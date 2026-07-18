@@ -31,7 +31,12 @@ class PillTabBar(tk.Frame):
         self._on_select = on_select
         self._tabs = list(tabs)
         self._selected = self._tabs[0][0] if self._tabs else None
-        self._font = tkfont.Font(size=11, weight="bold")
+        # 显式指定字体族 -- 不带 family 的 tkfont.Font(weight="bold") 在这台
+        # 机器上会解析成"宋体"而不是系统默认的雅黑，而宋体粗体把大写字母 M
+        # 渲染成了一个实心方块（缺字形回退），沿用 TkDefaultFont 的族名可以
+        # 保证粗体和正常粗细用的是同一款字体。
+        default_family = tkfont.nametofont("TkDefaultFont").actual()["family"]
+        self._font = tkfont.Font(family=default_family, size=11, weight="bold")
         self._regions = []  # (x1, x2, key)
 
         self._canvas = tk.Canvas(self, highlightthickness=0, bd=0, background=bg)
