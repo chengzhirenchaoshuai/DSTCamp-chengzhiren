@@ -26,11 +26,12 @@ from dstools.core.modinfo_reader import (
 from dstools.core.save_reader import get_save_summary, list_save_sessions, read_session_metadata
 from dstools.core.token_manager import is_valid_token, mask_token, read_token, write_token
 from dstools.core.world_reader import parse_leveldata, save_leveldata
+from dstools.gui import theme
+from dstools.gui.card_frame import CardFrame
+from dstools.gui.pill_tabs import PillTabBar
+from dstools.gui.theme import ERROR, HEADING, LOCAL_BG, LOCAL_COLOR, SERVER_BG, SERVER_COLOR, TEXT_MUTED
 from dstools.i18n import get_lang, set_lang, t
 from dstools.models import Cluster, ModEntry, SaveSource, Shard
-
-SERVER_COLOR = "#2e7d32"; LOCAL_COLOR = "#1565c0"
-SERVER_BG = "#e8f5e9"; LOCAL_BG = "#e3f2fd"
 
 # ── Helper: cluster name with source annotation ────────────────────────
 def _cluster_label(c: Cluster) -> str:
@@ -155,9 +156,32 @@ class DSToolsApp:
         self._aspect_lock.install()
 
         self.style = ttk.Style(); self.style.theme_use("clam")
+        theme.apply_theme(self.root, self.style)
         self._build_menu()
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Top-level nav is a custom pill tab bar, not a ttk.Notebook -- the
+        # three inner Notebooks (SaveBrowserTab.sub_notebook,
+        # WorldSettingsTab._sub_nb, ClusterConfigTab._cc_notebook) keep
+        # their native ttk shape and are just re-colored by apply_theme().
+        self._tab_keys = ["saves", "mods", "world", "server"]
+        self._pill_bar = PillTabBar(
+            self.root,
+            tabs=[(k, t(f"tab.{k}")) for k in self._tab_keys],
+            on_select=self._on_tab_select,
+        )
+        self._pill_bar.pack(fill=tk.X, side=tk.TOP)
+
+        self._tab_area = tk.Frame(self.root, background=theme.BG_SOFT)
+        self._tab_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self._tab_area.grid_rowconfigure(0, weight=1)
+        self._tab_area.grid_columnconfigure(0, weight=1)
+
+        def _make_card():
+            card = CardFrame(self._tab_area)
+            card.grid(row=0, column=0, sticky="nsew")
+            return card
+
+        self._tab_cards = {k: _make_card() for k in self._tab_keys}
 
         # SaveBrowserTab folds in what used to be a separate "环境信息"
         # tab as a third sub-tab (服务器存档/本地存档/环境概览) -- both
@@ -165,27 +189,24 @@ class DSToolsApp:
         # sliced differently (session-by-session vs. cluster-by-cluster
         # overview), so keeping them apart just meant clicking back and
         # forth between two tabs for related information.
-        self.save_tab = SaveBrowserTab(self.notebook, self)
-        self.mod_tab = ModManagerTab(self.notebook, self)
-        self.world_tab = WorldSettingsTab(self.notebook, self)
-        self.cluster_tab = ClusterConfigTab(self.notebook, self)
+        self.save_tab = SaveBrowserTab(self._tab_cards["saves"].body, self)
+        self.mod_tab = ModManagerTab(self._tab_cards["mods"].body, self)
+        self.world_tab = WorldSettingsTab(self._tab_cards["world"].body, self)
+        self.cluster_tab = ClusterConfigTab(self._tab_cards["server"].body, self)
 
         self._tabs = [self.save_tab, self.mod_tab, self.world_tab, self.cluster_tab]
-        self.notebook.add(self.save_tab.frame, text="saves")
-        self.notebook.add(self.mod_tab.frame, text="mods")
-        self.notebook.add(self.world_tab.frame, text="world")
-        self.notebook.add(self.cluster_tab.frame, text="server")
-        # 切换主标签页时 Tk 会把焦点默认给到新页面里第一个可获得焦点的控件
-        # (通常是顶部的"存档"下拉框)，readonly 状态的 Combobox 一旦拿到焦点
-        # 就会把当前选中文本显示成蓝色高亮，看起来像"一直选中" -- 把焦点收回
-        # notebook 容器本身即可，和 _cc_notebook 的同类修复一致。
-        self.notebook.bind("<<NotebookTabChanged>>", lambda e: self.notebook.focus_set())
+        for key, tab in zip(self._tab_keys, self._tabs):
+            tab.frame.pack(fill=tk.BOTH, expand=True)
+        self._tab_cards["saves"].tkraise()
         self._refresh_tab_labels()
 
         self.status_var = tk.StringVar(value=t("app.ready"))
         ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN,
                   anchor=tk.W, padding=(5,2)).pack(side=tk.BOTTOM, fill=tk.X)
         self._update_status(); self._refresh()
+
+    def _on_tab_select(self, key: str) -> None:
+        self._tab_cards[key].tkraise()
 
     def _build_menu(self):
         mb = tk.Menu(self.root)
@@ -237,10 +258,7 @@ class DSToolsApp:
         for tab in self._tabs: tab.refresh_language(); tab.refresh()
 
     def _refresh_tab_labels(self):
-        self.notebook.tab(0, text=t("tab.saves"))
-        self.notebook.tab(1, text=t("tab.mods"))
-        self.notebook.tab(2, text=t("tab.world"))
-        self.notebook.tab(3, text=t("tab.server"))
+        self._pill_bar.relabel({k: t(f"tab.{k}") for k in self._tab_keys})
 
     def _update_status(self):
         klei = str(self.env.klei_root) if self.env.klei_root else t("env.not_found")
@@ -520,7 +538,7 @@ class SaveBrowserTab:
         bg = SERVER_BG if is_server else LOCAL_BG
         tag = t("save.server_clusters") if is_server else t("save.local_clusters")
 
-        row = tk.Frame(self._env_rows_frame, background=bg, highlightbackground="#cccccc",
+        row = tk.Frame(self._env_rows_frame, background=bg, highlightbackground=theme.CARD_BORDER,
                        highlightthickness=1)
         row.pack(fill=tk.X, pady=3)
 
@@ -536,7 +554,7 @@ class SaveBrowserTab:
         detail = (f"{t('env.game_mode')}: {game_mode}   "
                  f"{t('env.max_players')}: {max_players}   "
                  f"{t('env.cluster_name')}: {cluster_name}")
-        tk.Label(left, text=detail, font=("", 9), fg="#555555", background=bg, anchor=tk.W).pack(fill=tk.X)
+        tk.Label(left, text=detail, font=("", 9), fg=TEXT_MUTED, background=bg, anchor=tk.W).pack(fill=tk.X)
 
         shard_bits = []
         for s in c.shards:
@@ -545,9 +563,9 @@ class SaveBrowserTab:
                 mc = len(list_mods(load_mod_overrides(s.mod_overrides_path)))
             ss = len(list_save_sessions(s.path))
             shard_bits.append(f"{s.name}({mc}{t('env.mods')}/{ss}{t('env.save_sessions')})")
-        tk.Label(left, text="  ".join(shard_bits), font=("", 9), fg="#777777",
+        tk.Label(left, text="  ".join(shard_bits), font=("", 9), fg=TEXT_MUTED,
                 background=bg, anchor=tk.W).pack(fill=tk.X)
-        tk.Label(left, text=str(c.path), font=("Consolas", 8), fg="#999999",
+        tk.Label(left, text=str(c.path), font=("Consolas", 8), fg=TEXT_MUTED,
                 background=bg, anchor=tk.W).pack(fill=tk.X, pady=(2,0))
 
         right = tk.Frame(row, background=bg)
@@ -890,10 +908,10 @@ class ModManagerTab:
         from dstools.gui.fonts import get_font
         from dstools.gui.mod_render import REF_WIDTH
         w = ref_width or REF_WIDTH
-        img = _Image.new("RGB", (w, 60), "#ffffff")
+        img = _Image.new("RGB", (w, 60), theme.CARD_BG)
         if text:
             draw = _ImageDraw.Draw(img)
-            draw.text((w / 2, 30), text, font=get_font(16), fill="#999999", anchor="mm")
+            draw.text((w / 2, 30), text, font=get_font(16), fill=TEXT_MUTED, anchor="mm")
         self.list_panel.set_image(img, [], keep_scroll=True)
 
     def _on_toggle(self, workshop_id):
@@ -1082,7 +1100,7 @@ class ModConfigDialog:
                      wraplength=DIALOG_W - 40, justify=tk.LEFT,
                      font=("", 9, "bold")).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
         if mod_info.unsupported_schema:
-            ttk.Label(win, text=t("mod.unsupported_schema"), foreground="#c62828",
+            ttk.Label(win, text=t("mod.unsupported_schema"), foreground=ERROR,
                      wraplength=DIALOG_W - 40, justify=tk.LEFT,
                      font=("", 9, "bold")).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
         elif remaining_dynamic:
@@ -1141,7 +1159,7 @@ class ModConfigDialog:
                     ttk.Separator(body, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=5, pady=(12,3))
                     title = _truncate(label_text, hdr_font, HEADER_W_PX)
                     ttk.Label(body, text=title, font=("", 15, "bold"),
-                             foreground="#37474f", anchor=tk.CENTER,
+                             foreground=HEADING, anchor=tk.CENTER,
                              justify=tk.CENTER).pack(fill=tk.X, padx=5, pady=(0,5))
                 else:
                     ttk.Frame(body, height=10).pack(fill=tk.X)
@@ -1175,9 +1193,9 @@ class ModConfigDialog:
                 # write back -- editing it here isn't safe either way).
                 reason = t("mod.dynamic_option") if opt.is_dynamic else t("mod.no_choices")
                 ttk.Label(row, text=f"{current_display}  ({reason})",
-                         foreground="#9e9e9e", font=("", 10, "italic")).pack(side=tk.RIGHT)
+                         foreground=TEXT_MUTED, font=("", 10, "italic")).pack(side=tk.RIGHT)
                 if opt.hover:
-                    info_lbl = ttk.Label(row, text="ⓘ", foreground="#1976d2", font=("", 12))
+                    info_lbl = ttk.Label(row, text="ⓘ", foreground=theme.ACCENT, font=("", 12))
                     info_lbl.pack(side=tk.RIGHT, padx=(0,6))
                     Tooltip(info_lbl, opt.hover)
                 continue
@@ -1206,7 +1224,7 @@ class ModConfigDialog:
             combo.pack(side=tk.RIGHT)
 
             if opt.hover:
-                info_lbl = ttk.Label(row, text="ⓘ", foreground="#1976d2", font=("", 12))
+                info_lbl = ttk.Label(row, text="ⓘ", foreground=theme.ACCENT, font=("", 12))
                 info_lbl.pack(side=tk.RIGHT, padx=(0,6))
                 Tooltip(info_lbl, opt.hover)
 
@@ -1489,15 +1507,15 @@ class WorldSettingsTab:
         # bordered card -- previously a single small (font size 9) Label
         # truncating the description to 80 characters, which read as
         # cramped and hard to read next to the rest of the tab.
-        self._wl_info_frame = tk.Frame(self.frame, highlightbackground="#b0bec5",
-                                       highlightthickness=1, bg="#eceff1")
+        self._wl_info_frame = tk.Frame(self.frame, highlightbackground=theme.CARD_BORDER,
+                                       highlightthickness=1, bg=theme.BG_SOFT)
         self._wl_info_frame.pack(fill=tk.X, padx=5, pady=(0,6))
         self._wl_title_var = tk.StringVar()
         tk.Label(self._wl_info_frame, textvariable=self._wl_title_var, font=("", 14, "bold"),
-                fg="#263238", bg="#eceff1", anchor=tk.W, justify=tk.LEFT).pack(fill=tk.X, padx=14, pady=(10,3))
+                fg=theme.TEXT, bg=theme.BG_SOFT, anchor=tk.W, justify=tk.LEFT).pack(fill=tk.X, padx=14, pady=(10,3))
         self._wl_desc_var = tk.StringVar()
         self._wl_desc_lbl = tk.Label(self._wl_info_frame, textvariable=self._wl_desc_var, font=("", 12),
-                                     fg="#455a64", bg="#eceff1", anchor=tk.W, justify=tk.LEFT)
+                                     fg=TEXT_MUTED, bg=theme.BG_SOFT, anchor=tk.W, justify=tk.LEFT)
         self._wl_desc_lbl.pack(fill=tk.X, padx=14, pady=(0,10))
         # Wraplength has to be maintained by hand (Label doesn't do this
         # itself) so the description reflows instead of clipping/
@@ -1650,7 +1668,7 @@ class WorldSettingsTab:
     def _empty_image(self):
         from PIL import Image
         from dstools.gui.world_render import REF_WIDTH
-        return Image.new("RGB", (REF_WIDTH, 40), "#ffffff"), []
+        return Image.new("RGB", (REF_WIDTH, 40), theme.CARD_BG), []
 
     def _on_rule_click(self, key, delta):
         if not self._wl_preset: return
@@ -1720,7 +1738,7 @@ class _TokenInputDialog:
         entry = ttk.Entry(win, textvariable=self.var, font=("Consolas", 12))
         entry.pack(fill=tk.X, padx=20, pady=(0, 6))
         self.err_var = tk.StringVar()
-        ttk.Label(win, textvariable=self.err_var, foreground="#c62828", font=("", 10)).pack(anchor=tk.W, padx=20)
+        ttk.Label(win, textvariable=self.err_var, foreground=ERROR, font=("", 10)).pack(anchor=tk.W, padx=20)
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
@@ -1955,7 +1973,7 @@ class ClusterConfigTab:
                 text = next((disp for raw, disp in enum_choices if raw == value), str(value))
             else:
                 text = str(value) if value is not None else ""
-            ttk.Label(parent, text=text, anchor=tk.W, foreground="#555", justify=tk.LEFT,
+            ttk.Label(parent, text=text, anchor=tk.W, foreground=TEXT_MUTED, justify=tk.LEFT,
                      wraplength=260, font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=tk.W, pady=3)
             var = tk.BooleanVar(value=bool(value)) if is_bool else tk.StringVar(value=str(value) if value is not None else "")
         elif is_bool:
@@ -2011,7 +2029,7 @@ class ClusterConfigTab:
                 if not sec_data:
                     continue
                 ttk.Label(col_frame, text=t(self._SECTION_HEADER_KEYS[sec_name]), font=("",11,"bold"),
-                         foreground="#37474f").grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(10,3))
+                         foreground=HEADING).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(10,3))
                 row += 1
                 for key, value in sec_data.items():
                     self._make_row(col_frame, sec_name, key, value, row, readonly=not is_server)

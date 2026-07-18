@@ -10,6 +10,7 @@ ImageScrollPanel to hit-test.
 
 from PIL import Image, ImageDraw
 
+from dstools.gui import theme
 from dstools.gui.fonts import get_font
 
 BASE_REF_WIDTH = 1300
@@ -27,21 +28,21 @@ CFG_W = 116
 CFG_H = 40
 LINK_W = 160
 
-_ON_COLOR = "#43a047"
+_ON_COLOR = theme.PRIMARY
 _OFF_COLOR = "#bdbdbd"
 _SWITCH_FLASH = "#ffca28"
-_CFG_COLOR = "#1565c0"
+_CFG_COLOR = theme.ACCENT
 _CFG_DISABLED_COLOR = "#cfd8dc"
 _CFG_TEXT_DISABLED = "#90a4ae"
-_LINK_COLOR = "#1565c0"
+_LINK_COLOR = theme.ACCENT
 _LINK_DISABLED = "#bdbdbd"
-_NAME_COLOR = "#212121"
-_ID_COLOR = "#757575"
-_ROW_BORDER = "#e0e0e0"
-_ROW_BG_EVEN = "#fafafa"
-_ROW_BG_ODD = "#ffffff"
-_ICON_PLACEHOLDER_BG = "#eeeeee"
-_ICON_PLACEHOLDER_BORDER = "#cccccc"
+_NAME_COLOR = theme.TEXT
+_ID_COLOR = theme.TEXT_MUTED
+_ROW_BORDER = theme.CARD_BORDER
+_ROW_BG_EVEN = theme.CARD_BG_ALT
+_ROW_BG_ODD = theme.CARD_BG
+_ICON_PLACEHOLDER_BG = theme.CARD_BG_ALT
+_ICON_PLACEHOLDER_BORDER = theme.CARD_BORDER
 
 
 def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=None,
@@ -86,7 +87,7 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
     total_h = pad_x + len(rows) * (row_h + row_gap)
     total_h = max(total_h, 40)
 
-    img = Image.new("RGB", (rw, int(total_h)), "#ffffff")
+    img = Image.new("RGB", (rw, int(total_h)), theme.CARD_BG)
     draw = ImageDraw.Draw(img)
     hit_regions = []
 
@@ -168,8 +169,8 @@ def _mk_cb(fn, wid):
 def _draw_local_badge(draw, x, cy, w, h, font):
     r = h / 2
     draw.rounded_rectangle([x, cy - r, x + w, cy + r], radius=r,
-                           fill="#eceff1", outline="#b0bec5")
-    draw.text((x + w / 2, cy), "本地", font=font, fill="#607d8b", anchor="mm")
+                           fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
+    draw.text((x + w / 2, cy), "本地", font=font, fill=theme.TEXT_MUTED, anchor="mm")
 
 
 def _draw_switch(draw, x, cy, w, h, on, pressed=False):
@@ -178,11 +179,11 @@ def _draw_switch(draw, x, cy, w, h, on, pressed=False):
     draw.rounded_rectangle([x, cy - r, x + w, cy + r], radius=r, fill=color)
     knob_cx = x + w - r if on else x + r
     knob_r = r - 3
-    draw.ellipse([knob_cx - knob_r, cy - knob_r, knob_cx + knob_r, cy + knob_r], fill="#ffffff")
+    draw.ellipse([knob_cx - knob_r, cy - knob_r, knob_cx + knob_r, cy + knob_r], fill=theme.CARD_BG)
 
 
 def _draw_pill(draw, x, y, w, h, text, font, enabled=True):
     fill = _CFG_COLOR if enabled else _CFG_DISABLED_COLOR
-    text_color = "#ffffff" if enabled else _CFG_TEXT_DISABLED
+    text_color = theme.CARD_BG if enabled else _CFG_TEXT_DISABLED
     draw.rounded_rectangle([x, y, x + w, y + h], radius=h / 2, fill=fill)
     draw.text((x + w / 2, y + h / 2), text, font=font, fill=text_color, anchor="mm")

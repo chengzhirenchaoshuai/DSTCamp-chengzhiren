@@ -6,9 +6,11 @@ instead of a plain ttk.Checkbutton.
 
 import tkinter as tk
 
-_ON_COLOR = "#43a047"
+from dstools.gui import theme
+
+_ON_COLOR = theme.PRIMARY
 _OFF_COLOR = "#bdbdbd"
-_KNOB_COLOR = "#ffffff"
+_KNOB_COLOR = theme.CARD_BG
 
 
 class ToggleSwitch(tk.Canvas):

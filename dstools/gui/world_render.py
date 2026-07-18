@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw
 
 from dstools.core.world_icons import get_pil_icon
 from dstools.core.world_value_sets import DEFAULT_SET, get_value_set
+from dstools.gui import theme
 from dstools.gui.fonts import get_font
 
 BASE_REF_WIDTH = 1300
@@ -103,15 +104,15 @@ def get_value_label(key: str, raw_value: str) -> str:
     return _VALUE_LABELS.get(raw_value, str(raw_value))
 
 _VALUE_COLORS = {
-    "default": "#9e9e9e", "never": "#e53935", "rare": "#1976d2",
-    "often": "#43a047", "always": "#ff9800",
-    "none": "#e53935", "few": "#1976d2", "many": "#43a047", "max": "#ff9800",
-    "veryslow": "#e53935", "slow": "#1976d2", "fast": "#43a047", "veryfast": "#ff9800",
-    "nonlethal": "#43a047", "force": "#ff9800", "more": "#43a047",
-    "disabled": "#9e9e9e", "enabled": "#43a047",
-    "uncommon": "#1976d2", "ocean_uncommon": "#1976d2", "mostly": "#43a047", "insane": "#ff9800",
-    "least": "#e53935", "most": "#ff9800",
-    "True": "#43a047", "False": "#e53935",
+    "default": theme.TEXT_MUTED, "never": theme.ERROR, "rare": theme.ACCENT,
+    "often": theme.PRIMARY, "always": "#ff9800",
+    "none": theme.ERROR, "few": theme.ACCENT, "many": theme.PRIMARY, "max": "#ff9800",
+    "veryslow": theme.ERROR, "slow": theme.ACCENT, "fast": theme.PRIMARY, "veryfast": "#ff9800",
+    "nonlethal": theme.PRIMARY, "force": "#ff9800", "more": theme.PRIMARY,
+    "disabled": theme.TEXT_MUTED, "enabled": theme.PRIMARY,
+    "uncommon": theme.ACCENT, "ocean_uncommon": theme.ACCENT, "mostly": theme.PRIMARY, "insane": "#ff9800",
+    "least": theme.ERROR, "most": "#ff9800",
+    "True": theme.PRIMARY, "False": theme.ERROR,
 }
 
 _FLASH_COLOR = "#ffca28"
@@ -162,18 +163,18 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
         total_h += cat_gap_before + cat_header_h + rows * row_h + cat_gap_after
     total_h = max(total_h, 40 * s)
 
-    img = Image.new("RGB", (rw, int(total_h)), "#ffffff")
+    img = Image.new("RGB", (rw, int(total_h)), theme.CARD_BG)
     draw = ImageDraw.Draw(img)
     hit_regions = []
 
     y = pad_x
     for cat_key, cat_name in visible_cats:
         items = grouped[cat_key]
-        color = cat_colors.get(cat_key, "#607d8b")
+        color = cat_colors.get(cat_key, theme.TEXT_MUTED)
 
         y += cat_gap_before
         draw.rectangle([pad_x, y, rw - pad_x, y + cat_header_h],
-                       fill="#f5f5f5", outline="#e0e0e0")
+                       fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
         draw.text((pad_x + 10 * s, y + cat_header_h / 2), f"{cat_name} ({len(items)})",
                   font=hdr_font, fill=color, anchor="lm")
         y += cat_header_h
@@ -191,7 +192,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                 img.paste(icon, (int(cx), int(cy)), icon)
 
             vlbl = get_value_label(ov.key, ov.value)
-            vcolor = _VALUE_COLORS.get(ov.value, "#212121")
+            vcolor = _VALUE_COLORS.get(ov.value, theme.TEXT)
             val_x = cx + col_w - 100 * s
             btn_r = 7 * s
             # Fixed half-width reserved for the value text (accommodates up
@@ -217,7 +218,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             tw = draw.textlength(name_text, font=name_font)
             draw_x = text_x_start + max(0, (slot_w - tw) / 2)
             draw.text((draw_x, icon_cy), name_text, font=name_font,
-                      fill="#333333", anchor="lm")
+                      fill=theme.TEXT, anchor="lm")
 
             if editable:
                 # Match the in-game cycle behavior: at either end of the
@@ -231,14 +232,14 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                     at_min, at_max = False, False
 
                 _draw_button(draw, bx1, icon_cy, btn_r, "left",
-                            "#cccccc" if at_min else "#888888",
+                            theme.CARD_BORDER if at_min else theme.TEXT_MUTED,
                             pressed=(flash == (ov.key, -1)))
                 if on_click and not at_min:
                     hit_regions.append((bx1 - 10 * s, cy, bx1 + 10 * s, cy + icon_size,
                                         _mk_cb(on_click, ov.key, -1)))
                 draw.text((val_x, icon_cy), vlbl, font=val_font, fill=vcolor, anchor="mm")
                 _draw_button(draw, bx2, icon_cy, btn_r, "right",
-                            "#cccccc" if at_max else "#888888",
+                            theme.CARD_BORDER if at_max else theme.TEXT_MUTED,
                             pressed=(flash == (ov.key, 1)))
                 if on_click and not at_max:
                     hit_regions.append((bx2 - 10 * s, cy, bx2 + 10 * s, cy + icon_size,
