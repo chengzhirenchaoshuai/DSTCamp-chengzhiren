@@ -1,0 +1,402 @@
+"""String tables for Chinese and English localization."""
+
+STRINGS = {
+    "zh": {
+        # Window
+        "app.title": "DST 存档工具 - 饥荒联机版管理器",
+        "app.ready": "就绪",
+        "app.refresh": "刷新全部 (F5)",
+        "app.exit": "退出 (Ctrl+Q)",
+
+        # Menu
+        "menu.file": "文件",
+        "menu.language": "语言",
+        "menu.lang_zh": "中文",
+        "menu.lang_en": "English",
+
+        # Tabs
+        "tab.saves": "  存档  ",
+        "tab.mods": "  Mod管理  ",
+        "tab.server": "  服务器配置  ",
+
+        # Save tab
+        "save.cluster": "服务器:",
+        "save.shard": "分片:",
+        "save.refresh": "刷新",
+        "save.source_server": "服务器存档",
+        "save.source_client": "本地存档",
+        "save.source": "来源",
+        "save.session_id": "会话ID",
+        "save.summary": "摘要",
+        "save.slots": "槽位",
+        "save.size": "总大小",
+        "save.details": "存档详情",
+        "save.no_saves": "未找到存档",
+        "save.no_client_saves": "未找到本地存档",
+
+        # Mod tab
+        "mod.cluster": "服务器:",
+        "mod.shard": "分片:",
+        "mod.filter": "搜索:",
+        "mod.show_all": "全部",
+        "mod.show_enabled": "已启用",
+        "mod.show_disabled": "已禁用",
+        "mod.show_local": "查看本地模组",
+        "mod.back_to_list": "返回Mod列表",
+        "mod.reload_full": "重载Mod信息",
+        "mod.loading_full": "正在重新加载全部 Mod 信息（含标题与配置），首次加载可能需要较长时间...",
+        "mod.save_btn": "保存修改",
+        "mod.apply_all": "应用到所有分片",
+        "mod.toggle": "切换启用",
+        "mod.edit_config": "编辑配置",
+        "mod.status": "状态",
+        "mod.workshop_id": "工坊ID",
+        "mod.config_count": "配置项数",
+        "mod.details_title": "Mod 详情 / 配置编辑器",
+        "mod.no_overrides": "未找到 modoverrides.lua",
+        "mod.on": "[启用]",
+        "mod.off": "[禁用]",
+
+        # Server config tab
+        "cluster.cluster": "服务器:",
+        "cluster.load": "加载",
+        "cluster.save_btn": "保存",
+        "cluster.shard_config": "分片配置(server.ini)",
+        "cluster.tab_cluster_ini": "服务器配置(cluster.ini)",
+        "cluster.editing": "编辑: {shard}/server.ini",
+        "cluster.tab_gameplay": "玩法设置",
+        "cluster.tab_network": "网络设置",
+        "cluster.tab_misc": "其他设置",
+        "cluster.tab_shard": "服务器分片设置",
+        "cluster.bool_on": "开启",
+        "cluster.bool_off": "关闭",
+
+        # Status bar
+        "status.klei": "Klei",
+        "status.user": "用户",
+        "status.clusters": "服务器",
+        "status.local_saves": "本地存档",
+
+        # Environment tab
+        "env.title": "DST 环境信息",
+        "env.klei_root": "Klei 根目录",
+        "env.steam_id": "Steam 用户 ID",
+        "env.client_config": "客户端配置",
+        "env.total_clusters": "服务器集群",
+        "env.total_local": "本地存档会话",
+        "env.shards": "个分片",
+        "env.mods": "个Mod",
+        "env.save_sessions": "个存档会话",
+        "env.game_mode": "游戏模式",
+        "env.max_players": "最大玩家数",
+        "env.cluster_name": "集群名称",
+        "env.not_found": "未找到",
+        "env.env_info": "环境信息",
+        "env.open_location": "打开位置",
+
+        # Dialogs
+        "dlg.save_ok": "保存成功",
+        "dlg.save_fail": "保存失败",
+        "dlg.confirm_save_msg": "确认保存 {name} 的配置?",
+        "dlg.select_mod": "请先选择一个 Mod",
+        "dlg.no_overrides": "没有可保存的 modoverrides.lua",
+        "dlg.apply_all_confirm": "将当前 Mod 状态应用到 {name} 的所有分片?",
+        "dlg.apply_done": "已应用到 {count} 个其他分片",
+        "dlg.saved_mods": "已保存 {count} 个 Mod 到 {shard}/modoverrides.lua",
+        "dlg.config_saved": "配置已保存到 {name}",
+        "dlg.remove_confirm": "确认从配置中移除 {mod_id} ?",
+        "dlg.sync_all_shards_confirm": "是否同步至所有世界分片？\n\n饥荒联机版默认要求各分片的 Mod 状态一致，仅修改单个分片可能导致主从不同步等问题。",
+        "dlg.confirm_btn": "确认",
+        "dlg.cancel_btn": "取消",
+
+        # World settings tab (NEW)
+        "tab.world": "  世界设置  ",
+        "world.cluster": "服务器:",
+        "world.shard": "分片:",
+        "world.preset_name": "预设名称",
+        "world.preset_id": "预设ID",
+        "world.location": "地图类型",
+        "world.description": "描述",
+        "world.overrides": "世界设置覆盖 ({count} 项)",
+        "world.no_leveldata": "未找到 leveldataoverride.lua",
+        "world.key": "设置项",
+        "world.value": "值",
+        "world.desc": "说明",
+
+        # Admin (NEW)
+        "admin.title": "管理员列表",
+        "admin.add": "添加",
+        "admin.remove": "删除",
+        "admin.id_placeholder": "KU_XXXXXXXX",
+        "admin.empty": "(无管理员)",
+        "admin.add_prompt": "输入 Klei 用户 ID:",
+        "admin.added": "已添加: {id}",
+        "admin.removed": "已删除: {id}",
+        "admin.already_exists": "该 ID 已在列表中",
+        "admin.not_found": "未找到该管理员",
+        "admin.invalid_format": "格式不正确，Klei 用户 ID 应形如 KU_XXXXXXXX。",
+
+        # Blocklist / 黑名单 (NEW)
+        "blocklist.title": "黑名单",
+        "blocklist.empty": "(无黑名单人员)",
+
+        # Token (NEW)
+        "token.title": "服务器令牌",
+        "token.show": "显示",
+        "token.hide": "隐藏",
+        "token.copy": "复制",
+        "token.change": "修改令牌",
+        "token.copied": "令牌已复制到剪贴板",
+        "token.empty": "(未设置)",
+        "token.masked": "(令牌已隐藏)",
+        "token.prompt": "输入新的服务器令牌:",
+        "token.invalid_hint": "令牌格式不正确（长度太短），请检查是否完整复制了令牌。",
+
+        # Save source labels
+        "save.server_clusters": "服务器存档",
+        "save.local_clusters": "本地存档",
+        "save.no_server": "未找到服务器存档",
+        "save.no_local": "未找到本地存档",
+        "save.env_overview": "环境概览",
+
+        # Config editor
+        "mod.add_config": "添加配置项",
+        "mod.edit_value": "编辑值",
+        "mod.config_key": "配置键",
+        "mod.config_value": "配置值",
+        "mod.config_add_prompt": "输入新配置项名称:",
+        "mod.config_edit_prompt": "编辑 {key} 的值:",
+
+        # Updated labels
+        "selector.archive": "存档:",
+
+        # World settings improved
+        "world.rules": "世界规则 (可修改)",
+        "world.generation": "世界生成 (仅查看)",
+        "world.save_rules": "保存世界规则",
+        "world.rule_count": "世界规则 ({count} 项)",
+        "world.gen_count": "世界生成 ({count} 项)",
+        "world.select_value": "选择值...",
+        "world.no_preset": "未找到世界设置文件",
+        "world.saved": "世界规则已保存",
+
+        # Mod info
+        "modinfo.name": "名称",
+        "modinfo.author": "作者",
+        "modinfo.version": "版本",
+        "modinfo.desc": "描述",
+        "modinfo.no_info": "未找到 modinfo.lua，使用自由输入模式",
+
+        # Mod config dialog (NEW)
+        "mod.apply": "应用",
+        "mod.reset": "重置",
+        "mod.back": "返回",
+        "mod.config_dialog_title": "配置 - {name}",
+        "mod.no_config_options": "该模组没有可编辑的配置项",
+        "mod.loading": "正在加载 Mod 列表...",
+        "mod.dynamic_option": "由模组内部逻辑动态生成，无法在此编辑，请在游戏内修改",
+        "mod.no_choices": "未声明可选值，请在游戏内修改",
+        "mod.unsupported_schema": "⚠ 该模组的配置定义格式比较特殊（例如依赖翻译表或游戏内部函数），本工具暂不支持解析，请在游戏内的 Mod 配置菜单中修改设置。开启/关闭该模组不受影响。",
+        "mod.dynamic_banner": "⚠ 有 {count} 项设置由模组内部逻辑动态生成，已尝试自动解析但未成功，无法在此编辑，请在游戏内修改。",
+        "mod.read_only_local": "该模组为本地模组（client_only），不需要在存档中配置，此处仅供查看，不可编辑。",
+    },
+    "en": {
+        # Window
+        "app.title": "DST Tools - Don't Starve Together Manager",
+        "app.ready": "Ready",
+        "app.refresh": "Refresh All (F5)",
+        "app.exit": "Exit (Ctrl+Q)",
+
+        # Menu
+        "menu.file": "File",
+        "menu.language": "Language",
+        "menu.lang_zh": "中文",
+        "menu.lang_en": "English",
+
+        # Tabs
+        "tab.saves": "  Saves  ",
+        "tab.mods": "  Mods  ",
+        "tab.server": "  Server Config  ",
+
+        # Save tab
+        "save.cluster": "Cluster:",
+        "save.shard": "Shard:",
+        "save.refresh": "Refresh",
+        "save.source_server": "Server Saves",
+        "save.source_client": "Client Saves",
+        "save.source": "Source",
+        "save.session_id": "Session ID",
+        "save.summary": "Summary",
+        "save.slots": "Slots",
+        "save.size": "Total Size",
+        "save.details": "Session Details",
+        "save.no_saves": "No save sessions found",
+        "save.no_client_saves": "No client saves found",
+
+        # Mod tab
+        "mod.cluster": "Cluster:",
+        "mod.shard": "Shard:",
+        "mod.filter": "Search:",
+        "mod.show_all": "All",
+        "mod.show_enabled": "Enabled",
+        "mod.show_disabled": "Disabled",
+        "mod.show_local": "View Local Mods",
+        "mod.back_to_list": "Back to Mod List",
+        "mod.reload_full": "Reload Mod Info",
+        "mod.loading_full": "Reloading all mod info (titles and config), this may take a while the first time...",
+        "mod.save_btn": "Save Changes",
+        "mod.apply_all": "Apply to All Shards",
+        "mod.toggle": "Toggle Selected",
+        "mod.edit_config": "Edit Config",
+        "mod.status": "Status",
+        "mod.workshop_id": "Workshop ID",
+        "mod.config_count": "Config Options",
+        "mod.details_title": "Mod Details / Config Editor",
+        "mod.no_overrides": "No modoverrides.lua found",
+        "mod.on": "[ON]",
+        "mod.off": "[OFF]",
+
+        # Server config tab
+        "cluster.cluster": "Cluster:",
+        "cluster.load": "Load",
+        "cluster.save_btn": "Save",
+        "cluster.shard_config": "Shard Config (server.ini)",
+        "cluster.tab_cluster_ini": "Server Config (cluster.ini)",
+        "cluster.editing": "Editing: {shard}/server.ini",
+        "cluster.tab_gameplay": "Gameplay",
+        "cluster.tab_network": "Network",
+        "cluster.tab_misc": "Misc",
+        "cluster.tab_shard": "Server Shard Settings",
+        "cluster.bool_on": "On",
+        "cluster.bool_off": "Off",
+
+        # Status bar
+        "status.klei": "Klei",
+        "status.user": "User",
+        "status.clusters": "Clusters",
+        "status.local_saves": "Local Saves",
+
+        # Environment tab
+        "env.title": "DST Environment",
+        "env.klei_root": "Klei Root",
+        "env.steam_id": "Steam User ID",
+        "env.client_config": "Client Config",
+        "env.total_clusters": "Server Clusters",
+        "env.total_local": "Local Save Sessions",
+        "env.shards": "shards",
+        "env.mods": "mods",
+        "env.save_sessions": "save sessions",
+        "env.game_mode": "Game Mode",
+        "env.max_players": "Max Players",
+        "env.cluster_name": "Cluster Name",
+        "env.not_found": "Not found",
+        "env.env_info": "Environment",
+        "env.open_location": "Open Location",
+
+        # Dialogs
+        "dlg.save_ok": "Save successful",
+        "dlg.save_fail": "Save failed",
+        "dlg.confirm_save_msg": "Save configuration for {name}?",
+        "dlg.select_mod": "Select a mod first",
+        "dlg.no_overrides": "No modoverrides.lua to save to",
+        "dlg.apply_all_confirm": "Apply current mod state to all shards in {name}?",
+        "dlg.apply_done": "Applied to {count} other shards",
+        "dlg.saved_mods": "Saved {count} mods to {shard}/modoverrides.lua",
+        "dlg.config_saved": "Configuration saved for {name}",
+        "dlg.remove_confirm": "Remove {mod_id} from configuration?",
+        "dlg.sync_all_shards_confirm": "Sync to all world shards?\n\nDon't Starve Together expects mod state to match across every shard -- changing only one shard can cause master/slave desync and other issues.",
+        "dlg.confirm_btn": "Confirm",
+        "dlg.cancel_btn": "Cancel",
+
+        # World settings tab (NEW)
+        "tab.world": "  World Settings  ",
+        "world.cluster": "Cluster:",
+        "world.shard": "Shard:",
+        "world.preset_name": "Preset Name",
+        "world.preset_id": "Preset ID",
+        "world.location": "Location",
+        "world.description": "Description",
+        "world.overrides": "World Overrides ({count} items)",
+        "world.no_leveldata": "No leveldataoverride.lua found",
+        "world.key": "Setting",
+        "world.value": "Value",
+        "world.desc": "Description",
+
+        # Admin (NEW)
+        "admin.title": "Admin List",
+        "admin.add": "Add",
+        "admin.remove": "Remove",
+        "admin.id_placeholder": "KU_XXXXXXXX",
+        "admin.empty": "(No admins)",
+        "admin.add_prompt": "Enter Klei User ID:",
+        "admin.added": "Added: {id}",
+        "admin.removed": "Removed: {id}",
+        "admin.already_exists": "This ID is already in the list",
+        "admin.not_found": "Admin not found",
+        "admin.invalid_format": "Invalid format -- a Klei user ID should look like KU_XXXXXXXX.",
+
+        # Blocklist (NEW)
+        "blocklist.title": "Blocklist",
+        "blocklist.empty": "(No blocked players)",
+
+        # Token (NEW)
+        "token.title": "Server Token",
+        "token.show": "Show",
+        "token.hide": "Hide",
+        "token.copy": "Copy",
+        "token.change": "Change Token",
+        "token.copied": "Token copied to clipboard",
+        "token.empty": "(Not set)",
+        "token.masked": "(Token hidden)",
+        "token.prompt": "Enter new server token:",
+        "token.invalid_hint": "That doesn't look like a valid token (too short) -- check you copied the whole thing.",
+
+        # Save source labels
+        "save.server_clusters": "Server Saves",
+        "save.local_clusters": "Local Saves",
+        "save.no_server": "No server saves found",
+        "save.no_local": "No local saves found",
+        "save.env_overview": "Environment Overview",
+
+        # Config editor
+        "mod.add_config": "Add Config",
+        "mod.edit_value": "Edit Value",
+        "mod.config_key": "Config Key",
+        "mod.config_value": "Config Value",
+        "mod.config_add_prompt": "Enter new config key name:",
+        "mod.config_edit_prompt": "Edit value for {key}:",
+
+        # Updated labels
+        "selector.archive": "Archive:",
+
+        # World settings improved
+        "world.rules": "World Rules (Editable)",
+        "world.generation": "World Generation (View Only)",
+        "world.save_rules": "Save World Rules",
+        "world.rule_count": "World Rules ({count} items)",
+        "world.gen_count": "World Generation ({count} items)",
+        "world.select_value": "Select value...",
+        "world.no_preset": "No world settings file found",
+        "world.saved": "World rules saved",
+
+        # Mod info
+        "modinfo.name": "Name",
+        "modinfo.author": "Author",
+        "modinfo.version": "Version",
+        "modinfo.desc": "Description",
+        "modinfo.no_info": "No modinfo.lua found, using free-form input",
+
+        # Mod config dialog (NEW)
+        "mod.apply": "Apply",
+        "mod.reset": "Reset",
+        "mod.back": "Back",
+        "mod.config_dialog_title": "Configure - {name}",
+        "mod.no_config_options": "This mod has no editable configuration options",
+        "mod.loading": "Loading mod list...",
+        "mod.dynamic_option": "Computed by the mod's own logic, can't edit here -- change it in-game",
+        "mod.no_choices": "No selectable values declared -- change it in-game",
+        "mod.unsupported_schema": "⚠ This mod defines its configuration in an unusual format (e.g. relying on translation tables or in-game engine functions) that this tool can't parse yet -- please change its settings from the in-game Mod Configuration menu instead. Enabling/disabling this mod is not affected.",
+        "mod.dynamic_banner": "⚠ {count} setting(s) are computed by the mod's own logic; automatic resolution was attempted but didn't succeed, so they can't be edited here -- please change them in-game.",
+        "mod.read_only_local": "This is a local (client_only) mod -- it doesn't need a save-file entry to work. Shown here for reference only, not editable.",
+    }
+}

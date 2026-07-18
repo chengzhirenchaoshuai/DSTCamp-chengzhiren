@@ -1,0 +1,18 @@
+World
+Biomes-Underground Spawn Area-Caves World Size-Small
+Land branch-Least Loops-Never Touch Stones-Less
+Failed Survivors-Less Sinkhole Lights-Slow Starting Resource Variety-Classic
+Resources
+Bananas-Less Berry Bushes-Less Boulderboughs-Less
+Boulders-Less Cave ferns-Less Flint-Less
+Glow Berries-Less Grass-Less Lichen-Less
+Light Flowers-Less Mushroom Trees-Less Mushrooms-Less
+Ponds-Less Reeds-Less Saplings-Less
+Spiky Bushes-Less Trees (All)-Less
+Creatures and Spawners
+Rabbit Hutches-Less Rock Lobsters-Less Slurpers-Less
+Slurtle Mounds-Less Splumonkey Pods-Less
+Hostile Creatures and Spawners
+Bats-Less Cave Worms-Less Clockworks-Less
+Nightmare Fissures-Less Spider Dens-Less Spilagmites-Less
+Tentacles-Less

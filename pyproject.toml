@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dstools"
+version = "0.1.0"
+description = "Don't Starve Together save file reader and configuration editor"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "lupa>=2.0",
+]
+license = {text = "MIT"}
+readme = "README.md"
+
+[project.scripts]
+dst = "dstools.cli.main:main"
+dst-gui = "dstools.gui.app:main"
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]

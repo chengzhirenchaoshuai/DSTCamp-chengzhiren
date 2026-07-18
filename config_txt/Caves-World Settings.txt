@@ -1,0 +1,24 @@
+World
+Acid Rain-Disabled Ancient Gateway-Slow Cave Worm Attacks-Little
+Earthquakes-Little Great Worm-Rare Rain-Little
+Wild Rift Frequency-Little Wild Rifts-None
+Resource Regrowth
+Regrowth Multiplier-Slow Boulderboughs-Slow Evergreens-Slow
+Light Flower-Slow Lightbug Flower-Slow Lunar Mushtrees-Slow
+Mushroom Trees-Slow Reeds-Slow Twiggy Trees-Slow
+Creatures
+Bulbous Lightbugs-Little Bunnymen-Little Dust Moths-Little
+Grass Gekko Morphing-Little Moles-Little Mush Gnomes-Little
+Pigs-Little Rock Lobsters-Little Slurtles-Little
+Snurtles-Little Splumonkeys-Little
+Hostile Creatures
+Bats-Little Cave Spiders-Little Dangling Depth Dwellers-Little
+Merms-Little Mimicreeps-Little Naked Mole Bats-Little
+Ornery Chests-Little Ruins Nightmares-Little Spider Warriors-None
+Spiders-Little Spitter Spiders-Little
+Giants
+Lord of the Fruit Flies-Little Nightmare Werepig-Little Spider Queen-Little
+Toadstool-Little Treeguards-Little
+Lunar Mutations
+Mutated Birds-None Mutated Merms-None Shattered Spider Holes-None
+Shattered Spiders-Little

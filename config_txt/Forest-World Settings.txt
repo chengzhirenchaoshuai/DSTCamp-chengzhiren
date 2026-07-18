@@ -1,0 +1,55 @@
+Global
+Events-Auto Autumn-Short Winter-Short
+Spring-Short Summer-Long Day Type-Long Day
+Spawn Mode-Random Survivor Death-Change Survivor Revive At Florid Postern-Enabled
+Ghost Sanity Drain-Enabled Death Reset Timer-Slow Beefalo Mating Frequency-Little
+Krampus-Default
+Events
+Midsummer Cawnival-Always Hallowed Nights-Always Winter's Feast-Always
+Year of the Gobbler-Always Year of the Varg-Always Year of the Pig King-Always
+Year of the Carrat-Always Year of the Beefalo-Always Year of the Catcoon-Always
+Year of the Bunnyman-Always Year of the Dragonfly-Always Year of the Depths Worm-Always
+Year of the Clockwork Knight-Always
+Survivors
+Extra Starting Resources-After Day 15 Seasonal Starting Items-None Griefers Spawn Protection-Always
+Drop Items on Disconnect-Default Max Health Penalty-Disabled Damage Taken-Less
+Temperature Damage-Nonlethal Hunger Damage-Nonlethal Darkness Damage-Nonlethal
+Sanity Monsters-Little Enlightenment Monsters-Little
+World
+Hound Attacks-Little Ice Hound Waves-None Fire Hound Waves-None
+Forest Petrification-Slow Frog Rain-Little Hunt Surprises-Little
+Hunts-Little Lightning-Little Lunar Hail-Little
+Meteor Frequency-Little Rain-Little Wandering Trader-Disabled
+Wild Rift Frequency-Little Wild Rifts-None Wildfires-Little
+Resource Regrowth
+Regrowth Multiplier-Slow Basic Resources-Disabled Birchnut Trees-Slow
+Cacti-Slow Carrots-Slow Evergreens-Slow
+Flowers-Slow Lure Trees-Slow Palmcone Tree-Slow
+Reeds-Slow Salt Formations-Slow Twiggy Trees-Slow
+Unnatural Portal Resources
+Banana Bushes-Little Crustashines-Little Monkeys-Little
+Palmcone Sprouts-Little Portal Activity-Little Powder Monkeys-Little
+Creatures
+Bees-Little Birds-Little Bunnymen-Little
+Butterflies-Little Catcoons-Little Gnarlwails-Little
+Gobblers-Little Grass Gecko Morphling-Little Marotters-Little
+Moles-Little Pengulls-Little Pigs-Little
+Rabbits-Little Schools of Fish-Little Lobsters-Little
+Hostile Creatures
+Bats-Little Cookie Cutters-Little Frogs-Little
+Hounds-Little Killer Bees-Little Lureplants-Little
+MacTusk-Little Merms-Little Moon Quay Pirates-Little
+Mosquitos-Little Sharks-Little Skittersquids-Little
+Spider Warriors-None Spiders-Little
+Giants
+Antlion Tribute-Little Bearger-Little Bee Queen-Little
+Crabking-Little Deerclops-Little Dragonfly-Little
+Eye of Terror-Little Frostjaw-Little Klaus-Little
+Lord of the Fruit Flies-Little Malbatross-Little Moose/Goose-Little
+Poison Birchnut Trees-Little Scrappy Werepig-Little Spider Queen-Little
+Treeguards-Little
+Lunar Mutations
+Armored Bearger-None Bright-Beaked Birds-None Crystal Deerclops-None
+Crystal-Crested Buzzards-None Horror Hounds-None Mutated Birds-None
+Mutated Merms-None Permafrost Pengulls-None Possessed Vargs-None
+Shattered Spider Holes-Default Shattered Spiders-Little
