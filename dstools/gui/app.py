@@ -1881,11 +1881,17 @@ class ClusterConfigTab:
             # its bottom-right corner. The button lives here (created once)
             # rather than inside _load_config()/_load_shard_config(), which
             # tear down and rebuild everything in `frame` on every reload.
+            # scroll_area is NOT expand=True: it's sized to its own content
+            # height (see the frame<Configure> handler below, which grows/
+            # shrinks the canvas to match), so the footer sits right after
+            # the last config row instead of being pinned to the bottom of
+            # the whole tab with a big gap for any content shorter than the
+            # tab's available height.
             page = ttk.Frame(self._cc_notebook)
             scroll_area = ttk.Frame(page)
-            scroll_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+            scroll_area.pack(side=tk.TOP, fill=tk.X)
             footer = ttk.Frame(page)
-            footer.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 0))
+            footer.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
             save_cmd = self._save_cluster_ini if tab_key == "Cluster" else self._save_shard_ini
             save_btn = ttk.Button(footer, text=t("cluster.save_btn"), command=save_cmd)
             save_btn.pack(side=tk.RIGHT)
@@ -1898,13 +1904,27 @@ class ClusterConfigTab:
             # visible scrollbar or wheel binding here, the 2-column layout
             # is just kept short enough in practice not to need one).
             scrollbar = ttk.Scrollbar(scroll_area, orient=tk.VERTICAL, command=canvas.yview)
+            # expand=True here is about *horizontal* space only (the only
+            # axis `expand` affects for a lone side=LEFT child -- it
+            # already gets the full crosswise/vertical parcel regardless):
+            # still needed so the canvas (and the width-sync trick on it)
+            # stretches to the tab's full width. Height is handled
+            # separately below via canvas.configure(height=...) tracking
+            # the content's own size, instead of expand/fill vertically.
             canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             frame = ttk.Frame(canvas)
             frame.grid_columnconfigure(0, weight=1)
             frame.grid_columnconfigure(1, weight=1)
             canvas.configure(yscrollcommand=scrollbar.set)
             win_id = canvas.create_window((0,0), window=frame, anchor=tk.NW)
-            frame.bind("<Configure>", lambda e, c=canvas: c.configure(scrollregion=c.bbox("all")))
+
+            def _on_frame_configure(e, c=canvas):
+                bbox = c.bbox("all")
+                c.configure(scrollregion=bbox)
+                if bbox:
+                    c.configure(height=bbox[3])
+
+            frame.bind("<Configure>", _on_frame_configure)
             # Without this, the embedded frame (and everything gridded
             # inside it, including the Entry/Combobox fields below) stays
             # pinned at its own natural/requested width forever -- growing

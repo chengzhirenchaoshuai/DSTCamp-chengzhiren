@@ -58,8 +58,11 @@ ICON_SIZE = 110
 # panel renders. Widened (was 30) to leave visible breathing room around
 # each item's new rounded background card instead of them nearly touching.
 ROW_GAP = 44
-# Horizontal gap between adjacent columns' background cards.
-COL_GUTTER = 14
+# Horizontal gap reserved between adjacent columns' background cards
+# (fixed, not scaled -- was 14 and only used as a fallback margin, which in
+# practice never won against the cycle-button's own width requirement, so
+# columns visually touched; now actually subtracted out of col_w itself).
+COL_GUTTER = 32
 CAT_HEADER_H = 38
 CAT_GAP_BEFORE = 8
 CAT_GAP_AFTER = 10
@@ -178,7 +181,14 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     cat_gap_before = CAT_GAP_BEFORE * s
     cat_gap_after = CAT_GAP_AFTER * s
     cols = COLS
-    col_w = (rw - 2 * pad_x) / cols
+    # Real reserved gap between columns (fixed, not scaled -- same "constant
+    # rhythm regardless of width" reasoning as ROW_GAP) so adjacent items'
+    # background blocks have actual empty space between them instead of
+    # nearly touching -- previously col_w spanned edge-to-edge with no gap
+    # reserved at all, and COL_GUTTER alone couldn't create one because the
+    # cycle-button position (which the block has to clear) already used
+    # almost the entire column width.
+    col_w = (rw - 2 * pad_x - (cols - 1) * COL_GUTTER) / cols
 
     name_font = get_font(round(18 * s))
     val_font = get_font(round(18 * s))
@@ -213,7 +223,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             col = idx % cols
             if col == 0 and idx > 0:
                 y += row_h
-            cx = pad_x + col * col_w
+            cx = pad_x + col * (col_w + COL_GUTTER)
             cy = y
             icon_cy = cy + icon_size / 2
 
@@ -245,10 +255,15 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             # columns. Drawn first so everything else sits on top of it.
             block_pad_v = 8 * s
             block_pad_h = 8 * s
+            # col_w already has COL_GUTTER's worth of space subtracted out
+            # (see its computation above), so cx + col_w lands exactly at
+            # the reserved gap before the next column -- the max() with
+            # right_extent is just a safety net in case a future font/label
+            # tweak ever pushes the cycle-button past that.
             right_extent = (bx2 + arrow_h / 2) if bx2 is not None else (val_x + VALUE_HALF_W)
             block_x1 = cx - block_pad_h / 2
             block_y1 = cy - block_pad_v
-            block_x2 = max(cx + col_w - COL_GUTTER, right_extent + block_pad_h)
+            block_x2 = max(cx + col_w, right_extent + block_pad_h)
             block_y2 = cy + icon_size + block_pad_v
             draw.rounded_rectangle([block_x1, block_y1, block_x2, block_y2],
                                    radius=10 * s, fill=theme.PRIMARY_LIGHT)
