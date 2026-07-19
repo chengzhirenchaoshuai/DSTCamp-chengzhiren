@@ -63,6 +63,15 @@ ROW_GAP = 44
 # practice never won against the cycle-button's own width requirement, so
 # columns visually touched; now actually subtracted out of col_w itself).
 COL_GUTTER = 32
+# Extra horizontal margin reserved between the leftmost/rightmost column's
+# own content and the category frame's outer edge. The first column's icon
+# sits flush at the column area's left edge, and its background block
+# extends block_pad_h further left than that for breathing room -- without
+# a reserved margin here, that reach (and, symmetrically, a cycle-button's
+# own reach past the last column's nominal right edge) poked past the
+# category frame itself instead of just past the column. Must stay >=
+# block_pad_h (16, see the per-item loop) with room to spare.
+CONTENT_MARGIN = 20
 CAT_HEADER_H = 46  # was 38 -- title text was reading small/cramped
 CAT_GAP_BEFORE = 8
 CAT_GAP_AFTER = 10
@@ -187,14 +196,18 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     cat_gap_before = CAT_GAP_BEFORE * s
     cat_gap_after = CAT_GAP_AFTER * s
     cols = COLS
+    content_margin = CONTENT_MARGIN * s
     # Real reserved gap between columns (fixed, not scaled -- same "constant
     # rhythm regardless of width" reasoning as ROW_GAP) so adjacent items'
     # background blocks have actual empty space between them instead of
     # nearly touching -- previously col_w spanned edge-to-edge with no gap
     # reserved at all, and COL_GUTTER alone couldn't create one because the
     # cycle-button position (which the block has to clear) already used
-    # almost the entire column width.
-    col_w = (rw - 2 * pad_x - (cols - 1) * COL_GUTTER) / cols
+    # almost the entire column width. content_margin (both sides) leaves
+    # the same kind of clearance between the first/last column and the
+    # category frame's own outer edge.
+    col_area_x0 = pad_x + content_margin
+    col_w = (rw - 2 * pad_x - 2 * content_margin - (cols - 1) * COL_GUTTER) / cols
 
     name_font = get_font(round(18 * s))
     val_font = get_font(round(18 * s))
@@ -232,7 +245,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             col = idx % cols
             if col == 0 and idx > 0:
                 y += row_h
-            cx = pad_x + col * (col_w + COL_GUTTER)
+            cx = col_area_x0 + col * (col_w + COL_GUTTER)
             cy = y
             icon_cy = cy + icon_size / 2
 
