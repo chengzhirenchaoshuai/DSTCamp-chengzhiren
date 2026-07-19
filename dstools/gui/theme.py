@@ -70,10 +70,20 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
 
     style.configure("TNotebook", background=BG_SOFT, borderwidth=0, tabmargins=(2, 4, 2, 0))
     style.configure("TNotebook.Tab", background=CARD_BG, foreground=TEXT_MUTED,
-                     padding=(14, 6), borderwidth=0)
+                     padding=(14, 6), borderwidth=1, bordercolor=CARD_BORDER)
     style.map("TNotebook.Tab",
               background=[("selected", PRIMARY)],
-              foreground=[("selected", "#FFFFFF")])
+              foreground=[("selected", "#FFFFFF")],
+              bordercolor=[("selected", PRIMARY_DARK)],
+              # clam's default bevel makes an *unselected* tab look raised
+              # and a selected one -- once it loses that bevel -- look
+              # pressed-in by comparison. Flip it: unselected stays flat
+              # (recedes), selected gets the raised bevel (pops forward),
+              # matching "selected should stick out, not sink in".
+              relief=[("selected", "raised"), ("!selected", "flat")],
+              # A couple more px of padding on the selected tab reinforces
+              # the same "popped up" read instead of a same-height swap.
+              padding=[("selected", (14, 8)), ("!selected", (14, 6))])
     # clam's default tab layout wraps the label in a "Notebook.focus"
     # element that draws a dashed focus rectangle -- app.py deliberately
     # shifts keyboard focus to the notebook itself on every tab switch (see

@@ -47,6 +47,7 @@ class ImageScrollPanel:
         self._img_id = None
         self._scale = 1.0
         self._settle_after_id = None
+        self._render_after_id = None  # throttles _render() during a live drag-resize
 
         # Set by the owner: callable(width_px, height_px) invoked once resizing
         # has settled, so content can be re-rendered natively at that size
@@ -58,6 +59,19 @@ class ImageScrollPanel:
         self.canvas.bind("<Button-4>", lambda e: self._scroll_by_screen(-50))
         self.canvas.bind("<Button-5>", lambda e: self._scroll_by_screen(50))
         self.canvas.bind("<Button-1>", self._on_click)
+
+    def current_width(self, default: int) -> int:
+        """Real on-screen canvas width if already known (>4px), else `default`.
+
+        Owners should pass this as `ref_width` for their very first render
+        instead of leaving it unset -- an unset ref_width falls back to a
+        guessed constant (e.g. mod_render.REF_WIDTH) that essentially never
+        matches the real canvas width, so that first image gets raster-
+        scaled in `_render()` and looks blurry until a real resize event
+        eventually triggers `on_settle` and corrects it.
+        """
+        w = self.canvas.winfo_width()
+        return w if w > 4 else default
 
     def set_image(self, img: Image.Image, hit_regions: list, keep_scroll: bool = False):
         """Replace the master content image and its clickable regions.
@@ -79,11 +93,27 @@ class ImageScrollPanel:
         self._render()
 
     def _on_configure(self, event):
-        self._render()
+        self._request_render()
         if self.on_settle:
             if self._settle_after_id:
                 self.canvas.after_cancel(self._settle_after_id)
             self._settle_after_id = self.canvas.after(self.SETTLE_DELAY_MS, self._fire_settle)
+
+    def _request_render(self):
+        """Coalesce bursts of rapid events (a live drag-resize, or dragging
+        the scrollbar thumb) into at most one real `_render()` per ~16ms
+        (roughly 60fps) instead of one per raw event -- a drag can fire
+        far more often than the screen can actually repaint, and calling
+        the PIL crop+resize+PhotoImage pipeline on every single one of them
+        both janks the drag and can show torn/ghosted frames when a new
+        PhotoImage lands before Tk has finished painting the previous one.
+        """
+        if self._render_after_id is None:
+            self._render_after_id = self.canvas.after(16, self._do_throttled_render)
+
+    def _do_throttled_render(self):
+        self._render_after_id = None
+        self._render()
 
     def _fire_settle(self):
         self._settle_after_id = None
@@ -130,7 +160,7 @@ class ImageScrollPanel:
             step = viewport_h_ref * 0.9 if unit == "pages" else 40
             self.scroll_y += n * step
         self._clamp_scroll()
-        self._render()
+        self._request_render()
 
     def _update_scrollbar(self):
         viewport_h_ref = self._viewport_h_ref()

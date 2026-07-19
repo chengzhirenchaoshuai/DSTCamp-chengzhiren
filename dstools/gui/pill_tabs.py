@@ -42,8 +42,21 @@ class PillTabBar(tk.Frame):
         self._canvas = tk.Canvas(self, highlightthickness=0, bd=0, background=bg)
         self._canvas.pack(fill=tk.BOTH, expand=True)
         self._bg_photo = None
-        self._canvas.bind("<Configure>", lambda e: self._redraw())
+        self._redraw_after_id = None
+        self._canvas.bind("<Configure>", lambda e: self._request_redraw())
         self._canvas.bind("<Button-1>", self._on_click)
+
+    def _request_redraw(self):
+        # Coalesce the burst of <Configure> events a live window drag-resize
+        # fires (far more often than the screen can repaint) into at most
+        # one real redraw per ~16ms (roughly 60fps), instead of regenerating
+        # the gradient PhotoImage and every pill polygon on each one.
+        if self._redraw_after_id is None:
+            self._redraw_after_id = self._canvas.after(16, self._do_throttled_redraw)
+
+    def _do_throttled_redraw(self):
+        self._redraw_after_id = None
+        self._redraw()
 
     def set_selected(self, key):
         if key == self._selected:

@@ -34,7 +34,21 @@ class CardFrame(tk.Frame):
         self.body.place(x=padding, y=padding, relwidth=1, relheight=1,
                          width=-2 * padding, height=-2 * padding)
 
-        self._canvas.bind("<Configure>", lambda e: self._redraw())
+        self._redraw_after_id = None
+        self._canvas.bind("<Configure>", lambda e: self._request_redraw())
+
+    def _request_redraw(self):
+        # Same throttling as PillTabBar/ImageScrollPanel -- a live window
+        # drag-resize fires far more <Configure> events than the screen can
+        # actually repaint, and redrawing the shadow+card polygons on every
+        # single one of them (times 4, one per stacked tab card) is a real
+        # contributor to resize jank.
+        if self._redraw_after_id is None:
+            self._redraw_after_id = self._canvas.after(16, self._do_throttled_redraw)
+
+    def _do_throttled_redraw(self):
+        self._redraw_after_id = None
+        self._redraw()
 
     def _redraw(self):
         c = self._canvas

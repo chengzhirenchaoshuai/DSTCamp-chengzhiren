@@ -141,6 +141,13 @@ class DSToolsApp:
         self._current_cluster: Cluster | None = None
         self._current_shard: Shard | None = None
 
+        # Must happen before tk.Tk() is created -- otherwise Windows treats
+        # the process as DPI-unaware and bitmap-stretches the whole window
+        # to the display's scale factor, which looks blurry everywhere
+        # (not just PIL-rendered panels).
+        from dstools.gui.win_aspect_lock import set_process_dpi_aware
+        set_process_dpi_aware()
+
         self.root = tk.Tk()
         self.root.title(t("app.title"))
         self.root.geometry("1100x710")
@@ -889,7 +896,9 @@ class ModManagerTab:
         return rows
 
     def _render_list(self, ref_width=None):
-        from dstools.gui.mod_render import render_mod_list
+        from dstools.gui.mod_render import REF_WIDTH, render_mod_list
+        if ref_width is None:
+            ref_width = self.list_panel.current_width(REF_WIDTH)
         if getattr(self, "_loading", False):
             msg = t("mod.loading_full") if getattr(self, "_loading_full", False) else t("mod.loading")
             self._render_placeholder(msg, ref_width)
@@ -907,7 +916,7 @@ class ModManagerTab:
         from PIL import Image as _Image, ImageDraw as _ImageDraw
         from dstools.gui.fonts import get_font
         from dstools.gui.mod_render import REF_WIDTH
-        w = ref_width or REF_WIDTH
+        w = ref_width or self.list_panel.current_width(REF_WIDTH)
         img = _Image.new("RGB", (w, 60), theme.CARD_BG)
         if text:
             draw = _ImageDraw.Draw(img)
@@ -1644,9 +1653,11 @@ class WorldSettingsTab:
     def _render_rules(self, ref_width=None):
         """(Re)render the rules panel image, preserving scroll position."""
         from dstools.core.world_categories import CATEGORY_COLORS
-        from dstools.gui.world_render import render_world_panel
+        from dstools.gui.world_render import REF_WIDTH, render_world_panel
         if not self._rules_cats:
             return
+        if ref_width is None:
+            ref_width = self._rules_panel.current_width(REF_WIDTH)
         loc = getattr(self._wl_preset, 'location', 'forest') or 'forest'
         img, hits = render_world_panel(self._rules_cats, self._rules_by_cat, CATEGORY_COLORS,
                                        editable=True, on_click=self._on_rule_click,
@@ -1657,9 +1668,11 @@ class WorldSettingsTab:
     def _render_gen(self, ref_width=None):
         """(Re)render the read-only generation panel image."""
         from dstools.core.world_categories import CATEGORY_COLORS
-        from dstools.gui.world_render import render_world_panel
+        from dstools.gui.world_render import REF_WIDTH, render_world_panel
         if not self._gen_cats:
             return
+        if ref_width is None:
+            ref_width = self._gen_panel.current_width(REF_WIDTH)
         loc = getattr(self._wl_preset, 'location', 'forest') or 'forest'
         img, hits = render_world_panel(self._gen_cats, self._gen_by_cat, CATEGORY_COLORS,
                                        editable=False, ref_width=ref_width, location=loc)

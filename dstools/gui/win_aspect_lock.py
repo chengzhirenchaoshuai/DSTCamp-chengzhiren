@@ -57,6 +57,29 @@ if IS_WINDOWS:
     user32.GetAncestor.restype = wintypes.HWND
 
 
+def set_process_dpi_aware() -> bool:
+    """Mark this process Per-Monitor-DPI-aware before any window is created.
+
+    Without this, Windows treats the process as DPI-unaware and silently
+    bitmap-stretches the whole window to match the display's scale factor
+    (e.g. 125%/150% on most laptops today) -- every widget looks slightly
+    blurry, not just PIL-rendered panels, because it's the OS compositing
+    a scaled bitmap of the real (lower-res) window rather than Tk drawing
+    at the display's native resolution. Must be called before `tk.Tk()`.
+    """
+    if not IS_WINDOWS:
+        return False
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        return True
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+            return True
+        except Exception:
+            return False
+
+
 class AspectLock:
     """Locks a Tk Toplevel's aspect ratio using a native WM_SIZING hook.
 
