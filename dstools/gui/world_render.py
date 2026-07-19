@@ -206,8 +206,23 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     # almost the entire column width. content_margin (both sides) leaves
     # the same kind of clearance between the first/last column and the
     # category frame's own outer edge.
-    col_area_x0 = pad_x + content_margin
-    col_w = (rw - 2 * pad_x - 2 * content_margin - (cols - 1) * COL_GUTTER) / cols
+    #
+    # block_pad_h/v: padding between an item's own icon/content and its own
+    # background block (hoisted here, was previously computed fresh inside
+    # the per-item loop -- needed at this scope too now, see col_area_x0).
+    block_pad_v = 14 * s
+    block_pad_h = 16 * s
+    # The right edge naturally ends up ~content_margin away from the
+    # category frame already (the *nominal* column edge -- see block_x2's
+    # max() below -- sits further out than what content actually needs, so
+    # that's where the block's right edge lands). The left edge has no such
+    # slack: the icon sits flush at the column's nominal left edge with
+    # nothing but block_pad_h between it and the frame, so its gap was only
+    # content_margin - block_pad_h (much tighter than the right's). Adding
+    # block_pad_h into col_area_x0 here pushes the whole column area right
+    # by exactly that amount, making the two gaps match.
+    col_area_x0 = pad_x + content_margin + block_pad_h
+    col_w = (rw - 2 * pad_x - 2 * content_margin - block_pad_h - (cols - 1) * COL_GUTTER) / cols
 
     name_font = get_font(round(18 * s))
     val_font = get_font(round(18 * s))
@@ -286,13 +301,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             # is one) rather than a fixed column-relative margin -- a fixed
             # margin clipped the right arrow's own edge for narrower
             # columns. Drawn first so everything else sits on top of it.
-            # Padding around the icon (top/left) was previously halved
-            # (block_pad_h/2, block_pad_v as-is) which left the icon almost
-            # flush against the block's top-left corner -- barely any
-            # margin there even though the right side (value/arrows) had
-            # comfortable clearance. Full pad on all sides now.
-            block_pad_v = 14 * s
-            block_pad_h = 16 * s
+            # (block_pad_v/h computed once above, alongside col_area_x0.)
             # col_w already has COL_GUTTER's worth of space subtracted out
             # (see its computation above), so cx + col_w lands exactly at
             # the reserved gap before the next column -- the max() with
