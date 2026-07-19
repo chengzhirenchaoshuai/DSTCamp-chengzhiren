@@ -253,15 +253,20 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             # is one) rather than a fixed column-relative margin -- a fixed
             # margin clipped the right arrow's own edge for narrower
             # columns. Drawn first so everything else sits on top of it.
-            block_pad_v = 8 * s
-            block_pad_h = 8 * s
+            # Padding around the icon (top/left) was previously halved
+            # (block_pad_h/2, block_pad_v as-is) which left the icon almost
+            # flush against the block's top-left corner -- barely any
+            # margin there even though the right side (value/arrows) had
+            # comfortable clearance. Full pad on all sides now.
+            block_pad_v = 14 * s
+            block_pad_h = 16 * s
             # col_w already has COL_GUTTER's worth of space subtracted out
             # (see its computation above), so cx + col_w lands exactly at
             # the reserved gap before the next column -- the max() with
             # right_extent is just a safety net in case a future font/label
             # tweak ever pushes the cycle-button past that.
             right_extent = (bx2 + arrow_h / 2) if bx2 is not None else (val_x + VALUE_HALF_W)
-            block_x1 = cx - block_pad_h / 2
+            block_x1 = max(0, cx - block_pad_h)
             block_y1 = cy - block_pad_v
             block_x2 = max(cx + col_w, right_extent + block_pad_h)
             block_y2 = cy + icon_size + block_pad_v

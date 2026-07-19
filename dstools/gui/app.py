@@ -1085,7 +1085,11 @@ class ModConfigDialog:
         # cost of no longer being OS-grouped with the main window, which
         # _guard_main_window() below compensates for.
         win.resizable(True, True)
-        DIALOG_W, DIALOG_H = 820, 680
+        # Widened (was 820) to fit NAME_W_PX below without squeezing the
+        # combobox -- long option names (e.g. a mod's own English/Chinese
+        # combined title) were getting truncated to "..." and only readable
+        # via hover tooltip otherwise.
+        DIALOG_W, DIALOG_H = 980, 680
         win.minsize(DIALOG_W, DIALOG_H)
 
         # Button bar is packed to the bottom FIRST so it always reserves
@@ -1167,8 +1171,8 @@ class ModConfigDialog:
         # uniform grid). Hover text that no longer fits inline moves into
         # a Tooltip popup instead, so it doesn't affect row height at all.
         from dstools.gui.tooltip import Tooltip
-        NAME_W_PX = 360
-        HEADER_W_PX = 760
+        NAME_W_PX = 520
+        HEADER_W_PX = 900
         COMBO_CHARS = 26
         name_font = tkfont.Font(font=("", 12, "bold"))
         hdr_font = tkfont.Font(font=("", 15, "bold"))
@@ -1887,10 +1891,17 @@ class ClusterConfigTab:
             # the last config row instead of being pinned to the bottom of
             # the whole tab with a big gap for any content shorter than the
             # tab's available height.
-            page = ttk.Frame(self._cc_notebook)
+            # page/footer are plain tk.Frame with an explicit CARD_BG
+            # (white) background rather than the ttk.Frame default
+            # (BG_SOFT, pale green) -- scroll_area/canvas/frame below stay
+            # the default green, so the green is visually scoped to just
+            # the actual config rows, ending right above the save button
+            # instead of the whole tab page (footer included) reading as
+            # one undifferentiated green block.
+            page = tk.Frame(self._cc_notebook, background=theme.CARD_BG)
             scroll_area = ttk.Frame(page)
             scroll_area.pack(side=tk.TOP, fill=tk.X)
-            footer = ttk.Frame(page)
+            footer = tk.Frame(page, background=theme.CARD_BG)
             footer.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
             save_cmd = self._save_cluster_ini if tab_key == "Cluster" else self._save_shard_ini
             save_btn = ttk.Button(footer, text=t("cluster.save_btn"), command=save_cmd)
