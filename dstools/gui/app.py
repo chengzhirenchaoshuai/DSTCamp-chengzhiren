@@ -1849,9 +1849,17 @@ class ClusterConfigTab:
             canvas = tk.Canvas(self._cc_notebook, highlightthickness=0)
             scrollbar = ttk.Scrollbar(self._cc_notebook, orient=tk.VERTICAL, command=canvas.yview)
             frame = ttk.Frame(canvas)
+            frame.grid_columnconfigure(0, weight=1)
+            frame.grid_columnconfigure(1, weight=1)
             canvas.configure(yscrollcommand=scrollbar.set)
-            canvas.create_window((0,0), window=frame, anchor=tk.NW)
+            win_id = canvas.create_window((0,0), window=frame, anchor=tk.NW)
             frame.bind("<Configure>", lambda e, c=canvas: c.configure(scrollregion=c.bbox("all")))
+            # Without this, the embedded frame (and everything gridded
+            # inside it, including the Entry/Combobox fields below) stays
+            # pinned at its own natural/requested width forever -- growing
+            # the window only grows the canvas's blank scrollable area to
+            # the right of the content, not the content itself.
+            canvas.bind("<Configure>", lambda e, c=canvas, wid=win_id: c.itemconfig(wid, width=e.width))
             self._cc_notebook.add(canvas, text=t(self._NOTEBOOK_TAB_KEYS[tab_key]))
             self._section_frames[tab_key] = frame
 
@@ -1949,7 +1957,7 @@ class ClusterConfigTab:
         text_widget = tk.Text(parent, width=38, height=self._WRAPPED_TEXT_LINES,
                               wrap=tk.WORD, font=self._ROW_VALUE_FONT)
         text_widget.insert("1.0", str(value) if value is not None else "")
-        text_widget.grid(row=row, column=1, sticky=tk.W, pady=3)
+        text_widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
         text_widget.bind("<Return>", lambda e: "break")
         Tooltip(text_widget, lambda tw=text_widget: tw.get("1.0", "end-1c"))
         return _TextVar(text_widget)
@@ -1958,6 +1966,12 @@ class ClusterConfigTab:
         from dstools.core.ini_field_info import get_enum_choices
         from dstools.gui.toggle_switch import ToggleSwitch
         from dstools.gui.tooltip import Tooltip
+        # The label column (0) stays its natural width; the field column
+        # (1) gets the weight so Entry/Combobox/Text actually grow to fill
+        # whatever extra width the window/card has, instead of staying at
+        # a fixed character width with a big blank strip of background to
+        # their right once the window's enlarged past its default size.
+        parent.grid_columnconfigure(1, weight=1)
         is_shard_section = section.startswith("SHARD_")
         ini_section = section[len("SHARD_"):] if is_shard_section else section
         info = get_field_info(ini_section, key, is_shard=is_shard_section)
@@ -2005,14 +2019,14 @@ class ClusterConfigTab:
             display_var.set(raw_to_display.get(value, str(value) if value is not None else ""))
             ttk.Combobox(parent, textvariable=display_var, state="readonly",
                         values=[disp for _, disp in enum_choices], width=35,
-                        font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=tk.W, pady=3)
+                        font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
             var = _EnumVar(display_var, display_to_raw)
         elif (ini_section, key) in self._WRAPPED_TEXT_FIELDS:
             var = self._make_wrapped_text_row(parent, row, value)
         else:
             var = tk.StringVar(value=str(value) if value is not None else "")
             ttk.Entry(parent, textvariable=var, width=38,
-                     font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=tk.W, pady=3)
+                     font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
         self._entries[(section, key)] = (var, readonly)
         return var
 
@@ -2033,8 +2047,16 @@ class ClusterConfigTab:
         # 明显比"GAMEPLAY+NETWORK"(11项) 对 "MISC+SHARD"(6项) 更均衡，
         # 这样最长的那一列才是决定整体高度的瓶颈，两列都能矮一些。
         outer = self._section_frames["Cluster"]
-        left_frame = ttk.Frame(outer); left_frame.grid(row=0, column=0, sticky=(tk.N, tk.W), padx=(0,28))
-        right_frame = ttk.Frame(outer); right_frame.grid(row=0, column=1, sticky=(tk.N, tk.W))
+        # weight=1 on both columns + sticky including E lets left_frame/
+        # right_frame actually claim any extra width the window/card grows
+        # by, instead of staying pinned at their natural size with a big
+        # blank strip of background showing to the right (see _make_row's
+        # own columnconfigure(1) for the same fix one level down, on the
+        # label/field split within each column).
+        outer.grid_columnconfigure(0, weight=1)
+        outer.grid_columnconfigure(1, weight=1)
+        left_frame = ttk.Frame(outer); left_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0,28))
+        right_frame = ttk.Frame(outer); right_frame.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E))
 
         def _fill_column(col_frame, sections):
             row = 0

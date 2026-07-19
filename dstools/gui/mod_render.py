@@ -8,10 +8,33 @@ drawn once as pixels, with clickable rectangles returned alongside for
 ImageScrollPanel to hit-test.
 """
 
+from pathlib import Path
+
 from PIL import Image, ImageDraw
 
 from dstools.gui import theme
 from dstools.gui.fonts import get_font
+
+# Real in-game default mod-icon background (images/ui.tex's "portrait_bg.tex"
+# -- confirmed against the actual game script, scripts/widgets/modstab.lua:
+# `self.detailimage:SetTexture("images/ui.xml", "portrait_bg.tex")` is
+# exactly what the game itself falls back to when a mod has no modicon.tex),
+# extracted via ktech. Used instead of a plain flat placeholder rectangle
+# for mods with no icon.
+_DEFAULT_ICON_PATH = Path(__file__).parent.parent.parent / "icons" / "ui" / "mod_icon_default.png"
+_default_icon_cache: dict[int, Image.Image] = {}
+
+
+def _get_default_icon(size: int) -> Image.Image | None:
+    if size in _default_icon_cache:
+        return _default_icon_cache[size]
+    if not _DEFAULT_ICON_PATH.exists():
+        return None
+    img = Image.open(_DEFAULT_ICON_PATH).convert("RGBA")
+    if img.size != (size, size):
+        img = img.resize((size, size), Image.LANCZOS)
+    _default_icon_cache[size] = img
+    return img
 
 BASE_REF_WIDTH = 1300
 REF_WIDTH = BASE_REF_WIDTH
@@ -106,8 +129,12 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
             thumb = icon.resize((icon_size, icon_size), Image.LANCZOS)
             img.paste(thumb, (int(x), int(icon_y)), thumb)
         else:
-            draw.rectangle([x, icon_y, x + icon_size, icon_y + icon_size],
-                           fill=_ICON_PLACEHOLDER_BG, outline=_ICON_PLACEHOLDER_BORDER)
+            default_icon = _get_default_icon(round(icon_size))
+            if default_icon:
+                img.paste(default_icon, (int(x), int(icon_y)), default_icon)
+            else:
+                draw.rectangle([x, icon_y, x + icon_size, icon_y + icon_size],
+                               fill=_ICON_PLACEHOLDER_BG, outline=_ICON_PLACEHOLDER_BORDER)
         x += icon_size + 14 * s
 
         # ── Column 5 (reserved from the right first, so column 2's
