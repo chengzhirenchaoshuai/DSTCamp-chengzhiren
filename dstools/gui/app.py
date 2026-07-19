@@ -2,7 +2,7 @@
 
 import re, sys, threading, tkinter as tk
 from pathlib import Path
-from tkinter import font as tkfont, messagebox, simpledialog, ttk
+from tkinter import font as tkfont, simpledialog, ttk
 from typing import Any
 
 from PIL import Image
@@ -26,7 +26,7 @@ from dstools.core.modinfo_reader import (
 from dstools.core.save_reader import get_save_summary, list_save_sessions, read_session_metadata
 from dstools.core.token_manager import is_valid_token, mask_token, read_token, write_token
 from dstools.core.world_reader import parse_leveldata, save_leveldata
-from dstools.gui import theme
+from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.card_frame import CardFrame
 from dstools.gui.pill_tabs import PillTabBar
 from dstools.gui.theme import ERROR, HEADING, LOCAL_BG, LOCAL_COLOR, SERVER_BG, SERVER_COLOR, TEXT_MUTED
@@ -585,7 +585,7 @@ class SaveBrowserTab:
         try:
             os.startfile(str(path))
         except Exception as e:
-            messagebox.showerror(t("env.open_location"), str(e))
+            dlg.show_error(self.app.root, t("env.open_location"), str(e))
 
 
 # ── Mod Manager Tab ────────────────────────────────────────────────────
@@ -959,22 +959,22 @@ class ModManagerTab:
     def _save_mods(self, silent=False):
         c = self.app._current_cluster; s = self.app._current_shard
         if not c or not s or not s.mod_overrides_path:
-            if not silent: messagebox.showwarning(t("mod.save_btn"), t("dlg.no_overrides"))
+            if not silent: dlg.show_warning(self.app.root, t("mod.save_btn"), t("dlg.no_overrides"))
             return
         overrides = load_mod_overrides(s.mod_overrides_path)
         self._write_mod_states(overrides)
         save_mod_overrides(overrides)
         if not silent:
-            messagebox.showinfo(t("dlg.save_ok"), t("dlg.saved_mods", count=len(overrides.mods), shard=s.name))
+            dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.saved_mods", count=len(overrides.mods), shard=s.name))
             # DST 默认要求各分片的 mod 状态一致，单个分片单独修改会导致
             # 主从不同步等问题，因此保存后主动询问是否同步到其他分片。
             other_shards = [sh for sh in c.shards if sh.name != s.name and sh.mod_overrides_path]
-            if other_shards and messagebox.askyesno(t("mod.save_btn"), t("dlg.sync_all_shards_confirm")):
+            if other_shards and dlg.ask_yes_no(self.app.root, t("mod.save_btn"), t("dlg.sync_all_shards_confirm")):
                 cnt = 0
                 for sh in other_shards:
                     dst = load_mod_overrides(sh.mod_overrides_path)
                     sync_mods(overrides, dst); save_mod_overrides(dst); cnt += 1
-                messagebox.showinfo(t("mod.apply_all"), t("dlg.apply_done", count=cnt))
+                dlg.show_info(self.app.root, t("mod.apply_all"), t("dlg.apply_done", count=cnt))
             self._refresh_mods()
 
     def _write_mod_states(self, overrides):
@@ -1017,7 +1017,7 @@ class ModManagerTab:
     def _apply_all_shards(self):
         c = self.app._current_cluster; src = self.app._current_shard
         if not c or not src or not src.mod_overrides_path: return
-        if not messagebox.askyesno(t("mod.apply_all"), t("dlg.apply_all_confirm", name=c.name)): return
+        if not dlg.ask_yes_no(self.app.root, t("mod.apply_all"), t("dlg.apply_all_confirm", name=c.name)): return
         overrides = load_mod_overrides(src.mod_overrides_path)
         self._write_mod_states(overrides)
         save_mod_overrides(overrides)
@@ -1027,7 +1027,7 @@ class ModManagerTab:
             if s.name == src.name or not s.mod_overrides_path: continue
             dst = load_mod_overrides(s.mod_overrides_path)
             sync_mods(src_overrides, dst); save_mod_overrides(dst); cnt += 1
-        messagebox.showinfo(t("mod.apply_all"), t("dlg.apply_done", count=cnt))
+        dlg.show_info(self.app.root, t("mod.apply_all"), t("dlg.apply_done", count=cnt))
         self._refresh_mods()
 
     def refresh_language(self):
@@ -1713,11 +1713,11 @@ class WorldSettingsTab:
 
     def _save_rules(self):
         if not self._wl_preset or not self._wl_path:
-            messagebox.showinfo(t("world.save_rules"), t("world.no_preset")); return
-        if not messagebox.askyesno(t("world.save_rules"), t("dlg.confirm_save_msg", name=self.app._current_shard.name)): return
+            dlg.show_info(self.app.root, t("world.save_rules"), t("world.no_preset")); return
+        if not dlg.ask_yes_no(self.app.root, t("world.save_rules"), t("dlg.confirm_save_msg", name=self.app._current_shard.name)): return
         save_leveldata(self._wl_preset, self._wl_path)
         self._dirty = False; self._wl_bs.configure(state=tk.DISABLED)
-        messagebox.showinfo(t("dlg.save_ok"), t("world.saved"))
+        dlg.show_info(self.app.root, t("dlg.save_ok"), t("world.saved"))
 
     def refresh_language(self):
         self._wl_lbl.configure(text=t("selector.archive")); self._wl_lbl2.configure(text=t("world.shard"))
@@ -2199,7 +2199,7 @@ class ClusterConfigTab:
     def _copy_token(self):
         if self._token_raw:
             self.frame.clipboard_clear(); self.frame.clipboard_append(self._token_raw)
-            messagebox.showinfo("", t("token.copied"))
+            dlg.show_info(self.app.root, "", t("token.copied"))
 
     def _change_token(self):
         c = self._get_cluster()
@@ -2226,7 +2226,7 @@ class ClusterConfigTab:
             if not readonly and section in ("GAMEPLAY","NETWORK","MISC","SHARD"):
                 set_cluster_option(config, section, key, var.get())
         save_cluster_config(config, c.path)
-        messagebox.showinfo(t("dlg.save_ok"), t("dlg.config_saved", name=c.name))
+        dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=c.name))
         self._load_config()
 
     def _save_shard_ini(self):
@@ -2243,7 +2243,7 @@ class ClusterConfigTab:
             if section.startswith("SHARD_") and not readonly:
                 set_shard_option(shard_config, section.replace("SHARD_",""), key, var.get())
         save_shard_config(shard_config, target.path)
-        messagebox.showinfo(t("dlg.save_ok"), t("dlg.config_saved", name=f"{c.name}/{target.name}"))
+        dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=f"{c.name}/{target.name}"))
         self._load_config()
 
     def refresh_language(self):
