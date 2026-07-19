@@ -254,6 +254,17 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             else:
                 bx1 = bx2 = None
                 text_x_end = val_x - VALUE_HALF_W - 10 * s
+                # Read-only values draw left-aligned from val_x (anchor=
+                # "lm") rather than centered like the editable rows, so an
+                # unusually long/unmapped raw value (get_value_label falls
+                # back to str(raw_value) for anything not in its table)
+                # could otherwise run past the column -- and therefore past
+                # both this item's own background block and the category's
+                # outer frame. Truncate to what actually fits, same pattern
+                # already used for the name label below.
+                max_val_w = max(10, (cx + col_w) - val_x - 8 * s)
+                while vlbl and draw.textlength(vlbl, font=val_font) > max_val_w:
+                    vlbl = vlbl[:-1]
 
             # Light-green rounded card behind each setting item, inset from
             # the column bounds and from the row above/below (ROW_GAP was
@@ -274,7 +285,16 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             # the reserved gap before the next column -- the max() with
             # right_extent is just a safety net in case a future font/label
             # tweak ever pushes the cycle-button past that.
-            right_extent = (bx2 + arrow_h / 2) if bx2 is not None else (val_x + VALUE_HALF_W)
+            if bx2 is not None:
+                right_extent = bx2 + arrow_h / 2
+            else:
+                # Read-only rows draw their value left-aligned starting at
+                # val_x (anchor="lm", unlike the editable rows' centered
+                # anchor="mm"), so it can run well past val_x+VALUE_HALF_W
+                # for a longer label -- measure the actual text instead of
+                # assuming it fits the same fixed half-width slot, or long
+                # values stick out past the block (and category frame).
+                right_extent = max(val_x + VALUE_HALF_W, val_x + draw.textlength(vlbl, font=val_font))
             block_x1 = max(0, cx - block_pad_h)
             block_y1 = cy - block_pad_v
             block_x2 = max(cx + col_w, right_extent + block_pad_h)
