@@ -63,9 +63,15 @@ ROW_GAP = 44
 # practice never won against the cycle-button's own width requirement, so
 # columns visually touched; now actually subtracted out of col_w itself).
 COL_GUTTER = 32
-CAT_HEADER_H = 38
+CAT_HEADER_H = 46  # was 38 -- title text was reading small/cramped
 CAT_GAP_BEFORE = 8
 CAT_GAP_AFTER = 10
+# Extra clearance between the header bar and the first item row, on top of
+# CAT_HEADER_H itself -- items' own background blocks extend upward past
+# their row's nominal top (see block_pad_v in the per-item loop) to give
+# each item breathing room, and without this gap that reach was enough to
+# overlap the category header right above it and visually clip its text.
+CAT_HEADER_ITEM_GAP = 20
 
 # Fixed at 3 to match the in-game "Customize World" screen's own layout.
 COLS = 3
@@ -192,7 +198,8 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
 
     name_font = get_font(round(18 * s))
     val_font = get_font(round(18 * s))
-    hdr_font = get_font(round(19 * s))
+    hdr_font = get_font(round(22 * s))
+    cat_header_item_gap = CAT_HEADER_ITEM_GAP * s
 
     # First pass: compute total height
     total_h = pad_x
@@ -200,7 +207,8 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     for cat_key, _ in visible_cats:
         items = grouped[cat_key]
         rows = (len(items) + cols - 1) // cols
-        total_h += cat_gap_before + cat_header_h + rows * row_h + cat_gap_after
+        total_h += (cat_gap_before + cat_header_h + cat_header_item_gap
+                    + rows * row_h + cat_gap_after)
     total_h = max(total_h, 40 * s)
 
     img = Image.new("RGB", (rw, int(total_h)), theme.CARD_BG)
@@ -213,11 +221,12 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
         color = cat_colors.get(cat_key, theme.TEXT_MUTED)
 
         y += cat_gap_before
+        cat_box_top = y
         draw.rectangle([pad_x, y, rw - pad_x, y + cat_header_h],
                        fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
         draw.text((pad_x + 10 * s, y + cat_header_h / 2), f"{cat_name} ({len(items)})",
                   font=hdr_font, fill=color, anchor="lm")
-        y += cat_header_h
+        y += cat_header_h + cat_header_item_gap
 
         for idx, ov in enumerate(items):
             col = idx % cols
@@ -314,7 +323,15 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             else:
                 draw.text((val_x, icon_cy), vlbl, font=val_font, fill=vcolor, anchor="lm")
 
-        y += row_h + cat_gap_after
+        y += row_h
+        # Outline-only frame wrapping the header + all of this category's
+        # item rows into one visually grouped section (the "层次感" ask --
+        # a plain flat header bar with no boundary below it read as
+        # disconnected from its own rows). Drawn last / outline-only so it
+        # never covers the header fill or any item's own background block.
+        draw.rounded_rectangle([pad_x, cat_box_top, rw - pad_x, y],
+                               radius=10 * s, outline=color, width=2)
+        y += cat_gap_after
 
     return img, hit_regions
 
