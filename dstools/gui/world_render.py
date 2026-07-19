@@ -12,6 +12,8 @@ re-renders at the real on-screen width once a resize settles, so text and
 icons are drawn natively at that size instead of being raster-upscaled.
 """
 
+from pathlib import Path
+
 from PIL import Image, ImageDraw
 
 from dstools.core.world_icons import get_pil_icon
@@ -20,14 +22,44 @@ from dstools.gui import theme
 from dstools.gui.fonts import get_font
 
 BASE_REF_WIDTH = 1300
+
+# Real in-game cycle-arrow chevrons (arrow2_left/right + their _over/_down
+# hover/press states), extracted from the shipped images/ui.tex atlas via
+# ktech -- swapped in for the old plain PIL-drawn filled-triangle buttons,
+# which were tiny (7px) and had no game-matching shape/shading.
+_ARROW_DIR = Path(__file__).parent.parent.parent / "icons" / "ui"
+_arrow_cache: dict[tuple[str, int], Image.Image] = {}
+
+
+def _get_arrow(name: str, height: int) -> Image.Image | None:
+    """Cached, aspect-ratio-preserving load of an icons/ui/{name}.png arrow,
+    scaled so its height matches `height` (source images aren't perfectly
+    square after trimming each atlas cell to its own opaque bounding box)."""
+    key = (name, height)
+    if key in _arrow_cache:
+        return _arrow_cache[key]
+    path = _ARROW_DIR / f"{name}.png"
+    if not path.exists():
+        return None
+    img = Image.open(path).convert("RGBA")
+    if img.height != height:
+        w = max(1, round(img.width * height / img.height))
+        img = img.resize((w, height), Image.LANCZOS)
+    _arrow_cache[key] = img
+    return img
+
+
 REF_WIDTH = BASE_REF_WIDTH  # default/initial width before the first real measurement
 
 PAD_X = 10
 ICON_SIZE = 110
 # Row spacing is a fixed pixel value (not scaled by width) so vertical
 # rhythm between icon rows stays constant regardless of how wide the
-# panel renders.
-ROW_GAP = 30
+# panel renders. Widened (was 30) to leave visible breathing room around
+# each item's new rounded background card instead of them nearly touching.
+ROW_GAP = 44
+# Horizontal gap between adjacent columns' background cards.
+COL_GUTTER = 14
 CAT_HEADER_H = 38
 CAT_GAP_BEFORE = 8
 CAT_GAP_AFTER = 10
@@ -115,8 +147,6 @@ _VALUE_COLORS = {
     "True": theme.PRIMARY, "False": theme.ERROR,
 }
 
-_FLASH_COLOR = "#ffca28"
-
 
 def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                         ref_width=None, flash=None, location="forest"):
@@ -187,6 +217,16 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             cy = y
             icon_cy = cy + icon_size / 2
 
+            # Light-green rounded card behind each setting item, inset from
+            # the column bounds and from the row above/below (ROW_GAP was
+            # widened specifically to leave room for this) -- drawn first so
+            # everything else sits on top of it.
+            block_pad_v = 6 * s
+            block_x1, block_y1 = cx + 3 * s, cy - block_pad_v
+            block_x2, block_y2 = cx + col_w - COL_GUTTER, cy + icon_size + block_pad_v
+            draw.rounded_rectangle([block_x1, block_y1, block_x2, block_y2],
+                                   radius=10 * s, fill=theme.BG_SOFT)
+
             icon = get_pil_icon(ov.key, icon_size, location)
             if icon:
                 img.paste(icon, (int(cx), int(cy)), icon)
@@ -194,7 +234,8 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             vlbl = get_value_label(ov.key, ov.value)
             vcolor = _VALUE_COLORS.get(ov.value, theme.TEXT)
             val_x = cx + col_w - 100 * s
-            btn_r = 7 * s
+            arrow_h = 26 * s  # cycle-button chevron height (was a 14px-tall drawn triangle)
+            arrow_pad = 14 * s  # breathing room around each arrow -- was a cramped 10px
             # Fixed half-width reserved for the value text (accommodates up
             # to ~4 Chinese characters). Buttons sit at a constant offset
             # from val_x regardless of the current label's length, so they
@@ -202,9 +243,9 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             VALUE_HALF_W = 48 * s
 
             if editable:
-                bx1 = val_x - VALUE_HALF_W - btn_r
-                bx2 = val_x + VALUE_HALF_W + btn_r
-                text_x_end = bx1 - 10 * s
+                bx1 = val_x - VALUE_HALF_W - arrow_pad - arrow_h / 2
+                bx2 = val_x + VALUE_HALF_W + arrow_pad + arrow_h / 2
+                text_x_end = bx1 - arrow_pad
             else:
                 text_x_end = val_x - VALUE_HALF_W - 10 * s
 
@@ -223,7 +264,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             if editable:
                 # Match the in-game cycle behavior: at either end of the
                 # value scale, only the other arrow is clickable -- the
-                # exhausted one is grayed out instead of wrapping around.
+                # exhausted one fades out instead of wrapping around.
                 value_set = get_value_set(ov.key)
                 try:
                     vidx = value_set.index(ov.value)
@@ -231,18 +272,16 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                 except ValueError:
                     at_min, at_max = False, False
 
-                _draw_button(draw, bx1, icon_cy, btn_r, "left",
-                            theme.CARD_BORDER if at_min else theme.TEXT_MUTED,
-                            pressed=(flash == (ov.key, -1)))
+                _draw_button(img, draw, bx1, icon_cy, arrow_h, "left",
+                            disabled=at_min, pressed=(flash == (ov.key, -1)))
                 if on_click and not at_min:
-                    hit_regions.append((bx1 - 10 * s, cy, bx1 + 10 * s, cy + icon_size,
+                    hit_regions.append((bx1 - arrow_h / 2, cy, bx1 + arrow_h / 2, cy + icon_size,
                                         _mk_cb(on_click, ov.key, -1)))
                 draw.text((val_x, icon_cy), vlbl, font=val_font, fill=vcolor, anchor="mm")
-                _draw_button(draw, bx2, icon_cy, btn_r, "right",
-                            theme.CARD_BORDER if at_max else theme.TEXT_MUTED,
-                            pressed=(flash == (ov.key, 1)))
+                _draw_button(img, draw, bx2, icon_cy, arrow_h, "right",
+                            disabled=at_max, pressed=(flash == (ov.key, 1)))
                 if on_click and not at_max:
-                    hit_regions.append((bx2 - 10 * s, cy, bx2 + 10 * s, cy + icon_size,
+                    hit_regions.append((bx2 - arrow_h / 2, cy, bx2 + arrow_h / 2, cy + icon_size,
                                         _mk_cb(on_click, ov.key, 1)))
             else:
                 draw.text((val_x, icon_cy), vlbl, font=val_font, fill=vcolor, anchor="lm")
@@ -256,13 +295,27 @@ def _mk_cb(on_click, key, delta):
     return lambda: on_click(key, delta)
 
 
-def _draw_button(draw, cx, cy, size, direction, color, pressed=False):
-    if pressed:
-        r = size * 2.1
-        draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=_FLASH_COLOR)
-        size = size * 1.25
-        color = "#5d4037"
-    _draw_triangle(draw, cx, cy, size, direction, color)
+def _draw_button(img, draw, cx, cy, height, direction, disabled=False, pressed=False):
+    """Paste the real in-game chevron (icons/ui/arrow_{direction}[_down].png)
+    centered at (cx, cy). Falls back to a small drawn triangle if the PNG
+    asset is missing for some reason (e.g. stripped from a packaged build)."""
+    name = f"arrow_{direction}" + ("_down" if pressed else "")
+    icon = _get_arrow(name, max(1, round(height)))
+    if icon is None:
+        _draw_triangle(draw, cx, cy, height / 2, direction,
+                       theme.CARD_BORDER if disabled else theme.TEXT_MUTED)
+        return
+    if disabled:
+        # Fade toward invisible rather than swap to a different texture --
+        # the real disabled-state atlas cell for this button is blank (the
+        # game just hides the arrow entirely at either end of the scale),
+        # but keeping a faint arrow visible here still shows the user where
+        # they'd click once the value moves off the boundary.
+        icon = icon.copy()
+        r, g, b, a = icon.split()
+        icon.putalpha(a.point(lambda v: int(v * 0.32)))
+    x, y = round(cx - icon.width / 2), round(cy - icon.height / 2)
+    img.paste(icon, (x, y), icon)
 
 
 def _draw_triangle(draw, cx, cy, size, direction, color):
