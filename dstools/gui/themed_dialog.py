@@ -1,11 +1,12 @@
 """Themed replacements for tkinter.messagebox's showinfo/showwarning/
 showerror/askyesno -- the stock messagebox is native OS chrome (a plain
-Windows dialog box) that doesn't pick up any of the app's mint-green/
-rounded-card styling no matter what ttk.Style says, since it isn't a Tk
-widget at all. These use the same CardFrame rounded-card look as the rest
-of the app instead.
+Windows dialog box) that doesn't pick up any of the app's mint-green
+styling no matter what ttk.Style says, since it isn't a Tk widget at all.
+These draw a bordered mint-green card instead (see _show()'s docstring for
+why it isn't the same rounded CardFrame used elsewhere in the app).
 """
 
+import sys
 import tkinter as tk
 from tkinter import ttk
 
@@ -18,6 +19,27 @@ _ICONS = {
     "error": ("✕", theme.ERROR),        # ✕
     "question": ("？", theme.PRIMARY),   # ？
 }
+
+if sys.platform == "win32":
+    import winsound
+    # Same icon<->sound mapping Windows' own MessageBox() uses, so swapping
+    # the native messagebox for this custom one doesn't silently drop the
+    # audible cue some users rely on.
+    _BEEPS = {
+        "info": winsound.MB_ICONASTERISK,
+        "warning": winsound.MB_ICONEXCLAMATION,
+        "error": winsound.MB_ICONHAND,
+        "question": winsound.MB_ICONQUESTION,
+    }
+
+    def _play_beep(kind):
+        try:
+            winsound.MessageBeep(_BEEPS.get(kind, winsound.MB_OK))
+        except Exception:
+            pass
+else:
+    def _play_beep(kind):
+        pass
 
 
 def _show(parent, title, message, kind, buttons):
@@ -79,6 +101,7 @@ def _show(parent, title, message, kind, buttons):
     y = py + max(0, (ph - h) // 3)
     win.geometry(f"{w}x{h}+{x}+{y}")
     win.deiconify()
+    _play_beep(kind)
     if default_btn is not None:
         default_btn.focus_set()
     win.grab_set()

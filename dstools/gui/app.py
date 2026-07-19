@@ -1119,7 +1119,34 @@ class ModConfigDialog:
 
         canvas = tk.Canvas(win, highlightthickness=0)
         self.canvas = canvas
-        vbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
+        # `command=canvas.yview` directly would call Tk's native scroll on
+        # every single scrollbar-drag event -- fine for the pure-canvas-
+        # image panels (world/mod list), but this canvas embeds a real ttk
+        # widget per option row (name label + combobox + tooltip binding),
+        # sometimes 100+ of them for a mod with a big config screen. Each
+        # native widget has to be individually repositioned/repainted on
+        # every scroll step, and a fast scrollbar drag fires far more of
+        # those than Tk/the window compositor can keep up with, which is
+        # what shows up as torn/ghosted text -- a plain mouse-wheel scroll
+        # moves in fewer, larger, slower steps and doesn't hit this.
+        # Coalescing drag events the same way image_scroll.py throttles its
+        # PIL re-renders (>=1 real yview per ~16ms instead of one per raw
+        # event) gives the compositor time to actually finish each frame.
+        self._cfg_scroll_after_id = None
+        self._cfg_scroll_pending = None
+
+        def _on_vbar(*args):
+            self._cfg_scroll_pending = args
+            if self._cfg_scroll_after_id is None:
+                self._cfg_scroll_after_id = canvas.after(16, _flush_vbar)
+
+        def _flush_vbar():
+            self._cfg_scroll_after_id = None
+            if self._cfg_scroll_pending is not None:
+                canvas.yview(*self._cfg_scroll_pending)
+                self._cfg_scroll_pending = None
+
+        vbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=_on_vbar)
         body = ttk.Frame(canvas)
         body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         # Deliberately NOT tracking the canvas's width to reflow this frame
@@ -1846,8 +1873,32 @@ class ClusterConfigTab:
         # built fresh inside _load_config() itself, as children of this
         # container, not tracked here.
         for tab_key in ("Cluster", "Shard Config"):
-            canvas = tk.Canvas(self._cc_notebook, highlightthickness=0)
-            scrollbar = ttk.Scrollbar(self._cc_notebook, orient=tk.VERTICAL, command=canvas.yview)
+            # A page wrapper holds the scrollable canvas *and* a footer row
+            # for the "保存" button below it, outside the scrolled area --
+            # previously the button was gridded as the last row inside the
+            # scrollable frame itself, so it both scrolled out of view with
+            # long content and sat inside the green card instead of hugging
+            # its bottom-right corner. The button lives here (created once)
+            # rather than inside _load_config()/_load_shard_config(), which
+            # tear down and rebuild everything in `frame` on every reload.
+            page = ttk.Frame(self._cc_notebook)
+            scroll_area = ttk.Frame(page)
+            scroll_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+            footer = ttk.Frame(page)
+            footer.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 0))
+            save_cmd = self._save_cluster_ini if tab_key == "Cluster" else self._save_shard_ini
+            save_btn = ttk.Button(footer, text=t("cluster.save_btn"), command=save_cmd)
+            save_btn.pack(side=tk.RIGHT)
+            self._section_save_btns[tab_key] = save_btn
+
+            canvas = tk.Canvas(scroll_area, highlightthickness=0)
+            # Not packed -- wasn't visible/packed before this button-footer
+            # refactor either (canvas alone was handed straight to
+            # notebook.add(), which auto-fills the tab; there was never a
+            # visible scrollbar or wheel binding here, the 2-column layout
+            # is just kept short enough in practice not to need one).
+            scrollbar = ttk.Scrollbar(scroll_area, orient=tk.VERTICAL, command=canvas.yview)
+            canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             frame = ttk.Frame(canvas)
             frame.grid_columnconfigure(0, weight=1)
             frame.grid_columnconfigure(1, weight=1)
@@ -1859,8 +1910,30 @@ class ClusterConfigTab:
             # pinned at its own natural/requested width forever -- growing
             # the window only grows the canvas's blank scrollable area to
             # the right of the content, not the content itself.
-            canvas.bind("<Configure>", lambda e, c=canvas, wid=win_id: c.itemconfig(wid, width=e.width))
-            self._cc_notebook.add(canvas, text=t(self._NOTEBOOK_TAB_KEYS[tab_key]))
+            #
+            # Debounced rather than applied on every raw event: setting the
+            # embedded window's width triggers a full grid relayout of
+            # every row in this tab (20-40+ Entry/Combobox/ToggleSwitch
+            # widgets), and doing that on every single WM_SIZE message
+            # during a live drag-resize is real, measurable jank -- ttk's
+            # own native geometry manager cost, not something a PIL-side
+            # throttle touches. Settling ~120ms after the last resize event
+            # (same idea as ImageScrollPanel's on_settle) means the fields
+            # still end up the right width shortly after you stop dragging,
+            # without paying that relayout cost on every intermediate frame.
+            resize_state = {"after_id": None}
+
+            def _settle_width(c=canvas, wid=win_id, state=resize_state):
+                state["after_id"] = None
+                c.itemconfig(wid, width=c.winfo_width())
+
+            def _on_canvas_configure(e, state=resize_state, settle=_settle_width):
+                if state["after_id"] is not None:
+                    e.widget.after_cancel(state["after_id"])
+                state["after_id"] = e.widget.after(120, settle)
+
+            canvas.bind("<Configure>", _on_canvas_configure)
+            self._cc_notebook.add(page, text=t(self._NOTEBOOK_TAB_KEYS[tab_key]))
             self._section_frames[tab_key] = frame
 
         # Admin, Blocklist (黑名单) & Token tabs -- Admin and Blocklist
@@ -2073,10 +2146,11 @@ class ClusterConfigTab:
         _fill_column(left_frame, [("GAMEPLAY",config.gameplay), ("SHARD",config.shard)])
         _fill_column(right_frame, [("NETWORK",config.network), ("MISC",config.misc)])
 
-        btn = ttk.Button(outer, text=t("cluster.save_btn"), command=self._save_cluster_ini)
-        btn.grid(row=1, column=0, columnspan=2, sticky=tk.E, padx=5, pady=(10,5))
-        btn.configure(state=tk.NORMAL if is_server else tk.DISABLED)
-        self._section_save_btns["Cluster"] = btn
+        # The button itself now lives in the tab's footer (created once,
+        # outside the green scrollable card -- see the _cc_notebook setup
+        # loop in __init__), so a reload here only needs to update whether
+        # it's clickable, not rebuild it.
+        self._section_save_btns["Cluster"].configure(state=tk.NORMAL if is_server else tk.DISABLED)
 
         # Shard config with a shard selector -- SERVER and LOCAL now share
         # the exact same UI (selector + _load_shard_config), the only
@@ -2101,10 +2175,7 @@ class ClusterConfigTab:
             self._shard_config_frame.grid(row=row, column=0, columnspan=2, sticky=tk.NSEW, padx=5)
             row += 1
             self._load_shard_config()
-        btn = ttk.Button(frame, text=t("cluster.save_btn"), command=self._save_shard_ini)
-        btn.grid(row=row, column=0, columnspan=2, sticky=tk.E, padx=5, pady=(10,5))
-        btn.configure(state=tk.NORMAL if is_server else tk.DISABLED)
-        self._section_save_btns["Shard Config"] = btn
+        self._section_save_btns["Shard Config"].configure(state=tk.NORMAL if is_server else tk.DISABLED)
 
         self._load_id_list_into(c, "adminlist_path", self._admin_listbox, self._admin_add_btn, self._admin_remove_btn)
         self._load_id_list_into(c, "blocklist_path", self._block_listbox, self._block_add_btn, self._block_remove_btn)

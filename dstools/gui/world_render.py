@@ -217,20 +217,6 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             cy = y
             icon_cy = cy + icon_size / 2
 
-            # Light-green rounded card behind each setting item, inset from
-            # the column bounds and from the row above/below (ROW_GAP was
-            # widened specifically to leave room for this) -- drawn first so
-            # everything else sits on top of it.
-            block_pad_v = 6 * s
-            block_x1, block_y1 = cx + 3 * s, cy - block_pad_v
-            block_x2, block_y2 = cx + col_w - COL_GUTTER, cy + icon_size + block_pad_v
-            draw.rounded_rectangle([block_x1, block_y1, block_x2, block_y2],
-                                   radius=10 * s, fill=theme.BG_SOFT)
-
-            icon = get_pil_icon(ov.key, icon_size, location)
-            if icon:
-                img.paste(icon, (int(cx), int(cy)), icon)
-
             vlbl = get_value_label(ov.key, ov.value)
             vcolor = _VALUE_COLORS.get(ov.value, theme.TEXT)
             val_x = cx + col_w - 100 * s
@@ -247,7 +233,29 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                 bx2 = val_x + VALUE_HALF_W + arrow_pad + arrow_h / 2
                 text_x_end = bx1 - arrow_pad
             else:
+                bx1 = bx2 = None
                 text_x_end = val_x - VALUE_HALF_W - 10 * s
+
+            # Light-green rounded card behind each setting item, inset from
+            # the column bounds and from the row above/below (ROW_GAP was
+            # widened specifically to leave room for this). Sized from the
+            # actual rightmost element (the right cycle-button, when there
+            # is one) rather than a fixed column-relative margin -- a fixed
+            # margin clipped the right arrow's own edge for narrower
+            # columns. Drawn first so everything else sits on top of it.
+            block_pad_v = 8 * s
+            block_pad_h = 8 * s
+            right_extent = (bx2 + arrow_h / 2) if bx2 is not None else (val_x + VALUE_HALF_W)
+            block_x1 = cx - block_pad_h / 2
+            block_y1 = cy - block_pad_v
+            block_x2 = max(cx + col_w - COL_GUTTER, right_extent + block_pad_h)
+            block_y2 = cy + icon_size + block_pad_v
+            draw.rounded_rectangle([block_x1, block_y1, block_x2, block_y2],
+                                   radius=10 * s, fill=theme.PRIMARY_LIGHT)
+
+            icon = get_pil_icon(ov.key, icon_size, location)
+            if icon:
+                img.paste(icon, (int(cx), int(cy)), icon)
 
             # Name label: centered in the slot between the icon and the value area
             text_x_start = cx + icon_size + 8 * s
