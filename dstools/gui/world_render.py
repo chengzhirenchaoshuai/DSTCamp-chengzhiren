@@ -387,7 +387,12 @@ def _draw_button(img, draw, cx, cy, height, direction, disabled=False, pressed=F
     centered at (cx, cy). Falls back to a small drawn triangle if the PNG
     asset is missing for some reason (e.g. stripped from a packaged build)."""
     name = f"arrow_{direction}" + ("_down" if pressed else "")
-    icon = _get_arrow(name, max(1, round(height)))
+    # Pressed state pops slightly bigger (still centered at cx, cy) on top
+    # of swapping to the game's own "_down" shading -- the shading swap
+    # alone reads as barely-there at a glance, a brief size bump on click
+    # is what actually makes it register as "something happened".
+    draw_height = height * 1.3 if pressed else height
+    icon = _get_arrow(name, max(1, round(draw_height)))
     if icon is None:
         _draw_triangle(draw, cx, cy, height / 2, direction,
                        theme.CARD_BORDER if disabled else theme.TEXT_MUTED)

@@ -1730,11 +1730,15 @@ class WorldSettingsTab:
         if not self._dirty:
             self._dirty = True; self._wl_bs.configure(state=tk.NORMAL)
         # Brief "pressed" highlight on the clicked button, like a game UI's
-        # click feedback -- rendered for one frame then cleared.
+        # click feedback -- rendered for one frame then cleared. Was 140ms,
+        # long enough for the code path to exist but too quick combined
+        # with the fairly subtle normal/pressed shading difference alone to
+        # actually register as "something happened" -- see world_render.py's
+        # _draw_button for the accompanying size-bump that now goes with it.
         self._flash_key = (key, delta)
         if self._flash_after_id:
             self.frame.after_cancel(self._flash_after_id)
-        self._flash_after_id = self.frame.after(140, self._clear_flash)
+        self._flash_after_id = self.frame.after(200, self._clear_flash)
         self._render_rules()
 
     def _clear_flash(self):
