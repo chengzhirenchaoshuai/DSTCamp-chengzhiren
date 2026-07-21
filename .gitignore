@@ -8,8 +8,9 @@ dist/
 *.egg-info/
 *.spec
 
-# Runtime mod-icon download cache (regenerated on demand, not source)
+# Runtime mod-icon / character-avatar caches (regenerated on demand, not source)
 icons/mod_cache/
+icons/character_cache/
 
 # Third-party ktools binaries (external toolkit, not project source)
 tools/ktools/
