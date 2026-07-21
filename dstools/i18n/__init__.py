@@ -60,7 +60,7 @@ def t(key: str, **kwargs) -> str:
 
     Usage:
         from dstools.i18n import t
-        print(t("app.title"))  # -> "DST 存档工具 - 饥荒联机版管理器"
+        print(t("app.title"))  # -> "DSTCamp · 本地服务器管理"
     """
     return _i18n.t(key, **kwargs)
 

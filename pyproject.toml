@@ -5,11 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dstools"
 version = "0.1.0"
-description = "Don't Starve Together save file reader and configuration editor"
+description = "DSTCamp - Don't Starve Together local server manager (saves, mods, world & server config)"
 requires-python = ">=3.10"
 dependencies = [
     "click>=8.0",
     "lupa>=2.0",
+    "Pillow>=10.0",
 ]
 license = {text = "MIT"}
 readme = "README.md"

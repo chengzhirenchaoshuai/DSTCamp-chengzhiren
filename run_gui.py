@@ -1,4 +1,4 @@
-"""DST Tools GUI Launcher — 双击运行以打开图形化工具.
+"""DSTCamp GUI Launcher — 双击运行以打开图形化工具.
 
 Usage:
     python run_gui.py              # 直接启动

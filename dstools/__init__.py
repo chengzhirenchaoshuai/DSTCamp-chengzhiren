@@ -1,3 +1,3 @@
-"""dstools - Don't Starve Together save file reader and mod manager."""
+"""dstools - DSTCamp, a Don't Starve Together local server manager."""
 
 __version__ = "0.1.0"

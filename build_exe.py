@@ -1,11 +1,11 @@
-"""Build standalone Windows EXE for DST Tools using PyInstaller.
+"""Build standalone Windows EXE for DSTCamp using PyInstaller.
 
 Usage:
     pip install pyinstaller    # First time only
     python build_exe.py        # Build the EXE
 
 Output:
-    dist/DSTools.exe           # Standalone executable (no Python required)
+    dist/DSTCamp.exe           # Standalone executable (no Python required)
 """
 
 import os
@@ -35,7 +35,7 @@ def build():
 
     args = [
         str(project_root / "run_gui.py"),      # Entry point
-        "--name=DSTools",                        # EXE filename
+        "--name=DSTCamp",                         # EXE filename
         "--onefile",                             # Single EXE file
         "--windowed",                            # No console window
         "--clean",                               # Clean cache
@@ -56,15 +56,15 @@ def build():
         "--hidden-import=lupa.lua51",
     ]
 
-    print("Building DSTools.exe...")
+    print("Building DSTCamp.exe...")
     print(f"  Entry: run_gui.py")
-    print(f"  Output: dist/DSTools.exe")
+    print(f"  Output: dist/DSTCamp.exe")
     print()
 
     PyInstaller.__main__.run(args)
 
     print()
-    print("Build complete! Find the EXE at: dist/DSTools.exe")
+    print("Build complete! Find the EXE at: dist/DSTCamp.exe")
     print("You can double-click it to launch the GUI.")
 
 
