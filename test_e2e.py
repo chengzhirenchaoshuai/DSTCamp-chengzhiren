@@ -34,8 +34,16 @@ from dstools.core.mod_manager import (
     sync_mods,
 )
 from dstools.core.discovery import find_klei_root, discover_environment
-from dstools.core.save_reader import list_save_sessions, get_save_summary
+from dstools.core.save_reader import list_save_sessions, get_save_summary, list_session_players
 from dstools.core.config_manager import load_cluster_config, set_cluster_option, save_cluster_config
+from dstools.core.character_names import get_character_display_name
+from dstools.core.character_icons import find_mod_character_name, resolve_character
+from dstools.core.app_settings import load_settings, save_settings, get_player_note, set_player_note
+from dstools.models import SaveSession
+from dstools.core.modinfo_reader import parse_modinfo
+from dstools.core.admin_manager import read_adminlist, write_adminlist, add_admin, remove_admin, has_admin
+from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
+from dstools.core.backup_utils import backup_file, _prune_old_backups
 
 
 def test_lua_parser_basic():
@@ -334,6 +342,266 @@ def test_cli_import():
     print("  PASS: CLI module imports successfully")
 
 
+def test_list_session_players():
+    """Test per-player character save discovery/parsing under a session dir."""
+    print("\n" + "=" * 60)
+    print("Test 11: Per-Player Character Save Reader")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        session_dir = Path(tmpdir) / "session" / "ABCDEF0123456789"
+        session_dir.mkdir(parents=True)
+
+        # 一个正常玩家：真实存档实测过的字节结构——3 字节任意二进制前缀 +
+        # `return {...}` + 1 字节 0x01 结尾（大多数真实文件是这样；也有极
+        # 少数文件结尾会跟着更多遗留垃圾，这里只测最常见的这种）。
+        good_dir = session_dir / "A7GOODPLAYER"
+        good_dir.mkdir()
+        table_text = (
+            'return {x=100.5,z=-50.25,data={health={health=120},'
+            'sanity={current=150,sane=true},hunger={hunger=100},'
+            'age={age=42}},age=0,prefab="wilson"}'
+        )
+        (good_dir / "0000000007").write_bytes(b"\x03\x11\x22" + table_text.encode("utf-8") + b"\x01")
+        (good_dir / "0000000007.meta").write_bytes(b'return {character="wilson"}\x00')
+
+        # 一个损坏玩家：主文件里完全没有 return，模拟解析失败——验证
+        # "一个玩家坏了不连累其他玩家"。
+        bad_dir = session_dir / "A7BADPLAYER0"
+        bad_dir.mkdir()
+        (bad_dir / "0000000003").write_bytes(b"\x00\x01\x02\x03garbage, not lua at all")
+        (bad_dir / "0000000003.meta").write_bytes(b'return {character="wolfgang"}\x00')
+
+        session = SaveSession(session_id="ABCDEF0123456789", path=session_dir)
+        players = list_session_players(session)
+        assert len(players) == 2, f"Expected 2 players, got {len(players)}"
+
+        by_id = {p.player_id: p for p in players}
+        good = by_id["A7GOODPLAYER"]
+        assert not good.parse_error, f"Good player should parse cleanly, got: {good.parse_error}"
+        assert good.character == "wilson"
+        assert good.health == 120
+        assert good.sanity == 150 and good.sanity_sane is True
+        assert good.hunger == 100
+        assert good.age == 42
+        assert good.x == 100.5 and good.z == -50.25
+        print("  PASS: Well-formed player save parsed correctly (binary-framed file)")
+
+        bad = by_id["A7BADPLAYER0"]
+        assert bad.parse_error, "Corrupt player should have parse_error set"
+        assert bad.player_id == "A7BADPLAYER0"
+        print("  PASS: Corrupt player entry isolated (parse_error set, other player unaffected)")
+
+
+def test_character_names():
+    """Test character prefab -> display name lookup."""
+    print("\n" + "=" * 60)
+    print("Test 12: Character Name Lookup")
+
+    assert get_character_display_name("wilson") == "威尔逊.P.希格斯伯里"
+    assert get_character_display_name("willow", "en") == "Willow"
+    assert get_character_display_name("wolfgang") == "沃尔夫冈"
+    print("  PASS: Known vanilla characters resolve to verified display names")
+
+    # 模组自定义角色查不到，原样返回，不猜测拼凑
+    assert get_character_display_name("some_modded_character") == "some_modded_character"
+    print("  PASS: Unknown/modded prefab falls back to raw name unchanged")
+
+
+def test_character_icons():
+    """Test mod character-name scanning + resolve_character fallback chain
+    (character_icons.py). 头像转换本身依赖真实 Steam 安装/ktech.exe，这里
+    只覆盖不需要真机环境的部分：正则扫描模组 .lua 文件找角色名声明、以及
+    resolve_character 在"官方表命中"和"哪里都找不到"两种情况下的行为。"""
+    print("\n" + "=" * 60)
+    print("Test 13: Character Icon / Mod Name Resolution")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        mod_folder = Path(tmp) / "fake_mod"
+        prefab_dir = mod_folder / "scripts" / "prefabs"
+        prefab_dir.mkdir(parents=True)
+        (prefab_dir / "testchar.lua").write_text(
+            'STRINGS.CHARACTER_NAMES.testchar = "测试角色"\n'
+            'STRINGS.CHARACTER_TITLES.testchar = "某个称号"\n',
+            encoding="utf-8",
+        )
+
+        assert find_mod_character_name(mod_folder, "testchar") == "测试角色"
+        print("  PASS: Mod-declared STRINGS.CHARACTER_NAMES.<prefab> found via regex scan")
+
+        assert find_mod_character_name(mod_folder, "no_such_prefab") is None
+        print("  PASS: Prefab not declared by this mod returns None (no guessing)")
+
+    # 官方角色表命中：不需要 mod_overrides_path，直接走官方分支。
+    name, _icon = resolve_character("wilson", None)
+    assert name == "威尔逊.P.希格斯伯里"
+    print("  PASS: resolve_character resolves known vanilla prefab without touching mods")
+
+    # 哪里都找不到（未知 prefab + 不存在的 modoverrides 路径）：原样回退，
+    # 不抛异常、不给头像。
+    name, icon = resolve_character("totally_unknown_prefab", Path(tmp) / "does_not_exist.lua")
+    assert name == "totally_unknown_prefab" and icon is None
+    print("  PASS: Unresolvable prefab falls back to raw name with no icon")
+
+
+def test_modinfo_reader():
+    """Test modinfo.lua parsing (modinfo_reader.py) against a hand-written
+    synthetic mod -- this logic previously had zero functional test
+    coverage (only ever loaded at import time via gui/app.py)."""
+    print("\n" + "=" * 60)
+    print("Test 14: Modinfo Parsing")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        mod_folder = Path(tmp) / "123456"
+        mod_folder.mkdir()
+        (mod_folder / "modinfo.lua").write_text(
+            '''
+            name = "Test Mod"
+            author = "Tester"
+            version = "1.0.0"
+            description = "A test mod for parsing."
+            icon = "modicon.tex"
+            icon_atlas = "modicon.xml"
+
+            configuration_options = {
+                {
+                    name = "difficulty",
+                    label = "Difficulty",
+                    hover = "How hard",
+                    options = {
+                        {description = "Easy", data = "easy"},
+                        {description = "Hard", data = "hard"},
+                    },
+                    default = "easy",
+                },
+            }
+            ''',
+            encoding="utf-8",
+        )
+
+        info = parse_modinfo(mod_folder)
+        assert info is not None
+        assert info.name == "Test Mod" and info.author == "Tester" and info.version == "1.0.0"
+        assert info.workshop_id == "workshop-123456"
+        print("  PASS: Top-level fields (name/author/version/workshop_id) parsed correctly")
+
+        assert len(info.config_options) == 1
+        opt = info.config_options[0]
+        assert opt.name == "difficulty" and opt.label == "Difficulty"
+        assert [c["data"] for c in opt.choices] == ["easy", "hard"]
+        print("  PASS: configuration_options choices parsed correctly")
+
+        # 不存在 modinfo.lua 的文件夹：明确返回 None，不抛异常。
+        assert parse_modinfo(Path(tmp) / "does_not_exist") is None
+        print("  PASS: Missing modinfo.lua returns None")
+
+
+def test_admin_manager():
+    """Test adminlist.txt read/write round-trip (admin_manager.py)."""
+    print("\n" + "=" * 60)
+    print("Test 15: Admin List Manager")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "adminlist.txt"
+
+        assert read_adminlist(path) == []
+        print("  PASS: Missing adminlist.txt reads as empty list")
+
+        assert add_admin(path, "KU_aaaaaaaa") is True
+        assert add_admin(path, "KU_bbbbbbbb") is True
+        assert add_admin(path, "KU_aaaaaaaa") is False, "Adding an existing admin should be a no-op"
+        assert read_adminlist(path) == ["KU_aaaaaaaa", "KU_bbbbbbbb"]
+        assert has_admin(path, "KU_bbbbbbbb") is True
+        print("  PASS: add_admin appends new IDs and rejects duplicates")
+
+        assert remove_admin(path, "KU_aaaaaaaa") is True
+        assert remove_admin(path, "KU_aaaaaaaa") is False, "Removing an absent admin should be a no-op"
+        assert read_adminlist(path) == ["KU_bbbbbbbb"]
+        print("  PASS: remove_admin removes an entry and is idempotent")
+
+
+def test_token_manager():
+    """Test cluster_token.txt read/write round-trip + masking (token_manager.py)."""
+    print("\n" + "=" * 60)
+    print("Test 16: Token Manager")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "cluster_token.txt"
+
+        assert read_token(path) == ""
+        print("  PASS: Missing cluster_token.txt reads as empty string")
+
+        token = "pds-g^KU_1234567890abcdefghijklmnop...c0w="
+        write_token(path, token)
+        assert read_token(path) == token
+        print("  PASS: write_token/read_token round-trips exactly")
+
+        assert is_valid_token(token) is True
+        assert is_valid_token("") is False and is_valid_token("short") is False
+        print("  PASS: is_valid_token distinguishes real tokens from empty/short strings")
+
+        masked = mask_token(token)
+        assert masked.startswith(token[:8]) and masked.endswith(token[-8:]) and "..." in masked
+        assert mask_token("short") == "*" * len("short")
+        print("  PASS: mask_token shows only the ends of a real token, fully masks short ones")
+
+
+def test_backup_utils():
+    """Test the real backup-copy-and-prune path (backup_utils.py) -- prior
+    coverage only ever hit the "source file doesn't exist" early return."""
+    print("\n" + "=" * 60)
+    print("Test 17: Backup Utils")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "cluster.ini"
+        src.write_text("[GAMEPLAY]\nmax_players = 6\n", encoding="utf-8")
+
+        backup_path = backup_file(src)
+        assert backup_path is not None and backup_path.exists()
+        assert backup_path.parent == src.parent / "backup"
+        assert backup_path.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
+        print("  PASS: backup_file copies the source into a backup/ subfolder with matching content")
+
+        # _prune_old_backups 直接测（不依赖真的连续调用 backup_file 在同一
+        # 秒内产生足够多互不相同的时间戳文件名，那样会因为文件名撞车而不
+        # 可靠）：手工造 7 个时间戳递增的备份文件，裁剪到只留 5 个最新的。
+        backup_dir = src.parent / "backup"
+        for i in range(7):
+            (backup_dir / f"cluster.ini.bak.2024010{i}_000000").write_text("x", encoding="utf-8")
+        _prune_old_backups(backup_dir, "cluster.ini", 5)
+        remaining = sorted(p.name for p in backup_dir.glob("cluster.ini.bak.*"))
+        assert len(remaining) == 5
+        assert remaining == sorted(remaining), "The newest (lexically largest) timestamps must survive"
+        assert "cluster.ini.bak.20240100_000000" not in remaining
+        assert "cluster.ini.bak.20240101_000000" not in remaining
+        print("  PASS: _prune_old_backups keeps only the newest max_backups copies")
+
+
+def test_player_notes():
+    """Test per-player note storage (app_settings.py)."""
+    print("\n" + "=" * 60)
+    print("Test 18: Player Notes")
+
+    # 这几个函数读写的是用户真实的 %APPDATA%/DSTCamp/settings.json，
+    # 测试前后必须把它还原成原样，不能在用户机器上留下测试痕迹。
+    before = load_settings()
+    try:
+        assert get_player_note("TEST_NONEXISTENT_ID") == "", "Unset note should be empty string"
+        print("  PASS: Unset player note defaults to empty string")
+
+        set_player_note("TEST_PLAYER_A", "老王的存档")
+        assert get_player_note("TEST_PLAYER_A") == "老王的存档"
+        print("  PASS: Set/get player note round-trips")
+
+        set_player_note("TEST_PLAYER_A", "")
+        assert get_player_note("TEST_PLAYER_A") == "", "Clearing a note should remove it, not leave an empty entry"
+        assert "TEST_PLAYER_A" not in load_settings().get("player_notes", {})
+        print("  PASS: Clearing a note removes the entry instead of leaving a blank one")
+    finally:
+        save_settings(before)
+        assert load_settings() == before, "Real settings.json must be restored after this test"
+        print("  PASS: Real settings.json restored to its pre-test state")
+
+
 def main():
     """Run all tests."""
     print("\n" + "█" * 60)
@@ -352,6 +620,14 @@ def main():
         test_mod_manager,
         test_config_manager,
         test_cli_import,
+        test_list_session_players,
+        test_character_names,
+        test_character_icons,
+        test_modinfo_reader,
+        test_admin_manager,
+        test_token_manager,
+        test_backup_utils,
+        test_player_notes,
     ]
 
     for test in tests:

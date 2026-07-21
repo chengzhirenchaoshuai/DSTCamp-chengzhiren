@@ -7,7 +7,11 @@ sys.path.insert(0, os.path.dirname(__file__))
 from dstools.core.lua_parser import parse_lua_file, serialize_lua_table, LuaTableParser
 from dstools.core.discovery import find_klei_root, discover_environment
 from dstools.core.ini_parser import parse_cluster_ini, parse_server_ini
-from dstools.core.save_reader import list_save_sessions, read_session_metadata, get_save_summary
+from dstools.core.save_reader import (
+    list_save_sessions, read_session_metadata, get_save_summary, list_session_players,
+)
+from dstools.core.character_names import get_character_display_name, CHARACTER_NAMES
+from dstools.core.character_icons import resolve_character
 from dstools.core.mod_manager import load_mod_overrides, list_mods
 from dstools.core.config_manager import load_cluster_config
 
@@ -66,5 +70,30 @@ for cluster in env.clusters:
             for sess in sessions[:3]:
                 summary = get_save_summary(sess)
                 print(f"    {sess.session_id[:16]}: {summary}")
+
+                # Test 4: Per-player character status -- this is real, on-disk
+                # data (not synthetic), which is how the binary-framing bug in
+                # some player slot files (leftover garbage after the real
+                # closing brace) was actually caught during planning.
+                players = list_session_players(sess)
+                if players:
+                    print(f"      Players: {len(players)}")
+                    for p in players:
+                        if p.parse_error:
+                            print(f"        {p.player_id}: PARSE ERROR - {p.parse_error}")
+                            continue
+                        known = p.character in CHARACTER_NAMES
+                        name = get_character_display_name(p.character)
+                        tag = "matched" if known else "fallback (modded/unknown)"
+                        print(f"        {p.player_id}: {name} [{tag}] "
+                              f"hp={p.health} sanity={p.sanity} hunger={p.hunger}")
+
+                        # Test 5: 头像/模组角色名解析 -- 同样是真机数据，官方
+                        # 头像需要真实安装的 data/bigportraits/，模组角色名/
+                        # 头像需要真实安装的模组文件夹，合成测试覆盖不到。
+                        resolved_name, icon_path = resolve_character(
+                            p.character, shard.mod_overrides_path)
+                        icon_state = str(icon_path) if icon_path else "(no icon)"
+                        print(f"          resolve_character -> {resolved_name} | {icon_state}")
 
 print("\n=== All tests passed! ===")

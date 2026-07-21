@@ -19,13 +19,13 @@ def test_i18n_basic():
 
     # Default is Chinese
     assert get_lang() == "zh"
-    assert "DST" in t("app.title") or "DST" in t("app.title")
+    assert "DSTCamp" in t("app.title")
     print(f"  PASS: Default language is zh, title='{t('app.title')[:30]}...'")
 
     # Switch to English
     set_lang("en")
     assert get_lang() == "en"
-    assert t("app.title") == "DST Tools - Don't Starve Together Manager"
+    assert t("app.title") == "DSTCamp · Local Server Manager"
     print(f"  PASS: English switch, title='{t('app.title')}'")
 
     # Switch back
@@ -113,6 +113,7 @@ def test_save_session_fields():
     assert session.source == SaveSource.SERVER
     assert session.cluster_name == ""
     assert session.shard_name == ""
+    assert session.players == []
 
     # Test client source
     client_session = SaveSession(
@@ -165,6 +166,12 @@ def test_gui_imports():
     print(f"  PASS: GUI imports OK, colors defined")
     print(f"    Server: {SERVER_COLOR} (bg={SERVER_BG})")
     print(f"    Local:  {LOCAL_COLOR} (bg={LOCAL_BG})")
+
+    # 每个玩家角色状态面板——import 级别检查方法存在即可，这个项目对 GUI
+    # 测试一贯只做到这一层，不真的实例化 tk.Tk() 构造控件树。
+    assert hasattr(SaveBrowserTab, "_build_player_row")
+    assert hasattr(SaveBrowserTab, "_refresh_players")
+    print(f"  PASS: SaveBrowserTab has per-player status methods")
 
 
 def main():
