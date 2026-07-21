@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-dstools 是一个饥荒联机版 (Don't Starve Together) 存档/Mod/服务器配置管理工具，提供 CLI (`dst`) 和 Tkinter GUI (`dst-gui`) 两种界面。核心工作是在没有 Lua 运行时的情况下，用纯 Python 解析和写回游戏自身使用的 Lua 表文件（`leveldataoverride.lua`、`modoverrides.lua`、`modinfo.lua`）以及 INI 文件（`cluster.ini`、`server.ini`）。唯一的例外见下方"Mod 配置定义解析"一节的 `core/lua_sandbox.py`：极少数 mod 用代码动态拼配置选项，纯文本解析原理上无法覆盖，为此收窄范围引入了一个沙箱化、按需触发的真实 Lua 5.1 解释器。
+DSTCamp（包名 dstools）是一个饥荒联机版 (Don't Starve Together) 本地服务器管理工具，提供 CLI (`dst`) 和 Tkinter GUI (`dst-gui`) 两种界面，覆盖存档/Mod/世界设置/服务器配置管理，后续会继续扩展本地服务器创建、Mod 更新等功能。核心工作是在没有 Lua 运行时的情况下，用纯 Python 解析和写回游戏自身使用的 Lua 表文件（`leveldataoverride.lua`、`modoverrides.lua`、`modinfo.lua`）以及 INI 文件（`cluster.ini`、`server.ini`）。唯一的例外见下方"Mod 配置定义解析"一节的 `core/lua_sandbox.py`：极少数 mod 用代码动态拼配置选项，纯文本解析原理上无法覆盖，为此收窄范围引入了一个沙箱化、按需触发的真实 Lua 5.1 解释器。
 
 ## 常用命令
 
@@ -12,7 +12,7 @@ dstools 是一个饥荒联机版 (Don't Starve Together) 存档/Mod/服务器配
 pip install -e .              # 安装（含 dst / dst-gui 两个入口点）
 python -m dstools.gui.app      # 启动 GUI（等价于 dst-gui）
 python run_gui.py              # 启动 GUI 的另一入口（PyInstaller 打包用）
-python build_exe.py            # 用 PyInstaller 打包为单文件 DSTools.exe（需先 pip install pyinstaller，或 pip install -e ".[build]"）
+python build_exe.py            # 用 PyInstaller 打包为单文件 DSTCamp.exe（需先 pip install pyinstaller，或 pip install -e ".[build]"）
 ```
 
 CLI 示例（详见 README.md）：
@@ -57,13 +57,42 @@ DST 的配置文件都是 `return { ... }` 形式的 Lua 表字面量。`lua_par
 
 世界设置的实现分成职责严格独立的几个模块，历史上因为混在一起走过弯路，现在的划分是：
 
-- **`core/world_reader.py`**：只负责 `leveldataoverride.lua` 的原始 I/O。核心 API 是 `parse_leveldata(path) -> WorldPreset | None` 和 `save_leveldata(preset, path)`，围绕 `WorldPreset`/`WorldOverride` 两个 dataclass。文件里遗留了一批旧的 `WORLD_SETTING_INFO`/`get_setting_info`/`VALUE_COLORS`/`WORLD_RULE_KEYS` 等符号——这些已被 `world_categories.py`/`world_render.py` 取代，**不要再从这里导入分类或取值逻辑**（`gui/app.py` 现在只从这个模块导入 `parse_leveldata, save_leveldata`）。
+- **`core/world_reader.py`**：只负责 `leveldataoverride.lua` 的原始 I/O，只有 `parse_leveldata(path) -> WorldPreset | None` 和 `save_leveldata(preset, path)` 两个函数，围绕 `WorldPreset`/`WorldOverride` 两个 dataclass。分类/排序/取值逻辑一律不在这里，**不要往这个文件里加分类或取值逻辑**（`gui/app.py` 只从这个模块导入 `parse_leveldata, save_leveldata`，其余逻辑全部来自下面几个模块）。
 - **`core/world_categories.py`**：分类/排序/中文名的唯一真源。**森林和洞穴是两个完全独立的存档文件**（`Cluster_1/Master/leveldataoverride.lua` vs `Cluster_1/Caves/leveldataoverride.lua`），即使是同名 key，两边的值也可能不同（例如 `regrowth` 森林是 `slow`、洞穴是 `never`）。因此设置表严格按"地图 × 类型"拆成 4 个独立字典：`FOREST_RULES_DICT`、`FOREST_GEN_DICT`、`CAVE_RULES_DICT`、`CAVE_GEN_DICT`（每项是 `key: (category, name)`），配合 `get_setting_info(key, location)`、`get_order(key, location, is_rule)`、`get_categories(location, setting_type)` 查询函数。注意模块里还有同名但用途不同的**分类列表**变量（如 `CAVE_RULES`，list 类型，用于分类导航），不要和 `CAVE_RULES_DICT` 这种字典搞混——两者曾经因为命名太像互相覆盖导致 `get_categories()` 返回错误类型。
 - **`core/world_icons.py`**：图标文件名映射，同理拆成 `FOREST_RULES_ICONS`/`FOREST_GEN_ICONS`/`CAVE_RULES_ICONS`/`CAVE_GEN_ICONS`，`get_icon_path()` 按顺序在 4 张表里查找。
-- **`core/world_value_sets.py`**：每个 key 的合法取值列表（`VALUE_SETS` + `DEFAULT_SET` 兜底）。不是所有设置都是 `never/rare/default/often/always` 五档——数据直接来自游戏自身的 `worldsettings_overrides.lua`（该文件的一份提取样本存放在仓库根目录 `worldsettings_overrides.lua`），循环切换设置值时如果用错取值表会静默把设置改坏。
+- **`core/world_value_sets.py`**：每个 key 的合法取值列表（`VALUE_SETS` + `DEFAULT_SET` 兜底）。不是所有设置都是 `never/rare/default/often/always` 五档——数据直接来自游戏自身的 `worldsettings_overrides.lua`（该文件的一份提取样本存放在 `reference/worldsettings_overrides.lua`，纯人工核对用，不是代码依赖），循环切换设置值时如果用错取值表会静默把设置改坏。
 - **`gui/world_render.py`**：负责取值的颜色/中文标签翻译（`get_value_label()`）以及用 PIL 把整个分类面板一次性渲染成单张图片（`render_world_panel()`），而不是创建成百个 ttk 组件，用来解决大量设置项渲染的性能问题。配合 `gui/image_scroll.py` 做滚动展示；resize 时按 `BASE_REF_WIDTH = 1300` 的参考宽度重新渲染，等 resize 稳定后再按真实宽度重渲染一次（避免 resize 过程中频繁重绘 PIL 图片）。
 
-改动任何世界设置相关的显示/排序/图标逻辑时，森林和洞穴要分别验证（config_json/config_txt 下有对应的游戏内 ground-truth 数据可以核对），不要假设两边共用同一份表。
+改动任何世界设置相关的显示/排序/图标逻辑时，森林和洞穴要分别验证（`reference/config_json/`、`reference/config_txt/` 下有对应的游戏内 ground-truth 数据可以核对，`reference/README.md` 说明了这批参考数据的来源和用途），不要假设两边共用同一份表。
+
+### 每个玩家角色状态（"存档信息"页签）
+
+`SaveBrowserTab`（"存档信息"）里"服务器存档"/"本地存档"选中某个会话后，
+除了世界自己的存档槽，还会展示这个会话下每个玩家当前扮演的角色状态：
+
+- **`core/save_reader.py` 的 `list_session_players()`**：一个会话文件夹
+  下除了世界自己的数字存档槽，还有一批以玩家 ID（cluster.ini
+  `[ACCOUNT] encode_user_path` 混淆编码后的结果，不是 Klei 账号 ID，没有
+  验证过的解码算法）命名的子文件夹，每个对应一个玩家。玩家主存档槽是
+  `return {...}` 字面量，但前后包了几字节二进制帧头/尾——**必须**用"从
+  `return` 开始正向扫描、按花括号深度找表的真实结尾"来提取，不能用
+  `raw.rfind(b"}")`（已验证：这台机器上有真实存档在表结尾之后还跟着几十
+  到几百字节的遗留二进制垃圾，`rfind` 会被垃圾里偶然出现的 `}` 字节带
+  偏）。
+- **`core/character_names.py`**：官方角色 prefab → 中文名对照表（数据来
+  自游戏本体 `chinese_s.po`，逐条核对过，不是凭记忆写的）。
+- **`core/character_icons.py` 的 `resolve_character(prefab, mod_overrides_path)`**：
+  角色显示名+头像的解析优先级——先查官方角色表（头像用游戏"Tab 键玩家
+  列表"那套 `data/databundles/images.zip` 里的 `avatar_<prefab>.tex` 小
+  图标，不是角色选择界面那种带盾牌花边的大插画，人物占比更大、更清
+  楚）；查不到再去这个分片当前**已启用**的模组里找
+  `STRINGS.CHARACTER_NAMES.<prefab> = "..."` 这种字面量声明（正则扫描该
+  模组全部 `.lua` 文件，不跑 Lua 沙箱），连带模组自己的
+  `images/avatars/avatar_<prefab>.tex` 头像一起用；都找不到就原样显示英
+  文 prefab、不给头像——不猜测未知模组的命名规则。
+- 头像/mod 图标共用的图集 XML 解析 + UV 裁切逻辑在 `core/atlas_utils.py`
+  （`parse_atlas_xml()`/`crop_by_uv()`），`character_icons.py` 和
+  `mod_icons.py` 都调用它，不要各自重新实现一份。
 
 ### Mod 配置定义解析 (`core/modinfo_reader.py`)
 
@@ -71,7 +100,7 @@ DST 的配置文件都是 `return { ... }` 形式的 Lua 表字面量。`lua_par
 
 **唯一的例外——`core/lua_sandbox.py`**：极少数 mod 用 `for` 循环等代码在运行时拼出选项列表（而不是写死成字面量表），这种情况文本解析原理上就无能为力，此时会退化到一个刻意收得很窄的 Lua 沙箱：只把 `modinfo.lua` 里 `configuration_options` **之前**的那段本地代码（`ModInfo.dynamic_preamble`）加一句 `return <未解析的表达式>`（`ModConfigOption.raw_options_expr`），丢进一个真实的 Lua 5.1 解释器（通过 `lupa.lua51`，版本特意和 DST 引擎自身的 Lua 版本对齐）跑一遍取值。关键约束：
 - 只在用户真正打开某个 mod 的配置弹窗时才会触发（`ModConfigDialog._resolve_dynamic_options`），批量扫描 mod 列表的路径完全不会碰它，不影响加载性能。
-- 永远在**子进程**里跑（`sys.executable` 非打包态指向 `_lua_sandbox_worker.py`，打包态则是 `DSTools.exe --lua-sandbox-worker` 自我重启，见 `run_gui.py`），带硬超时——mod 代码如果死循环，直接杀子进程，而不是卡住 GUI 主线程或某个后台线程。
+- 永远在**子进程**里跑（`sys.executable` 非打包态指向 `_lua_sandbox_worker.py`，打包态则是 `DSTCamp.exe --lua-sandbox-worker` 自我重启，见 `run_gui.py`），带硬超时——mod 代码如果死循环，直接杀子进程，而不是卡住 GUI 主线程或某个后台线程。
 - 子进程里提前把 `os`/`io`/`require`/`load`/`debug` 等全局置空，defense-in-depth（虽然只喂了本地代码片段，但那也是不可信的第三方文本）。
 - 任何失败（引用了游戏引擎全局变量如 `GLOBAL`/`STRINGS`、语法错误、超时、结果形状不对）一律返回 `None`，调用方把该选项标记为 `is_dynamic`（真沙箱跑过但没能解开）或整个 mod 标记为 `unsupported_schema`（连 `configuration_options` 的写法本身都没认出来，比如 Insight 那种按 key 直接嵌 `{name={...}}` 的写法），在弹窗里给出明确提示，而不是显示一个看起来像 bug 的空下拉框——**从不猜测**。开关 mod 启用/禁用本身跟这套解析完全无关，即使某个 mod 配置解析失败也不受影响。
 
@@ -87,4 +116,6 @@ Click 实现，命令分组：`save`（list/info）、`mod`（list/info/enable/d
 
 ### GUI (`gui/app.py`)
 
-`DSToolsApp` 主窗口 + Notebook 标签页：`SaveBrowserTab`、`ModManagerTab`、`WorldSettingsTab`、`ClusterConfigTab`、`EnvironmentTab`。Windows 下用 `gui/win_aspect_lock.py` 锁定窗口宽高比。
+`DSToolsApp` 主窗口 + Notebook 标签页：`SaveBrowserTab`（存档信息）、`ModManagerTab`（Mod 管理）、`WorldSettingsTab`（世界设置）、`ClusterConfigTab`（服务器配置，内部又嵌套了管理员/黑名单/Token 几个子页签）。"环境概览"没有单独的顶层标签页类，是 `SaveBrowserTab` 自己 `sub_notebook` 下"存档概览"这个子页签（跟"服务器存档"/"本地存档"平级）。Windows 下用 `gui/win_aspect_lock.py` 锁定窗口宽高比。
+
+**下拉框一律用 `gui/menu_combo.py` 的 `MenuCombo`，禁止用 `ttk.Combobox`**：实测 `ttk.Combobox` 在这台机器上有个选中后内容消失、只能靠真实鼠标点击（而不是任何程序化的 `.set()`/事件模拟）才能修复的渲染缺陷，根因在 ttk 的 Entry 控件本身，无法从外部规避。`MenuCombo` 是 `ttk.Menubutton`+`tk.Menu` 包出来的自研控件，兼容 Combobox 的常用接口子集（`["values"]`、`.current()`、`.get()`/`.set()`、`<<ComboboxSelected>>` 事件），因为内部根本没有 Entry 控件，这整类 bug 不可能出现。全项目所有下拉框（存档/分片选择、Mod 配置弹窗的选项、世界设置的枚举值、服务器配置的游戏模式/语言等）都已经是这个控件，新加下拉框也必须用它。

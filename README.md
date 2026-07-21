@@ -1,6 +1,6 @@
-# DST Save Tool (dstools)
+# DSTCamp · 本地服务器管理 (dstools)
 
-Don't Starve Together 存档管理和 Mod 配置工具。
+Don't Starve Together 本地服务器管理工具：存档管理、Mod 配置与更新、世界/服务器配置、本地服务器创建。
 
 ## 安装
 
@@ -50,3 +50,18 @@ dst cluster config set GAMEPLAY max_players 8 --cluster Cluster_3
 ```bash
 python -m dstools.gui.app
 ```
+
+图形界面按标签页分为：
+
+- **存档信息**：浏览服务器/本地存档，查看每个会话的基本信息，以及会话内
+  每个玩家当前扮演的角色状态（角色名、头像、血量/理智/饥饿/体温等），支
+  持给每个玩家标识加备注、一键打开对应存档文件夹。
+- **Mod 管理**：查看/启用/禁用/删除已安装的 Mod，可视化编辑每个 Mod 的
+  配置项（自动把自由输入换成下拉选择，避免手填出游戏不认的值），支持把
+  Mod 配置在不同分片/服务器之间同步。
+- **世界设置**：编辑 `leveldataoverride.lua`（世界规则 + 世界生成），森
+  林和洞穴分开管理，按分类展示、带图标和取值说明。
+- **服务器配置**：编辑 `cluster.ini`/`server.ini`（游戏模式、语言、分片
+  设置等），以及管理员列表、黑名单、服务器 Token。
+
+界面支持中/英文切换、多套配色主题。
