@@ -1,20 +1,21 @@
 """GUI for DST save tool. Tabs: Saves | Mods | World | Config | Env."""
 
-import re, sys, threading, tkinter as tk
+import queue, re, sys, threading, tkinter as tk
 from pathlib import Path
 from tkinter import font as tkfont, simpledialog, ttk
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageTk
 
 from dstools.core.admin_manager import add_admin, read_adminlist, remove_admin
+from dstools.core.app_settings import get_theme_name, set_theme_name, get_player_note, set_player_note
 from dstools.core.config_manager import (
     load_cluster_config, load_shard_config,
     save_cluster_config, save_shard_config,
     set_cluster_option, set_shard_option,
 )
 from dstools.core.discovery import discover_environment
-from dstools.core.ini_field_info import get_field_info
+from dstools.core.ini_field_info import get_field_info, get_enum_choices
 from dstools.core.mod_icons import get_mod_icon_path
 from dstools.core.mod_manager import (
     list_mods, load_mod_overrides, save_mod_overrides, sync_mods,
@@ -23,46 +24,22 @@ from dstools.core.modinfo_reader import (
     find_mod_folder, list_installed_mod_ids, parse_modinfo, resolve_config_value,
     resolve_full_modinfo,
 )
-from dstools.core.save_reader import get_save_summary, list_save_sessions, read_session_metadata
+from dstools.core.character_icons import resolve_character
+from dstools.core.mod_sync import get_enabled_mod_ids, sync_mods_to_server
+from dstools.core.save_reader import (
+    get_save_summary, list_save_sessions, list_session_players,
+)
 from dstools.core.token_manager import is_valid_token, mask_token, read_token, write_token
 from dstools.core.world_reader import parse_leveldata, save_leveldata
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.card_frame import CardFrame
+from dstools.gui.cluster_select import cluster_label as _cluster_label
+from dstools.gui.menu_combo import MenuCombo
+from dstools.gui.local_service_tab import LocalServiceTab
 from dstools.gui.pill_tabs import PillTabBar
 from dstools.gui.theme import ERROR, HEADING, LOCAL_BG, LOCAL_COLOR, SERVER_BG, SERVER_COLOR, TEXT_MUTED
 from dstools.i18n import get_lang, set_lang, t
 from dstools.models import Cluster, ModEntry, SaveSource, Shard
-
-# ── Helper: cluster name with source annotation ────────────────────────
-def _cluster_label(c: Cluster) -> str:
-    tag = t("save.server_clusters") if c.source == SaveSource.SERVER else t("save.local_clusters")
-    return f"{c.name} [{tag}]"
-
-
-def _cluster_from_label(clusters, label: str) -> Cluster | None:
-    """Resolve a Cluster from a `_cluster_label()`-formatted combo
-    selection, matching BOTH the name and the [服务器]/[本地] source tag.
-
-    A SERVER cluster and a LOCAL cluster can legitimately share the same
-    name (e.g. after copying a server save folder that happens to land on
-    the same name as an existing local save) -- they're two different
-    Cluster objects in two different directory trees, not a duplicate.
-    Matching on name alone would always resolve to whichever one happens
-    to come first in get_clusters(), regardless of which tag the combo
-    box actually shows selected.
-    """
-    if " [" in label:
-        name, tag = label.rsplit(" [", 1)
-        tag = tag.rstrip("]")
-        want_server = tag == t("save.server_clusters")
-        for c in clusters:
-            if c.name == name and (c.source == SaveSource.SERVER) == want_server:
-                return c
-        return None
-    for c in clusters:
-        if c.name == label:
-            return c
-    return None
 
 
 # Klei user IDs (used in adminlist.txt/blocklist.txt) look like
@@ -138,7 +115,6 @@ def _apply_full_sandbox_result(mod_info, result: dict | None) -> None:
 class DSToolsApp:
     def __init__(self, klei_path: Path | None = None):
         self.env = discover_environment(klei_path)
-        self._current_cluster: Cluster | None = None
         self._current_shard: Shard | None = None
 
         # Must happen before tk.Tk() is created -- otherwise Windows treats
@@ -150,7 +126,12 @@ class DSToolsApp:
 
         self.root = tk.Tk()
         self.root.title(t("app.title"))
-        self.root.geometry("1100x710")
+        # 1300 宽而不是原来的 1100 -- "Mod管理"页签这一行现在挤了存档/分片
+        # 选择器+5个按钮，1100 宽度下最后一个按钮(同步mod文件到服务器)
+        # 会被 pack 挤压到只剩十几像素宽、文字完全看不见；1300 也刚好和
+        # world_render.py 的 BASE_REF_WIDTH 一致，世界设置面板默认就是按
+        # 原始分辨率渲染，不需要再缩放。
+        self.root.geometry("1300x710")
         self.root.minsize(900, 580)
         self.root.resizable(True, True)
 
@@ -159,7 +140,7 @@ class DSToolsApp:
         # is silky smooth with zero flicker -- unlike reacting to
         # <Configure> from Python, which always shows a snap-back frame.
         from dstools.gui.win_aspect_lock import AspectLock
-        self._aspect_lock = AspectLock(self.root, 1100, 710)
+        self._aspect_lock = AspectLock(self.root, 1300, 710)
         self._aspect_lock.install()
 
         self.style = ttk.Style(); self.style.theme_use("clam")
@@ -170,7 +151,7 @@ class DSToolsApp:
         # three inner Notebooks (SaveBrowserTab.sub_notebook,
         # WorldSettingsTab._sub_nb, ClusterConfigTab._cc_notebook) keep
         # their native ttk shape and are just re-colored by apply_theme().
-        self._tab_keys = ["saves", "mods", "world", "server"]
+        self._tab_keys = ["local", "mods", "world", "server", "saves"]
         self._pill_bar = PillTabBar(
             self.root,
             tabs=[(k, t(f"tab.{k}")) for k in self._tab_keys],
@@ -190,79 +171,149 @@ class DSToolsApp:
 
         self._tab_cards = {k: _make_card() for k in self._tab_keys}
 
+        # 顶部统一存档选择栏——"本地服务器"/"Mod管理"/"世界设置"/"服务器
+        # 配置"这 4 个页签原来各自维护一份完全独立的存档下拉框，选完一个
+        # 存档还要在另外几个页签里重新选一遍，容易选错/选漏。这里统一成
+        # 一个控件，4 个页签的 on_cluster_changed() 由 _on_global_cluster_
+        # select()/_refresh() 统一广播。"存档信息"页签本身就是服务器/本地
+        # 两个子页签并列展示，不是单一当前选中项的模型，不接入这个控件，
+        # 切到那个页签时把这一整条隐藏掉（见 _on_tab_select）。
+        self._cluster_bar = ttk.Frame(self.root)
+        # 比其它选择器都大一号，字体和内边距都放大——毕竟这是决定其它 4
+        # 个页签内容的最重要的一个控件，视觉上应该更显眼。
+        _BAR_FONT = ("", 12)
+        ttk.Label(self._cluster_bar, text=t("selector.archive"), font=_BAR_FONT).pack(
+            side=tk.LEFT, padx=(10,6), pady=8)
+        # 这里特意不用 ttk.Combobox：readonly Combobox 背后是一个真正的
+        # Entry，实测（含用户本机反复验证）在"打开下拉/选中一项"之后，
+        # 这个 Entry 有时会卡住不肯把新文字画出来——底层选中值其实一直是
+        # 对的（点最小化瞬间能看到一次正确画面），但改内容
+        # （StringVar/combo.set）、强制走"刷新"同一份重建逻辑、甚至改一下
+        # 几何尺寸逼一次重绘，统统没用，只有真的点一下"刷新"按钮才会恢复
+        # ——这是 Entry 内部某种状态卡死，不是这个工具能从外面稳定修好的
+        # 东西。换成 Menubutton + Menu 彻底绕开这个坑：没有 Entry，当前
+        # 选中项就是普通的 tk.Label 文字（-textvariable 绑定），弹出的是
+        # 原生 Menu（Windows 自己的菜单绘制，历史上极少出这类"数据对但画
+        # 面不对"的问题），"选中了哪个存档"也不再靠反解析显示文字，而是
+        # 直接存一份 Cluster 对象引用（self._global_selected_cluster），
+        # 彻底不存在"文字被清空导致解析不到存档"这一类问题。
+        self._global_cluster_var = tk.StringVar()
+        self._global_selected_cluster = None
+        self._global_cluster_menu_btn = ttk.Menubutton(
+            self._cluster_bar, textvariable=self._global_cluster_var,
+            width=30, style="Archive.TMenubutton")
+        self._global_cluster_menu = tk.Menu(self._global_cluster_menu_btn, tearoff=0)
+        self._global_cluster_menu_btn.configure(menu=self._global_cluster_menu)
+        self._global_cluster_menu_btn.pack(side=tk.LEFT, padx=(0,10), ipady=3)
+        ttk.Button(self._cluster_bar, text=t("save.refresh"), command=self._refresh,
+                   style="Big.TButton").pack(side=tk.LEFT)
+        self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area)
+        self._populate_global_cluster_combo(preserve=False)
+
         # SaveBrowserTab folds in what used to be a separate "环境信息"
         # tab as a third sub-tab (服务器存档/本地存档/环境概览) -- both
         # were fundamentally "show information about my saves", just
         # sliced differently (session-by-session vs. cluster-by-cluster
         # overview), so keeping them apart just meant clicking back and
         # forth between two tabs for related information.
+        self.local_tab = LocalServiceTab(self._tab_cards["local"].body, self)
         self.save_tab = SaveBrowserTab(self._tab_cards["saves"].body, self)
         self.mod_tab = ModManagerTab(self._tab_cards["mods"].body, self)
         self.world_tab = WorldSettingsTab(self._tab_cards["world"].body, self)
         self.cluster_tab = ClusterConfigTab(self._tab_cards["server"].body, self)
 
-        self._tabs = [self.save_tab, self.mod_tab, self.world_tab, self.cluster_tab]
+        # 全局存档选择器广播给这 4 个页签时，只立即刷新当前正显示着的
+        # 那一个——世界设置/服务器配置的 on_cluster_changed 是同步的重活
+        # （PIL 面板重绘、几十个输入框整体重建），4 个一起做每次切存档都要
+        # 卡 5-6 秒。没在看的页签只标脏（_stale_cluster_tabs），真正切过去
+        # 的时候（_on_tab_select）才补一次——反正 on_cluster_changed() 不传
+        # cluster 参数时会自己从 get_selected_cluster() 现查，不会读到过期
+        # 的存档。
+        self._cluster_tab_map = {"local": self.local_tab, "mods": self.mod_tab,
+                                  "world": self.world_tab, "server": self.cluster_tab}
+        self._stale_cluster_tabs: set[str] = set()
+        self._current_tab_key = "local"
+
+        self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.cluster_tab, self.save_tab]
         for key, tab in zip(self._tab_keys, self._tabs):
             tab.frame.pack(fill=tk.BOTH, expand=True)
-        self._tab_cards["saves"].tkraise()
+        self._tab_cards["local"].tkraise()
         self._refresh_tab_labels()
 
         self.status_var = tk.StringVar(value=t("app.ready"))
         ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN,
                   anchor=tk.W, padding=(5,2)).pack(side=tk.BOTTOM, fill=tk.X)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._update_status(); self._refresh()
 
     def _on_tab_select(self, key: str) -> None:
         self._tab_cards[key].tkraise()
+        self._current_tab_key = key
+        # "存档信息"页签自己就是服务器/本地两个子页签并列展示，不是单一
+        # 当前选中项的模型，统一选择栏放在那底下没有意义，切过去时藏起来。
+        if key == "saves":
+            self._cluster_bar.pack_forget()
+        else:
+            self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area)
+            # 切过来的这个页签如果在别的页签选存档时被标脏过（见
+            # _apply_global_cluster_change），现在补一次刷新。
+            if key in self._stale_cluster_tabs:
+                self._stale_cluster_tabs.discard(key)
+                self._cluster_tab_map[key].on_cluster_changed()
+
+    def _on_close(self):
+        """统一处理三条退出路径（关闭按钮/菜单/Ctrl+Q）：如果还有本地服务器在
+        跑，先问一句是否一并关闭，避免用户随手一点就把正在运行的服务器杀掉。"""
+        if self.local_tab.has_running_servers():
+            count = len(self.local_tab.manager.running())
+            if dlg.ask_yes_no(self.root, t("local.confirm_close_title"),
+                               t("local.confirm_close_msg", count=count)):
+                self.local_tab.confirm_and_shutdown_all(on_done=self.root.quit)
+                return
+        self.root.quit()
 
     def _build_menu(self):
         mb = tk.Menu(self.root)
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label=t("app.refresh"), command=self._refresh, accelerator="F5")
         fm.add_separator()
-        fm.add_command(label=t("app.exit"), command=self.root.quit, accelerator="Ctrl+Q")
+        fm.add_command(label=t("app.exit"), command=self._on_close, accelerator="Ctrl+Q")
         mb.add_cascade(label=t("menu.file"), menu=fm)
         lm = tk.Menu(mb, tearoff=0)
         lm.add_radiobutton(label=t("menu.lang_zh"), command=lambda: self._switch_language("zh"))
         lm.add_radiobutton(label=t("menu.lang_en"), command=lambda: self._switch_language("en"))
         mb.add_cascade(label=t("menu.language"), menu=lm)
+        tm = tk.Menu(mb, tearoff=0)
+        for name in theme.THEME_NAMES:
+            tm.add_radiobutton(label=t(f"theme.{name}"), command=lambda n=name: self._switch_theme(n))
+        mb.add_cascade(label=t("menu.theme"), menu=tm)
         self.root.config(menu=mb)
         self.root.bind("<F5>", lambda e: self._refresh())
-        self.root.bind("<Control-q>", lambda e: self.root.quit())
+        self.root.bind("<Control-q>", lambda e: self._on_close())
 
     def _switch_language(self, lang):
         if get_lang() == lang: return
-        # _cluster_label() bakes in the *current* language's [服务器]/
-        # [本地] tag text at populate time -- a combo's already-selected
-        # cluster combo only gets its values list rebuilt by _populate*()
-        # (called at __init__, or by SaveBrowserTab.refresh()), so most
-        # tabs would otherwise keep showing the OLD language's tag next
-        # to the cluster name until the user reopens the dropdown. Snapshot
-        # which Cluster is selected in each such combo *before* switching
-        # (while _get_cluster() can still resolve the old-language tag).
-        snapshots = []
-        for tab in self._tabs:
-            if hasattr(tab, "cluster_combo") and hasattr(tab, "_get_cluster"):
-                snapshots.append((tab.cluster_combo, tab._get_cluster()))
         set_lang(lang)
         self.root.title(t("app.title")); self._build_menu()
         self._refresh_tab_labels(); self._update_status()
-        # Relabel every combo (both its selected text and its full values
-        # list) to the NEW language BEFORE calling refresh_language()/
-        # refresh() on any tab -- those resolve "which cluster is this
-        # tab looking at" via _get_cluster(), which parses the combo's
-        # own displayed [服务器]/[本地] tag text. Doing this after (as a
-        # previous version of this method did) leaves the combo showing
-        # the OLD language's tag for that brief window, so _get_cluster()
-        # compares it against the NEW language's tag string, mismatches,
-        # and silently resolves to the wrong-source cluster of the same
-        # name (e.g. the SERVER cluster's tab ends up reading the LOCAL
-        # cluster's config instead) until the next reselect.
-        for combo, cluster in snapshots:
-            combo["values"] = [_cluster_label(c) for c in self.get_clusters()]
-            if cluster is not None:
-                combo.set(_cluster_label(cluster))
+        # get_selected_cluster() 现在直接存的是 Cluster 对象引用（见
+        # __init__ 里 self._global_selected_cluster 的注释），不再靠反解析
+        # 下拉框显示的 [服务器]/[本地] 文字，所以这里不需要像以前那样在切
+        # 语言前后专门保存/恢复"当前选中项"——preserve=True 会按 Cluster
+        # 的 path 直接匹配回同一个存档，同时把菜单文字刷新成新语言。
+        self._populate_global_cluster_combo(preserve=True)
         for tab in self._tabs: tab.refresh_language(); tab.refresh()
+
+    def _switch_theme(self, name: str) -> None:
+        """主题切换是"重启后生效"，不是实时的——颜色不只是 ttk.Style 那
+        一套（能重新 configure），还烤进了一堆 tk.Label/tk.Text 创建时就
+        定死的 bg/fg，以及 mod_render.py/world_render.py 用 PIL 画好的整
+        张位图，真要做到实时切换等于要把这些页签的渲染逻辑全部重新跑一
+        遍。既然只是"下次启动生效"，这里只需要把选择存下来，提示用户重
+        启，不需要现在就重建任何 widget。"""
+        if name == get_theme_name(): return
+        set_theme_name(name)
+        dlg.show_info(self.root, t("menu.theme"), t("theme.restart_required"))
 
     def _refresh_tab_labels(self):
         self._pill_bar.relabel({k: t(f"tab.{k}") for k in self._tab_keys})
@@ -276,7 +327,18 @@ class DSToolsApp:
     def _refresh(self):
         self.env = discover_environment(self.env.klei_root)
         self._update_status()
-        for tab in self._tabs:
+        # 重新拉一遍全局存档下拉框的选项列表——这样"刷新"才能真正识别新增
+        # /消失的存档文件夹，而不只是重载当前选中项（尽量保留原来的选中项，
+        # 不存在了才退回第一项）。
+        self._populate_global_cluster_combo(preserve=True)
+        # 和 _apply_global_cluster_change 同样的道理："刷新"只立即重载当前
+        # 正显示的那个页签，另外 3 个标脏、真正切过去时再补（见
+        # _on_tab_select）——世界设置/服务器配置的刷新是同步重活，4 个页签
+        # 每次点"刷新"都全做一遍，看不见的页签也要陪着卡好几秒没有意义。
+        for key, tab in self._cluster_tab_map.items():
+            if key != self._current_tab_key:
+                self._stale_cluster_tabs.add(key)
+                continue
             # "刷新全部" (F5 / menu / the initial call at startup) should
             # behave exactly like first launching the app -- including
             # forcing ModManagerTab's full whole-file Lua sandbox pass
@@ -288,8 +350,60 @@ class DSToolsApp:
                 refresh_full()
             else:
                 tab.refresh()
+        self.save_tab.refresh()
 
     def get_clusters(self): return self.env.clusters
+
+    def get_selected_cluster(self):
+        """全局存档选择器当前选中的 Cluster——直接返回存好的对象引用
+        （见 __init__ 里的 self._global_selected_cluster），不再靠反解析
+        Menubutton 当前显示的文字。之前用 ttk.Combobox 时靠"从下拉框文字
+        现查"规避过一次"缓存值过期"的 bug，但换成 Menubutton 后，选中
+        某一项时（见 _on_global_cluster_pick）已经是直接拿到 Cluster
+        对象本身，没有必要再多绕一层"存成文字、再从文字反解析回对象"，
+        这一层往返正是之前那一串"文字被清空/画不出来"问题的根源。"""
+        return self._global_selected_cluster
+
+    def _populate_global_cluster_combo(self, preserve=True):
+        """重建下拉菜单的选项列表（存档增减、切换语言后 [服务器]/[本地]
+        标签文字变化时都要调用）。preserve=True 时按 path 找回同一个存档
+        （拿到的是这次重新 discover 出来的新 Cluster 对象，不是旧的），
+        找不到或 preserve=False 时退回第一项。"""
+        prev = self._global_selected_cluster if preserve else None
+        clusters = self.get_clusters()
+        menu = self._global_cluster_menu
+        menu.delete(0, tk.END)
+        for c in clusters:
+            menu.add_command(label=_cluster_label(c),
+                              command=lambda c=c: self._on_global_cluster_pick(c))
+        if not clusters:
+            self._global_selected_cluster = None
+            self._global_cluster_var.set("")
+            return
+        matched = next((c for c in clusters if prev is not None and c.path == prev.path), None)
+        self._global_selected_cluster = matched or clusters[0]
+        self._global_cluster_var.set(_cluster_label(self._global_selected_cluster))
+
+    def _on_global_cluster_pick(self, cluster):
+        """菜单里选中某一项时调用——直接拿到的就是真实的 Cluster 对象
+        （见 _populate_global_cluster_combo 里 add_command 的 lambda 闭包），
+        不需要再从显示文字反解析。"""
+        self._global_selected_cluster = cluster
+        self._global_cluster_var.set(_cluster_label(cluster))
+        # 广播给 4 个页签的实际工作丢到 after_idle 里做，不在菜单的
+        # command 回调里同步执行——这里面 Mod管理/世界设置会各自触发一次
+        # PIL 面板重新渲染，是相对重的操作，让 Tk 先把这次菜单收起的收尾
+        # 工作做完，再执行这些重活。
+        self.root.after_idle(self._apply_global_cluster_change)
+
+    def _apply_global_cluster_change(self):
+        c = self.get_selected_cluster()
+        for key, tab in self._cluster_tab_map.items():
+            if key == self._current_tab_key:
+                tab.on_cluster_changed(c)
+            else:
+                self._stale_cluster_tabs.add(key)
+
     def run(self): self.root.mainloop()
 
 
@@ -299,23 +413,26 @@ class SaveBrowserTab:
         self.app = app; self.frame = ttk.Frame(parent)
         self.sub_notebook = ttk.Notebook(self.frame)
         self.sub_notebook.pack(fill=tk.BOTH, expand=True)
+        # "存档概览"（原"环境概览"）放在第一位——它是这三个子页签里信息量
+        # 最全的一份总览，先看这个再决定去服务器存档/本地存档里细看，
+        # 顺序上比排在最后更合理。
+        self.env_frame = ttk.Frame(self.sub_notebook)
         self.server_frame = ttk.Frame(self.sub_notebook)
         self.local_frame = ttk.Frame(self.sub_notebook)
-        self.env_frame = ttk.Frame(self.sub_notebook)
+        self.sub_notebook.add(self.env_frame, text=t("save.env_overview"))
         self.sub_notebook.add(self.server_frame, text=t("save.server_clusters"))
         self.sub_notebook.add(self.local_frame, text=t("save.local_clusters"))
-        self.sub_notebook.add(self.env_frame, text=t("save.env_overview"))
+        self._build_env_panel(self.env_frame)
         self._build_panel(self.server_frame, SaveSource.SERVER, SERVER_COLOR, SERVER_BG)
         self._build_panel(self.local_frame, SaveSource.LOCAL, LOCAL_COLOR, LOCAL_BG)
-        self._build_env_panel(self.env_frame)
 
     def _build_panel(self, parent, source, color, bg):
         sf = ttk.Frame(parent); sf.pack(fill=tk.X, padx=5, pady=5)
         ttk.Label(sf, text=t("selector.archive")).pack(side=tk.LEFT, padx=(0,5))
-        combo_var = tk.StringVar(); combo = ttk.Combobox(sf, textvariable=combo_var, state="readonly", width=25)
+        combo_var = tk.StringVar(); combo = MenuCombo(sf, textvariable=combo_var, width=25)
         combo.pack(side=tk.LEFT, padx=(0,10))
         ttk.Label(sf, text=t("save.shard")).pack(side=tk.LEFT, padx=(0,5))
-        shard_var = tk.StringVar(); shard_combo = ttk.Combobox(sf, textvariable=shard_var, state="readonly", width=15)
+        shard_var = tk.StringVar(); shard_combo = MenuCombo(sf, textvariable=shard_var, width=15)
         shard_combo.pack(side=tk.LEFT, padx=(0,10))
         # "刷新" re-discovers the whole environment (not just re-listing
         # save sessions for the currently selected cluster/shard) --
@@ -330,41 +447,104 @@ class SaveBrowserTab:
         setattr(self, f"_{k}_shard_combo", shard_combo); setattr(self, f"_{k}_shard_var", shard_var)
         setattr(self, f"_{k}_btn", btn)
 
-        paned = ttk.PanedWindow(parent, orient=tk.VERTICAL); paned.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        tf = ttk.Frame(paned)
-        columns = ("session_id","summary","slots","size")
-        tree = ttk.Treeview(tf, columns=columns, show="headings", height=8)
-        for c in columns: tree.heading(c, text=t(f"save.{c if c!='session_id' else 'session_id'}"))
-        tree.heading("session_id", text=t("save.session_id"))
-        tree.heading("summary", text=t("save.summary"))
-        tree.heading("slots", text=t("save.slots"))
-        tree.heading("size", text=t("save.size"))
-        tree.column("session_id", width=180); tree.column("summary", width=350)
-        tree.column("slots", width=60, anchor=tk.CENTER); tree.column("size", width=100, anchor=tk.CENTER)
-        sb = ttk.Scrollbar(tf, orient=tk.VERTICAL, command=tree.yview)
-        tree.configure(yscrollcommand=sb.set); tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        tree.tag_configure(k, foreground=color, background=bg)
-        paned.add(tf, weight=1)
+        # 每个分片实测（这台机器全部 11 个分片，服务器+本地都算上）都只有
+        # 一个会话——DST 只有"生成新世界"才会开一个新的会话 ID，正常"继续
+        # 游戏"一直复用同一个，多个会话共存是很少见的边缘情况。既然是这样，
+        # 不用再把它当"可能很多项、需要滚动+可以跟下面拖动分配空间"的列表
+        # 处理，改成固定的一块头部信息，不做 PanedWindow（去掉拖动条），
+        # 直接和下面"每个玩家角色状态"衔接。真遇到一个分片有多个会话这种
+        # 罕见情况，不会静默丢掉——只显示第一个，另外用一行小字提示"还有
+        # N 个其他会话"，不会假装它们不存在。
+        #
+        # "基本信息"和"每个玩家角色状态"两个标题字体大小特意手动统一成
+        # 同一个 _SECTION_HEADER_FONT，而不是分别继承 ttk.LabelFrame 自己
+        # 的标题样式——否则两处不容易做到完全一致。
+        _SECTION_HEADER_FONT = ("", 11, "bold")
+        _SECTION_BODY_FONT = ("", 9)
 
-        df = ttk.LabelFrame(paned, text=t("save.details"), padding=10)
-        dt = tk.Text(df, height=10, wrap=tk.WORD); dt.pack(fill=tk.BOTH, expand=True)
-        paned.add(df, weight=1)
+        info_frame = ttk.Frame(parent, padding=(10,6))
+        info_frame.pack(fill=tk.X, padx=5, pady=(0,2))
+        info_header_row = ttk.Frame(info_frame)
+        info_header_row.pack(fill=tk.X)
+        info_header_label = ttk.Label(info_header_row, text=t("save.basic_info"), font=_SECTION_HEADER_FONT)
+        info_header_label.pack(side=tk.LEFT)
+        open_btn = ttk.Button(info_header_row, text=t("env.open_location"),
+                              command=lambda: self._open_current_session_location(source))
+        open_btn.pack(side=tk.RIGHT)
+        ttk.Separator(info_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(4,4))
+        session_id_var = tk.StringVar()
+        summary_var = tk.StringVar()
+        slots_var = tk.StringVar()
+        extra_sessions_var = tk.StringVar()
+        ttk.Label(info_frame, textvariable=session_id_var, font=_SECTION_BODY_FONT,
+                 foreground=TEXT_MUTED, anchor=tk.W).pack(fill=tk.X)
+        ttk.Label(info_frame, textvariable=summary_var, font=_SECTION_BODY_FONT,
+                 foreground=TEXT_MUTED, anchor=tk.W).pack(fill=tk.X)
+        ttk.Label(info_frame, textvariable=slots_var, font=_SECTION_BODY_FONT,
+                 foreground=TEXT_MUTED, anchor=tk.W).pack(fill=tk.X)
+        # 这一行只在真的有多个会话（很少见）时才 pack 出来，平时留空
+        # ——之前不管有没有内容都常驻 pack，哪怕文字是空的也照样占一行
+        # 高度，看起来就是"每个玩家角色状态"上方莫名多出一截空白。
+        extra_sessions_label = ttk.Label(info_frame, textvariable=extra_sessions_var, font=_SECTION_BODY_FONT,
+                                         foreground=TEXT_MUTED, anchor=tk.W)
 
-        setattr(self, f"_{k}_tree", tree); setattr(self, f"_{k}_detail_text", dt)
-        setattr(self, f"_{k}_detail_frame", df)
+        # "每个玩家角色状态" ——一个会话下面除了世界自己的存档槽，还有一批
+        # 按玩家分的子文件夹（见 save_reader.list_session_players）。一个
+        # 会话实测最多不过几个玩家，用不上 mod_render.py/world_render.py
+        # 那套给上百行准备的 PIL 整图渲染，跟 _build_env_row 一样直接用
+        # 普通 ttk/tk 控件（Canvas+Scrollbar 装一行一个的 Frame）足够了——
+        # 这里的滚动条是玩家列表自己的（人数多的时候还是需要滚动），跟上面
+        # 会话信息那块"去掉拖动条"是两回事，不冲突。
+        pf = ttk.Frame(parent, padding=(10,8))
+        pf.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0,5))
+        players_header_label = ttk.Label(pf, text=t("save.players_section"), font=_SECTION_HEADER_FONT)
+        players_header_label.pack(anchor=tk.W)
+        ttk.Separator(pf, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(4,6))
+        players_outer = ttk.Frame(pf)
+        players_outer.pack(fill=tk.BOTH, expand=True)
+        players_canvas = tk.Canvas(players_outer, highlightthickness=0)
+        players_vbar = ttk.Scrollbar(players_outer, orient=tk.VERTICAL, command=players_canvas.yview)
+        players_rows_frame = ttk.Frame(players_canvas)
+        players_rows_win = players_canvas.create_window((0,0), window=players_rows_frame, anchor="nw")
+        players_rows_frame.bind("<Configure>",
+                                lambda e, cv=players_canvas: cv.configure(scrollregion=cv.bbox("all")))
+        players_canvas.bind("<Configure>",
+                            lambda e, cv=players_canvas, win=players_rows_win: cv.itemconfigure(win, width=e.width))
+        players_canvas.configure(yscrollcommand=players_vbar.set)
+        players_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        players_vbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        setattr(self, f"_{k}_info_header_label", info_header_label)
+        setattr(self, f"_{k}_open_btn", open_btn)
+        setattr(self, f"_{k}_session_id_var", session_id_var)
+        setattr(self, f"_{k}_summary_var", summary_var)
+        setattr(self, f"_{k}_slots_var", slots_var)
+        setattr(self, f"_{k}_extra_sessions_var", extra_sessions_var)
+        setattr(self, f"_{k}_extra_sessions_label", extra_sessions_label)
+        setattr(self, f"_{k}_current_session_id", None)
+        setattr(self, f"_{k}_players_header_label", players_header_label)
+        setattr(self, f"_{k}_players_canvas", players_canvas)
+        setattr(self, f"_{k}_players_rows_frame", players_rows_frame)
 
         self._populate(source, combo, combo_var, shard_combo, shard_var)
         combo.bind("<<ComboboxSelected>>", lambda e: self._on_cluster_select(source))
         shard_combo.bind("<<ComboboxSelected>>", lambda e: self._on_shard_select(source))
-        tree.bind("<<TreeviewSelect>>", lambda e: self._show_detail(source))
 
     def _populate(self, source, combo, combo_var, shard_combo, shard_var):
+        # 尽量保留刷新前选中的存档，而不是每次都跳回下拉框第一项——否则
+        # 复制了一份新存档后点"刷新"，只要不是恰好排在第一个，看起来就
+        # 像"点了没反应"（其实数据已经刷新了，只是被切回了别的存档）。
+        prev_label = combo.get()
         clusters = [c for c in self.app.get_clusters() if c.source == source]
         combo["values"] = [_cluster_label(c) for c in clusters]
-        if clusters:
+        if not clusters:
+            return
+        prev_cluster = self._get_cluster_by_label(source, prev_label) if prev_label else None
+        if prev_cluster is not None:
+            combo.set(_cluster_label(prev_cluster))
+        else:
             combo.current(0)
-            self._on_cluster_select(source)
+        self._on_cluster_select(source)
 
     def _get_cluster_by_label(self, source, label):
         name = label.split(" [")[0]
@@ -378,15 +558,20 @@ class SaveBrowserTab:
         combo = getattr(self, f"_{k}_combo")
         combo_var = getattr(self, f"_{k}_combo_var")
         shard_combo = getattr(self, f"_{k}_shard_combo")
+        shard_var = getattr(self, f"_{k}_shard_var")
         combo_var.set(combo.get())  # sync StringVar
         c = self._get_cluster_by_label(source, combo.get())
         if not c: return
-        self.app._current_cluster = c
-        shard_combo["values"] = [s.name for s in c.shards]
-        if c.shards:
-            for i, s in enumerate(c.shards):
-                if s.name == "Master": shard_combo.current(i); break
-            else: shard_combo.current(0)
+        prev_shard = shard_var.get()
+        names = [s.name for s in c.shards]
+        shard_combo["values"] = names
+        if names:
+            if prev_shard in names:
+                shard_combo.current(names.index(prev_shard))
+            else:
+                for i, s in enumerate(c.shards):
+                    if s.name == "Master": shard_combo.current(i); break
+                else: shard_combo.current(0)
         self._on_shard_select(source)
 
     def _on_shard_select(self, source): self._refresh_saves(source)
@@ -396,75 +581,227 @@ class SaveBrowserTab:
 
     def _refresh_saves(self, source):
         k = source.value
-        tree = getattr(self, f"_{k}_tree")
-        for item in tree.get_children(): tree.delete(item)
-        # Resolved from this panel's OWN combo/shard selection, not the
-        # cross-tab-shared app._current_cluster/_current_shard -- every
-        # other tab (and this tab's *other* source panel) reassigns those
-        # shared attributes during its own init/selection handling, so by
-        # the time the user actually clicks "刷新" here they can easily
-        # point at a different cluster/shard than what this panel shows,
-        # which is why refresh silently did nothing (or refreshed the
-        # wrong shard) before this fix.
+        # Resolved from this panel's OWN combo/shard selection -- this tab
+        # has two independent source panels (server/local) that don't share
+        # state with each other or with the global cluster selector the
+        # other tabs use, so this always has to read its own combo.
         combo = getattr(self, f"_{k}_combo")
         c = self._get_cluster_by_label(source, combo.get())
-        if not c: tree.insert("", tk.END, values=(t("save.no_saves"),"","","")); return
-        shard_var = getattr(self, f"_{k}_shard_var")
-        for s in c.shards:
-            if s.name == shard_var.get():
-                sessions = list_save_sessions(s.path)
-                if not sessions: tree.insert("", tk.END, values=(t("save.no_saves"),"","","")); return
-                for session in sessions:
-                    session.cluster_name = c.name; session.shard_name = s.name; session.source = source
-                    summary = get_save_summary(session)
-                    size_str = f"{sum(sl.size for sl in session.slots)/(1024*1024):.1f} MB"
-                    tree.insert("", tk.END, values=(session.session_id, summary, len(session.slots), size_str), iid=session.session_id, tags=(k,))
-                break
+        sessions = []
+        mod_overrides_path = None
+        if c:
+            shard_var = getattr(self, f"_{k}_shard_var")
+            for s in c.shards:
+                if s.name == shard_var.get():
+                    sessions = list_save_sessions(s.path)
+                    for session in sessions:
+                        session.cluster_name = c.name; session.shard_name = s.name; session.source = source
+                    mod_overrides_path = s.mod_overrides_path
+                    break
 
-    def _show_detail(self, source):
+        session_id_var = getattr(self, f"_{k}_session_id_var")
+        summary_var = getattr(self, f"_{k}_summary_var")
+        slots_var = getattr(self, f"_{k}_slots_var")
+        extra_sessions_var = getattr(self, f"_{k}_extra_sessions_var")
+        open_btn = getattr(self, f"_{k}_open_btn")
+
+        if not sessions:
+            session_id_var.set(t("save.no_saves")); summary_var.set(""); slots_var.set("")
+            extra_sessions_var.set("")
+            getattr(self, f"_{k}_extra_sessions_label").pack_forget()
+            open_btn.configure(state=tk.DISABLED)
+            setattr(self, f"_{k}_current_session_id", None)
+            self._refresh_players(source, None, mod_overrides_path)
+            return
+
+        # 这台机器实测每个分片都只有一个会话——正常"继续游戏"一直复用同一
+        # 个会话 ID，只有"生成新世界"才会开一个新的。真遇到不止一个的罕见
+        # 情况，只展示第一个（跟原来"存档信息"这里一直隐含的假设一致），
+        # 但不假装其余的不存在，用一行小字提示还有几个。
+        session = sessions[0]
+        setattr(self, f"_{k}_current_session_id", session.session_id)
+        session_id_var.set(f"{t('save.session_id')}: {session.session_id}")
+        summary_var.set(f"{t('save.summary')}: {get_save_summary(session)}")
+        size_str = f"{sum(sl.size for sl in session.slots)/(1024*1024):.1f} MB"
+        slots_var.set(f"{t('save.slots')}: {len(session.slots)}    {t('save.size')}: {size_str}")
+        extra_label = getattr(self, f"_{k}_extra_sessions_label")
+        if len(sessions) > 1:
+            extra_sessions_var.set(t("save.extra_sessions", count=len(sessions)-1))
+            extra_label.pack(fill=tk.X)
+        else:
+            extra_sessions_var.set("")
+            extra_label.pack_forget()
+        open_btn.configure(state=tk.NORMAL)
+
+        session.players = list_session_players(session)
+        self._refresh_players(source, session, mod_overrides_path)
+
+    def _open_current_session_location(self, source):
+        session_id = getattr(self, f"_{source.value}_current_session_id", None)
+        if session_id:
+            self._open_session_location(source, session_id)
+
+    def _open_session_location(self, source, session_id):
         k = source.value
-        tree = getattr(self, f"_{k}_tree"); detail_text = getattr(self, f"_{k}_detail_text")
-        detail_frame = getattr(self, f"_{k}_detail_frame")
-        sel = tree.selection()
-        if not sel: return
-        sid = sel[0]
         combo = getattr(self, f"_{k}_combo"); shard_var = getattr(self, f"_{k}_shard_var")
         c = self._get_cluster_by_label(source, combo.get())
         if not c: return
         s = next((sh for sh in c.shards if sh.name == shard_var.get()), None)
         if not s: return
-        sessions = list_save_sessions(s.path)
-        session = next((ss for ss in sessions if ss.session_id == sid), None)
+        session = next((ss for ss in list_save_sessions(s.path) if ss.session_id == session_id), None)
         if not session: return
-        detail_frame.configure(text=t("save.details")); detail_text.delete("1.0", tk.END)
-        sl = t("save.server_clusters") if source == SaveSource.SERVER else t("save.local_clusters")
-        lines = [f"{t('save.source')}: {sl}", f"{t('save.session_id')}: {session.session_id}",
-                 f"Path: {session.path}", f"{t('save.summary')}: {get_save_summary(session)}",
-                 f"Cluster: {c.name}", f"Shard: {s.name}", ""]
-        if session.metadata:
-            lines += [f"Day: {session.metadata.day}", f"Season: {session.metadata.season}", f"Phase: {session.metadata.phase}"]
+        import os
+        try:
+            os.startfile(str(session.path))
+        except Exception as e:
+            dlg.show_error(self.app.root, t("env.open_location"), str(e))
+
+    def _refresh_players(self, source, session, mod_overrides_path=None):
+        k = source.value
+        rows_frame = getattr(self, f"_{k}_players_rows_frame")
+        canvas = getattr(self, f"_{k}_players_canvas")
+        for w in rows_frame.winfo_children(): w.destroy()
+        # PhotoImage 没有别处强引用就会被 Tk 提前回收，导致头像图标显示
+        # 后又变空白——这里跟行控件一起整体重建，重建前先清空旧的引用表。
+        photo_refs = []
+        setattr(self, f"_{k}_player_photo_refs", photo_refs)
+        players = session.players if session else []
+        if not players:
+            ttk.Label(rows_frame, text=t("save.no_players"), foreground=TEXT_MUTED).pack(pady=10)
         else:
+            for player in players:
+                self._build_player_row(rows_frame, player, mod_overrides_path, photo_refs)
+        self._canvas_bind_mousewheel(canvas, canvas)
+        self._canvas_bind_mousewheel(rows_frame, canvas)
+
+    def _build_player_row(self, parent, player, mod_overrides_path, photo_refs):
+        bg = theme.CARD_BG_ALT
+        row = tk.Frame(parent, background=bg, highlightbackground=theme.CARD_BORDER,
+                       highlightthickness=1)
+        row.pack(fill=tk.X, pady=3)
+        outer = tk.Frame(row, background=bg)
+        outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
+
+        name, icon_path = "?", None
+        if not player.parse_error and player.character:
+            name, icon_path = resolve_character(player.character, mod_overrides_path)
+
+        # body 的内容先填好（不 pack 到 outer 里），量出它实际需要的高度，
+        # 图标再按这个高度来放大——这样头像刚好铺满整行，而不是一个和
+        # 行高不成比例、贴在左边的小方块。图标要先 pack（side=LEFT 时先
+        # pack 的排在更左边），所以必须先造好 body 量完高度，再回头建图
+        # 标、最后才把 body 本身 pack 出来，视觉顺序才是"图标在左"。
+        body = tk.Frame(outer, background=bg)
+
+        if player.parse_error:
+            tk.Label(body, text=f"{t('save.player_id_label')}: {player.player_id}", font=("", 11, "bold"),
+                    fg=theme.TEXT, background=bg, anchor=tk.W).pack(fill=tk.X)
+            tk.Label(body, text=t("save.player_parse_error"), font=("", 9), fg=theme.ERROR,
+                    background=bg, anchor=tk.W).pack(fill=tk.X)
+            self._build_player_id_row(body, player, bg)
+        else:
+            header = tk.Frame(body, background=bg)
+            header.pack(fill=tk.X)
+            tk.Label(header, text=name, font=("", 11, "bold"), fg=theme.TEXT,
+                    background=bg, anchor=tk.W).pack(side=tk.LEFT)
+
+            self._build_player_id_row(body, player, bg)
+
+            # 存档文件里没有"上限"这个数（不同角色/模组血量上限不一样），
+            # 这里只显示原始数值，不猜一个上限画成百分比进度条。
+            def fmt(v):
+                return "?" if v is None else (f"{v:.0f}" if isinstance(v, float) else str(v))
+            stats = (
+                f"{t('save.stat_health')}: {fmt(player.health)}   "
+                f"{t('save.stat_sanity')}: {fmt(player.sanity)}   "
+                f"{t('save.stat_hunger')}: {fmt(player.hunger)}   "
+                f"{t('save.stat_temperature')}: {fmt(player.temperature)}"
+            )
+            tk.Label(body, text=stats, font=("", 9), fg=TEXT_MUTED, background=bg, anchor=tk.W).pack(fill=tk.X)
+
+        if icon_path:
+            body.update_idletasks()
+            icon_size = max(40, min(body.winfo_reqheight(), 110))
             try:
-                meta = read_session_metadata(session)
-                if meta: session.metadata = meta; lines += [f"Day: {meta.day}", f"Season: {meta.season}", f"Phase: {meta.phase}"]
-            except: pass
-        lines.append(""); lines.append(f"{t('save.slots')}: {len(session.slots)}")
-        for slt in session.slots[-10:]: lines.append(f"  Slot {slt.slot_number}: {slt.size/(1024*1024):.1f} MB")
-        detail_text.insert("1.0", "\n".join(lines))
+                with Image.open(icon_path) as img:
+                    img = img.convert("RGBA")
+                    img.thumbnail((icon_size, icon_size), Image.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                photo_refs.append(photo)  # 防止没有强引用被提前回收
+                tk.Label(outer, image=photo, background=bg).pack(side=tk.LEFT, padx=(0,8), anchor=tk.N)
+            except Exception:
+                pass  # 头像损坏/转换失败就不显示图标，不影响这一行其余信息
+
+        body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    def _build_player_id_row(self, parent, player, bg):
+        """"玩家标识"那一行——标识本身 + 备注（可编辑，按玩家标识全局
+        存一份，同一个人在不同存档下认得出来）+ 打开路径（这个玩家自己
+        那个子文件夹，不是整个会话的文件夹）。"""
+        id_row = tk.Frame(parent, background=bg)
+        id_row.pack(fill=tk.X, pady=(2,0))
+        tk.Label(id_row, text=f"{t('save.player_id_label')}: {player.player_id}", font=("", 9),
+                fg=TEXT_MUTED, background=bg, anchor=tk.W).pack(side=tk.LEFT)
+
+        open_path_btn = ttk.Button(id_row, text=t("save.player_open_path"),
+                                   command=lambda p=player: self._open_player_path(p))
+        open_path_btn.pack(side=tk.RIGHT)
+        if not player.save_file:
+            open_path_btn.configure(state=tk.DISABLED)
+
+        note_frame = tk.Frame(id_row, background=bg)
+        note_frame.pack(side=tk.LEFT, padx=(12,0))
+        tk.Label(note_frame, text=f"{t('save.player_note_label')}:", font=("", 9),
+                fg=TEXT_MUTED, background=bg).pack(side=tk.LEFT)
+        note_var = tk.StringVar(value=get_player_note(player.player_id))
+        note_entry = ttk.Entry(note_frame, textvariable=note_var, width=16, font=("", 9))
+        note_entry.pack(side=tk.LEFT, padx=(4,0))
+
+        def _save_note(event=None, pid=player.player_id, var=note_var):
+            set_player_note(pid, var.get().strip())
+        note_entry.bind("<FocusOut>", _save_note)
+        note_entry.bind("<Return>", _save_note)
+
+    def _open_player_path(self, player):
+        if not player.save_file:
+            return
+        import os
+        try:
+            os.startfile(str(player.save_file.parent))
+        except Exception as e:
+            dlg.show_error(self.app.root, t("save.player_open_path"), str(e))
+
+    def _canvas_on_mousewheel(self, event, canvas):
+        bbox = canvas.bbox("all")
+        if not bbox or bbox[3] - bbox[1] <= canvas.winfo_height():
+            return "break"
+        canvas.yview_scroll(int(-event.delta / 120), "units")
+        return "break"
+
+    def _canvas_bind_mousewheel(self, widget, canvas):
+        """给 canvas 内部的行(以及行里的每一层子控件)绑滚轮——玩家状态
+        列表用这个，鼠标停在行的任何位置滚轮都要生效，不能只在 canvas
+        自己空白的地方才响应。"""
+        widget.bind("<MouseWheel>", lambda e, cv=canvas: self._canvas_on_mousewheel(e, cv))
+        for child in widget.winfo_children():
+            self._canvas_bind_mousewheel(child, canvas)
 
     def refresh_language(self):
-        self.sub_notebook.tab(0, text=t("save.server_clusters"))
-        self.sub_notebook.tab(1, text=t("save.local_clusters"))
-        self.sub_notebook.tab(2, text=t("save.env_overview"))
+        self.sub_notebook.tab(0, text=t("save.env_overview"))
+        self.sub_notebook.tab(1, text=t("save.server_clusters"))
+        self.sub_notebook.tab(2, text=t("save.local_clusters"))
         for src_k in ["server","local"]:
-            tree = getattr(self, f"_{src_k}_tree", None)
-            if tree:
-                tree.heading("session_id", text=t("save.session_id"))
-                tree.heading("summary", text=t("save.summary"))
-                tree.heading("slots", text=t("save.slots"))
-                tree.heading("size", text=t("save.size"))
-            df = getattr(self, f"_{src_k}_detail_frame", None)
-            if df: df.configure(text=t("save.details"))
+            # 会话信息(session_id_var 等)和玩家状态行都是每次 _refresh_saves()
+            # /_refresh_players() 现拼文字的（不是常驻控件），语言切换后紧
+            # 跟着的 tab.refresh() 会重新调一遍，到时候自然是新语言——这里
+            # 只需要更新"基本信息"/"每个玩家角色状态"这两个常驻的标题
+            # Label、以及"打开位置"/"刷新"按钮文字。
+            info_header = getattr(self, f"_{src_k}_info_header_label", None)
+            if info_header: info_header.configure(text=t("save.basic_info"))
+            players_header = getattr(self, f"_{src_k}_players_header_label", None)
+            if players_header: players_header.configure(text=t("save.players_section"))
+            open_btn = getattr(self, f"_{src_k}_open_btn", None)
+            if open_btn: open_btn.configure(text=t("env.open_location"))
             btn = getattr(self, f"_{src_k}_btn", None)
             if btn: btn.configure(text=t("save.refresh"))
 
@@ -479,9 +816,13 @@ class SaveBrowserTab:
     # ── Environment overview sub-tab (folded in from the former
     # standalone EnvironmentTab) ────────────────────────────────────────
     def _build_env_panel(self, parent):
+        # 之前用 Consolas（等宽英文字体）显示这几行标题信息，中文在这个
+        # 字体下没有对应字形，渲染出来跟旁边的英文/数字混排显得很怪。
+        # 换成不指定字体族、只给字号的写法，跟随系统默认字体（Windows
+        # 中文环境下就是微软雅黑），中英文混排才是一致的。
         self._env_hdr_var = tk.StringVar()
         ttk.Label(parent, textvariable=self._env_hdr_var, justify=tk.LEFT,
-                 font=("Consolas", 10)).pack(anchor=tk.W, padx=10, pady=(10,5))
+                 font=("", 10)).pack(anchor=tk.W, padx=10, pady=(10,5))
 
         list_outer = ttk.Frame(parent)
         list_outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
@@ -555,7 +896,12 @@ class SaveBrowserTab:
                 fg=color, background=bg, anchor=tk.W).pack(fill=tk.X)
 
         config = load_cluster_config(c.path)
-        game_mode = config.gameplay.get("game_mode", "?")
+        game_mode_raw = config.gameplay.get("game_mode", "?")
+        # 跟"服务器配置"页签里 游戏模式 下拉框用的是同一张翻译表
+        # （ini_field_info.ENUM_FIELDS），这里查不到（比如某个 mod 塞了
+        # 一个游戏本体不认识的自定义模式）就照原样显示原始值，不瞎猜。
+        game_mode_choices = get_enum_choices("GAMEPLAY", "game_mode") or []
+        game_mode = next((disp for raw, disp in game_mode_choices if raw == game_mode_raw), game_mode_raw)
         max_players = config.gameplay.get("max_players", "?")
         cluster_name = config.network.get("cluster_name", "?")
         detail = (f"{t('env.game_mode')}: {game_mode}   "
@@ -621,14 +967,18 @@ class ModManagerTab:
         self._did_initial_full_load = False
 
         sf = ttk.Frame(self.frame); sf.pack(fill=tk.X, padx=5, pady=5)
-        self._md_lbl = ttk.Label(sf, text=t("selector.archive")); self._md_lbl.pack(side=tk.LEFT, padx=(0,5))
-        self.cluster_var = tk.StringVar()
-        self.cluster_combo = ttk.Combobox(sf, textvariable=self.cluster_var, state="readonly", width=25)
-        self.cluster_combo.pack(side=tk.LEFT, padx=(0,10))
-        self.cluster_combo.bind("<<ComboboxSelected>>", self._on_cluster_select)
+        # "存档"选择器已经搬到顶部的全局选择栏（见 DSToolsApp._cluster_bar），
+        # 这里不再重复一份。"同步mod文件到服务器"仍然摆在这一行最前面、
+        # "分片:"标签左边——同步针对的是整个存档(所有分片)的 Mod，不是当前
+        # 选中的某一个分片，放在分片选择器左边能提示"这不是只同步当前分片"。
+        # 不受 self._dirty 门控，同步的是已经写进 modoverrides.lua 的状态，
+        # 跟这次编辑有没有存盘无关；本地存档不需要这个功能，选中本地存档
+        # 时置灰（见 on_cluster_changed）。
+        self._md_sync = ttk.Button(sf, text=t("local.sync_mods_btn"), command=self._sync_mods_to_server)
+        self._md_sync.pack(side=tk.LEFT, padx=(0,10))
         self._md_lbl2 = ttk.Label(sf, text=t("mod.shard")); self._md_lbl2.pack(side=tk.LEFT, padx=(0,5))
         self.shard_var = tk.StringVar(value="Master")
-        self.shard_combo = ttk.Combobox(sf, textvariable=self.shard_var, state="readonly", width=15)
+        self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_select)
         # "重载mod信息": unlike a plain refresh, this always re-runs the
@@ -673,33 +1023,52 @@ class ModManagerTab:
         self._md_re = ttk.Radiobutton(ff, text=t("mod.show_enabled"), variable=self.show_var, value="enabled", command=self._render_list); self._md_re.pack(side=tk.LEFT, padx=5)
         self._md_rd = ttk.Radiobutton(ff, text=t("mod.show_disabled"), variable=self.show_var, value="disabled", command=self._render_list); self._md_rd.pack(side=tk.LEFT, padx=5)
 
+        # 本地存档选中时显示的醒目提示——本地存档的 mod 启用/配置实际由
+        # 客户端账号级 modindex 决定，这里只读查看，默认不 pack。
+        self._md_local_banner = tk.Label(self.frame, text=t("mod.local_view_only_banner"),
+                                          bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=("", 10, "bold"),
+                                          anchor=tk.W, padx=10, pady=6)
+
         from dstools.gui.image_scroll import ImageScrollPanel
         from dstools.gui.mod_render import REF_WIDTH
         self.list_panel = ImageScrollPanel(self.frame, ref_width=REF_WIDTH)
         self.list_panel.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.list_panel.on_settle = lambda w, h: self._render_list(ref_width=w)
 
-        self._populate_clusters()
+        self.on_cluster_changed(self.app.get_selected_cluster())
 
-    def _populate_clusters(self):
-        clusters = self.app.get_clusters()
-        self.cluster_combo["values"] = [_cluster_label(c) for c in clusters]
-        if clusters: self.cluster_combo.current(0); self._on_cluster_select()
+    def _get_cluster(self):
+        return self.app.get_selected_cluster()
 
-    def _on_cluster_select(self, event=None):
-        c = self._get_cluster()
-        if not c: return
-        self.cluster_var.set(self.cluster_combo.get())  # sync StringVar
-        self.app._current_cluster = c
+    def on_cluster_changed(self, cluster=None):
+        """顶部全局存档选择器变化时由 DSToolsApp 广播调用，取代原来这个
+        页签自己的 cluster_combo + _on_cluster_select。"""
+        c = cluster if cluster is not None else self._get_cluster()
+        is_server = bool(c and c.source == SaveSource.SERVER)
+        self._md_sync.configure(state=tk.NORMAL if is_server else tk.DISABLED)
+        # 本地存档的 mod 启用状态其实不完全由 modoverrides.lua 决定——游戏
+        # 客户端自己还维护一份账号级、加密的 modindex（不是这个工具能解析
+        # 的格式），我们改 modoverrides.lua 不保证真的生效。与其让用户改了
+        # 却不知道为什么没用，选中本地存档时整个 Mod 管理直接只读：开关/
+        # 配置弹窗都只能看，不能改（见 _render_list/_on_config/_on_toggle）。
+        save_state = tk.NORMAL if (is_server and self._dirty) else tk.DISABLED
+        self._md_bs.configure(state=save_state)
+        self._md_ba.configure(state=save_state)
+        if is_server:
+            self._md_local_banner.pack_forget()
+        else:
+            self._md_local_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self.list_panel.frame)
+        if not c:
+            self.shard_combo["values"] = []
+            self.shard_var.set("")
+            self._on_shard_select()
+            return
         self.shard_combo["values"] = [s.name for s in c.shards]
         if c.shards:
             for i, s in enumerate(c.shards):
                 if s.name == "Master": self.shard_combo.current(i); break
             else: self.shard_combo.current(0)
         self._on_shard_select()
-
-    def _get_cluster(self):
-        return _cluster_from_label(self.app.get_clusters(), self.cluster_combo.get())
 
     def _on_shard_select(self, event=None): self._refresh_mods()
 
@@ -744,7 +1113,7 @@ class ModManagerTab:
         """
         if full is None:
             full = not self._did_initial_full_load
-        c = self.app._current_cluster
+        c = self._get_cluster()
         shard = None
         if c:
             for s in c.shards:
@@ -753,18 +1122,17 @@ class ModManagerTab:
                     break
         # A load for this exact shard is already in flight -- this
         # reliably happens once during app startup (this tab's own
-        # constructor kicks off the initial load via _populate_clusters,
+        # constructor kicks off the initial load via on_cluster_changed,
         # then DSToolsApp.__init__'s own post-construction refresh()
         # immediately asks every tab to refresh again) -- without this
         # guard, that second call starts a faster non-full pass whose
         # results supersede the first (full) pass's before it's even
         # finished, leaving _full_resolved_cache only partially
         # populated. Keyed by (cluster, shard) *name*, not object
-        # identity -- self.app._current_cluster/its Shard objects get
-        # rebuilt (and are shared with other tabs, which reassign it
-        # during their own startup too), so a plain `is` comparison
-        # between the two calls' cluster/shard objects doesn't actually
-        # hold even though it's the very same save being loaded both
+        # identity -- discover_environment() rebuilds fresh Cluster/Shard
+        # objects on every "刷新全部", so a plain `is` comparison between
+        # the two calls' cluster/shard objects doesn't actually hold even
+        # though it's the very same save being loaded both
         # times. The one already running already reflects this shard, so
         # the redundant call is simply skipped rather than racing it.
         loading_key = (c.name if c else None, shard.name if shard else None)
@@ -907,7 +1275,15 @@ class ModManagerTab:
         if not rows:
             self._render_placeholder("", ref_width)
             return
-        img, hits = render_mod_list(rows, self._icon_imgs, on_toggle=self._on_toggle,
+        c = self._get_cluster()
+        is_server = bool(c and c.source == SaveSource.SERVER)
+        # 本地存档只读：不传 on_toggle 就不会给开关注册可点击区域（渲染
+        # 出来的开关仍然显示真实的启用/禁用状态，只是点了没反应）——和
+        # is_local(客户端模组) 那一行不接 on_toggle 是同一个套路，不用在
+        # mod_render.py 里再加一套"禁用态"绘制。"配置"按钮仍然接 on_config，
+        # 点开的弹窗会自己按 read_only 只显示不给改（见 _on_config）。
+        img, hits = render_mod_list(rows, self._icon_imgs,
+                                    on_toggle=self._on_toggle if is_server else None,
                                     on_config=self._on_config, on_link=self._on_link,
                                     ref_width=ref_width, flash=self._flash_wid)
         self.list_panel.set_image(img, hits, keep_scroll=True)
@@ -924,6 +1300,10 @@ class ModManagerTab:
         self.list_panel.set_image(img, [], keep_scroll=True)
 
     def _on_toggle(self, workshop_id):
+        # 只读兜底：_render_list() 已经不会在本地存档下给开关注册点击
+        # 区域，正常点不到这里；这里再挡一道防止别的路径漏调。
+        c = self._get_cluster()
+        if not c or c.source != SaveSource.SERVER: return
         mod = self._mod_data.get(workshop_id)
         if not mod: return
         mod.enabled = not mod.enabled
@@ -945,10 +1325,18 @@ class ModManagerTab:
         mod_info = self._mod_infos.get(workshop_id)
         if not mod or not mod_info: return
         if not mod_info.config_options and not mod_info.unsupported_schema: return
-        # client_only mods aren't tied to any save's modoverrides.lua, so
-        # there's no real "currently saved" configuration to edit -- the
-        # dialog opens read-only, showing each option's own default.
-        ModConfigDialog(self, workshop_id, mod, mod_info, read_only=mod_info.client_only)
+        c = self._get_cluster()
+        is_server = bool(c and c.source == SaveSource.SERVER)
+        if mod_info.client_only:
+            # client_only mods aren't tied to any save's modoverrides.lua,
+            # so there's no real "currently saved" configuration to edit --
+            # the dialog opens read-only, showing each option's own default.
+            ModConfigDialog(self, workshop_id, mod, mod_info, read_only=True, read_only_reason="client_only")
+        elif not is_server:
+            # 本地存档：只读查看，不给改（见 on_cluster_changed 顶部的说明）。
+            ModConfigDialog(self, workshop_id, mod, mod_info, read_only=True, read_only_reason="local_save")
+        else:
+            ModConfigDialog(self, workshop_id, mod, mod_info)
 
     def _on_link(self, workshop_id):
         numeric_id = workshop_id.replace("workshop-", "")
@@ -957,8 +1345,8 @@ class ModManagerTab:
         webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
 
     def _save_mods(self, silent=False):
-        c = self.app._current_cluster; s = self.app._current_shard
-        if not c or not s or not s.mod_overrides_path:
+        c = self._get_cluster(); s = self.app._current_shard
+        if not c or not s or not s.mod_overrides_path or c.source != SaveSource.SERVER:
             if not silent: dlg.show_warning(self.app.root, t("mod.save_btn"), t("dlg.no_overrides"))
             return
         overrides = load_mod_overrides(s.mod_overrides_path)
@@ -1015,8 +1403,8 @@ class ModManagerTab:
                                                configuration_options=config)
 
     def _apply_all_shards(self):
-        c = self.app._current_cluster; src = self.app._current_shard
-        if not c or not src or not src.mod_overrides_path: return
+        c = self._get_cluster(); src = self.app._current_shard
+        if not c or not src or not src.mod_overrides_path or c.source != SaveSource.SERVER: return
         if not dlg.ask_yes_no(self.app.root, t("mod.apply_all"), t("dlg.apply_all_confirm", name=c.name)): return
         overrides = load_mod_overrides(src.mod_overrides_path)
         self._write_mod_states(overrides)
@@ -1030,23 +1418,129 @@ class ModManagerTab:
         dlg.show_info(self.app.root, t("mod.apply_all"), t("dlg.apply_done", count=cnt))
         self._refresh_mods()
 
+    def _sync_mods_to_server(self):
+        """把当前存档已启用的 mod 同步到专用服务器能实际加载的位置（在线
+        下载列表 + 本地复制到 ugc_mods，见 dstools/core/mod_sync.py）。不
+        受 self._dirty 门控——同步的是已经写进 modoverrides.lua 的状态，
+        跟这次编辑会话有没有点过"保存"无关，随时可以点。"""
+        c = self._get_cluster()
+        if not c or c.source != SaveSource.SERVER:
+            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.select_cluster_first"))
+            return
+        local_tab = self.app.local_tab
+        if local_tab._install_dir is None and not local_tab._recheck_install_dir():
+            return
+        if not get_enabled_mod_ids(c):
+            dlg.show_info(self.app.root, t("local.sync_mods_btn"), t("local.sync_no_mods"))
+            return
+        if not dlg.ask_yes_no(self.app.root, t("local.sync_mods_btn"), t("local.sync_confirm_msg", name=c.name)):
+            return
+
+        install_dir = local_tab._install_dir
+        self._md_sync.configure(state=tk.DISABLED, text=t("local.sync_running_btn"))
+        log_dialog = _ModSyncLogDialog(self.app.root)
+        log_queue: "queue.Queue" = queue.Queue()
+
+        def _worker():
+            sync_mods_to_server(c, install_dir, on_log=log_queue.put)
+            log_queue.put(None)  # 哨兵：标记同步已经跑完
+
+        def _poll_log():
+            done = False
+            while True:
+                try:
+                    line = log_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if line is None:
+                    done = True
+                    break
+                log_dialog.append(line)
+            if done:
+                log_dialog.finish()
+                self._md_sync.configure(state=tk.NORMAL, text=t("local.sync_mods_btn"))
+                return
+            self.frame.after(100, _poll_log)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self.frame.after(100, _poll_log)
+
     def refresh_language(self):
-        self._md_lbl.configure(text=t("selector.archive")); self._md_lbl2.configure(text=t("mod.shard"))
+        self._md_lbl2.configure(text=t("mod.shard"))
         self._md_br.configure(text=t("mod.reload_full")); self._md_bs.configure(text=t("mod.save_btn"))
-        self._md_ba.configure(text=t("mod.apply_all")); self._md_filt.configure(text=t("mod.filter"))
+        self._md_ba.configure(text=t("mod.apply_all")); self._md_sync.configure(text=t("local.sync_mods_btn"))
+        self._md_filt.configure(text=t("mod.filter"))
         self._md_ra.configure(text=t("mod.show_all")); self._md_re.configure(text=t("mod.show_enabled"))
         self._md_rd.configure(text=t("mod.show_disabled"))
         self._md_rl.configure(text=t("mod.back_to_list") if self.show_local_var.get() else t("mod.show_local"))
+        self._md_local_banner.configure(text=t("mod.local_view_only_banner"))
         self._refresh_mods()
 
-    def refresh(self): self._refresh_mods()
+    def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())
 
     def refresh_full(self):
         """Used by DSToolsApp._refresh() ("刷新全部") -- always forces the
         full whole-file Lua sandbox pass, unlike plain refresh() which
         only does that once automatically per session (see
-        _refresh_mods's docstring)."""
+        _refresh_mods's docstring). Also re-applies on_cluster_changed
+        first so a newly added/removed shard is picked up -- the extra
+        fast (non-full) _refresh_mods() call that triggers is superseded
+        by the full pass right below via the existing _refresh_gen/
+        _loading_key guards, same tolerated overlap as at startup."""
+        self.on_cluster_changed(self.app.get_selected_cluster())
         self._refresh_mods(full=True)
+
+
+class _ModSyncLogDialog:
+    """"同步mod文件到服务器"点击后弹出的实时日志窗口——同步在后台线程
+    跑的过程中，ModManagerTab._sync_mods_to_server() 会不断调用 append()
+    把 dstools.core.mod_sync.sync_mods_to_server() 传回的日志行追加进来，
+    跑完之后调用 finish() 才能关闭；不是等全部跑完才一次性弹出结果。"""
+
+    def __init__(self, parent_widget):
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.title(t("local.sync_result_title"))
+        WIN_W, WIN_H = 560, 480
+
+        body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10,0))
+        self.text = tk.Text(body, wrap=tk.WORD, font=("Consolas", 10), state=tk.DISABLED)
+        vsb = ttk.Scrollbar(body, orient=tk.VERTICAL, command=self.text.yview)
+        self.text.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # 同步没跑完之前不让直接叉掉窗口——关掉了也看不到后续日志，容易
+        # 让人误以为"点了叉就是中断同步了"，其实后台线程还在继续跑。
+        self.close_btn = ttk.Button(win, text=t("dlg.confirm_btn"), command=win.destroy, state=tk.DISABLED)
+        self.close_btn.pack(side=tk.BOTTOM, pady=10)
+        win.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        win.update_idletasks()
+        root = parent_widget.winfo_toplevel()
+        px, py = root.winfo_rootx(), root.winfo_rooty()
+        pw, ph = root.winfo_width(), root.winfo_height()
+        x = px + max(0, (pw - WIN_W) // 2)
+        y = py + max(0, (ph - WIN_H) // 2)
+        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        win.transient(root)
+        win.grab_set()
+
+    def append(self, line: str) -> None:
+        if not self.win.winfo_exists():
+            return
+        self.text.configure(state=tk.NORMAL)
+        self.text.insert(tk.END, line + "\n")
+        self.text.see(tk.END)
+        self.text.configure(state=tk.DISABLED)
+
+    def finish(self) -> None:
+        if not self.win.winfo_exists():
+            return
+        self.close_btn.configure(state=tk.NORMAL)
+        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+        self.win.bind("<Return>", lambda e: self.win.destroy())
+        self.win.bind("<Escape>", lambda e: self.win.destroy())
 
 
 class ModConfigDialog:
@@ -1065,7 +1559,8 @@ class ModConfigDialog:
     clicked. 返回: closes and discards anything not yet applied.
     """
 
-    def __init__(self, tab: ModManagerTab, workshop_id: str, mod, mod_info, read_only: bool = False):
+    def __init__(self, tab: ModManagerTab, workshop_id: str, mod, mod_info, read_only: bool = False,
+                 read_only_reason: str = "client_only"):
         self.tab = tab; self.workshop_id = workshop_id; self.mod = mod; self.mod_info = mod_info
         self.read_only = read_only
         self.vars: dict[str, tk.StringVar] = {}
@@ -1104,12 +1599,16 @@ class ModConfigDialog:
 
         # A mod-level banner (not per-row) -- either this is a client_only
         # ("本地") mod, which has no modoverrides.lua entry to edit at all
-        # (see ModManagerTab.show_local_var), or one of the two "can't
-        # fully support this mod's config" cases -- packed above the
-        # canvas so it's always visible, not scrolled away with the rows.
+        # (see ModManagerTab.show_local_var), or the currently selected save
+        # is a LOCAL one (see ModManagerTab.on_cluster_changed's docstring
+        # for why editing a local save's modoverrides.lua isn't reliable),
+        # or one of the two "can't fully support this mod's config" cases --
+        # packed above the canvas so it's always visible, not scrolled away
+        # with the rows.
         remaining_dynamic = sum(1 for o in mod_info.config_options if o.is_dynamic)
         if read_only:
-            ttk.Label(win, text=t("mod.read_only_local"), foreground="#607d8b",
+            banner_key = "mod.read_only_local" if read_only_reason == "client_only" else "mod.read_only_local_save"
+            ttk.Label(win, text=t(banner_key), foreground="#607d8b",
                      wraplength=DIALOG_W - 40, justify=tk.LEFT,
                      font=("", 9, "bold")).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
         if mod_info.unsupported_schema:
@@ -1248,20 +1747,31 @@ class ModConfigDialog:
             self.choice_maps[opt.name] = desc_to_data
             var = tk.StringVar(value=current_display)
             self.vars[opt.name] = var
-            # Always "readonly", even in read-only dialogs -- that still
-            # lets the user open and browse the dropdown (just not type
-            # free text), which is exactly what a "view only" mod should
-            # allow. Nothing gets saved regardless, since read_only mode
-            # simply never builds an Apply/Reset button to click.
-            combo = ttk.Combobox(row, textvariable=var, state="readonly",
-                                 values=list(desc_to_data.keys()), width=COMBO_CHARS,
-                                 font=("", 11))
+            # 跟顶部全局存档选择器同一个坑，同一个解法（见 DSToolsApp.
+            # __init__ 里 Menubutton 那段注释）：readonly ttk.Combobox 背后
+            # 是个真 Entry，选完/点开不选之后经常卡在"数据其实对、但拒绝
+            # 重新画字"的状态，用户在存档选择器上实测确认过、也在这里的
+            # 设置下拉框上报告过一模一样的现象，换成 Menubutton + Menu 后
+            # 没有 Entry，从根上不存在这个问题——选中即直接把 var 设成一
+            # 个已知合法的选项文字，不可能出现"文字被清空/画不出来"的
+            # 中间状态，也就不需要再靠 <<ComboboxSelected>>/<FocusOut> 这类
+            # 事件兜底了。
+            #
+            # 依然保持"就算是 read_only 弹窗也能点开浏览"（不会真的存盘，
+            # 因为 read_only 弹窗根本不建 应用/重置 按钮）——跟原来的行为
+            # 一致，不额外区分。
+            menu_btn = ttk.Menubutton(row, textvariable=var, width=COMBO_CHARS,
+                                      style="ModOption.TMenubutton")
+            opt_menu = tk.Menu(menu_btn, tearoff=0)
+            for desc in desc_to_data.keys():
+                opt_menu.add_command(label=desc, command=lambda d=desc, v=var: v.set(d))
+            menu_btn.configure(menu=opt_menu)
             # Packed *before* the info icon (both side=tk.RIGHT) so the
             # icon always lands immediately to the dropdown's left,
             # anchored to the row's right edge -- previously it sat right
             # after the name label instead, so its position drifted left
             # or right depending on how long that label happened to be.
-            combo.pack(side=tk.RIGHT)
+            menu_btn.pack(side=tk.RIGHT)
 
             if opt.hover:
                 info_lbl = ttk.Label(row, text="ⓘ", foreground=theme.ACCENT, font=("", 12))
@@ -1275,7 +1785,7 @@ class ModConfigDialog:
             # this getter fresh every time the mouse hovers, not just once.
             def _current_choice_hover(dth=desc_to_hover, v=var):
                 return dth.get(v.get(), "")
-            Tooltip(combo, _current_choice_hover)
+            Tooltip(menu_btn, _current_choice_hover)
 
         if not real_options and not mod_info.unsupported_schema:
             ttk.Label(body, text=t("mod.no_config_options")).pack(padx=10, pady=10)
@@ -1532,17 +2042,18 @@ class WorldSettingsTab:
     def __init__(self, parent, app):
         self.app = app; self.frame = ttk.Frame(parent)
         sf = ttk.Frame(self.frame); sf.pack(fill=tk.X, padx=5, pady=5)
-        self._wl_lbl = ttk.Label(sf, text=t("selector.archive")); self._wl_lbl.pack(side=tk.LEFT, padx=(0,5))
-        self.cluster_var = tk.StringVar()
-        self.cluster_combo = ttk.Combobox(sf, textvariable=self.cluster_var, state="readonly", width=25)
-        self.cluster_combo.pack(side=tk.LEFT, padx=(0,10))
-        self.cluster_combo.bind("<<ComboboxSelected>>", self._on_cluster_select)
+        # "存档"选择器已经搬到顶部的全局选择栏，这里不再重复一份。
         self._wl_lbl2 = ttk.Label(sf, text=t("world.shard")); self._wl_lbl2.pack(side=tk.LEFT, padx=(0,5))
         self.shard_var = tk.StringVar(value="Master")
-        self.shard_combo = ttk.Combobox(sf, textvariable=self.shard_var, state="readonly", width=15)
+        self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_select)
         self._wl_br = ttk.Button(sf, text=t("save.refresh"), command=self._load_world); self._wl_br.pack(side=tk.LEFT, padx=(0,10))
+        # 本地存档选中时显示的醒目提示——本地存档的世界设置不保证编辑
+        # 生效，这里只读查看，默认不 pack。
+        self._wl_local_banner = tk.Label(self.frame, text=t("world.local_view_only_banner"),
+                                          bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=("", 10, "bold"),
+                                          anchor=tk.W, padx=10, pady=6)
         # Preset name/id/location + description, in a visually distinct
         # bordered card -- previously a single small (font size 9) Label
         # truncating the description to 80 characters, which read as
@@ -1551,12 +2062,12 @@ class WorldSettingsTab:
                                        highlightthickness=1, bg=theme.BG_SOFT)
         self._wl_info_frame.pack(fill=tk.X, padx=5, pady=(0,6))
         self._wl_title_var = tk.StringVar()
-        tk.Label(self._wl_info_frame, textvariable=self._wl_title_var, font=("", 14, "bold"),
-                fg=theme.TEXT, bg=theme.BG_SOFT, anchor=tk.W, justify=tk.LEFT).pack(fill=tk.X, padx=14, pady=(10,3))
+        tk.Label(self._wl_info_frame, textvariable=self._wl_title_var, font=("", 11, "bold"),
+                fg=theme.TEXT, bg=theme.BG_SOFT, anchor=tk.W, justify=tk.LEFT).pack(fill=tk.X, padx=14, pady=(8,2))
         self._wl_desc_var = tk.StringVar()
-        self._wl_desc_lbl = tk.Label(self._wl_info_frame, textvariable=self._wl_desc_var, font=("", 12),
+        self._wl_desc_lbl = tk.Label(self._wl_info_frame, textvariable=self._wl_desc_var, font=("", 9),
                                      fg=TEXT_MUTED, bg=theme.BG_SOFT, anchor=tk.W, justify=tk.LEFT)
-        self._wl_desc_lbl.pack(fill=tk.X, padx=14, pady=(0,10))
+        self._wl_desc_lbl.pack(fill=tk.X, padx=14, pady=(0,8))
         # Wraplength has to be maintained by hand (Label doesn't do this
         # itself) so the description reflows instead of clipping/
         # overflowing as the window is resized.
@@ -1567,7 +2078,7 @@ class WorldSettingsTab:
         from dstools.gui.world_render import REF_WIDTH
 
         self._rules_panel = ImageScrollPanel(self._sub_nb, ref_width=REF_WIDTH)
-        self._sub_nb.add(self._rules_panel.frame, text=t("world.rules"))
+        self._sub_nb.add(self._rules_panel.frame, text=self._rules_tab_label())
         self._gen_panel = ImageScrollPanel(self._sub_nb, ref_width=REF_WIDTH)
         self._sub_nb.add(self._gen_panel.frame, text=t("world.generation"))
         self._rules_panel.on_settle = lambda w, h: self._render_rules(ref_width=w)
@@ -1580,20 +2091,32 @@ class WorldSettingsTab:
         self._rules_by_cat = {}; self._rules_cats = []
         self._gen_by_cat = {}; self._gen_cats = []
         self._flash_key = None; self._flash_after_id = None
-        self._populate_clusters()
-
-    def _populate_clusters(self):
-        clusters = self.app.get_clusters()
-        self.cluster_combo["values"] = [_cluster_label(c) for c in clusters]
-        if clusters: self.cluster_combo.current(0); self._on_cluster_select()
+        self.on_cluster_changed(self.app.get_selected_cluster())
 
     def _get_cluster(self):
-        return _cluster_from_label(self.app.get_clusters(), self.cluster_combo.get())
+        return self.app.get_selected_cluster()
 
-    def _on_cluster_select(self, e=None):
+    def _rules_tab_label(self, count=None):
+        """"世界规则"这个子页签标题原来固定带"(可修改)"——本地存档现在
+        只读，标题也得跟着变成"(仅查看)"，不然明明只读了标题却还写着
+        "可修改"，误导用户。"""
         c = self._get_cluster()
-        if not c: return
-        self.cluster_var.set(self.cluster_combo.get()); self.app._current_cluster = c
+        is_server = bool(c and c.source == SaveSource.SERVER)
+        tag = t("world.rules_editable_tag") if is_server else t("world.rules_readonly_tag")
+        label = f"{t('world.rules')} {tag}"
+        if count is not None:
+            label = f"{label} ({count})"
+        return label
+
+    def on_cluster_changed(self, cluster=None):
+        """顶部全局存档选择器变化时由 DSToolsApp 广播调用，取代原来这个
+        页签自己的 cluster_combo + _on_cluster_select。"""
+        c = cluster if cluster is not None else self._get_cluster()
+        if not c:
+            self.shard_combo["values"] = []
+            self.shard_var.set("")
+            self._on_shard_select()
+            return
         self.shard_combo["values"] = [s.name for s in c.shards]
         if c.shards:
             for i, s in enumerate(c.shards):
@@ -1609,7 +2132,12 @@ class WorldSettingsTab:
         self._rules_by_cat = {}; self._rules_cats = []
         self._gen_by_cat = {}; self._gen_cats = []
         self._flash_key = None
-        c = self.app._current_cluster
+        c = self._get_cluster()
+        is_server = bool(c and c.source == SaveSource.SERVER)
+        if is_server:
+            self._wl_local_banner.pack_forget()
+        else:
+            self._wl_local_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self._wl_info_frame)
         if not c:
             self._wl_title_var.set(""); self._wl_desc_var.set("")
             self._rules_panel.set_image(*self._empty_image())
@@ -1677,7 +2205,7 @@ class WorldSettingsTab:
                 self._gen_cats = get_categories(loc, "generation")
                 self._render_gen()
 
-                self._sub_nb.tab(0, text=f"{t('world.rules')} ({sum(len(v) for v in rules_by_cat.values())})")
+                self._sub_nb.tab(0, text=self._rules_tab_label(sum(len(v) for v in rules_by_cat.values())))
                 self._sub_nb.tab(1, text=f"{t('world.generation')} ({sum(len(v) for v in gen_by_cat.values())})")
                 break
 
@@ -1690,8 +2218,13 @@ class WorldSettingsTab:
         if ref_width is None:
             ref_width = self._rules_panel.current_width(REF_WIDTH)
         loc = getattr(self._wl_preset, 'location', 'forest') or 'forest'
+        # 本地存档只读：不可编辑生效不保证，直接和"生成"面板一样按
+        # editable=False 渲染（不画 < > 按钮，也不注册点击区域）。
+        c = self._get_cluster()
+        is_server = bool(c and c.source == SaveSource.SERVER)
         img, hits = render_world_panel(self._rules_cats, self._rules_by_cat, CATEGORY_COLORS,
-                                       editable=True, on_click=self._on_rule_click,
+                                       editable=is_server,
+                                       on_click=self._on_rule_click if is_server else None,
                                        ref_width=ref_width, flash=self._flash_key,
                                        location=loc)
         self._rules_panel.set_image(img, hits, keep_scroll=True)
@@ -1715,6 +2248,10 @@ class WorldSettingsTab:
         return Image.new("RGB", (REF_WIDTH, 40), theme.CARD_BG), []
 
     def _on_rule_click(self, key, delta):
+        # 只读兜底：_render_rules() 已经不会在本地存档下注册点击区域，
+        # 正常点不到这里；这里再挡一道防止别的路径漏调。
+        c = self._get_cluster()
+        if not c or c.source != SaveSource.SERVER: return
         if not self._wl_preset: return
         from dstools.core.world_value_sets import get_value_set
         for ov in self._wl_preset.overrides:
@@ -1747,6 +2284,8 @@ class WorldSettingsTab:
         self._render_rules()
 
     def _save_rules(self):
+        c = self._get_cluster()
+        if not c or c.source != SaveSource.SERVER: return
         if not self._wl_preset or not self._wl_path:
             dlg.show_info(self.app.root, t("world.save_rules"), t("world.no_preset")); return
         if not dlg.ask_yes_no(self.app.root, t("world.save_rules"), t("dlg.confirm_save_msg", name=self.app._current_shard.name)): return
@@ -1755,11 +2294,12 @@ class WorldSettingsTab:
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("world.saved"))
 
     def refresh_language(self):
-        self._wl_lbl.configure(text=t("selector.archive")); self._wl_lbl2.configure(text=t("world.shard"))
+        self._wl_lbl2.configure(text=t("world.shard"))
         self._wl_br.configure(text=t("save.refresh")); self._wl_bs.configure(text=t("world.save_rules"))
-        self._sub_nb.tab(0, text=t("world.rules")); self._sub_nb.tab(1, text=t("world.generation"))
+        self._sub_nb.tab(0, text=self._rules_tab_label()); self._sub_nb.tab(1, text=t("world.generation"))
+        self._wl_local_banner.configure(text=t("world.local_view_only_banner"))
 
-    def refresh(self): self._load_world()
+    def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())
 
 class _TokenInputDialog:
     """Replaces simpledialog.askstring() for entering a cluster token --
@@ -1843,11 +2383,8 @@ class ClusterConfigTab:
     def __init__(self, parent, app: DSToolsApp):
         self.app = app; self.frame = ttk.Frame(parent); self._entries = {}
         sf = ttk.Frame(self.frame); sf.pack(fill=tk.X, padx=5, pady=5)
-        self._cc_lbl = ttk.Label(sf, text=t("selector.archive")); self._cc_lbl.pack(side=tk.LEFT, padx=(0,5))
-        self.cluster_var = tk.StringVar()
-        self.cluster_combo = ttk.Combobox(sf, textvariable=self.cluster_var, state="readonly", width=25)
-        self.cluster_combo.pack(side=tk.LEFT, padx=(0,10))
-        self.cluster_combo.bind("<<ComboboxSelected>>", self._on_cluster_select)
+        # "存档"选择器已经搬到顶部的全局选择栏，这里不再重复一份，"加载"
+        # 按钮变成这一行第一个控件。
         self._cc_bl = ttk.Button(sf, text=t("cluster.load"), command=self._load_config); self._cc_bl.pack(side=tk.LEFT, padx=(0,5))
 
         self._cc_notebook = ttk.Notebook(self.frame); self._cc_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -2000,7 +2537,7 @@ class ClusterConfigTab:
 
         self._token_frame = ttk.Frame(self._cc_notebook); self._build_token_panel(self._token_frame)
         self._cc_notebook.add(self._token_frame, text=t("token.title"))
-        self._populate_clusters()
+        self.on_cluster_changed(self.app.get_selected_cluster())
 
     def _build_id_list_panel(self, parent, title_key):
         lf = ttk.Frame(parent); lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -2016,7 +2553,16 @@ class ClusterConfigTab:
     def _build_token_panel(self, parent):
         p = ttk.Frame(parent); p.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         ttk.Label(p, text=t("token.title"), font=("",10,"bold")).pack(anchor=tk.W)
-        self._token_display = tk.Text(p, height=3, wrap=tk.WORD, font=("Consolas",10))
+        # 普通 tk.Text 不会跟着 theme.apply_theme() 走 ttk 皮肤，不显式给
+        # bg/fg 的话就是系统默认的白底黑字，跟其它页签的薄荷绿卡片+深色
+        # 文字完全不搭，看起来像是没套上主题、"坏掉"了一样。字体也不用
+        # Consolas——那是西文等宽字体，没有中文字形，"未设置"这类中文
+        # 占位文字在这个字体下会被 Tk/Windows 悄悄换成别的兜底字体渲染，
+        # 跟其它页签（用 _ROW_VALUE_FONT，即默认 UI 字体）明显不一致。
+        self._token_display = tk.Text(p, height=3, wrap=tk.WORD, font=self._ROW_VALUE_FONT,
+                                       bg=theme.CARD_BG, fg=theme.TEXT,
+                                       relief=tk.FLAT, highlightthickness=1,
+                                       highlightbackground=theme.CARD_BORDER, highlightcolor=theme.ACCENT)
         self._token_display.pack(fill=tk.X, pady=5); self._token_display.configure(state=tk.DISABLED)
         bf = ttk.Frame(p); bf.pack(fill=tk.X)
         self._token_show_btn = ttk.Button(bf, text=t("token.show"), command=self._toggle_token); self._token_show_btn.pack(side=tk.LEFT, padx=2)
@@ -2024,17 +2570,13 @@ class ClusterConfigTab:
         self._token_change_btn = ttk.Button(bf, text=t("token.change"), command=self._change_token); self._token_change_btn.pack(side=tk.LEFT, padx=2)
         self._token_visible = False; self._token_raw = ""
 
-    def _populate_clusters(self):
-        clusters = self.app.get_clusters()
-        self.cluster_combo["values"] = [_cluster_label(c) for c in clusters]
-        if clusters: self.cluster_combo.current(0); self._on_cluster_select()
-
-    def _on_cluster_select(self, e=None):
-        self.cluster_var.set(self.cluster_combo.get())  # sync StringVar
-        self._load_config()
-
     def _get_cluster(self):
-        return _cluster_from_label(self.app.get_clusters(), self.cluster_combo.get())
+        return self.app.get_selected_cluster()
+
+    def on_cluster_changed(self, cluster=None):
+        """顶部全局存档选择器变化时由 DSToolsApp 广播调用，取代原来这个
+        页签自己的 cluster_combo + _on_cluster_select。"""
+        self._load_config()
 
     def _clear_form(self):
         # self._section_frames only ever holds the two persistent
@@ -2050,6 +2592,10 @@ class ClusterConfigTab:
     # 之前默认的 ttk 字体太小、看不清；这几个是设置项统一放大后用的字体。
     _ROW_LABEL_FONT = ("", 11)
     _ROW_VALUE_FONT = ("", 11)
+    # 只有从分片(is_master=false)才需要的字段——见 _backfill_slave_shard_fields
+    # 和 _on_is_master_toggle：切换开关时这四项现场增删，不需要先保存。
+    _SHARD_EXTRA_FIELDS = [("SHARD", "name"), ("SHARD", "id"),
+                           ("STEAM", "master_server_port"), ("STEAM", "authentication_port")]
     # 有可能填很长文字、但官方并不支持真正换行符的字段（服务器描述在
     # 游戏里就是单行文本）-- 用固定 3 行高度的 Text 展示，wrap=tk.WORD
     # 只是视觉上自动换行，不会往内容里插入 "\n"；真按下回车键也会被
@@ -2071,7 +2617,6 @@ class ClusterConfigTab:
         return _TextVar(text_widget)
 
     def _make_row(self, parent, section, key, value, row, readonly=False):
-        from dstools.core.ini_field_info import get_enum_choices
         from dstools.gui.toggle_switch import ToggleSwitch
         from dstools.gui.tooltip import Tooltip
         # The label column (0) stays its natural width; the field column
@@ -2125,9 +2670,10 @@ class ClusterConfigTab:
             raw_to_display = {raw: disp for raw, disp in enum_choices}
             display_to_raw = {disp: raw for raw, disp in enum_choices}
             display_var.set(raw_to_display.get(value, str(value) if value is not None else ""))
-            ttk.Combobox(parent, textvariable=display_var, state="readonly",
-                        values=[disp for _, disp in enum_choices], width=35,
-                        font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
+            enum_combo = MenuCombo(parent, textvariable=display_var, width=35,
+                                   style="ModOption.TMenubutton")
+            enum_combo["values"] = [disp for _, disp in enum_choices]
+            enum_combo.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
             var = _EnumVar(display_var, display_to_raw)
         elif (ini_section, key) in self._WRAPPED_TEXT_FIELDS:
             var = self._make_wrapped_text_row(parent, row, value)
@@ -2142,7 +2688,7 @@ class ClusterConfigTab:
         self._clear_form()
         c = self._get_cluster()
         if not c: return
-        self.app._current_cluster = c; is_server = (c.source == SaveSource.SERVER)
+        is_server = (c.source == SaveSource.SERVER)
         config = load_cluster_config(c.path)
 
         # 本地存档的 cluster.ini/server.ini 由游戏客户端自己管理和重写，
@@ -2195,9 +2741,9 @@ class ClusterConfigTab:
         frame = self._section_frames["Shard Config"]
         row = 0
         if c.shards:
-            ttk.Label(frame, text=f"{t('save.shard')}:", font=("",10)).grid(row=row, column=0, sticky=tk.E, padx=(5,5), pady=5)
+            ttk.Label(frame, text=t("save.shard"), font=("",10)).grid(row=row, column=0, sticky=tk.E, padx=(5,5), pady=5)
             self._shard_sel_var = tk.StringVar()
-            shard_sel = ttk.Combobox(frame, textvariable=self._shard_sel_var, state="readonly", width=15)
+            shard_sel = MenuCombo(frame, textvariable=self._shard_sel_var, width=15)
             shard_sel["values"] = [s.name for s in c.shards]
             default_idx = next((i for i, s in enumerate(c.shards) if s.name == "Master"), 0)
             shard_sel.current(default_idx)
@@ -2217,15 +2763,17 @@ class ClusterConfigTab:
         self._load_token(c)
 
     def _load_shard_config(self, e=None):
-        """Load server.ini for the selected shard (read-only for LOCAL saves)."""
-        if not hasattr(self, '_shard_config_frame'): return
-        frame = self._shard_config_frame
-        for w in frame.winfo_children(): w.destroy()
-        # Remove old shard entries
-        keys_to_remove = [k for k in self._entries if k[0].startswith("SHARD_")]
-        for k in keys_to_remove: del self._entries[k]
+        """Load server.ini for the selected shard (read-only for LOCAL saves).
 
-        c = self.app._current_cluster
+        Resolved via _get_cluster(), which reads live from the global
+        cluster selector (DSToolsApp.get_selected_cluster()) -- this used
+        to read a cross-tab-shared cached attribute that every other tab
+        reassigned during its own init/selection handling, which could
+        point at a stale cluster by the time this ran; that attribute is
+        gone now, there's nothing left to go stale.
+        """
+        if not hasattr(self, '_shard_config_frame'): return
+        c = self._get_cluster()
         if not c: return
         is_server = (c.source == SaveSource.SERVER)
         shard_name = self._shard_sel_var.get()
@@ -2235,16 +2783,118 @@ class ClusterConfigTab:
         if not target_shard: return
 
         shard_config = load_shard_config(target_shard.path)
-        row = 0
-        ttk.Label(frame, text=t("cluster.editing", shard=target_shard.name), font=("",10,"bold")).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
-        row += 1
+        self._shard_config = shard_config
+        self._shard_config_cluster = c
+        self._shard_config_shard = target_shard
+        self._shard_config_is_server = is_server
+
+        frame = self._shard_config_frame
+        for w in frame.winfo_children(): w.destroy()
+        keys_to_remove = [k for k in self._entries if k[0].startswith("SHARD_")]
+        for k in keys_to_remove: del self._entries[k]
+        ttk.Label(frame, text=t("cluster.editing", shard=target_shard.name), font=("",10,"bold")).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+
+        # 从分片(is_master=false)的 server.ini 经常缺 name/id/
+        # master_server_port/authentication_port 这四项——Klei 官方
+        # Master+Caves 示例（论坛/wiki 的分片配置说明）里每个分片都必须有
+        # 这四项且互不冲突，缺了的话服务器要么起不来要么和别的分片抢端口。
+        # 只在服务器存档且确认是从分片时才补，本地存档只读、主分片不需要。
+        if is_server and not shard_config.shard.get("is_master", True):
+            self._backfill_slave_shard_fields(c, target_shard, shard_config)
+
+        self._render_shard_fields()
+
+    def _render_shard_fields(self):
+        """按 self._shard_config 当前数据画所有分片字段行（标题行之外的
+        可变区域）。切换分片、以及用户实时切换"是否为主分片"开关时都会
+        调用这个方法——is_master 的 ToggleSwitch 变化会触发
+        _on_is_master_toggle，在重画之前现场增删那四个从分片专属字段。"""
+        frame = self._shard_config_frame
+        shard_config = self._shard_config
+        is_server = self._shard_config_is_server
+
+        for w in frame.grid_slaves():
+            if int(w.grid_info()["row"]) >= 1:
+                w.destroy()
+        keys_to_remove = [k for k in self._entries if k[0].startswith("SHARD_")]
+        for k in keys_to_remove: del self._entries[k]
+
+        row = 1
         for sec in ["NETWORK","SHARD","ACCOUNT","STEAM"]:
             data = getattr(shard_config, sec.lower(), {})
             if data:
                 ttk.Label(frame, text=f"[{sec}]", font=("",9,"bold")).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5,0))
                 row += 1
                 for key, value in data.items():
-                    self._make_row(frame, f"SHARD_{sec}", key, value, row, readonly=not is_server); row += 1
+                    var = self._make_row(frame, f"SHARD_{sec}", key, value, row, readonly=not is_server)
+                    row += 1
+                    if is_server and sec == "SHARD" and key == "is_master":
+                        # 延到下一个空闲循环再重画，不要在这个 <Write> 回调
+                        # 本身还在处理"开关被点了一下"这个事件的过程中，就
+                        # 把开关自己所在的行销毁重建——这在 Tk 里不安全。
+                        var.trace_add("write", lambda *a: self.app.root.after(1, self._on_is_master_toggle))
+
+    def _snapshot_shard_entries_into(self, shard_config):
+        """把 self._entries 里所有 SHARD_* 字段当前（可能还没保存）的值
+        写回 shard_config 对应的字典，避免重画整个分片区域时丢失用户正在
+        编辑但还没点"保存"的其它字段。"""
+        for (section, key), (var, readonly) in list(self._entries.items()):
+            if not section.startswith("SHARD_") or readonly:
+                continue
+            data = getattr(shard_config, section[len("SHARD_"):].lower(), None)
+            if data is None:
+                continue
+            try:
+                data[key] = var.get()
+            except tk.TclError:
+                pass
+
+    def _on_is_master_toggle(self):
+        """"是否为主分片"开关被用户实时切换（还没点保存）——立即在编辑器
+        里增加/去掉从分片专属的 name/id/master_server_port/
+        authentication_port 四项，填好之后一起点"保存"才会写入文件；切
+        回主分片则把这四项现场去掉，不需要先保存再重新加载才能看到。"""
+        if not hasattr(self, "_shard_config") or self._shard_config is None:
+            return
+        shard_config = self._shard_config
+        self._snapshot_shard_entries_into(shard_config)
+        is_master_var, _ = self._entries.get(("SHARD_SHARD", "is_master"), (None, None))
+        is_master = bool(is_master_var.get()) if is_master_var is not None else True
+        if not is_master:
+            self._backfill_slave_shard_fields(self._shard_config_cluster, self._shard_config_shard, shard_config)
+        else:
+            for section, key in self._SHARD_EXTRA_FIELDS:
+                getattr(shard_config, section.lower()).pop(key, None)
+        self._render_shard_fields()
+
+    def _backfill_slave_shard_fields(self, cluster, shard, shard_config):
+        """给缺失的 name/id/master_server_port/authentication_port 生成默认值
+        （只填缺的，已有的不动），默认值保证和集群里其它分片已有的值不冲突。
+        直接改 shard_config 的字典，让后面的渲染循环把它们当成正常字段画出来，
+        "保存"时也会跟着一起写入 server.ini，不需要另外改保存逻辑。"""
+        siblings = [load_shard_config(s.path) for s in cluster.shards if s.path != shard.path]
+
+        def _next_free(getter, start):
+            used = set()
+            for sc in siblings:
+                raw = getter(sc)
+                if str(raw).strip().lstrip("-").isdigit():
+                    used.add(int(raw))
+            n = start
+            while n in used:
+                n += 1
+            return n
+
+        if not str(shard_config.shard.get("name", "")).strip():
+            shard_config.shard["name"] = shard.name
+        if not str(shard_config.shard.get("id", "")).strip():
+            shard_config.shard["id"] = _next_free(lambda sc: sc.shard.get("id", ""), 2)
+        if not str(shard_config.steam.get("master_server_port", "")).strip():
+            shard_config.steam["master_server_port"] = _next_free(
+                lambda sc: sc.steam.get("master_server_port", ""), 27016)
+        if not str(shard_config.steam.get("authentication_port", "")).strip():
+            shard_config.steam["authentication_port"] = _next_free(
+                lambda sc: sc.steam.get("authentication_port", ""), 8766)
 
     def _load_id_list_into(self, cluster, path_attr, listbox, add_btn, remove_btn):
         """Shared by the Admin List and Blocklist (黑名单) tabs -- both
@@ -2267,15 +2917,8 @@ class ClusterConfigTab:
         remove_btn.configure(state=tk.NORMAL if ids else tk.DISABLED)
 
     def _add_id_entry(self, path_attr, default_filename, listbox, status, add_btn, remove_btn):
-        # Resolved via the combo selection (like _load_config), not the
-        # cross-tab-shared self.app._current_cluster -- that attribute can
-        # still point at a Cluster object from *before* the app's own
-        # post-construction re-discovery (DSToolsApp.__init__'s trailing
-        # self._refresh()) if the user opens this tab and clicks "添加"
-        # without ever reselecting the combo -- a fresh lookup avoids
-        # mutating a Cluster object that self.app.get_clusters() (and any
-        # later _load_config() reload) doesn't actually hold a reference
-        # to anymore.
+        # Resolved live via the global selector (like _load_config) --
+        # never a stale cached Cluster object.
         c = self._get_cluster()
         if not c: return
         kid = simpledialog.askstring(t("admin.add"), t("admin.add_prompt"))
@@ -2355,7 +2998,36 @@ class ClusterConfigTab:
                 set_cluster_option(config, section, key, var.get())
         save_cluster_config(config, c.path)
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=c.name))
+        # _load_config() 会连"分片配置"一起重建，其中分片下拉框固定默认
+        # 选中 Master——不记住并恢复的话，保存"服务器配置"时如果用户当时
+        # 正在看 Caves 分片，会被莫名其妙地切回 Master。
+        prev_shard = self._shard_sel_var.get() if hasattr(self, "_shard_sel_var") else None
         self._load_config()
+        if prev_shard and hasattr(self, "_shard_sel_var"):
+            self._shard_sel_var.set(prev_shard)
+            self._load_shard_config()
+
+    # 每个分片必须各自独立、不能撞车的端口字段——见 Klei 官方 Master+Caves
+    # server.ini 示例（论坛/wiki 分片配置说明），撞了服务器要么起不来要么
+    # 互相抢占端口。
+    _SHARD_PORT_FIELDS = [("NETWORK", "server_port"), ("STEAM", "master_server_port"),
+                          ("STEAM", "authentication_port")]
+
+    def _find_port_conflict(self, cluster, shard, shard_config) -> str | None:
+        """检查 shard_config 里刚编辑好、还没写入文件的端口是否和集群内其它
+        分片已经保存的值撞车，撞了就返回一句说明文字，没撞返回 None。"""
+        for section, key in self._SHARD_PORT_FIELDS:
+            value = getattr(shard_config, section.lower()).get(key)
+            if value in (None, ""):
+                continue
+            for sibling in cluster.shards:
+                if sibling.path == shard.path:
+                    continue
+                sibling_value = getattr(load_shard_config(sibling.path), section.lower()).get(key)
+                if sibling_value not in (None, "") and str(sibling_value) == str(value):
+                    field_label, _ = get_field_info(section, key, is_shard=True) or (key, "")
+                    return t("cluster.port_conflict", field=field_label, value=value, shard=sibling.name)
+        return None
 
     def _save_shard_ini(self):
         """"保存" button on the "分片配置(server.ini)" tab -- a different
@@ -2370,12 +3042,20 @@ class ClusterConfigTab:
         for (section, key), (var, readonly) in self._entries.items():
             if section.startswith("SHARD_") and not readonly:
                 set_shard_option(shard_config, section.replace("SHARD_",""), key, var.get())
+
+        conflict = self._find_port_conflict(c, target, shard_config)
+        if conflict:
+            dlg.show_error(self.app.root, t("dlg.save_fail"), conflict)
+            return
+
         save_shard_config(shard_config, target.path)
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=f"{c.name}/{target.name}"))
-        self._load_config()
+        # 只重新加载这个分片自己的字段，不整页 _load_config()——后者会把
+        # 分片下拉框重置回默认的 Master，保存完不该跳走用户正在看的分片。
+        self._load_shard_config()
 
     def refresh_language(self):
-        self._cc_lbl.configure(text=t("selector.archive")); self._cc_bl.configure(text=t("cluster.load"))
+        self._cc_bl.configure(text=t("cluster.load"))
         # Each section's own "保存" button text (and the section-header
         # labels within the merged "Cluster" tab) get refreshed for free
         # by _load_config() at the bottom of this method (it rebuilds
@@ -2396,7 +3076,7 @@ class ClusterConfigTab:
         # active when this cluster was last loaded.
         self._load_config()
 
-    def refresh(self): pass
+    def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())
 
 
 def main():

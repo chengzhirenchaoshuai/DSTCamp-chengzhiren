@@ -189,7 +189,7 @@ def _worker_command() -> list:
 
     In a normal (non-frozen) run, this is just `python
     _lua_sandbox_worker.py`. In the PyInstaller --onefile build,
-    sys.executable *is* DSTools.exe -- there's no separate interpreter to
+    sys.executable *is* DSTCamp.exe -- there's no separate interpreter to
     point at a loose .py file, so instead the same exe is re-launched
     with a special flag that run_gui.py checks for at startup and
     dispatches straight to the worker's main() instead of opening the

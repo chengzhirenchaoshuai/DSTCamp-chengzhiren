@@ -3,7 +3,7 @@
 STRINGS = {
     "zh": {
         # Window
-        "app.title": "DST 存档工具 - 饥荒联机版管理器",
+        "app.title": "DSTCamp · 本地服务器管理",
         "app.ready": "就绪",
         "app.refresh": "刷新全部 (F5)",
         "app.exit": "退出 (Ctrl+Q)",
@@ -13,9 +13,17 @@ STRINGS = {
         "menu.language": "语言",
         "menu.lang_zh": "中文",
         "menu.lang_en": "English",
+        "menu.theme": "主题",
+
+        # Themes -- switching is restart-required, see gui/theme.py
+        "theme.mint": "薄荷绿（默认）",
+        "theme.twilight": "暮蓝",
+        "theme.campfire": "篝火橙",
+        "theme.restart_required": "主题已保存，重启 DSTCamp 后生效。",
 
         # Tabs
-        "tab.saves": "  存档  ",
+        "tab.local": "  本地服务器  ",
+        "tab.saves": "  存档信息  ",
         "tab.mods": "  Mod管理  ",
         "tab.server": "  服务器配置  ",
 
@@ -25,14 +33,28 @@ STRINGS = {
         "save.refresh": "刷新",
         "save.source_server": "服务器存档",
         "save.source_client": "本地存档",
-        "save.source": "来源",
         "save.session_id": "会话ID",
         "save.summary": "摘要",
         "save.slots": "槽位",
         "save.size": "总大小",
-        "save.details": "存档详情",
         "save.no_saves": "未找到存档",
         "save.no_client_saves": "未找到本地存档",
+        "save.basic_info": "基本信息",
+        "save.extra_sessions": "另外还有 {count} 个其他会话（这里只显示其中一个）",
+
+        # Per-player character status (in the selected session's detail area)
+        "save.players_section": "每个玩家角色状态",
+        "save.no_players": "该存档暂无玩家角色数据",
+        "save.player_id_label": "玩家标识",
+        "save.player_parse_error": "该玩家存档解析失败",
+        "save.player_note_label": "备注",
+        "save.player_open_path": "打开路径",
+        "save.stat_character": "角色",
+        "save.stat_health": "血量",
+        "save.stat_sanity": "理智",
+        "save.stat_hunger": "饥饿",
+        "save.stat_temperature": "体温",
+        "save.stat_age": "存活时长",
 
         # Mod tab
         "mod.cluster": "服务器:",
@@ -70,6 +92,7 @@ STRINGS = {
         "cluster.tab_shard": "服务器分片设置",
         "cluster.bool_on": "开启",
         "cluster.bool_off": "关闭",
+        "cluster.port_conflict": "「{field}」的值 {value} 和分片「{shard}」冲突，每个分片的这个端口都必须各不相同，请改成其它值再保存。",
 
         # Status bar
         "status.klei": "Klei",
@@ -89,7 +112,7 @@ STRINGS = {
         "env.save_sessions": "个存档会话",
         "env.game_mode": "游戏模式",
         "env.max_players": "最大玩家数",
-        "env.cluster_name": "集群名称",
+        "env.cluster_name": "存档名称",
         "env.not_found": "未找到",
         "env.env_info": "环境信息",
         "env.open_location": "打开位置",
@@ -157,7 +180,7 @@ STRINGS = {
         "save.local_clusters": "本地存档",
         "save.no_server": "未找到服务器存档",
         "save.no_local": "未找到本地存档",
-        "save.env_overview": "环境概览",
+        "save.env_overview": "存档概览",
 
         # Config editor
         "mod.add_config": "添加配置项",
@@ -171,7 +194,9 @@ STRINGS = {
         "selector.archive": "存档:",
 
         # World settings improved
-        "world.rules": "世界规则 (可修改)",
+        "world.rules": "世界规则",
+        "world.rules_editable_tag": "(可修改)",
+        "world.rules_readonly_tag": "(仅查看)",
         "world.generation": "世界生成 (仅查看)",
         "world.save_rules": "保存世界规则",
         "world.rule_count": "世界规则 ({count} 项)",
@@ -179,6 +204,7 @@ STRINGS = {
         "world.select_value": "选择值...",
         "world.no_preset": "未找到世界设置文件",
         "world.saved": "世界规则已保存",
+        "world.local_view_only_banner": "⚠ 当前选中的是本地存档，世界设置仅支持查看，不支持修改。",
 
         # Mod info
         "modinfo.name": "名称",
@@ -199,10 +225,51 @@ STRINGS = {
         "mod.unsupported_schema": "⚠ 该模组的配置定义格式比较特殊（例如依赖翻译表或游戏内部函数），本工具暂不支持解析，请在游戏内的 Mod 配置菜单中修改设置。开启/关闭该模组不受影响。",
         "mod.dynamic_banner": "⚠ 有 {count} 项设置由模组内部逻辑动态生成，已尝试自动解析但未成功，无法在此编辑，请在游戏内修改。",
         "mod.read_only_local": "该模组为本地模组（client_only），不需要在存档中配置，此处仅供查看，不可编辑。",
+        "mod.read_only_local_save": "当前选中的是本地存档：本地存档的 Mod 启用/配置状态实际由游戏客户端自己的账号级模组索引决定，直接修改这里的 modoverrides.lua 不保证生效，此处仅供查看，不可编辑。如需修改请在游戏内的 Mods 菜单操作。",
+        "mod.local_view_only_banner": "⚠ 当前选中的是本地存档，Mod 管理仅支持查看，不支持修改。",
+
+        # Local service tab (NEW)
+        "local.select_cluster_first": "请先选择一个服务器存档",
+        "local.select_server_hint": "当前选中的是本地存档，无需在这里管理服务器进程。请在上方切换到一个服务器存档。",
+        "local.no_shards": "该存档下未找到任何分片",
+        "local.install_status_label": "专用服务器工具:",
+        "local.install_not_found": "未检测到",
+        "local.install_change_btn": "更换路径",
+        "local.install_recheck_btn": "重新检测",
+        "local.shard_col_name": "世界",
+        "local.status_stopped": "未启动",
+        "local.status_starting": "启动中",
+        "local.status_running": "运行中",
+        "local.status_stopping": "正在停止",
+        "local.status_crashed": "已崩溃",
+        "local.start_btn": "启动",
+        "local.stop_btn": "停止",
+        "local.start_all_btn": "全部启动",
+        "local.stop_all_btn": "全部停止",
+        "local.console_placeholder": "输入控制台命令后回车发送...",
+        "local.console_send_btn": "发送",
+        "local.install_title": "未检测到专用服务器工具",
+        "local.install_body": "开服需要 Steam 上的免费工具「Don't Starve Together Dedicated Server」（App ID 343080），但没有检测到已安装。\n\n手动安装步骤：\n1. 打开 Steam 客户端\n2. 顶部菜单栏「库」\n3. 左侧库列表切换到「工具」分类（或者直接搜索工具名称）\n4. 找到「Don't Starve Together Dedicated Server」\n5. 右键点击（或双击后按提示）→ 安装\n\n安装完成后，回到本工具点击「重新检测」按钮，或者用「更换路径」手动选择安装目录。",
+        "local.install_invalid_dir": "所选目录下未找到专用服务器可执行文件，请确认选择的是「Don't Starve Together Dedicated Server」的安装目录。",
+        "local.confdir_cross_drive_error": "存档目录和系统「文档」目录不在同一个盘符，专用服务器工具无法跨盘符加载该存档。",
+        "local.confirm_close_title": "有服务器正在运行",
+        "local.confirm_close_msg": "还有 {count} 个服务器正在运行，是否一并关闭？",
+
+        # Mod sync (NEW)
+        "local.sync_mods_btn": "同步mod文件到服务器",
+        "local.sync_running_btn": "同步中...",
+        "local.sync_no_mods": "该存档没有启用的 Mod，无需同步。",
+        "local.sync_confirm_msg": "确认开始同步 {name} 的 Mod 吗？\n\n确保进入过一次游戏，并保证所有的 Mod 已在本地下载成功哦~",
+        "local.sync_result_title": "Mod 同步日志",
+        "local.sync_summary_online": "在线下载列表已写入 {count} 个 Mod：",
+        "local.sync_summary_copied": "本地复制成功 {count} 个：",
+        "local.sync_summary_not_local": "{count} 个本地未找到内容，仅走在线下载（如果启动服务器后仍未生效，请在客户端里进入一次游戏确保这些 Mod 已下载）：",
+        "local.sync_summary_client_only": "{count} 个是纯客户端 Mod，已跳过本地复制：",
+        "local.sync_summary_errors": "{count} 个同步出错：",
     },
     "en": {
         # Window
-        "app.title": "DST Tools - Don't Starve Together Manager",
+        "app.title": "DSTCamp · Local Server Manager",
         "app.ready": "Ready",
         "app.refresh": "Refresh All (F5)",
         "app.exit": "Exit (Ctrl+Q)",
@@ -212,9 +279,17 @@ STRINGS = {
         "menu.language": "Language",
         "menu.lang_zh": "中文",
         "menu.lang_en": "English",
+        "menu.theme": "Theme",
+
+        # Themes -- switching is restart-required, see gui/theme.py
+        "theme.mint": "Mint (default)",
+        "theme.twilight": "Twilight",
+        "theme.campfire": "Campfire",
+        "theme.restart_required": "Theme saved -- restart DSTCamp for it to take effect.",
 
         # Tabs
-        "tab.saves": "  Saves  ",
+        "tab.local": "  Local Server  ",
+        "tab.saves": "  Save Info  ",
         "tab.mods": "  Mods  ",
         "tab.server": "  Server Config  ",
 
@@ -224,14 +299,28 @@ STRINGS = {
         "save.refresh": "Refresh",
         "save.source_server": "Server Saves",
         "save.source_client": "Client Saves",
-        "save.source": "Source",
         "save.session_id": "Session ID",
         "save.summary": "Summary",
         "save.slots": "Slots",
         "save.size": "Total Size",
-        "save.details": "Session Details",
         "save.no_saves": "No save sessions found",
         "save.no_client_saves": "No client saves found",
+        "save.basic_info": "Basic Info",
+        "save.extra_sessions": "{count} other session(s) also exist (only one shown here)",
+
+        # Per-player character status (in the selected session's detail area)
+        "save.players_section": "Player Character Status",
+        "save.no_players": "No player data found for this session",
+        "save.player_id_label": "Player ID",
+        "save.player_parse_error": "Failed to parse this player's save data",
+        "save.player_note_label": "Note",
+        "save.player_open_path": "Open Path",
+        "save.stat_character": "Character",
+        "save.stat_health": "Health",
+        "save.stat_sanity": "Sanity",
+        "save.stat_hunger": "Hunger",
+        "save.stat_temperature": "Temperature",
+        "save.stat_age": "Playtime",
 
         # Mod tab
         "mod.cluster": "Cluster:",
@@ -269,6 +358,7 @@ STRINGS = {
         "cluster.tab_shard": "Server Shard Settings",
         "cluster.bool_on": "On",
         "cluster.bool_off": "Off",
+        "cluster.port_conflict": "“{field}” value {value} conflicts with shard “{shard}” -- this port must be unique per shard. Change it and save again.",
 
         # Status bar
         "status.klei": "Klei",
@@ -288,7 +378,7 @@ STRINGS = {
         "env.save_sessions": "save sessions",
         "env.game_mode": "Game Mode",
         "env.max_players": "Max Players",
-        "env.cluster_name": "Cluster Name",
+        "env.cluster_name": "Save Name",
         "env.not_found": "Not found",
         "env.env_info": "Environment",
         "env.open_location": "Open Location",
@@ -356,7 +446,7 @@ STRINGS = {
         "save.local_clusters": "Local Saves",
         "save.no_server": "No server saves found",
         "save.no_local": "No local saves found",
-        "save.env_overview": "Environment Overview",
+        "save.env_overview": "Save Overview",
 
         # Config editor
         "mod.add_config": "Add Config",
@@ -370,7 +460,9 @@ STRINGS = {
         "selector.archive": "Archive:",
 
         # World settings improved
-        "world.rules": "World Rules (Editable)",
+        "world.rules": "World Rules",
+        "world.rules_editable_tag": "(Editable)",
+        "world.rules_readonly_tag": "(View Only)",
         "world.generation": "World Generation (View Only)",
         "world.save_rules": "Save World Rules",
         "world.rule_count": "World Rules ({count} items)",
@@ -378,6 +470,7 @@ STRINGS = {
         "world.select_value": "Select value...",
         "world.no_preset": "No world settings file found",
         "world.saved": "World rules saved",
+        "world.local_view_only_banner": "⚠ The selected save is a local one -- World Settings is view-only here, editing isn't supported.",
 
         # Mod info
         "modinfo.name": "Name",
@@ -398,5 +491,46 @@ STRINGS = {
         "mod.unsupported_schema": "⚠ This mod defines its configuration in an unusual format (e.g. relying on translation tables or in-game engine functions) that this tool can't parse yet -- please change its settings from the in-game Mod Configuration menu instead. Enabling/disabling this mod is not affected.",
         "mod.dynamic_banner": "⚠ {count} setting(s) are computed by the mod's own logic; automatic resolution was attempted but didn't succeed, so they can't be edited here -- please change them in-game.",
         "mod.read_only_local": "This is a local (client_only) mod -- it doesn't need a save-file entry to work. Shown here for reference only, not editable.",
+        "mod.read_only_local_save": "The selected save is a local one: which mods are actually enabled is determined by the game client's own account-level mod index, so editing modoverrides.lua here isn't guaranteed to take effect. Shown here for reference only -- to change this, use the in-game Mods menu.",
+        "mod.local_view_only_banner": "⚠ The selected save is a local one -- Mod management is view-only here, editing isn't supported.",
+
+        # Local service tab (NEW)
+        "local.select_cluster_first": "Select a server save first",
+        "local.select_server_hint": "The selected save is a local one -- there's no server process to manage here. Switch to a server save above.",
+        "local.no_shards": "No shards found for this save",
+        "local.install_status_label": "Dedicated Server Tool:",
+        "local.install_not_found": "Not found",
+        "local.install_change_btn": "Change Path",
+        "local.install_recheck_btn": "Re-detect",
+        "local.shard_col_name": "World",
+        "local.status_stopped": "Stopped",
+        "local.status_starting": "Starting",
+        "local.status_running": "Running",
+        "local.status_stopping": "Stopping",
+        "local.status_crashed": "Crashed",
+        "local.start_btn": "Start",
+        "local.stop_btn": "Stop",
+        "local.start_all_btn": "Start All",
+        "local.stop_all_btn": "Stop All",
+        "local.console_placeholder": "Type a console command and press Enter...",
+        "local.console_send_btn": "Send",
+        "local.install_title": "Dedicated Server Tool Not Found",
+        "local.install_body": "Hosting a server needs the free Steam tool “Don't Starve Together Dedicated Server” (App ID 343080), but it wasn't detected.\n\nManual install steps:\n1. Open the Steam client\n2. Top menu bar → “Library”\n3. Switch the library filter to the “Tools” category (or just search for the tool name)\n4. Find “Don't Starve Together Dedicated Server”\n5. Right-click (or double-click and follow the prompt) → Install\n\nOnce installed, come back and click “Re-detect”, or use “Change Path” to pick the install folder manually.",
+        "local.install_invalid_dir": "No dedicated server executable found in that folder -- make sure you selected the “Don't Starve Together Dedicated Server” install directory.",
+        "local.confdir_cross_drive_error": "The save directory and the system “Documents” directory are on different drives -- the dedicated server tool can't load this save across drives.",
+        "local.confirm_close_title": "Servers Still Running",
+        "local.confirm_close_msg": "{count} server(s) are still running. Close them too?",
+
+        # Mod sync (NEW)
+        "local.sync_mods_btn": "Sync Mod Files to Server",
+        "local.sync_running_btn": "Syncing...",
+        "local.sync_no_mods": "This save has no enabled mods -- nothing to sync.",
+        "local.sync_confirm_msg": "Start syncing mods for {name}?\n\nMake sure you've launched the game at least once and that all mods have finished downloading locally~",
+        "local.sync_result_title": "Mod Sync Log",
+        "local.sync_summary_online": "Wrote {count} mod(s) to the online download list:",
+        "local.sync_summary_copied": "Copied {count} mod(s) locally:",
+        "local.sync_summary_not_local": "{count} mod(s) not found locally, relying on online download only (if they still don't work after starting the server, launch the game client once to make sure these mods are downloaded):",
+        "local.sync_summary_client_only": "{count} client-only mod(s) skipped for local copy:",
+        "local.sync_summary_errors": "{count} error(s) during sync:",
     }
 }

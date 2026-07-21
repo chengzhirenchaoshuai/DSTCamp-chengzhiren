@@ -254,6 +254,19 @@ def find_workshop_dir() -> Path | None:
     return None
 
 
+def find_workshop_acf_path() -> Path | None:
+    """本地 Steam 客户端下载 Workshop mod 后生成的校验/清单文件
+    appworkshop_322330.acf，位于 workshop 内容目录 (content/322330) 的上
+    一级。专用服务器就算复制了 mod 的实际文件，没有这个校验文件也不会
+    真正生效——这一点 Klei 官方文档没有写，是社区/用户自己验证出来的
+    经验，同步 mod 到服务器时要把它一起复制过去。"""
+    steam = find_steam_root()
+    if not steam:
+        return None
+    acf = steam / "steamapps" / "workshop" / f"appworkshop_{DST_APP_ID}.acf"
+    return acf if acf.exists() else None
+
+
 def find_game_mods_dir() -> Path | None:
     """Find the DST game mods directory (manually installed mods)."""
     steam = find_steam_root()

@@ -9,40 +9,15 @@ the source .tex's mtime), so repeated GUI refreshes don't re-invoke
 ktech.exe every time.
 """
 
-import re
 from pathlib import Path
 
 from PIL import Image
 
+from dstools.core.atlas_utils import crop_by_uv, parse_atlas_xml
 from dstools.core.modinfo_reader import ModInfo
 from dstools.core.tex_convert import tex_to_png
 
 _CACHE_DIR = Path(__file__).parent.parent.parent / "icons" / "mod_cache"
-
-# Third-party mods' atlas XML don't reliably keep attributes in a fixed
-# order (unlike the game's own atlases) -- e.g. some list "v2" before
-# "u1". Match each <Element .../> tag as a whole, then pull attributes
-# out by name independently instead of assuming an order.
-_TAG_RE = re.compile(r"<Element\b[^>]*/>")
-_ATTR_RE = re.compile(r'(\w+)="([^"]*)"')
-
-
-def _parse_atlas(xml_path: Path):
-    text = xml_path.read_text(encoding="utf-8", errors="replace")
-    items = []
-    for tag in _TAG_RE.finditer(text):
-        attrs = dict(_ATTR_RE.findall(tag.group(0)))
-        if "name" not in attrs:
-            continue
-        try:
-            items.append((
-                attrs["name"],
-                float(attrs["u1"]), float(attrs["u2"]),
-                float(attrs["v1"]), float(attrs["v2"]),
-            ))
-        except (KeyError, ValueError):
-            continue
-    return items
 
 
 def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path) -> Path | None:
@@ -71,22 +46,14 @@ def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path) -> Path | None:
         return None
 
     try:
-        elements = _parse_atlas(xml_path)
+        elements = parse_atlas_xml(xml_path.read_text(encoding="utf-8", errors="replace"))
         target = next((e for e in elements if e[0] == mod_info.icon),
                        elements[0] if elements else None)
         if not target:
             return None
 
         with Image.open(atlas_png) as img:
-            img = img.convert("RGBA")
-            w, h = img.size
-            _, u1, u2, v1, v2 = target
-            left, right = round(u1 * w), round(u2 * w)
-            # Klei atlas v-coordinates use a bottom-left origin, so they
-            # must be flipped to map into PIL's top-left-origin image.
-            top, bottom = round((1 - v2) * h), round((1 - v1) * h)
-            crop = img.crop((left, top, right, bottom))
-            crop.save(cache_path)
+            crop_by_uv(img.convert("RGBA"), target[1:]).save(cache_path)
     except Exception:
         return None
     finally:

@@ -42,9 +42,15 @@ else:
         pass
 
 
-def _show(parent, title, message, kind, buttons):
+def _show(parent, title, message, kind, buttons, wraplength=320, min_width=360):
     """buttons: list of (label, value, is_default). Returns the chosen
     value, or None if the dialog was closed without picking one.
+
+    wraplength/min_width let a caller with a longer message (e.g. the
+    dedicated-server install guide) ask for a wider card instead of
+    wrapping into a tall, narrow column -- default values match every
+    existing short 1-3 line show_info/show_warning/show_error call so
+    nothing else changes shape.
 
     Deliberately does NOT reuse CardFrame here: CardFrame's rounded-rect
     body is positioned with `.place(relwidth=1, ...)`, which needs its
@@ -71,7 +77,7 @@ def _show(parent, title, message, kind, buttons):
     tk.Label(row, text=icon_char, font=("", 22, "bold"), fg=icon_color,
              bg=theme.CARD_BG).pack(side=tk.LEFT, padx=(0, 14), anchor="n")
     tk.Label(row, text=message, font=("", 11), fg=theme.TEXT, bg=theme.CARD_BG,
-             justify=tk.LEFT, wraplength=320).pack(side=tk.LEFT, fill=tk.X, expand=True)
+             justify=tk.LEFT, wraplength=wraplength).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     btn_row = tk.Frame(card, background=theme.CARD_BG)
     btn_row.pack(fill=tk.X, pady=(18, 20), padx=20)
@@ -93,12 +99,12 @@ def _show(parent, title, message, kind, buttons):
     win.bind("<Escape>", lambda e: choose(None))
 
     win.update_idletasks()
-    w = max(360, win.winfo_reqwidth())
+    w = max(min_width, win.winfo_reqwidth())
     h = win.winfo_reqheight()
     px, py = parent.winfo_rootx(), parent.winfo_rooty()
     pw, ph = parent.winfo_width(), parent.winfo_height()
     x = px + max(0, (pw - w) // 2)
-    y = py + max(0, (ph - h) // 3)
+    y = py + max(0, (ph - h) // 2)
     win.geometry(f"{w}x{h}+{x}+{y}")
     win.deiconify()
     _play_beep(kind)
@@ -113,8 +119,9 @@ def show_info(parent, title, message):
     _show(parent, title, message, "info", [(t("dlg.confirm_btn"), True, True)])
 
 
-def show_warning(parent, title, message):
-    _show(parent, title, message, "warning", [(t("dlg.confirm_btn"), True, True)])
+def show_warning(parent, title, message, wraplength=320, min_width=360):
+    _show(parent, title, message, "warning", [(t("dlg.confirm_btn"), True, True)],
+          wraplength=wraplength, min_width=min_width)
 
 
 def show_error(parent, title, message):

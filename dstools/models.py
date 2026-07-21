@@ -39,6 +39,39 @@ class SaveSlot:
 
 
 @dataclass
+class PlayerCharacterSave:
+    """一个玩家在某个存档会话里的角色状态 (从其子文件夹最新槽位解析).
+
+    session/<session_id>/ 下面除了世界自己的数字存档槽，还有一批以玩家
+    ID 命名的子文件夹，每个对应一个在这个世界里玩过的玩家。这个 ID 是
+    cluster.ini [ACCOUNT] encode_user_path 设置对真实 Klei 账号 ID 做混淆
+    编码后的结果 (默认开启)，不是 Klei 账号 ID 本身，也没有验证过的解码
+    算法能还原回去——界面上只能原样展示，不能当成真实账号 ID 使用。
+    """
+
+    player_id: str
+    character: str = ""
+    slot_number: int | None = None
+    save_file: Path | None = None
+    meta_file: Path | None = None
+    size: int = 0
+    x: float | None = None
+    z: float | None = None
+    health: float | None = None
+    sanity: float | None = None
+    sanity_sane: bool | None = None
+    hunger: float | None = None
+    temperature: float | None = None
+    moisture: float | None = None
+    age: float | None = None
+    skin_name: str = ""
+    clothing: dict = field(default_factory=dict)
+    recipes_count: int | None = None
+    raw: dict = field(default_factory=dict)
+    parse_error: str = ""
+
+
+@dataclass
 class SaveSession:
     """一个存档会话."""
 
@@ -49,6 +82,7 @@ class SaveSession:
     source: SaveSource = SaveSource.SERVER
     cluster_name: str = ""
     shard_name: str = ""
+    players: list[PlayerCharacterSave] = field(default_factory=list)
 
 
 @dataclass
