@@ -179,21 +179,3 @@ def write_server_ini(config: ShardConfig, path: Path) -> None:
             for key, value in section_data.items():
                 val_str = str(value).lower() if isinstance(value, bool) else str(value)
                 _write_ini_value(f, key, val_str)
-
-
-# ── Client INI ─────────────────────────────────────────────────────────
-
-def parse_client_ini(path: Path) -> dict:
-    """Parse a client.ini file into a flat dict of sections.
-
-    Args:
-        path: Path to the client.ini file.
-
-    Returns:
-        Dict mapping section names to dicts of key-value pairs.
-    """
-    parser = _read_ini(path)
-    result = {}
-    for section in parser.sections():
-        result[section] = _coerce_dict_values(dict(parser.items(section)))
-    return result

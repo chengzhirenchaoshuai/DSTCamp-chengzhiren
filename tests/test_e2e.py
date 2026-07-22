@@ -3,9 +3,10 @@
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.core.lua_parser import (
     LuaTableParser,
@@ -38,12 +39,19 @@ from dstools.core.save_reader import list_save_sessions, get_save_summary, list_
 from dstools.core.config_manager import load_cluster_config, set_cluster_option, save_cluster_config
 from dstools.core.character_names import get_character_display_name
 from dstools.core.character_icons import find_mod_character_name, resolve_character
-from dstools.core.app_settings import load_settings, save_settings, get_player_note, set_player_note
+from dstools.core.app_settings import (
+    load_settings, save_settings, get_player_note, set_player_note,
+    get_minimize_on_close, set_minimize_on_close,
+    get_cache_use_exe_dir, set_cache_use_exe_dir,
+)
 from dstools.models import SaveSession
 from dstools.core.modinfo_reader import parse_modinfo
 from dstools.core.admin_manager import read_adminlist, write_adminlist, add_admin, remove_admin, has_admin
 from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
 from dstools.core.backup_utils import backup_file, _prune_old_backups
+from dstools.core.cluster_copy import (
+    validate_cluster_folder_name, suggest_new_cluster_name, copy_local_cluster_to_server,
+)
 
 
 def test_lua_parser_basic():
@@ -576,10 +584,59 @@ def test_backup_utils():
         print("  PASS: _prune_old_backups keeps only the newest max_backups copies")
 
 
+def test_cluster_copy():
+    """Test the "复制为服务器存档" logic (cluster_copy.py): name
+    validation, default-name suggestion, and the actual folder copy."""
+    print("\n" + "=" * 60)
+    print("Test 18: Cluster Copy (local save -> server save)")
+
+    assert validate_cluster_folder_name("MyServer") is None
+    assert validate_cluster_folder_name("Cluster_5") is None
+    assert validate_cluster_folder_name("") == "empty"
+    assert validate_cluster_folder_name("   ") == "empty"
+    assert validate_cluster_folder_name("bad/name") == "invalid_chars"
+    assert validate_cluster_folder_name("..") == "reserved"
+    print("  PASS: validate_cluster_folder_name accepts arbitrary legal names, "
+          "rejects empty/illegal-char/reserved names (no Cluster_<N> format required)")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        klei_root = Path(tmp) / "klei_root"
+        klei_root.mkdir()
+        (klei_root / "Cluster_1").mkdir()  # 已占用
+
+        assert suggest_new_cluster_name(klei_root, "Cluster_1") == "Cluster_2"
+        assert suggest_new_cluster_name(klei_root, "MyLocalSave") == "MyLocalSave"
+        print("  PASS: suggest_new_cluster_name falls back to Cluster_N only when the "
+          "preferred (source) name is already taken")
+
+        # 造一个假的本地 cluster 文件夹（cluster.ini + 一个假分片子目录），
+        # 复制到 klei_root 下一个新名字。
+        local_cluster = Path(tmp) / "local_user" / "Cluster_1"
+        (local_cluster / "Master").mkdir(parents=True)
+        (local_cluster / "cluster.ini").write_text("[GAMEPLAY]\nmax_players=6\n", encoding="utf-8")
+        (local_cluster / "Master" / "server.ini").write_text("[NETWORK]\n", encoding="utf-8")
+
+        logs = []
+        dest = copy_local_cluster_to_server(local_cluster, klei_root, "Cluster_2", on_log=logs.append)
+        assert dest == klei_root / "Cluster_2"
+        assert (dest / "cluster.ini").read_text(encoding="utf-8") == (local_cluster / "cluster.ini").read_text(encoding="utf-8")
+        assert (dest / "Master" / "server.ini").exists()
+        assert local_cluster.exists() and (local_cluster / "cluster.ini").exists(), "源文件夹必须保持不变"
+        assert len(logs) > 0
+        print("  PASS: copy_local_cluster_to_server copies the whole folder (files + shard "
+              "subfolders) and leaves the source untouched")
+
+        try:
+            copy_local_cluster_to_server(local_cluster, klei_root, "Cluster_2")
+            assert False, "Copying onto an already-existing destination must raise"
+        except FileExistsError:
+            print("  PASS: copying onto an existing destination raises instead of overwriting")
+
+
 def test_player_notes():
     """Test per-player note storage (app_settings.py)."""
     print("\n" + "=" * 60)
-    print("Test 18: Player Notes")
+    print("Test 19: Player Notes")
 
     # 这几个函数读写的是用户真实的 %APPDATA%/DSTCamp/settings.json，
     # 测试前后必须把它还原成原样，不能在用户机器上留下测试痕迹。
@@ -600,6 +657,145 @@ def test_player_notes():
         save_settings(before)
         assert load_settings() == before, "Real settings.json must be restored after this test"
         print("  PASS: Real settings.json restored to its pre-test state")
+
+
+def test_app_settings_toggles():
+    """Test the minimize-on-close / cache-use-exe-dir persisted toggles
+    (app_settings.py) added for the tray + settings-dialog feature."""
+    print("\n" + "=" * 60)
+    print("Test 20: App Settings Toggles")
+
+    before = load_settings()
+    try:
+        # 测"没设置过时的默认值"要先把这两个 key 从真实设置里摘掉，不能直接
+        # 假设当前机器上的持久化值就是默认值——这台机器上 minimize_on_close
+        # 之前测试托盘功能时被手动置过 False，一直没改回来，直接断言"现在
+        # 读到的就是默认值"并不可靠。
+        cleared = dict(before)
+        cleared.pop("minimize_on_close", None)
+        cleared.pop("cache_use_exe_dir", None)
+        save_settings(cleared)
+
+        assert get_minimize_on_close() is True, "Default should be enabled"
+        print("  PASS: minimize_on_close defaults to True when unset")
+
+        set_minimize_on_close(False)
+        assert get_minimize_on_close() is False
+        set_minimize_on_close(True)
+        assert get_minimize_on_close() is True
+        print("  PASS: minimize_on_close round-trips")
+
+        assert get_cache_use_exe_dir() is False, "Default should be disabled"
+        print("  PASS: cache_use_exe_dir defaults to False when unset")
+
+        set_cache_use_exe_dir(True)
+        assert get_cache_use_exe_dir() is True
+        set_cache_use_exe_dir(False)
+        assert get_cache_use_exe_dir() is False
+        print("  PASS: cache_use_exe_dir round-trips")
+    finally:
+        save_settings(before)
+        assert load_settings() == before, "Real settings.json must be restored after this test"
+        print("  PASS: Real settings.json restored to its pre-test state")
+
+
+def test_mod_sync_incremental_copy():
+    """Test mod_sync.py's _skip_if_unchanged_copy2 -- the fix for "同步mod
+    文件到服务器每次都很慢" (it used to unconditionally re-copy every file
+    via shutil.copytree)."""
+    print("\n" + "=" * 60)
+    print("Test 21: Mod Sync Incremental Copy")
+
+    from dstools.core.mod_sync import _skip_if_unchanged_copy2
+
+    with tempfile.TemporaryDirectory() as tmp:
+        src = os.path.join(tmp, "src.txt")
+        dst = os.path.join(tmp, "dst.txt")
+
+        with open(src, "w") as f:
+            f.write("hello")
+        _skip_if_unchanged_copy2(src, dst)
+        assert open(dst).read() == "hello"
+        print("  PASS: first copy always happens (destination didn't exist)")
+
+        # 目标 mtime 设成比源更新，但内容（大小）不同——size 校验应该
+        # 阻止误判为"没变化"而跳过。
+        future = time.time() + 100
+        os.utime(dst, (future, future))
+        with open(src, "w") as f:
+            f.write("changed, longer content")
+        _skip_if_unchanged_copy2(src, dst)
+        assert open(dst).read() == "changed, longer content", \
+            "Size mismatch must force a real copy even if dst mtime is newer"
+        print("  PASS: size mismatch forces a real copy (mtime alone isn't trusted)")
+
+        # 现在源和目标完全一致——上一步的真实复制（shutil.copy2）已经把
+        # dst 的 mtime 同步成源当时的 mtime 了，大小也相同。再调一次应该
+        # 直接跳过、不做任何真实复制；用 dst 的 mtime 有没有变化来验证
+        # "跳过"确实发生了（真复制一定会刷新 mtime，哪怕内容一样）。
+        dst_mtime_before = os.stat(dst).st_mtime
+        _skip_if_unchanged_copy2(src, dst)
+        assert os.stat(dst).st_mtime == dst_mtime_before, \
+            "Unchanged file (same mtime + size) should be skipped, not re-copied"
+        print("  PASS: unchanged file (same mtime + size) is skipped")
+
+
+def test_theme_set_theme():
+    """Test theme.py's set_theme() -- the live theme-switch mechanism.
+    Pure logic (module-level color variable reassignment), no real Tk
+    window needed."""
+    print("\n" + "=" * 60)
+    print("Test 22: Theme Live Switch")
+
+    from dstools.gui import theme
+
+    original_primary = theme.PRIMARY
+    try:
+        theme.set_theme("campfire")
+        assert theme.PRIMARY == "#E8A33D"
+        assert theme.BG_SOFT == "#FBF2E3"
+        print("  PASS: set_theme() reassigns theme.py's module-level color constants")
+
+        theme.set_theme("mint")
+        assert theme.PRIMARY == "#6FCF97"
+        print("  PASS: switching back restores the other theme's colors")
+    finally:
+        theme.set_theme("mint" if original_primary == "#6FCF97" else "campfire")
+        theme.PRIMARY = original_primary  # 双保险，确保测试不影响后续状态
+
+
+def test_world_categories_bilingual():
+    """Test world_categories.py's get_setting_info()/get_categories()
+    returning zh/en names based on the current i18n language -- the fix for
+    "世界设置切英文不生效"."""
+    print("\n" + "=" * 60)
+    print("Test 23: World Categories Bilingual")
+
+    from dstools.core.world_categories import get_setting_info, get_categories
+    from dstools.i18n import get_lang, set_lang
+
+    original_lang = get_lang()
+    try:
+        set_lang("zh")
+        cat, is_rule, name = get_setting_info("day", "forest")
+        assert (cat, is_rule, name) == ("global", True, "昼夜选项")
+        categories = dict(get_categories("forest", "rules"))
+        assert categories["global"] == "全局"
+        print("  PASS: zh returns Chinese names")
+
+        set_lang("en")
+        cat, is_rule, name = get_setting_info("day", "forest")
+        assert (cat, is_rule, name) == ("global", True, "Day/Night Cycle")
+        categories = dict(get_categories("forest", "rules"))
+        assert categories["global"] == "General"
+        print("  PASS: en returns English names")
+
+        # 未知 key 兜底：分类 "other"，名字原样回退成 key 本身。
+        cat, is_rule, name = get_setting_info("totally_unknown_key_xyz", "forest")
+        assert (cat, is_rule, name) == ("other", False, "totally_unknown_key_xyz")
+        print("  PASS: unknown key falls back to (\"other\", False, key)")
+    finally:
+        set_lang(original_lang)
 
 
 def main():
@@ -627,7 +823,12 @@ def main():
         test_admin_manager,
         test_token_manager,
         test_backup_utils,
+        test_cluster_copy,
         test_player_notes,
+        test_app_settings_toggles,
+        test_mod_sync_incremental_copy,
+        test_theme_set_theme,
+        test_world_categories_bilingual,
     ]
 
     for test in tests:

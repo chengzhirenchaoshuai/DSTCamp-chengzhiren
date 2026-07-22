@@ -64,17 +64,6 @@ def save_mod_overrides(mod_overrides: ModOverrides) -> None:
     mod_overrides.path.write_text(lua_text, encoding="utf-8")
 
 
-def save_mod_overrides_to(mod_overrides: ModOverrides, path: Path) -> None:
-    """Save mod overrides to a specific path.
-
-    Args:
-        mod_overrides: The ModOverrides to save.
-        path: Destination file path.
-    """
-    mod_overrides.path = path
-    save_mod_overrides(mod_overrides)
-
-
 def enable_mod(mod_overrides: ModOverrides, workshop_id: str) -> None:
     """Enable a mod. Adds it if not present.
 
@@ -107,24 +96,6 @@ def disable_mod(mod_overrides: ModOverrides, workshop_id: str) -> None:
             enabled=False,
             configuration_options={},
         )
-
-
-def toggle_mod(mod_overrides: ModOverrides, workshop_id: str) -> bool:
-    """Toggle a mod's enabled state. Adds it as enabled if not present.
-
-    Returns:
-        The new enabled state.
-    """
-    if workshop_id in mod_overrides.mods:
-        new_state = not mod_overrides.mods[workshop_id].enabled
-        mod_overrides.mods[workshop_id].enabled = new_state
-        return new_state
-    else:
-        mod_overrides.mods[workshop_id] = ModEntry(
-            workshop_id=workshop_id,
-            enabled=True,
-        )
-        return True
 
 
 def set_mod_config(mod_overrides: ModOverrides, workshop_id: str,
@@ -177,23 +148,6 @@ def get_mod_config(mod_overrides: ModOverrides, workshop_id: str, key: str) -> A
     if entry is None:
         return None
     return entry.configuration_options.get(key)
-
-
-def add_mod(mod_overrides: ModOverrides, workshop_id: str,
-            config: dict | None = None, enabled: bool = True) -> None:
-    """Add a new mod to the overrides.
-
-    Args:
-        mod_overrides: The ModOverrides to modify.
-        workshop_id: Workshop mod ID.
-        config: Optional initial configuration options.
-        enabled: Whether the mod should be enabled.
-    """
-    mod_overrides.mods[workshop_id] = ModEntry(
-        workshop_id=workshop_id,
-        enabled=enabled,
-        configuration_options=config or {},
-    )
 
 
 def remove_mod(mod_overrides: ModOverrides, workshop_id: str) -> bool:

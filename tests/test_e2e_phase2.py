@@ -2,7 +2,7 @@
 
 import os
 import sys
-sys.path.insert(0, os.path.dirname(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.i18n import t, set_lang, get_lang, get_i18n
 from dstools.models import SaveSource, SaveSession, DSTEnvironment
@@ -140,15 +140,22 @@ def test_exe_entry_imports():
     print("\n" + "=" * 60)
     print("Test P2-6: EXE Entry Point Imports")
 
+    # run_gui.py/build_exe.py live in scripts/, not on sys.path by default
+    # (only the project root is, so `import dstools` resolves) -- add it
+    # just for this test rather than polluting sys.path for the whole file.
+    scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+
     # Test run_gui.py imports
     import run_gui
     assert run_gui is not None
-    print("  PASS: run_gui.py imports successfully")
+    print("  PASS: scripts/run_gui.py imports successfully")
 
     # Test build_exe.py can be imported
     import build_exe
     assert build_exe is not None
-    print("  PASS: build_exe.py imports successfully")
+    print("  PASS: scripts/build_exe.py imports successfully")
 
 
 def test_gui_imports():

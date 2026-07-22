@@ -1,8 +1,16 @@
-"""Quick test of Lua parser with real DST data."""
+"""本机真实环境诊断脚本——不是自动化测试（没有 assert，纯打印），需要这台
+机器真的装了 DST 并且有实际存档数据（find_klei_root() 会扫描真实路径）。
+换一台没装 DST 的机器上跑，各步骤会因为 klei_root 是 None 而静默跳过、什么
+都不打印，"通过"字样并不代表验证了什么，只用于开发时人工核对输出是否合理。
+
+Usage (run from the project root): python scripts/diagnose_local_env.py
+"""
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(__file__))
+# 项目根目录（这个脚本在 scripts/ 下，比根目录多一层）加入 sys.path，
+# 才能 import dstools。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.core.lua_parser import parse_lua_file, serialize_lua_table, LuaTableParser
 from dstools.core.discovery import find_klei_root, discover_environment
@@ -96,4 +104,4 @@ for cluster in env.clusters:
                         icon_state = str(icon_path) if icon_path else "(no icon)"
                         print(f"          resolve_character -> {resolved_name} | {icon_state}")
 
-print("\n=== All tests passed! ===")
+print("\n=== 诊断输出结束（以上没有任何自动校验，需要人工核对内容是否合理）===")

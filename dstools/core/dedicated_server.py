@@ -269,7 +269,7 @@ class ServerProcess:
 class ServerManager:
     """管理这个 DSTCamp 进程自己启动的服务器子进程集合。key 用
     (cluster.path 字符串, shard 名字) 而不是 cluster 名字本身——两个不同目录
-    的 Cluster 可能重名（同一个坑 app.py 的 _cluster_from_label 也提过）。
+    的 Cluster 可能重名。
 
     stop()/stop_all() 的回调都在后台线程里触发，如果回调要碰 Tk 控件，
     调用方自己要用 .after(0, ...) 转回主线程。

@@ -4,52 +4,13 @@ PNG icons are loaded from dstools/icons/world/ at runtime.
 """
 
 from pathlib import Path
-from tkinter import PhotoImage
 from typing import Optional
+
+from dstools.core.resource_paths import bundled_resource_dir
 
 # ── Icon directory ─────────────────────────────────────────────────────
 
-_ICON_DIR = Path(__file__).parent.parent.parent / "icons" / "world"
-
-# Cache for loaded PhotoImage objects (must keep references for tkinter)
-_photo_cache: dict[str, PhotoImage] = {}
-_ICON_SIZE = (22, 22)  # Display size for icons
-
-
-def _load_photo(path: Path, master=None, target_size: int = 48) -> Optional[PhotoImage]:
-    """Load a PNG as a PhotoImage with responsive fractional scaling.
-
-    Uses zoom+subsample for smooth fractional scaling, e.g.:
-      64px source -> 48px target: zoom(3).subsample(4) = 64*3/4 = 48
-    """
-    cache_key = f"{path}:{target_size}"
-    if cache_key in _photo_cache:
-        return _photo_cache[cache_key]
-    try:
-        import math, tkinter as tk
-        parent = master or tk._default_root
-        img = tk.PhotoImage(master=parent, file=str(path))
-        w, h = img.width(), img.height()
-        size = max(w, h)
-        if size != target_size and size > 0:
-            # Find zoom/subsample ratio: size * zoom / subsample ≈ target_size
-            ratio = target_size / size
-            # Approximate with small integers (limit to reasonable range)
-            best_z, best_s = 1, 1
-            best_err = abs(ratio - 1)
-            for s in range(1, 9):
-                z = round(ratio * s)
-                if 1 <= z <= 12:
-                    err = abs(z/s - ratio)
-                    if err < best_err:
-                        best_err = err
-                        best_z, best_s = z, s
-            if best_z != best_s:
-                img = img.zoom(best_z).subsample(best_s)
-        _photo_cache[cache_key] = img
-        return img
-    except Exception:
-        return None
+_ICON_DIR = bundled_resource_dir() / "icons" / "world"
 
 
 def get_icon_path(key: str, location: str = "forest") -> Optional[Path]:
@@ -77,12 +38,6 @@ def get_icon_path(key: str, location: str = "forest") -> Optional[Path]:
 
 
 
-def get_icon_dir() -> Path:
-    """Get the icon directory path (create if needed)."""
-    _ICON_DIR.mkdir(parents=True, exist_ok=True)
-    return _ICON_DIR
-
-
 # ── PIL-based icon loading (for raster-composited panels) ─────────────
 
 _pil_cache: dict[tuple[str, int], object] = {}
@@ -105,14 +60,6 @@ def get_pil_icon(key: str, size: int = 48, location: str = "forest"):
         return img
     except Exception:
         return None
-
-
-def get_photo_image(key: str, master=None, target_size: int = 48, location: str = "forest") -> Optional[PhotoImage]:
-    """Get a PhotoImage for a world setting key's PNG icon."""
-    path = get_icon_path(key, location)
-    if path:
-        return _load_photo(path, master, target_size)
-    return None
 
 
 # ── KEY → PNG filename mapping ────────────────────────────────────────

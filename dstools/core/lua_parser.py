@@ -642,13 +642,3 @@ def _lua_value(value: Any) -> str:
         return f'"{value}"'
 
 
-def serialize_lua_file(data: dict, path: Path, indent: int = 4) -> None:
-    """Serialize a Python dict and write to a Lua file.
-
-    Args:
-        data: The dict to serialize.
-        path: Destination file path.
-        indent: Spaces per indentation level.
-    """
-    text = serialize_lua_table(data, indent)
-    path.write_text(text, encoding="utf-8")

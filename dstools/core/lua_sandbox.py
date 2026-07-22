@@ -46,6 +46,11 @@ _WORKER = Path(__file__).parent / "_lua_sandbox_worker.py"
 
 DEFAULT_TIMEOUT = 1.5
 
+# The child is a console process (a plain `python`/re-exec'd frozen exe) --
+# without this, every invocation briefly flashes a black console window on
+# top of the GUI.
+_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
 _BLOCK_OPENERS = re.compile(r'\b(?:if|for|while|function)\b')
 _BLOCK_CLOSERS = re.compile(r'\bend\b')
 _LONG_BRACKET_OPEN = re.compile(r'\[(=*)\[')
@@ -176,14 +181,6 @@ def _largest_balanced_prefix(text: str) -> str:
     return text[:last_safe]
 
 
-def lua_sandbox_available() -> bool:
-    try:
-        import lupa.lua51  # noqa: F401
-        return True
-    except Exception:
-        return False
-
-
 def _worker_command() -> list:
     """Command to launch the sandbox worker as a subprocess.
 
@@ -216,6 +213,7 @@ def run_lua_snippet(lua_code: str, timeout: float = DEFAULT_TIMEOUT) -> Any:
             _worker_command(),
             input=lua_code, capture_output=True, text=True,
             timeout=timeout, encoding="utf-8", errors="replace",
+            creationflags=_CREATIONFLAGS,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
         return None

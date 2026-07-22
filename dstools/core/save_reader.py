@@ -159,11 +159,6 @@ def get_save_summary(session: SaveSession) -> str:
     return ", ".join(parts)
 
 
-def get_latest_save_size(session: SaveSession) -> int:
-    """Get the total size of all save files in the session."""
-    return sum(slot.size for slot in session.slots)
-
-
 def _extract_lua_table_text(raw: bytes) -> str:
     """从玩家存档槽位文件的原始字节中提取出 `return {...}` 这一段文本.
 
