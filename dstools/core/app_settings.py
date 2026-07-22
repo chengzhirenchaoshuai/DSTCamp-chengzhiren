@@ -13,6 +13,8 @@ _KEY_DEDICATED_SERVER_PATH = "dedicated_server_path"
 _KEY_THEME_NAME = "theme_name"
 _DEFAULT_THEME_NAME = "mint"
 _KEY_PLAYER_NOTES = "player_notes"
+_KEY_MINIMIZE_ON_CLOSE = "minimize_on_close"
+_KEY_CACHE_USE_EXE_DIR = "cache_use_exe_dir"
 
 
 def get_settings_dir() -> Path:
@@ -95,4 +97,34 @@ def set_player_note(player_id: str, note: str) -> None:
     else:
         notes.pop(player_id, None)
     data[_KEY_PLAYER_NOTES] = notes
+    save_settings(data)
+
+
+def get_minimize_on_close() -> bool:
+    """关闭窗口（右上角 X）时是否直接最小化到系统托盘而不弹窗确认，
+    默认开启。"""
+    return load_settings().get(_KEY_MINIMIZE_ON_CLOSE, True)
+
+
+def set_minimize_on_close(value: bool) -> None:
+    data = load_settings()
+    data[_KEY_MINIMIZE_ON_CLOSE] = value
+    save_settings(data)
+
+
+def get_cache_use_exe_dir() -> bool:
+    """运行时缓存（mod图标/角色头像等，见 core/resource_paths.py 的
+    cache_dir()）是否改放到当前 exe 所在目录下，而不是默认的
+    %APPDATA%/DSTCamp/cache/。默认关闭。
+
+    跟主题切换一样是"重启后生效"——mod_icons.py/character_icons.py 的
+    缓存目录是模块级常量，import 时就算好了，这里只负责存这个开关本
+    身的状态。
+    """
+    return load_settings().get(_KEY_CACHE_USE_EXE_DIR, False)
+
+
+def set_cache_use_exe_dir(value: bool) -> None:
+    data = load_settings()
+    data[_KEY_CACHE_USE_EXE_DIR] = value
     save_settings(data)

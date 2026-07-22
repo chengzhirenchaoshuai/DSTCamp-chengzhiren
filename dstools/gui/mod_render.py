@@ -8,12 +8,12 @@ drawn once as pixels, with clickable rectangles returned alongside for
 ImageScrollPanel to hit-test.
 """
 
-from pathlib import Path
-
 from PIL import Image, ImageDraw
 
+from dstools.core.resource_paths import bundled_resource_dir
 from dstools.gui import theme
 from dstools.gui.fonts import get_font
+from dstools.i18n import t
 
 # Real in-game default mod-icon background (images/ui.tex's "portrait_bg.tex"
 # -- confirmed against the actual game script, scripts/widgets/modstab.lua:
@@ -21,7 +21,7 @@ from dstools.gui.fonts import get_font
 # exactly what the game itself falls back to when a mod has no modicon.tex),
 # extracted via ktech. Used instead of a plain flat placeholder rectangle
 # for mods with no icon.
-_DEFAULT_ICON_PATH = Path(__file__).parent.parent.parent / "icons" / "ui" / "mod_icon_default.png"
+_DEFAULT_ICON_PATH = bundled_resource_dir() / "icons" / "ui" / "mod_icon_default.png"
 _default_icon_cache: dict[int, Image.Image] = {}
 
 
@@ -51,21 +51,11 @@ CFG_W = 116
 CFG_H = 40
 LINK_W = 160
 
-_ON_COLOR = theme.PRIMARY
 _OFF_COLOR = "#bdbdbd"
 _SWITCH_FLASH = "#ffca28"
-_CFG_COLOR = theme.ACCENT
 _CFG_DISABLED_COLOR = "#cfd8dc"
 _CFG_TEXT_DISABLED = "#90a4ae"
-_LINK_COLOR = theme.ACCENT
 _LINK_DISABLED = "#bdbdbd"
-_NAME_COLOR = theme.TEXT
-_ID_COLOR = theme.TEXT_MUTED
-_ROW_BORDER = theme.CARD_BORDER
-_ROW_BG_EVEN = theme.CARD_BG_ALT
-_ROW_BG_ODD = theme.CARD_BG
-_ICON_PLACEHOLDER_BG = theme.CARD_BG_ALT
-_ICON_PLACEHOLDER_BORDER = theme.CARD_BORDER
 
 
 def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=None,
@@ -117,8 +107,8 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
     y = pad_x
     for i, row in enumerate(rows):
         wid = row["workshop_id"]
-        bg = _ROW_BG_EVEN if i % 2 == 0 else _ROW_BG_ODD
-        draw.rectangle([pad_x, y, rw - pad_x, y + row_h], fill=bg, outline=_ROW_BORDER)
+        bg = theme.CARD_BG_ALT if i % 2 == 0 else theme.CARD_BG
+        draw.rectangle([pad_x, y, rw - pad_x, y + row_h], fill=bg, outline=theme.CARD_BORDER)
         cy = y + row_h / 2
         x = pad_x + 10 * s
 
@@ -134,7 +124,7 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
                 img.paste(default_icon, (int(x), int(icon_y)), default_icon)
             else:
                 draw.rectangle([x, icon_y, x + icon_size, icon_y + icon_size],
-                               fill=_ICON_PLACEHOLDER_BG, outline=_ICON_PLACEHOLDER_BORDER)
+                               fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
         x += icon_size + 14 * s
 
         # ── Column 5 (reserved from the right first, so column 2's
@@ -148,8 +138,8 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
         name_text = row["name"] or wid
         while name_text and draw.textlength(name_text, font=name_font) > name_col_w:
             name_text = name_text[:-1]
-        draw.text((x, y + row_h * 0.34), name_text, font=name_font, fill=_NAME_COLOR, anchor="lm")
-        draw.text((x, y + row_h * 0.68), wid, font=id_font, fill=_ID_COLOR, anchor="lm")
+        draw.text((x, y + row_h * 0.34), name_text, font=name_font, fill=theme.TEXT, anchor="lm")
+        draw.text((x, y + row_h * 0.68), wid, font=id_font, fill=theme.TEXT_MUTED, anchor="lm")
 
         # ── Column 3: on/off switch (client_only/"本地" mods have no
         # meaningful enabled state -- see ModManagerTab.show_local_var --
@@ -166,15 +156,15 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
 
         # ── Column 4: config button ──────────────────────────────────
         has_cfg = row.get("has_config", False)
-        _draw_pill(draw, cfg_x, cy - cfg_h / 2, cfg_w, cfg_h, "配置", btn_font,
+        _draw_pill(draw, cfg_x, cy - cfg_h / 2, cfg_w, cfg_h, t("mod.config_btn"), btn_font,
                   enabled=has_cfg)
         if has_cfg and on_config:
             hit_regions.append((cfg_x, y, cfg_x + cfg_w, y + row_h, _mk_cb(on_config, wid)))
 
         # ── Column 5: workshop link ──────────────────────────────────
         has_link = row.get("has_link", False)
-        link_color = _LINK_COLOR if has_link else _LINK_DISABLED
-        link_text = "创意工坊页面" if has_link else "无工坊链接"
+        link_color = theme.ACCENT if has_link else _LINK_DISABLED
+        link_text = t("mod.workshop_link_btn") if has_link else t("mod.no_workshop_link")
         draw.text((link_x, cy), link_text, font=btn_font, fill=link_color, anchor="lm")
         if has_link:
             tw = draw.textlength(link_text, font=btn_font)
@@ -197,12 +187,12 @@ def _draw_local_badge(draw, x, cy, w, h, font):
     r = h / 2
     draw.rounded_rectangle([x, cy - r, x + w, cy + r], radius=r,
                            fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
-    draw.text((x + w / 2, cy), "本地", font=font, fill=theme.TEXT_MUTED, anchor="mm")
+    draw.text((x + w / 2, cy), t("mod.local_badge"), font=font, fill=theme.TEXT_MUTED, anchor="mm")
 
 
 def _draw_switch(draw, x, cy, w, h, on, pressed=False):
     r = h / 2
-    color = _SWITCH_FLASH if pressed else (_ON_COLOR if on else _OFF_COLOR)
+    color = _SWITCH_FLASH if pressed else (theme.PRIMARY if on else _OFF_COLOR)
     draw.rounded_rectangle([x, cy - r, x + w, cy + r], radius=r, fill=color)
     knob_cx = x + w - r if on else x + r
     knob_r = r - 3
@@ -210,7 +200,7 @@ def _draw_switch(draw, x, cy, w, h, on, pressed=False):
 
 
 def _draw_pill(draw, x, y, w, h, text, font, enabled=True):
-    fill = _CFG_COLOR if enabled else _CFG_DISABLED_COLOR
+    fill = theme.ACCENT if enabled else _CFG_DISABLED_COLOR
     text_color = theme.CARD_BG if enabled else _CFG_TEXT_DISABLED
     draw.rounded_rectangle([x, y, x + w, y + h], radius=h / 2, fill=fill)
     draw.text((x + w / 2, y + h / 2), text, font=font, fill=text_color, anchor="mm")

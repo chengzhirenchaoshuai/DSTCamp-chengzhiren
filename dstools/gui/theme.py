@@ -1,23 +1,35 @@
 """Switchable color palette and global ttk.Style configuration.
 
-Applied once at startup (see DSToolsApp.__init__ -> apply_theme()) so the
-whole app picks up a consistent look without touching the ~20 scattered
-ttk.Button/Entry/Combobox/Treeview/Scrollbar call sites individually.
+Applied at startup (see DSToolsApp.__init__ -> apply_theme()) so the whole
+app picks up a consistent look without touching the ~20 scattered
+ttk.Button/Entry/Combobox/Treeview/Scrollbar call sites individually, and
+re-applied on demand via `set_theme()` so switching themes takes effect
+immediately, with no restart.
 
-Theme switching is *restart-required*, not live: DSToolsApp._build_menu()'s
-"主题" submenu just calls app_settings.set_theme_name() and tells the user
-to restart. This module reads that saved preference once, at import time
-(see `_active` below), and sets its own module-level color constants
-(PRIMARY, BG_SOFT, ...) to match -- every other gui/ file either does
-`from dstools.gui import theme` and reads `theme.PRIMARY` etc. live, or (in
-app.py's case) `from dstools.gui.theme import ERROR, HEADING, ...`, which
-copies today's value into a separate name at import time. Either way, since
-this module always finishes initializing its globals before any importer's
-`from dstools.gui.theme import X` statement can complete, both patterns see
-the correct (persisted) palette -- there's no live-reassignment path needed,
-which is exactly what makes "restart-required" simple: no widget anywhere
-has to be told "recolor yourself", the whole app just gets built once with
-the right colors already in place.
+The palette itself lives in a batch of **module-level constants**
+(PRIMARY, BG_SOFT, TEXT, ...) rather than a dict you look up each time --
+that keeps every call site a plain `theme.PRIMARY` instead of
+`theme.palette()["PRIMARY"]` everywhere. The one rule this imposes on every
+other gui/ file: colors must be read as `theme.PRIMARY` at the point they're
+*used* (inside a function/method body), never copied into a separate name
+at import time (`from dstools.gui.theme import PRIMARY` or
+`_MY_COLOR = theme.PRIMARY` at module scope) -- a plain Python name binding
+freezes whatever value `theme.PRIMARY` held at that instant, and `set_theme()`
+reassigning `theme.py`'s own globals later has no way to reach into some
+other module's already-bound local name. This bit DSToolsApp.py once (it
+used to `from dstools.gui.theme import ERROR, HEADING, ...`) and a handful
+of gui/ modules that cached derived colors as module constants
+(toggle_switch.py, mod_render.py, world_render.py, themed_dialog.py,
+local_service_tab.py) -- all fixed to read `theme.X` live instead.
+
+Widgets that are *rebuilt* whenever their tab refreshes (PIL panels, per-row
+ttk widgets destroy()'d and reconstructed) automatically pick up the new
+palette the next time that happens, no extra work needed. Widgets built
+*once* and never rebuilt (CardFrame, PillTabBar, the archive-picker card bar,
+each tab's "local save is read-only" banner) need an explicit
+`apply_theme()`/`retheme()` method that re-`configure()`s their frozen
+colors -- see DSToolsApp._switch_theme() for the full list of what gets
+poked after a theme switch.
 
 Adding a new theme: add one dict to `_THEMES` (every key from the "mint"
 entry is required) and append its name to `THEME_NAMES` -- that's the only
@@ -79,6 +91,32 @@ ERROR = _active["ERROR"]
 HEADING = _active["HEADING"]
 BANNER_BG = _active["BANNER_BG"]
 BANNER_TEXT = _active["BANNER_TEXT"]
+
+
+def set_theme(name: str) -> None:
+    """运行时切换调色板——重新计算上面这批模块级颜色变量，不需要重启进程。
+    不负责持久化（跟 apply_theme() 一样是纯"应用一次"的函数），持久化仍由
+    调用方（gui/app.py 的 _switch_theme()）自己调
+    app_settings.set_theme_name()。"""
+    global _active, PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, BG_SOFT, ACCENT, \
+        TEXT, TEXT_MUTED, CARD_BG, CARD_BG_ALT, CARD_BORDER, SHADOW, ERROR, \
+        HEADING, BANNER_BG, BANNER_TEXT
+    _active = _THEMES.get(name) or _THEMES["mint"]
+    PRIMARY = _active["PRIMARY"]
+    PRIMARY_DARK = _active["PRIMARY_DARK"]
+    PRIMARY_LIGHT = _active["PRIMARY_LIGHT"]
+    BG_SOFT = _active["BG_SOFT"]
+    ACCENT = _active["ACCENT"]
+    TEXT = _active["TEXT"]
+    TEXT_MUTED = _active["TEXT_MUTED"]
+    CARD_BG = _active["CARD_BG"]
+    CARD_BG_ALT = _active["CARD_BG_ALT"]
+    CARD_BORDER = _active["CARD_BORDER"]
+    SHADOW = _active["SHADOW"]
+    ERROR = _active["ERROR"]
+    HEADING = _active["HEADING"]
+    BANNER_BG = _active["BANNER_BG"]
+    BANNER_TEXT = _active["BANNER_TEXT"]
 
 # Semantic (data) colors -- server vs. local save distinction. Kept
 # separate from the switchable palette since these mean "server" / "local",
@@ -205,11 +243,19 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     style.configure("TRadiobutton", background=BG_SOFT, foreground=TEXT)
 
 
-def gradient_image(width: int, height: int, top_color: str = PRIMARY_LIGHT,
-                    bottom_color: str = BG_SOFT) -> ImageTk.PhotoImage:
+def gradient_image(width: int, height: int, top_color: str | None = None,
+                    bottom_color: str | None = None) -> ImageTk.PhotoImage:
     """A soft vertical gradient, top_color -> bottom_color, one row of PIL
     interpolation per pixel row. Used behind the top pill tab bar to give
-    the "simulated glass" look without any real backdrop blur."""
+    the "simulated glass" look without any real backdrop blur.
+
+    top_color/bottom_color default to None (not PRIMARY_LIGHT/BG_SOFT
+    directly) so the fallback is resolved *at call time* -- a plain default
+    argument value is bound once, when this function is defined, and would
+    freeze whatever PRIMARY_LIGHT/BG_SOFT held back then, going stale the
+    first time set_theme() reassigns them."""
+    top_color = top_color if top_color is not None else PRIMARY_LIGHT
+    bottom_color = bottom_color if bottom_color is not None else BG_SOFT
     width = max(1, int(width))
     height = max(1, int(height))
     top = _hex_to_rgb(top_color)

@@ -26,9 +26,10 @@ from PIL import Image
 
 from dstools.core.atlas_utils import crop_by_uv, parse_atlas_xml
 from dstools.core.modinfo_reader import find_steam_root
+from dstools.core.resource_paths import cache_dir
 from dstools.core.tex_convert import tex_to_png
 
-_CACHE_DIR = Path(__file__).parent.parent.parent / "icons" / "character_cache"
+_CACHE_DIR = cache_dir("character_icons")
 
 # 一次性扫描某个模组文件夹里全部 STRINGS.CHARACTER_NAMES.xxx = "..." 声明，
 # 而不是每次只找一个 prefab——同一个模组常常一次装好几个自定义角色，扫一

@@ -29,13 +29,18 @@ _STATUS_KEYS = {
     ServerStatus.STOPPED: "local.status_stopped",
     ServerStatus.CRASHED: "local.status_crashed",
 }
-_STATUS_COLORS = {
-    ServerStatus.STARTING: theme.ACCENT,
-    ServerStatus.RUNNING: theme.SERVER_COLOR,
-    ServerStatus.STOPPING: theme.ACCENT,
-    ServerStatus.STOPPED: theme.TEXT_MUTED,
-    ServerStatus.CRASHED: theme.ERROR,
-}
+def _status_color(status) -> str:
+    """现建现查而不是模块级 dict 缓存——每 150ms 轮询一次的 _ShardRow.
+    update()/_ConsolePane.pump() 本来就会频繁重新调用这个函数，主题切换
+    后不需要额外做什么，下一次轮询自然就会拿到新颜色。"""
+    colors = {
+        ServerStatus.STARTING: theme.ACCENT,
+        ServerStatus.RUNNING: theme.SERVER_COLOR,
+        ServerStatus.STOPPING: theme.ACCENT,
+        ServerStatus.STOPPED: theme.TEXT_MUTED,
+        ServerStatus.CRASHED: theme.ERROR,
+    }
+    return colors[status]
 _RUNNING_LIKE = (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING)
 
 
@@ -90,7 +95,7 @@ class _ShardRow:
         proc = self.tab.manager.get(self.cluster.path, self.shard.name)
         status = proc.status if proc else ServerStatus.STOPPED
         self.status_var.set(t(_STATUS_KEYS[status]))
-        self.status_lbl.configure(fg=_STATUS_COLORS[status])
+        self.status_lbl.configure(fg=_status_color(status))
         running = status in _RUNNING_LIKE
         self.start_btn.configure(state=tk.DISABLED if running else tk.NORMAL)
         self.stop_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
@@ -106,17 +111,14 @@ class _ConsolePane:
         self.proc = proc
         self.frame = ttk.Frame(notebook)
 
-        body = ttk.Frame(self.frame)
-        body.pack(fill=tk.BOTH, expand=True)
-        vsb = ttk.Scrollbar(body, orient=tk.VERTICAL)
-        vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.text = tk.Text(body, wrap=tk.NONE, state=tk.DISABLED, font=("Consolas", 10),
-                             bg=theme.CARD_BG, fg=theme.TEXT, yscrollcommand=vsb.set)
-        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        vsb.configure(command=self.text.yview)
-
+        # bottom 先 pack（side=BOTTOM，固定高度）再 pack 会 expand 撑满的
+        # body -- pack 是按调用顺序切父容器空间，先 pack 且 expand=True 的
+        # 控件会把当前剩余空间先占满，后 pack 的只能捡剩下的；父容器高度
+        # 稍微不够时后 pack 的这个就会被压扁。之前 body 在前、bottom 在
+        # 后，导致发送按钮这一行下边缘经常被裁掉一截，这里跟 ModConfigDialog
+        # (app.py 里已经踩过同一个坑) 一样反过来，先留出 bottom 的空间。
         bottom = ttk.Frame(self.frame)
-        bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 0))
+        bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 4))
         self.status_var = tk.StringVar()
         self.status_lbl = tk.Label(bottom, textvariable=self.status_var, bg=theme.BG_SOFT)
         self.status_lbl.pack(side=tk.LEFT, padx=(2, 8))
@@ -127,6 +129,18 @@ class _ConsolePane:
         Tooltip(self.cmd_entry, t("local.console_placeholder"))
         self.send_btn = ttk.Button(bottom, text=t("local.console_send_btn"), command=self._send)
         self.send_btn.pack(side=tk.LEFT)
+
+        body = ttk.Frame(self.frame)
+        body.pack(fill=tk.BOTH, expand=True)
+        vsb = ttk.Scrollbar(body, orient=tk.VERTICAL)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        # font 用系统默认字体（不指定字体族）而不是 Consolas -- Consolas
+        # 不含中文字形，控制台日志里中英文混排时 Windows 会给中文字符静默
+        # fallback 到另一款字重不同的 CJK 字体，看起来"忽粗忽细"。
+        self.text = tk.Text(body, wrap=tk.NONE, state=tk.DISABLED, font=("", 10),
+                             bg=theme.CARD_BG, fg=theme.TEXT, yscrollcommand=vsb.set)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.configure(command=self.text.yview)
 
         self.pump()
 
@@ -161,7 +175,7 @@ class _ConsolePane:
             self.proc.status = ServerStatus.CRASHED
             status = ServerStatus.CRASHED
         self.status_var.set(t(_STATUS_KEYS[status]))
-        self.status_lbl.configure(fg=_STATUS_COLORS[status])
+        self.status_lbl.configure(fg=_status_color(status))
         can_send = status == ServerStatus.RUNNING
         self.cmd_entry.configure(state=tk.NORMAL if can_send else tk.DISABLED)
         self.send_btn.configure(state=tk.NORMAL if can_send else tk.DISABLED)
@@ -378,6 +392,11 @@ class LocalServiceTab:
         if self._install_dir is None:
             self._install_path_var.set(t("local.install_not_found"))
         self._local_banner.configure(text=t("local.select_server_hint"))
+
+    def retheme(self):
+        """主题切换时调用——这个横幅在 __init__ 里建一次就不再重建，
+        refresh() 不会碰它的颜色，需要显式重新上色。"""
+        self._local_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
 
     def refresh(self):
         self.on_cluster_changed(self.app.get_selected_cluster())

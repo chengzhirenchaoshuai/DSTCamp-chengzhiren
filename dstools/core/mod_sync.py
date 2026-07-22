@@ -16,6 +16,7 @@
 兜底；两者互不冲突（服务器发现本地已有文件时不会重新下载）。
 """
 
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,7 @@ from dstools.core.mod_manager import load_mod_overrides
 from dstools.core.modinfo_reader import (
     DST_APP_ID, find_game_mods_dir, find_mod_folder, find_workshop_acf_path, parse_modinfo,
 )
+from dstools.i18n import t
 from dstools.models import Cluster
 
 
@@ -70,11 +72,11 @@ def sync_mods_to_server(cluster: Cluster, install_dir: Path, on_log=None) -> Mod
 
     mod_ids = get_enabled_mod_ids(cluster)
     result = ModSyncResult(online_ids=list(mod_ids))
-    log(f"共 {len(mod_ids)} 个已启用的 Mod。")
+    log(t("sync.enabled_count", count=len(mod_ids)))
     _write_dedicated_server_mods_setup(install_dir, mod_ids)
-    log(f"已写入在线下载列表 mods/dedicated_server_mods_setup.lua（{len(mod_ids)} 个）。")
+    log(t("sync.wrote_setup_lua", count=len(mod_ids)))
     if not mod_ids:
-        log("没有需要同步的 Mod，结束。")
+        log(t("sync.nothing_to_sync"))
         return result
 
     acf_path = find_workshop_acf_path()
@@ -82,13 +84,13 @@ def sync_mods_to_server(cluster: Cluster, install_dir: Path, on_log=None) -> Mod
         for shard in cluster.shards:
             try:
                 _copy_acf_checksum(acf_path, cluster.name, shard.name, install_dir)
-                log(f"已复制校验文件 appworkshop_{DST_APP_ID}.acf 到 {shard.name}。")
+                log(t("sync.copied_acf", app_id=DST_APP_ID, shard=shard.name))
             except OSError as e:
-                msg = f"appworkshop_{DST_APP_ID}.acf ({shard.name}): {e}"
+                msg = t("sync.acf_error_detail", app_id=DST_APP_ID, shard=shard.name, error=e)
                 result.errors.append(msg)
-                log(f"[错误] {msg}")
+                log(t("sync.error_prefix", detail=msg))
     else:
-        log("本地未找到 Steam 的 appworkshop_322330.acf 校验文件，跳过复制（不影响在线下载方式）。")
+        log(t("sync.no_acf_found", app_id=DST_APP_ID))
 
     game_mods_dir = find_game_mods_dir()
 
@@ -96,7 +98,7 @@ def sync_mods_to_server(cluster: Cluster, install_dir: Path, on_log=None) -> Mod
         mod_folder = find_mod_folder(mod_id)
         if mod_folder is None:
             result.skipped_not_local.append(mod_id)
-            log(f"[跳过] {mod_id}：本地未找到内容，仅走在线下载。")
+            log(t("sync.skip_not_local", mod_id=mod_id))
             continue
 
         info = None
@@ -106,7 +108,7 @@ def sync_mods_to_server(cluster: Cluster, install_dir: Path, on_log=None) -> Mod
             pass
         if info is not None and info.client_only:
             result.skipped_client_only.append(mod_id)
-            log(f"[跳过] {mod_id}：纯客户端 Mod，不需要同步到服务器。")
+            log(t("sync.skip_client_only", mod_id=mod_id))
             continue
 
         try:
@@ -115,14 +117,15 @@ def sync_mods_to_server(cluster: Cluster, install_dir: Path, on_log=None) -> Mod
             if game_mods_dir is not None:
                 _copy_mod_info_folder(game_mods_dir, mod_id, install_dir)
             result.copied_ids.append(mod_id)
-            log(f"[完成] {mod_id}：已复制到 {len(cluster.shards)} 个分片。")
+            log(t("sync.copied_mod", mod_id=mod_id, count=len(cluster.shards)))
         except OSError as e:
-            result.errors.append(f"{mod_id}: {e}")
-            log(f"[错误] {mod_id}: {e}")
+            detail = f"{mod_id}: {e}"
+            result.errors.append(detail)
+            log(t("sync.error_prefix", detail=detail))
 
-    log(f"同步完成：在线 {len(result.online_ids)} 个，本地复制成功 {len(result.copied_ids)} 个，"
-        f"跳过 {len(result.skipped_not_local) + len(result.skipped_client_only)} 个，"
-        f"出错 {len(result.errors)} 个。")
+    log(t("sync.summary", online=len(result.online_ids), copied=len(result.copied_ids),
+          skipped=len(result.skipped_not_local) + len(result.skipped_client_only),
+          errors=len(result.errors)))
     return result
 
 
@@ -135,17 +138,35 @@ def _write_dedicated_server_mods_setup(install_dir: Path, mod_ids: list[str]) ->
     (mods_dir / "dedicated_server_mods_setup.lua").write_text(text, encoding="utf-8")
 
 
+def _skip_if_unchanged_copy2(src: str, dst: str) -> None:
+    """跟目标已存在的文件比一次大小+修改时间，没变就跳过，变了/目标
+    不存在才真的复制——同步过一次之后再点，之前已经原样没动过的文件
+    (占绝大多数) 不用每次都整个重新拷一遍，这是同步变快的关键。跟用户
+    自己那份 .bat 脚本用 xcopy /d（按修改时间跳过）是同一个思路，只是
+    多加了一个大小校验，比单看时间戳更保险一点。"""
+    try:
+        src_stat = os.stat(src)
+        dst_stat = os.stat(dst)
+        if (dst_stat.st_mtime >= src_stat.st_mtime
+                and dst_stat.st_size == src_stat.st_size):
+            return
+    except OSError:
+        pass
+    shutil.copy2(src, dst)
+
+
 def _copy_mod_content_to_ugc(mod_folder: Path, mod_id: str, cluster_name: str,
                               shard_name: str, install_dir: Path) -> None:
     target = install_dir / "ugc_mods" / cluster_name / shard_name / "content" / DST_APP_ID / mod_id
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(mod_folder, target, dirs_exist_ok=True)
+    shutil.copytree(mod_folder, target, dirs_exist_ok=True,
+                     copy_function=_skip_if_unchanged_copy2)
 
 
 def _copy_acf_checksum(acf_path: Path, cluster_name: str, shard_name: str, install_dir: Path) -> None:
     target_dir = install_dir / "ugc_mods" / cluster_name / shard_name
     target_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(acf_path, target_dir / acf_path.name)
+    _skip_if_unchanged_copy2(str(acf_path), str(target_dir / acf_path.name))
 
 
 def _copy_mod_info_folder(game_mods_dir: Path, mod_id: str, install_dir: Path) -> None:
@@ -159,4 +180,5 @@ def _copy_mod_info_folder(game_mods_dir: Path, mod_id: str, install_dir: Path) -
         return
     target = install_dir / "mods" / f"workshop-{mod_id}"
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, target, dirs_exist_ok=True)
+    shutil.copytree(src, target, dirs_exist_ok=True,
+                     copy_function=_skip_if_unchanged_copy2)

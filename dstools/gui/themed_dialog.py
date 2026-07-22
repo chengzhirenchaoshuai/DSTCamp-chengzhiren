@@ -13,12 +13,16 @@ from tkinter import ttk
 from dstools.gui import theme
 from dstools.i18n import t
 
-_ICONS = {
-    "info": ("ℹ", theme.ACCENT),        # ℹ
-    "warning": ("⚠", "#ff9800"),        # ⚠
-    "error": ("✕", theme.ERROR),        # ✕
-    "question": ("？", theme.PRIMARY),   # ？
-}
+def _icon_for(kind: str) -> tuple[str, str]:
+    """(图标字符, 颜色)——现建现查而不是模块级 dict 缓存，这样主题切换后
+    弹窗用到的 theme.ACCENT/ERROR/PRIMARY 都是当时最新的颜色。"""
+    icons = {
+        "info": ("ℹ", theme.ACCENT),        # ℹ
+        "warning": ("⚠", "#ff9800"),        # ⚠
+        "error": ("✕", theme.ERROR),        # ✕
+        "question": ("？", theme.PRIMARY),   # ？
+    }
+    return icons.get(kind, icons["info"])
 
 if sys.platform == "win32":
     import winsound
@@ -73,7 +77,7 @@ def _show(parent, title, message, kind, buttons, wraplength=320, min_width=360):
 
     row = tk.Frame(card, background=theme.CARD_BG)
     row.pack(fill=tk.X, padx=20, pady=(20, 0))
-    icon_char, icon_color = _ICONS.get(kind, _ICONS["info"])
+    icon_char, icon_color = _icon_for(kind)
     tk.Label(row, text=icon_char, font=("", 22, "bold"), fg=icon_color,
              bg=theme.CARD_BG).pack(side=tk.LEFT, padx=(0, 14), anchor="n")
     tk.Label(row, text=message, font=("", 11), fg=theme.TEXT, bg=theme.CARD_BG,

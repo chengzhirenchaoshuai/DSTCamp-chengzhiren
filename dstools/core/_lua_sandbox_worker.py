@@ -111,7 +111,25 @@ def main():
     sys.stdout.write(json.dumps(_to_plain(result)))
 
 
-if __name__ == "__main__":
+def run_worker_main() -> None:
+    """Crash-safe entry point -- called both when this file is run directly
+    as a script (`python _lua_sandbox_worker.py`, the dev-mode subprocess
+    launched by lua_sandbox._worker_command()) and when the frozen exe
+    re-invokes itself with `--lua-sandbox-worker` (see run_gui.py). A mod's
+    Lua snippet failing (a genuine Lua runtime error -- e.g. referencing an
+    engine global this sandbox doesn't provide -- is the expected, common
+    case, not a bug) must never surface as a visible crash dialog; the
+    parent only ever checks the exit code, never stderr, so exiting 1 here
+    is already the fully-handled "sandbox couldn't resolve this" path.
+
+    This used to be inlined under `if __name__ == "__main__":` below, which
+    only runs when this file is executed as the top-level script -- correct
+    for the dev-mode path, but run_gui.py's frozen-mode branch instead
+    imports and calls `main()` directly, bypassing that guard entirely, so
+    an unhandled LuaError there propagated all the way up and PyInstaller's
+    own "Unhandled exception in script" dialog popped up in front of the
+    user. Both entry points must go through this same wrapper.
+    """
     try:
         main()
     except Exception as e:
@@ -128,3 +146,7 @@ if __name__ == "__main__":
         except Exception:
             pass
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    run_worker_main()

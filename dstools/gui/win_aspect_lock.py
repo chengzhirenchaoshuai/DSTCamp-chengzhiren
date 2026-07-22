@@ -111,6 +111,17 @@ class AspectLock:
             self._hwnd = hwnd
 
             def wndproc(hwnd_, msg, wparam, lparam):
+                # IMPORTANT: only ever mutate the raw ctypes RECT here, never
+                # call back into Tkinter/Python-level app code (not even
+                # something as small as root.after(0, ...)) from inside this
+                # hook. Tried adding a WM_EXITSIZEMOVE branch that called
+                # root.after(...) to trigger a "drag just ended" callback --
+                # reproducibly crashed the whole interpreter with a fatal
+                # "PyEval_RestoreThread: GIL not held" error (verified via a
+                # real PostMessageW(WM_EXITSIZEMOVE) round-trip, not just
+                # theorized), even with a no-op callback. Whatever mechanism
+                # is responsible, this wndproc must stay limited to pure,
+                # Tkinter-free ctypes struct math like _enforce() below.
                 if msg == WM_SIZING and lparam:
                     try:
                         rect = ctypes.cast(lparam, ctypes.POINTER(RECT)).contents

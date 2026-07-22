@@ -48,6 +48,7 @@ class ImageScrollPanel:
         self._scale = 1.0
         self._settle_after_id = None
         self._render_after_id = None  # throttles _render() during a live drag-resize
+        self._last_settled_width = None  # dedupe: skip a redundant on_settle at an unchanged width
 
         # Set by the owner: callable(width_px, height_px) invoked once resizing
         # has settled, so content can be re-rendered natively at that size
@@ -119,8 +120,15 @@ class ImageScrollPanel:
         self._settle_after_id = None
         cw = self.canvas.winfo_width()
         ch = self.canvas.winfo_height()
-        if self.on_settle and cw > 4 and ch > 4:
-            self.on_settle(cw, ch)
+        if not self.on_settle or cw <= 4 or ch <= 4:
+            return
+        if cw == self._last_settled_width:
+            # 宽度没变就不用重新走一遍高清重绘（render_*_panel 是按宽度
+            # 排版的）——例如这个计时器因为拖动时的滞后被连续触发了两次，
+            # 但两次触发之间宽度其实没有再变化。
+            return
+        self._last_settled_width = cw
+        self.on_settle(cw, ch)
 
     def update_region_value(self, key, new_label: str, new_color: str):
         """Not used directly -- caller should call set_image() again after

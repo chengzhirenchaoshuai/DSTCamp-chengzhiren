@@ -69,6 +69,16 @@ class PillTabBar(tk.Frame):
         self._tabs = [(k, labels.get(k, lbl)) for k, lbl in self._tabs]
         self._redraw()
 
+    def apply_theme(self) -> None:
+        """主题切换时调用——self/self._canvas 的背景色是构造时焊死的
+        （见 __init__ 的 bg 参数），_redraw() 内部虽然已经实时读
+        theme.PRIMARY/theme.TEXT_MUTED，但容器本身的背景色不会自动跟着
+        变，需要显式重新 configure 一次。"""
+        bg = theme.BG_SOFT
+        self.configure(background=bg)
+        self._canvas.configure(background=bg)
+        self._redraw()
+
     def _on_click(self, event):
         for x1, x2, key in self._regions:
             if x1 <= event.x <= x2:

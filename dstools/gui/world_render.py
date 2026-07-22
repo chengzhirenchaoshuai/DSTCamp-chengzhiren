@@ -12,14 +12,14 @@ re-renders at the real on-screen width once a resize settles, so text and
 icons are drawn natively at that size instead of being raster-upscaled.
 """
 
-from pathlib import Path
-
 from PIL import Image, ImageDraw
 
+from dstools.core.resource_paths import bundled_resource_dir
 from dstools.core.world_icons import get_pil_icon
 from dstools.core.world_value_sets import DEFAULT_SET, get_value_set
 from dstools.gui import theme
 from dstools.gui.fonts import get_font
+from dstools.i18n import get_lang, t
 
 BASE_REF_WIDTH = 1300
 
@@ -27,7 +27,7 @@ BASE_REF_WIDTH = 1300
 # hover/press states), extracted from the shipped images/ui.tex atlas via
 # ktech -- swapped in for the old plain PIL-drawn filled-triangle buttons,
 # which were tiny (7px) and had no game-matching shape/shading.
-_ARROW_DIR = Path(__file__).parent.parent.parent / "icons" / "ui"
+_ARROW_DIR = bundled_resource_dir() / "icons" / "ui"
 _arrow_cache: dict[tuple[str, int], Image.Image] = {}
 
 
@@ -92,78 +92,132 @@ COLS = 3
 CYCLE_VALUES = DEFAULT_SET
 
 _VALUE_LABELS = {
-    "default": "默认", "never": "无", "rare": "很少", "often": "经常", "always": "总是",
-    "few": "很少", "many": "大量", "none": "禁用", "max": "最多",
-    "veryslow": "极慢", "slow": "慢", "fast": "快", "veryfast": "极快",
-    "long": "长", "short": "短", "random": "随机", "force": "强制",
-    "squall": "暴雨", "more": "较多", "nonlethal": "非致命",
-    "noseason": "无", "veryshortseason": "极短", "shortseason": "短",
-    "longseason": "长", "verylongseason": "极长",
-    "onlyday": "仅白天", "onlydusk": "仅黄昏", "onlynight": "仅夜晚",
-    "longday": "长白天", "longdusk": "长黄昏", "longnight": "长夜晚",
-    "noday": "无白天", "nodusk": "无黄昏", "nonight": "无夜晚",
-    "fixed": "固定", "wandering": "流浪", "scatter": "随机",
-    "disabled": "禁用", "enabled": "总是", "auto": "自动",
-    "uncommon": "较少", "ocean_uncommon": "较少", "mostly": "较多", "insane": "极多",
-    "least": "最少", "most": "最多",
-    "classic": "经典", "True": "是", "False": "否",
-    "LinkNodesByKeys": "按关键节点连接", "wormhole": "虫洞",
-    "small": "小", "medium": "中", "large": "大", "huge": "巨大",
+    "default": {"zh": "默认", "en": "Default"},
+    "never": {"zh": "无", "en": "Never"},
+    "rare": {"zh": "很少", "en": "Rare"},
+    "often": {"zh": "经常", "en": "Often"},
+    "always": {"zh": "总是", "en": "Always"},
+    "few": {"zh": "很少", "en": "Few"},
+    "many": {"zh": "大量", "en": "Many"},
+    "none": {"zh": "禁用", "en": "None"},
+    "max": {"zh": "最多", "en": "Max"},
+    "veryslow": {"zh": "极慢", "en": "Very Slow"},
+    "slow": {"zh": "慢", "en": "Slow"},
+    "fast": {"zh": "快", "en": "Fast"},
+    "veryfast": {"zh": "极快", "en": "Very Fast"},
+    "long": {"zh": "长", "en": "Long"},
+    "short": {"zh": "短", "en": "Short"},
+    "random": {"zh": "随机", "en": "Random"},
+    "force": {"zh": "强制", "en": "Forced"},
+    "squall": {"zh": "暴雨", "en": "Squall"},
+    "more": {"zh": "较多", "en": "More"},
+    "nonlethal": {"zh": "非致命", "en": "Non-lethal"},
+    "noseason": {"zh": "无", "en": "None"},
+    "veryshortseason": {"zh": "极短", "en": "Very Short"},
+    "shortseason": {"zh": "短", "en": "Short"},
+    "longseason": {"zh": "长", "en": "Long"},
+    "verylongseason": {"zh": "极长", "en": "Very Long"},
+    "onlyday": {"zh": "仅白天", "en": "Day Only"},
+    "onlydusk": {"zh": "仅黄昏", "en": "Dusk Only"},
+    "onlynight": {"zh": "仅夜晚", "en": "Night Only"},
+    "longday": {"zh": "长白天", "en": "Long Day"},
+    "longdusk": {"zh": "长黄昏", "en": "Long Dusk"},
+    "longnight": {"zh": "长夜晚", "en": "Long Night"},
+    "noday": {"zh": "无白天", "en": "No Day"},
+    "nodusk": {"zh": "无黄昏", "en": "No Dusk"},
+    "nonight": {"zh": "无夜晚", "en": "No Night"},
+    "fixed": {"zh": "固定", "en": "Fixed"},
+    "wandering": {"zh": "流浪", "en": "Wandering"},
+    "scatter": {"zh": "随机", "en": "Scattered"},
+    "disabled": {"zh": "禁用", "en": "Disabled"},
+    "enabled": {"zh": "总是", "en": "Enabled"},
+    "auto": {"zh": "自动", "en": "Auto"},
+    "uncommon": {"zh": "较少", "en": "Uncommon"},
+    "ocean_uncommon": {"zh": "较少", "en": "Uncommon"},
+    "mostly": {"zh": "较多", "en": "Mostly"},
+    "insane": {"zh": "极多", "en": "Insane"},
+    "least": {"zh": "最少", "en": "Least"},
+    "most": {"zh": "最多", "en": "Most"},
+    "classic": {"zh": "经典", "en": "Classic"},
+    "True": {"zh": "是", "en": "Yes"},
+    "False": {"zh": "否", "en": "No"},
+    "LinkNodesByKeys": {"zh": "按关键节点连接", "en": "Link Nodes by Keys"},
+    "wormhole": {"zh": "虫洞", "en": "Wormhole"},
+    "small": {"zh": "小", "en": "Small"},
+    "medium": {"zh": "中", "en": "Medium"},
+    "large": {"zh": "大", "en": "Large"},
+    "huge": {"zh": "巨大", "en": "Huge"},
 }
 
 # Per-key value overrides: same raw value means different things in
 # different settings (e.g. "default" = "自动" for Events but "默认" for
 # most others). These override the generic _VALUE_LABELS for their key.
 _PER_KEY_LABELS = {
-    "specialevent": {"default": "自动", "none": "无"},
-    "ghostenabled": {"none": "更改冒险家", "always": "变鬼混"},
-    "portalresurection": {"always": "启用", "none": "禁用"},
-    "ghostsanitydrain": {"always": "启用", "none": "禁用"},
-    "lessdamagetaken": {"default": "较少", "always": "较少", "more": "较多", "none": "默认"},
+    "specialevent": {"default": {"zh": "自动", "en": "Auto"}, "none": {"zh": "无", "en": "None"}},
+    "ghostenabled": {"none": {"zh": "更改冒险家", "en": "New Character"},
+                     "always": {"zh": "变鬼混", "en": "Become a Ghost"}},
+    "portalresurection": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    "ghostsanitydrain": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    "lessdamagetaken": {"default": {"zh": "较少", "en": "Less"}, "always": {"zh": "较少", "en": "Less"},
+                        "more": {"zh": "较多", "en": "More"}, "none": {"zh": "默认", "en": "Default"}},
     # "0" → 总是, "none" → 从不；其余数字走下面 get_value_label 里的动态格式化("第N天后")
-    "extrastartingitems": {"0": "总是", "none": "从不"},
-    "loop": {"never": "从不"},
-    "task_set": {"default": "联机版", "cave_default": "地下"},
-    "start_location": {"default": "默认", "caves": "洞穴"},
-    "moon_spider": {"rare": "很少", "never": "无"},
-    "moon_spiders": {"uncommon": "默认", "never": "无"},
-    "worms": {"uncommon": "稀有"},
-    "rocky_setting": {"rare": "较少"},
+    "extrastartingitems": {"0": {"zh": "总是", "en": "Always"}, "none": {"zh": "从不", "en": "Never"}},
+    "loop": {"never": {"zh": "从不", "en": "Never"}},
+    "task_set": {"default": {"zh": "联机版", "en": "Together"}, "cave_default": {"zh": "地下", "en": "Caves"}},
+    "start_location": {"default": {"zh": "默认", "en": "Default"}, "caves": {"zh": "洞穴", "en": "Caves"}},
+    "moon_spider": {"rare": {"zh": "很少", "en": "Rare"}, "never": {"zh": "无", "en": "None"}},
+    "moon_spiders": {"uncommon": {"zh": "默认", "en": "Default"}, "never": {"zh": "无", "en": "None"}},
+    "worms": {"uncommon": {"zh": "稀有", "en": "Rare"}},
+    "rocky_setting": {"rare": {"zh": "较少", "en": "Less"}},
     # spawnprotection 中间档"自动监测"目前假设原始值是 default，还未确认
-    "spawnprotection": {"default": "自动监测"},
-    "acidrain_enabled": {"always": "启用"},
-    "wanderingtrader_enabled": {"always": "启用"},
+    "spawnprotection": {"default": {"zh": "自动监测", "en": "Auto-detect"}},
+    "acidrain_enabled": {"always": {"zh": "启用", "en": "Enabled"}},
+    "wanderingtrader_enabled": {"always": {"zh": "启用", "en": "Enabled"}},
     # 从不(未实测，按同类设置推断)/稀有/常见 是这个 key 专属的文案
-    "wormattacks_boss": {"never": "从不", "rare": "稀有", "often": "常见"},
+    "wormattacks_boss": {"never": {"zh": "从不", "en": "Never"}, "rare": {"zh": "稀有", "en": "Rare"},
+                         "often": {"zh": "常见", "en": "Common"}},
 }
 
+def _localized_value(names: dict) -> str:
+    return names.get(get_lang()) or names.get("zh") or ""
+
+
 def get_value_label(key: str, raw_value: str) -> str:
-    """Get the Chinese display label for a raw setting value, with per-key overrides."""
+    """Get the display label for a raw setting value in the current UI
+    language, with per-key overrides."""
     # Check per-key override first
     if key in _PER_KEY_LABELS:
         override = _PER_KEY_LABELS[key].get(raw_value)
         if override is not None:
-            return override
+            return _localized_value(override)
     # extrastartingitems: raw is a number of days
     if key == "extrastartingitems":
         try:
             n = int(raw_value)
-            return f"第{n}天后"
+            return t("world.after_day_n", n=n)
         except (ValueError, TypeError):
             pass
-    return _VALUE_LABELS.get(raw_value, str(raw_value))
+    names = _VALUE_LABELS.get(raw_value)
+    if names is not None:
+        return _localized_value(names)
+    return str(raw_value)
 
-_VALUE_COLORS = {
-    "default": theme.TEXT_MUTED, "never": theme.ERROR, "rare": theme.ACCENT,
-    "often": theme.PRIMARY, "always": "#ff9800",
-    "none": theme.ERROR, "few": theme.ACCENT, "many": theme.PRIMARY, "max": "#ff9800",
-    "veryslow": theme.ERROR, "slow": theme.ACCENT, "fast": theme.PRIMARY, "veryfast": "#ff9800",
-    "nonlethal": theme.PRIMARY, "force": "#ff9800", "more": theme.PRIMARY,
-    "disabled": theme.TEXT_MUTED, "enabled": theme.PRIMARY,
-    "uncommon": theme.ACCENT, "ocean_uncommon": theme.ACCENT, "mostly": theme.PRIMARY, "insane": "#ff9800",
-    "least": theme.ERROR, "most": "#ff9800",
-    "True": theme.PRIMARY, "False": theme.ERROR,
-}
+def _value_color(raw_value: str) -> str:
+    """取值对应的强调色——现建现查（不用模块级 dict 缓存），这样主题切换
+    以后重新渲染面板时，取到的是 theme.PRIMARY/theme.ERROR/theme.ACCENT 当
+    时最新的颜色，不会停在旧主题上。"""
+    table = {
+        "default": theme.TEXT_MUTED, "never": theme.ERROR, "rare": theme.ACCENT,
+        "often": theme.PRIMARY, "always": "#ff9800",
+        "none": theme.ERROR, "few": theme.ACCENT, "many": theme.PRIMARY, "max": "#ff9800",
+        "veryslow": theme.ERROR, "slow": theme.ACCENT, "fast": theme.PRIMARY, "veryfast": "#ff9800",
+        "nonlethal": theme.PRIMARY, "force": "#ff9800", "more": theme.PRIMARY,
+        "disabled": theme.TEXT_MUTED, "enabled": theme.PRIMARY,
+        "uncommon": theme.ACCENT, "ocean_uncommon": theme.ACCENT, "mostly": theme.PRIMARY, "insane": "#ff9800",
+        "least": theme.ERROR, "most": "#ff9800",
+        "True": theme.PRIMARY, "False": theme.ERROR,
+    }
+    return table.get(raw_value, theme.TEXT)
 
 
 def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
@@ -265,7 +319,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             icon_cy = cy + icon_size / 2
 
             vlbl = get_value_label(ov.key, ov.value)
-            vcolor = _VALUE_COLORS.get(ov.value, theme.TEXT)
+            vcolor = _value_color(ov.value)
             val_x = cx + col_w - 100 * s
             arrow_h = 26 * s  # cycle-button chevron height (was a 14px-tall drawn triangle)
             arrow_pad = 14 * s  # breathing room around each arrow -- was a cramped 10px

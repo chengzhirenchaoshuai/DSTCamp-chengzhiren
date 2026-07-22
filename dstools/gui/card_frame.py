@@ -50,6 +50,18 @@ class CardFrame(tk.Frame):
         self._redraw_after_id = None
         self._redraw()
 
+    def apply_theme(self) -> None:
+        """主题切换时调用——self/self._canvas 的背景色和 self._card_bg/
+        self._border 都是构造时焊死的实例属性（见 __init__），不会随
+        theme.py 的模块级变量更新自动变化，需要显式重新读一遍再重画。"""
+        bg = theme.BG_SOFT
+        self.configure(background=bg)
+        self._canvas.configure(background=bg)
+        self._card_bg = theme.CARD_BG
+        self._border = theme.CARD_BORDER
+        self.body.configure(background=self._card_bg)
+        self._redraw()
+
     def _redraw(self):
         c = self._canvas
         c.delete("all")

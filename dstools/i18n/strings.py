@@ -6,20 +6,30 @@ STRINGS = {
         "app.title": "DSTCamp · 本地服务器管理",
         "app.ready": "就绪",
         "app.refresh": "刷新全部 (F5)",
-        "app.exit": "退出 (Ctrl+Q)",
+        "app.refreshed_hint": "✓ 已刷新",
 
         # Menu
         "menu.file": "文件",
-        "menu.language": "语言",
         "menu.lang_zh": "中文",
         "menu.lang_en": "English",
         "menu.theme": "主题",
+        "menu.settings": "设置",
+        "menu.about": "关于",
 
-        # Themes -- switching is restart-required, see gui/theme.py
+        # Themes -- switching takes effect immediately, no restart needed
         "theme.mint": "薄荷绿（默认）",
         "theme.twilight": "暮蓝",
         "theme.campfire": "篝火橙",
-        "theme.restart_required": "主题已保存，重启 DSTCamp 后生效。",
+
+        # Settings dialog
+        "settings.title": "设置",
+        "settings.language_label": "语言",
+        "settings.minimize_on_close_label": "关闭时最小化到任务栏",
+        "settings.cache_use_exe_dir_label": "缓存存放在程序所在目录",
+        "settings.restart_required": "设置已保存，重启 DSTCamp 后生效。",
+
+        # About (NEW)
+        "about.message": "DSTCamp {version}\n\nDon't Starve Together 本地服务器管理工具\n\n作者：橙之刃\n交流群：463227692",
 
         # Tabs
         "tab.local": "  本地服务器  ",
@@ -64,8 +74,10 @@ STRINGS = {
         "mod.show_enabled": "已启用",
         "mod.show_disabled": "已禁用",
         "mod.show_local": "查看本地模组",
+        "mod.show_local_hover": "查看已订阅的本地mod",
         "mod.back_to_list": "返回Mod列表",
         "mod.reload_full": "重载Mod信息",
+        "mod.reload_full_hover": "重新加载已订阅的所有mod信息",
         "mod.loading_full": "正在重新加载全部 Mod 信息（含标题与配置），首次加载可能需要较长时间...",
         "mod.save_btn": "保存修改",
         "mod.apply_all": "应用到所有分片",
@@ -74,6 +86,10 @@ STRINGS = {
         "mod.status": "状态",
         "mod.workshop_id": "工坊ID",
         "mod.config_count": "配置项数",
+        "mod.config_btn": "配置",
+        "mod.workshop_link_btn": "创意工坊页面",
+        "mod.no_workshop_link": "无工坊链接",
+        "mod.local_badge": "本地",
         "mod.details_title": "Mod 详情 / 配置编辑器",
         "mod.no_overrides": "未找到 modoverrides.lua",
         "mod.on": "[启用]",
@@ -142,6 +158,9 @@ STRINGS = {
         "world.description": "描述",
         "world.overrides": "世界设置覆盖 ({count} 项)",
         "world.no_leveldata": "未找到 leveldataoverride.lua",
+        "world.location_forest": "\U0001f332 地面",
+        "world.location_cave": "\U0001f573️ 洞穴",
+        "world.after_day_n": "第{n}天后",
         "world.key": "设置项",
         "world.value": "值",
         "world.desc": "说明",
@@ -181,6 +200,24 @@ STRINGS = {
         "save.no_server": "未找到服务器存档",
         "save.no_local": "未找到本地存档",
         "save.env_overview": "存档概览",
+
+        # Copy local save to server (NEW)
+        "save.copy_to_server": "复制为服务器存档",
+        "save.copy_dialog_title": "复制为服务器存档",
+        "save.copy_dialog_prompt": "将复制本地存档「{name}」到服务器，请指定目标文件夹名称：",
+        "save.copy_name_label": "目标文件夹名称：",
+        "save.copy_name_empty": "文件夹名称不能为空。",
+        "save.copy_name_invalid_chars": "文件夹名称不能包含 / \\ : * ? \" < > | 这些字符。",
+        "save.copy_name_reserved": "文件夹名称不能是 . 或 .. 。",
+        "save.copy_name_exists": "该服务器目录已存在，请更换名称。",
+        "save.copy_result_title": "复制存档",
+
+        # Cluster copy progress log (core/cluster_copy.py on_log narration)
+        "copy.dest_exists": "{dest} 已存在",
+        "copy.created_dest": "已创建目标目录 {dest}",
+        "copy.copying_dir": "正在复制 {name}/ ...",
+        "copy.copying_file": "正在复制 {name} ...",
+        "copy.done": "复制完成。",
 
         # Config editor
         "mod.add_config": "添加配置项",
@@ -253,39 +290,68 @@ STRINGS = {
         "local.install_invalid_dir": "所选目录下未找到专用服务器可执行文件，请确认选择的是「Don't Starve Together Dedicated Server」的安装目录。",
         "local.confdir_cross_drive_error": "存档目录和系统「文档」目录不在同一个盘符，专用服务器工具无法跨盘符加载该存档。",
         "local.confirm_close_title": "有服务器正在运行",
-        "local.confirm_close_msg": "还有 {count} 个服务器正在运行，是否一并关闭？",
+        "local.confirm_close_msg": "有 {count} 个服务器正在运行，是否关闭服务器并退出软件？",
+
+        # System tray (NEW)
+        "tray.show": "显示主窗口",
+        "tray.exit": "退出",
 
         # Mod sync (NEW)
         "local.sync_mods_btn": "同步mod文件到服务器",
         "local.sync_running_btn": "同步中...",
+        "local.sync_hover": "将存档启用的本地已下载mod文件复制到服务器目录，并添加mod列表至服务器在线下载配置",
+        "local.sync_running_hover": "请停止服务器后再进行同步",
         "local.sync_no_mods": "该存档没有启用的 Mod，无需同步。",
-        "local.sync_confirm_msg": "确认开始同步 {name} 的 Mod 吗？\n\n确保进入过一次游戏，并保证所有的 Mod 已在本地下载成功哦~",
+        "local.sync_confirm_msg": "确认开始同步 {name} 的 Mod 吗？\n\n确保进入过一次游戏，并保证所有的 Mod 已在本地下载成功？",
         "local.sync_result_title": "Mod 同步日志",
         "local.sync_summary_online": "在线下载列表已写入 {count} 个 Mod：",
         "local.sync_summary_copied": "本地复制成功 {count} 个：",
         "local.sync_summary_not_local": "{count} 个本地未找到内容，仅走在线下载（如果启动服务器后仍未生效，请在客户端里进入一次游戏确保这些 Mod 已下载）：",
         "local.sync_summary_client_only": "{count} 个是纯客户端 Mod，已跳过本地复制：",
         "local.sync_summary_errors": "{count} 个同步出错：",
+
+        # Mod sync progress log (core/mod_sync.py on_log narration)
+        "sync.enabled_count": "共 {count} 个已启用的 Mod。",
+        "sync.wrote_setup_lua": "已写入在线下载列表 mods/dedicated_server_mods_setup.lua（{count} 个）。",
+        "sync.nothing_to_sync": "没有需要同步的 Mod，结束。",
+        "sync.copied_acf": "已复制校验文件 appworkshop_{app_id}.acf 到 {shard}。",
+        "sync.no_acf_found": "本地未找到 Steam 的 appworkshop_{app_id}.acf 校验文件，跳过复制（不影响在线下载方式）。",
+        "sync.acf_error_detail": "appworkshop_{app_id}.acf ({shard}): {error}",
+        "sync.skip_not_local": "[跳过] {mod_id}：本地未找到内容，仅走在线下载。",
+        "sync.skip_client_only": "[跳过] {mod_id}：纯客户端 Mod，不需要同步到服务器。",
+        "sync.copied_mod": "[完成] {mod_id}：已复制到 {count} 个分片。",
+        "sync.error_prefix": "[错误] {detail}",
+        "sync.summary": "同步完成：在线 {online} 个，本地复制成功 {copied} 个，跳过 {skipped} 个，出错 {errors} 个。",
     },
     "en": {
         # Window
         "app.title": "DSTCamp · Local Server Manager",
         "app.ready": "Ready",
         "app.refresh": "Refresh All (F5)",
-        "app.exit": "Exit (Ctrl+Q)",
+        "app.refreshed_hint": "✓ Refreshed",
 
         # Menu
         "menu.file": "File",
-        "menu.language": "Language",
         "menu.lang_zh": "中文",
         "menu.lang_en": "English",
         "menu.theme": "Theme",
+        "menu.settings": "Settings",
+        "menu.about": "About",
 
-        # Themes -- switching is restart-required, see gui/theme.py
+        # Themes -- switching takes effect immediately, no restart needed
         "theme.mint": "Mint (default)",
         "theme.twilight": "Twilight",
         "theme.campfire": "Campfire",
-        "theme.restart_required": "Theme saved -- restart DSTCamp for it to take effect.",
+
+        # Settings dialog
+        "settings.title": "Settings",
+        "settings.language_label": "Language",
+        "settings.minimize_on_close_label": "Minimize to tray on close",
+        "settings.cache_use_exe_dir_label": "Store cache next to the exe",
+        "settings.restart_required": "Setting saved -- restart DSTCamp for it to take effect.",
+
+        # About (NEW)
+        "about.message": "DSTCamp {version}\n\nDon't Starve Together local server manager\n\nAuthor：橙之刃\nQQ group：463227692",
 
         # Tabs
         "tab.local": "  Local Server  ",
@@ -330,8 +396,10 @@ STRINGS = {
         "mod.show_enabled": "Enabled",
         "mod.show_disabled": "Disabled",
         "mod.show_local": "View Local Mods",
+        "mod.show_local_hover": "View subscribed local mods",
         "mod.back_to_list": "Back to Mod List",
         "mod.reload_full": "Reload Mod Info",
+        "mod.reload_full_hover": "Reload info for all subscribed mods",
         "mod.loading_full": "Reloading all mod info (titles and config), this may take a while the first time...",
         "mod.save_btn": "Save Changes",
         "mod.apply_all": "Apply to All Shards",
@@ -340,6 +408,10 @@ STRINGS = {
         "mod.status": "Status",
         "mod.workshop_id": "Workshop ID",
         "mod.config_count": "Config Options",
+        "mod.config_btn": "Configure",
+        "mod.workshop_link_btn": "Workshop Page",
+        "mod.no_workshop_link": "No Workshop Link",
+        "mod.local_badge": "Local",
         "mod.details_title": "Mod Details / Config Editor",
         "mod.no_overrides": "No modoverrides.lua found",
         "mod.on": "[ON]",
@@ -408,6 +480,9 @@ STRINGS = {
         "world.description": "Description",
         "world.overrides": "World Overrides ({count} items)",
         "world.no_leveldata": "No leveldataoverride.lua found",
+        "world.location_forest": "\U0001f332 Forest",
+        "world.location_cave": "\U0001f573️ Caves",
+        "world.after_day_n": "After Day {n}",
         "world.key": "Setting",
         "world.value": "Value",
         "world.desc": "Description",
@@ -447,6 +522,24 @@ STRINGS = {
         "save.no_server": "No server saves found",
         "save.no_local": "No local saves found",
         "save.env_overview": "Save Overview",
+
+        # Copy local save to server (NEW)
+        "save.copy_to_server": "Copy as Server Save",
+        "save.copy_dialog_title": "Copy as Server Save",
+        "save.copy_dialog_prompt": "This will copy local save \"{name}\" to the server. Please specify a destination folder name:",
+        "save.copy_name_label": "Destination folder name:",
+        "save.copy_name_empty": "Folder name cannot be empty.",
+        "save.copy_name_invalid_chars": "Folder name cannot contain / \\ : * ? \" < > | .",
+        "save.copy_name_reserved": "Folder name cannot be . or .. .",
+        "save.copy_name_exists": "This server directory already exists, please choose another name.",
+        "save.copy_result_title": "Copy Save",
+
+        # Cluster copy progress log (core/cluster_copy.py on_log narration)
+        "copy.dest_exists": "{dest} already exists",
+        "copy.created_dest": "Created destination directory {dest}",
+        "copy.copying_dir": "Copying {name}/ ...",
+        "copy.copying_file": "Copying {name} ...",
+        "copy.done": "Copy complete.",
 
         # Config editor
         "mod.add_config": "Add Config",
@@ -519,11 +612,17 @@ STRINGS = {
         "local.install_invalid_dir": "No dedicated server executable found in that folder -- make sure you selected the “Don't Starve Together Dedicated Server” install directory.",
         "local.confdir_cross_drive_error": "The save directory and the system “Documents” directory are on different drives -- the dedicated server tool can't load this save across drives.",
         "local.confirm_close_title": "Servers Still Running",
-        "local.confirm_close_msg": "{count} server(s) are still running. Close them too?",
+        "local.confirm_close_msg": "{count} server(s) are still running. Close them and exit?",
+
+        # System tray (NEW)
+        "tray.show": "Show Main Window",
+        "tray.exit": "Exit",
 
         # Mod sync (NEW)
         "local.sync_mods_btn": "Sync Mod Files to Server",
         "local.sync_running_btn": "Syncing...",
+        "local.sync_hover": "Copy locally downloaded mod files enabled for this save to the server directory, and add the mod list to the server's online-download config",
+        "local.sync_running_hover": "Stop the server before syncing",
         "local.sync_no_mods": "This save has no enabled mods -- nothing to sync.",
         "local.sync_confirm_msg": "Start syncing mods for {name}?\n\nMake sure you've launched the game at least once and that all mods have finished downloading locally~",
         "local.sync_result_title": "Mod Sync Log",
@@ -532,5 +631,18 @@ STRINGS = {
         "local.sync_summary_not_local": "{count} mod(s) not found locally, relying on online download only (if they still don't work after starting the server, launch the game client once to make sure these mods are downloaded):",
         "local.sync_summary_client_only": "{count} client-only mod(s) skipped for local copy:",
         "local.sync_summary_errors": "{count} error(s) during sync:",
+
+        # Mod sync progress log (core/mod_sync.py on_log narration)
+        "sync.enabled_count": "{count} mod(s) enabled.",
+        "sync.wrote_setup_lua": "Wrote online-download list mods/dedicated_server_mods_setup.lua ({count} mod(s)).",
+        "sync.nothing_to_sync": "No mods need syncing, done.",
+        "sync.copied_acf": "Copied checksum file appworkshop_{app_id}.acf to {shard}.",
+        "sync.no_acf_found": "Steam's appworkshop_{app_id}.acf checksum file not found locally, skipping copy (doesn't affect online download).",
+        "sync.acf_error_detail": "appworkshop_{app_id}.acf ({shard}): {error}",
+        "sync.skip_not_local": "[Skipped] {mod_id}: not found locally, relying on online download only.",
+        "sync.skip_client_only": "[Skipped] {mod_id}: client-only mod, no need to sync to server.",
+        "sync.copied_mod": "[Done] {mod_id}: copied to {count} shard(s).",
+        "sync.error_prefix": "[Error] {detail}",
+        "sync.summary": "Sync complete: {online} online, {copied} copied locally, {skipped} skipped, {errors} error(s).",
     }
 }

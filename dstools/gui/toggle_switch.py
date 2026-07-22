@@ -8,9 +8,7 @@ import tkinter as tk
 
 from dstools.gui import theme
 
-_ON_COLOR = theme.PRIMARY
 _OFF_COLOR = "#bdbdbd"
-_KNOB_COLOR = theme.CARD_BG
 
 
 class ToggleSwitch(tk.Canvas):
@@ -48,7 +46,7 @@ class ToggleSwitch(tk.Canvas):
         self.delete("all")
         on = bool(self.variable.get())
         r = self._sw_h / 2
-        color = _ON_COLOR if on else _OFF_COLOR
+        color = theme.PRIMARY if on else _OFF_COLOR
         if not self.enabled:
             color = "#e0e0e0" if not on else "#a5d6a7"
         self.create_oval(0, 0, self._sw_h, self._sw_h, fill=color, outline=color)
@@ -57,7 +55,7 @@ class ToggleSwitch(tk.Canvas):
         knob_r = r - 3
         cx = self._sw_w - r if on else r
         self.create_oval(cx - knob_r, r - knob_r, cx + knob_r, r + knob_r,
-                         fill=_KNOB_COLOR, outline=_KNOB_COLOR)
+                         fill=theme.CARD_BG, outline=theme.CARD_BG)
 
     def _on_click(self, event):
         self.variable.set(not self.variable.get())

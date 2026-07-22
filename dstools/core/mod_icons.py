@@ -15,9 +15,10 @@ from PIL import Image
 
 from dstools.core.atlas_utils import crop_by_uv, parse_atlas_xml
 from dstools.core.modinfo_reader import ModInfo
+from dstools.core.resource_paths import cache_dir
 from dstools.core.tex_convert import tex_to_png
 
-_CACHE_DIR = Path(__file__).parent.parent.parent / "icons" / "mod_cache"
+_CACHE_DIR = cache_dir("mod_icons")
 
 
 def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path) -> Path | None:
