@@ -1,6 +1,6 @@
 """GUI for DST save tool. Tabs: Saves | Mods | World | Config | Env."""
 
-import queue, re, sys, threading, tkinter as tk
+import queue, re, sys, threading, tkinter as tk, weakref
 from pathlib import Path
 from tkinter import font as tkfont, simpledialog, ttk
 from typing import Any
@@ -13,7 +13,9 @@ from dstools.core.app_settings import (
     get_theme_name, set_theme_name, get_player_note, set_player_note,
     get_minimize_on_close, set_minimize_on_close,
     get_cache_use_exe_dir, set_cache_use_exe_dir,
+    get_custom_bg_opacity,
 )
+from dstools.core.custom_background import get_custom_bg_path, render_background
 from dstools.core.config_manager import (
     load_cluster_config, load_shard_config,
     save_cluster_config, save_shard_config,
@@ -37,6 +39,7 @@ from dstools.core.save_reader import (
 from dstools.core.token_manager import is_valid_token, mask_token, read_token, write_token
 from dstools.core.world_reader import parse_leveldata, save_leveldata
 from dstools.gui import theme, themed_dialog as dlg
+from dstools.gui.bg_frame import BgFrame
 from dstools.gui.card_frame import CardFrame
 from dstools.gui.cluster_select import cluster_label as _cluster_label
 from dstools.gui.menu_combo import MenuCombo
@@ -141,12 +144,15 @@ class DSToolsApp:
             self.root.iconbitmap(default=str(_icon_dir / "icon.ico"))
         except Exception:
             pass  # 找不到就用 Tk 自带的默认图标，不影响功能
-        # 1300 宽而不是原来的 1100 -- "Mod管理"页签这一行现在挤了存档/分片
-        # 选择器+5个按钮，1100 宽度下最后一个按钮(同步mod文件到服务器)
-        # 会被 pack 挤压到只剩十几像素宽、文字完全看不见；1300 也刚好和
-        # world_render.py 的 BASE_REF_WIDTH 一致，世界设置面板默认就是按
-        # 原始分辨率渲染，不需要再缩放。
-        self.root.geometry("1300x710")
+        # 默认窗口比原来的 1300x710 放大了一圈（约 15%，宽高比不变仍是
+        # 1300:710 那个比例）——用户反馈默认打开太小。1300 宽这个下限本身
+        # 的由来还在：更窄"Mod管理"页签那一行会把最后一个按钮(同步mod文
+        # 件到服务器)挤到只剩十几像素宽看不见文字；world_render.py 的
+        # BASE_REF_WIDTH 是按原来 1300 调的，现在窗口更宽了，世界设置面板
+        # 首次打开会多一次"停顿后按实际宽度重渲染"（既有机制，见
+        # image_scroll.py 的 SETTLE_DELAY_MS），不是 bug，只是不再是"一开
+        # 始就恰好是原始分辨率"而已。
+        self.root.geometry("1500x820")
         self.root.minsize(900, 580)
         self.root.resizable(True, True)
 
@@ -155,11 +161,12 @@ class DSToolsApp:
         # is silky smooth with zero flicker -- unlike reacting to
         # <Configure> from Python, which always shows a snap-back frame.
         from dstools.gui.win_aspect_lock import AspectLock
-        self._aspect_lock = AspectLock(self.root, 1300, 710)
+        self._aspect_lock = AspectLock(self.root, 1500, 820)
         self._aspect_lock.install()
 
         self.style = ttk.Style(); self.style.theme_use("clam")
         theme.apply_theme(self.root, self.style)
+        self._init_bg_system()
         self._build_menu()
 
         # Top-level nav is a custom pill tab bar, not a ttk.Notebook -- the
@@ -171,17 +178,26 @@ class DSToolsApp:
             self.root,
             tabs=[(k, t(f"tab.{k}")) for k in self._tab_keys],
             on_select=self._on_tab_select,
+            app=self,
         )
         self._pill_bar.pack(fill=tk.X, side=tk.TOP)
 
-        self._tab_area = tk.Frame(self.root, background=theme.BG_SOFT)
+        # 之前试过把这个改成 Canvas + 各自独立 render_background()，在真实
+        # 拖拽缩放窗口时跟 win_aspect_lock.py 的原生 WM_SIZING 钩子打架，
+        # 出现过布局错位/闪烁/背景图割裂——根因是"每个背景表面各自独立做
+        # 一遍读盘/裁剪/缩放/混合这套重活，且没有防抖"。这次改用 BgFrame
+        # （gui/bg_frame.py），走 DSToolsApp 统一维护的"共享大图"，拖拽过
+        # 程中只做便宜的内存 crop，重活只在窗口停顿后做一次——这个节流
+        # 手法本身是 image_scroll.py 已经验证过的既有规范，不是新发明的。
+        self._tab_area = BgFrame(self.root, self)
         self._tab_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self._tab_area.grid_rowconfigure(0, weight=1)
         self._tab_area.grid_columnconfigure(0, weight=1)
 
         def _make_card():
-            card = CardFrame(self._tab_area)
-            card.grid(row=0, column=0, sticky="nsew")
+            card = CardFrame(self._tab_area, self)
+            card.grid(row=0, column=0, sticky="nsew",
+                      padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
             return card
 
         self._tab_cards = {k: _make_card() for k in self._tab_keys}
@@ -195,21 +211,34 @@ class DSToolsApp:
         # 切到那个页签时把这一整条隐藏掉（见 _on_tab_select）。
         # self._cluster_bar 是最外层（描边色），真正的内容放在里面一层
         # CARD_BG 背景的 _cluster_bar_inner 里，四周露出 1px 边框——跟
-        # _show_about/_SettingsDialog 已经在用的"卡片"配色配方一样，让这
+        # _show_about 已经在用的"卡片"配色配方一样，让这
         # 一整条看起来是一张浮起来的卡片，而不是几个控件干巴巴地摆在页面
         # 背景上。外部代码（_on_tab_select 等）只认 self._cluster_bar 这
         # 个最外层引用，pack/pack_forget 逻辑不用跟着变。
-        self._cluster_bar = tk.Frame(self.root, background=theme.CARD_BORDER)
-        cluster_bar_inner = self._cluster_bar_inner = tk.Frame(self._cluster_bar, background=theme.CARD_BG)
+        # BgFrame 而不是 tk.Frame——这一条栏也要能显示自定义背景图。
+        self._cluster_bar = BgFrame(self.root, self, bg=theme.CARD_BORDER)
+        cluster_bar_inner = self._cluster_bar_inner = BgFrame(self._cluster_bar, self, bg=theme.CARD_BG)
         cluster_bar_inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
         # 比其它选择器都大一号，字体和内边距都放大——毕竟这是决定其它 4
         # 个页签内容的最重要的一个控件，视觉上应该更显眼；加粗+主题强调色
-        # 让它看起来像个有分量的标签，而不是随手放的一行说明字。
-        _BAR_FONT = ("", 12)
-        self._archive_label = tk.Label(
-            cluster_bar_inner, text=t("selector.archive"), font=(_BAR_FONT[0], _BAR_FONT[1], "bold"),
-            background=theme.CARD_BG, foreground=theme.PRIMARY)
-        self._archive_label.pack(side=tk.LEFT, padx=(12,6), pady=8)
+        # 让它看起来像个有分量的标签，而不是随手放的一行说明字。"存档:"
+        # 这段文字不用 tk.Label（绘制区域永远不透明实色，会挡住背景图），
+        # 直接在 cluster_bar_inner 这个 BgFrame 的 Canvas 上 create_text
+        # 画字，跟 install_row/_ShardRow 是同一个思路。
+        self._archive_label_font = tkfont.Font(size=12, weight="bold")
+        self._archive_label_w = self._archive_label_font.measure(t("selector.archive"))
+
+        def _redraw_archive_label():
+            cluster_bar_inner.delete("archive_label")
+            h = cluster_bar_inner.winfo_height()
+            if h < 4:
+                return
+            cluster_bar_inner.create_text(12, h / 2, text=t("selector.archive"), anchor=tk.W,
+                                           fill=theme.PRIMARY, font=self._archive_label_font,
+                                           tags="archive_label")
+
+        self._redraw_archive_label = _redraw_archive_label
+        cluster_bar_inner.bind("<Configure>", lambda e: self._redraw_archive_label(), add="+")
         # 这里特意不用 ttk.Combobox：readonly Combobox 背后是一个真正的
         # Entry，实测（含用户本机反复验证）在"打开下拉/选中一项"之后，
         # 这个 Entry 有时会卡住不肯把新文字画出来——底层选中值其实一直是
@@ -227,10 +256,13 @@ class DSToolsApp:
         self._global_selected_cluster = None
         self._global_cluster_menu_btn = ttk.Menubutton(
             cluster_bar_inner, textvariable=self._global_cluster_var,
-            width=30, style="Archive.TMenubutton")
+            width=26, style="Archive.TMenubutton")
         self._global_cluster_menu = tk.Menu(self._global_cluster_menu_btn, tearoff=0)
         self._global_cluster_menu_btn.configure(menu=self._global_cluster_menu)
-        self._global_cluster_menu_btn.pack(side=tk.LEFT, padx=(0,10), ipady=3)
+        # "存档:"文字不再是 pack() 进来的 Label，没法再靠"排在它后面"自动
+        # 空出位置——左边距改成手动算：12（文字左内边距）+ 文字实际宽度 + 6
+        # （原来 Label 自己的右内边距），跟以前视觉上对齐。
+        self._global_cluster_menu_btn.pack(side=tk.LEFT, padx=(12 + self._archive_label_w + 6, 10), ipady=3)
         ttk.Button(cluster_bar_inner, text=t("save.refresh"), command=self._refresh,
                    style="Big.TButton").pack(side=tk.LEFT, padx=(0, 10))
         self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
@@ -298,6 +330,11 @@ class DSToolsApp:
             on_exit=lambda: self.root.after(0, self._do_exit),
         )
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # 首次同步建一次共享背景大图——不这样做的话，要等 root 第一次
+        # <Configure>（本来就会在窗口刚显示时触发一次）之后再等
+        # _BG_SETTLE_MS 才会有图，会有一瞬间的纯色闪一下。
+        self._rebuild_shared_bg_image()
+        self._refresh_all_bg_surfaces()
         self._update_status(); self._refresh()
 
     def _on_tab_select(self, key: str) -> None:
@@ -380,36 +417,127 @@ class DSToolsApp:
         fm.add_command(label=t("app.refresh"), command=self._refresh, accelerator="F5")
         # "语言"已经搬进"设置"弹窗里了（跟"关闭时最小化到任务栏"那两个开
         # 关放一起，不再单独占一个菜单位置）。
+        # 现在只剩一套主题（"自定义背景图"），"启用此主题"这个单选项已经
+        # 删掉——只有一个选项时，一个永远选中、点了也不会有任何变化的单
+        # 选按钮没有意义。"主题"这一层现在直接放"背景图设置…"这一个命令。
+        # theme.THEME_NAMES 仍然是通用的列表机制，以后要加回别的主题，
+        # 这里改成 else 分支的 add_radiobutton 就行（跟改之前完全一样）。
         tm = tk.Menu(self.root, tearoff=0)
         for name in theme.THEME_NAMES:
-            tm.add_radiobutton(label=t(f"theme.{name}"), command=lambda n=name: self._switch_theme(n))
+            if name == "custom_bg":
+                tm.add_command(label=t("theme.custom_bg_settings"), command=self._show_custom_bg_dialog)
+            else:
+                tm.add_radiobutton(label=t(f"theme.{name}"), command=lambda n=name: self._switch_theme(n))
         self.root.bind("<F5>", lambda e: self._refresh())
+
+        # "设置"原来是一个独立的 Toplevel 弹窗（_SettingsDialog，已删除），
+        # 现在跟"主题"一样改成下拉菜单——"语言"是一个二级子菜单（级联，跟
+        # "主题"平级放在顶层菜单条不一样，语言选项数量少、又是"设置"里的
+        # 一项，收进子菜单更符合"设置"菜单本身的定位），里面两个
+        # add_radiobutton 两态互斥；"关闭时最小化到任务栏"/"缓存存放在程序
+        # 所在目录"这两项本质是布尔开关，改用 add_checkbutton（打勾）而不
+        # 是拟真开关控件，跟系统菜单里常见的勾选项观感一致。这几个 Var 必
+        # 须挂在 self 上而不是局部变量——tk.Menu 只在语言/主题切换时随
+        # _build_menu 整体重建，平时用户点开关时菜单对象本身不重建，勾选
+        # 状态全靠这几个 Var 存活于菜单生命周期内。
+        sm = tk.Menu(self.root, tearoff=0)
+        lang_menu = tk.Menu(sm, tearoff=0)
+        self._settings_lang_var = tk.StringVar(value=get_lang())
+        lang_menu.add_radiobutton(label=t("menu.lang_zh"), variable=self._settings_lang_var, value="zh",
+                            command=lambda: self._switch_language("zh"))
+        lang_menu.add_radiobutton(label=t("menu.lang_en"), variable=self._settings_lang_var, value="en",
+                            command=lambda: self._switch_language("en"))
+        sm.add_cascade(label=t("settings.language_label"), menu=lang_menu)
+        sm.add_separator()
+        self._settings_minimize_var = tk.BooleanVar(value=get_minimize_on_close())
+        sm.add_checkbutton(label=t("settings.minimize_on_close_label"), variable=self._settings_minimize_var,
+                            command=lambda: set_minimize_on_close(self._settings_minimize_var.get()))
+        self._settings_cache_var = tk.BooleanVar(value=get_cache_use_exe_dir())
+        sm.add_checkbutton(label=t("settings.cache_use_exe_dir_label"), variable=self._settings_cache_var,
+                            command=self._on_cache_setting_toggle)
 
         # 语言切换/主题都会重新调一次这个方法（刷新标签文字），旧的那条
         # 触发条要先拆掉再重建，不然会在 root 里留一条重复的。
         old_strip = getattr(self, "_menu_strip", None)
         if old_strip is not None:
             old_strip.destroy()
-        strip = tk.Frame(self.root, background=theme.CARD_BG)
+        # 用 BgFrame（gui/bg_frame.py）而不是 tk.Frame——第一版直接
+        # tk.Canvas + 自己独立 render_background() 的做法在真实拖拽缩放
+        # 窗口时跟 win_aspect_lock.py 打架过；BgFrame 走的是"共享大图 +
+        # 便宜的偏移量裁剪"这一套（见 _tab_area 那边、以及
+        # gui/bg_frame.py 顶部的详细说明），已经反复验证过安全。
+        # 这一排触发文字("文件"/"主题"/"设置"/"关于")以前是各自一个
+        # tk.Label——Label 的绘制区域永远是不透明实色，四个紧挨着的 Label
+        # 会在背后的自定义背景图上拼出一整条很显眼的色块，跟 install_row
+        # 的路径文字是同一类问题。现在改成直接在 strip 这个 BgFrame 的
+        # Canvas 上 create_text 画字，文字直接盖在背景图上层；悬停高亮换
+        # 成一个平时不可见（fill=""）的矩形，鼠标移上去才现出
+        # theme.BG_SOFT 底色——这跟 PillTabBar 选中态直接拿实色盖住背景图
+        # 是同一个做法，属于"有意为之的高亮状态"，不是背景没做好。
+        strip = BgFrame(self.root, self, bg=theme.CARD_BG)
+        # pack_propagate 默认开着的话，strip 的高度会被"它唯一 pack() 进去
+        # 的子控件"（下面这条 1px 的分隔线）反过来决定，缩成 1px 高，把
+        # 已经画好的文字全部挤没——之前文字是靠 tk.Label 撑高度，现在文
+        # 字换成了 create_text（不参与 pack 布局），必须显式关掉
+        # pack_propagate 才能让下面 configure(height=strip_h) 真正生效。
+        # PillTabBar.__init__ 也用的这个手法，是同一类问题。
+        strip.pack_propagate(False)
         border = tk.Frame(strip, background=theme.CARD_BORDER, height=1)
         border.pack(side=tk.BOTTOM, fill=tk.X)
 
-        def _add_menu_item(text, menu=None, command=None):
-            lbl = tk.Label(strip, text=text, font=("", 11), padx=14, pady=7,
-                           background=theme.CARD_BG, foreground=theme.TEXT, cursor="hand2")
-            lbl.pack(side=tk.LEFT)
-            lbl.bind("<Enter>", lambda e: lbl.configure(background=theme.BG_SOFT))
-            lbl.bind("<Leave>", lambda e: lbl.configure(background=theme.CARD_BG))
-            if menu is not None:
-                lbl.bind("<Button-1>", lambda e: self._popup_menu(menu, lbl))
-            else:
-                lbl.bind("<Button-1>", lambda e: command())
+        # 第一个字体元素平时是 ""（Tk 的"系统默认字体"写法），"自定义背景
+        # 图"主题换成 theme.FONT_FAMILY 指定的纤细字体族——_build_menu()
+        # 本身在语言/主题切换时会整体重建，这里跟其它现查 theme.X 的地方
+        # 一样不用担心切主题后字体卡在旧值上。
+        menu_font = tkfont.Font(family=theme.FONT_FAMILY, size=11)
+        PADX, PADY = 14, 7
+        strip_h = menu_font.metrics("linespace") + 2 * PADY
+        # BgFrame 底下没有其它 pack() 的子控件撑高度了（原来是靠那几个
+        # Label 的 reqheight），Canvas 自己不 pack_propagate 的话默认高度
+        # 是 200，必须显式给一个跟字体匹配的高度。
+        strip.configure(height=strip_h)
 
-        _add_menu_item(t("menu.file"), menu=fm)
-        _add_menu_item(t("menu.theme"), menu=tm)
-        # "设置"/"关于"不需要子菜单，直接绑命令。
-        _add_menu_item(t("menu.settings"), command=self._show_settings)
-        _add_menu_item(t("menu.about"), command=self._show_about)
+        self._menu_strip_items: list[dict] = []
+        x = 0
+        for text, menu, command in (
+            (t("menu.file"), fm, None),
+            (t("menu.theme"), tm, None),
+            (t("menu.settings"), sm, None),
+            (t("menu.about"), None, self._show_about),  # "关于"不需要子菜单，直接绑命令
+        ):
+            item_w = menu_font.measure(text) + 2 * PADX
+            rect_id = strip.create_rectangle(x, 0, x + item_w, strip_h, fill="", outline="", tags="menu_hit")
+            strip.create_text(x + PADX, strip_h / 2, text=text, anchor=tk.W,
+                               fill=theme.TEXT, font=menu_font, tags="menu_text")
+            self._menu_strip_items.append({"x1": x, "x2": x + item_w, "menu": menu,
+                                            "command": command, "rect_id": rect_id})
+            x += item_w
+
+        def _on_motion(event):
+            hit = False
+            for item in self._menu_strip_items:
+                hovering = item["x1"] <= event.x < item["x2"]
+                strip.itemconfigure(item["rect_id"], fill=theme.BG_SOFT if hovering else "")
+                hit = hit or hovering
+            strip.configure(cursor="hand2" if hit else "")
+
+        def _on_leave(event):
+            for item in self._menu_strip_items:
+                strip.itemconfigure(item["rect_id"], fill="")
+
+        def _on_click(event):
+            for item in self._menu_strip_items:
+                if item["x1"] <= event.x < item["x2"]:
+                    if item["menu"] is not None:
+                        self._popup_menu_at(item["menu"], strip.winfo_rootx() + item["x1"],
+                                             strip.winfo_rooty() + strip_h)
+                    else:
+                        item["command"]()
+                    return
+
+        strip.bind("<Motion>", _on_motion)
+        strip.bind("<Leave>", _on_leave)
+        strip.bind("<Button-1>", _on_click)
 
         # 首次建（__init__ 里 _pill_bar 还不存在）直接 pack；语言切换时
         # 重建，_pill_bar 已经在下面了，要用 before= 顶回最上面，否则
@@ -420,9 +548,7 @@ class DSToolsApp:
             strip.pack(fill=tk.X, side=tk.TOP)
         self._menu_strip = strip
 
-    def _popup_menu(self, menu, anchor_widget):
-        x = anchor_widget.winfo_rootx()
-        y = anchor_widget.winfo_rooty() + anchor_widget.winfo_height()
+    def _popup_menu_at(self, menu, x, y):
         try:
             menu.tk_popup(x, y)
         finally:
@@ -456,10 +582,13 @@ class DSToolsApp:
         theme.set_theme(name)
         theme.apply_theme(self.root, self.style)
         self._build_menu()
+        self._tab_area.apply_theme()
         for card in self._tab_cards.values():
             card.apply_theme()
+            card.grid_configure(padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
         self._pill_bar.apply_theme()
         self._retheme_cluster_bar()
+        self._force_refresh_bg_now()
         for tab in self._tabs:
             retheme = getattr(tab, "retheme", None)
             if retheme:
@@ -467,13 +596,117 @@ class DSToolsApp:
             tab.refresh()
 
     def _retheme_cluster_bar(self) -> None:
-        """顶部存档卡片栏（_cluster_bar/_cluster_bar_inner/"存档:"标签）
+        """顶部存档卡片栏（_cluster_bar/_cluster_bar_inner/"存档:"文字）
         都是 __init__ 里建一次就不再重建的静态部件，主题切换时需要显式
         重新上色；Menubutton/Button 本身是 ttk 控件，已经被上面的
         theme.apply_theme() 覆盖，不用管。"""
-        self._cluster_bar.configure(background=theme.CARD_BORDER)
-        self._cluster_bar_inner.configure(background=theme.CARD_BG)
-        self._archive_label.configure(background=theme.CARD_BG, foreground=theme.PRIMARY)
+        self._cluster_bar.apply_theme(bg=theme.CARD_BORDER)
+        self._cluster_bar_inner.apply_theme(bg=theme.CARD_BG)
+        self._redraw_archive_label()
+
+    # ── 自定义背景图：共享大图系统 ───────────────────────────────────
+    # 详细设计见 gui/bg_frame.py 顶部说明。核心规则：拖拽缩放窗口的过程
+    # 中绝不做"读盘/裁剪比例/LANCZOS 缩放/颜色混合"这套重活，只在停顿
+    # 超过 _BG_SETTLE_MS 之后才重新生成一次共享大图——这是本项目处理
+    # resize 重活的既有规范（跟 image_scroll.py 的 SETTLE_DELAY_MS 完全
+    # 一致），不是新发明的手法；上一版每个背景表面各自独立做这套重活、
+    # 且没有防抖，在真实拖拽缩放窗口时跟 win_aspect_lock.py 的原生
+    # WM_SIZING 钩子打架，出现过布局错位/闪烁/背景图割裂的问题。
+
+    _BG_SETTLE_MS = 150  # 跟 image_scroll.py 的 SETTLE_DELAY_MS 保持一致
+
+    def _init_bg_system(self) -> None:
+        self._bg_surfaces: list = []  # BgFrame 的弱引用列表
+        self._shared_bg_image = None  # PIL Image，跟 root 客户区同尺寸
+        self._shared_bg_key = None
+        self._bg_settle_after_id = None
+        self.root.bind("<Configure>", self._on_root_configure_for_bg)
+
+    def _register_bg_surface(self, surface) -> None:
+        """BgFrame 构造时调用，登记进来以便窗口停顿后统一收到重画通知。"""
+        self._bg_surfaces.append(weakref.ref(surface))
+
+    def _on_root_configure_for_bg(self, event) -> None:
+        # <Configure> 只在事件的 widget 就是 root 自己时才处理——子控件
+        # 自己的 <Configure> 不会冒泡到这里，这个判断只是双重保险。
+        if event.widget is not self.root:
+            return
+        if self._bg_settle_after_id is not None:
+            self.root.after_cancel(self._bg_settle_after_id)
+        self._bg_settle_after_id = self.root.after(self._BG_SETTLE_MS, self._on_bg_settle)
+
+    def _on_bg_settle(self) -> None:
+        self._bg_settle_after_id = None
+        self._rebuild_shared_bg_image()
+        self._refresh_all_bg_surfaces()
+
+    def _rebuild_shared_bg_image(self) -> None:
+        """真正的重活——只在窗口停顿后（或者背景图设置改变时）调用一次。
+        统一按 theme.BG_SOFT 混合：各表面自己具体的色号（CARD_BG 等）跟
+        BG_SOFT 差异都很小，共用同一张混合结果换来的是"处处看起来是同
+        一张连续的图"，比每个表面自己抠自己的颜色更重要。"""
+        w, h = self.root.winfo_width(), self.root.winfo_height()
+        bg_path = get_custom_bg_path() if theme.BG_IMAGE_ENABLED else None
+        opacity = get_custom_bg_opacity()
+        key = (bg_path, opacity, w, h)
+        if self._shared_bg_key == key:
+            return
+        if bg_path is None:
+            self._shared_bg_image = None
+            self._shared_bg_key = key
+            return
+        if w < 4 or h < 4:
+            return
+        self._shared_bg_image = render_background(bg_path, w, h, opacity, theme.BG_SOFT)
+        self._shared_bg_key = key
+
+    def _get_bg_slice_image(self, widget, w: int, h: int):
+        """从共享大图里按 widget 相对 root 客户区的屏幕偏移量裁一块出来
+        （纯内存 crop，不缩放/不混合，足够便宜），返回的是 PIL Image 本
+        身，不是转换好的 PhotoImage——CardFrame 需要拿这个原始图再自己
+        做一次圆角遮罩合成（见 card_frame.py._render_masked_bg()），普通
+        消费者（BgFrame）直接用下面 _get_bg_slice() 那个转好 PhotoImage
+        的版本就够了。widget 尺寸如果比共享大图当前的尺寸还大（比如窗口
+        刚变大、共享大图还没来得及在停顿后重新生成），裁出来的区域会被
+        裁到大图边界内，不会报错，只是暂时看起来小一圈，等停顿后的重建
+        补上就好。"""
+        if self._shared_bg_image is None:
+            return None
+        big = self._shared_bg_image
+        ox = widget.winfo_rootx() - self.root.winfo_rootx()
+        oy = widget.winfo_rooty() - self.root.winfo_rooty()
+        x0 = max(0, min(ox, big.width))
+        y0 = max(0, min(oy, big.height))
+        x1 = max(x0, min(ox + w, big.width))
+        y1 = max(y0, min(oy + h, big.height))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return big.crop((x0, y0, x1, y1))
+
+    def _get_bg_slice(self, widget, w: int, h: int):
+        img = self._get_bg_slice_image(widget, w, h)
+        return ImageTk.PhotoImage(img) if img is not None else None
+
+    def _refresh_all_bg_surfaces(self) -> None:
+        alive = []
+        for ref in self._bg_surfaces:
+            surf = ref()
+            if surf is None:
+                continue
+            try:
+                if surf.winfo_exists():
+                    alive.append(ref)
+                    surf.render_now()
+            except tk.TclError:
+                pass
+        self._bg_surfaces = alive
+
+    def _force_refresh_bg_now(self) -> None:
+        """自定义背景图弹窗（选文件/调不透明度/清除）改完设置后调用——
+        跟"窗口停顿后"是两回事，这里要立刻生效，不等 150ms。"""
+        self._shared_bg_key = None  # 强制下一次 _rebuild_shared_bg_image() 真的重算
+        self._rebuild_shared_bg_image()
+        self._refresh_all_bg_surfaces()
 
     def _show_about(self) -> None:
         """自己搭一个卡片样式的"关于"弹窗，而不是直接复用
@@ -523,8 +756,21 @@ class DSToolsApp:
         win.grab_set()
         win.wait_window()
 
-    def _show_settings(self) -> None:
-        _SettingsDialog(self.root, self)
+    def _on_cache_setting_toggle(self) -> None:
+        """这一项是"重启后生效"（跟主题切换不一样——主题已经改成实时生
+        效了，见 _switch_theme()）：mod_icons.py/character_icons.py 的缓
+        存目录是模块级常量，import 时就算好了，这里改完设置本身立刻持久
+        化，但要提示用户重启才会用上新目录。"""
+        set_cache_use_exe_dir(self._settings_cache_var.get())
+        dlg.show_info(self.root, t("settings.title"), t("settings.restart_required"))
+
+    def _show_custom_bg_dialog(self) -> None:
+        """"主题"菜单里的"背景图设置…"——背景图是这个主题的一部分，点这
+        里等于同时表达"我要用这个主题"，所以先切过去再弹选图窗口（目前
+        只有这一套主题，这一步是空操作，但保留调用是为了将来加回别的
+        主题时这里不用改）。"""
+        self._switch_theme("custom_bg")
+        _BackgroundImageDialog(self.root, self)
 
     def _refresh_tab_labels(self):
         self._pill_bar.relabel({k: t(f"tab.{k}") for k in self._tab_keys})
@@ -2818,84 +3064,76 @@ class _CopyToServerDialog:
         self.win.destroy()
 
 
-class _SettingsDialog:
-    """菜单"设置"弹出的窗口——语言 + 两个开关，切换即立刻持久化，不需要
-    额外的"保存"按钮。跟其它自定义弹窗一样先 withdraw() 建好内容/定位好
-    再 deiconify() 显示，避免一闪而过。
+class _BackgroundImageDialog:
+    """"主题"菜单"自定义背景图"级联里"选择图片…"打开的小弹窗——选图片、
+    拖不透明度、清除背景图都是选完/拖完立刻生效，不需要额外的"保存"按
+    钮。这个功能本来就需要真正的文件选择对话框（filedialog）和一个连续
+    取值的滑块，两个都不是菜单勾选项能表达的，所以单独开一个小弹窗；
+    "主题"本身仍然是纯下拉菜单（见 _build_menu()），这里只是"自定义背景
+    图"这一项级联出来的一个命令入口，跟已经删掉的 `_SettingsDialog` 不是
+    一回事——那个是想把"设置"整体做成独立弹窗，这个只服务于这一项确实
+    需要弹窗形态的功能。这个功能原来挂在"设置"菜单下，是个跟主题无关的
+    全局开关；现在改成只在"自定义背景图"这个主题生效（见 theme.py 的
+    `BG_IMAGE_ENABLED` 字段），选完图片后背景图只有切回这个主题才会显示。
 
-    语言原来是顶部菜单条自己的一项（"语言"下拉两个单选），现在挪进这个
-    弹窗里跟其它设置放一起。切语言这个操作本身是"立即生效"的（不是重启
-    才生效），所以选了新语言后除了照常调 app._switch_language() 刷新主
-    窗口，还要把这个弹窗自己身上的文字（标题、各行标签、按钮）也重新
-    刷一遍并重新量一次窗口尺寸——不然弹窗还开着的时候，主窗口已经变成
-    新语言了，这个弹窗自己却还留着旧语言的文字，两边不一致。"""
+    目前只有顶部胶囊页签条（PillTabBar）会画这张背景图（见
+    pill_tabs.py._redraw()）——那是项目里本来就有"背景图片"这个绘制槽位
+    的地方（原来画的是模拟玻璃感的渐变），菜单条/卡片内部这些本来就是纯
+    色不透明容器的地方目前没有跟着变，不在这次改动范围内。"""
 
     def __init__(self, parent_widget, app):
-        from dstools.gui.toggle_switch import ToggleSwitch
+        from tkinter import filedialog
+
+        from dstools.core.app_settings import get_custom_bg_opacity, set_custom_bg_opacity
+        from dstools.core.custom_background import (
+            clear_custom_bg_image, get_custom_bg_path, set_custom_bg_image,
+        )
 
         self.app = app
+        self._filedialog = filedialog
+        self._get_custom_bg_path = get_custom_bg_path
+        self._set_custom_bg_image = set_custom_bg_image
+        self._clear_custom_bg_image = clear_custom_bg_image
+        self._set_custom_bg_opacity = set_custom_bg_opacity
+
         win = tk.Toplevel(parent_widget)
         self.win = win
         win.withdraw()
-        win.title(t("settings.title"))
+        win.title(t("settings.custom_bg_title"))
         win.resizable(False, False)
         win.configure(background=theme.CARD_BORDER)
 
         card = tk.Frame(win, background=theme.CARD_BG)
         card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
-        row_lang = tk.Frame(card, background=theme.CARD_BG)
-        row_lang.pack(fill=tk.X, padx=24, pady=(24, 16))
-        self._lang_label = tk.Label(row_lang, text=t("settings.language_label"), font=("", 11),
-                 fg=theme.TEXT, bg=theme.CARD_BG)
-        self._lang_label.pack(side=tk.LEFT)
-        lang_btns = tk.Frame(row_lang, background=theme.CARD_BG)
-        lang_btns.pack(side=tk.RIGHT)
-        self._lang_var = tk.StringVar(value=get_lang())
-        self._lang_zh_rb = ttk.Radiobutton(lang_btns, text=t("menu.lang_zh"), variable=self._lang_var,
-                                            value="zh", command=lambda: self._on_language_pick("zh"))
-        self._lang_zh_rb.pack(side=tk.LEFT, padx=(0, 10))
-        self._lang_en_rb = ttk.Radiobutton(lang_btns, text=t("menu.lang_en"), variable=self._lang_var,
-                                            value="en", command=lambda: self._on_language_pick("en"))
-        self._lang_en_rb.pack(side=tk.LEFT)
+        path = get_custom_bg_path()
+        self._status_var = tk.StringVar(value=path.name if path else t("settings.custom_bg_none"))
+        row_path = tk.Frame(card, background=theme.CARD_BG)
+        row_path.pack(fill=tk.X, padx=24, pady=(24, 12))
+        tk.Label(row_path, textvariable=self._status_var, font=("", 11),
+                 fg=theme.TEXT_MUTED, bg=theme.CARD_BG).pack(side=tk.LEFT)
 
-        row1 = tk.Frame(card, background=theme.CARD_BG)
-        row1.pack(fill=tk.X, padx=24, pady=(0, 16))
-        self._minimize_label = tk.Label(row1, text=t("settings.minimize_on_close_label"), font=("", 11),
-                 fg=theme.TEXT, bg=theme.CARD_BG)
-        self._minimize_label.pack(side=tk.LEFT)
-        self._minimize_var = tk.BooleanVar(value=get_minimize_on_close())
-        ToggleSwitch(row1, variable=self._minimize_var,
-                     command=lambda: set_minimize_on_close(self._minimize_var.get())
-                     ).pack(side=tk.RIGHT)
+        btn_row1 = tk.Frame(card, background=theme.CARD_BG)
+        btn_row1.pack(fill=tk.X, padx=24, pady=(0, 16))
+        ttk.Button(btn_row1, text=t("settings.custom_bg_choose"), command=self._on_choose).pack(side=tk.LEFT)
+        ttk.Button(btn_row1, text=t("settings.custom_bg_clear"), command=self._on_clear).pack(side=tk.LEFT, padx=(8, 0))
 
-        row2 = tk.Frame(card, background=theme.CARD_BG)
-        row2.pack(fill=tk.X, padx=24, pady=(0, 24))
-        self._cache_label = tk.Label(row2, text=t("settings.cache_use_exe_dir_label"), font=("", 11),
-                 fg=theme.TEXT, bg=theme.CARD_BG)
-        self._cache_label.pack(side=tk.LEFT)
-        self._cache_var = tk.BooleanVar(value=get_cache_use_exe_dir())
-        ToggleSwitch(row2, variable=self._cache_var,
-                     command=self._on_cache_toggle).pack(side=tk.RIGHT)
+        row_opacity = tk.Frame(card, background=theme.CARD_BG)
+        row_opacity.pack(fill=tk.X, padx=24, pady=(0, 24))
+        tk.Label(row_opacity, text=t("settings.custom_bg_opacity_label"), font=("", 11),
+                 fg=theme.TEXT, bg=theme.CARD_BG).pack(side=tk.LEFT)
+        self._opacity_var = tk.DoubleVar(value=get_custom_bg_opacity())
+        ttk.Scale(row_opacity, from_=0.0, to=1.0, variable=self._opacity_var,
+                  command=self._on_opacity_change, length=160).pack(side=tk.RIGHT)
 
-        btn_row = tk.Frame(card, background=theme.CARD_BG)
-        btn_row.pack(fill=tk.X, padx=24, pady=(0, 24))
-        self._confirm_btn = ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=win.destroy)
-        self._confirm_btn.pack(side=tk.RIGHT)
+        btn_row2 = tk.Frame(card, background=theme.CARD_BG)
+        btn_row2.pack(fill=tk.X, padx=24, pady=(0, 24))
+        ttk.Button(btn_row2, text=t("dlg.confirm_btn"), command=win.destroy).pack(side=tk.RIGHT)
 
         win.protocol("WM_DELETE_WINDOW", win.destroy)
         win.bind("<Return>", lambda e: win.destroy())
         win.bind("<Escape>", lambda e: win.destroy())
 
-        self._resize_to_content()
-
-        win.transient(parent_widget.winfo_toplevel())
-        win.deiconify()
-        win.grab_set()
-        win.wait_window()
-
-    def _resize_to_content(self):
-        win = self.win
         win.update_idletasks()
         w = max(360, win.winfo_reqwidth())
         h = win.winfo_reqheight()
@@ -2906,28 +3144,42 @@ class _SettingsDialog:
         y = py + max(0, (ph - h) // 2)
         win.geometry(f"{w}x{h}+{x}+{y}")
 
-    def _on_language_pick(self, lang: str) -> None:
-        if get_lang() == lang:
-            return
-        self.app._switch_language(lang)
-        # 主窗口/菜单/各页签都已经在 _switch_language 里刷新过了，这里
-        # 只需要把这个弹窗自己身上的文字也重新刷一遍。
-        self.win.title(t("settings.title"))
-        self._lang_label.configure(text=t("settings.language_label"))
-        self._lang_zh_rb.configure(text=t("menu.lang_zh"))
-        self._lang_en_rb.configure(text=t("menu.lang_en"))
-        self._minimize_label.configure(text=t("settings.minimize_on_close_label"))
-        self._cache_label.configure(text=t("settings.cache_use_exe_dir_label"))
-        self._confirm_btn.configure(text=t("dlg.confirm_btn"))
-        self._resize_to_content()
+        win.transient(parent_widget.winfo_toplevel())
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
 
-    def _on_cache_toggle(self):
-        """这一项是"重启后生效"（跟主题切换不一样——主题已经改成实时生
-        效了，见 DSToolsApp._switch_theme()）：mod_icons.py/
-        character_icons.py 的缓存目录是模块级常量，import 时就算好了，
-        这里改完设置本身立刻持久化，但要提示用户重启才会用上新目录。"""
-        set_cache_use_exe_dir(self._cache_var.get())
-        dlg.show_info(self.win, t("settings.title"), t("settings.restart_required"))
+    def _on_choose(self) -> None:
+        path = self._filedialog.askopenfilename(
+            parent=self.win,
+            title=t("settings.custom_bg_choose"),
+            filetypes=[(t("settings.custom_bg_filetypes"), "*.png *.jpg *.jpeg *.bmp *.gif")],
+        )
+        if not path:
+            return
+        self._set_custom_bg_image(Path(path))
+        self._status_var.set(Path(path).name)
+        self._refresh_custom_bg_surfaces()
+
+    def _on_clear(self) -> None:
+        self._clear_custom_bg_image()
+        self._status_var.set(t("settings.custom_bg_none"))
+        self._refresh_custom_bg_surfaces()
+
+    def _on_opacity_change(self, _value: str) -> None:
+        # ttk.Scale 拖动过程中会连续触发这个回调——真正的裁剪/缩放/混合
+        # 重活走 PillTabBar/_tab_area 自己的节流入口（跟拖拽窗口缩放共用
+        # 同一套 ~60fps 节流），这里只管把值立刻持久化，不会因为拖动滑块
+        # 卡顿。
+        self._set_custom_bg_opacity(self._opacity_var.get())
+        self._refresh_custom_bg_surfaces()
+
+    def _refresh_custom_bg_surfaces(self) -> None:
+        """选完图/调完不透明度/清除背景图，都要立刻生效——跟"窗口停顿
+        后"是两回事（那是给拖拽缩放用的节流），这里调 app 的
+        _force_refresh_bg_now() 立刻重新生成共享大图并通知所有登记过的
+        BgFrame（见 gui/bg_frame.py）重画，不等 150ms。"""
+        self.app._force_refresh_bg_now()
 
 
 # ── Cluster Config Tab ─────────────────────────────────────────────────

@@ -17,16 +17,21 @@ STRINGS = {
         "menu.about": "关于",
 
         # Themes -- switching takes effect immediately, no restart needed
-        "theme.mint": "薄荷绿（默认）",
-        "theme.twilight": "暮蓝",
-        "theme.campfire": "篝火橙",
+        "theme.custom_bg": "自定义背景图",
+        "theme.custom_bg_settings": "背景图设置…",
 
-        # Settings dialog
+        # Settings menu
         "settings.title": "设置",
         "settings.language_label": "语言",
         "settings.minimize_on_close_label": "关闭时最小化到任务栏",
         "settings.cache_use_exe_dir_label": "缓存存放在程序所在目录",
         "settings.restart_required": "设置已保存，重启 DSTCamp 后生效。",
+        "settings.custom_bg_title": "自定义背景图片",
+        "settings.custom_bg_none": "未设置背景图",
+        "settings.custom_bg_choose": "选择图片…",
+        "settings.custom_bg_clear": "清除背景图",
+        "settings.custom_bg_opacity_label": "不透明度",
+        "settings.custom_bg_filetypes": "图片文件",
 
         # About (NEW)
         "about.message": "DSTCamp {version}\n\nDon't Starve Together 本地服务器管理工具\n\n作者：橙之刃\n交流群：463227692",
@@ -339,16 +344,21 @@ STRINGS = {
         "menu.about": "About",
 
         # Themes -- switching takes effect immediately, no restart needed
-        "theme.mint": "Mint (default)",
-        "theme.twilight": "Twilight",
-        "theme.campfire": "Campfire",
+        "theme.custom_bg": "Custom Background",
+        "theme.custom_bg_settings": "Background Settings...",
 
-        # Settings dialog
+        # Settings menu
         "settings.title": "Settings",
         "settings.language_label": "Language",
         "settings.minimize_on_close_label": "Minimize to tray on close",
         "settings.cache_use_exe_dir_label": "Store cache next to the exe",
         "settings.restart_required": "Setting saved -- restart DSTCamp for it to take effect.",
+        "settings.custom_bg_title": "Custom Background Image",
+        "settings.custom_bg_none": "No background image set",
+        "settings.custom_bg_choose": "Choose Image...",
+        "settings.custom_bg_clear": "Clear Background",
+        "settings.custom_bg_opacity_label": "Opacity",
+        "settings.custom_bg_filetypes": "Image files",
 
         # About (NEW)
         "about.message": "DSTCamp {version}\n\nDon't Starve Together local server manager\n\nAuthor：橙之刃\nQQ group：463227692",

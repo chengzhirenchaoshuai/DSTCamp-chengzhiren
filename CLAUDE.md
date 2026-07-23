@@ -99,15 +99,43 @@ DST 的配置文件都是 `return { ... }` 形式的 Lua 表字面量。`lua_par
 
 - `resource_paths.bundled_resource_dir()`：只读素材（`icons/world`、`icons/ui`、`icons/app`、`tools/ktools/`）的根目录——源码直跑时是仓库根目录，PyInstaller 打包后是 `sys._MEIPASS`（每次启动都会解压到一个新的临时目录，进程退出就清掉）。**不能把任何需要持久化的内容写进这里**，下次启动这个目录就没了。
 - `resource_paths.cache_dir(name)`：运行时缓存（mod 图标、角色头像等）的根目录，默认 `%APPDATA%/DSTCamp/cache/<name>/`，不随源码/打包/重启次数变化；如果 `app_settings.get_cache_use_exe_dir()` 为 True（用户在"设置"里勾选过），改成 `resource_paths.exe_dir()/cache/<name>/`（exe 所在目录）。这个开关是"重启后生效"——`mod_icons.py`/`character_icons.py` 的 `_CACHE_DIR` 是模块级常量，import 时就算好了，不会热切换。
-- `app_settings.py` 是 DSTCamp 自己的本地偏好持久化（`%APPDATA%/DSTCamp/settings.json`，原子写入），跟游戏自己的 `cluster.ini`/`server.ini` 完全无关。目前存的偏好：专用服务器安装目录、界面主题名、玩家备注、`minimize_on_close`（关闭窗口时是否最小化到托盘，默认开）、`cache_use_exe_dir`（上面说的那个开关，默认关）。
+- `app_settings.py` 是 DSTCamp 自己的本地偏好持久化（`%APPDATA%/DSTCamp/settings.json`，原子写入），跟游戏自己的 `cluster.ini`/`server.ini` 完全无关。目前存的偏好：专用服务器安装目录、界面主题名、玩家备注、`minimize_on_close`（关闭窗口时是否最小化到托盘，默认开）、`cache_use_exe_dir`（上面说的那个开关，默认关）、`custom_bg_filename`/`custom_bg_opacity`（自定义背景图的文件名和不透明度，默认 0.35，见下方"自定义背景图片"一节）。
 
 ### GUI 主题热切换 (`gui/theme.py`)
 
 主题切换是**立即生效**的（`gui/app.py` 的 `_switch_theme()` 调 `theme.set_theme(name)` 重新计算调色板 + `theme.apply_theme()` 重新配置 ttk 样式 + 逐 tab `retheme()`/`refresh()`），不需要重启——但这背后有一条容易踩的坑，改任何跟颜色相关的代码前务必了解：
 
-`theme.py` 的调色板是一批**模块级常量**（`PRIMARY`/`BG_SOFT`/`TEXT`/... 共 15 个），`set_theme()` 负责重新赋值这些变量。**这意味着任何消费方必须在"用的时候"现查 `theme.PRIMARY`，不能在 import 时或者构造时把值"抄"成自己的一份**——`from dstools.gui.theme import PRIMARY` 或者在自己模块顶层写 `_MY_COLOR = theme.PRIMARY` 都是普通的 Python 名字绑定，只在那一刻生效，之后 `theme.py` 重新赋值跟这份"抄本"完全没有关系，会导致切主题后这一处颜色卡在旧主题上。这次会话已经踩过这个坑并修复了好几处（`app.py` 曾经 `from dstools.gui.theme import ERROR, HEADING, ...`，`toggle_switch.py`/`mod_render.py`/`world_render.py`/`themed_dialog.py`/`local_service_tab.py` 都曾经在模块顶层缓存过派生颜色），现在全部改成函数体内现查 `theme.X`。
+`theme.py` 的调色板是一批**模块级常量**（`PRIMARY`/`BG_SOFT`/`TEXT`/... 共 19 个——15 个纯颜色 + `WINDOW_ALPHA`/`FONT_FAMILY`/`CARD_RADIUS`/`BG_IMAGE_ENABLED` 这四个"跨颜色"维度），`set_theme()` 负责重新赋值这些变量。**目前 `_THEMES`/`THEME_NAMES` 里只有一套主题 `custom_bg`**（原来的 mint/twilight/campfire/sakura/lavender 5 套纯色主题已经删掉，先把这一套自定义背景图主题打磨好）——字典结构和 `THEME_NAMES` 列表机制本身没变，以后要加回别的主题还是"加一个 dict + 追加一个名字"就够了（见 `theme.py` 顶部 docstring）。**这意味着任何消费方必须在"用的时候"现查 `theme.PRIMARY`，不能在 import 时或者构造时把值"抄"成自己的一份**——`from dstools.gui.theme import PRIMARY` 或者在自己模块顶层写 `_MY_COLOR = theme.PRIMARY` 都是普通的 Python 名字绑定，只在那一刻生效，之后 `theme.py` 重新赋值跟这份"抄本"完全没有关系，会导致切主题后这一处颜色卡在旧主题上。这次会话已经踩过这个坑并修复了好几处（`app.py` 曾经 `from dstools.gui.theme import ERROR, HEADING, ...`，`toggle_switch.py`/`mod_render.py`/`world_render.py`/`themed_dialog.py`/`local_service_tab.py` 都曾经在模块顶层缓存过派生颜色），现在全部改成函数体内现查 `theme.X`。
 
-另外，`CardFrame`（`gui/card_frame.py`）、`PillTabBar`（`gui/pill_tabs.py`）这类**构造一次、长期存活、不会被重建**的自绘容器，即使颜色是现查的，容器本身的 `background=` 也是构造时焊死在 widget 实例上的，各自补了一个 `apply_theme()` 方法在切主题时被调用；用完即毁的弹窗（`themed_dialog.py`、`app.py` 里各个 `_XxxDialog`）不需要任何处理，下次弹出来自然用最新颜色。
+另外，`CardFrame`（`gui/card_frame.py`）、`PillTabBar`（`gui/pill_tabs.py`）这类**构造一次、长期存活、不会被重建**的自绘容器，即使颜色是现查的，容器本身的 `background=` 也是构造时焊死在 widget 实例上的，各自补了一个 `apply_theme()` 方法在切主题时被调用；用完即毁的弹窗（`themed_dialog.py`、`app.py` 里各个 `_XxxDialog`）不需要任何处理，下次弹出来自然用最新颜色。`PillTabBar` 的 `tk.font.Font` 对象（`self._font`）同理不能在 `__init__` 读一次 `theme.FONT_FAMILY` 就不管了，`apply_theme()` 里要用 `.configure(family=...)` 重新配一次——`Font` 对象是可变的，`.configure()` 后所有引用它的地方（包括已经画出来的 `create_text`）自动生效，不需要整个重建。
+
+`WINDOW_ALPHA`（整窗透明度，`root.attributes("-alpha", ...)`，Tk 在 Windows 上唯一稳定支持的真透明手段，套在 `try/except tk.TclError` 里防止不支持的平台报错）——**`custom_bg` 主题现在固定是 `1.0`（不透明）**：早期版本试过 0.92 的整窗透明效果，用户反馈要去掉，"透明"这个需求现在只保留在"自定义背景图片"这一处（图片本身按不透明度跟背景色混合），不再有整窗透视桌面的效果；这个字段本身还留着（`apply_theme()` 里仍然会调 `root.attributes()`），只是当前唯一的主题没有再用非 1.0 的值。`CARD_RADIUS`（`CardFrame` 圆角半径，构造时 `radius=None` 表示"跟着主题走"，`apply_theme()` 里重新读一次）在 `apply_theme()` 里统一处理；`FONT_FAMILY` 只用在顶部菜单条（`app.py` 的 `_build_menu()`，本来就在主题切换时整体重建）和 `PillTabBar` 这两个最显眼的位置，没有对全项目三十多处 `font=("", N)` 做大扫荡——这是刻意收窄的范围，不是遗漏。`BG_IMAGE_ENABLED` 见下面"自定义背景图片"一节。
+
+### 自定义背景图片 (`core/custom_background.py` / `gui/bg_frame.py` / `gui/app.py`)
+
+自定义背景图**是 `custom_bg` 这一个主题的一部分，不是跟主题无关的全局开关**——现在只剩这一套主题，"主题"下拉直接就是 `theme.custom_bg_settings` 一个命令，打开 `_BackgroundImageDialog` 选文件（`filedialog`）/调不透明度（`ttk.Scale`）/清除，两者都不是菜单勾选项能表达的，所以没有摊平在"设置"下拉里。
+
+`core/custom_background.py`（无 GUI 依赖）：把用户选的图片拷进 `resource_paths.cache_dir("background")`（固定文件名覆盖式替换，原图挪了/删了不影响）；`render_background()` 居中裁剪到目标宽高比再缩放（**绝不拉伸变形**，多出来的部分裁掉）、按不透明度跟调用方传入的颜色 `Image.blend()`（0 纯色、1 纯原图）；`_load_source_image()` 按文件 mtime 缓存解码后的原图。
+
+**架构：共享大图 + 各表面按偏移量取一块**（`gui/bg_frame.py` + `DSToolsApp` 的 `_init_bg_system`/`_rebuild_shared_bg_image`/`_get_bg_slice`/`_refresh_all_bg_surfaces`），照搬 `image_scroll.py` 的 `ImageScrollPanel` 已验证过的"拖拽中便宜、停顿后精细"节流手法（`SETTLE_DELAY_MS`/`_BG_SETTLE_MS` 都是 150ms）：
+- `DSToolsApp` 维护**唯一一张**跟 root 客户区同尺寸的共享背景大图（`_shared_bg_image`），只在 root 的 `<Configure>` 停顿超过 150ms 后才重新读盘/裁剪比例/缩放/混合一次（`_rebuild_shared_bg_image()`）——这是唯一的重活，拖拽缩放过程中绝不做。**这条是硬性规则，不能绕开**：每个背景表面各自独立调 `render_background()` 在真实拖拽缩放窗口时会跟 `gui/win_aspect_lock.py` 的原生 WM_SIZING 钩子打架（这个钩子本来就有过一次真实的解释器级致命崩溃教训，见下面"系统托盘"一节），出现过布局错位/闪烁/背景图割裂。
+- `gui/bg_frame.py` 的 `BgFrame`（`tk.Canvas` 子类，**drop-in 替代 `tk.Frame`/`ttk.Frame`**，子控件照常 `pack()`/`grid()`）构造时向 `_register_bg_surface()` 登记，自己的 `<Configure>` 只做"从共享大图里按自己在 root 里的屏幕偏移量裁一小块"（`_get_bg_slice()`，纯内存 crop，不缩放不混合，可以按 ~60fps 节流频繁调用）。窗口停顿后 `_refresh_all_bg_surfaces()` 统一通知所有登记过的 `BgFrame` 重新裁一次，图片在所有消费者之间天然连续。
+- `PillTabBar`（`gui/pill_tabs.py`）不是 `BgFrame` 子类（自己还要画胶囊形状+文字），但走同一套 `app._get_bg_slice(canvas, w, h)`。
+- 没有自定义背景图（`theme.BG_IMAGE_ENABLED` 为假或用户没设置过）时，`BgFrame`/`PillTabBar` 都退化成纯色（`PillTabBar` 退化成模拟玻璃感的渐变）。
+
+**给某个容器接入 `BgFrame` 之后，如果它原来靠"内部 `pack()` 的子控件"撑高度、现在把那些子控件换成了 `create_text`/`create_rectangle` 直接画，一定要记得 `pack_propagate(False)`**——`Canvas` 默认 `pack_propagate` 开着，容器尺寸会被已 `pack()` 进去的子控件反过来决定，只剩一条 1px 分隔线还在 `pack()` 时会把整个容器压成 1px 高、内容全部不可见。
+
+**目前接入这套系统的地方**：`gui/app.py` 的 `_menu_strip`（顶部"文件/主题/设置/关于"触发条）、`_tab_area`（四张主 tab 卡片的外层容器，`theme.CARD_MARGIN`=24 给每张 `CardFrame` 的 `grid_configure(padx=,pady=)` 留出空隙露出背景图）、`_cluster_bar`/`_cluster_bar_inner`（顶部"存档: [下拉框] 刷新"全局选择栏）、`CardFrame`（`gui/card_frame.py`，构造需多传 `app` 参数）、`PillTabBar`（构造需多传 `app=self`）、`gui/local_service_tab.py`（"本地服务器"页签内容，见下）。
+
+**`CardFrame` 自己的圆角外壳（`_canvas`）故意保持朴素，不贴背景图、没有阴影**——`_redraw()` 只是 `fill=self._card_bg, outline=self._border` 的纯色圆角描边，真正显示背景图的是内层的 `body`（`BgFrame`）。以后若想让外壳也贴图，注意两个已知坑：缓存 key 必须包含图片路径/mtime（不能只用尺寸，否则换图后外壳还显示旧图）；这台机器上 Tk 渲染半透明 `PhotoImage` 圆角外侧会带黑边，需先解决。
+
+**卡片内部——目前只有"本地服务器"（`gui/local_service_tab.py`）改造完成**，把 `self.frame`/`install_row`/`left`/`btn_row`/`_shard_list`/`right`/每个 `_ShardRow.frame` 都换成了 `BgFrame`。**紧挨着摆放的纯说明性文字一律不用 `ttk.Label`/`tk.Label`**——这两种控件绘制区域永远是不透明实色，拼在一起会形成跟背景图格格不入的色块；改成直接在对应 `BgFrame` 的 Canvas 上 `create_text()`（`_redraw_install_row_text()`/`_ShardRow._redraw_text()`）。文字内容来自 `StringVar` 时用 `trace_add("write", ...)` 驱动重画；文字需要随高度居中时额外绑 `<Configure>`（`add="+"`，不要覆盖 `BgFrame` 自己已绑的那个）。`ttk.PanedWindow`/`ttk.Notebook` 保留原生控件不动（成本/风险不对等）；`ttk.Button` 等原生 ttk 控件绘制区域仍是不透明实色，这是 Tkinter 的天花板。**其余 4 个页签（Mod管理/世界设置/服务器配置/存档信息）尚未改造**，扩大范围就照 `local_service_tab.py` 这个思路：`ModManagerTab`/`WorldSettingsTab` 最容易（主体已是 `ImageScrollPanel` 整面板 PIL 渲染，本身就是一整张位图）；`SaveBrowserTab` 中等（`ttk.Notebook` 下十来个容器 + 动态重建的每行 `tk.Frame`，跟 `_ShardRow` 同一类）；`ClusterConfigTab` 最麻烦（`page → scroll_area → Canvas 内嵌 frame → 左右两列` 嵌套，每次刷新整个重建）。
+
+**Windows 原生标题栏不做背景图兼容，不在近期计划内**——这是 Windows 自己（DWM）画的非客户区，唯一办法是弃用原生标题栏（`overrideredirect(True)` 或等价无边框窗口）自己手写拖动/双击最大化/min/max/close，工作量大且很可能跟 `win_aspect_lock.py` 的 WM_SIZING 钩子产生新的相互作用（无边框窗口非客户区消息路径整个不一样），等专门评估过兼容性再考虑。
+
+**验证方法务必用真实拖拽缩放**：程序化 `geometry()`/`update_idletasks()` 测试一切正常、真实拖拽缩放才会暴露的问题出过不止一次——用 `SetWindowPos` 连续多次改变窗口尺寸模拟真实拖拽（比单纯调 `root.geometry()` 更接近真实的 WM_SIZING 消息序列），再截图检查菜单条/页签条/卡片位置有没有跑偏。
+
+`_BackgroundImageDialog` 选完图/调完不透明度/清除背景图后调用 `_force_refresh_bg_now()`（`app.py`），统一触发所有登记表面重画，避免"一处已经换图、别的地方还是旧图"的不一致。
 
 ### 系统托盘 + 关闭/退出逻辑 (`gui/tray_icon.py` / `gui/app.py`)
 
@@ -182,6 +210,6 @@ Click 实现，命令分组：`save`（list/info）、`mod`（list/info/enable/d
 
 ### GUI (`gui/app.py`)
 
-`DSToolsApp` 主窗口 + 顶部自绘胶囊页签（`PillTabBar`，不是原生 `ttk.Notebook`）：`LocalServiceTab`（本地服务器）、`ModManagerTab`（Mod 管理）、`WorldSettingsTab`（世界设置）、`ClusterConfigTab`（服务器配置，内部又嵌套了管理员/黑名单/Token 几个子页签）、`SaveBrowserTab`（存档信息）。"环境概览"没有单独的顶层标签页类，是 `SaveBrowserTab` 自己 `sub_notebook` 下"存档概览"这个子页签（跟"服务器存档"/"本地存档"平级）。顶部菜单条（文件/主题/设置/关于）是自绘的 `tk.Label` 触发条+原生 `tk.Menu` 弹出下拉（不是挂 `root.config(menu=...)` 的系统菜单条，那样没法自定义配色），"语言"选项已经并入"设置"弹窗里，不再单独占一个菜单位置。Windows 下用 `gui/win_aspect_lock.py` 锁定窗口宽高比（这个模块动过一次导致致命崩溃，见上面"系统托盘"一节，改之前务必读它顶部的警告注释）。
+`DSToolsApp` 主窗口 + 顶部自绘胶囊页签（`PillTabBar`，不是原生 `ttk.Notebook`）：`LocalServiceTab`（本地服务器）、`ModManagerTab`（Mod 管理）、`WorldSettingsTab`（世界设置）、`ClusterConfigTab`（服务器配置，内部又嵌套了管理员/黑名单/Token 几个子页签）、`SaveBrowserTab`（存档信息）。"环境概览"没有单独的顶层标签页类，是 `SaveBrowserTab` 自己 `sub_notebook` 下"存档概览"这个子页签（跟"服务器存档"/"本地存档"平级）。顶部菜单条（文件/主题/设置/关于）是 `create_text`/`create_rectangle` 直接画在 `_menu_strip`（`BgFrame`）Canvas 上的触发条（悬停高亮同样是 `create_rectangle`，不是 `tk.Label`——这样才能透出背景图，见下方"自定义背景图片"一节）+原生 `tk.Menu` 弹出下拉（`_popup_menu_at(menu, x, y)`，不是挂 `root.config(menu=...)` 的系统菜单条，那样没法自定义配色）。"设置"跟"主题"一样是纯下拉菜单，不再是独立弹窗（原来的 `_SettingsDialog` Toplevel 已删除）："语言"是一个二级级联子菜单（`add_cascade` 挂一个独立的 `lang_menu`），里面两个互斥的 `add_radiobutton`；"关闭时最小化到任务栏"/"缓存存放在程序所在目录"这两个布尔开关平铺在"设置"菜单本身，用 `add_checkbutton`（打勾样式，不是 `ToggleSwitch` 那种拟真开关）——`ToggleSwitch` 仍在世界设置等需要摆在表格行里的场景使用，只是设置菜单这里改成跟系统菜单一致的勾选项。这几个菜单项绑定的 `tk.StringVar`/`tk.BooleanVar` 必须存在 `self` 上（`_settings_lang_var`/`_settings_minimize_var`/`_settings_cache_var`），因为 `tk.Menu` 只在语言/主题切换触发 `_build_menu()` 整体重建时才重建，用户平时点开关不会重建菜单，勾选状态全靠这几个 Var 存活。Windows 下用 `gui/win_aspect_lock.py` 锁定窗口宽高比（这个模块动过一次导致致命崩溃，见上面"系统托盘"一节，改之前务必读它顶部的警告注释）。
 
 **下拉框一律用 `gui/menu_combo.py` 的 `MenuCombo`，禁止用 `ttk.Combobox`**：实测 `ttk.Combobox` 在这台机器上有个选中后内容消失、只能靠真实鼠标点击（而不是任何程序化的 `.set()`/事件模拟）才能修复的渲染缺陷，根因在 ttk 的 Entry 控件本身，无法从外部规避。`MenuCombo` 是 `ttk.Menubutton`+`tk.Menu` 包出来的自研控件，兼容 Combobox 的常用接口子集（`["values"]`、`.current()`、`.get()`/`.set()`、`<<ComboboxSelected>>` 事件），因为内部根本没有 Entry 控件，这整类 bug 不可能出现。全项目所有下拉框（存档/分片选择、Mod 配置弹窗的选项、世界设置的枚举值、服务器配置的游戏模式/语言等）都已经是这个控件，新加下拉框也必须用它。

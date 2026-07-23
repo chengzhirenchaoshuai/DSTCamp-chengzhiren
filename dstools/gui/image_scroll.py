@@ -130,11 +130,6 @@ class ImageScrollPanel:
         self._last_settled_width = cw
         self.on_settle(cw, ch)
 
-    def update_region_value(self, key, new_label: str, new_color: str):
-        """Not used directly -- caller should call set_image() again after
-        mutating the source data and re-rendering, since content is pixels."""
-        pass
-
     # ── Scrolling ────────────────────────────────────────────────────
     def _on_wheel(self, event):
         self._scroll_by_screen(-event.delta / 2)

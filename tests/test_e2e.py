@@ -743,7 +743,10 @@ def test_mod_sync_incremental_copy():
 def test_theme_set_theme():
     """Test theme.py's set_theme() -- the live theme-switch mechanism.
     Pure logic (module-level color variable reassignment), no real Tk
-    window needed."""
+    window needed. Only one theme ("custom_bg") exists now, so there's no
+    "switch between two themes" to test -- what's actually worth verifying
+    is (a) it assigns the expected palette/flags and (b) an unknown name
+    falls back to "custom_bg" instead of raising."""
     print("\n" + "=" * 60)
     print("Test 22: Theme Live Switch")
 
@@ -751,16 +754,17 @@ def test_theme_set_theme():
 
     original_primary = theme.PRIMARY
     try:
-        theme.set_theme("campfire")
-        assert theme.PRIMARY == "#E8A33D"
-        assert theme.BG_SOFT == "#FBF2E3"
+        theme.set_theme("custom_bg")
+        assert theme.PRIMARY == "#8A97A3"
+        assert theme.BG_IMAGE_ENABLED is True
+        assert theme.WINDOW_ALPHA == 1.0, "整窗透明效果已经按用户要求去掉，只保留图片自身的透明度"
         print("  PASS: set_theme() reassigns theme.py's module-level color constants")
 
-        theme.set_theme("mint")
-        assert theme.PRIMARY == "#6FCF97"
-        print("  PASS: switching back restores the other theme's colors")
+        theme.set_theme("some_removed_theme_name")
+        assert theme.PRIMARY == "#8A97A3"
+        print("  PASS: unknown theme name falls back to custom_bg instead of raising")
     finally:
-        theme.set_theme("mint" if original_primary == "#6FCF97" else "campfire")
+        theme.set_theme("custom_bg")
         theme.PRIMARY = original_primary  # 双保险，确保测试不影响后续状态
 
 
@@ -798,6 +802,43 @@ def test_world_categories_bilingual():
         set_lang(original_lang)
 
 
+def test_custom_background():
+    """Test custom_background.py's crop-to-ratio (never stretch) + opacity
+    blend logic -- the core of "支持自定义背景图，按比例裁剪不拉伸，可调
+    不透明度贴合主题"。纯 PIL 逻辑，不需要真实 Tk 窗口。"""
+    print("\n" + "=" * 60)
+    print("Test 24: Custom Background Image")
+
+    from PIL import Image
+
+    from dstools.core.custom_background import _center_crop_to_ratio, render_background
+
+    # 宽图裁窄比例：裁掉左右两侧，裁完的宽高比必须刚好等于目标比例
+    # （不是拉伸变形出来的），且没有超出原图尺寸。
+    wide = Image.new("RGB", (400, 100), "red")
+    cropped = _center_crop_to_ratio(wide, 1.0)
+    assert cropped.size == (100, 100), "Wide image cropped to a square must trim the sides, not stretch"
+    print("  PASS: wider-than-target image is center-cropped on the sides")
+
+    # 高图裁宽比例：裁掉上下两侧。
+    tall = Image.new("RGB", (100, 400), "blue")
+    cropped2 = _center_crop_to_ratio(tall, 2.0)
+    assert cropped2.size == (100, 50), "Tall image cropped to a wide ratio must trim top/bottom, not stretch"
+    print("  PASS: taller-than-target image is center-cropped on top/bottom")
+
+    # 不透明度混合的两个边界：0 = 完全是主题纯色（图片全隐），1 = 完全是原图。
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "bg.png"
+        Image.new("RGB", (50, 50), (255, 0, 0)).save(src)
+
+        transparent = render_background(src, 20, 20, 0.0, "#00FF00")
+        assert transparent.getpixel((10, 10)) == (0, 255, 0), "opacity=0 must show only the theme's blend color"
+
+        opaque = render_background(src, 20, 20, 1.0, "#00FF00")
+        assert opaque.getpixel((10, 10)) == (255, 0, 0), "opacity=1 must show only the original image"
+        print("  PASS: opacity=0/1 blend to pure theme color / pure image respectively")
+
+
 def main():
     """Run all tests."""
     print("\n" + "█" * 60)
@@ -829,6 +870,7 @@ def main():
         test_mod_sync_incremental_copy,
         test_theme_set_theme,
         test_world_categories_bilingual,
+        test_custom_background,
     ]
 
     for test in tests:

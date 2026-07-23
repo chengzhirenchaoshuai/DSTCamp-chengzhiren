@@ -8,7 +8,7 @@
 
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.core.app_settings import set_dedicated_server_path
 from dstools.core.dedicated_server import (
@@ -16,6 +16,7 @@ from dstools.core.dedicated_server import (
     find_dedicated_server_dir, is_valid_install_dir, resolve_conf_dir_arg,
 )
 from dstools.gui import theme, themed_dialog as dlg
+from dstools.gui.bg_frame import BgFrame
 from dstools.gui.tooltip import Tooltip
 from dstools.i18n import t
 from dstools.models import SaveSource
@@ -69,6 +70,10 @@ def _show_not_found_warning(parent) -> None:
                       wraplength=640, min_width=720)
 
 
+_NAME_COL_W = 110   # "世界名字"这一列的固定像素宽度，大致对应原来 ttk.Label(width=14) 的观感
+_STATUS_COL_W = 70  # "状态"这一列，大致对应原来 ttk.Label(width=8) 的观感
+
+
 class _ShardRow:
     """分片启动器的一行：世界名字 + 状态徽标 + 启动/停止按钮。"""
 
@@ -76,26 +81,46 @@ class _ShardRow:
         self.tab = tab
         self.cluster = cluster
         self.shard = shard
-        self.frame = ttk.Frame(parent)
+        self._shard_name = shard.name
+        self._status_fg = theme.TEXT_MUTED
+        # BgFrame 而不是 ttk.Frame——这一行能透出自定义背景图；世界名字/
+        # 状态文字也不用 ttk.Label/tk.Label（那两个控件的绘制区域永远是
+        # 不透明实色，两个紧挨着的标签会拼成一块很显眼的色块），改成直接
+        # 在这个 BgFrame 的 Canvas 上 create_text 画字，文字直接盖在背景
+        # 图上层，没有独立的背景框——跟 install_row 的 _redraw_install_
+        # row_text() 是同一个思路。
+        self.frame = BgFrame(parent, tab.app, bg=theme.CARD_BG)
         self.frame.pack(fill=tk.X, pady=2)
-        ttk.Label(self.frame, text=shard.name, width=14).pack(side=tk.LEFT)
+        self.frame.bind("<Configure>", lambda e: self._redraw_text(), add="+")
         self.status_var = tk.StringVar()
-        self.status_lbl = tk.Label(self.frame, textvariable=self.status_var,
-                                    bg=theme.BG_SOFT, width=8, anchor=tk.W)
-        self.status_lbl.pack(side=tk.LEFT, padx=(0, 8))
+
         self.start_btn = ttk.Button(self.frame, text=t("local.start_btn"), width=8,
                                      command=lambda: tab.start_shard(cluster, shard))
-        self.start_btn.pack(side=tk.LEFT, padx=(0, 4))
+        self.start_btn.pack(side=tk.LEFT, padx=(_NAME_COL_W + _STATUS_COL_W, 4))
         self.stop_btn = ttk.Button(self.frame, text=t("local.stop_btn"), width=8,
                                     command=lambda: tab.stop_shard(cluster, shard))
         self.stop_btn.pack(side=tk.LEFT)
         self.update()
 
+    def _redraw_text(self) -> None:
+        c = self.frame
+        c.delete("row_text")
+        h = c.winfo_height()
+        if h < 4:
+            return
+        cy = h / 2
+        font = tkfont.nametofont("TkDefaultFont")
+        c.create_text(4, cy, text=self._shard_name, anchor=tk.W, fill=theme.TEXT,
+                       font=font, tags="row_text")
+        c.create_text(_NAME_COL_W, cy, text=self.status_var.get(), anchor=tk.W,
+                       fill=self._status_fg, font=font, tags="row_text")
+
     def update(self):
         proc = self.tab.manager.get(self.cluster.path, self.shard.name)
         status = proc.status if proc else ServerStatus.STOPPED
         self.status_var.set(t(_STATUS_KEYS[status]))
-        self.status_lbl.configure(fg=_status_color(status))
+        self._status_fg = _status_color(status)
+        self._redraw_text()
         running = status in _RUNNING_LIKE
         self.start_btn.configure(state=tk.DISABLED if running else tk.NORMAL)
         self.stop_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
@@ -184,7 +209,15 @@ class _ConsolePane:
 class LocalServiceTab:
     def __init__(self, parent, app):
         self.app = app
-        self.frame = ttk.Frame(parent)
+        # 这个页签的外层结构容器（自己 + 各行/各栏）全部用 BgFrame（见
+        # gui/bg_frame.py）替代 ttk.Frame/tk.Frame——控件之间的留白就能透
+        # 出用户设置的自定义背景图（"自定义背景图"主题启用时）；ttk.Button/
+        # ttk.Label/ttk.PanedWindow/ttk.Notebook 这些原生控件自己的绘制区
+        # 域仍然是不透明实色，只有它们之间、以及它们内部没铺满控件的缝隙
+        # 才看得见背景图——这是 Tkinter 原生控件的天花板，不是遗漏。这个
+        # 页签是第一个试点，其余页签（Mod管理/世界设置/服务器配置/存档
+        # 信息）还是原来的纯 ttk.Frame，之后再照这个思路逐个改。
+        self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
         self.manager = ServerManager()
         self._shard_rows: dict[str, _ShardRow] = {}
         self._shard_rows_cluster_path: str | None = None
@@ -193,19 +226,26 @@ class LocalServiceTab:
 
         # "存档"选择器已经搬到顶部的全局选择栏（DSToolsApp._cluster_bar），
         # 这里不再重复一份。
-        install_row = ttk.Frame(self.frame)
+        #
+        # 这两段说明文字（"专用服务器工具:" + 实际路径）不用 ttk.Label——
+        # ttk.Label 自己的绘制区域永远是一块不透明实色矩形（TLabel 样式的
+        # background），两个标签紧挨着会拼成一条很长、很显眼的"色块"，
+        # 跟这一行背后本来该露出来的自定义背景图格格不入。这里直接在
+        # install_row 这个 BgFrame 的 Canvas 上 create_text 画字——跟
+        # gui/pill_tabs.py 画页签文字是同一个思路，文字本身没有独立的背
+        # 景框，直接盖在背景图上面。
+        self._install_row = install_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
         install_row.pack(fill=tk.X, padx=5, pady=(0, 5))
-        self._install_lbl = ttk.Label(install_row, text=t("local.install_status_label"))
-        self._install_lbl.pack(side=tk.LEFT, padx=(0, 5))
         self._install_path_var = tk.StringVar()
-        ttk.Label(install_row, textvariable=self._install_path_var,
-                  foreground=theme.TEXT_MUTED).pack(side=tk.LEFT, padx=(0, 10))
-        self._install_change_btn = ttk.Button(install_row, text=t("local.install_change_btn"),
-                                               command=self._change_install_dir)
-        self._install_change_btn.pack(side=tk.LEFT, padx=(0, 5))
+        self._install_path_var.trace_add("write", lambda *a: self._redraw_install_row_text())
+        install_row.bind("<Configure>", lambda e: self._redraw_install_row_text(), add="+")
+
         self._install_recheck_btn = ttk.Button(install_row, text=t("local.install_recheck_btn"),
                                                 command=self._recheck_install_dir)
-        self._install_recheck_btn.pack(side=tk.LEFT)
+        self._install_recheck_btn.pack(side=tk.RIGHT)
+        self._install_change_btn = ttk.Button(install_row, text=t("local.install_change_btn"),
+                                               command=self._change_install_dir)
+        self._install_change_btn.pack(side=tk.RIGHT, padx=(0, 5))
 
         # 选中本地存档时显示的醒目提示——风格和"Mod管理"/"世界设置"的
         # 本地存档提示条保持一致（黄底加粗），跨整个页签宽度，而不是像
@@ -214,21 +254,28 @@ class LocalServiceTab:
                                        bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=("", 10, "bold"),
                                        anchor=tk.W, padx=10, pady=6)
 
+        # ttk.PanedWindow 本身保留原生（可拖拽分栏这个交互重写代价太
+        # 高）——它自己的分隔条(sash)还是不透明的，但两侧塞进去的内容
+        # 容器（left/right）改成 BgFrame，可拖拽分栏这个功能完全不受影响。
         self._body = body = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         body.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
 
-        left = ttk.Frame(body)
+        left = BgFrame(body, app, bg=theme.CARD_BG)
         body.add(left, weight=1)
-        btn_row = ttk.Frame(left)
+        btn_row = BgFrame(left, app, bg=theme.CARD_BG)
         btn_row.pack(fill=tk.X, pady=(0, 5))
         self._start_all_btn = ttk.Button(btn_row, text=t("local.start_all_btn"), command=self._start_all)
         self._start_all_btn.pack(side=tk.LEFT, padx=(0, 5))
         self._stop_all_btn = ttk.Button(btn_row, text=t("local.stop_all_btn"), command=self._stop_all)
         self._stop_all_btn.pack(side=tk.LEFT)
-        self._shard_list = ttk.Frame(left)
+        self._shard_list = BgFrame(left, app, bg=theme.CARD_BG)
         self._shard_list.pack(fill=tk.BOTH, expand=True)
 
-        right = ttk.Frame(body)
+        # ttk.Notebook 同理保留原生（标签切换这个交互重写代价太高）——
+        # 它自己的标签条还是不透明的；每个世界的控制台页面内部（_ConsolePane）
+        # 暂时维持原样不透明，留到后续再评估是否值得改（日志区本身需要
+        # 大片纯色才能看清文字，透明化的收益本来就有限）。
+        right = BgFrame(body, app, bg=theme.CARD_BG)
         body.add(right, weight=3)
         self._console_nb = ttk.Notebook(right)
         self._console_nb.pack(fill=tk.BOTH, expand=True)
@@ -282,6 +329,25 @@ class LocalServiceTab:
                 row.update()
 
     # ── 安装目录检测 ────────────────────────────────────────────────
+
+    def _redraw_install_row_text(self) -> None:
+        """在 install_row 这个 Canvas 上画"专用服务器工具:"+实际路径这两
+        段文字——StringVar 的 trace 和 Canvas 自己的 <Configure>（尺寸/位
+        置变化，比如窗口缩放导致背后的背景图切片要重新对齐）都会触发这
+        里，不需要调用方关心具体触发原因。"""
+        c = self._install_row
+        c.delete("install_text")
+        h = c.winfo_height()
+        if h < 4:
+            return
+        cy = h / 2
+        font = tkfont.nametofont("TkDefaultFont")
+        label_text = t("local.install_status_label")
+        c.create_text(4, cy, text=label_text, anchor=tk.W, fill=theme.TEXT,
+                       font=font, tags="install_text")
+        label_w = font.measure(label_text)
+        c.create_text(4 + label_w + 6, cy, text=self._install_path_var.get(), anchor=tk.W,
+                       fill=theme.TEXT_MUTED, font=font, tags="install_text")
 
     def _detect_install_dir(self):
         self._install_dir = find_dedicated_server_dir()
@@ -384,19 +450,25 @@ class LocalServiceTab:
     # ── Tab 协议 ────────────────────────────────────────────────────
 
     def refresh_language(self):
-        self._install_lbl.configure(text=t("local.install_status_label"))
         self._install_change_btn.configure(text=t("local.install_change_btn"))
         self._install_recheck_btn.configure(text=t("local.install_recheck_btn"))
         self._start_all_btn.configure(text=t("local.start_all_btn"))
         self._stop_all_btn.configure(text=t("local.stop_all_btn"))
         if self._install_dir is None:
             self._install_path_var.set(t("local.install_not_found"))
+        else:
+            # StringVar 没变但"专用服务器工具:"这段标签文字要跟着切语言
+            # ——trace 只在 set() 真的改变值时触发，这里手动补一次重画。
+            self._redraw_install_row_text()
         self._local_banner.configure(text=t("local.select_server_hint"))
 
     def retheme(self):
         """主题切换时调用——这个横幅在 __init__ 里建一次就不再重建，
-        refresh() 不会碰它的颜色，需要显式重新上色。"""
+        refresh() 不会碰它的颜色，需要显式重新上色。install_row 直接画的
+        文字（_redraw_install_row_text）同理要跟着重新上色一次。"""
         self._local_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+        self._install_row.apply_theme(bg=theme.CARD_BG)
+        self._redraw_install_row_text()
 
     def refresh(self):
         self.on_cluster_changed(self.app.get_selected_cluster())

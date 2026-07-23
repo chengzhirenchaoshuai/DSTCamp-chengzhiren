@@ -11,10 +11,13 @@ from pathlib import Path
 _SETTINGS_FILE = "settings.json"
 _KEY_DEDICATED_SERVER_PATH = "dedicated_server_path"
 _KEY_THEME_NAME = "theme_name"
-_DEFAULT_THEME_NAME = "mint"
+_DEFAULT_THEME_NAME = "custom_bg"
 _KEY_PLAYER_NOTES = "player_notes"
 _KEY_MINIMIZE_ON_CLOSE = "minimize_on_close"
 _KEY_CACHE_USE_EXE_DIR = "cache_use_exe_dir"
+_KEY_CUSTOM_BG_FILENAME = "custom_bg_filename"
+_KEY_CUSTOM_BG_OPACITY = "custom_bg_opacity"
+_DEFAULT_CUSTOM_BG_OPACITY = 0.35
 
 
 def get_settings_dir() -> Path:
@@ -127,4 +130,33 @@ def get_cache_use_exe_dir() -> bool:
 def set_cache_use_exe_dir(value: bool) -> None:
     data = load_settings()
     data[_KEY_CACHE_USE_EXE_DIR] = value
+    save_settings(data)
+
+
+def get_custom_bg_filename() -> str | None:
+    """自定义背景图在 core/custom_background.py 缓存目录下的文件名（不是
+    完整路径——缓存目录本身跟着 get_cache_use_exe_dir() 的开关走，实际
+    路径由 custom_background.py 自己拼），没设置过返回 None。"""
+    return load_settings().get(_KEY_CUSTOM_BG_FILENAME)
+
+
+def set_custom_bg_filename(name: str | None) -> None:
+    data = load_settings()
+    if name:
+        data[_KEY_CUSTOM_BG_FILENAME] = name
+    else:
+        data.pop(_KEY_CUSTOM_BG_FILENAME, None)
+    save_settings(data)
+
+
+def get_custom_bg_opacity() -> float:
+    """自定义背景图跟当前主题背景色混合时的不透明度，0=完全是主题纯色
+    （图片全隐），1=完全是原图，默认 0.35（让图片弱化成背景氛围，不抢
+    前景文字的可读性）。"""
+    return load_settings().get(_KEY_CUSTOM_BG_OPACITY, _DEFAULT_CUSTOM_BG_OPACITY)
+
+
+def set_custom_bg_opacity(value: float) -> None:
+    data = load_settings()
+    data[_KEY_CUSTOM_BG_OPACITY] = value
     save_settings(data)

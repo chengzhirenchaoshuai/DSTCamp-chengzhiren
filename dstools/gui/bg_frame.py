@@ -1,0 +1,77 @@
+"""能显示自定义背景图的通用容器控件——drop-in 替代 tk.Frame/ttk.Frame，
+子控件照常 pack()/grid() 上去（tk.Canvas 本来就能当任何几何管理器的父
+容器，这一点跟 tk.Frame 没有区别）。
+
+背景图渲染分两层，直接照搬 image_scroll.py 里 ImageScrollPanel 已经验证
+过的"拖拽中便宜、停顿后精细"节流手法（这是本项目处理"resize 时的重
+活"的既有规范，不是新发明的一套）：
+- 拖拽缩放过程中：只从"当前已有的共享大图"（DSToolsApp._shared_bg_image，
+  由 DSToolsApp 统一维护、跟当前窗口客户区同尺寸）里裁一小块出来贴上
+  去，纯内存 crop，不做任何读盘/裁剪比例/LANCZOS 缩放/颜色混合，足够
+  便宜，可以跟 <Configure> 一样频繁触发（节流到约 60fps）。
+- 停顿超过 DSToolsApp._BG_SETTLE_MS（150ms，跟 image_scroll.py 的
+  SETTLE_DELAY_MS 保持一致）之后：DSToolsApp 才重新生成一张跟当前窗口
+  客户区同尺寸的新大图（真正的重活），再通知所有 BgFrame 重新裁一次。
+  这一步只在停顿后做一次，绝不会在拖拽过程中跟 win_aspect_lock.py 的
+  原生 WM_SIZING 钩子抢时间——上一版每个背景表面都各自独立做这套重
+  活、且没有防抖，就是在这里出的问题：真实拖拽缩放窗口时布局错位/
+  闪烁/背景图割裂。
+
+没有自定义背景图（theme.BG_IMAGE_ENABLED 为 False，或者用户没设置过
+图）时就是一个普通纯色 Canvas，跟 tk.Frame 观感上没有区别。
+"""
+
+import tkinter as tk
+
+from dstools.gui import theme
+
+
+class BgFrame(tk.Canvas):
+    """app 必须实现 `_register_bg_surface(self)` 和
+    `_get_bg_slice(widget, w, h) -> ImageTk.PhotoImage | None`（见
+    gui/app.py 的 DSToolsApp）。bg=None 表示背景色现查 theme.BG_SOFT；
+    传具体颜色（比如 theme.CARD_BG）则固定用那个颜色跟背景图混合/兜底。"""
+
+    def __init__(self, parent, app, bg: str | None = None, **kw):
+        self._app = app
+        self._bg_color_override = bg
+        super().__init__(parent, highlightthickness=0, bd=0,
+                          background=self._resolve_color(), **kw)
+        self._photo = None
+        self._render_after_id = None
+        self.bind("<Configure>", lambda e: self._request_render())
+        app._register_bg_surface(self)
+
+    def _resolve_color(self) -> str:
+        return self._bg_color_override if self._bg_color_override is not None else theme.BG_SOFT
+
+    def apply_theme(self, bg: str | None = None) -> None:
+        """主题切换时调用——background 色是构造时焊死的，需要显式重新
+        configure 一次（跟 CardFrame/PillTabBar 是同一条既有规则）。"""
+        if bg is not None:
+            self._bg_color_override = bg
+        self.configure(background=self._resolve_color())
+        self.render_now()
+
+    def _request_render(self) -> None:
+        if self._render_after_id is None:
+            self._render_after_id = self.after(16, self._do_throttled_render)
+
+    def _do_throttled_render(self) -> None:
+        self._render_after_id = None
+        self.render_now()
+
+    def render_now(self) -> None:
+        """便宜的一步：从共享大图裁一块贴上去。真正的重活（读盘/裁剪比
+        例/缩放/混合）由 DSToolsApp 在窗口停顿后单独触发一次，这里从不
+        做。"""
+        self.delete("bg_image")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 2 or h < 2:
+            return
+        photo = self._app._get_bg_slice(self, w, h)
+        self._photo = photo  # 必须留一份引用，否则 PhotoImage 会被 GC 掉
+        if photo is None:
+            return
+        self.create_image(0, 0, image=photo, anchor=tk.NW, tags="bg_image")
+        self.tag_lower("bg_image")
