@@ -12,7 +12,7 @@ from PIL import Image, ImageDraw
 
 from dstools.core.resource_paths import bundled_resource_dir
 from dstools.gui import theme
-from dstools.gui.fonts import get_font
+from dstools.gui.fonts import draw_mixed_text, get_font, measure_mixed
 from dstools.i18n import t
 
 # Real in-game default mod-icon background (images/ui.tex's "portrait_bg.tex"
@@ -93,7 +93,7 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
     link_w = LINK_W * s
     col_gap = 16 * s
 
-    name_font = get_font(round(24 * s))
+    name_size = round(24 * s)
     id_font = get_font(round(17 * s))
     btn_font = get_font(round(18 * s))
 
@@ -135,10 +135,14 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
         name_col_w = max(30, switch_x - col_gap - x)
 
         # ── Column 2: name (top) + workshop id (bottom) ─────────────
+        # mod 名是不受信任的第三方文本，可能带 emoji（微软雅黑等 CJK 字体
+        # 没有对应字形，直接画会得到 .notdef 方块）——用
+        # draw_mixed_text()/measure_mixed() 而不是 draw.text()/
+        # draw.textlength()，遇到 emoji 字符会自动切到 get_emoji_font()。
         name_text = row["name"] or wid
-        while name_text and draw.textlength(name_text, font=name_font) > name_col_w:
+        while name_text and measure_mixed(name_text, name_size) > name_col_w:
             name_text = name_text[:-1]
-        draw.text((x, y + row_h * 0.34), name_text, font=name_font, fill=theme.TEXT, anchor="lm")
+        draw_mixed_text(draw, x, y + row_h * 0.34, name_text, name_size, theme.TEXT, anchor="lm")
         draw.text((x, y + row_h * 0.68), wid, font=id_font, fill=theme.TEXT_MUTED, anchor="lm")
 
         # ── Column 3: on/off switch (client_only/"本地" mods have no

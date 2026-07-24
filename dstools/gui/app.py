@@ -123,6 +123,93 @@ def _apply_full_sandbox_result(mod_info, result: dict | None) -> None:
             setattr(mod_info, key, result[key])
     mod_info.full_sandbox_tried = True
 
+
+def _make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None,
+                         side=tk.LEFT, anchor=tk.W) -> BgFrame:
+    """在工具栏行(BgFrame)里插入一小块只画一行说明文字的子画布，跟其它
+    ttk 控件一起 pack()——ttk.Label/tk.Label 绘制区域永远不透明，会挡住
+    背景图（跟 local_service_tab.py 里"专用服务器工具:"那段文字是同一个
+    问题），这里改用嵌套的小 BgFrame + create_text，达到同样的视觉效果
+    但不挡住背景图。宽度随文字自适应，高度固定为单行文字高度（不需要撑
+    满整行——pack 只是把它摆在跟其它控件同一条水平线上，不需要参与"整
+    行多高"这件事）。
+
+    text_getter: callable() -> str，现查当前文字（跟随语言切换）。font
+    默认 TkDefaultFont，传"("", 11, "bold")"这类可以做成小节标题。返回的
+    BgFrame 挂了一个 `redraw()` 方法，语言切换时调用一次即可刷新文字。
+    """
+    font = tkfont.nametofont("TkDefaultFont") if font is None else tkfont.Font(font=font)
+    label_h = font.metrics("linespace") + 4
+    label = BgFrame(row, app, bg=theme.CARD_BG)
+    label.configure(height=label_h)
+
+    def _redraw():
+        label.delete("label_text")
+        text = text_getter()
+        label.configure(width=font.measure(text) + 6)
+        label.create_text(2, label_h / 2, text=text, anchor=tk.W,
+                           fill=theme.TEXT, font=font, tags="label_text")
+
+    label.redraw = _redraw
+    label.pack(side=side, anchor=anchor, padx=(0, 5))
+    _redraw()
+    return label
+
+
+def _make_filter_chips(row: BgFrame, app: "DSToolsApp", options, variable: tk.StringVar,
+                        command, font=None) -> BgFrame:
+    """在工具栏行(BgFrame)里嵌一组互斥的纯文字筛选项（"全部/已启用/已禁
+    用"这种），取代 ttk.Radiobutton——ttk 主题给它上了不透明背景
+    （style.configure("TRadiobutton", background=BG_SOFT)），会挡住背景
+    图，这里改用一块小画布，每个选项直接 create_text，选中项用主题强调
+    色+加粗，未选中用 muted 色，点文字切换，不画任何原生控件。
+
+    options: [(value, text_getter), ...]（text_getter: callable() -> str，
+    现查当前文字，跟随语言切换）。variable: 保存当前选中值的 StringVar。
+    command: 选中值真的发生变化后调用（不传参数，调用方自己从 variable
+    现查）。返回的 BgFrame 挂了 `redraw()` 方法，语言切换/选中态变化后
+    调用一次即可刷新。
+    """
+    base_font = tkfont.nametofont("TkDefaultFont") if font is None else tkfont.Font(font=font)
+    bold_font = tkfont.Font(family=base_font.actual("family"), size=base_font.actual("size"),
+                             weight="bold")
+    gap = 16
+    chip_h = base_font.metrics("linespace") + 4
+    chip = BgFrame(row, app, bg=theme.CARD_BG)
+    chip.configure(height=chip_h, cursor="hand2")
+    regions: list[tuple[int, int, str]] = []
+
+    def _redraw():
+        chip.delete("chip_text")
+        regions.clear()
+        x = 0
+        for value, text_getter in options:
+            text = text_getter()
+            selected = variable.get() == value
+            f = bold_font if selected else base_font
+            fill = theme.PRIMARY if selected else theme.TEXT_MUTED
+            chip.create_text(x, chip_h / 2, text=text, anchor=tk.W, fill=fill, font=f,
+                              tags="chip_text")
+            w = f.measure(text)
+            regions.append((x, x + w, value))
+            x += w + gap
+        chip.configure(width=max(1, x - gap))
+
+    def _on_click(event):
+        for x1, x2, value in regions:
+            if x1 <= event.x <= x2:
+                if variable.get() != value:
+                    variable.set(value)
+                    _redraw()
+                    command()
+                return
+
+    chip.bind("<Button-1>", _on_click)
+    chip.redraw = _redraw
+    chip.pack(side=tk.LEFT, padx=(0, 5))
+    _redraw()
+    return chip
+
 # ── Main App ───────────────────────────────────────────────────────────
 class DSToolsApp:
     def __init__(self, klei_path: Path | None = None):
@@ -156,17 +243,22 @@ class DSToolsApp:
         self.root.minsize(900, 580)
         self.root.resizable(True, True)
 
-        # Native OS-level aspect-ratio lock (Windows only): intercepts
-        # WM_SIZING before the window repaints, so dragging an edge/corner
-        # is silky smooth with zero flicker -- unlike reacting to
-        # <Configure> from Python, which always shows a snap-back frame.
-        from dstools.gui.win_aspect_lock import AspectLock
-        self._aspect_lock = AspectLock(self.root, 1500, 820)
-        self._aspect_lock.install()
+        # 自定义标题栏：弃用原生标题栏，改成自己画一条 + 手写拖拽移动/
+        # 缩放，见 gui/custom_titlebar.py 顶部说明——那边跟这次的
+        # win_aspect_lock.py 刻意分成两个文件，前者全程只做"一次性设置
+        # 窗口样式位"的 Win32 调用，不涉及消息钩子，风险级别跟后者已经
+        # 出过真实崩溃的 WNDPROC 替换完全不同。原生标题栏没了之后
+        # Windows 不会再对这个窗口发 WM_SIZING，AspectLock 从此不再对
+        # root 生效（也就不再调用），宽高比锁定改成
+        # custom_titlebar.ResizeGrips 里同一套数学重新算一遍。
+        from dstools.gui import custom_titlebar
+        custom_titlebar.apply_borderless_style(self.root)
 
         self.style = ttk.Style(); self.style.theme_use("clam")
         theme.apply_theme(self.root, self.style)
         self._init_bg_system()
+        self._titlebar = custom_titlebar.CustomTitleBar(self.root, self, icon_path=_icon_dir / "icon.png")
+        self._titlebar.pack(fill=tk.X, side=tk.TOP)
         self._build_menu()
 
         # Top-level nav is a custom pill tab bar, not a ttk.Notebook -- the
@@ -336,6 +428,12 @@ class DSToolsApp:
         self._rebuild_shared_bg_image()
         self._refresh_all_bg_surfaces()
         self._update_status(); self._refresh()
+
+        # 缩放手柄放在 __init__ 最后——它们是直接 place() 在 root 上的
+        # 普通 tk.Frame，Tk 里同一父容器下后创建的控件在层叠顺序里更靠
+        # 上，必须等其它内容（菜单条/页签条/卡片等，同样是 root 的直接
+        # 子控件）都建完，手柄才能稳定盖在最上层接收边缘的鼠标事件。
+        custom_titlebar.ResizeGrips(self.root, 1500, 820)
 
     def _on_tab_select(self, key: str) -> None:
         for k, card in self._tab_cards.items():
@@ -557,7 +655,11 @@ class DSToolsApp:
     def _switch_language(self, lang):
         if get_lang() == lang: return
         set_lang(lang)
-        self.root.title(t("app.title")); self._build_menu()
+        # root.title() 本身现在不会显示在任何地方了（原生标题栏已经弃用，
+        # 见 gui/custom_titlebar.py）——保留这一行只是让底层窗口标题字符
+        # 串（任务栏悬浮提示等系统层面还会用到）跟着语言同步，真正显示
+        # 给用户看的是 self._titlebar._redraw()。
+        self.root.title(t("app.title")); self._titlebar._redraw(); self._build_menu()
         self._refresh_tab_labels(); self._update_status()
         # get_selected_cluster() 现在直接存的是 Cluster 对象引用（见
         # __init__ 里 self._global_selected_cluster 的注释），不再靠反解析
@@ -581,6 +683,7 @@ class DSToolsApp:
         set_theme_name(name)
         theme.set_theme(name)
         theme.apply_theme(self.root, self.style)
+        self._titlebar.apply_theme(bg=theme.CARD_BG)
         self._build_menu()
         self._tab_area.apply_theme()
         for card in self._tab_cards.values():
@@ -873,15 +976,20 @@ class DSToolsApp:
 # ── Save Browser Tab ───────────────────────────────────────────────────
 class SaveBrowserTab:
     def __init__(self, parent, app: DSToolsApp):
-        self.app = app; self.frame = ttk.Frame(parent)
+        # self.frame 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
+        # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
+        # 义背景图；三个子页签(env_frame/server_frame/local_frame)是
+        # sub_notebook 的页面容器，同理换成 BgFrame（ttk.Notebook 接受任
+        # 意 widget 当页面，不要求必须是 ttk.Frame）。
+        self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
         self.sub_notebook = ttk.Notebook(self.frame)
         self.sub_notebook.pack(fill=tk.BOTH, expand=True)
         # "存档概览"（原"环境概览"）放在第一位——它是这三个子页签里信息量
         # 最全的一份总览，先看这个再决定去服务器存档/本地存档里细看，
         # 顺序上比排在最后更合理。
-        self.env_frame = ttk.Frame(self.sub_notebook)
-        self.server_frame = ttk.Frame(self.sub_notebook)
-        self.local_frame = ttk.Frame(self.sub_notebook)
+        self.env_frame = BgFrame(self.sub_notebook, app, bg=theme.CARD_BG)
+        self.server_frame = BgFrame(self.sub_notebook, app, bg=theme.CARD_BG)
+        self.local_frame = BgFrame(self.sub_notebook, app, bg=theme.CARD_BG)
         self.sub_notebook.add(self.env_frame, text=t("save.env_overview"))
         self.sub_notebook.add(self.server_frame, text=t("save.server_clusters"))
         self.sub_notebook.add(self.local_frame, text=t("save.local_clusters"))
@@ -890,11 +998,15 @@ class SaveBrowserTab:
         self._build_panel(self.local_frame, SaveSource.LOCAL, LOCAL_COLOR, LOCAL_BG)
 
     def _build_panel(self, parent, source, color, bg):
-        sf = ttk.Frame(parent); sf.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Label(sf, text=t("selector.archive")).pack(side=tk.LEFT, padx=(0,5))
+        # sf 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
+        # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
+        # 义背景图；"存档:"/"分片:"两个纯说明文字改用 _make_toolbar_label
+        # （create_text，不挡背景图），下拉框/按钮仍是原生 ttk 控件不变。
+        sf = BgFrame(parent, self.app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=5, pady=5)
+        archive_label = _make_toolbar_label(sf, self.app, lambda: t("selector.archive"))
         combo_var = tk.StringVar(); combo = MenuCombo(sf, textvariable=combo_var, width=25)
         combo.pack(side=tk.LEFT, padx=(0,10))
-        ttk.Label(sf, text=t("save.shard")).pack(side=tk.LEFT, padx=(0,5))
+        shard_label = _make_toolbar_label(sf, self.app, lambda: t("save.shard"))
         shard_var = tk.StringVar(); shard_combo = MenuCombo(sf, textvariable=shard_var, width=15)
         shard_combo.pack(side=tk.LEFT, padx=(0,10))
         # "刷新" re-discovers the whole environment (not just re-listing
@@ -923,33 +1035,72 @@ class SaveBrowserTab:
         # 同一个 _SECTION_HEADER_FONT，而不是分别继承 ttk.LabelFrame 自己
         # 的标题样式——否则两处不容易做到完全一致。
         _SECTION_HEADER_FONT = ("", 11, "bold")
-        _SECTION_BODY_FONT = ("", 9)
 
-        info_frame = ttk.Frame(parent, padding=(10,6))
+        # info_frame/info_header_row 用 BgFrame 而不是 ttk.Frame(padding=...)
+        # ——Canvas 没有 ttk 的 padding 选项，改成给各直接子控件手动
+        # padx=10 模拟原来 padding=(10,6) 的水平内边距。
+        info_frame = BgFrame(parent, self.app, bg=theme.CARD_BG)
         info_frame.pack(fill=tk.X, padx=5, pady=(0,2))
-        info_header_row = ttk.Frame(info_frame)
-        info_header_row.pack(fill=tk.X)
-        info_header_label = ttk.Label(info_header_row, text=t("save.basic_info"), font=_SECTION_HEADER_FONT)
-        info_header_label.pack(side=tk.LEFT)
+        info_header_row = BgFrame(info_frame, self.app, bg=theme.CARD_BG)
+        info_header_row.pack(fill=tk.X, padx=10, pady=(6,0))
+        info_header_label = _make_toolbar_label(info_header_row, self.app, lambda: t("save.basic_info"),
+                                                 font=_SECTION_HEADER_FONT)
         open_btn = ttk.Button(info_header_row, text=t("env.open_location"),
                               command=lambda: self._open_current_session_location(source))
         open_btn.pack(side=tk.RIGHT)
-        ttk.Separator(info_frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(4,4))
+        separator = ttk.Separator(info_frame, orient=tk.HORIZONTAL)
+        separator.pack(fill=tk.X, padx=10, pady=(4,4))
         session_id_var = tk.StringVar()
         summary_var = tk.StringVar()
         slots_var = tk.StringVar()
         extra_sessions_var = tk.StringVar()
-        ttk.Label(info_frame, textvariable=session_id_var, font=_SECTION_BODY_FONT,
-                 foreground=theme.TEXT_MUTED, anchor=tk.W).pack(fill=tk.X)
-        ttk.Label(info_frame, textvariable=summary_var, font=_SECTION_BODY_FONT,
-                 foreground=theme.TEXT_MUTED, anchor=tk.W).pack(fill=tk.X)
-        ttk.Label(info_frame, textvariable=slots_var, font=_SECTION_BODY_FONT,
-                 foreground=theme.TEXT_MUTED, anchor=tk.W).pack(fill=tk.X)
-        # 这一行只在真的有多个会话（很少见）时才 pack 出来，平时留空
-        # ——之前不管有没有内容都常驻 pack，哪怕文字是空的也照样占一行
-        # 高度，看起来就是"每个玩家角色状态"上方莫名多出一截空白。
-        extra_sessions_label = ttk.Label(info_frame, textvariable=extra_sessions_var, font=_SECTION_BODY_FONT,
-                                         foreground=theme.TEXT_MUTED, anchor=tk.W)
+        # 下面 4 行原来是 4 个 ttk.Label（不透明背景，挡背景图）——改成直
+        # 接在 info_frame 自己的画布上 create_text；info_frame 只有
+        # info_header_row/separator 这两个 pack() 进去的子控件，靠它俩撑
+        # 出来的高度盖不住下面这些直接画的文字，必须先
+        # pack_propagate(False) 再由 _redraw_info_text() 显式给高度（见
+        # gui/bg_frame.py 顶部"pack_propagate 的坑"）。extra_sessions_var
+        # 为空时那一行直接不画，等效于原来的 pack()/pack_forget()。
+        info_frame.pack_propagate(False)
+        info_text_font = tkfont.Font(size=9)
+
+        def _redraw_info_text():
+            info_frame.delete("info_text")
+            # update_idletasks() ——没有这一步，header_row/separator 刚
+            # pack() 完还没被 Tk 真正排布过一次时，winfo_y()/winfo_height()
+            # 会返回 0/1 这种还没算出来的默认值，导致下面几行文字全叠在
+            # 一起画到 y=5 附近。
+            info_frame.update_idletasks()
+            y = separator.winfo_y() + separator.winfo_height() + 4
+            for var in (session_id_var, summary_var, slots_var, extra_sessions_var):
+                text = var.get()
+                if not text:
+                    continue
+                info_frame.create_text(10, y, text=text, anchor=tk.NW, fill=theme.TEXT_MUTED,
+                                        font=info_text_font, tags="info_text")
+                y += info_text_font.metrics("linespace") + 2
+            info_frame.configure(height=y + 4)
+
+        # <Configure> 期间（拖拽缩放窗口）节流到 ~16ms 一次——
+        # update_idletasks() 不是免费的，直接绑在原始 <Configure> 上会在
+        # 拖拽过程中被连续调用很多次；StringVar 的 trace 不需要节流（只在
+        # 存档/分片真的切换时才触发，不是每帧都触发）。
+        info_redraw_after_id = None
+
+        def _request_info_redraw(event=None):
+            nonlocal info_redraw_after_id
+            if info_redraw_after_id is None:
+                info_redraw_after_id = info_frame.after(16, _do_throttled_info_redraw)
+
+        def _do_throttled_info_redraw():
+            nonlocal info_redraw_after_id
+            info_redraw_after_id = None
+            _redraw_info_text()
+
+        for var in (session_id_var, summary_var, slots_var, extra_sessions_var):
+            var.trace_add("write", lambda *a: _redraw_info_text())
+        info_frame.bind("<Configure>", _request_info_redraw, add="+")
+        setattr(self, f"_{k}_redraw_info_text", _redraw_info_text)
 
         # "每个玩家角色状态" ——一个会话下面除了世界自己的存档槽，还有一批
         # 按玩家分的子文件夹（见 save_reader.list_session_players）。一个
@@ -958,32 +1109,44 @@ class SaveBrowserTab:
         # 普通 ttk/tk 控件（Canvas+Scrollbar 装一行一个的 Frame）足够了——
         # 这里的滚动条是玩家列表自己的（人数多的时候还是需要滚动），跟上面
         # 会话信息那块"去掉拖动条"是两回事，不冲突。
-        pf = ttk.Frame(parent, padding=(10,8))
+        # pf/players_outer 用 BgFrame 而不是 ttk.Frame(padding=...)——同上，
+        # 手动 padx=10 模拟原来的水平内边距；players_canvas 直接用 BgFrame
+        # 代替普通 tk.Canvas（BgFrame 本身就是 tk.Canvas 子类，
+        # create_window()/scrollregion 这套用法不受影响），空白处能透出
+        # 背景图——单条玩家状态卡片（_build_player_row）本身保持不透明的
+        # 高亮识别色不变，只是它们之间/下方的空白不再是纯色。
+        pf = BgFrame(parent, self.app, bg=theme.CARD_BG)
         pf.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0,5))
-        players_header_label = ttk.Label(pf, text=t("save.players_section"), font=_SECTION_HEADER_FONT)
-        players_header_label.pack(anchor=tk.W)
-        ttk.Separator(pf, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(4,6))
-        players_outer = ttk.Frame(pf)
-        players_outer.pack(fill=tk.BOTH, expand=True)
-        players_canvas = tk.Canvas(players_outer, highlightthickness=0)
+        players_header_label = _make_toolbar_label(pf, self.app, lambda: t("save.players_section"),
+                                                     font=_SECTION_HEADER_FONT, side=tk.TOP, anchor=tk.W)
+        players_header_label.pack(padx=10, pady=(8,0))
+        ttk.Separator(pf, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=10, pady=(4,6))
+        players_outer = BgFrame(pf, self.app, bg=theme.CARD_BG)
+        players_outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,8))
+        players_canvas = BgFrame(players_outer, self.app, bg=theme.CARD_BG)
         players_vbar = ttk.Scrollbar(players_outer, orient=tk.VERTICAL, command=players_canvas.yview)
         players_rows_frame = ttk.Frame(players_canvas)
         players_rows_win = players_canvas.create_window((0,0), window=players_rows_frame, anchor="nw")
         players_rows_frame.bind("<Configure>",
                                 lambda e, cv=players_canvas: cv.configure(scrollregion=cv.bbox("all")))
+        # add="+" ——不能覆盖 BgFrame(players_canvas) 自己已经绑的那个
+        # <Configure>（负责从共享大图裁一块背景贴上去，见 bg_frame.py），
+        # 否则这个画布会永远画不出背景图切片。
         players_canvas.bind("<Configure>",
-                            lambda e, cv=players_canvas, win=players_rows_win: cv.itemconfigure(win, width=e.width))
+                            lambda e, cv=players_canvas, win=players_rows_win: cv.itemconfigure(win, width=e.width),
+                            add="+")
         players_canvas.configure(yscrollcommand=players_vbar.set)
         players_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         players_vbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+        setattr(self, f"_{k}_archive_label", archive_label)
+        setattr(self, f"_{k}_shard_label", shard_label)
         setattr(self, f"_{k}_info_header_label", info_header_label)
         setattr(self, f"_{k}_open_btn", open_btn)
         setattr(self, f"_{k}_session_id_var", session_id_var)
         setattr(self, f"_{k}_summary_var", summary_var)
         setattr(self, f"_{k}_slots_var", slots_var)
         setattr(self, f"_{k}_extra_sessions_var", extra_sessions_var)
-        setattr(self, f"_{k}_extra_sessions_label", extra_sessions_label)
         setattr(self, f"_{k}_current_session_id", None)
         setattr(self, f"_{k}_players_header_label", players_header_label)
         setattr(self, f"_{k}_players_canvas", players_canvas)
@@ -1071,7 +1234,6 @@ class SaveBrowserTab:
         if not sessions:
             session_id_var.set(t("save.no_saves")); summary_var.set(""); slots_var.set("")
             extra_sessions_var.set("")
-            getattr(self, f"_{k}_extra_sessions_label").pack_forget()
             open_btn.configure(state=tk.DISABLED)
             setattr(self, f"_{k}_current_session_id", None)
             self._refresh_players(source, None, mod_overrides_path)
@@ -1087,13 +1249,10 @@ class SaveBrowserTab:
         summary_var.set(f"{t('save.summary')}: {get_save_summary(session)}")
         size_str = f"{sum(sl.size for sl in session.slots)/(1024*1024):.1f} MB"
         slots_var.set(f"{t('save.slots')}: {len(session.slots)}    {t('save.size')}: {size_str}")
-        extra_label = getattr(self, f"_{k}_extra_sessions_label")
         if len(sessions) > 1:
             extra_sessions_var.set(t("save.extra_sessions", count=len(sessions)-1))
-            extra_label.pack(fill=tk.X)
         else:
             extra_sessions_var.set("")
-            extra_label.pack_forget()
         open_btn.configure(state=tk.NORMAL)
 
         session.players = list_session_players(session)
@@ -1329,14 +1488,30 @@ class SaveBrowserTab:
             # 跟着的 tab.refresh() 会重新调一遍，到时候自然是新语言——这里
             # 只需要更新"基本信息"/"每个玩家角色状态"这两个常驻的标题
             # Label、以及"打开位置"/"刷新"按钮文字。
+            archive_label = getattr(self, f"_{src_k}_archive_label", None)
+            if archive_label: archive_label.redraw()
+            shard_label = getattr(self, f"_{src_k}_shard_label", None)
+            if shard_label: shard_label.redraw()
             info_header = getattr(self, f"_{src_k}_info_header_label", None)
-            if info_header: info_header.configure(text=t("save.basic_info"))
+            if info_header: info_header.redraw()
             players_header = getattr(self, f"_{src_k}_players_header_label", None)
-            if players_header: players_header.configure(text=t("save.players_section"))
+            if players_header: players_header.redraw()
             open_btn = getattr(self, f"_{src_k}_open_btn", None)
             if open_btn: open_btn.configure(text=t("env.open_location"))
             btn = getattr(self, f"_{src_k}_btn", None)
             if btn: btn.configure(text=t("save.refresh"))
+
+    def retheme(self):
+        """主题切换时调用——_make_toolbar_label() 画的说明文字、以及
+        _redraw_info_text()/_redraw_env_hdr() 画的正文都是建一次就不再重
+        建，refresh() 不会碰它们的颜色，需要显式重新画一遍。"""
+        for src_k in ["server", "local"]:
+            for attr in ("_archive_label", "_shard_label", "_info_header_label", "_players_header_label"):
+                label = getattr(self, f"_{src_k}{attr}", None)
+                if label: label.redraw()
+            redraw_info = getattr(self, f"_{src_k}_redraw_info_text", None)
+            if redraw_info: redraw_info()
+        self._redraw_env_hdr()
 
     def refresh(self):
         for src in [SaveSource.SERVER, SaveSource.LOCAL]:
@@ -1353,13 +1528,34 @@ class SaveBrowserTab:
         # 字体下没有对应字形，渲染出来跟旁边的英文/数字混排显得很怪。
         # 换成不指定字体族、只给字号的写法，跟随系统默认字体（Windows
         # 中文环境下就是微软雅黑），中英文混排才是一致的。
+        #
+        # 用 BgFrame + create_text 代替 ttk.Label——这段说明文字本身是固
+        # 定换行（内容里已经带 \n），不需要动态 wraplength，比
+        # _wl_info_frame 那种要简单，不需要跟着 <Configure> 重算宽度，只
+        # 需要在文字变化时（StringVar.trace_add）重画+撑高容器。
+        env_hdr_frame = BgFrame(parent, self.app, bg=theme.CARD_BG)
+        env_hdr_frame.pack(fill=tk.X, padx=10, pady=(10,5))
         self._env_hdr_var = tk.StringVar()
-        ttk.Label(parent, textvariable=self._env_hdr_var, justify=tk.LEFT,
-                 font=("", 10)).pack(anchor=tk.W, padx=10, pady=(10,5))
+        env_hdr_font = tkfont.Font(size=10)
 
-        list_outer = ttk.Frame(parent)
+        def _redraw_env_hdr():
+            env_hdr_frame.delete("env_hdr_text")
+            env_hdr_frame.create_text(0, 0, text=self._env_hdr_var.get(), anchor=tk.NW,
+                                       fill=theme.TEXT, font=env_hdr_font, justify=tk.LEFT,
+                                       tags="env_hdr_text")
+            bbox = env_hdr_frame.bbox("env_hdr_text")
+            env_hdr_frame.configure(height=(bbox[3] + 2) if bbox else 20)
+
+        self._redraw_env_hdr = _redraw_env_hdr
+        self._env_hdr_var.trace_add("write", lambda *a: _redraw_env_hdr())
+
+        # list_outer/canvas 用 BgFrame 而不是 ttk.Frame/tk.Canvas——跟
+        # _build_panel() 里 players_outer/players_canvas 是同一个思路，空
+        # 白处透出背景图；单条存档概览行（_build_env_row）本身保持不透
+        # 明的高亮识别色不变。
+        list_outer = BgFrame(parent, self.app, bg=theme.CARD_BG)
         list_outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,10))
-        self._env_canvas = canvas = tk.Canvas(list_outer, highlightthickness=0)
+        self._env_canvas = canvas = BgFrame(list_outer, self.app, bg=theme.CARD_BG)
         vbar = ttk.Scrollbar(list_outer, orient=tk.VERTICAL, command=canvas.yview)
         self._env_rows_frame = ttk.Frame(canvas)
         self._env_rows_win = canvas.create_window((0,0), window=self._env_rows_frame, anchor="nw")
@@ -1367,8 +1563,9 @@ class SaveBrowserTab:
         # Keep the inner frame's width pinned to the canvas's own width so
         # each row's detail label wraps/aligns against the visible area
         # instead of the frame shrinking to its content and leaving a
-        # blank strip on the right.
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(self._env_rows_win, width=e.width))
+        # blank strip on the right. add="+" ——不能覆盖 BgFrame(canvas) 自
+        # 己已经绑的那个 <Configure>（负责画背景图切片）。
+        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(self._env_rows_win, width=e.width), add="+")
         canvas.configure(yscrollcommand=vbar.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
@@ -1487,7 +1684,10 @@ class ModManagerTab:
     """
 
     def __init__(self, parent, app: DSToolsApp):
-        self.app = app; self.frame = ttk.Frame(parent)
+        # self.frame 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
+        # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
+        # 义背景图。
+        self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
         self._mod_data = {}     # workshop_id -> ModEntry
         self._mod_infos = {}    # workshop_id -> ModInfo | None
         self._icon_imgs = {}    # workshop_id -> PIL.Image (RGBA)
@@ -1506,7 +1706,7 @@ class ModManagerTab:
         self._full_resolved_cache: dict[str, ModInfo] = {}
         self._did_initial_full_load = False
 
-        sf = ttk.Frame(self.frame); sf.pack(fill=tk.X, padx=5, pady=5)
+        sf = BgFrame(self.frame, app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=5, pady=5)
         # "存档"选择器已经搬到顶部的全局选择栏（见 DSToolsApp._cluster_bar），
         # 这里不再重复一份。"同步mod文件到服务器"仍然摆在这一行最前面、
         # "分片:"标签左边——同步针对的是整个存档(所有分片)的 Mod，不是当前
@@ -1518,7 +1718,7 @@ class ModManagerTab:
         self._md_sync.pack(side=tk.LEFT, padx=(0,10))
         from dstools.gui.tooltip import Tooltip
         Tooltip(self._md_sync, self._sync_button_hover_text)
-        self._md_lbl2 = ttk.Label(sf, text=t("mod.shard")); self._md_lbl2.pack(side=tk.LEFT, padx=(0,5))
+        self._md_lbl2 = _make_toolbar_label(sf, app, lambda: t("mod.shard"))
         self.shard_var = tk.StringVar(value="Master")
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
@@ -1560,14 +1760,17 @@ class ModManagerTab:
         self._md_bs.configure(state=tk.DISABLED)
         self._md_ba.configure(state=tk.DISABLED)
 
-        ff = ttk.Frame(self.frame); ff.pack(fill=tk.X, padx=5)
-        self._md_filt = ttk.Label(ff, text=t("mod.filter")); self._md_filt.pack(side=tk.LEFT, padx=(0,5))
+        ff = BgFrame(self.frame, app, bg=theme.CARD_BG); ff.pack(fill=tk.X, padx=5)
+        self._md_filt = _make_toolbar_label(ff, app, lambda: t("mod.filter"))
         self.filter_var = tk.StringVar(); self.filter_var.trace_add("write", lambda *a: self._render_list())
         ttk.Entry(ff, textvariable=self.filter_var, width=30).pack(side=tk.LEFT, padx=(0,10))
         self.show_var = tk.StringVar(value="all")
-        self._md_ra = ttk.Radiobutton(ff, text=t("mod.show_all"), variable=self.show_var, value="all", command=self._render_list); self._md_ra.pack(side=tk.LEFT, padx=5)
-        self._md_re = ttk.Radiobutton(ff, text=t("mod.show_enabled"), variable=self.show_var, value="enabled", command=self._render_list); self._md_re.pack(side=tk.LEFT, padx=5)
-        self._md_rd = ttk.Radiobutton(ff, text=t("mod.show_disabled"), variable=self.show_var, value="disabled", command=self._render_list); self._md_rd.pack(side=tk.LEFT, padx=5)
+        self._md_filter_chips = _make_filter_chips(
+            ff, app,
+            [("all", lambda: t("mod.show_all")),
+             ("enabled", lambda: t("mod.show_enabled")),
+             ("disabled", lambda: t("mod.show_disabled"))],
+            self.show_var, self._render_list)
 
         # 本地存档选中时显示的醒目提示——本地存档的 mod 启用/配置实际由
         # 客户端账号级 modindex 决定，这里只读查看，默认不 pack。
@@ -1577,7 +1780,7 @@ class ModManagerTab:
 
         from dstools.gui.image_scroll import ImageScrollPanel
         from dstools.gui.mod_render import REF_WIDTH
-        self.list_panel = ImageScrollPanel(self.frame, ref_width=REF_WIDTH)
+        self.list_panel = ImageScrollPanel(self.frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
         self.list_panel.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.list_panel.on_settle = lambda w, h: self._render_list(ref_width=w)
 
@@ -2041,20 +2244,23 @@ class ModManagerTab:
         self.frame.after(100, _poll_log)
 
     def refresh_language(self):
-        self._md_lbl2.configure(text=t("mod.shard"))
+        self._md_lbl2.redraw()
         self._md_br.configure(text=t("mod.reload_full")); self._md_bs.configure(text=t("mod.save_btn"))
         self._md_ba.configure(text=t("mod.apply_all")); self._md_sync.configure(text=t("local.sync_mods_btn"))
-        self._md_filt.configure(text=t("mod.filter"))
-        self._md_ra.configure(text=t("mod.show_all")); self._md_re.configure(text=t("mod.show_enabled"))
-        self._md_rd.configure(text=t("mod.show_disabled"))
+        self._md_filt.redraw()
+        self._md_filter_chips.redraw()
         self._md_rl.configure(text=t("mod.back_to_list") if self.show_local_var.get() else t("mod.show_local"))
         self._md_local_banner.configure(text=t("mod.local_view_only_banner"))
         self._refresh_mods()
 
     def retheme(self):
-        """主题切换时调用——这个横幅在 __init__ 里建一次就不再重建，
-        refresh()/refresh_full() 都不会碰它的颜色，需要显式重新上色。"""
+        """主题切换时调用——这个横幅、以及 _make_toolbar_label() 画的说明
+        文字都是 __init__ 里建一次就不再重建，refresh()/refresh_full() 都
+        不会碰它们的颜色，需要显式重新上色/重画。"""
         self._md_local_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+        self._md_lbl2.redraw()
+        self._md_filt.redraw()
+        self._md_filter_chips.redraw()
 
     def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())
 
@@ -2641,10 +2847,13 @@ class WorldSettingsTab:
     """
 
     def __init__(self, parent, app):
-        self.app = app; self.frame = ttk.Frame(parent)
-        sf = ttk.Frame(self.frame); sf.pack(fill=tk.X, padx=5, pady=5)
+        # self.frame/sf 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
+        # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
+        # 义背景图。
+        self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
+        sf = BgFrame(self.frame, app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=5, pady=5)
         # "存档"选择器已经搬到顶部的全局选择栏，这里不再重复一份。
-        self._wl_lbl2 = ttk.Label(sf, text=t("world.shard")); self._wl_lbl2.pack(side=tk.LEFT, padx=(0,5))
+        self._wl_lbl2 = _make_toolbar_label(sf, app, lambda: t("world.shard"))
         self.shard_var = tk.StringVar(value="Master")
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
@@ -2655,32 +2864,50 @@ class WorldSettingsTab:
         self._wl_local_banner = tk.Label(self.frame, text=t("world.local_view_only_banner"),
                                           bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=("", 10, "bold"),
                                           anchor=tk.W, padx=10, pady=6)
-        # Preset name/id/location + description, in a visually distinct
-        # bordered card -- previously a single small (font size 9) Label
-        # truncating the description to 80 characters, which read as
-        # cramped and hard to read next to the rest of the tab.
-        self._wl_info_frame = tk.Frame(self.frame, highlightbackground=theme.CARD_BORDER,
-                                       highlightthickness=1, bg=theme.BG_SOFT)
+        # Preset name/id/location + description -- BgFrame（不是
+        # tk.Frame）+ create_text（不是 tk.Label）好透出背景图；
+        # create_text 原生支持 width= 自动换行，照抄原来
+        # "<Configure> 时按容器宽度重算 wraplength" 的思路，只是从
+        # Label.configure(wraplength=) 换成重新画一次 create_text(width=)。
+        self._wl_info_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._wl_info_frame.pack(fill=tk.X, padx=5, pady=(0,6))
         self._wl_title_var = tk.StringVar()
-        tk.Label(self._wl_info_frame, textvariable=self._wl_title_var, font=("", 11, "bold"),
-                fg=theme.TEXT, bg=theme.BG_SOFT, anchor=tk.W, justify=tk.LEFT).pack(fill=tk.X, padx=14, pady=(8,2))
         self._wl_desc_var = tk.StringVar()
-        self._wl_desc_lbl = tk.Label(self._wl_info_frame, textvariable=self._wl_desc_var, font=("", 9),
-                                     fg=theme.TEXT_MUTED, bg=theme.BG_SOFT, anchor=tk.W, justify=tk.LEFT)
-        self._wl_desc_lbl.pack(fill=tk.X, padx=14, pady=(0,8))
-        # Wraplength has to be maintained by hand (Label doesn't do this
-        # itself) so the description reflows instead of clipping/
-        # overflowing as the window is resized.
-        self._wl_info_frame.bind("<Configure>", lambda e: self._wl_desc_lbl.configure(wraplength=max(200, e.width - 28)))
+        self._wl_title_font = tkfont.Font(size=11, weight="bold")
+        self._wl_desc_font = tkfont.Font(size=9)
+
+        def _redraw_wl_info():
+            c = self._wl_info_frame
+            c.delete("wl_info_text")
+            w = c.winfo_width()
+            if w < 4:
+                return
+            y = 8
+            title = self._wl_title_var.get()
+            if title:
+                c.create_text(14, y, text=title, anchor=tk.NW, fill=theme.TEXT,
+                               font=self._wl_title_font, tags="wl_info_text")
+                y += self._wl_title_font.metrics("linespace") + 4
+            desc = self._wl_desc_var.get()
+            if desc:
+                c.create_text(14, y, text=desc, anchor=tk.NW, fill=theme.TEXT_MUTED,
+                               font=self._wl_desc_font, width=max(200, w - 28),
+                               tags="wl_info_text")
+            bbox = c.bbox("wl_info_text")
+            c.configure(height=(bbox[3] + 8) if bbox else 20)
+
+        self._redraw_wl_info = _redraw_wl_info
+        self._wl_info_frame.bind("<Configure>", lambda e: _redraw_wl_info(), add="+")
+        self._wl_title_var.trace_add("write", lambda *a: _redraw_wl_info())
+        self._wl_desc_var.trace_add("write", lambda *a: _redraw_wl_info())
         self._sub_nb = ttk.Notebook(self.frame); self._sub_nb.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0,5))
 
         from dstools.gui.image_scroll import ImageScrollPanel
         from dstools.gui.world_render import REF_WIDTH
 
-        self._rules_panel = ImageScrollPanel(self._sub_nb, ref_width=REF_WIDTH)
+        self._rules_panel = ImageScrollPanel(self._sub_nb, ref_width=REF_WIDTH, bg=theme.CARD_BG)
         self._sub_nb.add(self._rules_panel.frame, text=self._rules_tab_label())
-        self._gen_panel = ImageScrollPanel(self._sub_nb, ref_width=REF_WIDTH)
+        self._gen_panel = ImageScrollPanel(self._sub_nb, ref_width=REF_WIDTH, bg=theme.CARD_BG)
         self._sub_nb.add(self._gen_panel.frame, text=t("world.generation"))
         self._rules_panel.on_settle = lambda w, h: self._render_rules(ref_width=w)
         self._gen_panel.on_settle = lambda w, h: self._render_gen(ref_width=w)
@@ -2895,15 +3122,18 @@ class WorldSettingsTab:
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("world.saved"))
 
     def refresh_language(self):
-        self._wl_lbl2.configure(text=t("world.shard"))
+        self._wl_lbl2.redraw()
         self._wl_br.configure(text=t("save.refresh")); self._wl_bs.configure(text=t("world.save_rules"))
         self._sub_nb.tab(0, text=self._rules_tab_label()); self._sub_nb.tab(1, text=t("world.generation"))
         self._wl_local_banner.configure(text=t("world.local_view_only_banner"))
 
     def retheme(self):
-        """主题切换时调用——这个横幅在 __init__ 里建一次就不再重建，
-        refresh() 不会碰它的颜色，需要显式重新上色。"""
+        """主题切换时调用——这个横幅、以及 _make_toolbar_label() 画的说明
+        文字都是 __init__ 里建一次就不再重建，refresh() 不会碰它们的颜
+        色，需要显式重新上色/重画。"""
         self._wl_local_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+        self._wl_lbl2.redraw()
+        self._redraw_wl_info()
 
     def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())
 
@@ -3200,8 +3430,14 @@ class ClusterConfigTab:
     }
 
     def __init__(self, parent, app: DSToolsApp):
-        self.app = app; self.frame = ttk.Frame(parent); self._entries = {}
-        sf = ttk.Frame(self.frame); sf.pack(fill=tk.X, padx=5, pady=5)
+        # self.frame/sf 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
+        # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
+        # 义背景图。这个页签内部（Cluster/Shard Config 两个 tab 页各自
+        # 的 Canvas+动态表格、以及管理员/黑名单/Token 三个子面板）本轮不
+        # 动——CLAUDE.md 自己标注这是"最麻烦"的一处，resize-settle 逻辑
+        # 比较精细，牵一发动全身，本轮只做最外层。
+        self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG); self._entries = {}
+        sf = BgFrame(self.frame, app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=5, pady=5)
         # "存档"选择器已经搬到顶部的全局选择栏，这里不再重复一份，"加载"
         # 按钮变成这一行第一个控件。
         self._cc_bl = ttk.Button(sf, text=t("cluster.load"), command=self._load_config); self._cc_bl.pack(side=tk.LEFT, padx=(0,5))
