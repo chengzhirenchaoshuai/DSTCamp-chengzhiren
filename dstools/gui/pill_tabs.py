@@ -72,6 +72,15 @@ class PillTabBar(tk.Frame):
         gui/bg_frame.py 的 BgFrame 保持一致，内部就是 _redraw()。"""
         self._redraw()
 
+    def clear_bg_image(self) -> None:
+        """DSToolsApp._begin_bg_drag_suppress() 拖拽开始时调用——跟
+        gui/bg_frame.py 的 BgFrame.clear_bg_image() 是同一套接口约定，
+        但这里不需要真的做什么：_redraw() 每次都是背景图/渐变+药丸+文
+        字一次性整体重画（`c.delete("all")` 开头），不像 BgFrame 那样有
+        "描边跟背景图贴图分开独立重绘"的组合，不存在拖拽中途冻结出残
+        影的问题，留空即可。"""
+        pass
+
     def relabel(self, labels: dict) -> None:
         """labels: {key: new_label}. Called on language switch."""
         self._tabs = [(k, labels.get(k, lbl)) for k, lbl in self._tabs]

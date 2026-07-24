@@ -80,7 +80,10 @@ python scripts/run_gui.py
 其它功能：
 - 界面支持中/英文切换；支持自定义背景图片（"主题"菜单里设置），图片按
   区域比例居中裁剪、不拉伸变形，可调不透明度让图片跟界面配色融合，显示
-  在顶部菜单条/页签条/存档选择栏背后，以及"本地服务器"页签内容区里。
+  在整个窗口背后（标题栏、菜单条、页签条、存档选择栏、五个页签内容区）。
+- 窗口标题栏是自绘的（非 Windows 原生），支持拖动、缩放（宽高比锁定）、
+  最小化到任务栏，风格跟自定义背景图统一；不支持最大化（宽高比锁定，拉
+  伸铺满屏幕没有意义）。
 - 可以最小化到系统托盘继续在后台运行；"设置"菜单里可以选择关闭窗口时是
   直接退出还是最小化到托盘（默认最小化），以及把运行时缓存目录改到 exe
   所在目录（默认在 `%APPDATA%/DSTCamp/`）。
@@ -111,7 +114,8 @@ try/except 收集器（非 assert 抛出即视为失败）：
 ```bash
 python tests/test_e2e.py          # 核心模块：Lua/INI 解析、存档发现、Mod 管理、
                                     # 本地偏好设置、主题切换、自定义背景图裁剪/混合等
-python tests/test_e2e_phase2.py   # i18n、本地存档发现、DSTEnvironment 字段、exe/gui 可导入性
+python tests/test_e2e_phase2.py   # i18n、本地存档发现、DSTEnvironment 字段、
+                                    # exe/gui/自定义标题栏模块可导入性
 ```
 
 `scripts/diagnose_local_env.py` 不是测试（没有 assert，纯打印），需要本机

@@ -45,11 +45,6 @@ from dstools.gui.cluster_select import cluster_label as _cluster_label
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.local_service_tab import LocalServiceTab
 from dstools.gui.pill_tabs import PillTabBar
-# 只留这 4 个——它们是固定语义色（服务器/本地存档的区分色），不随主题
-# 变化，import 时拷贝一份值不会有"切主题后变旧"的问题。会随主题变的
-# ERROR/HEADING/TEXT_MUTED 已经全部改成 theme.ERROR/theme.HEADING/
-# theme.TEXT_MUTED（见 theme.py 顶部文档字符串关于这条规则的说明）。
-from dstools.gui.theme import LOCAL_BG, LOCAL_COLOR, SERVER_BG, SERVER_COLOR
 from dstools.i18n import get_lang, set_lang, t
 from dstools.models import Cluster, ModEntry, SaveSource, Shard
 
@@ -257,6 +252,16 @@ class DSToolsApp:
         self.style = ttk.Style(); self.style.theme_use("clam")
         theme.apply_theme(self.root, self.style)
         self._init_bg_system()
+        # 铺满整个客户区、z-order 最底层的背景——root 本身不是 BgFrame，
+        # 永远只有 theme.BG_SOFT 这一种浅色纯色；顶层各控件之间用
+        # pack() padx/pady 留出的间隙（比如"存档:"栏跟页签卡片之间、卡
+        # 片跟底部状态栏之间）会漏出 root 这层浅色，在暗色自定义背景图
+        # 下变成一条条突兀的白边（真机截图确认过）。这里先创建一个铺满
+        # 整个客户区的 BgFrame——因为最先创建，之后所有 pack()/place()
+        # 的控件天然叠在它上面，任何缝隙漏出来的都是这张背景图本身，不
+        # 再是纯色。
+        self._root_bg = BgFrame(self.root, self)
+        self._root_bg.place(relx=0, rely=0, relwidth=1, relheight=1)
         self._titlebar = custom_titlebar.CustomTitleBar(self.root, self, icon_path=_icon_dir / "icon.png")
         self._titlebar.pack(fill=tk.X, side=tk.TOP)
         self._build_menu()
@@ -398,9 +403,29 @@ class DSToolsApp:
                 card.grid_remove()
         self._refresh_tab_labels()
 
+        # BgFrame + create_text（不是 ttk.Label）——ttk.Label 的 TLabel 样
+        # 式背景固定是 theme.BG_SOFT（浅色，见 theme.apply_theme()），在
+        # 暗色自定义背景图下会显得像贴底的一条白色横杠（真机截图确认
+        # 过）。跟本项目其它说明性文字（_make_toolbar_label 等）同一个
+        # 思路，换成能显示背景图切片的画布，只是丢了 ttk 原生的
+        # relief=SUNKEN 内凹描边——这个项目里其它地方本来就没有类似的描
+        # 边效果，不算观感倒退。
         self.status_var = tk.StringVar(value=t("app.ready"))
-        ttk.Label(self.root, textvariable=self.status_var, relief=tk.SUNKEN,
-                  anchor=tk.W, padding=(5,2)).pack(side=tk.BOTTOM, fill=tk.X)
+        self._status_font = tkfont.nametofont("TkDefaultFont")
+        status_h = self._status_font.metrics("linespace") + 6
+        self._status_bar = BgFrame(self.root, self, bg=theme.CARD_BG)
+        self._status_bar.configure(height=status_h)
+        self._status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        def _redraw_status_bar():
+            self._status_bar.delete("status_text")
+            self._status_bar.create_text(6, status_h / 2, text=self.status_var.get(), anchor=tk.W,
+                                          fill=theme.TEXT, font=self._status_font, tags="status_text")
+
+        self._redraw_status_bar = _redraw_status_bar
+        self.status_var.trace_add("write", lambda *a: _redraw_status_bar())
+        self._status_bar.bind("<Configure>", lambda e: _redraw_status_bar(), add="+")
+        _redraw_status_bar()
 
         # 系统托盘——只在真的被"关闭到托盘"时才创建 pystray.Icon 并起后
         # 台线程，见 gui/tray_icon.py 顶部说明（跟这次会话前面
@@ -430,10 +455,22 @@ class DSToolsApp:
         self._update_status(); self._refresh()
 
         # 缩放手柄放在 __init__ 最后——它们是直接 place() 在 root 上的
-        # 普通 tk.Frame，Tk 里同一父容器下后创建的控件在层叠顺序里更靠
-        # 上，必须等其它内容（菜单条/页签条/卡片等，同样是 root 的直接
-        # 子控件）都建完，手柄才能稳定盖在最上层接收边缘的鼠标事件。
-        custom_titlebar.ResizeGrips(self.root, 1500, 820)
+        # 普通控件，Tk 里同一父容器下后创建的控件在层叠顺序里更靠上，必
+        # 须等其它内容（菜单条/页签条/卡片/底部状态栏等，同样是 root 的
+        # 直接子控件）都建完，手柄才能稳定盖在最上层接收边缘的鼠标事件。
+        #
+        # bottom_reserve/top_reserve=状态栏/标题栏实际渲染高度——
+        # n/nw/ne/s/sw/se 这几个手柄要让开这两整行，不能直接铺到窗口物
+        # 理边缘：状态栏文字几乎贴着窗口底边（padding 只有 2px），手柄
+        # 盖过去会挡住文字最下面几像素；标题栏的最小化/关闭按钮同理会
+        # 被手柄的一角"抠"掉（真机截图确认过，见 custom_titlebar.py 里
+        # ResizeGrips 的说明）。宽高比是锁死的，从任何一条边/角拖都能等
+        # 效缩放整个窗口，让开这两行不影响缩放操作本身。
+        self.root.update_idletasks()
+        bottom_reserve = self._status_bar.winfo_height()
+        top_reserve = self._titlebar.winfo_height()
+        custom_titlebar.ResizeGrips(self.root, self, 1500, 820,
+                                     bottom_reserve=bottom_reserve, top_reserve=top_reserve)
 
     def _on_tab_select(self, key: str) -> None:
         for k, card in self._tab_cards.items():
@@ -691,6 +728,9 @@ class DSToolsApp:
             card.grid_configure(padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
         self._pill_bar.apply_theme()
         self._retheme_cluster_bar()
+        self._root_bg.apply_theme()
+        self._status_bar.apply_theme(bg=theme.CARD_BG)
+        self._redraw_status_bar()
         self._force_refresh_bg_now()
         for tab in self._tabs:
             retheme = getattr(tab, "retheme", None)
@@ -723,6 +763,7 @@ class DSToolsApp:
         self._shared_bg_image = None  # PIL Image，跟 root 客户区同尺寸
         self._shared_bg_key = None
         self._bg_settle_after_id = None
+        self._bg_drag_suppressed = False  # ResizeGrips 拖拽期间为 True，见下
         self.root.bind("<Configure>", self._on_root_configure_for_bg)
 
     def _register_bg_surface(self, surface) -> None:
@@ -734,12 +775,47 @@ class DSToolsApp:
         # 自己的 <Configure> 不会冒泡到这里，这个判断只是双重保险。
         if event.widget is not self.root:
             return
+        if self._bg_drag_suppressed:
+            # 拖拽缩放期间（custom_titlebar.ResizeGrips）——背景图的重
+            # 建/刷新已经交给 _begin_bg_drag_suppress()/
+            # _end_bg_drag_suppress() 接管，这里不重新武装 150ms 停顿计
+            # 时器，避免它在拖拽中途被意外触发、基于一个转瞬即逝的中间
+            # 尺寸做一次白费的重活。
+            return
         if self._bg_settle_after_id is not None:
             self.root.after_cancel(self._bg_settle_after_id)
         self._bg_settle_after_id = self.root.after(self._BG_SETTLE_MS, self._on_bg_settle)
 
     def _on_bg_settle(self) -> None:
         self._bg_settle_after_id = None
+        self._rebuild_shared_bg_image()
+        self._refresh_all_bg_surfaces()
+
+    def _begin_bg_drag_suppress(self) -> None:
+        """custom_titlebar.ResizeGrips 按下手柄开始拖拽时调用——期间所
+        有 BgFrame 跳过背景图重绘（见 gui/bg_frame.py._request_render()），
+        避免拿拖拽中实时变化的控件坐标去裁一张仍停留在拖拽开始前那个尺
+        寸的共享大图，产生错位/割裂的观感。顺带取消掉可能已经武装的
+        150ms 停顿计时器，避免它在拖拽中途被触发。
+
+        清掉每个表面已有的 bg_image 贴图（而不是保留旧内容不动）——只
+        "跳过更新"会让整段拖拽期间都冻结着一张按旧尺寸裁好的图，CardFrame
+        圆角外壳这类"外框描边独立重绘、背景图贴图被这里冻结"的组合会明
+        显看出来是一小块贴歪的旧图被框在新描边里（残影）。清空之后拖拽
+        期间就是纯色，跟"没有背景图"时的观感一致，松手那一刻
+        _end_bg_drag_suppress() 才补上一张按最终尺寸裁好的图——这只是清
+        一次空画布，不涉及任何裁剪/缩放，比继续渲染旧内容还便宜。"""
+        self._bg_drag_suppressed = True
+        if self._bg_settle_after_id is not None:
+            self.root.after_cancel(self._bg_settle_after_id)
+            self._bg_settle_after_id = None
+        self._for_each_alive_bg_surface(lambda surf: surf.clear_bg_image())
+
+    def _end_bg_drag_suppress(self) -> None:
+        """ResizeGrips 松手时调用——跟 _on_bg_settle() 做的事完全一样
+        （按最终尺寸整体重算一次共享大图 + 刷新所有表面），只是不必再
+        等 150ms，拖拽一结束立刻结算。"""
+        self._bg_drag_suppressed = False
         self._rebuild_shared_bg_image()
         self._refresh_all_bg_surfaces()
 
@@ -766,13 +842,11 @@ class DSToolsApp:
     def _get_bg_slice_image(self, widget, w: int, h: int):
         """从共享大图里按 widget 相对 root 客户区的屏幕偏移量裁一块出来
         （纯内存 crop，不缩放/不混合，足够便宜），返回的是 PIL Image 本
-        身，不是转换好的 PhotoImage——CardFrame 需要拿这个原始图再自己
-        做一次圆角遮罩合成（见 card_frame.py._render_masked_bg()），普通
-        消费者（BgFrame）直接用下面 _get_bg_slice() 那个转好 PhotoImage
-        的版本就够了。widget 尺寸如果比共享大图当前的尺寸还大（比如窗口
-        刚变大、共享大图还没来得及在停顿后重新生成），裁出来的区域会被
-        裁到大图边界内，不会报错，只是暂时看起来小一圈，等停顿后的重建
-        补上就好。"""
+        身，不是转换好的 PhotoImage——下面 _get_bg_slice() 转成
+        PhotoImage 前的中间步骤。widget 尺寸如果比共享大图当前的尺寸还
+        大（比如窗口刚变大、共享大图还没来得及在停顿后重新生成），裁出
+        来的区域会被裁到大图边界内，不会报错，只是暂时看起来小一圈，等
+        停顿后的重建补上就好。"""
         if self._shared_bg_image is None:
             return None
         big = self._shared_bg_image
@@ -790,7 +864,11 @@ class DSToolsApp:
         img = self._get_bg_slice_image(widget, w, h)
         return ImageTk.PhotoImage(img) if img is not None else None
 
-    def _refresh_all_bg_surfaces(self) -> None:
+    def _for_each_alive_bg_surface(self, fn) -> None:
+        """遍历 self._bg_surfaces（弱引用列表），对每个还活着的表面调用
+        fn(surf)，顺带把已经被销毁的控件对应的弱引用摘掉。
+        _refresh_all_bg_surfaces()/_begin_bg_drag_suppress() 共用这段清
+        理逻辑，避免两处各自维护一份一样的存活性判断。"""
         alive = []
         for ref in self._bg_surfaces:
             surf = ref()
@@ -799,10 +877,13 @@ class DSToolsApp:
             try:
                 if surf.winfo_exists():
                     alive.append(ref)
-                    surf.render_now()
+                    fn(surf)
             except tk.TclError:
                 pass
         self._bg_surfaces = alive
+
+    def _refresh_all_bg_surfaces(self) -> None:
+        self._for_each_alive_bg_surface(lambda surf: surf.render_now())
 
     def _force_refresh_bg_now(self) -> None:
         """自定义背景图弹窗（选文件/调不透明度/清除）改完设置后调用——
@@ -994,10 +1075,10 @@ class SaveBrowserTab:
         self.sub_notebook.add(self.server_frame, text=t("save.server_clusters"))
         self.sub_notebook.add(self.local_frame, text=t("save.local_clusters"))
         self._build_env_panel(self.env_frame)
-        self._build_panel(self.server_frame, SaveSource.SERVER, SERVER_COLOR, SERVER_BG)
-        self._build_panel(self.local_frame, SaveSource.LOCAL, LOCAL_COLOR, LOCAL_BG)
+        self._build_panel(self.server_frame, SaveSource.SERVER)
+        self._build_panel(self.local_frame, SaveSource.LOCAL)
 
-    def _build_panel(self, parent, source, color, bg):
+    def _build_panel(self, parent, source):
         # sf 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
         # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
         # 义背景图；"存档:"/"分片:"两个纯说明文字改用 _make_toolbar_label
@@ -1612,8 +1693,10 @@ class SaveBrowserTab:
 
     def _build_env_row(self, c):
         is_server = c.source == SaveSource.SERVER
-        color = SERVER_COLOR if is_server else LOCAL_COLOR
-        bg = SERVER_BG if is_server else LOCAL_BG
+        # 服务器/本地存档不再用绿/蓝底色区分——统一用默认卡片配色，靠下面
+        # 的 [tag] 文字区分即可。
+        color = theme.TEXT
+        bg = theme.CARD_BG
         tag = t("save.server_clusters") if is_server else t("save.local_clusters")
 
         row = tk.Frame(self._env_rows_frame, background=bg, highlightbackground=theme.CARD_BORDER,

@@ -166,13 +166,20 @@ def test_gui_imports():
     from dstools.gui.app import (
         DSToolsApp, SaveBrowserTab, ModManagerTab,
         ClusterConfigTab,
-        SERVER_COLOR, LOCAL_COLOR, SERVER_BG, LOCAL_BG,
     )
+    from dstools.gui.theme import SERVER_COLOR
     assert SERVER_COLOR == "#2e7d32"
-    assert LOCAL_COLOR == "#1565c0"
-    print(f"  PASS: GUI imports OK, colors defined")
-    print(f"    Server: {SERVER_COLOR} (bg={SERVER_BG})")
-    print(f"    Local:  {LOCAL_COLOR} (bg={LOCAL_BG})")
+    print(f"  PASS: GUI imports OK")
+
+    # custom_titlebar.py 只在 DSToolsApp.__init__ 里延迟 import（避免非
+    # Windows 平台在模块加载时就碰 ctypes.windll），这里单独补一次模块级
+    # 可导入性检查——否则这个文件里的语法错误/ctypes 符号错误只有真正启
+    # 动一次 GUI 才会暴露。
+    import dstools.gui.custom_titlebar as custom_titlebar
+    assert hasattr(custom_titlebar, "apply_borderless_style")
+    assert hasattr(custom_titlebar, "ResizeGrips")
+    assert hasattr(custom_titlebar, "CustomTitleBar")
+    print(f"  PASS: custom_titlebar imports OK")
 
     # 每个玩家角色状态面板——import 级别检查方法存在即可，这个项目对 GUI
     # 测试一贯只做到这一层，不真的实例化 tk.Tk() 构造控件树。

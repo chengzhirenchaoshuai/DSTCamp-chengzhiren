@@ -5,8 +5,7 @@
 (WNDPROC) + 拦截 WM_SIZING 消息"的危险区，已经踩出过一次真实的解释器级
 崩溃（"PyEval_RestoreThread: GIL not held"，见 win_aspect_lock.py 顶部注
 释）。这个文件里的代码全程只做**一次性设置窗口样式位**的 Win32 调用
-（`SetWindowLongW` 改样式、`DwmExtendFrameIntoClientArea`、
-`DwmSetWindowAttribute`），不替换任何窗口过程、不拦截任何消息——风险级
+（`SetWindowLongW` 改样式），不替换任何窗口过程、不拦截任何消息——风险级
 别完全不同：这些函数只在启动时调用一次，之后全部靠
 `root.overrideredirect(True)` 之后的普通 Tk 事件
 （`<ButtonPress-1>`/`<B1-Motion>`）驱动拖拽，从 Tk 事件回调里操作
@@ -37,38 +36,16 @@ IS_WINDOWS = sys.platform == "win32"
 if IS_WINDOWS:
     from ctypes import wintypes
 
-    GWL_STYLE = -16
     GWL_EXSTYLE = -20
-    WS_CAPTION = 0x00C00000
     WS_EX_APPWINDOW = 0x00040000
 
-    SWP_NOMOVE = 0x0002
-    SWP_NOSIZE = 0x0001
-    SWP_NOZORDER = 0x0004
-    SWP_FRAMECHANGED = 0x0020
-
-    DWMWA_WINDOW_CORNER_PREFERENCE = 33
-    DWMWCP_ROUND = 2
-
-    class _MARGINS(ctypes.Structure):
-        _fields_ = [
-            ("cxLeftWidth", ctypes.c_int),
-            ("cxRightWidth", ctypes.c_int),
-            ("cyTopHeight", ctypes.c_int),
-            ("cyBottomHeight", ctypes.c_int),
-        ]
-
     user32 = ctypes.windll.user32
-    dwmapi = ctypes.windll.dwmapi
     user32.GetParent.argtypes = [wintypes.HWND]
     user32.GetParent.restype = wintypes.HWND
     user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.GetWindowLongW.restype = ctypes.c_long
     user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
     user32.SetWindowLongW.restype = ctypes.c_long
-    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
-                                     ctypes.c_int, ctypes.c_int, ctypes.c_uint]
-    user32.SetWindowPos.restype = wintypes.BOOL
     user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.ShowWindow.restype = wintypes.BOOL
 
@@ -97,12 +74,17 @@ def _get_hwnd(root: tk.Tk) -> int:
 
 
 def apply_borderless_style(root: tk.Tk) -> dict:
-    """弃用原生标题栏 + 尽量恢复任务栏可见性/阴影/圆角。只在启动时调用一
-    次，全程只是设置几个窗口样式位/DWM 属性，不涉及消息钩子。返回一个
-    dict 记录每一步是否成功，纯调试用，不影响功能——圆角在 Windows 10 上
-    必然失败（这个 DWM 属性 Windows 11 才有），是"最佳努力"，不是硬要求。
+    """弃用原生标题栏 + 尽量恢复任务栏可见性。只在启动时调用一次，全程只
+    是设置几个窗口样式位，不涉及消息钩子。返回一个 dict 记录每一步是否
+    成功，纯调试用，不影响功能。
+
+    窗口默认就是直角方形，不尝试 DWM 圆角——`DWMWA_WINDOW_CORNER_
+    PREFERENCE` 只有 Windows 11 才支持，这台目标机器是 Windows 10，调用
+    必然静默失败，留着只是死代码，索性不装。真要在 Windows 10 上做出圆
+    角得手工 `SetWindowRgn` 抠一个圆角区域出来，且需要跟着每次 resize
+    重算，复杂度收益比很差，不做。
     """
-    result = {"overrideredirect": False, "taskbar": False, "shadow": False, "corner": False}
+    result = {"overrideredirect": False, "taskbar": False, "shadow": False}
     root.overrideredirect(True)
     result["overrideredirect"] = True
     if not IS_WINDOWS:
@@ -124,13 +106,6 @@ def apply_borderless_style(root: tk.Tk) -> dict:
         # 不是我们自己的界面。这两个都是真机验证过的失败，不是理论推
         # 测，所以这台机器上放弃恢复阴影——退回没有阴影的简单方形窗口。
         result["shadow"] = False
-
-        # 圆角：仅 Windows 11+ 支持这个 DWM 属性，Windows 10 上这个调用
-        # 会失败，静默跳过——最佳努力，不是必须成功的硬要求。
-        pref = ctypes.c_int(DWMWCP_ROUND)
-        hr2 = dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
-                                            ctypes.byref(pref), ctypes.sizeof(pref))
-        result["corner"] = (hr2 == 0)
     except Exception:
         pass
     return result
@@ -146,31 +121,79 @@ class ResizeGrips:
     base_width/base_height 同时充当"宽高比来源"和"拖拽时的下限"——跟原
     来 AspectLock(root, 1500, 820) 的语义完全一致（那边的 min_width/
     min_height 参数其实就是直接传的 base_width/base_height）。
+
+    **拖拽节流 + 背景图暂停**（解决真实拖拽缩放时的卡顿/背景图错位）：
+    原来 `<B1-Motion>` 每收到一个鼠标事件就同步调一次 `root.geometry()`，
+    没有任何节流——这会级联触发树上几十个 `BgFrame` 各自独立的
+    `<Configure>` 重绘，而且这些重绘是拿"实时"控件坐标去裁一张要等停顿
+    150ms 后才会更新的共享背景大图，两者对不上就是拖拽久了背景图看起来
+    "分层"/错位的直接原因。现在改成：`<B1-Motion>` 只算新矩形、不立刻
+    调 `geometry()`，节流到 ~60fps（`after(16, ...)`）才真正应用一次；
+    同时按住的整个拖拽期间通过 `app._begin_bg_drag_suppress()` 让所有
+    `BgFrame` 暂停背景图重绘（见 bg_frame.py），松手
+    （`<ButtonRelease-1>`）那一刻才用最终尺寸整体重算一次背景图并恢复
+    重绘（`app._end_bg_drag_suppress()`）——代价是拖拽过程中背景图会短
+    暂"冻结"不跟手，换来的是不再有中途错位/撕裂的观感，且窗口本身的
+    reflow 频率大幅降低。
     """
 
     _GRIP = 6  # 边缘手柄粗细（像素）；四角手柄用同样的边长做成正方形
+    _DRAG_THROTTLE_MS = 16  # ~60fps，跟项目里其它 resize 节流保持一致
 
-    def __init__(self, root: tk.Tk, base_width: int, base_height: int):
+    def __init__(self, root: tk.Tk, app, base_width: int, base_height: int,
+                 bottom_reserve: int = 0, top_reserve: int = 0):
+        """bottom_reserve：底部状态栏（app.py 的 self._status_bar）实际
+        渲染高度（像素）——south 相关的手柄（s/sw/se）要让开这一整行，不
+        能像其它几个手柄一样直接铺到窗口物理边缘：状态栏文字（比如
+        "Klei: ..."）几乎贴着窗口底边（padding 只有 2px），手柄一旦盖过
+        去就会挡住文字最下面几像素（真机截图确认过左下角"K"被啃掉一
+        块）。
+
+        top_reserve：顶部自定义标题栏（`CustomTitleBar._HEIGHT`）的高
+        度——同理，n/nw/ne 这三个手柄本来紧贴窗口物理顶边，会盖住标题栏
+        最上面几像素，恰好就是最小化/关闭按钮所在的位置，把按钮"抠"掉
+        一角、右边缘的 e 手柄同理会在按钮右侧连成一条竖线（真机截图确
+        认过，见 gui/app.py 里贴的两张标注图）。跟 bottom_reserve 完全
+        对称的处理：n/nw/ne 往下让开 top_reserve，w/e 的可拖拽范围也从
+        `[0, 窗口高度]` 收窄成 `[top_reserve, 窗口高度-bottom_reserve]`。
+        手柄本身的屏幕位置跟着让开，但 `_on_press`/`_on_drag` 读的还是
+        `root.winfo_y()`/`winfo_height()` 这些窗口真实边界，缩放逻辑不
+        受影响——用户拖的手柄不在窗口最顶边，但缩放的仍然是整个窗口。
+
+        宽高比锁死，从任何一条边/角拖都能等效缩放整个窗口，让开标题栏/
+        状态栏这两行不影响缩放操作本身。"""
         self.root = root
+        self._app = app
         self.aspect = base_width / base_height
         self.min_width = base_width
         self.min_height = base_height
         self._start = None
         self._edge = None
+        self._pending_rect = None
+        self._drag_after_id = None
 
         # 4 条边（沿窗口铺满，两端各让开 _GRIP*2 给角上的手柄）+ 4 个角
         # （固定正方形，钉在角上）。字典写死每种手柄的 place() 参数，比
-        # 用公式套所有情况更直接、容易核对。
+        # 用公式套所有情况更直接、容易核对。north 三个手柄用 y=top_reserve
+        # 整体下移让开标题栏，south 三个手柄用 y=-bottom_reserve 整体上
+        # 移让开状态栏；w/e 改成从左上/右上角(而不是居中)定位，配合
+        # relheight=1.0 + height=-(...) 让实际拖拽范围正好卡在标题栏和
+        # 状态栏之间。
         g = 2 * self._GRIP
+        v_shrink = top_reserve + bottom_reserve
         grip_place_kw = {
-            "n":  dict(anchor="n",  relx=0.5, rely=0.0, relwidth=1.0, width=-g, height=self._GRIP),
-            "s":  dict(anchor="s",  relx=0.5, rely=1.0, relwidth=1.0, width=-g, height=self._GRIP),
-            "w":  dict(anchor="w",  relx=0.0, rely=0.5, relheight=1.0, height=-g, width=self._GRIP),
-            "e":  dict(anchor="e",  relx=1.0, rely=0.5, relheight=1.0, height=-g, width=self._GRIP),
-            "nw": dict(anchor="nw", relx=0.0, rely=0.0, width=g, height=g),
-            "ne": dict(anchor="ne", relx=1.0, rely=0.0, width=g, height=g),
-            "sw": dict(anchor="sw", relx=0.0, rely=1.0, width=g, height=g),
-            "se": dict(anchor="se", relx=1.0, rely=1.0, width=g, height=g),
+            "n":  dict(anchor="n",  relx=0.5, rely=0.0, y=top_reserve,
+                       relwidth=1.0, width=-g, height=self._GRIP),
+            "s":  dict(anchor="s",  relx=0.5, rely=1.0, y=-bottom_reserve,
+                       relwidth=1.0, width=-g, height=self._GRIP),
+            "w":  dict(anchor="nw", relx=0.0, rely=0.0, y=top_reserve,
+                       relheight=1.0, height=-v_shrink, width=self._GRIP),
+            "e":  dict(anchor="ne", relx=1.0, rely=0.0, y=top_reserve,
+                       relheight=1.0, height=-v_shrink, width=self._GRIP),
+            "nw": dict(anchor="nw", relx=0.0, rely=0.0, y=top_reserve, width=g, height=g),
+            "ne": dict(anchor="ne", relx=1.0, rely=0.0, y=top_reserve, width=g, height=g),
+            "sw": dict(anchor="sw", relx=0.0, rely=1.0, y=-bottom_reserve, width=g, height=g),
+            "se": dict(anchor="se", relx=1.0, rely=1.0, y=-bottom_reserve, width=g, height=g),
         }
         cursors = {
             "n": "sb_v_double_arrow", "s": "sb_v_double_arrow",
@@ -181,11 +204,24 @@ class ResizeGrips:
         # 先放 4 条边，再放 4 个角——place() 同一父容器下后放的在层叠顺
         # 序里更靠上，角上跟边缘手柄重叠的那一小块要优先响应角的光标/
         # 拖拽语义。
+        # 用 BgFrame（不是普通 tk.Frame）——这几个手柄创建在所有其它内
+        # 容之后，z-order 天然盖在最上面，沿窗口四边/四角常驻，普通
+        # Frame 只能填纯色，之前用空字符串背景色被 Tk 解析成这台机器的
+        # 系统默认浅灰，看起来像一圈突兀的浅色描边；换成背景图感知的
+        # BgFrame 后色调至少能跟周围融合。但这只解决了"颜色不对"——手柄
+        # 本身是独立于标题栏/卡片之外的另一个控件，只要它盖在别的控件上
+        # 面，不管画的是什么内容，物理上都会整块挡住底下的东西（真机截
+        # 图实测过：标题栏的关闭按钮被手柄的一角"抠"掉、右边缘一整条被
+        # 手柄连成一条线，见 __init__ 参数里 top_reserve/bottom_reserve
+        # 的说明）。真正的修复是让手柄的可视范围本来就不跟标题栏/状态栏
+        # 重叠，而不是指望"画得像"来蒙混过去。
         for edge in ("n", "s", "w", "e", "nw", "ne", "sw", "se"):
-            grip = tk.Frame(root, cursor=cursors[edge], background="", bd=0, highlightthickness=0)
+            grip = BgFrame(root, app)
+            grip.configure(cursor=cursors[edge])
             grip.place(**grip_place_kw[edge])
             grip.bind("<ButtonPress-1>", lambda e, ed=edge: self._on_press(e, ed))
             grip.bind("<B1-Motion>", self._on_drag)
+            grip.bind("<ButtonRelease-1>", self._on_release)
 
     def _on_press(self, event, edge):
         self._edge = edge
@@ -194,6 +230,7 @@ class ResizeGrips:
         w0 = self.root.winfo_width()
         h0 = self.root.winfo_height()
         self._start = (event.x_root, event.y_root, x0, y0, x0 + w0, y0 + h0)
+        self._app._begin_bg_drag_suppress()
 
     def _on_drag(self, event):
         if self._start is None:
@@ -201,8 +238,28 @@ class ResizeGrips:
         sx, sy, l0, t0, r0, b0 = self._start
         dx = event.x_root - sx
         dy = event.y_root - sy
-        l, t, r, b = self._compute_rect(self._edge, l0, t0, r0, b0, dx, dy)
+        self._pending_rect = self._compute_rect(self._edge, l0, t0, r0, b0, dx, dy)
+        if self._drag_after_id is None:
+            self._drag_after_id = self.root.after(self._DRAG_THROTTLE_MS, self._apply_pending_rect)
+
+    def _apply_pending_rect(self):
+        self._drag_after_id = None
+        if self._pending_rect is None:
+            return
+        l, t, r, b = self._pending_rect
         self.root.geometry(f"{r - l}x{b - t}+{l}+{t}")
+
+    def _on_release(self, event):
+        # 松手前先把还没应用的最后一帧矩形立刻应用掉（不能留给节流定时
+        # 器慢慢补，否则窗口最终尺寸会比鼠标松开时的位置"慢半拍"）。
+        if self._drag_after_id is not None:
+            self.root.after_cancel(self._drag_after_id)
+            self._drag_after_id = None
+        self._apply_pending_rect()
+        self._pending_rect = None
+        self._start = None
+        self._edge = None
+        self._app._end_bg_drag_suppress()
 
     def _compute_rect(self, edge, left0, top0, right0, bottom0, dx, dy):
         moves_left = "w" in edge
@@ -263,7 +320,11 @@ class CustomTitleBar(BgFrame):
         self.root = root
         self._app = app
         self._title_font = tkfont.Font(size=10)
-        self._btn_font = tkfont.Font(family="Segoe UI", size=11)
+        # 最小化用"−"（半角减号，比原来的"─"box-drawing 横线短很多，视
+        # 觉上不会显得那么长）；关闭"×"字号调大，两个按钮观感上更接近常
+        # 见标题栏的比例（关闭更醒目、最小化更收敛）。
+        self._min_font = tkfont.Font(family="Segoe UI", size=10)
+        self._close_font = tkfont.Font(family="Segoe UI", size=13)
         self._icon_photo = None
         if icon_path:
             try:
@@ -332,12 +393,12 @@ class CustomTitleBar(BgFrame):
         # 右侧按钮：关闭在最右，最小化紧挨着它左边——从右往左排列。
         self._btn_regions = []
         bx = w
-        for key, glyph, hover_bg in (("close", "×", theme.ERROR),
-                                      ("minimize", "─", theme.BG_SOFT)):
+        for key, glyph, font, hover_bg in (("close", "×", self._close_font, theme.ERROR),
+                                            ("minimize", "−", self._min_font, theme.BG_SOFT)):
             x1 = bx - self._BTN_W
             rect_id = self.create_rectangle(x1, 0, bx, h, fill="", outline="", tags="titlebar_content")
             self.create_text((x1 + bx) / 2, cy, text=glyph, anchor=tk.CENTER, fill=theme.TEXT,
-                              font=self._btn_font, tags="titlebar_content")
+                              font=font, tags="titlebar_content")
             self._btn_regions.append({"x1": x1, "x2": bx, "key": key, "rect_id": rect_id,
                                        "hover_bg": hover_bg})
             bx = x1

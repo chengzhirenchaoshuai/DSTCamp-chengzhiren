@@ -73,7 +73,9 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 **架构：共享大图 + 各表面按偏移量裁一块**（`gui/bg_frame.py` 的 `BgFrame` + `DSToolsApp._rebuild_shared_bg_image`/`_get_bg_slice`/`_refresh_all_bg_surfaces`），照搬 `image_scroll.py` 的"拖拽中便宜、停顿后精细"节流手法（`_BG_SETTLE_MS`=150ms）：`DSToolsApp` 维护唯一一张跟 root 客户区同尺寸的共享大图，只在 `<Configure>` 停顿超过 150ms 才重新读盘/裁剪/混合；`BgFrame`（`tk.Canvas` 子类，drop-in 替代 `tk.Frame`/`ttk.Frame`）自己的 `<Configure>` 只做便宜的内存 crop。**这是硬性规则，不能绕开**——每个表面各自独立做读盘/缩放这套重活，在真实拖拽缩放时会跟 `win_aspect_lock.py` 的原生钩子打架，出现过布局错位/闪烁/割裂。
 
-`BgFrame` 接入点：`_menu_strip`/`_tab_area`/`_cluster_bar`/`CardFrame`/`PillTabBar`/五个页签的外层容器和工具栏。**纯说明性文字一律不用 `ttk.Label`/`tk.Label`**（绘制区域永远不透明，会挡背景图），改用 `create_text()` 或 `gui/app.py` 的 `_make_toolbar_label()`/`_make_filter_chips()` 工厂函数；给容器接入 `BgFrame` 后如果原来的子控件换成了直接画的 `create_text`，记得 `pack_propagate(False)`，否则容器会被压缩到只剩 1px。`CardFrame` 圆角外壳（`_canvas`）本身也是 `BgFrame`（`_redraw()` 只画 `outline` 不画 `fill`），跟内层 `body` 显示同一张连续照片，不留"缺角"。
+`BgFrame` 接入点：`_root_bg`（铺满整个客户区、z-order 最底层，兜底所有控件间隙——root 自己只有纯色 `theme.BG_SOFT`，不这样做的话任何 pack/place 留白都会漏出一条纯色）、`_menu_strip`/`_tab_area`/`_cluster_bar`/`_status_bar`/`CardFrame`/`PillTabBar`/五个页签的外层容器和工具栏。**纯说明性文字一律不用 `ttk.Label`/`tk.Label`**（绘制区域永远不透明，会挡背景图），改用 `create_text()` 或 `gui/app.py` 的 `_make_toolbar_label()`/`_make_filter_chips()` 工厂函数；给容器接入 `BgFrame` 后如果原来的子控件换成了直接画的 `create_text`，记得 `pack_propagate(False)`，否则容器会被压缩到只剩 1px。`CardFrame` 圆角外壳（`_canvas`）本身也是 `BgFrame`（`_redraw()` 只画 `outline` 不画 `fill`），跟内层 `body` 显示同一张连续照片，不留"缺角"。
+
+**拖拽缩放期间背景图整体冻结**（`DSToolsApp._begin_bg_drag_suppress()`/`_end_bg_drag_suppress()`，`custom_titlebar.ResizeGrips` 按下/松手时调用）：期间所有 `BgFrame._request_render()` 直接跳过（`clear_bg_image()` 清成纯色，不留旧尺寸残影），松手那一刻才按最终尺寸整体重算一次——不这样做的话，拖拽中途每个表面各自拿实时控件坐标去裁一张还没更新的共享大图，就是背景图"分层"/错位的直接原因。
 
 **验证方法务必用真实拖拽缩放**（`SetWindowPos` 连续改尺寸模拟，不能只调 `root.geometry()`），程序化测试正常、真实拖拽才暴露的问题出过不止一次。
 
@@ -81,11 +83,11 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 已弃用 Windows 原生标题栏：`root.overrideredirect(True)` + 自绘 `CustomTitleBar`（`BgFrame` 子类，能透出背景图）+ 手写拖拽移动/缩放（`ResizeGrips`，宽高比锁定的数学照抄 `win_aspect_lock.py` 的 `AspectLock._enforce()`，只是从改 ctypes RECT 变成算好 `(x,y,w,h)` 后调 `root.geometry()`）。**这个文件跟 `win_aspect_lock.py` 刻意分开**——后者是替换 WNDPROC 的危险区（见下），这边全程只做一次性设置窗口样式位的 Win32 调用，不拦截任何消息。原生标题栏没了之后 Windows 不再发 `WM_SIZING`，`AspectLock` 已不再被调用（文件保留，降低回退成本）。
 
-真机验证过的坑：
-- 改 `GWL_STYLE`/`GWL_EXSTYLE` 后必须紧跟 `SetWindowPos(..., SWP_FRAMECHANGED)`，否则窗口画成空白。
-- 恢复阴影的两种公认做法在这台机器上都会破坏渲染（`WS_CAPTION+DwmExtendFrameIntoClientArea` 画成空白；单独 `DwmExtendFrameIntoClientArea` 变成"玻璃"透视效果）——**已放弃恢复阴影**，只保留任务栏可见性（`WS_EX_APPWINDOW`）和圆角（`DWMWA_WINDOW_CORNER_PREFERENCE`，仅 Win11+，Win10 静默失败）。
+真机验证过的坑（都已经踩过、代码里不会再犯，记录下来防止以后重新尝试）：
+- **不恢复阴影/圆角**：两种恢复阴影的公认做法（`WS_CAPTION+DwmExtendFrameIntoClientArea`、单独 `DwmExtendFrameIntoClientArea`）在这台机器上分别会把窗口画成空白/变成"玻璃"透视效果；`DWMWA_WINDOW_CORNER_PREFERENCE` 圆角只有 Win11 支持，这台目标机器是 Win10。两个都已放弃，现在就是没有阴影的简单直角方形窗口，只保留 `WS_EX_APPWINDOW`（任务栏/Alt+Tab 可见性）。
 - 最小化不能用 `root.iconify()`（overrideredirect 下 Tk 直接拒绝，报 TclError），改用原生 `ShowWindow(hwnd, SW_MINIMIZE)`；`root.deiconify()`（托盘恢复用）不受此限制。
 - 不做最大化按钮：项目锁定 1500:820 宽高比，原生"真最大化"会破坏比例。
+- `ResizeGrips` 的 8 个拖拽手柄（4 边+4 角）是独立叠在最上层的 `BgFrame`，四边默认会铺到窗口物理边缘——如果直接这样摆，会整块盖住标题栏的最小化/关闭按钮和底部状态栏文字（真机截图确认过）。用 `top_reserve`/`bottom_reserve` 两个参数（分别传标题栏/状态栏的实际渲染高度）把手柄的可视范围整体让开这两行，缩放逻辑本身读的是 `root.winfo_y()`/`winfo_height()` 这些窗口真实边界，不受手柄让开的影响。
 
 ### 系统托盘 + 关闭/退出逻辑 (`gui/tray_icon.py` / `gui/app.py`)
 

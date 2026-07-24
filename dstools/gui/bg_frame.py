@@ -54,6 +54,12 @@ class BgFrame(tk.Canvas):
         self.render_now()
 
     def _request_render(self) -> None:
+        # 拖拽缩放窗口期间（custom_titlebar.ResizeGrips 按下到松手之间）
+        # 整体跳过——app 会在松手那一刻用最终尺寸调用 render_now() 统一
+        # 刷新一次（见 DSToolsApp._end_bg_drag_suppress()），这里提前排
+        # 队反而会拿拖拽中途、还没稳定下来的共享大图去裁，产生错位。
+        if getattr(self._app, "_bg_drag_suppressed", False):
+            return
         if self._render_after_id is None:
             self._render_after_id = self.after(16, self._do_throttled_render)
 
@@ -75,3 +81,12 @@ class BgFrame(tk.Canvas):
             return
         self.create_image(0, 0, image=photo, anchor=tk.NW, tags="bg_image")
         self.tag_lower("bg_image")
+
+    def clear_bg_image(self) -> None:
+        """DSToolsApp._begin_bg_drag_suppress() 拖拽开始时调用——只删掉
+        "bg_image" 这一个 tag，不碰其它已经画好的内容（比如
+        CustomTitleBar 自己的文字/按钮用的是"titlebar_content" tag）。
+        跟 render_now() 是同一套接口约定，PillTabBar 也要实现这个方法
+        （见 pill_tabs.py），app 侧统一按 surf.clear_bg_image() 调用，不
+        对具体是 Canvas 还是别的控件类型做假设。"""
+        self.delete("bg_image")

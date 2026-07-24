@@ -144,16 +144,10 @@ def set_theme(name: str) -> None:
     CARD_MARGIN = _active["CARD_MARGIN"]
     BANNER_TEXT = _active["BANNER_TEXT"]
 
-# Semantic (data) colors -- server vs. local save distinction. Kept
-# separate from the switchable palette since these mean "server" / "local",
-# not "primary" / "accent" -- they stay the same across every theme so a
-# server/local save always reads the same regardless of which theme is
-# active.
+# Semantic (data) color -- "running" status in local_service_tab.py. Kept
+# separate from the switchable palette since it stays the same across every
+# theme regardless of which theme is active.
 SERVER_COLOR = "#2e7d32"
-LOCAL_COLOR = "#1565c0"
-SERVER_BG = "#CDE8D3"      # more saturated than the old #e8f5e9 so it reads
-                           # distinctly from BG_SOFT instead of blending in
-LOCAL_BG = "#DCEBFA"
 
 
 def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
