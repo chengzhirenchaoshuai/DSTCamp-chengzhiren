@@ -53,34 +53,54 @@ REF_WIDTH = BASE_REF_WIDTH  # default/initial width before the first real measur
 
 PAD_X = 10
 ICON_SIZE = 110
-# Row spacing is a fixed pixel value (not scaled by width) so vertical
-# rhythm between icon rows stays constant regardless of how wide the
-# panel renders. Widened (was 30) to leave visible breathing room around
-# each item's new rounded background card instead of them nearly touching.
-ROW_GAP = 44
-# Horizontal gap reserved between adjacent columns' background cards
-# (fixed, not scaled -- was 14 and only used as a fallback margin, which in
-# practice never won against the cycle-button's own width requirement, so
-# columns visually touched; now actually subtracted out of col_w itself).
-COL_GUTTER = 32
+# 两行背景卡片之间真正看得见的空隙——固定像素值，不随窗口宽度缩放（"无
+# 论多宽间隙都一样"）。**这不是直接加给 row_h 的那个量**：真正吃掉这段
+# 间隙的是 block_pad_v（每个 item 背景卡片自己的上下内边距，会随 s 缩
+# 放）——下面 row_gap 才是拼进 row_h 时真正要用的量（ROW_GAP + 2 倍当前
+# 缩放后的 block_pad_v）。这两个概念以前混成了一个"ROW_GAP=44"直接拿去
+# 加，等价于假设 block_pad_v 永远不缩放——窗口拖宽（图标跟着变大，
+# block_pad_v 也跟着变大）之后，从这个固定 44px 里上下各吃掉的部分越来
+# 越多，某个宽度之后同一列里相邻两行的背景卡片就会连成一片（真机反馈过，
+# 截图里能看到同一列上下几个卡片背景完全没有缝隙）。现在把"上下各要吃掉
+# 的 block_pad_v"显式算进 row_gap 里，剩下的 ROW_GAP 才是真正留给人看、
+# 不随窗口缩放的间隙——跟 COL_GAP 是完全对称的同一类修复。
+ROW_GAP = 16
+# 两列背景卡片之间真正看得见的空隙——固定像素值，不随窗口宽度缩放（跟
+# ROW_GAP 一样"无论多宽间隙都一样"的考虑）。**这不是直接减给 col_w 的那
+# 个量**：真正吃掉这段间隙的是 block_pad_h（每个 item 背景卡片自己的内
+# 边距，会随 s 缩放），下面 col_gutter 才是分配 col_w 宽度时真正要减掉
+# 的量（COL_GAP + 当前缩放后的 block_pad_h）。这两个概念以前混成了一
+# 个"COL_GUTTER=32"直接拿去减，等价于假设 block_pad_h 永远不缩放——窗口
+# 拖宽之后 block_pad_h 越来越大，从这个固定 32px 里越吃越多，某个宽度
+# 之后反而比 32px 还大，两列背景卡片就撞上了（真机反馈过，拖宽窗口到一
+# 定程度背景卡片开始重叠）。现在把"要吃掉的 block_pad_h"显式算进
+# col_gutter 里，剩下的 COL_GAP 才是真正留给人看、不随窗口缩放的间隙。
+COL_GAP = 16
 # Extra horizontal margin reserved between the leftmost/rightmost column's
 # own content and the category frame's outer edge. The first column's icon
 # sits flush at the column area's left edge, and its background block
 # extends block_pad_h further left than that for breathing room -- without
-# a reserved margin here, that reach (and, symmetrically, a cycle-button's
-# own reach past the last column's nominal right edge) poked past the
-# category frame itself instead of just past the column. Must stay >=
-# block_pad_h (16, see the per-item loop) with room to spare.
+# a reserved margin here, that reach poked past the category frame itself
+# instead of just past the column. Must stay >= block_pad_h (16, see the
+# per-item loop) with room to spare. (The last column's right edge no
+# longer needs a symmetric allowance for a cycle-button poking past its
+# nominal edge -- block_x2 is clamped to the column's own nominal right
+# edge now, see col_gutter/block_x2 above.)
 CONTENT_MARGIN = 20
 CAT_HEADER_H = 46  # was 38 -- title text was reading small/cramped
 CAT_GAP_BEFORE = 8
 CAT_GAP_AFTER = 10
-# Extra clearance between the header bar and the first item row, on top of
-# CAT_HEADER_H itself -- items' own background blocks extend upward past
-# their row's nominal top (see block_pad_v in the per-item loop) to give
-# each item breathing room, and without this gap that reach was enough to
-# overlap the category header right above it and visually clip its text.
-CAT_HEADER_ITEM_GAP = 20
+# 分类大标题条底边到第一行设置之间的空隙——原来直接写死 20 再乘 s，跟
+# ROW_GAP/COL_GAP 改之前是同一个坑：第一行的背景卡片会向上探出
+# block_pad_v（会随 s 缩放）来留白，20*s 里刨掉这一截之后，实际看得见的
+# 缝隙在默认窗口大小下只有 6px 左右，比设置项之间的正常间距（ROW_GAP，
+# 现在是 16px）窄了一大截，标题条几乎贴到下面第一排背景卡片上（真机截
+# 图确认过）。改成跟 ROW_GAP/COL_GAP 一样的写法：这里的值是"目标可见间
+# 隙"（不缩放，直接就是数值本身），跟 ROW_GAP 用同一个值（16），这样
+# "标题下面的缝隙"和"设置项之间的缝隙"看起来完全一样高——用户截图里要
+# 求的效果。实际拼进布局时再把会缩放的 block_pad_v 补偿进去（见下面
+# cat_header_item_gap 的计算）。
+CAT_HEADER_ITEM_GAP = 16
 
 # Fixed at 3 to match the in-game "Customize World" screen's own layout.
 COLS = 3
@@ -244,44 +264,49 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
 
     pad_x = PAD_X * s
     icon_size = max(14, round(ICON_SIZE * s))
-    row_gap = ROW_GAP  # fixed, not scaled -- constant vertical rhythm
-    row_h = icon_size + row_gap
     cat_header_h = CAT_HEADER_H * s
     cat_gap_before = CAT_GAP_BEFORE * s
     cat_gap_after = CAT_GAP_AFTER * s
     cols = COLS
     content_margin = CONTENT_MARGIN * s
-    # Real reserved gap between columns (fixed, not scaled -- same "constant
-    # rhythm regardless of width" reasoning as ROW_GAP) so adjacent items'
-    # background blocks have actual empty space between them instead of
-    # nearly touching -- previously col_w spanned edge-to-edge with no gap
-    # reserved at all, and COL_GUTTER alone couldn't create one because the
-    # cycle-button position (which the block has to clear) already used
-    # almost the entire column width. content_margin (both sides) leaves
-    # the same kind of clearance between the first/last column and the
-    # category frame's own outer edge.
     #
     # block_pad_h/v: padding between an item's own icon/content and its own
     # background block (hoisted here, was previously computed fresh inside
     # the per-item loop -- needed at this scope too now, see col_area_x0).
     block_pad_v = 14 * s
     block_pad_h = 16 * s
+    # 真正分配给"行间距"的量：ROW_GAP（不缩放，纯给人看的空隙）+
+    # 2*block_pad_v（会缩放，是这一行和下一行背景卡片各自上下要吃掉的内
+    # 边距）。见上面 ROW_GAP 定义处的说明——不加这一份补偿的话，图标越大
+    # （窗口越宽）block_pad_v 吃掉的越多，最终会啃光这个固定间隙，同一列
+    # 里相邻两行的背景卡片就连成一片。
+    row_gap = ROW_GAP + 2 * block_pad_v
+    row_h = icon_size + row_gap
+    # 真正分配给"列间距"的量：COL_GAP（不缩放，纯给人看的空隙）+
+    # block_pad_h（会缩放，是下一列背景卡片自己左边要吃掉的内边距）。两
+    # 段都要预留够，块的右边缘才能稳稳停在 col_w 算出来的名义列宽边界上
+    # （见下面 block_x2 = cx + col_w，不再跟着内容动态外扩），gap 才会
+    # 始终等于 COL_GAP，不随窗口宽度变化。
+    col_gutter = COL_GAP + block_pad_h
     # The right edge naturally ends up ~content_margin away from the
-    # category frame already (the *nominal* column edge -- see block_x2's
-    # max() below -- sits further out than what content actually needs, so
-    # that's where the block's right edge lands). The left edge has no such
-    # slack: the icon sits flush at the column's nominal left edge with
-    # nothing but block_pad_h between it and the frame, so its gap was only
-    # content_margin - block_pad_h (much tighter than the right's). Adding
-    # block_pad_h into col_area_x0 here pushes the whole column area right
-    # by exactly that amount, making the two gaps match.
+    # category frame already (the *nominal* column edge sits further out
+    # than what content actually needs, so that's where the block's right
+    # edge lands). The left edge has no such slack: the icon sits flush at
+    # the column's nominal left edge with nothing but block_pad_h between
+    # it and the frame, so its gap was only content_margin - block_pad_h
+    # (much tighter than the right's). Adding block_pad_h into col_area_x0
+    # here pushes the whole column area right by exactly that amount,
+    # making the two gaps match.
     col_area_x0 = pad_x + content_margin + block_pad_h
-    col_w = (rw - 2 * pad_x - 2 * content_margin - block_pad_h - (cols - 1) * COL_GUTTER) / cols
+    col_w = (rw - 2 * pad_x - 2 * content_margin - block_pad_h - (cols - 1) * col_gutter) / cols
 
     name_font = get_font(round(18 * s))
     val_font = get_font(round(18 * s))
     hdr_font = get_font(round(22 * s))
-    cat_header_item_gap = CAT_HEADER_ITEM_GAP * s
+    # 只需要补偿下面第一行自己的 block_pad_v（标题条本身不会向下探出任
+    # 何 padding），跟 ROW_GAP/col_gutter 是同一个思路，见 CAT_HEADER_
+    # ITEM_GAP 定义处的说明。
+    cat_header_item_gap = CAT_HEADER_ITEM_GAP + block_pad_v
 
     # First pass: compute total height
     total_h = pad_x
@@ -314,7 +339,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             col = idx % cols
             if col == 0 and idx > 0:
                 y += row_h
-            cx = col_area_x0 + col * (col_w + COL_GUTTER)
+            cx = col_area_x0 + col * (col_w + col_gutter)
             cy = y
             icon_cy = cy + icon_size / 2
 
@@ -350,30 +375,25 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
 
             # Light-green rounded card behind each setting item, inset from
             # the column bounds and from the row above/below (ROW_GAP was
-            # widened specifically to leave room for this). Sized from the
-            # actual rightmost element (the right cycle-button, when there
-            # is one) rather than a fixed column-relative margin -- a fixed
-            # margin clipped the right arrow's own edge for narrower
-            # columns. Drawn first so everything else sits on top of it.
-            # (block_pad_v/h computed once above, alongside col_area_x0.)
-            # col_w already has COL_GUTTER's worth of space subtracted out
-            # (see its computation above), so cx + col_w lands exactly at
-            # the reserved gap before the next column -- the max() with
-            # right_extent is just a safety net in case a future font/label
-            # tweak ever pushes the cycle-button past that.
-            if bx2 is not None:
-                right_extent = bx2 + arrow_h / 2
-            else:
-                # Read-only rows draw their value left-aligned starting at
-                # val_x (anchor="lm", unlike the editable rows' centered
-                # anchor="mm"), so it can run well past val_x+VALUE_HALF_W
-                # for a longer label -- measure the actual text instead of
-                # assuming it fits the same fixed half-width slot, or long
-                # values stick out past the block (and category frame).
-                right_extent = max(val_x + VALUE_HALF_W, val_x + draw.textlength(vlbl, font=val_font))
+            # widened specifically to leave room for this). Drawn first so
+            # everything else sits on top of it. (block_pad_v/h computed
+            # once above, alongside col_area_x0.)
+            #
+            # block_x2 固定停在 cx + col_w（列的名义右边界），不再跟着按
+            # 钮/文字的实际宽度动态外扩——之前是 max(cx+col_w,
+            # right_extent+block_pad_h)，可编辑行的循环箭头按钮位置是固
+            # 定偏移量算出来的，每次都会让 block_x2 比 cx+col_w 多出一截
+            # （只读行则通常不会，因为多数取值文字本来就短），这就是
+            # "世界规则"和"世界生成"背景卡片间距看着不一样的根源；而且这
+            # 一截会随 s 缩放，窗口拖宽后越界越多，最终吃光 col_gutter 里
+            # 留的间隙，两列背景卡片就撞上了。col_w 的计算已经把按钮/文字
+            # 会用到的空间都留够了（value_x/箭头偏移量都是相对 col_w 算
+            # 的，只读文字有 _truncate 兜底不会超出 col_w-8*s），直接钉死
+            # 在 cx+col_w 既不会裁到任何内容，又能让间隙精确等于
+            # COL_GAP，不随窗口宽度变化，两种行也完全一致。
             block_x1 = max(0, cx - block_pad_h)
             block_y1 = cy - block_pad_v
-            block_x2 = max(cx + col_w, right_extent + block_pad_h)
+            block_x2 = cx + col_w
             block_y2 = cy + icon_size + block_pad_v
             draw.rounded_rectangle([block_x1, block_y1, block_x2, block_y2],
                                    radius=10 * s, fill=theme.PRIMARY_LIGHT)

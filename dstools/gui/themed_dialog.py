@@ -78,9 +78,9 @@ def _show(parent, title, message, kind, buttons, wraplength=320, min_width=360):
     row = tk.Frame(card, background=theme.CARD_BG)
     row.pack(fill=tk.X, padx=20, pady=(20, 0))
     icon_char, icon_color = _icon_for(kind)
-    tk.Label(row, text=icon_char, font=("", 22, "bold"), fg=icon_color,
+    tk.Label(row, text=icon_char, font=(theme.FONT_FAMILY, 22, "bold"), fg=icon_color,
              bg=theme.CARD_BG).pack(side=tk.LEFT, padx=(0, 14), anchor="n")
-    tk.Label(row, text=message, font=("", 11), fg=theme.TEXT, bg=theme.CARD_BG,
+    tk.Label(row, text=message, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
              justify=tk.LEFT, wraplength=wraplength).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     btn_row = tk.Frame(card, background=theme.CARD_BG)

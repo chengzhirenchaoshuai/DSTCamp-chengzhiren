@@ -4,7 +4,6 @@ Uses Python's built-in configparser with case-sensitive key preservation,
 which is required for DST's cluster.ini and server.ini files.
 """
 
-import os
 from configparser import ConfigParser
 from pathlib import Path
 from typing import Any

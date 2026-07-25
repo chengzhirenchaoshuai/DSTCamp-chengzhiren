@@ -159,10 +159,12 @@ class _ConsolePane:
         body.pack(fill=tk.BOTH, expand=True)
         vsb = ttk.Scrollbar(body, orient=tk.VERTICAL)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
-        # font 用系统默认字体（不指定字体族）而不是 Consolas -- Consolas
-        # 不含中文字形，控制台日志里中英文混排时 Windows 会给中文字符静默
-        # fallback 到另一款字重不同的 CJK 字体，看起来"忽粗忽细"。
-        self.text = tk.Text(body, wrap=tk.NONE, state=tk.DISABLED, font=("", 10),
+        # 用 theme.FONT_FAMILY（微软雅黑 Light）而不是 Consolas -- Consolas
+        # 不含中文字形，控制台日志里中英文混排时如果用等宽字体，Windows 会
+        # 给中文字符静默 fallback 到另一款字重不同的 CJK 字体，看起来"忽粗
+        # 忽细"；雅黑本身自带完整中英文字形，不存在这个问题。
+        self.text = tk.Text(body, wrap=tk.NONE, state=tk.DISABLED,
+                             font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
                              bg=theme.CARD_BG, fg=theme.TEXT, yscrollcommand=vsb.set)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.configure(command=self.text.yview)
@@ -251,7 +253,8 @@ class LocalServiceTab:
         # 本地存档提示条保持一致（黄底加粗），跨整个页签宽度，而不是像
         # 之前那样塞在左侧分片列表那个窄栏里、字又小又不显眼。默认不 pack。
         self._local_banner = tk.Label(self.frame, text=t("local.select_server_hint"),
-                                       bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=("", 10, "bold"),
+                                       bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
+                                       font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
                                        anchor=tk.W, padx=10, pady=6)
 
         # ttk.PanedWindow 本身保留原生（可拖拽分栏这个交互重写代价太

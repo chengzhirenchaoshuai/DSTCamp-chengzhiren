@@ -839,6 +839,51 @@ def test_custom_background():
         print("  PASS: opacity=0/1 blend to pure theme color / pure image respectively")
 
 
+def test_mod_resolve_cache():
+    """Test mod_resolve_cache.py's disk-persisted cache for
+    resolve_full_modinfo() results -- added because the Lua 沙箱全量解析
+    之前只在内存里缓存一份，每次重启应用都要为没变过的 mod 重新跑一遍
+    （真机反馈过"启动要卡 3 秒"，profile 出来这是大头之一）。这里只测纯
+    数据逻辑（mtime 失效判断 + JSON 往返，含 ModConfigOption 这个
+    dataclass 的序列化/反序列化），不需要真的跑一遍 Lua 沙箱。"""
+    print("\n" + "=" * 60)
+    print("Test 25: Mod Resolve Cache")
+
+    from dstools.core.mod_resolve_cache import _cache_path, load_cached_result, save_result
+    from dstools.core.modinfo_reader import ModConfigOption
+
+    workshop_id = "test-workshop-resolve-cache"
+    cache_path = _cache_path(workshop_id)
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            modinfo_path = Path(tmp) / "modinfo.lua"
+            modinfo_path.write_text("name = 'x'", encoding="utf-8")
+
+            assert load_cached_result(workshop_id, modinfo_path) is None
+            print("  PASS: no cache yet returns None")
+
+            result = {
+                "name": "测试Mod",
+                "config_options": [ModConfigOption(name="opt1", label="选项1", default="a")],
+            }
+            save_result(workshop_id, result)
+            cached = load_cached_result(workshop_id, modinfo_path)
+            assert cached is not None and cached["name"] == "测试Mod"
+            assert isinstance(cached["config_options"][0], ModConfigOption)
+            assert cached["config_options"][0].name == "opt1"
+            print("  PASS: save/load round-trips config_options as real ModConfigOption objects")
+
+            # modinfo.lua 比缓存新——缓存失效，返回 None，跟 mod_icons.py
+            # 图标缓存同一套 mtime 判断逻辑。
+            future = time.time() + 100
+            os.utime(modinfo_path, (future, future))
+            assert load_cached_result(workshop_id, modinfo_path) is None
+            print("  PASS: cache invalidated once modinfo.lua's mtime moves past it")
+    finally:
+        cache_path.unlink(missing_ok=True)
+        print("  PASS: test cache file cleaned up")
+
+
 def main():
     """Run all tests."""
     print("\n" + "█" * 60)
@@ -871,6 +916,7 @@ def main():
         test_theme_set_theme,
         test_world_categories_bilingual,
         test_custom_background,
+        test_mod_resolve_cache,
     ]
 
     for test in tests:

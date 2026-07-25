@@ -27,6 +27,7 @@ from dstools.core.mod_icons import get_mod_icon_path
 from dstools.core.mod_manager import (
     list_mods, load_mod_overrides, save_mod_overrides, sync_mods,
 )
+from dstools.core.mod_resolve_cache import load_cached_result, save_result
 from dstools.core.modinfo_reader import (
     find_mod_folder, list_installed_mod_ids, parse_modinfo, resolve_config_value,
     resolve_full_modinfo,
@@ -38,7 +39,7 @@ from dstools.core.save_reader import (
 )
 from dstools.core.token_manager import is_valid_token, mask_token, read_token, write_token
 from dstools.core.world_reader import parse_leveldata, save_leveldata
-from dstools.gui import theme, themed_dialog as dlg
+from dstools.gui import fonts, theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.card_frame import CardFrame
 from dstools.gui.cluster_select import cluster_label as _cluster_label
@@ -46,7 +47,7 @@ from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.local_service_tab import LocalServiceTab
 from dstools.gui.pill_tabs import PillTabBar
 from dstools.i18n import get_lang, set_lang, t
-from dstools.models import Cluster, ModEntry, SaveSource, Shard
+from dstools.models import ModEntry, SaveSource, Shard
 
 
 # Klei user IDs (used in adminlist.txt/blocklist.txt) look like
@@ -251,6 +252,23 @@ class DSToolsApp:
 
         self.style = ttk.Style(); self.style.theme_use("clam")
         theme.apply_theme(self.root, self.style)
+        # theme.apply_theme() 内部会调 root.attributes("-alpha", ...)——
+        # Windows 上 Tk 这个调用会整体重写窗口的扩展样式位，把
+        # apply_borderless_style() 刚设置好的 WS_EX_APPWINDOW 冲掉，表现
+        # 为任务栏图标/Alt+Tab 找不到这个应用（真机调试复现过，见
+        # custom_titlebar.ensure_taskbar_visible() 的说明）。每次调完
+        # theme.apply_theme() 后都要重新调一遍找补回来，_switch_theme()
+        # 里也是同样的道理。
+        #
+        # refresh_shell=True（隐藏再显示一下触发任务栏重新扫描，见该函
+        # 数文档字符串）特意放在这里、紧跟第一次 theme.apply_theme() 之
+        # 后，而不是放到 __init__ 最后——放最后虽然闪烁的是已经建好的完
+        # 整界面、观感更平滑，但意味着任务栏图标要等标题栏/菜单/五个页
+        # 签整棵控件树全部建完才会出现，真机反馈"等一会才出现"体验不如
+        # 点击就近乎同时出现；放这里闪的是刚设完样式、内容还没填充的空
+        # 窗口，代价是这一下闪烁可能更明显，换来任务栏图标基本跟点击启
+        # 动同时出现，两者取舍过后选了这一版。
+        custom_titlebar.ensure_taskbar_visible(self.root, refresh_shell=True)
         self._init_bg_system()
         # 铺满整个客户区、z-order 最底层的背景——root 本身不是 BgFrame，
         # 永远只有 theme.BG_SOFT 这一种浅色纯色；顶层各控件之间用
@@ -388,6 +406,15 @@ class DSToolsApp:
                                   "world": self.world_tab, "server": self.cluster_tab}
         self._stale_cluster_tabs: set[str] = set()
         self._current_tab_key = "local"
+        # save_tab 不在 _cluster_tab_map 里（它是服务器/本地并列展示，不
+        # 是单一"当前选中 cluster"模型，见上面的说明），之前唯一的刷新点
+        # （_refresh() 里的 self.save_tab.refresh()）没有走"只刷新当前
+        # 页签、其余标脏延迟"这一套，是无条件同步刷新——真机反馈启动要卡
+        # 3 秒才显示内容，profile 出来大头就是这里：默认页签是"本地服务
+        # 器"，用户还没点进"存档信息"，却要在启动时白等它把服务器+本地
+        # 两边所有会话的玩家角色名/头像全解析一遍（每个角色名还要去查一
+        # 遍当前启用的模组）。这里补上跟其它页签一样的标脏机制。
+        self._save_tab_stale = False
 
         self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.cluster_tab, self.save_tab]
         for key, tab in zip(self._tab_keys, self._tabs):
@@ -412,14 +439,20 @@ class DSToolsApp:
         # 边效果，不算观感倒退。
         self.status_var = tk.StringVar(value=t("app.ready"))
         self._status_font = tkfont.nametofont("TkDefaultFont")
-        status_h = self._status_font.metrics("linespace") + 6
+        # 状态栏高度还是原来那套算法（行高+6），不再额外加高——加了 14px
+        # 纯空白那版用户反馈"下面空一大块很奇怪"，视觉上确实比原来明显厚
+        # 一圈，改回去。缩放手柄贴到窗口真实底边（下面 bottom_reserve=0）
+        # 这件事改成手柄自己的尺寸够小，不靠状态栏让出空白来配合——见
+        # custom_titlebar.py 里 ResizeGrips 的 _BOTTOM_GRIP 说明。
+        self._status_text_h = self._status_font.metrics("linespace") + 6
+        status_h = self._status_text_h
         self._status_bar = BgFrame(self.root, self, bg=theme.CARD_BG)
         self._status_bar.configure(height=status_h)
         self._status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
         def _redraw_status_bar():
             self._status_bar.delete("status_text")
-            self._status_bar.create_text(6, status_h / 2, text=self.status_var.get(), anchor=tk.W,
+            self._status_bar.create_text(6, self._status_text_h / 2, text=self.status_var.get(), anchor=tk.W,
                                           fill=theme.TEXT, font=self._status_font, tags="status_text")
 
         self._redraw_status_bar = _redraw_status_bar
@@ -427,16 +460,16 @@ class DSToolsApp:
         self._status_bar.bind("<Configure>", lambda e: _redraw_status_bar(), add="+")
         _redraw_status_bar()
 
-        # 系统托盘——只在真的被"关闭到托盘"时才创建 pystray.Icon 并起后
-        # 台线程，见 gui/tray_icon.py 顶部说明（跟这次会话前面
-        # win_aspect_lock.py 那次 WM_EXITSIZEMOVE 崩溃是完全不同的架构：
-        # pystray 自己的消息循环在独立线程里，不是挂在 Tk 的窗口过程
-        # 上，但跨线程回调 Tk 这条底线还是要守，on_restore/on_exit 都用
-        # root.after(0, ...) 转回主线程）。注意：标题栏"最小化"按钮不会
-        # 触碰这个类——那是 Windows 自己处理的普通最小化到任务栏，只有
-        # 右上角"关闭"按钮（勾选了"关闭时最小化到任务栏"时）才会调用
-        # self._minimize_to_tray()，两者是完全独立的两件事，不要在
-        # <Unmap> 上重新接一个"最小化=进托盘"的分支。
+        # 系统托盘——跟大多数常驻后台的应用习惯一致，应用一启动就常驻显
+        # 示在托盘里，一直到应用真正退出才消失（不是以前那版"只在被最小
+        # 化/关闭到托盘时才临时出现，窗口一恢复就消失"）。pystray 后端见
+        # gui/tray_icon.py 顶部说明（跟这次会话前面 win_aspect_lock.py 那
+        # 次 WM_EXITSIZEMOVE 崩溃是完全不同的架构：pystray 自己的消息循
+        # 环在独立线程里，不是挂在 Tk 的窗口过程上，但跨线程回调 Tk 这条
+        # 底线还是要守，on_restore/on_exit 都用 root.after(0, ...) 转回
+        # 主线程）。注意：标题栏"最小化"按钮不会触碰这个类——那是 Windows
+        # 自己处理的普通最小化到任务栏，跟托盘图标是否常驻是两件独立的
+        # 事，不要在 <Unmap> 上接一个"最小化=进托盘"的分支。
         from dstools.gui.tray_icon import TrayIcon
         self._tray = TrayIcon(
             icon_image_path=str(_icon_dir / "icon.png"),
@@ -446,6 +479,7 @@ class DSToolsApp:
             on_restore=lambda: self.root.after(0, self._restore_from_tray),
             on_exit=lambda: self.root.after(0, self._do_exit),
         )
+        self._tray.show()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         # 首次同步建一次共享背景大图——不这样做的话，要等 root 第一次
         # <Configure>（本来就会在窗口刚显示时触发一次）之后再等
@@ -459,18 +493,45 @@ class DSToolsApp:
         # 须等其它内容（菜单条/页签条/卡片/底部状态栏等，同样是 root 的
         # 直接子控件）都建完，手柄才能稳定盖在最上层接收边缘的鼠标事件。
         #
-        # bottom_reserve/top_reserve=状态栏/标题栏实际渲染高度——
-        # n/nw/ne/s/sw/se 这几个手柄要让开这两整行，不能直接铺到窗口物
-        # 理边缘：状态栏文字几乎贴着窗口底边（padding 只有 2px），手柄
-        # 盖过去会挡住文字最下面几像素；标题栏的最小化/关闭按钮同理会
-        # 被手柄的一角"抠"掉（真机截图确认过，见 custom_titlebar.py 里
-        # ResizeGrips 的说明）。宽高比是锁死的，从任何一条边/角拖都能等
-        # 效缩放整个窗口，让开这两行不影响缩放操作本身。
+        # n/nw/ne 三个手柄现在固定贴在窗口真实顶边（y=0，不受 top_reserve
+        # 影响，见 custom_titlebar.py 里 ResizeGrips 的说明）——早期版本
+        # 靠 top_reserve 把它们整体下移一整条标题栏+菜单条的高度，用户反
+        # 馈"应该跟 Windows 一样能直接在左上/右上角拖拽缩放"，改成贴真实
+        # 顶边 + 尺寸缩小成 top_grip（配合 CustomTitleBar._EDGE_MARGIN，
+        # 标题栏的最小化/关闭按钮的可点击矩形从这条留白下面才开始画，两
+        # 者贴着但不重叠，不会互相"抠"）。
+        #
+        # top_reserve 现在只管 w/e 两条竖边的下限，依然要给"标题栏+菜单
+        # 条"这么大——这两条边贴着窗口左右两侧、贯穿几乎整个高度，如果只
+        # 越过按钮那一小段，会在标题栏这一段里把关闭按钮最右侧几像素连成
+        # 一条竖直的死条（关闭按钮本来就贴着窗口右边缘）；"文件"菜单项也
+        # 贴着菜单条左上角 x=0 起画，w 边缘手柄没让开菜单条的话会啃掉它
+        # 的左边缘（用户截图 1.png 确认过的那次）。n/nw/ne 单独贴真实顶
+        # 边不代表 w/e 的下限也要跟着收紧，是分开处理的两件事。
+        #
+        # 胶囊页签条（_pill_bar）选中态药丸的起始间距 _GAP 之前因为手柄
+        # 下移到页签条被顶过（用户截图 2.png 确认过），已经在
+        # pill_tabs.py 里加大到 >=12——n/nw/ne 现在贴真实顶边、够不到页签
+        # 条了，这个间距不再是必须的，但留着也没有坏处（页签之间稍微松
+        # 一点，不影响观感），不用专门改回去。
+        #
+        # 状态栏（跟标题栏不一样）从头到尾只有纯文字、没有任何按钮，不需
+        # 要整条让开——bottom_reserve 直接给 0（手柄贴到窗口真实底边），
+        # 靠缩小南边手柄本身的尺寸（bottom_grip）来避免盖住文字。这里试过
+        # 两版都不理想：①bottom_reserve=状态栏整条高度——缩放热区整条排
+        # 除在外，鼠标要挪到状态栏上边缘以上才有缩放光标，最左下/最右下
+        # 附近完全够不到，用户反馈像状态栏"不属于"主窗口；②状态栏额外加
+        # 高一条纯空白给手柄用——又被反馈"底下空一大块很奇怪"。现在两头
+        # 都不动状态栏的布局，只把手柄缩小到能塞进文字自带的上下留白里
+        # （状态栏高度是 文字行高+6，文字垂直居中，上下各留 3px，见上面
+        # status_h 那行）。宽高比是锁死的，从任何一条边/角拖都能等效缩放
+        # 整个窗口，缩小南边手柄不影响缩放操作本身，只是南边比其它三边细
+        # 一点、需要稍微精确一点的鼠标定位。
         self.root.update_idletasks()
-        bottom_reserve = self._status_bar.winfo_height()
-        top_reserve = self._titlebar.winfo_height()
+        top_reserve = self._titlebar.winfo_height() + self._menu_strip.winfo_height()
         custom_titlebar.ResizeGrips(self.root, self, 1500, 820,
-                                     bottom_reserve=bottom_reserve, top_reserve=top_reserve)
+                                     bottom_reserve=0, top_reserve=top_reserve,
+                                     bottom_grip=3, top_grip=2)
 
     def _on_tab_select(self, key: str) -> None:
         for k, card in self._tab_cards.items():
@@ -483,6 +544,12 @@ class DSToolsApp:
         # 当前选中项的模型，统一选择栏放在那底下没有意义，切过去时藏起来。
         if key == "saves":
             self._cluster_bar.pack_forget()
+            # 跟其它页签的 _stale_cluster_tabs 是同一个道理——启动时/
+            # "刷新全部"时如果这个页签不是当前显示的那个，刷新会被推迟到
+            # 这里才真正做一次（见 self._save_tab_stale 的说明）。
+            if self._save_tab_stale:
+                self._save_tab_stale = False
+                self.save_tab.refresh()
         else:
             self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
             # 切过来的这个页签如果在别的页签选存档时被标脏过（见
@@ -508,13 +575,29 @@ class DSToolsApp:
             self._do_exit()
 
     def _minimize_to_tray(self):
+        # 托盘图标现在应用一启动就常驻显示（见 __init__ 里 self._tray.
+        # show() 那次调用），这里不用再单独 show() 一次——TrayIcon.show()
+        # 本身也做了"已经在跑就什么都不做"的幂等判断，就算哪天又需要在
+        # 这里补调一次也不会出问题，纯粹是现在没必要了。
         self.root.withdraw()
-        self._tray.show()
 
     def _restore_from_tray(self):
-        self.root.deiconify()
-        self.root.lift()
-        self._tray.hide()
+        # 同理，不在这里 hide() 托盘图标——它要一直显示到应用真正退出
+        # （_quit_app()）为止，窗口从托盘恢复显示不等于要退出。
+        #
+        # 不能只调 root.deiconify()——窗口被藏起来可能是两条完全不同的
+        # 路径：勾选了"关闭时最小化到任务栏"时点关闭按钮走的是
+        # _minimize_to_tray()（Tk 自己的 root.withdraw()，deiconify() 能
+        # 正确撤销）；但标题栏的最小化按钮走的是原生
+        # ShowWindow(SW_MINIMIZE)（custom_titlebar.minimize_window()，
+        # 跟这个复选框设置完全无关，随时都能点），deiconify() 对这种情
+        # 况不起作用。真机反馈过"没勾选这个设置时点托盘图标没反应"，根因
+        # 就是这种情况——用户点的是标题栏最小化按钮，不是关闭按钮。
+        # custom_titlebar.restore_window() 两条路径都处理，见该函数说明。
+        # 局部 import，理由跟 __init__/_switch_theme() 里那两处一样：避
+        # 免非 Windows 平台在模块加载时就碰 ctypes.windll。
+        from dstools.gui import custom_titlebar
+        custom_titlebar.restore_window(self.root)
 
     def _do_exit(self):
         """真正退出的唯一入口——菜单"退出"/Ctrl+Q/托盘菜单"退出"/关闭
@@ -720,6 +803,14 @@ class DSToolsApp:
         set_theme_name(name)
         theme.set_theme(name)
         theme.apply_theme(self.root, self.style)
+        # custom_titlebar 在 __init__ 里是局部 import（避免非 Windows 平
+        # 台在模块加载时就碰 ctypes.windll），这里再 import 一次同理，不
+        # 依赖 __init__ 里那个局部变量（那个作用域到 __init__ 结束就没
+        # 了）。同 __init__ 里的调用点——theme.apply_theme() 会冲掉
+        # WS_EX_APPWINDOW，见 custom_titlebar.ensure_taskbar_visible()
+        # 的说明，切主题时也要重新找补一遍。
+        from dstools.gui import custom_titlebar
+        custom_titlebar.ensure_taskbar_visible(self.root)
         self._titlebar.apply_theme(bg=theme.CARD_BG)
         self._build_menu()
         self._tab_area.apply_theme()
@@ -911,11 +1002,11 @@ class DSToolsApp:
         card = tk.Frame(win, background=theme.CARD_BG)
         card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
-        tk.Label(card, text=header_text, font=("", 18, "bold"), fg=theme.PRIMARY,
+        tk.Label(card, text=header_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_XL, "bold"), fg=theme.PRIMARY,
                 bg=theme.CARD_BG).pack(anchor=tk.W, padx=24, pady=(24, 4))
         ttk.Separator(card, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=24, pady=(0, 14))
         if body_text:
-            tk.Label(card, text=body_text, font=("", 11), fg=theme.TEXT, bg=theme.CARD_BG,
+            tk.Label(card, text=body_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
                     justify=tk.LEFT, anchor=tk.W).pack(fill=tk.X, padx=24)
 
         btn_row = tk.Frame(card, background=theme.CARD_BG)
@@ -991,7 +1082,13 @@ class DSToolsApp:
                 refresh_full()
             else:
                 tab.refresh()
-        self.save_tab.refresh()
+        # save_tab 同理：只有它就是当前正显示的页签时才立即刷新，否则标
+        # 脏，等用户真的切过去（_on_tab_select）再补——见上面
+        # self._save_tab_stale 的说明。
+        if self._current_tab_key == "saves":
+            self.save_tab.refresh()
+        else:
+            self._save_tab_stale = True
         # "刷新全部"本身逻辑一直是对的（无条件重新拉取数据/重新渲染），
         # 但如果磁盘上确实没有任何变化，界面前后长得一模一样，用户点了会
         # 觉得"跟没点一样"。这里加一句短暂的状态栏提示，过 1.5 秒后恢复
@@ -1233,7 +1330,17 @@ class SaveBrowserTab:
         setattr(self, f"_{k}_players_canvas", players_canvas)
         setattr(self, f"_{k}_players_rows_frame", players_rows_frame)
 
-        self._populate(source, combo, combo_var, shard_combo, shard_var)
+        # 不在这里现场 _populate()——那会级联到 _on_cluster_select() ->
+        # _refresh_saves() -> _refresh_players()，同步解析这个 source 下
+        # 每个会话每个玩家的角色名/头像（含挨个查一遍当前启用的模组），
+        # 这一步本来就是这个页签最重的部分。SaveBrowserTab 在 __init__
+        # 里对 server_frame/local_frame 各建一次面板，如果两边都在这里现
+        # 场 populate，就是"用户还没点进‘存档信息’页签，应用刚启动就要为
+        # 一个看不见的页签白等这份重活"——真机反馈过启动要卡 3 秒才显示内
+        # 容，profile 出来这里是大头。交给 refresh()（跟其它 4 个页签一
+        # 样，只有当前显示的页签立即刷新，其余标脏，见
+        # DSToolsApp._save_tab_stale 的说明）统一负责首次填充，构造阶段
+        # 只搭好控件壳子。
         combo.bind("<<ComboboxSelected>>", lambda e: self._on_cluster_select(source))
         shard_combo.bind("<<ComboboxSelected>>", lambda e: self._on_shard_select(source))
 
@@ -1467,15 +1574,15 @@ class SaveBrowserTab:
         body = tk.Frame(outer, background=bg)
 
         if player.parse_error:
-            tk.Label(body, text=f"{t('save.player_id_label')}: {player.player_id}", font=("", 11, "bold"),
+            tk.Label(body, text=f"{t('save.player_id_label')}: {player.player_id}", font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE, "bold"),
                     fg=theme.TEXT, background=bg, anchor=tk.W).pack(fill=tk.X)
-            tk.Label(body, text=t("save.player_parse_error"), font=("", 9), fg=theme.ERROR,
+            tk.Label(body, text=t("save.player_parse_error"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS), fg=theme.ERROR,
                     background=bg, anchor=tk.W).pack(fill=tk.X)
             self._build_player_id_row(body, player, bg)
         else:
             header = tk.Frame(body, background=bg)
             header.pack(fill=tk.X)
-            tk.Label(header, text=name, font=("", 11, "bold"), fg=theme.TEXT,
+            tk.Label(header, text=name, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE, "bold"), fg=theme.TEXT,
                     background=bg, anchor=tk.W).pack(side=tk.LEFT)
 
             self._build_player_id_row(body, player, bg)
@@ -1490,7 +1597,7 @@ class SaveBrowserTab:
                 f"{t('save.stat_hunger')}: {fmt(player.hunger)}   "
                 f"{t('save.stat_temperature')}: {fmt(player.temperature)}"
             )
-            tk.Label(body, text=stats, font=("", 9), fg=theme.TEXT_MUTED, background=bg, anchor=tk.W).pack(fill=tk.X)
+            tk.Label(body, text=stats, font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS), fg=theme.TEXT_MUTED, background=bg, anchor=tk.W).pack(fill=tk.X)
 
         if icon_path:
             body.update_idletasks()
@@ -1513,7 +1620,7 @@ class SaveBrowserTab:
         那个子文件夹，不是整个会话的文件夹）。"""
         id_row = tk.Frame(parent, background=bg)
         id_row.pack(fill=tk.X, pady=(2,0))
-        tk.Label(id_row, text=f"{t('save.player_id_label')}: {player.player_id}", font=("", 9),
+        tk.Label(id_row, text=f"{t('save.player_id_label')}: {player.player_id}", font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS),
                 fg=theme.TEXT_MUTED, background=bg, anchor=tk.W).pack(side=tk.LEFT)
 
         open_path_btn = ttk.Button(id_row, text=t("save.player_open_path"),
@@ -1524,10 +1631,10 @@ class SaveBrowserTab:
 
         note_frame = tk.Frame(id_row, background=bg)
         note_frame.pack(side=tk.LEFT, padx=(12,0))
-        tk.Label(note_frame, text=f"{t('save.player_note_label')}:", font=("", 9),
+        tk.Label(note_frame, text=f"{t('save.player_note_label')}:", font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS),
                 fg=theme.TEXT_MUTED, background=bg).pack(side=tk.LEFT)
         note_var = tk.StringVar(value=get_player_note(player.player_id))
-        note_entry = ttk.Entry(note_frame, textvariable=note_var, width=16, font=("", 9))
+        note_entry = ttk.Entry(note_frame, textvariable=note_var, width=16, font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS))
         note_entry.pack(side=tk.LEFT, padx=(4,0))
 
         def _save_note(event=None, pid=player.player_id, var=note_var):
@@ -1705,7 +1812,7 @@ class SaveBrowserTab:
 
         left = tk.Frame(row, background=bg)
         left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=10, pady=6)
-        tk.Label(left, text=f"{c.name}  [{tag}]", font=("", 11, "bold"),
+        tk.Label(left, text=f"{c.name}  [{tag}]", font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE, "bold"),
                 fg=color, background=bg, anchor=tk.W).pack(fill=tk.X)
 
         config = load_cluster_config(c.path)
@@ -1720,7 +1827,7 @@ class SaveBrowserTab:
         detail = (f"{t('env.game_mode')}: {game_mode}   "
                  f"{t('env.max_players')}: {max_players}   "
                  f"{t('env.cluster_name')}: {cluster_name}")
-        tk.Label(left, text=detail, font=("", 9), fg=theme.TEXT_MUTED, background=bg, anchor=tk.W).pack(fill=tk.X)
+        tk.Label(left, text=detail, font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS), fg=theme.TEXT_MUTED, background=bg, anchor=tk.W).pack(fill=tk.X)
 
         shard_bits = []
         for s in c.shards:
@@ -1729,7 +1836,7 @@ class SaveBrowserTab:
                 mc = len(list_mods(load_mod_overrides(s.mod_overrides_path)))
             ss = len(list_save_sessions(s.path))
             shard_bits.append(f"{s.name}({mc}{t('env.mods')}/{ss}{t('env.save_sessions')})")
-        tk.Label(left, text="  ".join(shard_bits), font=("", 9), fg=theme.TEXT_MUTED,
+        tk.Label(left, text="  ".join(shard_bits), font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS), fg=theme.TEXT_MUTED,
                 background=bg, anchor=tk.W).pack(fill=tk.X)
         tk.Label(left, text=str(c.path), font=("Consolas", 8), fg=theme.TEXT_MUTED,
                 background=bg, anchor=tk.W).pack(fill=tk.X, pady=(2,0))
@@ -1858,7 +1965,7 @@ class ModManagerTab:
         # 本地存档选中时显示的醒目提示——本地存档的 mod 启用/配置实际由
         # 客户端账号级 modindex 决定，这里只读查看，默认不 pack。
         self._md_local_banner = tk.Label(self.frame, text=t("mod.local_view_only_banner"),
-                                          bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=("", 10, "bold"),
+                                          bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
                                           anchor=tk.W, padx=10, pady=6)
 
         from dstools.gui.image_scroll import ImageScrollPanel
@@ -1867,7 +1974,14 @@ class ModManagerTab:
         self.list_panel.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.list_panel.on_settle = lambda w, h: self._render_list(ref_width=w)
 
-        self.on_cluster_changed(self.app.get_selected_cluster())
+        # 不在这里现场 on_cluster_changed()——即使重活本身在后台线程做
+        # （_load_mods_worker），"要不要开始做"这个决定不应该在构造这一
+        # 刻就下：默认页签是"本地服务器"不是"Mod管理"，这里现场触发会让
+        # 后台线程立刻开始跑一遍全量 Lua 沙箱解析，跟主线程抢 GIL，拖慢
+        # 应用启动到能响应的时间（真机反馈过启动要卡好几秒，profile 里
+        # 这一段是大头之一）。交给 DSToolsApp._refresh()（只有当前显示的
+        # 页签立即刷新，其余标脏，真正切过去时 _on_tab_select 才补一次）
+        # 统一负责首次触发，构造阶段只搭好控件壳子。
 
     def _get_cluster(self):
         return self.app.get_selected_cluster()
@@ -2053,7 +2167,22 @@ class ModManagerTab:
                     else:
                         mod_info = parse_modinfo(mod_folder) if mod_folder else None
                         if full and mod_info and mod_folder:
-                            _apply_full_sandbox_result(mod_info, resolve_full_modinfo(mod_folder))
+                            # _full_resolved_cache 只在这个进程活着的时
+                            # 候有效，每次重新启动都会是空的——sandbox
+                            # 那趟解析本身很慢（子进程 + 最多几秒超时/
+                            # 个），之前每次启动都要为没变过的 mod 重跑
+                            # 一遍，见 mod_resolve_cache.py 顶部说明。这
+                            # 里先查磁盘缓存（按 modinfo.lua 的 mtime 判
+                            # 断有没有过期，跟 mod_icons.py 图标缓存同一
+                            # 套逻辑），命中就不用再起子进程；没命中才真
+                            # 的跑一遍 sandbox，并把结果写回磁盘缓存供下
+                            # 次启动用。
+                            modinfo_path = mod_folder / "modinfo.lua"
+                            result = load_cached_result(wid, modinfo_path)
+                            if result is None:
+                                result = resolve_full_modinfo(mod_folder)
+                                save_result(wid, result)
+                            _apply_full_sandbox_result(mod_info, result)
                             self._full_resolved_cache[wid] = mod_info
                     mod_infos[wid] = mod_info
                     if mod_info and mod_folder:
@@ -2390,7 +2519,7 @@ class _ModSyncLogDialog:
         # 不含中文字形，日志内容中英文混排时 Windows 会给中文字符静默
         # fallback 到另一款字重不同的 CJK 字体，视觉上"忽粗忽细"，换成默
         # 认字体（项目里其它 Label 也都这么用）从根上避免这个字体切换。
-        self.text = tk.Text(body, wrap=tk.WORD, font=("", 10), state=tk.DISABLED,
+        self.text = tk.Text(body, wrap=tk.WORD, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), state=tk.DISABLED,
                              bg=theme.CARD_BG, fg=theme.TEXT, relief=tk.FLAT,
                              highlightthickness=1, highlightbackground=theme.CARD_BORDER,
                              highlightcolor=theme.ACCENT)
@@ -2461,7 +2590,16 @@ class ModConfigDialog:
 
         win = tk.Toplevel(tab.frame)
         self.win = win
-        win.title(t("mod.config_dialog_title", name=mod_info.name or workshop_id))
+        # mod_info.name 是 mod 作者自己写的、不受信任的原始文本——Windows
+        # 原生标题栏没有 fonts.py 那套字体切换/回退逻辑，某个 mod 名字里
+        # 混进游戏自定义图标字体的私用区码位（Private Use Area，比如实测
+        # 过的 "\U000f000d Cherry Forest \U000f000d"）时，标题栏画不出对
+        # 应字形，只能显示成方块（这个码位本身没有标准字形定义，不是"这
+        # 台机器缺字体"）。mod 列表那边（mod_render.py）已经在画之前调
+        # fonts.strip_unrenderable() 清过一遍，这里也一样清一遍再拼进标
+        # 题文字。
+        title_name = fonts.strip_unrenderable(mod_info.name or workshop_id) or workshop_id
+        win.title(t("mod.config_dialog_title", name=title_name))
         # Deliberately NOT transient(): on Windows, a transient Toplevel is
         # drawn as a "dialog" and Windows itself strips its minimize/
         # maximize boxes regardless of resizable() -- confirmed by
@@ -2500,15 +2638,15 @@ class ModConfigDialog:
             banner_key = "mod.read_only_local" if read_only_reason == "client_only" else "mod.read_only_local_save"
             ttk.Label(win, text=t(banner_key), foreground="#607d8b",
                      wraplength=DIALOG_W - 40, justify=tk.LEFT,
-                     font=("", 9, "bold")).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
+                     font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS, "bold")).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
         if mod_info.unsupported_schema:
             ttk.Label(win, text=t("mod.unsupported_schema"), foreground=theme.ERROR,
                      wraplength=DIALOG_W - 40, justify=tk.LEFT,
-                     font=("", 9, "bold")).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
+                     font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS, "bold")).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
         elif remaining_dynamic:
             ttk.Label(win, text=t("mod.dynamic_banner", count=remaining_dynamic),
                      foreground="#8d6e00", wraplength=DIALOG_W - 40, justify=tk.LEFT,
-                     font=("", 9)).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
+                     font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS)).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
 
         canvas = tk.Canvas(win, highlightthickness=0)
         self.canvas = canvas
@@ -2563,8 +2701,8 @@ class ModConfigDialog:
         NAME_W_PX = 520
         HEADER_W_PX = 900
         COMBO_CHARS = 26
-        name_font = tkfont.Font(font=("", 12, "bold"))
-        hdr_font = tkfont.Font(font=("", 15, "bold"))
+        name_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_MD, weight="bold")
+        hdr_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_LG, weight="bold")
 
         def _truncate(text, font, max_px):
             if font.measure(text) <= max_px:
@@ -2587,7 +2725,7 @@ class ModConfigDialog:
                 if label_text:
                     ttk.Separator(body, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=5, pady=(12,3))
                     title = _truncate(label_text, hdr_font, HEADER_W_PX)
-                    ttk.Label(body, text=title, font=("", 15, "bold"),
+                    ttk.Label(body, text=title, font=(theme.FONT_FAMILY, theme.FONT_SIZE_LG, "bold"),
                              foreground=theme.HEADING, anchor=tk.CENTER,
                              justify=tk.CENTER).pack(fill=tk.X, padx=5, pady=(0,5))
                 else:
@@ -2600,7 +2738,7 @@ class ModConfigDialog:
 
             label_full = opt.label or opt.name
             label_shown = _truncate(label_full, name_font, NAME_W_PX)
-            name_lbl = ttk.Label(row, text=label_shown, font=("", 12, "bold"), anchor=tk.W)
+            name_lbl = ttk.Label(row, text=label_shown, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"), anchor=tk.W)
             name_lbl.pack(side=tk.LEFT)
             if label_shown != label_full:
                 Tooltip(name_lbl, label_full)
@@ -2622,9 +2760,9 @@ class ModConfigDialog:
                 # write back -- editing it here isn't safe either way).
                 reason = t("mod.dynamic_option") if opt.is_dynamic else t("mod.no_choices")
                 ttk.Label(row, text=f"{current_display}  ({reason})",
-                         foreground=theme.TEXT_MUTED, font=("", 10, "italic")).pack(side=tk.RIGHT)
+                         foreground=theme.TEXT_MUTED, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "italic")).pack(side=tk.RIGHT)
                 if opt.hover:
-                    info_lbl = ttk.Label(row, text="ⓘ", foreground=theme.ACCENT, font=("", 12))
+                    info_lbl = ttk.Label(row, text="ⓘ", foreground=theme.ACCENT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD))
                     info_lbl.pack(side=tk.RIGHT, padx=(0,6))
                     Tooltip(info_lbl, opt.hover)
                 continue
@@ -2664,7 +2802,7 @@ class ModConfigDialog:
             menu_btn.pack(side=tk.RIGHT)
 
             if opt.hover:
-                info_lbl = ttk.Label(row, text="ⓘ", foreground=theme.ACCENT, font=("", 12))
+                info_lbl = ttk.Label(row, text="ⓘ", foreground=theme.ACCENT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD))
                 info_lbl.pack(side=tk.RIGHT, padx=(0,6))
                 Tooltip(info_lbl, opt.hover)
 
@@ -2737,7 +2875,11 @@ class ModConfigDialog:
         mod_folder = find_mod_folder(workshop_id)
         if not mod_folder:
             return
-        result = resolve_full_modinfo(mod_folder)
+        modinfo_path = mod_folder / "modinfo.lua"
+        result = load_cached_result(workshop_id, modinfo_path)
+        if result is None:
+            result = resolve_full_modinfo(mod_folder)
+            save_result(workshop_id, result)
         if not result:
             return
         _apply_full_sandbox_result(mod_info, result)
@@ -2945,7 +3087,7 @@ class WorldSettingsTab:
         # 本地存档选中时显示的醒目提示——本地存档的世界设置不保证编辑
         # 生效，这里只读查看，默认不 pack。
         self._wl_local_banner = tk.Label(self.frame, text=t("world.local_view_only_banner"),
-                                          bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=("", 10, "bold"),
+                                          bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
                                           anchor=tk.W, padx=10, pady=6)
         # Preset name/id/location + description -- BgFrame（不是
         # tk.Frame）+ create_text（不是 tk.Label）好透出背景图；
@@ -3002,7 +3144,15 @@ class WorldSettingsTab:
         self._rules_by_cat = {}; self._rules_cats = []
         self._gen_by_cat = {}; self._gen_cats = []
         self._flash_key = None; self._flash_after_id = None
-        self.on_cluster_changed(self.app.get_selected_cluster())
+        # 不在这里现场 on_cluster_changed()——那会同步渲染两大张 PIL 面板
+        # （世界规则/世界生成），是这个页签最重的部分。这个页签在
+        # DSToolsApp.__init__ 里跟其它 4 个页签一起建，构造这一刻默认页
+        # 签是"本地服务器"不是"世界设置"，在这里现场加载就是"用户还没点
+        # 进来，应用刚启动就要为一个看不见的页签白等这份重活"（真机反馈
+        # 过启动要卡好几秒才显示内容，profile 出来这里是大头之一）。交给
+        # DSToolsApp._refresh()（只有当前显示的页签立即刷新，其余标脏，
+        # 真正切过去时 _on_tab_select 才补一次，见那两处的说明）统一负责
+        # 首次填充，构造阶段只搭好控件壳子。
 
     def _get_cluster(self):
         return self.app.get_selected_cluster()
@@ -3246,12 +3396,12 @@ class _TokenInputDialog:
         win.configure(background=theme.BG_SOFT)
         WIN_W, WIN_H = 620, 220
 
-        ttk.Label(win, text=t("token.prompt"), font=("", 12)).pack(anchor=tk.W, padx=20, pady=(20, 8))
+        ttk.Label(win, text=t("token.prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD)).pack(anchor=tk.W, padx=20, pady=(20, 8))
         self.var = tk.StringVar(value=initial)
         entry = ttk.Entry(win, textvariable=self.var, font=("Consolas", 12))
         entry.pack(fill=tk.X, padx=20, pady=(0, 6))
         self.err_var = tk.StringVar()
-        ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR, font=("", 10)).pack(anchor=tk.W, padx=20)
+        ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20)
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
@@ -3322,14 +3472,14 @@ class _CopyToServerDialog:
         # 性质的错误文字 10——之前字段标签那行漏配字号，跟其它几行不一
         # 致，混在一起看着比较乱。
         ttk.Label(win, text=t("save.copy_dialog_prompt", name=source_name),
-                  font=("", 11), wraplength=WIN_W - 40, justify=tk.LEFT).pack(
+                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), wraplength=WIN_W - 40, justify=tk.LEFT).pack(
             anchor=tk.W, padx=20, pady=(20, 8))
-        ttk.Label(win, text=t("save.copy_name_label"), font=("", 11)).pack(anchor=tk.W, padx=20)
+        ttk.Label(win, text=t("save.copy_name_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(anchor=tk.W, padx=20)
         self.var = tk.StringVar(value=suggested_name)
-        entry = ttk.Entry(win, textvariable=self.var, font=("", 11))
+        entry = ttk.Entry(win, textvariable=self.var, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE))
         entry.pack(fill=tk.X, padx=20, pady=(2, 6))
         self.err_var = tk.StringVar()
-        ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR, font=("", 10)).pack(anchor=tk.W, padx=20)
+        ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20)
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
@@ -3423,7 +3573,7 @@ class _BackgroundImageDialog:
         self._status_var = tk.StringVar(value=path.name if path else t("settings.custom_bg_none"))
         row_path = tk.Frame(card, background=theme.CARD_BG)
         row_path.pack(fill=tk.X, padx=24, pady=(24, 12))
-        tk.Label(row_path, textvariable=self._status_var, font=("", 11),
+        tk.Label(row_path, textvariable=self._status_var, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
                  fg=theme.TEXT_MUTED, bg=theme.CARD_BG).pack(side=tk.LEFT)
 
         btn_row1 = tk.Frame(card, background=theme.CARD_BG)
@@ -3433,7 +3583,7 @@ class _BackgroundImageDialog:
 
         row_opacity = tk.Frame(card, background=theme.CARD_BG)
         row_opacity.pack(fill=tk.X, padx=24, pady=(0, 24))
-        tk.Label(row_opacity, text=t("settings.custom_bg_opacity_label"), font=("", 11),
+        tk.Label(row_opacity, text=t("settings.custom_bg_opacity_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
                  fg=theme.TEXT, bg=theme.CARD_BG).pack(side=tk.LEFT)
         self._opacity_var = tk.DoubleVar(value=get_custom_bg_opacity())
         ttk.Scale(row_opacity, from_=0.0, to=1.0, variable=self._opacity_var,
@@ -3675,11 +3825,19 @@ class ClusterConfigTab:
 
         self._token_frame = ttk.Frame(self._cc_notebook); self._build_token_panel(self._token_frame)
         self._cc_notebook.add(self._token_frame, text=t("token.title"))
-        self.on_cluster_changed(self.app.get_selected_cluster())
+        # 不在这里现场 on_cluster_changed()——那会同步重建这个页签好几十
+        # 个输入框（GAMEPLAY/NETWORK/MISC/SHARD 等每个字段一个控件）。这
+        # 个页签在 DSToolsApp.__init__ 里跟其它 4 个页签一起建，构造这一
+        # 刻默认页签是"本地服务器"不是"服务器配置"，在这里现场加载就是
+        # "用户还没点进来，应用刚启动就要为一个看不见的页签白等这份重
+        # 活"（真机反馈过启动要卡好几秒才显示内容）。交给
+        # DSToolsApp._refresh()（只有当前显示的页签立即刷新，其余标脏，
+        # 真正切过去时 _on_tab_select 才补一次）统一负责首次填充，构造阶
+        # 段只搭好控件壳子。
 
     def _build_id_list_panel(self, parent, title_key):
         lf = ttk.Frame(parent); lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        title_lbl = ttk.Label(lf, text=t(title_key), font=("", 11, "bold")); title_lbl.pack(anchor=tk.W)
+        title_lbl = ttk.Label(lf, text=t(title_key), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE, "bold")); title_lbl.pack(anchor=tk.W)
         listbox = tk.Listbox(lf, height=10, font=self._ROW_VALUE_FONT)
         listbox.pack(fill=tk.BOTH, expand=True, pady=5)
         bf = ttk.Frame(lf); bf.pack(fill=tk.X)
@@ -3690,7 +3848,7 @@ class ClusterConfigTab:
 
     def _build_token_panel(self, parent):
         p = ttk.Frame(parent); p.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        ttk.Label(p, text=t("token.title"), font=("",10,"bold")).pack(anchor=tk.W)
+        ttk.Label(p, text=t("token.title"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold")).pack(anchor=tk.W)
         # 普通 tk.Text 不会跟着 theme.apply_theme() 走 ttk 皮肤，不显式给
         # bg/fg 的话就是系统默认的白底黑字，跟其它页签的薄荷绿卡片+深色
         # 文字完全不搭，看起来像是没套上主题、"坏掉"了一样。字体也不用
@@ -3855,7 +4013,7 @@ class ClusterConfigTab:
             for sec_name, sec_data in sections:
                 if not sec_data:
                     continue
-                ttk.Label(col_frame, text=t(self._SECTION_HEADER_KEYS[sec_name]), font=("",11,"bold"),
+                ttk.Label(col_frame, text=t(self._SECTION_HEADER_KEYS[sec_name]), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"),
                          foreground=theme.HEADING).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(10,3))
                 row += 1
                 for key, value in sec_data.items():
@@ -3879,7 +4037,7 @@ class ClusterConfigTab:
         frame = self._section_frames["Shard Config"]
         row = 0
         if c.shards:
-            ttk.Label(frame, text=t("save.shard"), font=("",10)).grid(row=row, column=0, sticky=tk.E, padx=(5,5), pady=5)
+            ttk.Label(frame, text=t("save.shard"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).grid(row=row, column=0, sticky=tk.E, padx=(5,5), pady=5)
             self._shard_sel_var = tk.StringVar()
             shard_sel = MenuCombo(frame, textvariable=self._shard_sel_var, width=15)
             shard_sel["values"] = [s.name for s in c.shards]
@@ -3930,7 +4088,7 @@ class ClusterConfigTab:
         for w in frame.winfo_children(): w.destroy()
         keys_to_remove = [k for k in self._entries if k[0].startswith("SHARD_")]
         for k in keys_to_remove: del self._entries[k]
-        ttk.Label(frame, text=t("cluster.editing", shard=target_shard.name), font=("",10,"bold")).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(frame, text=t("cluster.editing", shard=target_shard.name), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold")).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
 
         # 从分片(is_master=false)的 server.ini 经常缺 name/id/
         # master_server_port/authentication_port 这四项——Klei 官方
@@ -3961,7 +4119,7 @@ class ClusterConfigTab:
         for sec in ["NETWORK","SHARD","ACCOUNT","STEAM"]:
             data = getattr(shard_config, sec.lower(), {})
             if data:
-                ttk.Label(frame, text=f"[{sec}]", font=("",9,"bold")).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5,0))
+                ttk.Label(frame, text=f"[{sec}]", font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS, "bold")).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5,0))
                 row += 1
                 for key, value in data.items():
                     var = self._make_row(frame, f"SHARD_{sec}", key, value, row, readonly=not is_server)

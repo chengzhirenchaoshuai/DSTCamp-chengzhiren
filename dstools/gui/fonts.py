@@ -4,7 +4,15 @@ from pathlib import Path
 
 from PIL import ImageFont
 
+# 首选跟 gui/theme.py 的 FONT_FAMILY（"Microsoft YaHei UI Light"）同一个
+# 字重的字体文件——PIL 是按文件路径直接加载字形，不像 Tk 那样能按族名走
+# Windows 字体链接，没法直接写"Microsoft YaHei UI Light"这个名字，只能给
+# 一条它对应的实际文件路径（msyhl.ttc）。保留后面几个候选当兜底：某台机
+# 器没有 msyhl.ttc（比如更旧的 Windows 10 版本）就退回常规粗细的雅黑，
+# 依次再退到黑体/宋体/等线，都没有才会落到 PIL 内置的位图字体（丑但不
+# 崩，见 get_font() 最下面的 except 分支）。
 _CANDIDATES = [
+    "C:/Windows/Fonts/msyhl.ttc",    # Microsoft YaHei Light（跟主题字体一致）
     "C:/Windows/Fonts/msyh.ttc",     # Microsoft YaHei
     "C:/Windows/Fonts/msyhbd.ttc",
     "C:/Windows/Fonts/simhei.ttf",   # SimHei

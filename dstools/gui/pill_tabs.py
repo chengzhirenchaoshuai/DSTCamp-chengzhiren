@@ -4,21 +4,63 @@ four main tabs (saves / mods / world / server). Only these four are
 WorldSettingsTab, ClusterConfigTab) keep their native ttk shape and are
 just re-colored via theme.apply_theme().
 
-Shapes are native Canvas polygons (same create_polygon(..., smooth=True)
-rounded-rect trick as card_frame.CardFrame) rather than a PIL bitmap, so
-text metrics always match what's actually drawn and relabel() (language
-switch) is just a re-measure + redraw, no image regeneration.
+文字仍然是原生 create_text（量出来的宽度直接决定药丸宽度，relabel() 语言
+切换只是重新量一次再重画，不用管图片跟文字对不齐的问题）；选中态药丸的
+圆角矩形改成 PIL 超采样抗锯齿位图（见 _selected_pill_image()），不再用
+Canvas create_polygon(smooth=True) 那个手法——原生多边形没有抗锯齿，选中
+药丸这种大面积纯色圆角在这台机器上肉眼能看出台阶感，PIL 超采样能画出真
+正平滑的圆角。这跟 card_frame.py 里放弃掉的那版 PIL 圆角方案不是一回
+事，见 _selected_pill_image() 里的说明。
 """
 
 import tkinter as tk
 from tkinter import font as tkfont
 
+from PIL import Image, ImageDraw, ImageTk
+
 from dstools.gui import theme
 
 _HEIGHT = 44
 _PILL_H = 34
-_GAP = 10
+# >= custom_titlebar.py 里缩放角手柄的边长（ResizeGrips 的 g = 2*_GRIP =
+# 12px）——第一个药丸的圆角矩形如果紧贴 x=0 起画，会被叠在最上层、缩放用
+# 的左上角手柄方块盖掉一角（真机截图确认过：选中态的"本地服务器"药丸左
+# 上角缺一小块，跟之前"文件"菜单项悬停高亮矩形缺角是同一类问题——手柄
+# 用来保证缩放拖拽的点击热区在最上层，本身没画错，只是離 x=0 太近的不透
+# 明内容都会被它压住）。留出 >=12px 的起始间距，药丸圆角矩形就完全落在
+# 手柄范围之外，不需要再去改手柄本身的尺寸/位置。
+_GAP = 14
 _HPAD = 18  # horizontal padding inside a pill, around the label
+
+_PILL_IMG_CACHE: dict[tuple, "ImageTk.PhotoImage"] = {}
+_PILL_SUPERSAMPLE = 4
+
+
+def _selected_pill_image(w: int, h: int, radius: int, color: str) -> "ImageTk.PhotoImage":
+    """选中态药丸的圆角矩形位图，按 (宽, 高, 圆角, 颜色) 缓存——同一个标
+    签在同一语言下量出来的宽高是固定值，resize/切主题/切语言重画时基本都
+    命中缓存，不会重复超采样。超采样 4 倍画完再用 LANCZOS 缩回目标尺寸，
+    边缘天然带抗锯齿，比 Canvas 原生 create_polygon(smooth=True) 的台阶感
+    明显平滑。
+
+    跟 card_frame.py 顶部说明里提到、后来被放弃的那版 PIL 圆角方案不是一
+    回事：那版是"把背景图裁成圆角再跟半透明色块合成"，出过换背景图不触发
+    重新生成（缓存 key 只认窗口尺寸）、以及半透明 PhotoImage 圆角边缘在这
+    台机器上出黑边这两个问题。这里画的是不透明纯色药丸，不裁剪/合成任何
+    背景图片，缓存 key 也完全不依赖窗口尺寸或背景图状态，不会遇到同一类
+    问题。"""
+    key = (w, h, radius, color)
+    cached = _PILL_IMG_CACHE.get(key)
+    if cached is not None:
+        return cached
+    s = _PILL_SUPERSAMPLE
+    img = Image.new("RGBA", (w * s, h * s), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.rounded_rectangle((0, 0, w * s - 1, h * s - 1), radius=radius * s, fill=color)
+    img = img.resize((w, h), Image.LANCZOS)
+    photo = ImageTk.PhotoImage(img)
+    _PILL_IMG_CACHE[key] = photo
+    return photo
 
 
 class PillTabBar(tk.Frame):
@@ -136,17 +178,14 @@ class PillTabBar(tk.Frame):
             x1, y1, x2, y2 = x, cy - _PILL_H / 2, x + pill_w, cy + _PILL_H / 2
             selected = key == self._selected
             if selected:
-                self._rounded_rect(x1, y1, x2, y2, _PILL_H / 2,
-                                    fill=theme.PRIMARY, outline="")
+                pill_w = int(round(x2 - x1))
+                pill_h = int(round(y2 - y1))
+                photo = _selected_pill_image(pill_w, pill_h, int(_PILL_H / 2), theme.PRIMARY)
+                # 保留一份引用防止被垃圾回收——create_image() 本身不会替
+                # 调用方存活这份 PhotoImage，_PILL_IMG_CACHE 模块级缓存已
+                # 经够用，这里不需要再额外存一份到 self。
+                c.create_image(int(round(x1)), int(round(y1)), image=photo, anchor=tk.NW)
             fg = "#FFFFFF" if selected else theme.TEXT_MUTED
             c.create_text((x1 + x2) / 2, cy, text=label, fill=fg, font=self._font)
             self._regions.append((x1, x2, key))
             x = x2 + _GAP
-
-    def _rounded_rect(self, x1, y1, x2, y2, r, **kw):
-        points = [
-            x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
-            x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
-            x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
-        ]
-        return self._canvas.create_polygon(points, smooth=True, **kw)

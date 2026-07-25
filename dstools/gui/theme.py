@@ -52,17 +52,31 @@ from dstools.core.app_settings import get_theme_name
 # 后要加回别的主题，还是"加一个 dict + 追加一个名字"就够了（见本文件顶部
 # docstring "Adding a new theme" 一节）。
 #
-# WINDOW_ALPHA / FONT_FAMILY / CARD_RADIUS / BG_IMAGE_ENABLED / CARD_MARGIN
-# 这五个字段：
+# WINDOW_ALPHA / FONT_FAMILY / FONT_SIZE_* / CARD_RADIUS / BG_IMAGE_ENABLED /
+# CARD_MARGIN 这几个字段：
 # - WINDOW_ALPHA：整窗透明度（Tk 在 Windows 上唯一稳定支持的真透明手
 #   段），1.0 = 不透明，apply_theme() 里调 root.attributes("-alpha", ...)。
 #   这套主题目前设成 1.0（不透明）——之前试过 0.92 的整窗透明效果，用户
 #   反馈要去掉，"透明"这个需求只保留下面"自定义背景图片"这一处（图片本
 #   身按不透明度跟背景色混合），不是整个窗口透视桌面。
-# - FONT_FAMILY：""（空串）等价于现在到处硬编码的 font=("", 11) 里的""，
-#   意思是"用 Tk 系统默认字体"；这套主题换成一个更纤细的字体族，只用在
-#   顶部菜单条 (gui/app.py) 和胶囊页签 (gui/pill_tabs.py) 这两个全局最显
-#   眼的位置，不做全项目字体大扫荡。
+# - FONT_FAMILY："Microsoft YaHei UI Light"（微软雅黑 Light，字体文件
+#   msyhl.ttc，Windows 10/11 通常自带）——项目全程中英文混排，这款字体本
+#   身自带完整中文字形，不需要像纯拉丁字体（如以前用过的 "Segoe UI
+#   Light"）那样依赖 Windows 字体链接去把中文字符临时换到另一款字体上画，
+#   贯穿 ttk 全局样式、tk 原生控件、pill_tabs.py/custom_titlebar.py 这类
+#   自绘控件统一用这一个族名。fonts.py 里 PIL 光栅面板（世界设置/Mod 卡
+#   片等整块渲染成图片的地方）走的是独立的字体文件加载，不读这个常量，
+#   但候选列表里同样把 msyhl.ttc 放在最前面，观感对齐。Tk 对不存在的字体
+#   族名不会报错，只会静默回退成系统默认字体，某台机器没装这个变体也不
+#   会崩溃，只是看不出字体差异。
+# - FONT_SIZE_XL/LG/MD/BASE/SM/XS：统一的字号阶梯，替代过去散落在
+#   gui/app.py 等文件里几十处 font=("", 具体数字) 的硬编码写法（8/9/10/
+#   11/12/15/18 混用、同一层级信息在不同页签字号还对不上）。约定：XL=大
+#   标题/强调横幅，LG=对话框主标题/分区大标题，MD=小节标题/加粗强调行，
+#   BASE=默认正文，SM=次要/辅助说明文字，XS=最小的备注/ID 一类细节文字。
+#   等宽字体（路径、Token 等原始数据展示）不在这套阶梯里，那是刻意用
+#   "Consolas" 标识"这是一段可复制的原始数据"，跟本阶梯的语义不同，各调
+#   用点保留自己单独写 font=("Consolas", N)。
 # - CARD_RADIUS：CardFrame（四个主 tab 外层"玻璃卡片"容器）的圆角半径。
 # - BG_IMAGE_ENABLED：只有它为 True，才会去画用户在 core/custom_
 #   background.py 里设置的自定义背景图。画这张图的地方见
@@ -80,11 +94,10 @@ _THEMES = {
         "CARD_BG": "#FDFEFE", "CARD_BG_ALT": "#EFF3F4", "CARD_BORDER": "#D6DEE1",
         "SHADOW": "#C9D3D6", "ERROR": "#c62828", "HEADING": "#33393D",
         "BANNER_BG": "#fff3cd", "BANNER_TEXT": "#856404",
-        # Windows 上通常自带的一款更纤细的 UI 字体变体；Tk 对不存在的字体
-        # 族名不会报错，只会静默回退成系统默认字体，即便某台机器上没装
-        # 这款变体也不会崩溃，只是看不出字体差异。
-        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Segoe UI Light", "CARD_RADIUS": 34,
+        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
         "BG_IMAGE_ENABLED": True, "CARD_MARGIN": 24,
+        "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
+        "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
     },
 }
 THEME_NAMES = ["custom_bg"]  # 菜单里出现的顺序，目前只有这一套
@@ -111,6 +124,12 @@ FONT_FAMILY = _active["FONT_FAMILY"]
 CARD_RADIUS = _active["CARD_RADIUS"]
 BG_IMAGE_ENABLED = _active["BG_IMAGE_ENABLED"]
 CARD_MARGIN = _active["CARD_MARGIN"]
+FONT_SIZE_XL = _active["FONT_SIZE_XL"]
+FONT_SIZE_LG = _active["FONT_SIZE_LG"]
+FONT_SIZE_MD = _active["FONT_SIZE_MD"]
+FONT_SIZE_BASE = _active["FONT_SIZE_BASE"]
+FONT_SIZE_SM = _active["FONT_SIZE_SM"]
+FONT_SIZE_XS = _active["FONT_SIZE_XS"]
 
 
 def set_theme(name: str) -> None:
@@ -121,7 +140,8 @@ def set_theme(name: str) -> None:
     global _active, PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, BG_SOFT, ACCENT, \
         TEXT, TEXT_MUTED, CARD_BG, CARD_BG_ALT, CARD_BORDER, SHADOW, ERROR, \
         HEADING, BANNER_BG, BANNER_TEXT, WINDOW_ALPHA, FONT_FAMILY, CARD_RADIUS, \
-        BG_IMAGE_ENABLED, CARD_MARGIN
+        BG_IMAGE_ENABLED, CARD_MARGIN, FONT_SIZE_XL, FONT_SIZE_LG, FONT_SIZE_MD, \
+        FONT_SIZE_BASE, FONT_SIZE_SM, FONT_SIZE_XS
     _active = _THEMES.get(name) or _THEMES["custom_bg"]
     PRIMARY = _active["PRIMARY"]
     PRIMARY_DARK = _active["PRIMARY_DARK"]
@@ -143,6 +163,12 @@ def set_theme(name: str) -> None:
     BG_IMAGE_ENABLED = _active["BG_IMAGE_ENABLED"]
     CARD_MARGIN = _active["CARD_MARGIN"]
     BANNER_TEXT = _active["BANNER_TEXT"]
+    FONT_SIZE_XL = _active["FONT_SIZE_XL"]
+    FONT_SIZE_LG = _active["FONT_SIZE_LG"]
+    FONT_SIZE_MD = _active["FONT_SIZE_MD"]
+    FONT_SIZE_BASE = _active["FONT_SIZE_BASE"]
+    FONT_SIZE_SM = _active["FONT_SIZE_SM"]
+    FONT_SIZE_XS = _active["FONT_SIZE_XS"]
 
 # Semantic (data) color -- "running" status in local_service_tab.py. Kept
 # separate from the switchable palette since it stays the same across every

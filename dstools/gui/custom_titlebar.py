@@ -38,6 +38,13 @@ if IS_WINDOWS:
 
     GWL_EXSTYLE = -20
     WS_EX_APPWINDOW = 0x00040000
+    # SetWindowPos 的几个标志位，只用来在改完 GWL_EXSTYLE 之后触发一次
+    # "样式生效"的刷新（见 apply_borderless_style() 里的说明），不实际
+    # 移动/缩放/改层叠顺序，所以三个 NOxxx 都要带上。
+    SWP_NOSIZE = 0x0001
+    SWP_NOMOVE = 0x0002
+    SWP_NOZORDER = 0x0004
+    SWP_FRAMECHANGED = 0x0020
 
     user32 = ctypes.windll.user32
     user32.GetParent.argtypes = [wintypes.HWND]
@@ -46,10 +53,16 @@ if IS_WINDOWS:
     user32.GetWindowLongW.restype = ctypes.c_long
     user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
     user32.SetWindowLongW.restype = ctypes.c_long
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                     ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+    user32.SetWindowPos.restype = wintypes.BOOL
     user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.ShowWindow.restype = wintypes.BOOL
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
 
     SW_MINIMIZE = 6
+    SW_RESTORE = 9
 
 
 def minimize_window(root: tk.Tk) -> None:
@@ -68,15 +81,106 @@ def minimize_window(root: tk.Tk) -> None:
     root.withdraw()  # 非 Windows/调用失败时的兜底，至少能把窗口藏起来
 
 
+def restore_window(root: tk.Tk) -> None:
+    """从"任意一种隐藏状态"恢复显示——配合 minimize_window()：窗口可能是
+    被标题栏最小化按钮（原生 ShowWindow(SW_MINIMIZE)）藏起来的，也可能是
+    被 DSToolsApp._minimize_to_tray()（Tk 自己的 root.withdraw()）藏起来
+    的，这是两条完全不同的路径，只调 Tk 的 root.deiconify() 只能撤销后
+    者——真机反馈过"没勾选'关闭时最小化到任务栏'时点托盘图标没反应"，根
+    因就是这种情况下用户是拿标题栏的最小化按钮把窗口藏起来的（那个按钮
+    走的是原生 ShowWindow 分支，跟这个复选框设置完全无关），Tk 自己并
+    不知道窗口是被原生调用最小化的，deiconify() 对这种情况不起作用。原
+    生 ShowWindow(SW_RESTORE) 能同时处理这两种情况（不管窗口当前是原生
+    最小化还是被 Tk 隐藏，都能正常显示回来），所以两边都调一遍，互为兜
+    底——原生调用负责真正让窗口可见，root.deiconify() 负责让 Tk 自己的
+    内部状态跟着同步（不然 Tk 会一直以为窗口还处于 withdraw 状态），
+    root.lift() + SetForegroundWindow 保证不仅显示出来、还真的抢到前
+    台，不是"显示了但盖在别的窗口下面"。"""
+    if IS_WINDOWS:
+        try:
+            user32.ShowWindow(_get_hwnd(root), SW_RESTORE)
+        except Exception:
+            pass
+    root.deiconify()
+    root.lift()
+    if IS_WINDOWS:
+        try:
+            user32.SetForegroundWindow(_get_hwnd(root))
+        except Exception:
+            pass
+
+
 def _get_hwnd(root: tk.Tk) -> int:
     root.update_idletasks()
     return user32.GetParent(root.winfo_id()) or root.winfo_id()
 
 
+def ensure_taskbar_visible(root: tk.Tk, refresh_shell: bool = False) -> bool:
+    """加回 WS_EX_APPWINDOW 这个扩展样式位，强制这个 overrideredirect 窗
+    口在任务栏/Alt+Tab 里显示（默认没有）。**设计成随时可以重复调用**
+    （幂等，不是"只在启动时调一次"）——真机调试确认过一个不直观的坑：
+    `root.attributes("-alpha", ...)` 在 Windows 上的 Tk 实现会整体重写
+    这个窗口的 GWL_EXSTYLE（不是"在当前值基础上按位或"，是直接覆盖成 Tk
+    自己维护的一份值），会把我们外部加上去的 WS_EX_APPWINDOW 位冲掉。
+    `theme.apply_theme()` 每次调用都会走一次 `attributes("-alpha", ...)`
+    （即使目标透明度是 1.0 不透明也一样会触发这条内部逻辑），而它在
+    `DSToolsApp.__init__()` 里紧跟在 `apply_borderless_style()` 后面调
+    用一次、`_switch_theme()` 切主题时还会再调用——每次都会把刚设置好
+    的样式位冲掉，表现为"任务栏图标/Alt+Tab 时有时无"（取决于窗口创建
+    时序的巧合，不是每次都能复现，真机调试时复现过"任务栏完全找不到这
+    个应用"）。所以这个函数不能只在启动时调一次，需要在每次
+    `theme.apply_theme()` 之后都重新调一遍（见 `gui/app.py` 的两处调用
+    点），单靠开头调一次不够。
+
+    SetWindowLongW 只是把新样式写进窗口的内部结构，Windows 自己不会因
+    为这一步就重新去判断"这个窗口该不该有任务栏按钮"——必须紧跟一次
+    SetWindowPos(..., SWP_FRAMECHANGED) 才会真正触发 shell 重新评估。这
+    一步曾经在一次死代码清理里被当成"只服务于已放弃的阴影方案"给删掉过
+    （当时的判断依据是它在代码里只有一处引用），这里补回来。
+
+    refresh_shell：补上 SetWindowPos 之后，真机验证发现任务栏图标启动时
+    仍然不出现——只有点一下这个窗口（激活/前台切换）或者 Alt+Tab 切过来
+    才会突然冒出来。说明 explorer.exe 的任务栏是在"窗口第一次显示
+    (ShowWindow)"或者"窗口被激活"这类事件上才决定要不要建按钮的，单纯
+    SetWindowPos(FRAMECHANGED) 只会让窗口自己重绘非客户区，不足以让已经
+    "路过一次"的任务栏回头重新扫描这个窗口。用 `root.withdraw()` +
+    `root.deiconify()` 强制走一遍"隐藏再显示"，让 explorer 在窗口样式已
+    经带着 WS_EX_APPWINDOW 的情况下重新收到一次"这个窗口显示了"的事
+    件，从而在第一次启动时就正确建好任务栏按钮。
+
+    `DSToolsApp.__init__()` 里紧跟第一次 `theme.apply_theme()` 之后就调
+    一次（`refresh_shell=True`）——早期版本放在 `__init__` 最后、整棵控
+    件树（标题栏/菜单/五个页签）都建完之后才调，闪烁的是已经建好的完整
+    界面、观感更平滑，但代价是任务栏图标要等这一整个构建过程跑完才出
+    现，真机反馈"进去等一会才出现"，不像点击就近乎同时出现那么符合预
+    期；改成紧跟第一次 theme.apply_theme() 之后调，闪烁的是刚设完样式、
+    内容还没填充的空窗口（代价是这一下闪烁可能更明显一点，构建过程中
+    Tk 本来就会逐步把内容画出来，实测这个空窗口闪烁不算突兀），换来任
+    务栏图标基本跟点击启动同时出现，两者取舍过后选了这一版。
+    `_switch_theme()` 那次不传——那时任务栏按钮已经建好了，没必要再闪一
+    次，只需要把样式位找补回来防止后续某个环节读到错误的值。"""
+    if not IS_WINDOWS:
+        return False
+    try:
+        hwnd = _get_hwnd(root)
+        ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_APPWINDOW)
+        user32.SetWindowPos(hwnd, None, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
+        if refresh_shell:
+            root.withdraw()
+            root.deiconify()
+        return True
+    except Exception:
+        return False
+
+
 def apply_borderless_style(root: tk.Tk) -> dict:
     """弃用原生标题栏 + 尽量恢复任务栏可见性。只在启动时调用一次，全程只
     是设置几个窗口样式位，不涉及消息钩子。返回一个 dict 记录每一步是否
-    成功，纯调试用，不影响功能。
+    成功，纯调试用，不影响功能。**任务栏可见性这一步后续还得在
+    `theme.apply_theme()` 之后重新调用 `ensure_taskbar_visible()`，见该
+    函数文档字符串——这里的调用只是"第一次设置"，不是唯一一次。**
 
     窗口默认就是直角方形，不尝试 DWM 圆角——`DWMWA_WINDOW_CORNER_
     PREFERENCE` 只有 Windows 11 才支持，这台目标机器是 Windows 10，调用
@@ -90,14 +194,7 @@ def apply_borderless_style(root: tk.Tk) -> dict:
     if not IS_WINDOWS:
         return result
     try:
-        hwnd = _get_hwnd(root)
-
-        # 任务栏/Alt+Tab 可见性：overrideredirect 窗口默认没有任务栏图
-        # 标、Alt+Tab 也看不到，加回 WS_EX_APPWINDOW 这个扩展样式位强制
-        # 找回来。
-        ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_APPWINDOW)
-        result["taskbar"] = True
+        result["taskbar"] = ensure_taskbar_visible(root)
 
         # 阴影：这台机器上实测过公认的两种做法都会破坏渲染——
         # "WS_CAPTION + DwmExtendFrameIntoClientArea" 直接把整个客户区
@@ -141,27 +238,54 @@ class ResizeGrips:
     _DRAG_THROTTLE_MS = 16  # ~60fps，跟项目里其它 resize 节流保持一致
 
     def __init__(self, root: tk.Tk, app, base_width: int, base_height: int,
-                 bottom_reserve: int = 0, top_reserve: int = 0):
-        """bottom_reserve：底部状态栏（app.py 的 self._status_bar）实际
-        渲染高度（像素）——south 相关的手柄（s/sw/se）要让开这一整行，不
-        能像其它几个手柄一样直接铺到窗口物理边缘：状态栏文字（比如
-        "Klei: ..."）几乎贴着窗口底边（padding 只有 2px），手柄一旦盖过
-        去就会挡住文字最下面几像素（真机截图确认过左下角"K"被啃掉一
-        块）。
+                 bottom_reserve: int = 0, top_reserve: int = 0,
+                 bottom_grip: int | None = None, top_grip: int | None = None):
+        """n/nw/ne 三个手柄现在**始终贴在窗口真实顶边**（y=0，固定值，
+        不受 top_reserve 影响），尺寸用 top_grip——早期版本靠 top_reserve
+        把它们整体下移一整条标题栏+菜单条的高度，用户反馈"应该跟
+        Windows 一样能在左上/右上角直接拖拽缩放"，这里改成跟原生窗口一
+        样的思路：真正贴边的是一条很细的缩放热区，可点击的按钮本身反而
+        离真实边缘留一点点距离（见 `CustomTitleBar._EDGE_MARGIN`，标题栏
+        关闭/最小化按钮的可点击矩形从 y=`_EDGE_MARGIN` 开始画，不再铺到
+        y=0），两者刚好首尾相接、不重叠：n/nw/ne 占
+        `[0, top_grip]`（边）/`[0, 2*top_grip]`（角），按钮占
+        `[_EDGE_MARGIN, 标题栏高度]`，只要 `2*top_grip <= _EDGE_MARGIN`
+        就不会互相盖住。
 
-        top_reserve：顶部自定义标题栏（`CustomTitleBar._HEIGHT`）的高
-        度——同理，n/nw/ne 这三个手柄本来紧贴窗口物理顶边，会盖住标题栏
-        最上面几像素，恰好就是最小化/关闭按钮所在的位置，把按钮"抠"掉
-        一角、右边缘的 e 手柄同理会在按钮右侧连成一条竖线（真机截图确
-        认过，见 gui/app.py 里贴的两张标注图）。跟 bottom_reserve 完全
-        对称的处理：n/nw/ne 往下让开 top_reserve，w/e 的可拖拽范围也从
-        `[0, 窗口高度]` 收窄成 `[top_reserve, 窗口高度-bottom_reserve]`。
-        手柄本身的屏幕位置跟着让开，但 `_on_press`/`_on_drag` 读的还是
-        `root.winfo_y()`/`winfo_height()` 这些窗口真实边界，缩放逻辑不
-        受影响——用户拖的手柄不在窗口最顶边，但缩放的仍然是整个窗口。
+        top_reserve：w/e 两条竖边的可拖拽范围上边界（`[top_reserve, 窗口
+        高度-bottom_reserve]`），依然要给一个能越过整条标题栏+菜单条的
+        值（app.py 传的还是 `标题栏高度+菜单条高度`，没有变）——这两条边
+        贴着窗口左右两侧、贯穿几乎整个高度，如果只越过按钮那一小段就把
+        下限收窄到贴着按钮下边缘，会在标题栏这一段里把关闭按钮最右侧几
+        像素连成一条竖直的死条（关闭按钮本来就贴着窗口右边缘，真实
+        Windows 窗口里贴着标题栏的这一段边缘本来就不参与缩放，只有标题
+        栏下方的普通窗体边框才是缩放热区）。n/nw/ne 单独拆出来贴真实顶
+        边，不代表 w/e 的下限也要跟着收紧，两者是分开处理的两件事。
+
+        bottom_reserve：south 相关手柄（s/sw/se）离窗口真实底边的距离，
+        默认 0（贴到真实底边）——不像 top_reserve 那样需要让开一整条标
+        题栏（标题栏上有必须能点到的最小化/关闭按钮，功能性刚需），状态
+        栏（app.py 的 self._status_bar）从头到尾都只是纯文字，没有任何
+        可点击控件，真正需要避开的只是"别把手柄画在文字上"这一件事，用
+        不着让开整条状态栏的高度——早期版本直接让
+        bottom_reserve=状态栏整条渲染高度，缩放热区整条排除在外，鼠标要
+        挪到状态栏上边缘以上才有缩放光标，最左下/最右下附近完全够不到，
+        用户反馈像状态栏"不属于"主窗口；后来改成状态栏额外加高一条纯空
+        白给手柄用，又被反馈"底下空一大块很奇怪"（视觉改动太明显）。两
+        版都不理想，现在的做法是两头都不动：状态栏还是原来的高度/内容，
+        手柄本身通过 bottom_grip 缩小到能塞进状态栏文字自带的那几像素留
+        白里，不需要改状态栏的布局。
+
+        bottom_grip/top_grip：south/north 手柄（边用作厚度，角用作方形
+        边长的一半）的尺寸，默认都等于 `_GRIP`（跟 w/e 一样粗）。app.py
+        传小一点的值——状态栏文字上下留白、标题栏按钮上方新留出来的
+        `_EDGE_MARGIN`都只有几像素，`_GRIP`(6)/角手柄 2*_GRIP(12) 那个厚
+        度直接贴到真实边缘会盖住文字/按钮，缩小到能塞进留白里的尺寸，代
+        价是这两边摸起来比 w/e 细一点，比"完全够不到"仍然是明显的可用性
+        提升。
 
         宽高比锁死，从任何一条边/角拖都能等效缩放整个窗口，让开标题栏/
-        状态栏这两行不影响缩放操作本身。"""
+        缩小手柄尺寸都不影响缩放操作本身。"""
         self.root = root
         self._app = app
         self.aspect = base_width / base_height
@@ -172,28 +296,33 @@ class ResizeGrips:
         self._pending_rect = None
         self._drag_after_id = None
 
-        # 4 条边（沿窗口铺满，两端各让开 _GRIP*2 给角上的手柄）+ 4 个角
-        # （固定正方形，钉在角上）。字典写死每种手柄的 place() 参数，比
-        # 用公式套所有情况更直接、容易核对。north 三个手柄用 y=top_reserve
-        # 整体下移让开标题栏，south 三个手柄用 y=-bottom_reserve 整体上
-        # 移让开状态栏；w/e 改成从左上/右上角(而不是居中)定位，配合
-        # relheight=1.0 + height=-(...) 让实际拖拽范围正好卡在标题栏和
-        # 状态栏之间。
-        g = 2 * self._GRIP
+        # 4 条边（沿窗口铺满，两端各让开对应角手柄的边长）+ 4 个角（固定
+        # 正方形，钉在角上）。字典写死每种手柄的 place() 参数，比用公式套
+        # 全部情况更直接、容易核对。n/nw/ne 固定贴在 y=0（真实顶边），尺
+        # 寸用 top_grip（不再靠位置偏移让开标题栏，改成尺寸本身够小，见
+        # 上面 __init__ 文档字符串）；s/sw/se 同理贴在真实底边，尺寸用
+        # bottom_grip；w/e 从左上/右上角（而不是居中）定位，配合
+        # relheight=1.0 + height=-(...) 让实际拖拽范围正好卡在
+        # top_reserve 和 bottom_reserve 之间。
+        grip = self._GRIP
+        tg_grip = grip if top_grip is None else top_grip
+        tg = 2 * tg_grip
+        bg_grip = grip if bottom_grip is None else bottom_grip
+        bg = 2 * bg_grip
         v_shrink = top_reserve + bottom_reserve
         grip_place_kw = {
-            "n":  dict(anchor="n",  relx=0.5, rely=0.0, y=top_reserve,
-                       relwidth=1.0, width=-g, height=self._GRIP),
+            "n":  dict(anchor="n",  relx=0.5, rely=0.0, y=0,
+                       relwidth=1.0, width=-tg, height=tg_grip),
             "s":  dict(anchor="s",  relx=0.5, rely=1.0, y=-bottom_reserve,
-                       relwidth=1.0, width=-g, height=self._GRIP),
+                       relwidth=1.0, width=-bg, height=bg_grip),
             "w":  dict(anchor="nw", relx=0.0, rely=0.0, y=top_reserve,
-                       relheight=1.0, height=-v_shrink, width=self._GRIP),
+                       relheight=1.0, height=-v_shrink, width=grip),
             "e":  dict(anchor="ne", relx=1.0, rely=0.0, y=top_reserve,
-                       relheight=1.0, height=-v_shrink, width=self._GRIP),
-            "nw": dict(anchor="nw", relx=0.0, rely=0.0, y=top_reserve, width=g, height=g),
-            "ne": dict(anchor="ne", relx=1.0, rely=0.0, y=top_reserve, width=g, height=g),
-            "sw": dict(anchor="sw", relx=0.0, rely=1.0, y=-bottom_reserve, width=g, height=g),
-            "se": dict(anchor="se", relx=1.0, rely=1.0, y=-bottom_reserve, width=g, height=g),
+                       relheight=1.0, height=-v_shrink, width=grip),
+            "nw": dict(anchor="nw", relx=0.0, rely=0.0, y=0, width=tg, height=tg),
+            "ne": dict(anchor="ne", relx=1.0, rely=0.0, y=0, width=tg, height=tg),
+            "sw": dict(anchor="sw", relx=0.0, rely=1.0, y=-bottom_reserve, width=bg, height=bg),
+            "se": dict(anchor="se", relx=1.0, rely=1.0, y=-bottom_reserve, width=bg, height=bg),
         }
         cursors = {
             "n": "sb_v_double_arrow", "s": "sb_v_double_arrow",
@@ -313,16 +442,35 @@ class CustomTitleBar(BgFrame):
 
     _HEIGHT = 32
     _BTN_W = 46
+    # 按钮组的可点击/悬停矩形离窗口真实顶边/右边各留 _EDGE_MARGIN——留出
+    # 来的这一圈给 ResizeGrips 的 n/nw/ne 手柄用（那几个手柄现在贴在窗口
+    # 真实顶边/右上角，尺寸正好是 _EDGE_MARGIN，见 custom_titlebar.py 里
+    # ResizeGrips 的说明），跟原生 Windows 窗口的观感一致（用户拿真实
+    # Windows 窗口截图核对过：关闭按钮的悬停高亮离窗口顶边、右边都留了
+    # 一点点距离，不是紧贴着画的）——最顶上/最右侧几像素永远是缩放热
+    # 区，按钮本身离真实边缘留一点点距离，两者贴着但不重叠，不会互相
+    # "抠"。第一版只在 y 方向留了这圈空隙（`_TOP_MARGIN`），x 方向（右
+    # 边）还是直接铺到窗口真实右边缘，被用户截图对比出"紧贴右侧"跟参考
+    # 图不一致，改成两边都留；后来用户反馈这个空隙看着偏大，又调小了一
+    # 次。跟 ResizeGrips 的 top_grip 是配套的一对数字，改这个值时
+    # gui/app.py 里传给 ResizeGrips 的 top_grip 也要跟着改（
+    # `2*top_grip <= _EDGE_MARGIN`，否则角手柄会比留白还大，重新盖住按
+    # 钮）。
+    _EDGE_MARGIN = 5
 
     def __init__(self, root: tk.Tk, app, icon_path=None):
         super().__init__(root, app, bg=theme.CARD_BG)
         self.configure(height=self._HEIGHT, cursor="")
         self.root = root
         self._app = app
-        self._title_font = tkfont.Font(size=10)
-        # 最小化用"−"（半角减号，比原来的"─"box-drawing 横线短很多，视
-        # 觉上不会显得那么长）；关闭"×"字号调大，两个按钮观感上更接近常
-        # 见标题栏的比例（关闭更醒目、最小化更收敛）。
+        self._title_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_SM)
+        # 最小化/关闭按钮的"−"/"×"是纯符号字形，不是给人读的文字内容，
+        # 刻意不跟 theme.FONT_FAMILY 走——Segoe UI 画这两个符号字形干净、
+        # 字重稳定，换成雅黑细体这类 CJK 字体反而可能出现符号变形/字重不
+        # 一致，标题文字（上面 _title_font）才是真正要统一字体族的地方。
+        # "−"（半角减号，比原来的"─"box-drawing 横线短很多，视觉上不会显
+        # 得那么长）；关闭"×"字号调大，两个按钮观感上更接近常见标题栏的
+        # 比例（关闭更醒目、最小化更收敛）。
         self._min_font = tkfont.Font(family="Segoe UI", size=10)
         self._close_font = tkfont.Font(family="Segoe UI", size=13)
         self._icon_photo = None
@@ -350,7 +498,12 @@ class CustomTitleBar(BgFrame):
 
     # ── 拖拽移动（排除按钮区域） ─────────────────────────────────────
     def _hit_button(self, x, y) -> bool:
-        return any(b["x1"] <= x <= b["x2"] for b in self._btn_regions)
+        # y < _EDGE_MARGIN 那一小条已经让给 ResizeGrips 的 n/nw/ne 手柄
+        # 了（见 _redraw() 里按钮矩形从 y=_EDGE_MARGIN 开始画），正常情况
+        # 下手柄在层叠顺序里更靠上，这一条不会真的被点到——这里补上 y 判
+        # 断只是让这个方法自己的语义跟实际画出来的按钮范围保持一致，不依
+        # 赖"反正手柄会先接住"这个假设。
+        return any(b["x1"] <= x <= b["x2"] and y >= self._EDGE_MARGIN for b in self._btn_regions)
 
     def _on_press(self, event):
         if self._hit_button(event.x, event.y):
@@ -390,13 +543,17 @@ class CustomTitleBar(BgFrame):
         self.create_text(x, cy, text=t("app.title"), anchor=tk.W, fill=theme.TEXT,
                           font=self._title_font, tags="titlebar_content")
 
-        # 右侧按钮：关闭在最右，最小化紧挨着它左边——从右往左排列。
+        # 右侧按钮：关闭在最右，最小化紧挨着它左边——从右往左排列。整组
+        # 起点从 w 让开 _EDGE_MARGIN，只影响"关闭"按钮离窗口真实右边缘的
+        # 距离，"最小化"按钮相对"关闭"按钮的位置不受影响（不需要单独再
+        # 让一次）。
         self._btn_regions = []
-        bx = w
+        bx = w - self._EDGE_MARGIN
         for key, glyph, font, hover_bg in (("close", "×", self._close_font, theme.ERROR),
                                             ("minimize", "−", self._min_font, theme.BG_SOFT)):
             x1 = bx - self._BTN_W
-            rect_id = self.create_rectangle(x1, 0, bx, h, fill="", outline="", tags="titlebar_content")
+            rect_id = self.create_rectangle(x1, self._EDGE_MARGIN, bx, h, fill="", outline="",
+                                             tags="titlebar_content")
             self.create_text((x1 + bx) / 2, cy, text=glyph, anchor=tk.CENTER, fill=theme.TEXT,
                               font=font, tags="titlebar_content")
             self._btn_regions.append({"x1": x1, "x2": bx, "key": key, "rect_id": rect_id,
@@ -405,7 +562,7 @@ class CustomTitleBar(BgFrame):
 
     def _on_motion(self, event):
         for b in self._btn_regions:
-            hovering = b["x1"] <= event.x <= b["x2"]
+            hovering = self._hit_button(event.x, event.y) and b["x1"] <= event.x <= b["x2"]
             self.itemconfigure(b["rect_id"], fill=b["hover_bg"] if hovering else "")
         self.configure(cursor="hand2" if self._hit_button(event.x, event.y) else "")
 
@@ -414,6 +571,8 @@ class CustomTitleBar(BgFrame):
             self.itemconfigure(b["rect_id"], fill="")
 
     def _on_click(self, event):
+        if not self._hit_button(event.x, event.y):
+            return
         for b in self._btn_regions:
             if b["x1"] <= event.x <= b["x2"]:
                 if b["key"] == "close":

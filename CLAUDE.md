@@ -67,6 +67,8 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 **硬性规则：任何消费方必须现查 `theme.X`，不能在 import/构造时缓存成自己的一份**（`from theme import PRIMARY` 或模块顶层 `_MY_COLOR = theme.PRIMARY` 都是一次性绑定，之后主题重新赋值跟这份"抄本"无关）。`CardFrame`/`PillTabBar` 这类构造一次、长期存活的容器，`background=` 是构造时焊死的，各自需要显式 `apply_theme()` 方法；`PillTabBar` 的 `tk.font.Font` 同理要用 `.configure()` 重配，不能重建。
 
+**字体**：`FONT_FAMILY` 固定为 `"Microsoft YaHei UI Light"`（原生带中文字形，避免 Windows 字体链接回退到不同字重的问题字体），配合 6 档字号常量 `FONT_SIZE_XL/LG/MD/BASE/SM/XS`（18/15/12/11/10/9）。`core/fonts.py` 里 PIL 栅格化用的字体（`world_render.py` 渲染面板用）要跟 Tk 侧保持视觉一致，优先找 `msyhl.ttc`（微软雅黑 Light）。
+
 ### 自定义背景图片 (`core/custom_background.py` / `gui/bg_frame.py`)
 
 背景图是 `custom_bg` 主题的一部分（"主题"菜单里的 `custom_bg_settings`，不是全局开关）。`custom_background.py` 把图片拷进 `cache_dir("background")`，`render_background()` 居中裁剪到目标比例（不拉伸变形）再按不透明度跟主题色 `Image.blend()`。
@@ -95,13 +97,15 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 三条路径分开处理：标题栏最小化按钮 = 普通最小化任务栏，不碰托盘；关闭按钮（X）按 `app_settings.get_minimize_on_close()` 分流——开则直接最小化到托盘，关则走 `_do_exit()`（有本地服务器在跑才问是否一并关闭，选"否"是取消退出）；菜单"退出"/托盘"退出"走同一个 `_do_exit()`。
 
+**托盘图标常驻**：`TrayIcon.show()` 在 `__init__` 里启动即调用一次，跟"是否最小化"无关，只有 `_do_exit()` 才 `.hide()`——匹配常见应用惯例（开着就有图标，不是只在最小化时才出现）。**还原窗口有两条独立路径要同时处理**：Tk 的 `root.withdraw()`（`_minimize_to_tray()` 用）和原生 `ShowWindow(hwnd, SW_MINIMIZE)`（标题栏最小化按钮，不走 Tk）互不兼容，`root.deiconify()` 只能反转前者；`custom_titlebar.restore_window()` 把原生 `SW_RESTORE` + `deiconify()` + `SetForegroundWindow` 一起做，托盘"显示主窗口"必须调这个，不能只调 `deiconify()`。
+
 ### 世界设置 —— 关键架构，务必先理解再动手
 
 - **`core/world_reader.py`**：只负责 `leveldataoverride.lua` 原始 I/O（`parse_leveldata`/`save_leveldata`），不要往这里加分类/取值逻辑。
 - **`core/world_categories.py`**：分类/排序/双语名唯一真源。**森林和洞穴是两个独立存档文件**，同名 key 两边值可能不同，设置表按"地图×类型"拆成 4 个独立字典（`FOREST_RULES_DICT`/`FOREST_GEN_DICT`/`CAVE_RULES_DICT`/`CAVE_GEN_DICT`），配合 `get_setting_info()`/`get_order()`/`get_categories()` 按 `get_lang()` 现查中英文。注意还有同名但不同用途的**分类列表**变量（如 `CAVE_RULES`，list），别跟 `_DICT` 搞混。
 - **`core/world_icons.py`**：图标映射，`icons/world/` 下有未引用的 PNG（孤岛/暴风雪 DLC 专属，DST 用不上），故意保留。
 - **`core/world_value_sets.py`**：每个 key 的合法取值（`VALUE_SETS`），数据来自游戏自身 `worldsettings_overrides.lua`，用错表会静默改坏设置。
-- **`gui/world_render.py`**：取值颜色/双语翻译 + 用 PIL 把整个分类面板渲染成单张图片（`render_world_panel()`，避免创建成百个 ttk 组件），配合 `image_scroll.py` 滚动，resize 时先按参考宽度渲染、稳定后再按真实宽度重渲染一次。
+- **`gui/world_render.py`**：取值颜色/双语翻译 + 用 PIL 把整个分类面板渲染成单张图片（`render_world_panel()`，避免创建成百个 ttk 组件），配合 `image_scroll.py` 滚动，resize 时先按参考宽度渲染、稳定后再按真实宽度重渲染一次。间距常量（`COL_GAP`/`ROW_GAP`/`CAT_HEADER_ITEM_GAP`，均为未缩放的目标间距）必须和对应方向上"侵入间隙"的圆角/描边侵蚀量（`block_pad_h`/`block_pad_v`）相加后再参与位置计算，不能让固定像素的留白单独存在——固定留白在窗口放大、渲染整体按比例缩放时不会跟着变大，会被侵蚀量反超导致缝隙缩小到重叠（真机放大窗口截图确认过，横向/纵向/分类标题到首行三处都需要同一套修法）。
 
 改这块逻辑时森林/洞穴要分别验证（`reference/config_json/`、`reference/config_txt/` 有 ground-truth 数据）。
 
@@ -112,6 +116,12 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 ### Mod 配置解析 (`core/modinfo_reader.py`)
 
 `parse_modinfo()` 提取 `configuration_options`，绝大多数 mod 靠纯文本/正则覆盖。**唯一例外 `core/lua_sandbox.py`**：极少数 mod 用代码动态拼选项，退化到一个收窄的 Lua 5.1 沙箱（`lupa.lua51`）。关键约束：只在用户打开某个 mod 配置弹窗时触发，不影响批量扫描性能；永远在**子进程**里跑、带硬超时（防死循环卡住主线程）；子进程里 `os`/`io`/`require`/`load`/`debug` 全局置空；任何失败一律返回 `None`（标记 `is_dynamic`/`unsupported_schema`），**从不猜测**。动手前读一遍 `lua_sandbox.py` 顶部说明。
+
+`resolve_full_modinfo()`（Mod 管理页签"完整解析"用的沙箱全量结果）跑一次有明显耗时，`core/mod_resolve_cache.py` 按 workshop_id 做磁盘持久化缓存（`cache_dir("mod_full_resolve")`，`modinfo.lua` mtime 失效判断，跟 `mod_icons.py` 图标缓存同一套模式），配合 `ModManagerTab`/`ModConfigDialog` 里已有的内存缓存一起用——内存缓存进程重启即丢，磁盘缓存补上这一层，避免每次启动都重新跑一遍沙箱解析。
+
+### 纹理转换 (`core/tex_convert.py`)
+
+`ktech.exe`（`tools/ktools/`，第三方）把 mod 图标 `.tex` 转成 `.png`。**已验证的坑**：ktech.exe 的 argv 走系统 ANSI 代码页而非 Unicode，输出路径带中文会直接失败（`WriteBlob Failed`），输入路径带中文没问题；Windows 8.3 短路径名（`GetShortPathNameW`）这台机器上全局禁用，绕不过去。现在的做法是**永远先让 ktech.exe 写到 `tempfile.TemporaryDirectory()`（保证纯 ASCII），再用 `shutil.move()`（Python 自己的 Unicode 安全文件 API）挪到真实的、可能带中文的目标路径**——不要重新尝试短路径或者直接传中文输出路径给 ktech.exe。
 
 ### i18n (`dstools/i18n/`)
 
@@ -124,5 +134,7 @@ Click 实现：`save`/`mod`/`cluster`/`env` 命令分组，全局 `--klei-path` 
 ### GUI (`gui/app.py`)
 
 `DSToolsApp` 主窗口 + 顶部自绘胶囊页签（`PillTabBar`，非原生 `ttk.Notebook`）：`LocalServiceTab`/`ModManagerTab`/`WorldSettingsTab`/`ClusterConfigTab`/`SaveBrowserTab`。顶部菜单条（文件/主题/设置/关于）是 `create_text`/`create_rectangle` 画在 `_menu_strip`（`BgFrame`）上的触发条 + 原生 `tk.Menu` 弹出下拉。"设置"是下拉菜单（非独立弹窗）：语言是二级级联子菜单，"关闭时最小化到任务栏"/"缓存存放在程序所在目录"用 `add_checkbutton`；这几个菜单项绑定的 `Var` 必须挂在 `self` 上，因为 `tk.Menu` 只在语言/主题切换时整体重建。
+
+**页签 `__init__` 里不能塞重活**：默认打开的页签固定是"本地服务器"，其余四个页签的完整数据加载（`on_cluster_changed()`/`refresh()`）必须只由 `_refresh()`（当前页签立即刷新，其它标记 `_stale_cluster_tabs`/`_save_tab_stale`）和 `_on_tab_select()`（切到某个标记为 stale 的页签时才补刷新）触发懒加载，页签类自己的 `__init__` 不能无条件调用这些方法——否则不管用户当前停在哪个页签，四个页签的重活(Lua 沙箱扫描、PIL 面板渲染、批量构建输入控件) 全部在启动瞬间抢着跑，实测能把启动时间从 0.5~0.9 秒拖到 3.86 秒。
 
 **下拉框一律用 `gui/menu_combo.py` 的 `MenuCombo`，禁止用 `ttk.Combobox`**：实测 `ttk.Combobox` 在这台机器上有个选中后内容消失、只能靠真实鼠标点击才能修复的渲染缺陷，根因在 ttk 的 Entry 控件本身。`MenuCombo` 是 `ttk.Menubutton`+`tk.Menu` 包出来的自研控件，兼容 Combobox 常用接口子集，内部没有 Entry，这类 bug 不可能出现。
