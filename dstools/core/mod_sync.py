@@ -23,7 +23,7 @@ from pathlib import Path
 
 from dstools.core.mod_manager import load_mod_overrides
 from dstools.core.modinfo_reader import (
-    DST_APP_ID, find_game_mods_dir, find_mod_folder, find_workshop_acf_path, parse_modinfo,
+    DST_APP_ID, find_game_mods_dir, find_mod_content_folder, find_workshop_acf_path, parse_modinfo,
 )
 from dstools.i18n import t
 from dstools.models import Cluster
@@ -95,7 +95,7 @@ def sync_mods_to_server(cluster: Cluster, install_dir: Path, on_log=None) -> Mod
     game_mods_dir = find_game_mods_dir()
 
     for mod_id in mod_ids:
-        mod_folder = find_mod_folder(mod_id)
+        mod_folder = find_mod_content_folder(mod_id)
         if mod_folder is None:
             result.skipped_not_local.append(mod_id)
             log(t("sync.skip_not_local", mod_id=mod_id))

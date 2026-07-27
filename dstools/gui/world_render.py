@@ -329,8 +329,15 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
 
         y += cat_gap_before
         cat_box_top = y
-        draw.rectangle([pad_x, y, rw - pad_x, y + cat_header_h],
-                       fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
+        # 标题条本身的方角原来会从下面 (y += row_h 之后) 画的圆角外框同一
+        # 个左上/右上顶点里"戳出来"一小截——外框是圆角，标题条是直角，两
+        # 者共用完全一样的左右边界(pad_x/rw-pad_x)和顶边(y)，直角的四个
+        # 角必然比圆弧更往外凸一点，真机截图确认过（见"2.png"）。改成顶
+        # 部两个角用跟外框一样的半径提前圆掉，底部两个角保持直角（标题
+        # 条下面紧接着的是设置项那一整块背景，不需要圆）。
+        draw.rounded_rectangle([pad_x, y, rw - pad_x, y + cat_header_h],
+                               radius=10 * s, corners=(True, True, False, False),
+                               fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
         draw.text((pad_x + 10 * s, y + cat_header_h / 2), f"{cat_name} ({len(items)})",
                   font=hdr_font, fill=color, anchor="lm")
         y += cat_header_h + cat_header_item_gap

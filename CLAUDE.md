@@ -75,7 +75,7 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 **架构：共享大图 + 各表面按偏移量裁一块**（`gui/bg_frame.py` 的 `BgFrame` + `DSToolsApp._rebuild_shared_bg_image`/`_get_bg_slice`/`_refresh_all_bg_surfaces`），照搬 `image_scroll.py` 的"拖拽中便宜、停顿后精细"节流手法（`_BG_SETTLE_MS`=150ms）：`DSToolsApp` 维护唯一一张跟 root 客户区同尺寸的共享大图，只在 `<Configure>` 停顿超过 150ms 才重新读盘/裁剪/混合；`BgFrame`（`tk.Canvas` 子类，drop-in 替代 `tk.Frame`/`ttk.Frame`）自己的 `<Configure>` 只做便宜的内存 crop。**这是硬性规则，不能绕开**——每个表面各自独立做读盘/缩放这套重活，在真实拖拽缩放时会跟 `win_aspect_lock.py` 的原生钩子打架，出现过布局错位/闪烁/割裂。
 
-`BgFrame` 接入点：`_root_bg`（铺满整个客户区、z-order 最底层，兜底所有控件间隙——root 自己只有纯色 `theme.BG_SOFT`，不这样做的话任何 pack/place 留白都会漏出一条纯色）、`_menu_strip`/`_tab_area`/`_cluster_bar`/`_status_bar`/`CardFrame`/`PillTabBar`/五个页签的外层容器和工具栏。**纯说明性文字一律不用 `ttk.Label`/`tk.Label`**（绘制区域永远不透明，会挡背景图），改用 `create_text()` 或 `gui/app.py` 的 `_make_toolbar_label()`/`_make_filter_chips()` 工厂函数；给容器接入 `BgFrame` 后如果原来的子控件换成了直接画的 `create_text`，记得 `pack_propagate(False)`，否则容器会被压缩到只剩 1px。`CardFrame` 圆角外壳（`_canvas`）本身也是 `BgFrame`（`_redraw()` 只画 `outline` 不画 `fill`），跟内层 `body` 显示同一张连续照片，不留"缺角"。
+`BgFrame` 接入点：`_root_bg`（铺满整个客户区、z-order 最底层，兜底所有控件间隙——root 自己只有纯色 `theme.BG_SOFT`，不这样做的话任何 pack/place 留白都会漏出一条纯色）、`_menu_strip`/`_tab_area`/`_cluster_bar`/`_status_bar`/`CardFrame`/`PillTabBar`/五个页签的外层容器和工具栏。**纯说明性文字一律不用 `ttk.Label`/`tk.Label`**（绘制区域永远不透明，会挡背景图），改用 `create_text()` 或 `gui/toolbar_widgets.py` 的 `make_toolbar_label()`/`make_filter_chips()` 工厂函数；给容器接入 `BgFrame` 后如果原来的子控件换成了直接画的 `create_text`，记得 `pack_propagate(False)`，否则容器会被压缩到只剩 1px。`CardFrame` 圆角外壳（`_canvas`）本身也是 `BgFrame`（`_redraw()` 只画 `outline` 不画 `fill`），跟内层 `body` 显示同一张连续照片，不留"缺角"。
 
 **拖拽缩放期间背景图整体冻结**（`DSToolsApp._begin_bg_drag_suppress()`/`_end_bg_drag_suppress()`，`custom_titlebar.ResizeGrips` 按下/松手时调用）：期间所有 `BgFrame._request_render()` 直接跳过（`clear_bg_image()` 清成纯色，不留旧尺寸残影），松手那一刻才按最终尺寸整体重算一次——不这样做的话，拖拽中途每个表面各自拿实时控件坐标去裁一张还没更新的共享大图，就是背景图"分层"/错位的直接原因。
 
@@ -105,19 +105,27 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 - **`core/world_categories.py`**：分类/排序/双语名唯一真源。**森林和洞穴是两个独立存档文件**，同名 key 两边值可能不同，设置表按"地图×类型"拆成 4 个独立字典（`FOREST_RULES_DICT`/`FOREST_GEN_DICT`/`CAVE_RULES_DICT`/`CAVE_GEN_DICT`），配合 `get_setting_info()`/`get_order()`/`get_categories()` 按 `get_lang()` 现查中英文。注意还有同名但不同用途的**分类列表**变量（如 `CAVE_RULES`，list），别跟 `_DICT` 搞混。
 - **`core/world_icons.py`**：图标映射，`icons/world/` 下有未引用的 PNG（孤岛/暴风雪 DLC 专属，DST 用不上），故意保留。
 - **`core/world_value_sets.py`**：每个 key 的合法取值（`VALUE_SETS`），数据来自游戏自身 `worldsettings_overrides.lua`，用错表会静默改坏设置。
-- **`gui/world_render.py`**：取值颜色/双语翻译 + 用 PIL 把整个分类面板渲染成单张图片（`render_world_panel()`，避免创建成百个 ttk 组件），配合 `image_scroll.py` 滚动，resize 时先按参考宽度渲染、稳定后再按真实宽度重渲染一次。间距常量（`COL_GAP`/`ROW_GAP`/`CAT_HEADER_ITEM_GAP`，均为未缩放的目标间距）必须和对应方向上"侵入间隙"的圆角/描边侵蚀量（`block_pad_h`/`block_pad_v`）相加后再参与位置计算，不能让固定像素的留白单独存在——固定留白在窗口放大、渲染整体按比例缩放时不会跟着变大，会被侵蚀量反超导致缝隙缩小到重叠（真机放大窗口截图确认过，横向/纵向/分类标题到首行三处都需要同一套修法）。
+- **`gui/world_render.py`**：取值颜色/双语翻译 + 用 PIL 把整个分类面板渲染成单张图片（`render_world_panel()`，避免创建成百个 ttk 组件），配合 `image_scroll.py` 滚动，resize 时先按参考宽度渲染、稳定后再按真实宽度重渲染一次。间距常量（`COL_GAP`/`ROW_GAP`/`CAT_HEADER_ITEM_GAP`，均为未缩放的目标间距）必须和对应方向上"侵入间隙"的圆角/描边侵蚀量（`block_pad_h`/`block_pad_v`）相加后再参与位置计算，不能让固定像素的留白单独存在——固定留白在窗口放大、渲染整体按比例缩放时不会跟着变大，会被侵蚀量反超导致缝隙缩小到重叠（真机放大窗口截图确认过，横向/纵向/分类标题到首行三处都需要同一套修法）。分类标题条自己的背景矩形和外面包一整个分类的圆角描边框共用同一个左上/右上顶点——标题条画成直角的话，直角顶点必然比外框的圆弧更往外凸一点，从描边框"戳出来"一小截方角（真机截图确认过），标题条改用 `corners=(True, True, False, False)` 只圆两个顶角，跟外框半径保持一致。
 
 改这块逻辑时森林/洞穴要分别验证（`reference/config_json/`、`reference/config_txt/` 有 ground-truth 数据）。
 
 ### 每个玩家角色状态（"存档信息"页签）
 
-`save_reader.list_session_players()`：玩家存档槽前后包了二进制帧头/尾，**必须**从 `return` 正向扫描花括号深度找表的真实结尾，不能用 `raw.rfind(b"}")`（真实存档表结尾后常跟着垃圾字节，会把 `rfind` 带偏）。`character_names.py` 是官方 prefab→中文名对照表（数据来自 `chinese_s.po`）。`character_icons.resolve_character()` 优先级：官方角色表 → 分片当前已启用模组的 `STRINGS.CHARACTER_NAMES` 声明 → 原样显示英文 prefab（不猜测）。图集 XML 解析共用 `core/atlas_utils.py`。
+`save_reader.list_session_players()`：玩家存档槽前后包了二进制帧头/尾，**必须**从 `return` 正向扫描花括号深度找表的真实结尾，不能用 `raw.rfind(b"}")`（真实存档表结尾后常跟着垃圾字节，会把 `rfind` 带偏）。**"最新槽位"不一定是最新数据**：跨分片传送/进程被异常打断保存时，编号最新的槽位可能是个 0 字节占位文件，真机复现过（真实数据还在上一个槽位）——挑槽位时优先选最新的**非空**文件，全空了才退回真的最新编号那个走原来的失败路径。`character_names.py` 是官方 prefab→中文名对照表（数据来自 `chinese_s.po`）。`character_icons.resolve_character()` 优先级：官方角色表 → 分片当前已启用模组的 `STRINGS.CHARACTER_NAMES` 声明 → 原样显示英文 prefab（不猜测）。图集 XML 解析共用 `core/atlas_utils.py`。
+
+角色名/头像都查不到时（含解析失败的玩家），GUI 层（`save_browser_tab.py`）统一用 `icons/ui/character_icon_default.png` 兜底——固定素材，裁自游戏官方 Tab 键头像图集里本来就有的 `avatar_unknown.tex`，跟每个玩家具体装了什么 mod 无关，每次都一样，不走 `character_icons.py` 那套按 workshop_id/mtime 失效的运行时缓存（不需要每次现查现转）。同一行的头像列还固定了 `icon_size × icon_size` 的容器再居中贴图——`Image.thumbnail()` 只保证不超过目标尺寸不保证是正方形，不固定容器宽度的话不同角色头像原图宽高比不同，同一列每行头像占的宽度会不一样，后面"玩家标识"/"备注"就跟着错位对不齐（真机截图确认过）；"玩家标识"文字本身也要包一层固定像素宽度的容器（同样必须显式给 `height`，只给 `width` 配 `pack_propagate(False)` 会把内容压扁到看不见）才能让不同长度的标识文字后面"备注:"位置对齐。
 
 ### Mod 配置解析 (`core/modinfo_reader.py`)
 
 `parse_modinfo()` 提取 `configuration_options`，绝大多数 mod 靠纯文本/正则覆盖。**唯一例外 `core/lua_sandbox.py`**：极少数 mod 用代码动态拼选项，退化到一个收窄的 Lua 5.1 沙箱（`lupa.lua51`）。关键约束：只在用户打开某个 mod 配置弹窗时触发，不影响批量扫描性能；永远在**子进程**里跑、带硬超时（防死循环卡住主线程）；子进程里 `os`/`io`/`require`/`load`/`debug` 全局置空；任何失败一律返回 `None`（标记 `is_dynamic`/`unsupported_schema`），**从不猜测**。动手前读一遍 `lua_sandbox.py` 顶部说明。
 
 `resolve_full_modinfo()`（Mod 管理页签"完整解析"用的沙箱全量结果）跑一次有明显耗时，`core/mod_resolve_cache.py` 按 workshop_id 做磁盘持久化缓存（`cache_dir("mod_full_resolve")`，`modinfo.lua` mtime 失效判断，跟 `mod_icons.py` 图标缓存同一套模式），配合 `ModManagerTab`/`ModConfigDialog` 里已有的内存缓存一起用——内存缓存进程重启即丢，磁盘缓存补上这一层，避免每次启动都重新跑一遍沙箱解析。
+
+### Mod 同步到服务器 (`core/mod_sync.py`)
+
+两条独立路径同时做，不是二选一：①在线——不管本地有没有内容，无条件把所有已启用 mod 写进 `mods/dedicated_server_mods_setup.lua`（`ServerModSetup("<id>")`），服务器启动时自己联网下载；②本地复制兜底——只有本地能找到内容才复制到 `ugc_mods/<cluster>/<shard>/content/322330/<id>/`，同时复制 `appworkshop_322330.acf` 校验文件（没有这个服务器不认为 mod 已生效，Klei 文档没写，是验证出来的）。
+
+本地内容判断用 `modinfo_reader.find_mod_content_folder()`，**不是** `find_mod_folder()`——后者要求必须有 `modinfo.lua`，是给"需要解析 mod 名字/配置项"的场景用的（Mod 管理列表等）；前者只要求 workshop 内容目录存在且非空，专给这里的同步场景用。真机验证过：长期没更新的老旧 workshop 内容，Steam 会存成一个 `<id>_legacy.bin`（没有解压成 modinfo.lua 等正常文件），但专用服务器自己联网下载这个 mod 落地的也是同一个 bin、照样能正常启动加载——服务器认这个格式，不需要先解压，本地复制这条路直接原样复制过去就行，用 `find_mod_folder()` 的严格判断会把这种情况误判成"本地没有内容"而跳过。
 
 ### 纹理转换 (`core/tex_convert.py`)
 
@@ -131,9 +139,13 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 Click 实现：`save`/`mod`/`cluster`/`env` 命令分组，全局 `--klei-path` 覆盖自动发现路径。跟 GUI/主题完全不相关。
 
-### GUI (`gui/app.py`)
+### GUI (`gui/app.py` + 五个页签各自独立文件)
 
-`DSToolsApp` 主窗口 + 顶部自绘胶囊页签（`PillTabBar`，非原生 `ttk.Notebook`）：`LocalServiceTab`/`ModManagerTab`/`WorldSettingsTab`/`ClusterConfigTab`/`SaveBrowserTab`。顶部菜单条（文件/主题/设置/关于）是 `create_text`/`create_rectangle` 画在 `_menu_strip`（`BgFrame`）上的触发条 + 原生 `tk.Menu` 弹出下拉。"设置"是下拉菜单（非独立弹窗）：语言是二级级联子菜单，"关闭时最小化到任务栏"/"缓存存放在程序所在目录"用 `add_checkbutton`；这几个菜单项绑定的 `Var` 必须挂在 `self` 上，因为 `tk.Menu` 只在语言/主题切换时整体重建。
+`gui/app.py` 只保留 `DSToolsApp` 主窗口本体 + `main()`（约 1000 行）；五个页签各自拆成独立模块，`app.py` 只 `import` 后在 `__init__` 里实例化：`gui/local_service_tab.py`（`LocalServiceTab`）、`gui/save_browser_tab.py`（`SaveBrowserTab` + 私有的 `_CopyToServerDialog`）、`gui/mod_manager_tab.py`（`ModManagerTab` + `ModConfigDialog` + 私有的 `_apply_full_sandbox_result`）、`gui/world_settings_tab.py`（`WorldSettingsTab`）、`gui/cluster_config_tab.py`（`ClusterConfigTab` + 私有的 `_TokenInputDialog`/`_TextVar`/`_EnumVar`/`_is_valid_klei_id`）。三个跨页签共享的小控件/弹窗单独成模块，被多个页签文件 import：`gui/toolbar_widgets.py`（`make_toolbar_label`/`make_filter_chips`，纯说明文字/筛选项的 `BgFrame+create_text` 手绘工厂）、`gui/mod_sync_log_dialog.py`（`ModSyncLogDialog`，"复制为服务器存档"和"同步mod到服务器"共用的耗时操作日志弹窗）、`gui/background_dialog.py`（`BackgroundImageDialog`，"主题"菜单的自定义背景图设置弹窗，只有 `DSToolsApp` 自己用）。
+
+**页签类构造函数故意不接 `app: DSToolsApp` 类型注解**（只写 `app`，鸭子类型）：这些文件被 `app.py` import，如果反过来在页签文件里 `from dstools.gui.app import DSToolsApp` 做类型注解会形成循环 import——`local_service_tab.py` 一直是这个写法，本轮拆分出的另外四个页签文件照抄同一个约定，不要"顺手"加回类型注解。
+
+顶部胶囊页签（`PillTabBar`，非原生 `ttk.Notebook`）+ 顶部菜单条（文件/主题/设置/关于，`create_text`/`create_rectangle` 画在 `_menu_strip`（`BgFrame`）上的触发条 + 原生 `tk.Menu` 弹出下拉）仍在 `app.py` 里。"设置"是下拉菜单（非独立弹窗）：语言是二级级联子菜单，"关闭时最小化到任务栏"/"缓存存放在程序所在目录"用 `add_checkbutton`；这几个菜单项绑定的 `Var` 必须挂在 `self` 上，因为 `tk.Menu` 只在语言/主题切换时整体重建。
 
 **页签 `__init__` 里不能塞重活**：默认打开的页签固定是"本地服务器"，其余四个页签的完整数据加载（`on_cluster_changed()`/`refresh()`）必须只由 `_refresh()`（当前页签立即刷新，其它标记 `_stale_cluster_tabs`/`_save_tab_stale`）和 `_on_tab_select()`（切到某个标记为 stale 的页签时才补刷新）触发懒加载，页签类自己的 `__init__` 不能无条件调用这些方法——否则不管用户当前停在哪个页签，四个页签的重活(Lua 沙箱扫描、PIL 面板渲染、批量构建输入控件) 全部在启动瞬间抢着跑，实测能把启动时间从 0.5~0.9 秒拖到 3.86 秒。
 

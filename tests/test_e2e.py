@@ -18,9 +18,8 @@ from dstools.core.ini_parser import (
     parse_cluster_ini,
     parse_server_ini,
     write_cluster_ini,
-    write_server_ini,
 )
-from dstools.models import ClusterConfig, ShardConfig
+from dstools.models import ClusterConfig
 from dstools.core.mod_manager import (
     ModOverrides,
     load_mod_overrides,
@@ -36,7 +35,7 @@ from dstools.core.mod_manager import (
 )
 from dstools.core.discovery import find_klei_root, discover_environment
 from dstools.core.save_reader import list_save_sessions, get_save_summary, list_session_players
-from dstools.core.config_manager import load_cluster_config, set_cluster_option, save_cluster_config
+from dstools.core.config_manager import set_cluster_option
 from dstools.core.character_names import get_character_display_name
 from dstools.core.character_icons import find_mod_character_name, resolve_character
 from dstools.core.app_settings import (
@@ -46,7 +45,7 @@ from dstools.core.app_settings import (
 )
 from dstools.models import SaveSession
 from dstools.core.modinfo_reader import parse_modinfo
-from dstools.core.admin_manager import read_adminlist, write_adminlist, add_admin, remove_admin, has_admin
+from dstools.core.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
 from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
 from dstools.core.backup_utils import backup_file, _prune_old_backups
 from dstools.core.cluster_copy import (
@@ -398,6 +397,25 @@ def test_list_session_players():
         assert bad.parse_error, "Corrupt player should have parse_error set"
         assert bad.player_id == "A7BADPLAYER0"
         print("  PASS: Corrupt player entry isolated (parse_error set, other player unaffected)")
+
+        # 真机在本地存档上复现过的情况：跨分片传送/进程被打断时，DST 会把
+        # 编号最新的槽位写成 0 字节占位文件，真正数据还在上一个槽位里——
+        # 必须回退去读那一个，不能因为最新槽位是空文件就整条判定解析失败。
+        empty_latest_dir = session_dir / "A7EMPTYLATEST"
+        empty_latest_dir.mkdir()
+        (empty_latest_dir / "0000000010").write_bytes(
+            b"\x03\x11\x22" + 'return {data={health={health=88}},prefab="willow"}'.encode("utf-8") + b"\x01"
+        )
+        (empty_latest_dir / "0000000010.meta").write_bytes(b'return {character="willow"}\x00')
+        (empty_latest_dir / "0000000011").write_bytes(b"")  # 0 字节占位文件
+        (empty_latest_dir / "0000000011.meta").write_bytes(b'return {character="willow"}\x00')
+
+        players = list_session_players(session)
+        empty_latest = next(p for p in players if p.player_id == "A7EMPTYLATEST")
+        assert not empty_latest.parse_error, f"Should fall back to slot 10, got: {empty_latest.parse_error}"
+        assert empty_latest.slot_number == 10
+        assert empty_latest.health == 88
+        print("  PASS: Falls back to the newest non-empty slot when the latest one is a 0-byte placeholder")
 
 
 def test_character_names():

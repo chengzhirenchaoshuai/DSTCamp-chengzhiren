@@ -5,7 +5,7 @@ STRINGS = {
         # Window
         "app.title": "DSTCamp · 本地服务器管理",
         "app.ready": "就绪",
-        "app.refresh": "刷新全部 (F5)",
+        "app.refresh": "刷新全部",
         "app.refreshed_hint": "✓ 已刷新",
 
         # Menu
@@ -332,7 +332,7 @@ STRINGS = {
         # Window
         "app.title": "DSTCamp · Local Server Manager",
         "app.ready": "Ready",
-        "app.refresh": "Refresh All (F5)",
+        "app.refresh": "Refresh All",
         "app.refreshed_hint": "✓ Refreshed",
 
         # Menu

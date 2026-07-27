@@ -4,12 +4,12 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dstools.i18n import t, set_lang, get_lang, get_i18n
+from dstools.i18n import t, set_lang, get_lang
 from dstools.models import SaveSource, SaveSession, DSTEnvironment
 from dstools.core.discovery import (
     discover_environment, find_klei_root,
 )
-from dstools.core.save_reader import list_save_sessions, get_save_summary
+from dstools.core.save_reader import list_save_sessions
 
 
 def test_i18n_basic():
@@ -163,10 +163,15 @@ def test_gui_imports():
     print("\n" + "=" * 60)
     print("Test P2-7: GUI Module Import")
 
-    from dstools.gui.app import (
-        DSToolsApp, SaveBrowserTab, ModManagerTab,
-        ClusterConfigTab,
-    )
+    # 五个页签各自拆到了自己的模块（gui/save_browser_tab.py 等），主窗口
+    # 本体留在 gui/app.py——各自从真正定义它们的模块导入，而不是借
+    # app.py 重新导出的副作用，这样才是真的在测这几个模块自己能不能
+    # 正常导入。
+    from dstools.gui.app import DSToolsApp
+    from dstools.gui.save_browser_tab import SaveBrowserTab
+    from dstools.gui.mod_manager_tab import ModManagerTab
+    from dstools.gui.cluster_config_tab import ClusterConfigTab
+    assert DSToolsApp and ModManagerTab and ClusterConfigTab
     from dstools.gui.theme import SERVER_COLOR
     assert SERVER_COLOR == "#2e7d32"
     print(f"  PASS: GUI imports OK")

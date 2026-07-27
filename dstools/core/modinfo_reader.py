@@ -319,6 +319,38 @@ def find_mod_folder(workshop_id: str) -> Path | None:
     return None
 
 
+def find_mod_content_folder(workshop_id: str) -> Path | None:
+    """跟 find_mod_folder 类似，但要求宽松得多：只要 workshop 内容目录
+    本身存在且非空就认，不要求有 modinfo.lua。
+
+    专用服务器同步（core/mod_sync.py）只是把这个目录下的文件原样复制
+    给服务器用，不需要解析这个 mod 的名字/配置项/图标——find_mod_folder
+    那个"必须有 modinfo.lua"的门槛是给真的要解析 mod 内容的场景（Mod
+    管理列表、角色名解析等）准备的。真机验证过：Steam 有些老旧、长期
+    没更新的 workshop 内容只有一个 "<id>_legacy.bin"（Steam 自己的旧式
+    压缩包，没有解压成 modinfo.lua/modmain.lua 这些正常文件），但专用
+    服务器自己联网下载这个 mod 时落地的也是同一个 "_legacy.bin"、照样能
+    正常启动加载——服务器认得这个格式，不需要先解压成松散文件，所以只
+    要本地也有这份内容（哪怕只是这一个 bin 文件），原样复制过去就行，
+    不该因为没有 modinfo.lua 就判定"本地没有可用内容"而跳过。
+    """
+    mod_id = workshop_id.replace("workshop-", "")
+
+    workshop_dir = find_workshop_dir()
+    if workshop_dir:
+        candidate = workshop_dir / mod_id
+        if candidate.exists() and any(candidate.iterdir()):
+            return candidate
+
+    game_mods = find_game_mods_dir()
+    if game_mods:
+        for candidate in (game_mods / workshop_id, game_mods / mod_id):
+            if candidate.exists() and any(candidate.iterdir()):
+                return candidate
+
+    return None
+
+
 def list_installed_mod_ids() -> list[str]:
     """Enumerate every installed mod's ID, as it would appear as a
     modoverrides.lua key -- scanning both the Steam Workshop content
