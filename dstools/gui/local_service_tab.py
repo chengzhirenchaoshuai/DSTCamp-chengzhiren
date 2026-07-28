@@ -11,10 +11,12 @@ from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.core.app_settings import set_dedicated_server_path
+from dstools.core.config_manager import load_cluster_config
 from dstools.core.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
     find_dedicated_server_dir, is_valid_install_dir, resolve_conf_dir_arg,
 )
+from dstools.core.token_manager import is_valid_token, read_token
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.tooltip import Tooltip
@@ -384,7 +386,30 @@ class LocalServiceTab:
 
     # ── 启动/停止 ────────────────────────────────────────────────────
 
+    def _confirm_token_ok(self, cluster) -> bool:
+        """启动前检查一下 cluster_token.txt——没有令牌/令牌格式不对，专
+        用服务器进程本身能拉起来，但连不上 Klei 账号验证，实际会在日志
+        里报错退出（真机验证过，不是"能启动但功能缺失"这种程度，是直接
+        启动失败）。"离线模式"（NETWORK.offline_cluster）是唯一不需要
+        令牌的例外（不注册到 Klei 服务器列表，见
+        ini_field_info.py 对应字段的说明），这种情况直接放行。
+        其它情况下令牌缺失/无效就弹一个"是否仍要继续"确认框——不是强制
+        拦截（万一用户就是知道自己在干什么，比如刚删了令牌准备手动重新
+        申请），返回 True 表示可以继续启动。"""
+        config = load_cluster_config(cluster.path)
+        if config.network.get("offline_cluster", False):
+            return True
+        token = read_token(cluster.token_path) if cluster.token_path else ""
+        if is_valid_token(token):
+            return True
+        return dlg.ask_yes_no(self.app.root, t("local.token_missing_title"), t("local.token_missing_confirm"))
+
     def start_shard(self, cluster, shard):
+        if not self._confirm_token_ok(cluster):
+            return
+        self._do_start_shard(cluster, shard)
+
+    def _do_start_shard(self, cluster, shard):
         if self._install_dir is None:
             if not self._recheck_install_dir():
                 return
@@ -423,8 +448,14 @@ class LocalServiceTab:
         if not c.shards:
             dlg.show_warning(self.app.root, t("local.install_title"), t("local.no_shards"))
             return
+        # 令牌检查只在这里做一次，不是对每个分片各调一次 start_shard()
+        # ——同一个存档下所有分片共用同一个 cluster_token.txt，"全部启
+        # 动"如果每个分片都各自弹一次确认框，2~3 个分片就要连点 2~3 次
+        # 一模一样的确认，体验很差。
+        if not self._confirm_token_ok(c):
+            return
         for s in _ordered_shards(c):
-            self.start_shard(c, s)
+            self._do_start_shard(c, s)
 
     def _stop_all(self):
         c = self._get_cluster()

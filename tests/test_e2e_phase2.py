@@ -1,4 +1,6 @@
-"""End-to-end tests for Phase 2 features: i18n, client saves, exe entry."""
+"""End-to-end tests for Phase 2 features: i18n, model fields, exe/gui
+importability. 真实磁盘存档发现/SaveSource 校验已经并入 test_e2e.py 的
+Test 6/Test 7，不在这个文件里重复。"""
 
 import os
 import sys
@@ -6,10 +8,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.i18n import t, set_lang, get_lang
 from dstools.models import SaveSource, SaveSession, DSTEnvironment
-from dstools.core.discovery import (
-    discover_environment, find_klei_root,
-)
-from dstools.core.save_reader import list_save_sessions
 
 
 def test_i18n_basic():
@@ -59,54 +57,10 @@ def test_i18n_basic():
     print("  PASS: Format strings work in both languages")
 
 
-def test_client_save_discovery():
-    """Test local cluster discovery (clusters under user ID dir)."""
-    print("\n" + "=" * 60)
-    print("Test P2-2: Local Cluster Discovery")
-
-    klei_root = find_klei_root()
-    if not klei_root:
-        print("  SKIP: No DST data found")
-        return
-
-    env = discover_environment(klei_root)
-    local_clusters = [c for c in env.clusters if c.source == SaveSource.LOCAL]
-    server_clusters = [c for c in env.clusters if c.source == SaveSource.SERVER]
-    print(f"  Server clusters: {len(server_clusters)}")
-    for c in server_clusters:
-        print(f"    {c.name}: {len(c.shards)} shards, source={c.source.value}")
-    print(f"  Local clusters: {len(local_clusters)}")
-    for c in local_clusters:
-        print(f"    {c.name}: {len(c.shards)} shards, source={c.source.value}")
-    assert len(server_clusters) > 0
-    assert len(local_clusters) > 0
-    print(f"  PASS: {len(server_clusters)} server + {len(local_clusters)} local clusters")
-
-
-def test_server_save_source():
-    """Test that server saves have correct source tag."""
-    print("\n" + "=" * 60)
-    print("Test P2-3: Server Save Source")
-
-    klei_root = find_klei_root()
-    if not klei_root:
-        print("  SKIP: No DST data found")
-        return
-
-    env = discover_environment(klei_root)
-    for c in env.clusters[:1]:
-        for s in c.shards[:1]:
-            sessions = list_save_sessions(s.path)
-            for session in sessions:
-                assert session.source == SaveSource.SERVER
-                print(f"  {c.name}/{s.name}: {session.session_id} source={session.source.value}")
-    print("  PASS: Server saves have SERVER source")
-
-
 def test_save_session_fields():
     """Test new SaveSession fields."""
     print("\n" + "=" * 60)
-    print("Test P2-4: SaveSession Fields")
+    print("Test P2-2: SaveSession Fields")
 
     # Test default values
     session = SaveSession(session_id="test", path=__import__('pathlib').Path("/tmp"))
@@ -127,7 +81,7 @@ def test_save_session_fields():
 def test_dstenvironment_fields():
     """Test new DSTEnvironment fields."""
     print("\n" + "=" * 60)
-    print("Test P2-5: DSTEnvironment Fields")
+    print("Test P2-3: DSTEnvironment Fields")
 
     env = DSTEnvironment()
     assert env.clusters == []
@@ -138,7 +92,7 @@ def test_dstenvironment_fields():
 def test_exe_entry_imports():
     """Test that the EXE entry point imports correctly."""
     print("\n" + "=" * 60)
-    print("Test P2-6: EXE Entry Point Imports")
+    print("Test P2-4: EXE Entry Point Imports")
 
     # run_gui.py/build_exe.py live in scripts/, not on sys.path by default
     # (only the project root is, so `import dstools` resolves) -- add it
@@ -161,7 +115,7 @@ def test_exe_entry_imports():
 def test_gui_imports():
     """Test that the new GUI module imports correctly."""
     print("\n" + "=" * 60)
-    print("Test P2-7: GUI Module Import")
+    print("Test P2-5: GUI Module Import")
 
     # 五个页签各自拆到了自己的模块（gui/save_browser_tab.py 等），主窗口
     # 本体留在 gui/app.py——各自从真正定义它们的模块导入，而不是借
@@ -197,14 +151,12 @@ def main():
     """Run all Phase 2 tests."""
     print("\n" + "O" * 60)
     print("  DSTOOLS Phase 2 - Verification Tests")
-    print("  (i18n, Client Saves, EXE Entry)")
+    print("  (i18n, Model Fields, EXE/GUI Imports)")
     print("O" * 60)
 
     all_passed = True
     tests = [
         test_i18n_basic,
-        test_client_save_discovery,
-        test_server_save_source,
         test_save_session_fields,
         test_dstenvironment_fields,
         test_exe_entry_imports,

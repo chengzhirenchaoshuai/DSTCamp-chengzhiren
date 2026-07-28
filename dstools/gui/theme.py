@@ -32,9 +32,11 @@ colors -- see DSToolsApp._switch_theme() for the full list of what gets
 poked after a theme switch.
 
 Adding a new theme: add one dict to `_THEMES` (every key from the
-"custom_bg" entry is required) and append its name to `THEME_NAMES` --
+"gray" entry is required) and append its name to `THEME_NAMES` --
 that's the only change needed; the menu and app_settings persistence are
-fully generic.
+fully generic. Custom background images are *not* part of this palette --
+they're a separate, theme-independent feature (see custom_background.py /
+bg_frame.py) layered on top of whichever theme is active.
 """
 
 import tkinter as tk
@@ -46,14 +48,20 @@ from PIL import Image, ImageDraw, ImageTk
 from dstools.core.app_settings import get_theme_name
 
 # ── Named palettes ───────────────────────────────────────────────────────
-# 只保留 "custom_bg"（自定义背景图）这一套主题——原来 mint/twilight/
-# campfire/sakura/lavender 那 5 套纯色主题已经删掉，先把这一套自定义背景
-# 图主题打磨好；_THEMES 的字典结构和 THEME_NAMES 列表机制本身没有变，以
-# 后要加回别的主题，还是"加一个 dict + 追加一个名字"就够了（见本文件顶部
-# docstring "Adding a new theme" 一节）。
+# "gray"（灰色，默认）+ 四套纯色主题：mint（薄荷绿）/twilight（暮色蓝）/
+# campfire（篝火橙——呼应游戏本身的篝火意象）/sakura（樱花粉）。字号阶
+# 梯/字体/圆角/边距各套主题保持一致（这些是布局常量，不是配色，没有理
+# 由随主题变化，只有下面这批调色板相关的键才按主题各自取值）。
 #
-# WINDOW_ALPHA / FONT_FAMILY / FONT_SIZE_* / CARD_RADIUS / BG_IMAGE_ENABLED /
-# CARD_MARGIN 这几个字段：
+# 自定义背景图片（core/custom_background.py）是跟主题**完全解耦**的独立
+# 功能，不属于任何一套主题——任选一套主题，只要设置过背景图就会叠加显
+# 示（见 gui/app.py._rebuild_shared_bg_image()，不再看任何 theme.X 开
+# 关）。历史上背景图曾经只绑定给一个专门叫 "custom_bg" 的主题（这也是
+# "gray" 这套主题曾经用这个名字的原因），后来发现"背景图只能在一套主题下
+# 用"限制没有必要，改回两者独立。
+#
+# WINDOW_ALPHA / FONT_FAMILY / FONT_SIZE_* / CARD_RADIUS / CARD_MARGIN
+# 这几个字段：
 # - WINDOW_ALPHA：整窗透明度（Tk 在 Windows 上唯一稳定支持的真透明手
 #   段），1.0 = 不透明，apply_theme() 里调 root.attributes("-alpha", ...)。
 #   这套主题目前设成 1.0（不透明）——之前试过 0.92 的整窗透明效果，用户
@@ -78,31 +86,68 @@ from dstools.core.app_settings import get_theme_name
 #   "Consolas" 标识"这是一段可复制的原始数据"，跟本阶梯的语义不同，各调
 #   用点保留自己单独写 font=("Consolas", N)。
 # - CARD_RADIUS：CardFrame（四个主 tab 外层"玻璃卡片"容器）的圆角半径。
-# - BG_IMAGE_ENABLED：只有它为 True，才会去画用户在 core/custom_
-#   background.py 里设置的自定义背景图。画这张图的地方见
-#   gui/bg_frame.py（BgFrame，drop-in 替代 tk.Frame/ttk.Frame 的背景感知
-#   容器）——早期版本每个背景表面各自独立读盘/裁剪/缩放/混合、且没有
-#   防抖，在真实拖拽缩放窗口时跟 win_aspect_lock.py 的原生 WM_SIZING
-#   钩子打架，出现过布局错位/闪烁/背景图割裂；现在统一走 DSToolsApp 维
-#   护的"共享大图"，拖拽中只做便宜的内存 crop，重活只在停顿后做一次。
 # - CARD_MARGIN：CardFrame 四周留出的空隙宽度，让 _tab_area（BgFrame）
 #   背后的背景图露出来（见 gui/app.py 创建 CardFrame 那几行）。
 _THEMES = {
-    "custom_bg": {
+    "gray": {
         "PRIMARY": "#8A97A3", "PRIMARY_DARK": "#6B7A87", "PRIMARY_LIGHT": "#E7ECEF",
         "BG_SOFT": "#F4F6F7", "ACCENT": "#5C7A89", "TEXT": "#2E3438", "TEXT_MUTED": "#6E7880",
         "CARD_BG": "#FDFEFE", "CARD_BG_ALT": "#EFF3F4", "CARD_BORDER": "#D6DEE1",
         "SHADOW": "#C9D3D6", "ERROR": "#c62828", "HEADING": "#33393D",
         "BANNER_BG": "#fff3cd", "BANNER_TEXT": "#856404",
         "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
-        "BG_IMAGE_ENABLED": True, "CARD_MARGIN": 24,
+        "CARD_MARGIN": 24,
+        "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
+        "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
+    },
+    "mint": {
+        "PRIMARY": "#6FCF97", "PRIMARY_DARK": "#57BF84", "PRIMARY_LIGHT": "#D7F5E4",
+        "BG_SOFT": "#E8F8F0", "ACCENT": "#2D9CDB", "TEXT": "#2F3E46", "TEXT_MUTED": "#6B7C82",
+        "CARD_BG": "#FFFFFF", "CARD_BG_ALT": "#F4FBF7", "CARD_BORDER": "#CFEEDD",
+        "SHADOW": "#C9E4D8", "ERROR": "#c62828", "HEADING": "#37474f",
+        "BANNER_BG": "#fff3cd", "BANNER_TEXT": "#856404",
+        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
+        "CARD_MARGIN": 24,
+        "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
+        "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
+    },
+    "twilight": {
+        "PRIMARY": "#5B8DEF", "PRIMARY_DARK": "#3F6FD1", "PRIMARY_LIGHT": "#D9E6FB",
+        "BG_SOFT": "#EEF3FC", "ACCENT": "#2D9CDB", "TEXT": "#2A3342", "TEXT_MUTED": "#6B7785",
+        "CARD_BG": "#FFFFFF", "CARD_BG_ALT": "#F5F8FE", "CARD_BORDER": "#D3E1FA",
+        "SHADOW": "#C7D6F0", "ERROR": "#c62828", "HEADING": "#33415C",
+        "BANNER_BG": "#fdecc8", "BANNER_TEXT": "#7a5a12",
+        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
+        "CARD_MARGIN": 24,
+        "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
+        "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
+    },
+    "campfire": {
+        "PRIMARY": "#E8A33D", "PRIMARY_DARK": "#C9822A", "PRIMARY_LIGHT": "#FBE7C6",
+        "BG_SOFT": "#FBF2E3", "ACCENT": "#D9534F", "TEXT": "#4A3728", "TEXT_MUTED": "#8A7862",
+        "CARD_BG": "#FFFFFF", "CARD_BG_ALT": "#FDF6EC", "CARD_BORDER": "#F0DBB4",
+        "SHADOW": "#E8D2A0", "ERROR": "#c62828", "HEADING": "#6B4A28",
+        "BANNER_BG": "#fde3df", "BANNER_TEXT": "#a3392f",
+        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
+        "CARD_MARGIN": 24,
+        "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
+        "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
+    },
+    "sakura": {
+        "PRIMARY": "#F27CA0", "PRIMARY_DARK": "#D85F87", "PRIMARY_LIGHT": "#FBD9E4",
+        "BG_SOFT": "#FFF0F5", "ACCENT": "#9B6FB3", "TEXT": "#4A2E39", "TEXT_MUTED": "#9C7C89",
+        "CARD_BG": "#FFFFFF", "CARD_BG_ALT": "#FFF5F8", "CARD_BORDER": "#F5C4D3",
+        "SHADOW": "#F0B8CB", "ERROR": "#c62828", "HEADING": "#7A3B54",
+        "BANNER_BG": "#fff3cd", "BANNER_TEXT": "#856404",
+        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
+        "CARD_MARGIN": 24,
         "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
         "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
     },
 }
-THEME_NAMES = ["custom_bg"]  # 菜单里出现的顺序，目前只有这一套
+THEME_NAMES = ["gray", "mint", "twilight", "campfire", "sakura"]  # 菜单里出现的顺序
 
-_active = _THEMES.get(get_theme_name()) or _THEMES["custom_bg"]
+_active = _THEMES.get(get_theme_name()) or _THEMES["gray"]
 
 PRIMARY = _active["PRIMARY"]
 PRIMARY_DARK = _active["PRIMARY_DARK"]
@@ -122,7 +167,6 @@ BANNER_TEXT = _active["BANNER_TEXT"]
 WINDOW_ALPHA = _active["WINDOW_ALPHA"]
 FONT_FAMILY = _active["FONT_FAMILY"]
 CARD_RADIUS = _active["CARD_RADIUS"]
-BG_IMAGE_ENABLED = _active["BG_IMAGE_ENABLED"]
 CARD_MARGIN = _active["CARD_MARGIN"]
 FONT_SIZE_XL = _active["FONT_SIZE_XL"]
 FONT_SIZE_LG = _active["FONT_SIZE_LG"]
@@ -140,9 +184,9 @@ def set_theme(name: str) -> None:
     global _active, PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, BG_SOFT, ACCENT, \
         TEXT, TEXT_MUTED, CARD_BG, CARD_BG_ALT, CARD_BORDER, SHADOW, ERROR, \
         HEADING, BANNER_BG, BANNER_TEXT, WINDOW_ALPHA, FONT_FAMILY, CARD_RADIUS, \
-        BG_IMAGE_ENABLED, CARD_MARGIN, FONT_SIZE_XL, FONT_SIZE_LG, FONT_SIZE_MD, \
+        CARD_MARGIN, FONT_SIZE_XL, FONT_SIZE_LG, FONT_SIZE_MD, \
         FONT_SIZE_BASE, FONT_SIZE_SM, FONT_SIZE_XS
-    _active = _THEMES.get(name) or _THEMES["custom_bg"]
+    _active = _THEMES.get(name) or _THEMES["gray"]
     PRIMARY = _active["PRIMARY"]
     PRIMARY_DARK = _active["PRIMARY_DARK"]
     PRIMARY_LIGHT = _active["PRIMARY_LIGHT"]
@@ -160,7 +204,6 @@ def set_theme(name: str) -> None:
     WINDOW_ALPHA = _active["WINDOW_ALPHA"]
     FONT_FAMILY = _active["FONT_FAMILY"]
     CARD_RADIUS = _active["CARD_RADIUS"]
-    BG_IMAGE_ENABLED = _active["BG_IMAGE_ENABLED"]
     CARD_MARGIN = _active["CARD_MARGIN"]
     BANNER_TEXT = _active["BANNER_TEXT"]
     FONT_SIZE_XL = _active["FONT_SIZE_XL"]

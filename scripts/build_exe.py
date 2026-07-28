@@ -74,13 +74,14 @@ def build():
         # for the window titlebar icon and the system tray icon -- --icon=
         # above only embeds it into the exe file itself, the running code
         # still needs its own copy to read via resource_paths.bundled_
-        # resource_dir()). Deliberately NOT the whole icons/ dir:
-        # icons/mod_cache/ and icons/character_cache/ are runtime caches
-        # (see dstools/core/resource_paths.py) that live under
-        # %APPDATA%/DSTCamp/cache/ instead, not bundled with the exe --
-        # bundling them here would freeze in whatever happened to be cached
-        # on the machine that ran this build script, which is meaningless
-        # (and stale) on every other machine, and pure bloat.
+        # resource_dir()). All four runtime cache subfolders (mod_icons/
+        # character_icons/mod_full_resolve/background -- see
+        # dstools/core/resource_paths.py's cache_dir()) live under
+        # %APPDATA%/DSTCamp/cache/ instead, never under icons/, so there's
+        # nothing cache-related to accidentally bundle here.
+        # icons/app/ ships only icon.ico + icon.png -- the source PNG used
+        # to regenerate them lives in reference/ instead (dev-only asset,
+        # never read at runtime, would otherwise be dead weight in the exe).
         f"--add-data={world_icons_src}{sep}icons{os.sep}world",
         f"--add-data={ui_icons_src}{sep}icons{os.sep}ui",
         f"--add-data={app_icons_src}{sep}icons{os.sep}app",

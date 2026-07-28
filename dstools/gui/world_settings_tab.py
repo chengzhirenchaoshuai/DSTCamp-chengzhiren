@@ -7,9 +7,16 @@ from dstools.core.world_reader import parse_leveldata, save_leveldata
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.menu_combo import MenuCombo
+from dstools.gui.pill_tabs import PillTabBar
 from dstools.gui.toolbar_widgets import make_toolbar_label
 from dstools.i18n import t
 from dstools.models import SaveSource
+
+# 子页签条尺寸——比顶层 5 个主页签的 PillTabBar（44px 高、34px 药丸）小一
+# 号，跟原来那条细的 ttk.Notebook 页签条比例更接近。
+_SUB_TAB_H = 32
+_SUB_PILL_H = 24
+_SUB_FONT_SIZE = 10
 
 
 class WorldSettingsTab:
@@ -33,7 +40,10 @@ class WorldSettingsTab:
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_select)
-        self._wl_br = ttk.Button(sf, text=t("save.refresh"), command=self._load_world); self._wl_br.pack(side=tk.LEFT, padx=(0,10))
+        # 分片下拉框旁边原来还有一个"刷新"按钮——应用户要求删掉了：顶部
+        # 全局存档选择栏已经有一个"刷新"按钮，点了会走
+        # DSToolsApp._refresh() -> tab.refresh() -> on_cluster_changed()
+        # -> _on_shard_select() -> _load_world()，效果跟这里重复。
         # 本地存档选中时显示的醒目提示——本地存档的世界设置不保证编辑
         # 生效，这里只读查看，默认不 pack。
         self._wl_local_banner = tk.Label(self.frame, text=t("world.local_view_only_banner"),
@@ -75,15 +85,27 @@ class WorldSettingsTab:
         self._wl_info_frame.bind("<Configure>", lambda e: _redraw_wl_info(), add="+")
         self._wl_title_var.trace_add("write", lambda *a: _redraw_wl_info())
         self._wl_desc_var.trace_add("write", lambda *a: _redraw_wl_info())
-        self._sub_nb = ttk.Notebook(self.frame); self._sub_nb.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0,5))
+        # PillTabBar（gui/pill_tabs.py）代替 ttk.Notebook——原生 Notebook
+        # 页签条自己画不透明背景，没有选项能让它透出自定义背景图；
+        # PillTabBar 本来就是给这类场景准备的手绘控件（顶层 5 个主页签已
+        # 经在用），这里按小一号尺寸复用。_sub_content 是两个面板共用的
+        # 普通容器（PillTabBar 不像 ttk.Notebook 那样自带"页面容器"），
+        # 两个 ImageScrollPanel.frame 手动 pack()/pack_forget() 切换。
+        self._sub_tabs = [("rules", self._rules_tab_label()), ("gen", t("world.generation"))]
+        self._sub_tab_bar = PillTabBar(self.frame, tabs=self._sub_tabs, on_select=self._on_sub_tab_select,
+                                        app=app, bg=theme.CARD_BG, height=_SUB_TAB_H,
+                                        pill_h=_SUB_PILL_H, font_size=_SUB_FONT_SIZE)
+        self._sub_tab_bar.pack(fill=tk.X, padx=5, pady=(0,0))
+        self._sub_content = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._sub_content.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0,5))
 
         from dstools.gui.image_scroll import ImageScrollPanel
         from dstools.gui.world_render import REF_WIDTH
 
-        self._rules_panel = ImageScrollPanel(self._sub_nb, ref_width=REF_WIDTH, bg=theme.CARD_BG)
-        self._sub_nb.add(self._rules_panel.frame, text=self._rules_tab_label())
-        self._gen_panel = ImageScrollPanel(self._sub_nb, ref_width=REF_WIDTH, bg=theme.CARD_BG)
-        self._sub_nb.add(self._gen_panel.frame, text=t("world.generation"))
+        self._rules_panel = ImageScrollPanel(self._sub_content, ref_width=REF_WIDTH, bg=theme.CARD_BG)
+        self._gen_panel = ImageScrollPanel(self._sub_content, ref_width=REF_WIDTH, bg=theme.CARD_BG)
+        self._rules_panel.frame.pack(fill=tk.BOTH, expand=True)
+        self._sub_tab_key = "rules"
         self._rules_panel.on_settle = lambda w, h: self._render_rules(ref_width=w)
         self._gen_panel.on_settle = lambda w, h: self._render_gen(ref_width=w)
 
@@ -103,6 +125,11 @@ class WorldSettingsTab:
         # DSToolsApp._refresh()（只有当前显示的页签立即刷新，其余标脏，
         # 真正切过去时 _on_tab_select 才补一次，见那两处的说明）统一负责
         # 首次填充，构造阶段只搭好控件壳子。
+
+    def _on_sub_tab_select(self, key):
+        (self._rules_panel.frame if self._sub_tab_key == "rules" else self._gen_panel.frame).pack_forget()
+        self._sub_tab_key = key
+        (self._rules_panel.frame if key == "rules" else self._gen_panel.frame).pack(fill=tk.BOTH, expand=True)
 
     def _get_cluster(self):
         return self.app.get_selected_cluster()
@@ -216,8 +243,10 @@ class WorldSettingsTab:
                 self._gen_cats = get_categories(loc, "generation")
                 self._render_gen()
 
-                self._sub_nb.tab(0, text=self._rules_tab_label(sum(len(v) for v in rules_by_cat.values())))
-                self._sub_nb.tab(1, text=f"{t('world.generation')} ({sum(len(v) for v in gen_by_cat.values())})")
+                self._sub_tab_bar.relabel({
+                    "rules": self._rules_tab_label(sum(len(v) for v in rules_by_cat.values())),
+                    "gen": f"{t('world.generation')} ({sum(len(v) for v in gen_by_cat.values())})",
+                })
                 break
 
     def _render_rules(self, ref_width=None):
@@ -306,16 +335,17 @@ class WorldSettingsTab:
 
     def refresh_language(self):
         self._wl_lbl2.redraw()
-        self._wl_br.configure(text=t("save.refresh")); self._wl_bs.configure(text=t("world.save_rules"))
-        self._sub_nb.tab(0, text=self._rules_tab_label()); self._sub_nb.tab(1, text=t("world.generation"))
+        self._wl_bs.configure(text=t("world.save_rules"))
+        self._sub_tab_bar.relabel({"rules": self._rules_tab_label(), "gen": t("world.generation")})
         self._wl_local_banner.configure(text=t("world.local_view_only_banner"))
 
     def retheme(self):
         """主题切换时调用——这个横幅、以及 make_toolbar_label() 画的说明
         文字都是 __init__ 里建一次就不再重建，refresh() 不会碰它们的颜
-        色，需要显式重新上色/重画。"""
+        色，需要显式重新上色/重画。_sub_tab_bar 同理。"""
         self._wl_local_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
         self._wl_lbl2.redraw()
         self._redraw_wl_info()
+        self._sub_tab_bar.apply_theme()
 
     def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())

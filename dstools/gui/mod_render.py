@@ -204,7 +204,13 @@ def _draw_switch(draw, x, cy, w, h, on, pressed=False):
 
 
 def _draw_pill(draw, x, y, w, h, text, font, enabled=True):
-    fill = theme.ACCENT if enabled else _CFG_DISABLED_COLOR
+    # "配置"按钮跟着 PRIMARY 走，不用 ACCENT——ACCENT 是刻意跟 PRIMARY
+    # 区分开的强调色（entry 聚焦边框、workshop 链接文字），换主题时不一
+    # 定跟着主题的"招牌色"直觉走（比如篝火橙主题 ACCENT 是红色）；这个
+    # 按钮用户是当成"这套主题的颜色"来看的（薄荷绿主题应该是浅绿色按
+    # 钮、樱花粉主题应该是粉色按钮），跟开关/Big.TButton 这些控件保持
+    # 同一个 PRIMARY 色号才符合直觉。
+    fill = theme.PRIMARY if enabled else _CFG_DISABLED_COLOR
     text_color = theme.CARD_BG if enabled else _CFG_TEXT_DISABLED
     draw.rounded_rectangle([x, y, x + w, y + h], radius=h / 2, fill=fill)
     draw.text((x + w / 2, y + h / 2), text, font=font, fill=text_color, anchor="mm")

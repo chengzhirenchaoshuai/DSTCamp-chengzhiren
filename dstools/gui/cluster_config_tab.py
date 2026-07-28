@@ -17,8 +17,15 @@ from dstools.core.token_manager import is_valid_token, mask_token, read_token, w
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.menu_combo import MenuCombo
+from dstools.gui.pill_tabs import PillTabBar
 from dstools.i18n import t
 from dstools.models import SaveSource
+
+# 子页签条尺寸——比顶层 5 个主页签的 PillTabBar（44px 高、34px 药丸）小一
+# 号，跟原来那条细的 ttk.Notebook 页签条比例更接近。
+_SUB_TAB_H = 32
+_SUB_PILL_H = 24
+_SUB_FONT_SIZE = 10
 
 # Klei user IDs (used in adminlist.txt/blocklist.txt) look like
 # "KU_4R9OEYX3" -- "KU_" followed by a handful of mixed-case alphanumeric
@@ -159,25 +166,37 @@ class ClusterConfigTab:
         # self.frame/sf 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
         # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
         # 义背景图。这个页签内部（Cluster/Shard Config 两个 tab 页各自
-        # 的 Canvas+动态表格、以及管理员/黑名单/Token 三个子面板）本轮不
-        # 动——CLAUDE.md 自己标注这是"最麻烦"的一处，resize-settle 逻辑
-        # 比较精细，牵一发动全身，本轮只做最外层。
+        # 的 Canvas+动态表格 resize-settle 逻辑、管理员/黑名单/Token 三个
+        # 子面板的内容）本轮不动——CLAUDE.md 自己标注这是"最麻烦"的一
+        # 处，牵一发动全身；这次只把外层 ttk.Notebook 换成 PillTabBar
+        # （原生 Notebook 页签条本身不透明、没法透出背景图），5 个页面
+        # 各自的内容/滚动逻辑原样保留，只是父容器从 self._cc_notebook 换
+        # 成下面的 self._sub_content。
         self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG); self._entries = {}
-        sf = BgFrame(self.frame, app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=5, pady=5)
-        # "存档"选择器已经搬到顶部的全局选择栏，这里不再重复一份，"加载"
-        # 按钮变成这一行第一个控件。
-        self._cc_bl = ttk.Button(sf, text=t("cluster.load"), command=self._load_config); self._cc_bl.pack(side=tk.LEFT, padx=(0,5))
+        # "存档"选择器已经搬到顶部的全局选择栏，这里不再重复一份；原来
+        # 这里还有一个独立的"加载"按钮，应用户要求删掉了——顶部全局选
+        # 择栏切换存档/点"刷新"都会走 on_cluster_changed() ->
+        # _load_config()，跟这个按钮完全重复。
 
-        self._cc_notebook = ttk.Notebook(self.frame); self._cc_notebook.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        # Switching tabs otherwise leaves keyboard focus on whichever
-        # widget happens to be first in that tab's creation order (its
-        # Entry/Combobox/Listbox) -- a focused ttk widget draws its
-        # content with the selection highlight, which read as "the first
-        # setting is randomly selected" even though nothing was actually
-        # clicked. Shifting focus to the notebook itself (a plain
-        # container, nothing to highlight) clears that on every tab
-        # switch.
-        self._cc_notebook.bind("<<NotebookTabChanged>>", lambda e: self._cc_notebook.focus_set())
+        self._sub_tabs = [
+            ("cluster", t(self._NOTEBOOK_TAB_KEYS["Cluster"])), ("shard", t(self._NOTEBOOK_TAB_KEYS["Shard Config"])),
+            ("admin", t("admin.title")), ("block", t("blocklist.title")), ("token", t("token.title")),
+        ]
+        self._sub_tab_bar = PillTabBar(self.frame, tabs=self._sub_tabs, on_select=self._on_sub_tab_select,
+                                        app=app, bg=theme.CARD_BG, height=_SUB_TAB_H,
+                                        pill_h=_SUB_PILL_H, font_size=_SUB_FONT_SIZE)
+        self._sub_tab_bar.pack(fill=tk.X, padx=5, pady=(5,0))
+        self._sub_content = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._sub_content.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self._sub_pages = {}  # key -> page frame，_on_sub_tab_select 用来 pack()/pack_forget()
+        self._sub_tab_key = "cluster"
+        # 切换子页签时把键盘焦点转移到 self._sub_content（一个普通容器，
+        # 没有任何东西可以画选中态高亮）——不这样做的话焦点会停在上一个
+        # 页签里恰好排在最前面创建的那个控件（Entry/Combobox/Listbox）
+        # 上，切过来的新页签第一项会被误当成"已经选中"画出高亮，其实用
+        # 户什么都没点。原来 ttk.Notebook 版本靠 <<NotebookTabChanged>>
+        # 事件做同一件事，PillTabBar 没有这个原生事件，改在
+        # _on_sub_tab_select 里直接调用（见文件靠后的方法定义）。
         # "Cluster" is a single merged tab holding all four cluster.ini
         # sections (GAMEPLAY/NETWORK/MISC/SHARD), each row still keyed
         # into self._entries/ini_field_info by its real section name --
@@ -220,7 +239,7 @@ class ClusterConfigTab:
             # the actual config rows, ending right above the save button
             # instead of the whole tab page (footer included) reading as
             # one undifferentiated green block.
-            page = tk.Frame(self._cc_notebook, background=theme.CARD_BG)
+            page = tk.Frame(self._sub_content, background=theme.CARD_BG)
             scroll_area = ttk.Frame(page)
             scroll_area.pack(side=tk.TOP, fill=tk.X)
             footer = tk.Frame(page, background=theme.CARD_BG)
@@ -286,7 +305,8 @@ class ClusterConfigTab:
                 state["after_id"] = e.widget.after(120, settle)
 
             canvas.bind("<Configure>", _on_canvas_configure)
-            self._cc_notebook.add(page, text=t(self._NOTEBOOK_TAB_KEYS[tab_key]))
+            sub_key = "cluster" if tab_key == "Cluster" else "shard"
+            self._sub_pages[sub_key] = page
             self._section_frames[tab_key] = frame
 
         # Admin, Blocklist (黑名单) & Token tabs -- Admin and Blocklist
@@ -294,7 +314,7 @@ class ClusterConfigTab:
         # (adminlist.txt grants, blocklist.txt bans), so they share the
         # same generic panel/loading/add/remove code below, parameterized
         # by which Cluster attribute + filename to use.
-        self._admin_frame = ttk.Frame(self._cc_notebook)
+        self._admin_frame = ttk.Frame(self._sub_content)
         (self._admin_title_lbl, self._admin_listbox, self._admin_add_btn,
          self._admin_remove_btn, self._admin_status) = self._build_id_list_panel(self._admin_frame, "admin.title")
         self._admin_add_btn.configure(command=lambda: self._add_id_entry(
@@ -303,9 +323,9 @@ class ClusterConfigTab:
         self._admin_remove_btn.configure(command=lambda: self._remove_id_entry(
             "adminlist_path", self._admin_listbox, self._admin_status,
             self._admin_add_btn, self._admin_remove_btn))
-        self._cc_notebook.add(self._admin_frame, text=t("admin.title"))
+        self._sub_pages["admin"] = self._admin_frame
 
-        self._block_frame = ttk.Frame(self._cc_notebook)
+        self._block_frame = ttk.Frame(self._sub_content)
         (self._block_title_lbl, self._block_listbox, self._block_add_btn,
          self._block_remove_btn, self._block_status) = self._build_id_list_panel(self._block_frame, "blocklist.title")
         self._block_add_btn.configure(command=lambda: self._add_id_entry(
@@ -314,10 +334,15 @@ class ClusterConfigTab:
         self._block_remove_btn.configure(command=lambda: self._remove_id_entry(
             "blocklist_path", self._block_listbox, self._block_status,
             self._block_add_btn, self._block_remove_btn))
-        self._cc_notebook.add(self._block_frame, text=t("blocklist.title"))
+        self._sub_pages["block"] = self._block_frame
 
-        self._token_frame = ttk.Frame(self._cc_notebook); self._build_token_panel(self._token_frame)
-        self._cc_notebook.add(self._token_frame, text=t("token.title"))
+        self._token_frame = ttk.Frame(self._sub_content); self._build_token_panel(self._token_frame)
+        self._sub_pages["token"] = self._token_frame
+
+        # 5 个页面全部建完，只 pack() 默认选中的第一个（"cluster"），其
+        # 余保持未托管状态——跟顶层 5 个主页签的 CardFrame 是同一套"只有
+        # 当前显示的那个真正 pack()/grid()着"的做法。
+        self._sub_pages[self._sub_tab_key].pack(fill=tk.BOTH, expand=True)
         # 不在这里现场 on_cluster_changed()——那会同步重建这个页签好几十
         # 个输入框（GAMEPLAY/NETWORK/MISC/SHARD 等每个字段一个控件）。这
         # 个页签在 DSToolsApp.__init__ 里跟其它 4 个页签一起建，构造这一
@@ -327,6 +352,14 @@ class ClusterConfigTab:
         # DSToolsApp._refresh()（只有当前显示的页签立即刷新，其余标脏，
         # 真正切过去时 _on_tab_select 才补一次）统一负责首次填充，构造阶
         # 段只搭好控件壳子。
+
+    def _on_sub_tab_select(self, key):
+        self._sub_pages[self._sub_tab_key].pack_forget()
+        self._sub_tab_key = key
+        self._sub_pages[key].pack(fill=tk.BOTH, expand=True)
+        # 跟原来 ttk.Notebook 版本 <<NotebookTabChanged>> 绑定的效果一
+        # 样——见 __init__ 里这段的说明。
+        self._sub_content.focus_set()
 
     def _build_id_list_panel(self, parent, title_key):
         lf = ttk.Frame(parent); lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -517,7 +550,7 @@ class ClusterConfigTab:
         _fill_column(right_frame, [("NETWORK",config.network), ("MISC",config.misc)])
 
         # The button itself now lives in the tab's footer (created once,
-        # outside the green scrollable card -- see the _cc_notebook setup
+        # outside the green scrollable card -- see the sub-tab page setup
         # loop in __init__), so a reload here only needs to update whether
         # it's clickable, not rebuild it.
         self._section_save_btns["Cluster"].configure(state=tk.NORMAL if is_server else tk.DISABLED)
@@ -857,15 +890,14 @@ class ClusterConfigTab:
         self._load_shard_config()
 
     def refresh_language(self):
-        self._cc_bl.configure(text=t("cluster.load"))
         # Each section's own "保存" button text (and the section-header
         # labels within the merged "Cluster" tab) get refreshed for free
         # by _load_config() at the bottom of this method (it rebuilds
         # every row -- and both save buttons -- from scratch).
-        self._cc_notebook.tab(0, text=t(self._NOTEBOOK_TAB_KEYS["Cluster"]))
-        self._cc_notebook.tab(1, text=t(self._NOTEBOOK_TAB_KEYS["Shard Config"]))
-        self._cc_notebook.tab(2, text=t("admin.title")); self._cc_notebook.tab(3, text=t("blocklist.title"))
-        self._cc_notebook.tab(4, text=t("token.title"))
+        self._sub_tab_bar.relabel({
+            "cluster": t(self._NOTEBOOK_TAB_KEYS["Cluster"]), "shard": t(self._NOTEBOOK_TAB_KEYS["Shard Config"]),
+            "admin": t("admin.title"), "block": t("blocklist.title"), "token": t("token.title"),
+        })
         self._admin_title_lbl.configure(text=t("admin.title"))
         self._admin_add_btn.configure(text=t("admin.add")); self._admin_remove_btn.configure(text=t("admin.remove"))
         self._block_title_lbl.configure(text=t("blocklist.title"))
@@ -877,5 +909,12 @@ class ClusterConfigTab:
         # follow the switch instead of staying in whichever language was
         # active when this cluster was last loaded.
         self._load_config()
+
+    def retheme(self):
+        """主题切换时调用——_sub_tab_bar（PillTabBar）是构造一次就不再
+        重建的长期容器，跟顶层主页签条同理需要显式重新上色。这个页签
+        内部的输入框/按钮都是原生 ttk 控件，theme.apply_theme() 的全局
+        样式表已经覆盖，不需要在这里额外处理。"""
+        self._sub_tab_bar.apply_theme()
 
     def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())

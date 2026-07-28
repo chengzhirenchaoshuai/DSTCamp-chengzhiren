@@ -1,8 +1,13 @@
-"""Top-level pill-shaped tab bar, replacing a plain ttk.Notebook for the
-four main tabs (saves / mods / world / server). Only these four are
-"capsule-ified" -- the inner ttk.Notebook sub-tabs (SaveBrowserTab,
-WorldSettingsTab, ClusterConfigTab) keep their native ttk shape and are
-just re-colored via theme.apply_theme().
+"""Pill-shaped tab bar. Originally just the top-level replacement for a
+plain ttk.Notebook (the five main tabs: saves / mods / world / server /
+local), now also reused at a smaller size for the inner sub-tab rows
+(SaveBrowserTab/WorldSettingsTab/ClusterConfigTab's ttk.Notebook sub-tabs)
+so their background can show the custom wallpaper the same way the outer
+bar does -- a native ttk.Notebook tab strip is always opaque, there's no
+ttk option that makes it background-image-aware, and this project's
+established answer to "a native ttk widget can't do X we need" is to draw
+it ourselves (see menu_combo.py replacing ttk.Combobox, gui/slider.py
+replacing ttk.Scale for the same kind of reason).
 
 文字仍然是原生 create_text（量出来的宽度直接决定药丸宽度，relabel() 语言
 切换只是重新量一次再重画，不用管图片跟文字对不齐的问题）；选中态药丸的
@@ -22,13 +27,17 @@ from dstools.gui import theme
 
 _HEIGHT = 44
 _PILL_H = 34
+_FONT_SIZE = 11
 # >= custom_titlebar.py 里缩放角手柄的边长（ResizeGrips 的 g = 2*_GRIP =
 # 12px）——第一个药丸的圆角矩形如果紧贴 x=0 起画，会被叠在最上层、缩放用
 # 的左上角手柄方块盖掉一角（真机截图确认过：选中态的"本地服务器"药丸左
 # 上角缺一小块，跟之前"文件"菜单项悬停高亮矩形缺角是同一类问题——手柄
 # 用来保证缩放拖拽的点击热区在最上层，本身没画错，只是離 x=0 太近的不透
 # 明内容都会被它压住）。留出 >=12px 的起始间距，药丸圆角矩形就完全落在
-# 手柄范围之外，不需要再去改手柄本身的尺寸/位置。
+# 手柄范围之外，不需要再去改手柄本身的尺寸/位置。这个下限只对紧贴 root
+# 顶部、真的会被缩放手柄盖到的顶层用法有意义；嵌在某个页签内容区域中间
+# 的小号用法（sub_height 参数）够不到缩放手柄，_GAP 对它只是普通的视觉
+# 间距，沿用同一个值没有坏处。
 _GAP = 14
 _HPAD = 18  # horizontal padding inside a pill, around the label
 
@@ -64,19 +73,29 @@ def _selected_pill_image(w: int, h: int, radius: int, color: str) -> "ImageTk.Ph
 
 
 class PillTabBar(tk.Frame):
-    def __init__(self, parent, tabs, on_select, app=None, bg: str = None, **kw):
+    def __init__(self, parent, tabs, on_select, app=None, bg: str = None,
+                 height: int = _HEIGHT, pill_h: int = _PILL_H, font_size: int = _FONT_SIZE,
+                 gap: int = _GAP, hpad: int = _HPAD, **kw):
         """tabs: list of (key, label) in display order.
         on_select: callable(key) invoked on click of an unselected tab.
         app: DSToolsApp 实例——用来接入共享背景图系统（见 gui/bg_frame.py
         顶部说明）；不传（比如其它地方以后要单独用这个控件）就退回没有
-        自定义背景图，只有原来那条模拟玻璃感的渐变。"""
+        自定义背景图，只有原来那条模拟玻璃感的渐变。
+        height/pill_h/font_size/gap：默认沿用顶层五页签这一套尺寸；三个
+        内部子页签（存档信息/世界设置/服务器配置）改用更小号的一套（见
+        各自调用点），跟原来那条细的 ttk.Notebook 页签条比例更接近，不
+        会因为直接套顶层这套尺寸显得比其它控件粗一圈。"""
         bg = bg or theme.BG_SOFT
-        super().__init__(parent, background=bg, height=_HEIGHT, **kw)
+        super().__init__(parent, background=bg, height=height, **kw)
         self.pack_propagate(False)
         self._app = app
         self._on_select = on_select
         self._tabs = list(tabs)
         self._selected = self._tabs[0][0] if self._tabs else None
+        self._height = height
+        self._pill_h = pill_h
+        self._gap = gap
+        self._hpad = hpad
         # 显式指定字体族 -- 不带 family 的 tkfont.Font(weight="bold") 在这台
         # 机器上会解析成"宋体"而不是系统默认的雅黑，而宋体粗体把大写字母 M
         # 渲染成了一个实心方块（缺字形回退），沿用 TkDefaultFont 的族名可以
@@ -85,7 +104,7 @@ class PillTabBar(tk.Frame):
         # 已验证安全的默认族名——同一条 apply_theme() 里也会重新读一遍，
         # 不能在这里读一次就固定住（见 theme.py 顶部"现查不缓存"的规则）。
         default_family = tkfont.nametofont("TkDefaultFont").actual()["family"]
-        self._font = tkfont.Font(family=theme.FONT_FAMILY or default_family, size=11, weight="bold")
+        self._font = tkfont.Font(family=theme.FONT_FAMILY or default_family, size=font_size, weight="bold")
         self._regions = []  # (x1, x2, key)
 
         self._canvas = tk.Canvas(self, highlightthickness=0, bd=0, background=bg)
@@ -156,31 +175,29 @@ class PillTabBar(tk.Frame):
         c.delete("all")
         self._regions = []
         w = max(1, c.winfo_width())
-        h = max(_HEIGHT, self.winfo_height())
+        h = max(self._height, self.winfo_height())
         cy = h / 2
 
-        # 背后条带只有当前主题是"自定义背景图"（theme.BG_IMAGE_ENABLED）
-        # 才画用户设置的照片，从 DSToolsApp 统一维护的共享大图里按自己在
-        # root 里的屏幕位置裁一小块（纯内存 crop，足够便宜，可以跟着
-        # <Configure> 一起触发）——背景图是这个主题自己的一部分，切到别
-        # 的主题应该看到别的主题本来的样子，不是一个跟主题无关的全局开
-        # 关。没启用/没设置过图/拿不到共享大图都还是原来那条"模拟玻璃
-        # 感"的薄荷到白渐变。真正的读盘/裁剪比例/缩放/混合这套重活由
-        # DSToolsApp 在窗口停顿后统一算一次，这里从不做。
-        photo = self._app._get_bg_slice(c, w, h) if (self._app and theme.BG_IMAGE_ENABLED) else None
+        # 背景图是跟主题无关的全局功能，任意主题下只要用户设置过图片就画
+        # ——从 DSToolsApp 统一维护的共享大图里按自己在 root 里的屏幕位置
+        # 裁一小块（纯内存 crop，足够便宜，可以跟着 <Configure> 一起触
+        # 发）。没设置过图/拿不到共享大图都还是原来那条"模拟玻璃感"的薄荷
+        # 到白渐变。真正的读盘/裁剪比例/缩放/混合这套重活由 DSToolsApp 在
+        # 窗口停顿后统一算一次，这里从不做。
+        photo = self._app._get_bg_slice(c, w, h) if self._app else None
         self._bg_photo = photo if photo is not None else theme.gradient_image(w, h)
         c.create_image(0, 0, image=self._bg_photo, anchor=tk.NW)
 
-        x = _GAP
+        x = self._gap
         for key, label in self._tabs:
             text_w = self._font.measure(label)
-            pill_w = text_w + 2 * _HPAD
-            x1, y1, x2, y2 = x, cy - _PILL_H / 2, x + pill_w, cy + _PILL_H / 2
+            pill_w = text_w + 2 * self._hpad
+            x1, y1, x2, y2 = x, cy - self._pill_h / 2, x + pill_w, cy + self._pill_h / 2
             selected = key == self._selected
             if selected:
                 pill_w = int(round(x2 - x1))
                 pill_h = int(round(y2 - y1))
-                photo = _selected_pill_image(pill_w, pill_h, int(_PILL_H / 2), theme.PRIMARY)
+                photo = _selected_pill_image(pill_w, pill_h, int(self._pill_h / 2), theme.PRIMARY)
                 # 保留一份引用防止被垃圾回收——create_image() 本身不会替
                 # 调用方存活这份 PhotoImage，_PILL_IMG_CACHE 模块级缓存已
                 # 经够用，这里不需要再额外存一份到 self。
@@ -188,4 +205,4 @@ class PillTabBar(tk.Frame):
             fg = "#FFFFFF" if selected else theme.TEXT_MUTED
             c.create_text((x1 + x2) / 2, cy, text=label, fill=fg, font=self._font)
             self._regions.append((x1, x2, key))
-            x = x2 + _GAP
+            x = x2 + self._gap

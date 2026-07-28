@@ -12,6 +12,7 @@ from dstools.core.app_settings import (
     get_minimize_on_close, set_minimize_on_close,
     get_cache_use_exe_dir, set_cache_use_exe_dir,
     get_custom_bg_opacity,
+    get_window_position, set_window_position,
 )
 from dstools.core.custom_background import get_custom_bg_path, render_background
 from dstools.core.discovery import discover_environment
@@ -58,7 +59,13 @@ class DSToolsApp:
         # 首次打开会多一次"停顿后按实际宽度重渲染"（既有机制，见
         # image_scroll.py 的 SETTLE_DELAY_MS），不是 bug，只是不再是"一开
         # 始就恰好是原始分辨率"而已。
-        self.root.geometry("1500x820")
+        # 启动位置：应用户要求不再固定贴屏幕左上角——优先用上次关闭时保
+        # 存的坐标（_compute_startup_position() 里会校验这个坐标是否还
+        # 落在当前显示器布局范围内，处理"上次开在副屏、这次副屏没接"这
+        # 类情况），没存过或者校验不通过就退回屏幕正中央（比默认贴左上
+        # 角更合理的首次启动体验）。
+        x, y = self._compute_startup_position()
+        self.root.geometry(f"1500x820+{x}+{y}")
         self.root.minsize(900, 580)
         self.root.resizable(True, True)
 
@@ -140,19 +147,17 @@ class DSToolsApp:
 
         self._tab_cards = {k: _make_card() for k in self._tab_keys}
 
-        # 顶部统一存档选择栏——"本地服务器"/"Mod管理"/"世界设置"/"服务器
-        # 配置"这 4 个页签原来各自维护一份完全独立的存档下拉框，选完一个
-        # 存档还要在另外几个页签里重新选一遍，容易选错/选漏。这里统一成
-        # 一个控件，4 个页签的 on_cluster_changed() 由 _on_global_cluster_
-        # select()/_refresh() 统一广播。"存档信息"页签本身就是服务器/本地
-        # 两个子页签并列展示，不是单一当前选中项的模型，不接入这个控件，
-        # 切到那个页签时把这一整条隐藏掉（见 _on_tab_select）。
-        # self._cluster_bar 是最外层（描边色），真正的内容放在里面一层
-        # CARD_BG 背景的 _cluster_bar_inner 里，四周露出 1px 边框——跟
-        # _show_about 已经在用的"卡片"配色配方一样，让这
-        # 一整条看起来是一张浮起来的卡片，而不是几个控件干巴巴地摆在页面
-        # 背景上。外部代码（_on_tab_select 等）只认 self._cluster_bar 这
-        # 个最外层引用，pack/pack_forget 逻辑不用跟着变。
+        # 顶部统一存档选择栏——5 个页签原来各自（或者"存档信息"是服务
+        # 器/本地两个子页签分别）维护一份完全独立的存档下拉框，选完一个
+        # 存档还要在另外几个页签里重新选一遍，容易选错/选漏，"存档信息"
+        # 那份还额外造成了背景图错位的 bug（见 _on_tab_select 的说明）。
+        # 这里统一成一个控件，全部 5 个页签的 on_cluster_changed() 由
+        # _on_global_cluster_select()/_refresh() 统一广播，全程常驻显
+        # 示，不会因为切到哪个页签而隐藏。self._cluster_bar 是最外层
+        # （描边色），真正的内容放在里面一层 CARD_BG 背景的
+        # _cluster_bar_inner 里，四周露出 1px 边框——跟 _show_about 已经
+        # 在用的"卡片"配色配方一样，让这一整条看起来是一张浮起来的卡片，
+        # 而不是几个控件干巴巴地摆在页面背景上。
         # BgFrame 而不是 tk.Frame——这一条栏也要能显示自定义背景图。
         self._cluster_bar = BgFrame(self.root, self, bg=theme.CARD_BORDER)
         cluster_bar_inner = self._cluster_bar_inner = BgFrame(self._cluster_bar, self, bg=theme.CARD_BG)
@@ -207,37 +212,32 @@ class DSToolsApp:
         self._populate_global_cluster_combo(preserve=False)
 
         # SaveBrowserTab folds in what used to be a separate "环境信息"
-        # tab as a third sub-tab (服务器存档/本地存档/环境概览) -- both
-        # were fundamentally "show information about my saves", just
-        # sliced differently (session-by-session vs. cluster-by-cluster
-        # overview), so keeping them apart just meant clicking back and
-        # forth between two tabs for related information.
+        # tab as a second sub-tab (存档概览/会话详情) -- both were
+        # fundamentally "show information about my saves", just sliced
+        # differently (cluster-by-cluster overview vs. one session's
+        # detail), so keeping them apart just meant clicking back and
+        # forth between two tabs for related information. 会话详情现在
+        # 跟其它 4 个页签一样，靠顶部全局存档选择器驱动（不再自己维护一
+        # 份服务器/本地各一套的下拉框），"存档信息"因此可以完全并入下面
+        # 通用的 _cluster_tab_map/_stale_cluster_tabs 懒加载机制。
         self.local_tab = LocalServiceTab(self._tab_cards["local"].body, self)
         self.save_tab = SaveBrowserTab(self._tab_cards["saves"].body, self)
         self.mod_tab = ModManagerTab(self._tab_cards["mods"].body, self)
         self.world_tab = WorldSettingsTab(self._tab_cards["world"].body, self)
         self.cluster_tab = ClusterConfigTab(self._tab_cards["server"].body, self)
 
-        # 全局存档选择器广播给这 4 个页签时，只立即刷新当前正显示着的
-        # 那一个——世界设置/服务器配置的 on_cluster_changed 是同步的重活
-        # （PIL 面板重绘、几十个输入框整体重建），4 个一起做每次切存档都要
-        # 卡 5-6 秒。没在看的页签只标脏（_stale_cluster_tabs），真正切过去
-        # 的时候（_on_tab_select）才补一次——反正 on_cluster_changed() 不传
-        # cluster 参数时会自己从 get_selected_cluster() 现查，不会读到过期
-        # 的存档。
+        # 全局存档选择器广播给这 5 个页签时，只立即刷新当前正显示着的
+        # 那一个——世界设置/服务器配置/存档信息的 on_cluster_changed 都是
+        # 同步的重活（PIL 面板重绘、几十个输入框整体重建、玩家头像解
+        # 析），5 个一起做每次切存档都要卡好几秒。没在看的页签只标脏
+        # （_stale_cluster_tabs），真正切过去的时候（_on_tab_select）才
+        # 补一次——反正 on_cluster_changed() 不传 cluster 参数时会自己从
+        # get_selected_cluster() 现查，不会读到过期的存档。
         self._cluster_tab_map = {"local": self.local_tab, "mods": self.mod_tab,
-                                  "world": self.world_tab, "server": self.cluster_tab}
+                                  "world": self.world_tab, "server": self.cluster_tab,
+                                  "saves": self.save_tab}
         self._stale_cluster_tabs: set[str] = set()
         self._current_tab_key = "local"
-        # save_tab 不在 _cluster_tab_map 里（它是服务器/本地并列展示，不
-        # 是单一"当前选中 cluster"模型，见上面的说明），之前唯一的刷新点
-        # （_refresh() 里的 self.save_tab.refresh()）没有走"只刷新当前
-        # 页签、其余标脏延迟"这一套，是无条件同步刷新——真机反馈启动要卡
-        # 3 秒才显示内容，profile 出来大头就是这里：默认页签是"本地服务
-        # 器"，用户还没点进"存档信息"，却要在启动时白等它把服务器+本地
-        # 两边所有会话的玩家角色名/头像全解析一遍（每个角色名还要去查一
-        # 遍当前启用的模组）。这里补上跟其它页签一样的标脏机制。
-        self._save_tab_stale = False
 
         self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.cluster_tab, self.save_tab]
         for key, tab in zip(self._tab_keys, self._tabs):
@@ -370,28 +370,63 @@ class DSToolsApp:
             else:
                 card.grid_remove()
         self._current_tab_key = key
-        # "存档信息"页签自己就是服务器/本地两个子页签并列展示，不是单一
-        # 当前选中项的模型，统一选择栏放在那底下没有意义，切过去时藏起来。
-        if key == "saves":
-            self._cluster_bar.pack_forget()
-            # 跟其它页签的 _stale_cluster_tabs 是同一个道理——启动时/
-            # "刷新全部"时如果这个页签不是当前显示的那个，刷新会被推迟到
-            # 这里才真正做一次（见 self._save_tab_stale 的说明）。
-            if self._save_tab_stale:
-                self._save_tab_stale = False
-                self.save_tab.refresh()
-        else:
-            self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
-            # 切过来的这个页签如果在别的页签选存档时被标脏过（见
-            # _apply_global_cluster_change），现在补一次刷新。
-            if key in self._stale_cluster_tabs:
-                self._stale_cluster_tabs.discard(key)
-                self._cluster_tab_map[key].on_cluster_changed()
-            # "服务器是否在运行"跟选了哪个存档无关——用户可能没切存档，只是
-            # 去"本地服务器"页签启停了一下再切回来，这种情况不会被标脏，
-            # 但"同步mod文件到服务器"按钮的可用状态需要跟着重新判一次。
-            if key == "mods":
-                self.mod_tab.refresh_sync_button_state()
+
+        # 之前这里在每次切页签后都强制 update_idletasks() +
+        # _refresh_all_bg_surfaces()，是为了修一个"顶部全局存档选择栏
+        # （_cluster_bar）切进/切出'存档信息'时单独隐藏/显示，导致
+        # _tab_area 屏幕位置跟着变、深层嵌套的 BgFrame 没收到 <Configure>
+        # 而背景图错位"的 bug。现在 _cluster_bar 全程常驻显示（见
+        # SaveBrowserTab.on_cluster_changed()），那个根因已经不存在了，
+        # 这里不再需要每次都强制刷新——card.grid()/grid_remove() 本身对
+        # 刚显示出来的这张卡片就是一次真正的几何变化（从"未托管"变成
+        # "已托管"），会正常级联触发它自己以及所有子控件的 <Configure>，
+        # 各个 BgFrame 自己就能用上当前正确的屏幕坐标，不需要外部再强制
+        # 补一次。61 个背景表面全量重刷一次实测要 200ms+，之前无条件对
+        # 每次切页签都做一遍（甚至做两遍），是真机反馈过的"切页签变卡"
+        # 的根因。
+
+        # 切过来的这个页签如果在别的页签选存档时被标脏过（见
+        # _apply_global_cluster_change），现在补一次刷新——只有这种情况
+        # 才可能是真正的重活（"存档信息"首次访问要解析所有玩家角色的头
+        # 像/名字，含未缓存的 mod 头像转换；世界设置/服务器配置/Mod管理
+        # 是 PIL 面板重绘/Lua 沙箱扫描，真机实测冷启动能到 1~2 秒的同步
+        # 阻塞）。这里不套 _begin_bg_drag_suppress()（先把背景清空成纯
+        # 色再重算）——之前套过一版，效果是重活这 1~2 秒里整个窗口背景
+        # 图变成大片纯色（"全屏白色"），真机反馈这比"背景图偶尔有一点点
+        # 没对齐"更明显、更难看。
+        if key in self._stale_cluster_tabs:
+            self._stale_cluster_tabs.discard(key)
+            # 背景图应该优先显示，不用等内容一起加载好——on_cluster_
+            # changed() 是同步阻塞 Tk 主线程的重活，不主动强制刷新一次
+            # 的话，Tk 在这整个 1~2 秒里完全没有机会把"这张卡片已经
+            # grid() 出来了"这件事真的画到屏幕上（<Configure> 触发的背
+            # 景渲染走的是 after(16, ...) 定时器，不会在主线程被同步代
+            # 码占住时自己插队执行），用户看到的是"点了之后画面僵住
+            # 一两秒，背景和内容同时冒出来"。这里先补一次
+            # update_idletasks()（把刚才 card.grid() 这次真正排布完）+
+            # _refresh_all_bg_surfaces()（背景表面用新坐标裁好）+
+            # update()（这一步是关键——不只是排布，是真的把已经画好的
+            # 内容立刻刷到屏幕上，不用等 on_cluster_changed() 返回、回
+            # 到主循环那一刻才有机会重绘），这样背景图能在内容加载完成
+            # 之前就先显示出来，重活期间背景图保持这个已经对齐好的样
+            # 子，不会再变成大片纯色或者僵住不出现。
+            self.root.update_idletasks()
+            self._refresh_all_bg_surfaces()
+            self.root.update()
+
+            self._cluster_tab_map[key].on_cluster_changed()
+
+            # 重活做完后再刷一次，保证最终状态一定是对的——多数情况下
+            # 重活期间背景本身不会变（没有发生窗口尺寸变化），上面已经
+            # 提前显示的那张就是对的，这次只是兜底。
+            self.root.update_idletasks()
+            self._refresh_all_bg_surfaces()
+
+        # "服务器是否在运行"跟选了哪个存档无关——用户可能没切存档，只是
+        # 去"本地服务器"页签启停了一下再切回来，这种情况不会被标脏，
+        # 但"同步mod文件到服务器"按钮的可用状态需要跟着重新判一次。
+        if key == "mods":
+            self.mod_tab.refresh_sync_button_state()
 
     def _dismiss_entry_focus(self, event):
         """点击到的控件本身不是输入框时，如果当前焦点停在某个 Entry/Text
@@ -457,8 +492,57 @@ class DSToolsApp:
         self._quit_app()
 
     def _quit_app(self):
+        # 退出前记一下窗口当前的左上角坐标，下次启动照这个位置还原（见
+        # __init__ 里 _compute_startup_position() 的说明）。放在这里
+        # （唯一真正退出的出口）而不是绑 <Configure>/窗口拖拽事件—— 没
+        # 必要每拖一下就写一次磁盘，只要退出前这一次是准的就够了。
+        set_window_position(self.root.winfo_x(), self.root.winfo_y())
         self._tray.hide()
         self.root.quit()
+
+    def _get_virtual_screen_bounds(self) -> tuple[int, int, int, int]:
+        """完整虚拟桌面范围（横跨全部显示器），不是
+        winfo_screenwidth()/winfo_screenheight() 那种只报主显示器尺寸的
+        Tk 内置值——校验"上次关闭时保存的位置"是否还在当前显示器布局
+        内要用这个，不然会把停在副屏的窗口误判成"超出屏幕"、强行拉回
+        主屏。用 GetSystemMetrics(SM_XVIRTUALSCREEN 等)，跟
+        custom_titlebar.py 已经在用的 ctypes 手法一致；非 Windows 平台
+        /调用失败都退回主显示器尺寸兜底。"""
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                user32 = ctypes.windll.user32
+                SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
+                SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
+                vx = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+                vy = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+                vw = user32.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+                vh = user32.GetSystemMetrics(SM_CYVIRTUALSCREEN)
+                if vw > 0 and vh > 0:
+                    return vx, vy, vw, vh
+            except Exception:
+                pass
+        return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+    def _compute_startup_position(self) -> tuple[int, int]:
+        """算启动时窗口左上角该放哪——优先用上次关闭时保存的坐标
+        （get_window_position()），但要先校验它是不是还落在当前显示器
+        布局范围内（换了台电脑/拔掉了副屏，保存的坐标可能落在一片根本
+        不存在的区域，直接用会导致窗口开出去就看不见，只能靠任务栏图
+        标猜）；没存过、或者校验不通过，都退回屏幕正中央——比默认贴左
+        上角更符合直觉的首次启动体验（应用户反馈修的）。"""
+        vx, vy, vw, vh = self._get_virtual_screen_bounds()
+        pos = get_window_position()
+        if pos is not None:
+            x, y = pos
+            # 不要求整个 1500x820 窗口都落在范围内（用户可能就是想贴着
+            # 某块屏幕的边缘摆），只要标题栏这一段还有个至少 100px 能看
+            # 见、点得到，就采信保存的坐标。
+            MIN_VISIBLE = 100
+            if (vx - 1500 + MIN_VISIBLE <= x <= vx + vw - MIN_VISIBLE
+                    and vy <= y <= vy + vh - MIN_VISIBLE):
+                return x, y
+        return vx + max(0, (vw - 1500) // 2), vy + max(0, (vh - 820) // 2)
 
     def _build_menu(self):
         """原生 tk.Menu 挂成 Windows 系统菜单条(root.config(menu=...))时，
@@ -478,17 +562,24 @@ class DSToolsApp:
         fm.add_command(label=t("app.refresh"), command=self._refresh, accelerator="F5")
         # "语言"已经搬进"设置"弹窗里了（跟"关闭时最小化到任务栏"那两个开
         # 关放一起，不再单独占一个菜单位置）。
-        # 现在只剩一套主题（"自定义背景图"），"启用此主题"这个单选项已经
-        # 删掉——只有一个选项时，一个永远选中、点了也不会有任何变化的单
-        # 选按钮没有意义。"主题"这一层现在直接放"背景图设置…"这一个命令。
-        # theme.THEME_NAMES 仍然是通用的列表机制，以后要加回别的主题，
-        # 这里改成 else 分支的 add_radiobutton 就行（跟改之前完全一样）。
+        # 四套颜色主题统一用 add_radiobutton 互斥选择。variable/value 必须
+        # 显式指定并挂在 self 上（跟下面"语言"那组 self._settings_lang_var
+        # 同一个理由）——不指定 variable 的话 tk.Menu 会给同一个菜单自动建
+        # 一个内部变量，选中态在这次菜单没重建之前能凑合用，但每次语言切
+        # 换重建菜单（_build_menu 整个重跑）都会丢失，且不会反映真正持久
+        # 化的当前主题，只反映"这次菜单里最后点了哪个"；用 get_theme_name()
+        # 初始化就能在重建后仍然对上号。
+        # "背景图设置…"是单独一条命令，跟主题选择是平级但完全独立的两件
+        # 事——背景图是跟主题解耦的全局功能（任意主题下都能叠加显示，见
+        # theme.py 顶部注释），不是某一套主题专属，点开只弹设置窗口，不
+        # 会顺带切主题。
+        self._theme_menu_var = tk.StringVar(value=get_theme_name())
         tm = tk.Menu(self.root, tearoff=0)
         for name in theme.THEME_NAMES:
-            if name == "custom_bg":
-                tm.add_command(label=t("theme.custom_bg_settings"), command=self._show_custom_bg_dialog)
-            else:
-                tm.add_radiobutton(label=t(f"theme.{name}"), command=lambda n=name: self._switch_theme(n))
+            tm.add_radiobutton(label=t(f"theme.{name}"), variable=self._theme_menu_var, value=name,
+                                command=lambda n=name: self._switch_theme(n))
+        tm.add_separator()
+        tm.add_command(label=t("theme.custom_bg_settings"), command=self._show_custom_bg_dialog)
         self.root.bind("<F5>", lambda e: self._refresh())
 
         # "设置"原来是一个独立的 Toplevel 弹窗（_SettingsDialog，已删除），
@@ -634,14 +725,14 @@ class DSToolsApp:
 
     def _switch_theme(self, name: str) -> None:
         """主题切换现在是立即生效的，不需要重启——跟 _switch_language()
-        走的是同一套思路（重建菜单条 + 逐 tab refresh()），额外要处理的
-        是主题特有的三类"颜色冻结"：ttk.Style 需要重新 configure 一遍
-        （theme.apply_theme() 本身是幂等的，直接复用）；`CardFrame`/
-        `PillTabBar` 这类构造一次就不再重建的长期容器需要显式
-        apply_theme()；散布在 world_render.py/mod_render.py/
+        走的是同一套思路（重建菜单条 + 逐 tab retheme() + 只重载当前页
+        签），额外要处理的是主题特有的三类"颜色冻结"：ttk.Style 需要重新
+        configure 一遍（theme.apply_theme() 本身是幂等的，直接复用）；
+        `CardFrame`/`PillTabBar` 这类构造一次就不再重建的长期容器需要显
+        式 apply_theme()；散布在 world_render.py/mod_render.py/
         toggle_switch.py/themed_dialog.py/local_service_tab.py 里"模块级
-        缓存主题色"的写法已经全部改成现查 theme.X，配合下面的
-        tab.refresh() 触发的重新渲染自然就会用上新颜色。"""
+        缓存主题色"的写法已经全部改成现查 theme.X，配合各 tab 自己的
+        retheme()（只重新上色/重画静态文字，不碰数据）就能用上新颜色。"""
         if name == get_theme_name(): return
         set_theme_name(name)
         theme.set_theme(name)
@@ -657,20 +748,45 @@ class DSToolsApp:
         self._titlebar.apply_theme(bg=theme.CARD_BG)
         self._build_menu()
         self._tab_area.apply_theme()
-        for card in self._tab_cards.values():
+        # 5 张卡片全部叠在 _tab_area 同一个 grid(row=0, column=0) 格子里，
+        # 只有 self._current_tab_key 那张是真的 grid() 着、其余 4 张都
+        # grid_remove() 隐藏——Tk 的 grid_configure() 对一个已经
+        # grid_remove() 的控件调用会把它重新映射回可见状态（哪怕只是改
+        # padx/pady 这种跟"要不要显示"无关的选项），之前这里对全部 5 张
+        # 卡片无条件 grid_configure()，会把隐藏的另外 4 个页签全部强制显
+        # 示出来，叠在最上面的是字典/_tab_keys 顺序里排最后的"存档信息"
+        # （"saves"），造成"切主题后页签跳到存档信息、但顶部页签高亮没
+        # 变"的错觉（真机反馈过）。这里在 configure 之后对非当前页签立刻
+        # 再 grid_remove() 一次——纯 Tk 几何管理器的批处理操作，中间不会
+        # 有真实的屏幕重绘，不会闪一下；grid_remove() 之后再次 grid() 时
+        # （_on_tab_select）会带着这次刚更新过的 padx/pady，不会因为"被
+        # 跳过"而停留在旧的 CARD_MARGIN 上。
+        for key, card in self._tab_cards.items():
             card.apply_theme()
             card.grid_configure(padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
+            if key != self._current_tab_key:
+                card.grid_remove()
         self._pill_bar.apply_theme()
         self._retheme_cluster_bar()
         self._root_bg.apply_theme()
         self._status_bar.apply_theme(bg=theme.CARD_BG)
         self._redraw_status_bar()
         self._force_refresh_bg_now()
-        for tab in self._tabs:
+        # retheme() 只是重新上色/重画静态说明文字，很便宜，5 个页签都立
+        # 即做；refresh() 才是重活（on_cluster_changed 整块重载：Lua 沙箱
+        # 扫描、PIL 面板重绘、几十个输入框重建），只对当前正显示的那个页
+        # 签立即做，其余标脏、真正切过去时才补——跟 _refresh()（"刷新全
+        # 部"）、_apply_global_cluster_change() 是同一套既有的懒加载规
+        # 范，不这样做的话切一次主题要把 5 个页签的重活全同步做一遍，实
+        # 测就是用户反馈的"切主题很卡"的根因。
+        for key, tab in zip(self._tab_keys, self._tabs):
             retheme = getattr(tab, "retheme", None)
             if retheme:
                 retheme()
-            tab.refresh()
+            if key == self._current_tab_key:
+                tab.refresh()
+            else:
+                self._stale_cluster_tabs.add(key)
 
     def _retheme_cluster_bar(self) -> None:
         """顶部存档卡片栏（_cluster_bar/_cluster_bar_inner/"存档:"文字）
@@ -759,7 +875,7 @@ class DSToolsApp:
         BG_SOFT 差异都很小，共用同一张混合结果换来的是"处处看起来是同
         一张连续的图"，比每个表面自己抠自己的颜色更重要。"""
         w, h = self.root.winfo_width(), self.root.winfo_height()
-        bg_path = get_custom_bg_path() if theme.BG_IMAGE_ENABLED else None
+        bg_path = get_custom_bg_path()
         opacity = get_custom_bg_opacity()
         key = (bg_path, opacity, w, h)
         if self._shared_bg_key == key:
@@ -883,11 +999,9 @@ class DSToolsApp:
         dlg.show_info(self.root, t("settings.title"), t("settings.restart_required"))
 
     def _show_custom_bg_dialog(self) -> None:
-        """"主题"菜单里的"背景图设置…"——背景图是这个主题的一部分，点这
-        里等于同时表达"我要用这个主题"，所以先切过去再弹选图窗口（目前
-        只有这一套主题，这一步是空操作，但保留调用是为了将来加回别的
-        主题时这里不用改）。"""
-        self._switch_theme("custom_bg")
+        """"主题"菜单里的"背景图设置…"——背景图是跟主题解耦的全局功能，
+        点开只弹设置窗口，不切主题，选完之后不管当前是哪套颜色主题都会
+        叠加显示。"""
         BackgroundImageDialog(self.root, self)
 
     def _refresh_tab_labels(self):
@@ -907,9 +1021,10 @@ class DSToolsApp:
         # 不存在了才退回第一项）。
         self._populate_global_cluster_combo(preserve=True)
         # 和 _apply_global_cluster_change 同样的道理："刷新"只立即重载当前
-        # 正显示的那个页签，另外 3 个标脏、真正切过去时再补（见
-        # _on_tab_select）——世界设置/服务器配置的刷新是同步重活，4 个页签
-        # 每次点"刷新"都全做一遍，看不见的页签也要陪着卡好几秒没有意义。
+        # 正显示的那个页签，另外 4 个标脏、真正切过去时再补（见
+        # _on_tab_select）——世界设置/服务器配置/存档信息的刷新是同步重
+        # 活，5 个页签每次点"刷新"都全做一遍，看不见的页签也要陪着卡好几
+        # 秒没有意义。
         for key, tab in self._cluster_tab_map.items():
             if key != self._current_tab_key:
                 self._stale_cluster_tabs.add(key)
@@ -925,13 +1040,6 @@ class DSToolsApp:
                 refresh_full()
             else:
                 tab.refresh()
-        # save_tab 同理：只有它就是当前正显示的页签时才立即刷新，否则标
-        # 脏，等用户真的切过去（_on_tab_select）再补——见上面
-        # self._save_tab_stale 的说明。
-        if self._current_tab_key == "saves":
-            self.save_tab.refresh()
-        else:
-            self._save_tab_stale = True
         # "刷新全部"本身逻辑一直是对的（无条件重新拉取数据/重新渲染），
         # 但如果磁盘上确实没有任何变化，界面前后长得一模一样，用户点了会
         # 觉得"跟没点一样"。这里加一句短暂的状态栏提示，过 1.5 秒后恢复

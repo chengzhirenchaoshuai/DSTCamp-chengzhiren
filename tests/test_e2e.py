@@ -1,5 +1,6 @@
 """End-to-end verification tests for dstools."""
 
+import contextlib
 import os
 import sys
 import tempfile
@@ -43,7 +44,7 @@ from dstools.core.app_settings import (
     get_minimize_on_close, set_minimize_on_close,
     get_cache_use_exe_dir, set_cache_use_exe_dir,
 )
-from dstools.models import SaveSession
+from dstools.models import SaveSession, SaveSource
 from dstools.core.modinfo_reader import parse_modinfo
 from dstools.core.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
 from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
@@ -51,6 +52,38 @@ from dstools.core.backup_utils import backup_file, _prune_old_backups
 from dstools.core.cluster_copy import (
     validate_cluster_folder_name, suggest_new_cluster_name, copy_local_cluster_to_server,
 )
+
+
+@contextlib.contextmanager
+def _isolated_settings_dir():
+    """给读写 DSTCamp 自身设置/缓存的测试用——猴子补丁
+    get_settings_dir() 指向一个临时目录，测试期间
+    load_settings()/save_settings()/cache_dir() 全部间接落到这个临时目
+    录，不会碰真实的 %APPDATA%/DSTCamp/。比"读出真实设置、测完再手动写
+    回去"更安全：就算测试中途抛异常/被打断，真实用户数据也从来没被碰
+    过，不需要指望 finally 里的恢复逻辑生效。
+
+    要打两个补丁，不是一个：resource_paths.py 是用
+    `from dstools.core.app_settings import get_settings_dir` 把函数抄
+    了一份到自己的模块命名空间里，只改 app_settings 模块自己的属性，
+    resource_paths.cache_dir() 用的还是抄过去的那份旧引用——两个模块
+    各自的 `get_settings_dir` 名字都要替换掉才能让 load_settings()/
+    save_settings()（走 app_settings 自己那份）和 cache_dir()（走
+    resource_paths 抄的那份）同时生效。"""
+    import dstools.core.app_settings as app_settings
+    import dstools.core.resource_paths as resource_paths
+
+    original_in_app_settings = app_settings.get_settings_dir
+    original_in_resource_paths = resource_paths.get_settings_dir
+    with tempfile.TemporaryDirectory() as tmpdir:
+        patched = lambda: Path(tmpdir)
+        app_settings.get_settings_dir = patched
+        resource_paths.get_settings_dir = patched
+        try:
+            yield Path(tmpdir)
+        finally:
+            app_settings.get_settings_dir = original_in_app_settings
+            resource_paths.get_settings_dir = original_in_resource_paths
 
 
 def test_lua_parser_basic():
@@ -196,8 +229,17 @@ def test_discovery():
 
     for c in env.clusters:
         assert len(c.shards) >= 1
-        print(f"  PASS: {c.name} has {len(c.shards)} shard(s): "
+        assert c.source in (SaveSource.SERVER, SaveSource.LOCAL)
+        print(f"  PASS: {c.name} has {len(c.shards)} shard(s), source={c.source.value}: "
               f"{[s.name for s in c.shards]}")
+
+    # 按 SaveSource 分类计数上报——不硬性要求两边都非空（这台机器目前
+    # 两种都有，但换一台只装了专用服务器/只有本地存档的机器完全可能只
+    # 有一边，不是 bug，不该让测试失败）。
+    server_count = sum(1 for c in env.clusters if c.source == SaveSource.SERVER)
+    local_count = sum(1 for c in env.clusters if c.source == SaveSource.LOCAL)
+    assert server_count + local_count == len(env.clusters)
+    print(f"  PASS: {server_count} server + {local_count} local cluster(s)")
 
 
 def test_save_reader():
@@ -225,7 +267,8 @@ def test_save_reader():
                     summary = get_save_summary(session)
                     assert session.session_id
                     assert session.slots
-                    print(f"    Session {session.session_id}: {summary}")
+                    assert session.source == c.source, "会话的 source 标记应该跟它所属 cluster 的一致"
+                    print(f"    Session {session.session_id}: {summary} (source={session.source.value})")
 
                     if session.metadata:
                         assert session.metadata.day >= 0
@@ -238,14 +281,10 @@ def test_save_reader():
 
 
 def test_mod_manager():
-    """Test mod management operations."""
+    """Test mod management operations. Pure tempdir/synthetic data --
+    no real DST install needed, unlike the other tests around it."""
     print("\n" + "=" * 60)
     print("Test 8: Mod Manager")
-
-    klei_root = find_klei_root()
-    if not klei_root:
-        print("  SKIP: No DST data found")
-        return
 
     # Use a temp file for safe testing
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -656,10 +695,7 @@ def test_player_notes():
     print("\n" + "=" * 60)
     print("Test 19: Player Notes")
 
-    # 这几个函数读写的是用户真实的 %APPDATA%/DSTCamp/settings.json，
-    # 测试前后必须把它还原成原样，不能在用户机器上留下测试痕迹。
-    before = load_settings()
-    try:
+    with _isolated_settings_dir():
         assert get_player_note("TEST_NONEXISTENT_ID") == "", "Unset note should be empty string"
         print("  PASS: Unset player note defaults to empty string")
 
@@ -671,10 +707,6 @@ def test_player_notes():
         assert get_player_note("TEST_PLAYER_A") == "", "Clearing a note should remove it, not leave an empty entry"
         assert "TEST_PLAYER_A" not in load_settings().get("player_notes", {})
         print("  PASS: Clearing a note removes the entry instead of leaving a blank one")
-    finally:
-        save_settings(before)
-        assert load_settings() == before, "Real settings.json must be restored after this test"
-        print("  PASS: Real settings.json restored to its pre-test state")
 
 
 def test_app_settings_toggles():
@@ -683,17 +715,7 @@ def test_app_settings_toggles():
     print("\n" + "=" * 60)
     print("Test 20: App Settings Toggles")
 
-    before = load_settings()
-    try:
-        # 测"没设置过时的默认值"要先把这两个 key 从真实设置里摘掉，不能直接
-        # 假设当前机器上的持久化值就是默认值——这台机器上 minimize_on_close
-        # 之前测试托盘功能时被手动置过 False，一直没改回来，直接断言"现在
-        # 读到的就是默认值"并不可靠。
-        cleared = dict(before)
-        cleared.pop("minimize_on_close", None)
-        cleared.pop("cache_use_exe_dir", None)
-        save_settings(cleared)
-
+    with _isolated_settings_dir():
         assert get_minimize_on_close() is True, "Default should be enabled"
         print("  PASS: minimize_on_close defaults to True when unset")
 
@@ -711,10 +733,6 @@ def test_app_settings_toggles():
         set_cache_use_exe_dir(False)
         assert get_cache_use_exe_dir() is False
         print("  PASS: cache_use_exe_dir round-trips")
-    finally:
-        save_settings(before)
-        assert load_settings() == before, "Real settings.json must be restored after this test"
-        print("  PASS: Real settings.json restored to its pre-test state")
 
 
 def test_mod_sync_incremental_copy():
@@ -761,10 +779,12 @@ def test_mod_sync_incremental_copy():
 def test_theme_set_theme():
     """Test theme.py's set_theme() -- the live theme-switch mechanism.
     Pure logic (module-level color variable reassignment), no real Tk
-    window needed. Only one theme ("custom_bg") exists now, so there's no
-    "switch between two themes" to test -- what's actually worth verifying
-    is (a) it assigns the expected palette/flags and (b) an unknown name
-    falls back to "custom_bg" instead of raising."""
+    window needed. Four themes exist ("gray" default + mint/twilight/
+    campfire) -- verify (a) switching actually reassigns the palette,
+    (b) an unknown name falls back to "gray" instead of raising, (c)
+    background-image support (BG_IMAGE_ENABLED) is gone from theme.py
+    entirely now that it's decoupled from theming (see custom_background.py
+    -- background image applies regardless of active theme)."""
     print("\n" + "=" * 60)
     print("Test 22: Theme Live Switch")
 
@@ -772,17 +792,23 @@ def test_theme_set_theme():
 
     original_primary = theme.PRIMARY
     try:
-        theme.set_theme("custom_bg")
+        theme.set_theme("gray")
         assert theme.PRIMARY == "#8A97A3"
-        assert theme.BG_IMAGE_ENABLED is True
+        assert not hasattr(theme, "BG_IMAGE_ENABLED"), "背景图已跟主题解耦，theme.py 不应再有这个字段"
         assert theme.WINDOW_ALPHA == 1.0, "整窗透明效果已经按用户要求去掉，只保留图片自身的透明度"
         print("  PASS: set_theme() reassigns theme.py's module-level color constants")
 
+        theme.set_theme("mint")
+        assert theme.PRIMARY == "#6FCF97"
+        theme.set_theme("gray")
+        assert theme.PRIMARY == "#8A97A3"
+        print("  PASS: switching between real themes (gray/mint) reassigns the palette")
+
         theme.set_theme("some_removed_theme_name")
         assert theme.PRIMARY == "#8A97A3"
-        print("  PASS: unknown theme name falls back to custom_bg instead of raising")
+        print("  PASS: unknown theme name falls back to gray instead of raising")
     finally:
-        theme.set_theme("custom_bg")
+        theme.set_theme("gray")
         theme.PRIMARY = original_primary  # 双保险，确保测试不影响后续状态
 
 
@@ -867,12 +893,16 @@ def test_mod_resolve_cache():
     print("\n" + "=" * 60)
     print("Test 25: Mod Resolve Cache")
 
-    from dstools.core.mod_resolve_cache import _cache_path, load_cached_result, save_result
-    from dstools.core.modinfo_reader import ModConfigOption
+    # _isolated_settings_dir() 必须在 import mod_resolve_cache 之前进
+    # 入——那个模块的 _CACHE_DIR 是 import 时算好的模块级常量
+    # （cache_dir("mod_full_resolve")），只有在补丁生效期间第一次
+    # import 才能让它落在隔离的临时目录里，不写真实的
+    # %APPDATA%/DSTCamp/cache/。
+    with _isolated_settings_dir():
+        from dstools.core.mod_resolve_cache import load_cached_result, save_result
+        from dstools.core.modinfo_reader import ModConfigOption
 
-    workshop_id = "test-workshop-resolve-cache"
-    cache_path = _cache_path(workshop_id)
-    try:
+        workshop_id = "test-workshop-resolve-cache"
         with tempfile.TemporaryDirectory() as tmp:
             modinfo_path = Path(tmp) / "modinfo.lua"
             modinfo_path.write_text("name = 'x'", encoding="utf-8")
@@ -897,9 +927,6 @@ def test_mod_resolve_cache():
             os.utime(modinfo_path, (future, future))
             assert load_cached_result(workshop_id, modinfo_path) is None
             print("  PASS: cache invalidated once modinfo.lua's mtime moves past it")
-    finally:
-        cache_path.unlink(missing_ok=True)
-        print("  PASS: test cache file cleaned up")
 
 
 def main():

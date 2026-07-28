@@ -54,9 +54,25 @@ class TrayIcon:
         self._thread.start()
 
     def hide(self) -> None:
-        """没在跑就什么都不做。"""
+        """没在跑就什么都不做。
+
+        self._icon.stop() 只是给托盘图标自己的消息循环线程发一个"退出"
+        信号，不会等它真的处理完——真正调用 Shell_NotifyIcon(NIM_DELETE)
+        把图标从托盘摘掉是那个线程自己后续做的事。这里如果 stop() 一喊完
+        就立刻返回（调用方 DSToolsApp._quit_app() 紧接着就是
+        self.root.quit()，整个进程很快就退出了），托盘线程（daemon=True）
+        很可能还没来得及真正调用 NIM_DELETE 就被进程退出直接杀掉——真机
+        反馈过的"退出后托盘图标还在，鼠标划过去才消失"，正是 Windows 没
+        收到"删除图标"这个通知，托盘里留着一个指向已死窗口的图标引用，
+        只有等资源管理器主动查询它（鼠标悬停触发）才发现并清理掉。这里
+        显式 join 一小段时间，把"确保图标真的被摘掉"这件事做完再返回，
+        避免调用方后续退出进程抢在前面。超时兜底（正常情况下几十毫秒内
+        就会返回）：万一 pystray 某个平台的 stop() 卡住，也不会无限期挂
+        起退出流程。"""
         if self._icon is None:
             return
         self._icon.stop()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
         self._icon = None
         self._thread = None

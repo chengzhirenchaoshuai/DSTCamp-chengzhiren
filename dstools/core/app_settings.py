@@ -11,13 +11,14 @@ from pathlib import Path
 _SETTINGS_FILE = "settings.json"
 _KEY_DEDICATED_SERVER_PATH = "dedicated_server_path"
 _KEY_THEME_NAME = "theme_name"
-_DEFAULT_THEME_NAME = "custom_bg"
+_DEFAULT_THEME_NAME = "gray"
 _KEY_PLAYER_NOTES = "player_notes"
 _KEY_MINIMIZE_ON_CLOSE = "minimize_on_close"
 _KEY_CACHE_USE_EXE_DIR = "cache_use_exe_dir"
 _KEY_CUSTOM_BG_FILENAME = "custom_bg_filename"
 _KEY_CUSTOM_BG_OPACITY = "custom_bg_opacity"
 _DEFAULT_CUSTOM_BG_OPACITY = 0.35
+_KEY_WINDOW_POS = "window_pos"
 
 
 def get_settings_dir() -> Path:
@@ -100,6 +101,28 @@ def set_player_note(player_id: str, note: str) -> None:
     else:
         notes.pop(player_id, None)
     data[_KEY_PLAYER_NOTES] = notes
+    save_settings(data)
+
+
+def get_window_position() -> tuple[int, int] | None:
+    """取上次关闭时保存的主窗口左上角坐标，没存过/存的值格式不对都返回
+    None——是否还落在当前显示器布局范围内由调用方（gui/app.py）拿
+    GetSystemMetrics 查完整虚拟桌面范围后自己判断，这里只管读写这两个
+    数字本身。"""
+    raw = load_settings().get(_KEY_WINDOW_POS)
+    if not raw or not isinstance(raw, list) or len(raw) != 2:
+        return None
+    try:
+        return int(raw[0]), int(raw[1])
+    except (TypeError, ValueError):
+        return None
+
+
+def set_window_position(x: int, y: int) -> None:
+    """记住主窗口关闭前的左上角坐标——下次启动时原样还原（应用户要求，
+    默认行为原来总是贴着屏幕左上角，见 gui/app.py.__init__ 的说明）。"""
+    data = load_settings()
+    data[_KEY_WINDOW_POS] = [x, y]
     save_settings(data)
 
 

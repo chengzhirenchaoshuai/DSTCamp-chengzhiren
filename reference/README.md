@@ -12,5 +12,5 @@
   `world_value_sets.py` 的 `VALUE_SETS` 就是照这份文件手抄的。
 - `洞穴设置核对清单.md`/`森林设置核对清单.md`：对着本机真实存档
   `leveldataoverride.lua` 的全部 override key 做的人工核对记录。
-- 两个 `.bat`：饥荒启动/Mod 更新的个人本地脚本，跟这个项目本身无关，
-  留档而已。
+- `icon_source.png`：生成 `icons/app/icon.ico`/`icon.png` 用的高分辨率
+  源图，仅供人工重新导出图标时使用，代码不会读取，不参与打包。

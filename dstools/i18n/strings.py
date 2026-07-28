@@ -17,8 +17,12 @@ STRINGS = {
         "menu.about": "关于",
 
         # Themes -- switching takes effect immediately, no restart needed
-        "theme.custom_bg": "自定义背景图",
+        "theme.gray": "灰色",
         "theme.custom_bg_settings": "背景图设置…",
+        "theme.mint": "薄荷绿",
+        "theme.twilight": "暮色蓝",
+        "theme.campfire": "篝火橙",
+        "theme.sakura": "樱花粉",
 
         # Settings menu
         "settings.title": "设置",
@@ -54,8 +58,10 @@ STRINGS = {
         "save.size": "总大小",
         "save.no_saves": "未找到存档",
         "save.no_client_saves": "未找到本地存档",
-        "save.basic_info": "基本信息",
         "save.extra_sessions": "另外还有 {count} 个其他会话（这里只显示其中一个）",
+        "save.loading": "加载中…",
+        "save.basic_info": "基本信息",
+        "save.storage_location": "存档位置",
 
         # Per-player character status (in the selected session's detail area)
         "save.players_section": "每个玩家角色状态",
@@ -102,7 +108,6 @@ STRINGS = {
 
         # Server config tab
         "cluster.cluster": "服务器:",
-        "cluster.load": "加载",
         "cluster.save_btn": "保存",
         "cluster.shard_config": "分片配置(server.ini)",
         "cluster.tab_cluster_ini": "服务器配置(cluster.ini)",
@@ -124,10 +129,6 @@ STRINGS = {
         # Environment tab
         "env.title": "DST 环境信息",
         "env.klei_root": "Klei 根目录",
-        "env.steam_id": "Steam 用户 ID",
-        "env.client_config": "客户端配置",
-        "env.total_clusters": "服务器集群",
-        "env.total_local": "本地存档会话",
         "env.shards": "个分片",
         "env.mods": "个Mod",
         "env.save_sessions": "个存档会话",
@@ -202,9 +203,6 @@ STRINGS = {
         # Save source labels
         "save.server_clusters": "服务器存档",
         "save.local_clusters": "本地存档",
-        "save.no_server": "未找到服务器存档",
-        "save.no_local": "未找到本地存档",
-        "save.env_overview": "存档概览",
 
         # Copy local save to server (NEW)
         "save.copy_to_server": "复制为服务器存档",
@@ -294,6 +292,8 @@ STRINGS = {
         "local.install_body": "开服需要 Steam 上的免费工具「Don't Starve Together Dedicated Server」（App ID 343080），但没有检测到已安装。\n\n手动安装步骤：\n1. 打开 Steam 客户端\n2. 顶部菜单栏「库」\n3. 左侧库列表切换到「工具」分类（或者直接搜索工具名称）\n4. 找到「Don't Starve Together Dedicated Server」\n5. 右键点击（或双击后按提示）→ 安装\n\n安装完成后，回到本工具点击「重新检测」按钮，或者用「更换路径」手动选择安装目录。",
         "local.install_invalid_dir": "所选目录下未找到专用服务器可执行文件，请确认选择的是「Don't Starve Together Dedicated Server」的安装目录。",
         "local.confdir_cross_drive_error": "存档目录和系统「文档」目录不在同一个盘符，专用服务器工具无法跨盘符加载该存档。",
+        "local.token_missing_title": "令牌未设置",
+        "local.token_missing_confirm": "令牌未设置，服务器会启动失败，是否继续？",
         "local.confirm_close_title": "有服务器正在运行",
         "local.confirm_close_msg": "有 {count} 个服务器正在运行，是否关闭服务器并退出软件？",
 
@@ -344,8 +344,12 @@ STRINGS = {
         "menu.about": "About",
 
         # Themes -- switching takes effect immediately, no restart needed
-        "theme.custom_bg": "Custom Background",
+        "theme.gray": "Gray",
         "theme.custom_bg_settings": "Background Settings...",
+        "theme.mint": "Mint",
+        "theme.twilight": "Twilight",
+        "theme.campfire": "Campfire",
+        "theme.sakura": "Sakura",
 
         # Settings menu
         "settings.title": "Settings",
@@ -381,8 +385,10 @@ STRINGS = {
         "save.size": "Total Size",
         "save.no_saves": "No save sessions found",
         "save.no_client_saves": "No client saves found",
-        "save.basic_info": "Basic Info",
         "save.extra_sessions": "{count} other session(s) also exist (only one shown here)",
+        "save.loading": "Loading…",
+        "save.basic_info": "Basic Info",
+        "save.storage_location": "Save Location",
 
         # Per-player character status (in the selected session's detail area)
         "save.players_section": "Player Character Status",
@@ -429,7 +435,6 @@ STRINGS = {
 
         # Server config tab
         "cluster.cluster": "Cluster:",
-        "cluster.load": "Load",
         "cluster.save_btn": "Save",
         "cluster.shard_config": "Shard Config (server.ini)",
         "cluster.tab_cluster_ini": "Server Config (cluster.ini)",
@@ -451,10 +456,6 @@ STRINGS = {
         # Environment tab
         "env.title": "DST Environment",
         "env.klei_root": "Klei Root",
-        "env.steam_id": "Steam User ID",
-        "env.client_config": "Client Config",
-        "env.total_clusters": "Server Clusters",
-        "env.total_local": "Local Save Sessions",
         "env.shards": "shards",
         "env.mods": "mods",
         "env.save_sessions": "save sessions",
@@ -529,9 +530,6 @@ STRINGS = {
         # Save source labels
         "save.server_clusters": "Server Saves",
         "save.local_clusters": "Local Saves",
-        "save.no_server": "No server saves found",
-        "save.no_local": "No local saves found",
-        "save.env_overview": "Save Overview",
 
         # Copy local save to server (NEW)
         "save.copy_to_server": "Copy as Server Save",
@@ -621,6 +619,8 @@ STRINGS = {
         "local.install_body": "Hosting a server needs the free Steam tool “Don't Starve Together Dedicated Server” (App ID 343080), but it wasn't detected.\n\nManual install steps:\n1. Open the Steam client\n2. Top menu bar → “Library”\n3. Switch the library filter to the “Tools” category (or just search for the tool name)\n4. Find “Don't Starve Together Dedicated Server”\n5. Right-click (or double-click and follow the prompt) → Install\n\nOnce installed, come back and click “Re-detect”, or use “Change Path” to pick the install folder manually.",
         "local.install_invalid_dir": "No dedicated server executable found in that folder -- make sure you selected the “Don't Starve Together Dedicated Server” install directory.",
         "local.confdir_cross_drive_error": "The save directory and the system “Documents” directory are on different drives -- the dedicated server tool can't load this save across drives.",
+        "local.token_missing_title": "Token Not Set",
+        "local.token_missing_confirm": "No cluster token is set -- the server will fail to start. Continue anyway?",
         "local.confirm_close_title": "Servers Still Running",
         "local.confirm_close_msg": "{count} server(s) are still running. Close them and exit?",
 

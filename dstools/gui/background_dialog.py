@@ -5,6 +5,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from dstools.gui import theme
+from dstools.gui.slider import Slider
 from dstools.i18n import t
 
 
@@ -13,12 +14,12 @@ class BackgroundImageDialog:
     拖不透明度、清除背景图都是选完/拖完立刻生效，不需要额外的"保存"按
     钮。这个功能本来就需要真正的文件选择对话框（filedialog）和一个连续
     取值的滑块，两个都不是菜单勾选项能表达的，所以单独开一个小弹窗；
-    "主题"本身仍然是纯下拉菜单（见 app.py._build_menu()），这里只是"自定
-    义背景图"这一项级联出来的一个命令入口，跟已经删掉的 `_SettingsDialog`
-    不是一回事——那个是想把"设置"整体做成独立弹窗，这个只服务于这一项确
-    实需要弹窗形态的功能。这个功能原来挂在"设置"菜单下，是个跟主题无关的
-    全局开关；现在改成只在"自定义背景图"这个主题生效（见 theme.py 的
-    `BG_IMAGE_ENABLED` 字段），选完图片后背景图只有切回这个主题才会显示。
+    "主题"本身仍然是纯下拉菜单（见 app.py._build_menu()），这里是"主题"
+    菜单里单独一条、跟主题选择平级但完全独立的命令入口，跟已经删掉的
+    `_SettingsDialog` 不是一回事——那个是想把"设置"整体做成独立弹窗，这
+    个只服务于这一项确实需要弹窗形态的功能。背景图是跟主题解耦的全局功
+    能：选完图片后不管当前激活的是哪一套颜色主题（灰色/薄荷绿/暮色蓝/
+    篝火橙）都会叠加显示，不绑定任何一套主题。
 
     目前只有顶部胶囊页签条（PillTabBar）会画这张背景图（见
     pill_tabs.py._redraw()）——那是项目里本来就有"背景图片"这个绘制槽位
@@ -67,8 +68,17 @@ class BackgroundImageDialog:
         tk.Label(row_opacity, text=t("settings.custom_bg_opacity_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
                  fg=theme.TEXT, bg=theme.CARD_BG).pack(side=tk.LEFT)
         self._opacity_var = tk.DoubleVar(value=get_custom_bg_opacity())
-        ttk.Scale(row_opacity, from_=0.0, to=1.0, variable=self._opacity_var,
-                  command=self._on_opacity_change, length=160).pack(side=tk.RIGHT)
+        self._opacity_apply_after_id = None
+        self._opacity_pending = None
+        # 这里用自绘的 Slider（gui/slider.py）而不是 ttk.Scale——实测
+        # ttk.Scale 在这个项目用的 "clam" 主题下点击滑槽任意位置不会跳
+        # 到点击处，落点几乎是随机蹦到最左/最右（合成点击事件逐点验证
+        # 过），是 clam 主题 Scale 元素几何计算的问题，改不了，只能换
+        # 成自己画的滑块——跟 menu_combo.py 用 MenuCombo 替换有渲染缺陷
+        # 的 ttk.Combobox 是同一个理由。
+        Slider(row_opacity, variable=self._opacity_var, from_=0.0, to=1.0,
+               width=160, height=20, command=self._on_opacity_change,
+               bg=theme.CARD_BG).pack(side=tk.RIGHT)
 
         btn_row2 = tk.Frame(card, background=theme.CARD_BG)
         btn_row2.pack(fill=tk.X, padx=24, pady=(0, 24))
@@ -110,12 +120,30 @@ class BackgroundImageDialog:
         self._status_var.set(t("settings.custom_bg_none"))
         self._refresh_custom_bg_surfaces()
 
-    def _on_opacity_change(self, _value: str) -> None:
-        # ttk.Scale 拖动过程中会连续触发这个回调——真正的裁剪/缩放/混合
-        # 重活走 PillTabBar/_tab_area 自己的节流入口（跟拖拽窗口缩放共用
-        # 同一套 ~60fps 节流），这里只管把值立刻持久化，不会因为拖动滑块
-        # 卡顿。
-        self._set_custom_bg_opacity(self._opacity_var.get())
+    # 拖动滑块时每移动一个像素都会触发一次这个回调——真正的重活
+    # （_refresh_custom_bg_surfaces() 里 app._force_refresh_bg_now() 强
+    # 制重新裁剪/缩放/混合整张背景大图 + set_custom_bg_opacity() 落盘）
+    # 在这里完全不节流的话，拖一下滑块要同步做几十次这套重活，正是用户
+    # 反馈"拖动的时候有点卡"的根因——跟 image_scroll.py/bg_frame.py 已
+    # 经验证过的"拖拽中便宜、停顿后（或按固定节奏）才做重活"是同一个思
+    # 路，只是这里不是等停顿，而是限制成大约每 _OPACITY_THROTTLE_MS
+    # 做一次（留着live预览的观感，不是等松手才更新），用最新值覆盖旧的
+    # 待处理值，不会因为节流丢结果或者停在中间某个过时的值上。
+    _OPACITY_THROTTLE_MS = 60
+
+    def _on_opacity_change(self, value: float) -> None:
+        self._opacity_pending = value
+        if self._opacity_apply_after_id is None:
+            self._opacity_apply_after_id = self.win.after(
+                self._OPACITY_THROTTLE_MS, self._apply_pending_opacity)
+
+    def _apply_pending_opacity(self) -> None:
+        self._opacity_apply_after_id = None
+        if self._opacity_pending is None:
+            return
+        value = self._opacity_pending
+        self._opacity_pending = None
+        self._set_custom_bg_opacity(value)
         self._refresh_custom_bg_surfaces()
 
     def _refresh_custom_bg_surfaces(self) -> None:
