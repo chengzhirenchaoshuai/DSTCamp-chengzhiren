@@ -390,6 +390,7 @@ class ClusterConfigTab:
         self._token_show_btn = ttk.Button(bf, text=t("token.show"), command=self._toggle_token); self._token_show_btn.pack(side=tk.LEFT, padx=2)
         self._token_copy_btn = ttk.Button(bf, text=t("token.copy"), command=self._copy_token); self._token_copy_btn.pack(side=tk.LEFT, padx=2)
         self._token_change_btn = ttk.Button(bf, text=t("token.change"), command=self._change_token); self._token_change_btn.pack(side=tk.LEFT, padx=2)
+        self._token_apply_btn = ttk.Button(bf, text=t("token.apply"), command=self._apply_token); self._token_apply_btn.pack(side=tk.RIGHT, padx=2)
         self._token_visible = False; self._token_raw = ""
 
     def _get_cluster(self):
@@ -807,6 +808,10 @@ class ClusterConfigTab:
             self.frame.clipboard_clear(); self.frame.clipboard_append(self._token_raw)
             dlg.show_info(self.app.root, "", t("token.copied"))
 
+    def _apply_token(self):
+        import webbrowser
+        webbrowser.open("https://accounts.klei.com/account/game/servers?game=DontStarveTogether")
+
     def _change_token(self):
         c = self._get_cluster()
         if not c: return
@@ -904,6 +909,7 @@ class ClusterConfigTab:
         self._block_add_btn.configure(text=t("admin.add")); self._block_remove_btn.configure(text=t("admin.remove"))
         self._token_show_btn.configure(text=t("token.show") if not self._token_visible else t("token.hide"))
         self._token_copy_btn.configure(text=t("token.copy")); self._token_change_btn.configure(text=t("token.change"))
+        self._token_apply_btn.configure(text=t("token.apply"))
         # Field labels/tooltips (via ini_field_info) and the local-save
         # readonly note are all language-dependent -- re-render so they
         # follow the switch instead of staying in whichever language was

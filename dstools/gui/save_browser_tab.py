@@ -13,6 +13,7 @@ from tkinter import font as tkfont, ttk
 from PIL import Image, ImageTk
 
 from dstools.core.app_settings import get_player_note, set_player_note
+from dstools.core.backup_manager import create_backup
 from dstools.core.character_icons import resolve_character
 from dstools.core.config_manager import load_cluster_config
 from dstools.core.ini_field_info import get_enum_choices
@@ -764,6 +765,7 @@ class SaveBrowserTab:
         self._env_header_label.redraw()
         self._shard_label.redraw()
         self._players_header_label.redraw()
+        self._backup_btn.configure(text=t("save.backup_now"))
 
     def retheme(self):
         """主题切换时调用——make_toolbar_label() 画的说明文字、以及
@@ -794,6 +796,8 @@ class SaveBrowserTab:
         self._env_header_label = make_toolbar_label(env_header_row, self.app,
                                                        lambda: t("save.basic_info"),
                                                        font=_SECTION_HEADER_FONT)
+        self._backup_btn = ttk.Button(env_header_row, text=t("save.backup_now"), command=self._on_backup_now)
+        self._backup_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
         # 不再是"全部存档"的可滚动列表——顶部全局选择栏已经选了具体是哪
         # 个存档，这里只需要现查、现画那一个存档自己的详情（存档位置/
@@ -804,6 +808,16 @@ class SaveBrowserTab:
         # 知就没必要保留旧控件"思路一致。
         self._selected_cluster_frame = BgFrame(env_section, self.app, bg=theme.CARD_BG)
         self._selected_cluster_frame.pack(fill=tk.X, padx=10, pady=(0,4))
+
+    def _on_backup_now(self):
+        c = self._get_cluster()
+        if not c: return
+        try:
+            create_backup(c.path)
+        except OSError as e:
+            dlg.show_error(self.app.root, t("save.backup_title"), t("save.backup_failed", error=str(e)))
+            return
+        dlg.show_info(self.app.root, t("save.backup_title"), t("save.backup_ok"))
 
     def _refresh_env(self):
         for w in self._selected_cluster_frame.winfo_children(): w.destroy()

@@ -11,6 +11,7 @@ from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.core.app_settings import set_dedicated_server_path
+from dstools.core.backup_manager import create_backup
 from dstools.core.config_manager import load_cluster_config
 from dstools.core.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
@@ -435,10 +436,19 @@ class LocalServiceTab:
 
     def stop_shard(self, cluster, shard):
         self.manager.stop(cluster.path, shard.name,
-                           on_done=lambda p: self.frame.after(0, self._on_stop_done))
+                           on_done=lambda p: self.frame.after(0, lambda: self._on_stop_done(cluster)))
 
-    def _on_stop_done(self):
+    def _on_stop_done(self, cluster):
         self._refresh_shard_rows(self._get_cluster())
+        # 一个 cluster 下的分片共享同一份世界进度（Master/Caves 通过传送门
+        # 联动），只有这个 cluster 名下所有分片都真正停下来之后备份才是一
+        # 个一致的快照——不是每停一个分片就各自备份一次。
+        running = self.manager.running()
+        if not any(str(p.cluster_path) == str(cluster.path) for p in running):
+            try:
+                create_backup(cluster.path)
+            except OSError:
+                pass  # 备份失败不应该打断正常的停服流程，用户还能手动备份
 
     def _start_all(self):
         c = self._get_cluster()

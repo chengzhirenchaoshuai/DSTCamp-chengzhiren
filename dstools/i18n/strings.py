@@ -61,6 +61,10 @@ STRINGS = {
         "save.extra_sessions": "另外还有 {count} 个其他会话（这里只显示其中一个）",
         "save.loading": "加载中…",
         "save.basic_info": "基本信息",
+        "save.backup_now": "立即备份",
+        "save.backup_title": "存档备份",
+        "save.backup_ok": "备份完成",
+        "save.backup_failed": "备份失败：{error}",
         "save.storage_location": "存档位置",
 
         # Per-player character status (in the selected session's detail area)
@@ -194,6 +198,7 @@ STRINGS = {
         "token.hide": "隐藏",
         "token.copy": "复制",
         "token.change": "修改令牌",
+        "token.apply": "申请令牌",
         "token.copied": "令牌已复制到剪贴板",
         "token.empty": "(未设置)",
         "token.masked": "(令牌已隐藏)",
@@ -388,6 +393,10 @@ STRINGS = {
         "save.extra_sessions": "{count} other session(s) also exist (only one shown here)",
         "save.loading": "Loading…",
         "save.basic_info": "Basic Info",
+        "save.backup_now": "Backup Now",
+        "save.backup_title": "Save Backup",
+        "save.backup_ok": "Backup complete",
+        "save.backup_failed": "Backup failed: {error}",
         "save.storage_location": "Save Location",
 
         # Per-player character status (in the selected session's detail area)
@@ -521,6 +530,7 @@ STRINGS = {
         "token.hide": "Hide",
         "token.copy": "Copy",
         "token.change": "Change Token",
+        "token.apply": "Apply for Token",
         "token.copied": "Token copied to clipboard",
         "token.empty": "(Not set)",
         "token.masked": "(Token hidden)",
