@@ -36,14 +36,16 @@ from dstools.core.mod_manager import (
 )
 from dstools.core.discovery import find_klei_root, discover_environment
 from dstools.core.save_reader import list_save_sessions, get_save_summary, list_session_players
-from dstools.core.config_manager import set_cluster_option
+from dstools.core.config_manager import set_cluster_option, backfill_cluster_defaults
 from dstools.core.character_names import get_character_display_name
 from dstools.core.character_icons import find_mod_character_name, resolve_character
 from dstools.core.app_settings import (
     load_settings, save_settings, get_player_note, set_player_note,
     get_minimize_on_close, set_minimize_on_close,
     get_cache_use_exe_dir, set_cache_use_exe_dir,
+    set_backup_retention,
 )
+from dstools.core.backup_manager import create_backup, restore_backup, list_backups
 from dstools.models import SaveSession, SaveSource
 from dstools.core.modinfo_reader import parse_modinfo
 from dstools.core.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
@@ -929,6 +931,91 @@ def test_mod_resolve_cache():
             print("  PASS: cache invalidated once modinfo.lua's mtime moves past it")
 
 
+def test_backup_manager_restore_clears_stale_slots():
+    """restore_backup() 必须先清空会被覆盖的每一项再解压，不能只是在旧
+    文件上覆盖解压——不这样做的话，备份之后又产生的新存档槽文件会跟备
+    份里的旧槽位混在一起，游戏很可能还是照常挑编号最新的那个，恢复了个
+    寂寞。这是 backup_manager.py 里最复杂、最容易静默出错的一段逻辑。"""
+    print("\n" + "=" * 60)
+    print("Test 26: Backup Restore Clears Stale Slots")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = Path(tmp) / "Cluster_1"
+        sess = cluster / "Master" / "save" / "session" / "ABCDEF0123456789"
+        sess.mkdir(parents=True)
+        (sess / "0000000001").write_text("old_slot_data")
+        (cluster / "Master" / "server.ini").write_text("[NETWORK]\nserver_port=1\n")
+        (cluster / "Master" / "modoverrides.lua").write_text("return {}")
+        (cluster / "cluster.ini").write_text("[GAMEPLAY]\nmax_players=6\n")
+
+        backup_zip = create_backup(cluster)
+        print(f"  PASS: created backup {backup_zip.name}")
+
+        # 模拟备份之后又产生了更新的存档槽位。
+        (sess / "0000000002").write_text("newer_slot_after_backup")
+        assert sorted(p.name for p in sess.iterdir()) == ["0000000001", "0000000002"]
+
+        restore_backup(cluster, backup_zip)
+        remaining = sorted(p.name for p in sess.iterdir())
+        assert remaining == ["0000000001"], f"应该只剩备份里的旧槽位，实际是 {remaining}"
+        print("  PASS: restore_backup() removes slots created after the backup")
+
+        assert (cluster / "Master" / "server.ini").read_text() == "[NETWORK]\nserver_port=1\n"
+        print("  PASS: restored config files match the backed-up content")
+
+
+def test_backup_manager_prune_retention_boundary():
+    """备份保留份数（app_settings.get_backup_retention()）超过时自动删
+    掉最旧的。用手工构造、时间戳互不相同的旧备份文件模拟"已经攒了很多
+    份"，比连续调用 create_backup() 更贴近真实使用场景（真实场景里两次
+    备份之间至少隔几分钟，不会在同一秒内触发好几次自动去重后缀，直接
+    连续调用反而会绕进那段自动去重逻辑本身，测的东西就跑偏了），再用一
+    次真实的 create_backup() 验证会触发裁剪、且顺序正确。"""
+    print("\n" + "=" * 60)
+    print("Test 27: Backup Retention Boundary")
+
+    with _isolated_settings_dir():
+        # 保留份数的合法范围是 5~99（见 app_settings.set_backup_retention
+        # 的 clamp）。
+        set_backup_retention(5)
+        with tempfile.TemporaryDirectory() as tmp:
+            cluster = Path(tmp) / "Cluster_2"
+            cluster.mkdir(parents=True)
+            (cluster / "cluster.ini").write_text("[GAMEPLAY]\nmax_players=4\n")
+
+            backup_dir = cluster / "dstcamp_backups"
+            backup_dir.mkdir(parents=True)
+            for i in range(1, 8):  # 7 份时间戳递增的旧备份（都早于"现在"）
+                (backup_dir / f"Cluster_2_2026010{i}_000000.zip").write_bytes(b"")
+
+            newest = create_backup(cluster)  # 第 8 份，真实时间戳，必然是最新的
+            backups = list_backups(cluster)
+            assert len(backups) == 5, f"应该只保留 5 份，实际 {len(backups)} 份"
+            print("  PASS: only the most recent 5 backups are kept")
+
+            assert backups[0] == newest, "最新的一份必须排在最前面"
+            assert backups == sorted(backups, key=lambda p: p.name, reverse=True)
+            print("  PASS: list_backups() orders newest-first")
+
+
+def test_backfill_cluster_defaults_only_fills_missing():
+    """backfill_cluster_defaults() 只能补缺的字段，不能覆盖已经存在的
+    值——这是最容易被后续重构不小心破坏（"补默认值"误写成"覆盖已有
+    值"）、且后果是用户已保存配置被悄悄吞掉的一类 bug。"""
+    print("\n" + "=" * 60)
+    print("Test 28: Cluster Defaults Backfill Only Fills Missing")
+
+    config = ClusterConfig(gameplay={"vote_enabled": False}, network={}, misc={}, shard={})
+    backfill_cluster_defaults(config)
+
+    assert config.gameplay["vote_enabled"] is False, "已经显式设置的值不应该被默认值覆盖"
+    print("  PASS: explicitly-set values are not overwritten")
+
+    assert config.network["tick_rate"] == 15, "缺失的字段应该被补上官方默认值"
+    assert config.misc["max_snapshots"] == 6
+    print("  PASS: missing fields are backfilled with official defaults")
+
+
 def main():
     """Run all tests."""
     print("\n" + "█" * 60)
@@ -962,6 +1049,9 @@ def main():
         test_world_categories_bilingual,
         test_custom_background,
         test_mod_resolve_cache,
+        test_backup_manager_restore_clears_stale_slots,
+        test_backup_manager_prune_retention_boundary,
+        test_backfill_cluster_defaults_only_fills_missing,
     ]
 
     for test in tests:
