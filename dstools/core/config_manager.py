@@ -14,6 +14,31 @@ from dstools.models import ClusterConfig, ShardConfig
 
 # ── Cluster Config ─────────────────────────────────────────────────────
 
+# 游戏本身只在值被改动过时才会把它写进 cluster.ini——很多存档里这几个
+# 字段干脆不存在，不代表没有默认行为，只是"文件里没有、GUI 上也就看不
+# 到"。默认值来自 Klei 官方论坛置顶的《Dedicated Server Settings Guide》
+# 和官方示例配置，只收录确认过的默认值。
+CLUSTER_INI_DEFAULTS: dict[tuple[str, str], Any] = {
+    ("GAMEPLAY", "vote_enabled"): True,
+    ("NETWORK", "cluster_intention"): "cooperative",
+    ("NETWORK", "tick_rate"): 15,
+    ("NETWORK", "autosaver_enabled"): True,
+    ("NETWORK", "whitelist_slots"): 0,
+    ("MISC", "max_snapshots"): 6,
+}
+
+
+def backfill_cluster_defaults(config: ClusterConfig) -> None:
+    """给缺失的字段补上官方默认值（只补缺的，已有的不动），让"服务器配置"
+    页面能看到并按需修改它们；点"保存"之后就会作为真实值写进 cluster.ini。"""
+    section_map = {
+        "GAMEPLAY": config.gameplay, "NETWORK": config.network,
+        "MISC": config.misc, "SHARD": config.shard,
+    }
+    for (section, key), default in CLUSTER_INI_DEFAULTS.items():
+        section_map[section].setdefault(key, default)
+
+
 def load_cluster_config(path: Path) -> ClusterConfig:
     """Load cluster configuration from a cluster.ini file.
 

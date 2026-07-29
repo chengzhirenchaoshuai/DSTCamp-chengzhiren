@@ -8,7 +8,7 @@ from tkinter import simpledialog, ttk
 
 from dstools.core.admin_manager import add_admin, read_adminlist, remove_admin
 from dstools.core.config_manager import (
-    load_cluster_config, load_shard_config,
+    backfill_cluster_defaults, load_cluster_config, load_shard_config,
     save_cluster_config, save_shard_config,
     set_cluster_option, set_shard_option,
 )
@@ -513,6 +513,11 @@ class ClusterConfigTab:
         if not c: return
         is_server = (c.source == SaveSource.SERVER)
         config = load_cluster_config(c.path)
+        if is_server:
+            # 游戏没写进文件不代表没有默认行为，只是这台机器的存档还没
+            # 存过这几个字段——本地存档由客户端自己管理，不需要（也不
+            # 应该）在这边替它补默认值。
+            backfill_cluster_defaults(config)
 
         # 本地存档的 cluster.ini/server.ini 由游戏客户端自己管理和重写，
         # 工具这边的修改实际上留不住，因此本地存档下所有字段一律只读展示

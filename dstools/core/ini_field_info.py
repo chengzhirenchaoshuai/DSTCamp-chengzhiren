@@ -168,6 +168,12 @@ ENUM_FIELDS: dict[tuple[str, str], list[tuple[str, str, str]]] = {
         ("zh", "中文", "Chinese"),
         ("en", "英文", "English"),
     ],
+    ("NETWORK", "cluster_intention"): [
+        ("cooperative", "合作 (cooperative)", "Cooperative"),
+        ("competitive", "竞争 (competitive)", "Competitive"),
+        ("social", "社交 (social)", "Social"),
+        ("madness", "疯狂 (madness)", "Madness"),
+    ],
 }
 
 

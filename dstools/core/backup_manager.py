@@ -11,6 +11,7 @@ discovery.py 误认成分片，因为分片判定要求目录里有 server.ini�
 _MAX_BACKUPS 份，超过的自动删掉最旧的。
 """
 
+import shutil
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +66,32 @@ def create_backup(cluster_path: Path) -> Path:
 
     _prune_old_backups(dest_dir)
     return zip_path
+
+
+def restore_backup(cluster_path: Path, backup_zip: Path) -> None:
+    """用某一份备份 zip 覆盖 cluster_path 当前的状态。
+
+    先把这份备份会覆盖到的每一项（cluster 级配置 + 每个分片的 save/ 和
+    三个配置文件）整个删掉，再解压——不能只是在旧文件上覆盖解压：比如
+    save/session/ 下比这份备份更新的存档槽文件如果不清掉，会跟备份里的
+    旧槽位混在一起，游戏很可能还是照常挑编号最新的槽位，恢复了个寂寞。
+    调用方必须自己确认对应的分片都已经停止（文件被进程占着的话，
+    Windows 上这些删除/覆盖操作会直接失败）。
+    """
+    for name in _CLUSTER_ITEMS:
+        target = cluster_path / name
+        if target.exists():
+            target.unlink()
+    for shard_dir in list_shards(cluster_path):
+        for name in _SHARD_ITEMS:
+            target = shard_dir / name
+            if target.is_dir():
+                shutil.rmtree(target)
+            elif target.exists():
+                target.unlink()
+
+    with zipfile.ZipFile(backup_zip) as zf:
+        zf.extractall(cluster_path)
 
 
 def _prune_old_backups(dest_dir: Path) -> None:

@@ -8,14 +8,16 @@
 import queue
 import threading
 import tkinter as tk
+from datetime import datetime
 from tkinter import font as tkfont, ttk
 
 from PIL import Image, ImageTk
 
 from dstools.core.app_settings import get_player_note, set_player_note
-from dstools.core.backup_manager import create_backup
+from dstools.core.backup_manager import create_backup, list_backups, restore_backup
 from dstools.core.character_icons import resolve_character
 from dstools.core.config_manager import load_cluster_config
+from dstools.core.dedicated_server import ServerStatus
 from dstools.core.ini_field_info import get_enum_choices
 from dstools.core.mod_manager import list_mods, load_mod_overrides
 from dstools.core.resource_paths import bundled_resource_dir
@@ -131,6 +133,80 @@ class _CopyToServerDialog:
             self.err_var.set(error)
             return
         self.result = name
+        self.win.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.win.destroy()
+
+
+def _format_backup_label(path, cluster_name: str) -> str:
+    """把备份文件名（{cluster_name}_{YYYYMMDD_HHMMSS}[_n].zip）转成人能看
+    懂的时间字符串，解析失败就原样显示文件名（不猜测）。"""
+    stem = path.stem
+    prefix = f"{cluster_name}_"
+    rest = stem[len(prefix):] if stem.startswith(prefix) else stem
+    try:
+        dt = datetime.strptime(rest[:15], "%Y%m%d_%H%M%S")
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return stem
+
+
+class _RestoreBackupDialog:
+    """"从备份恢复"窗口：列出这个存档目录下 dstcamp_backups/ 里的历史备
+    份（新的在前），选中后点"恢复"才把结果交回调用方，实际的运行中检查/
+    二次确认/覆盖逻辑都在 SaveBrowserTab._on_restore_backup 里做——这个
+    类只负责"选哪一份"。"""
+
+    def __init__(self, parent_widget, cluster, backups):
+        self.result = None
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("save.restore_backup"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+        WIN_W = 420
+
+        ttk.Label(win, text=t("save.restore_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+                  wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
+
+        listbox = tk.Listbox(win, height=min(8, len(backups)), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE))
+        listbox.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
+        for b in backups:
+            listbox.insert(tk.END, _format_backup_label(b, cluster.path.name))
+        listbox.selection_set(0)
+        self._listbox = listbox
+        self._backups = backups
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text=t("save.restore_confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
+
+        win.bind("<Escape>", lambda e: self._cancel())
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        win.update_idletasks()
+        WIN_H = win.winfo_reqheight() + 20
+        root = parent_widget.winfo_toplevel()
+        px, py = root.winfo_rootx(), root.winfo_rooty()
+        pw, ph = root.winfo_width(), root.winfo_height()
+        x = px + max(0, (pw - WIN_W) // 2)
+        y = py + max(0, (ph - WIN_H) // 2)
+        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _confirm(self):
+        sel = self._listbox.curselection()
+        if not sel:
+            return
+        self.result = self._backups[sel[0]]
         self.win.destroy()
 
     def _cancel(self):
@@ -766,6 +842,7 @@ class SaveBrowserTab:
         self._shard_label.redraw()
         self._players_header_label.redraw()
         self._backup_btn.configure(text=t("save.backup_now"))
+        self._restore_btn.configure(text=t("save.restore_backup"))
 
     def retheme(self):
         """主题切换时调用——make_toolbar_label() 画的说明文字、以及
@@ -796,6 +873,8 @@ class SaveBrowserTab:
         self._env_header_label = make_toolbar_label(env_header_row, self.app,
                                                        lambda: t("save.basic_info"),
                                                        font=_SECTION_HEADER_FONT)
+        self._restore_btn = ttk.Button(env_header_row, text=t("save.restore_backup"), command=self._on_restore_backup)
+        self._restore_btn.pack(side=tk.RIGHT, padx=(0, 2))
         self._backup_btn = ttk.Button(env_header_row, text=t("save.backup_now"), command=self._on_backup_now)
         self._backup_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
@@ -818,6 +897,39 @@ class SaveBrowserTab:
             dlg.show_error(self.app.root, t("save.backup_title"), t("save.backup_failed", error=str(e)))
             return
         dlg.show_info(self.app.root, t("save.backup_title"), t("save.backup_ok"))
+
+    def _on_restore_backup(self):
+        c = self._get_cluster()
+        if not c: return
+        backups = list_backups(c.path)
+        if not backups:
+            dlg.show_info(self.app.root, t("save.restore_backup"), t("save.restore_none"))
+            return
+        picker = _RestoreBackupDialog(self.app.root, c, backups)
+        if picker.result is None:
+            return
+
+        # 分片文件被服务器进程占着的时候没法覆盖/删除，必须先确认这个
+        # cluster 名下所有分片都已经停止——"本地服务器"页签的 manager 是
+        # 唯一知道哪些进程还在跑的地方，跨页签直接访问 app.local_tab。
+        running = [s.name for s in c.shards
+                   if (proc := self.app.local_tab.manager.get(c.path, s.name))
+                   and proc.status == ServerStatus.RUNNING]
+        if running:
+            dlg.show_warning(self.app.root, t("save.restore_backup"),
+                              t("save.restore_shards_running", shards="、".join(running)))
+            return
+
+        if not dlg.ask_yes_no(self.app.root, t("save.restore_backup"), t("save.restore_confirm")):
+            return
+        try:
+            create_backup(c.path)  # 恢复前先保险备份一次当前状态，恢复本身也能撤销
+            restore_backup(c.path, picker.result)
+        except OSError as e:
+            dlg.show_error(self.app.root, t("save.restore_backup"), t("save.restore_failed", error=str(e)))
+            return
+        dlg.show_info(self.app.root, t("save.restore_backup"), t("save.restore_ok"))
+        self.refresh()
 
     def _refresh_env(self):
         for w in self._selected_cluster_frame.winfo_children(): w.destroy()

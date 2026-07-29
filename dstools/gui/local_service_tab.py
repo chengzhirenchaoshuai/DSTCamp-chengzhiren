@@ -12,7 +12,7 @@ from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.core.app_settings import set_dedicated_server_path
 from dstools.core.backup_manager import create_backup
-from dstools.core.config_manager import load_cluster_config
+from dstools.core.config_manager import backfill_cluster_defaults, load_cluster_config
 from dstools.core.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
     find_dedicated_server_dir, is_valid_install_dir, resolve_conf_dir_arg,
@@ -54,6 +54,86 @@ def _ordered_shards(cluster):
     "Master" 前面，不改全局排序（避免影响其它 Tab），只在这个标签页
     的显示/启动顺序上按 Master 优先重排。"""
     return sorted(cluster.shards, key=lambda s: s.name != "Master")
+
+
+def _max_rollback_days(cluster) -> int:
+    """游戏保留 max_snapshots 份快照（默认 6），能回退的次数比这个数少
+    一——第 1 份是"当前"，剩下的才是能回退到的历史点（Klei 官方确认过
+    "最多回退 5 天"对应默认的 6 份快照）。"""
+    config = load_cluster_config(cluster.path)
+    backfill_cluster_defaults(config)
+    try:
+        snapshots = int(config.misc.get("max_snapshots", 6))
+    except (TypeError, ValueError):
+        snapshots = 6
+    return max(1, snapshots - 1)
+
+
+class _RollbackDialog:
+    """"回档"窗口：列出当前可用的回退天数，点哪个就往这个 cluster 下所有
+    正在运行的分片控制台各发一次对应的 c_rollback(n)。分片式集群
+    （Master+Caves）必须两边的控制台都发一遍，只发给其中一个分片会导致
+    两边世界天数不同步——这不是我们自己拍脑袋定的规则，是 Klei 官方论坛
+    原话确认过的机制。"""
+
+    _COLS = 5
+
+    def __init__(self, parent_widget, tab, cluster, max_days):
+        self.tab = tab
+        self.cluster = cluster
+        self._parent = parent_widget
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("local.rollback_title"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+
+        ttk.Label(win, text=t("local.rollback_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD),
+                  wraplength=360, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 10))
+
+        grid = ttk.Frame(win)
+        grid.pack(padx=20, pady=(0, 10))
+        for i in range(1, max_days + 1):
+            b = ttk.Button(grid, text=t("local.rollback_n_days", n=i), width=10,
+                           command=lambda n=i: self._do_rollback(n))
+            b.grid(row=(i - 1) // self._COLS, column=(i - 1) % self._COLS, padx=4, pady=4)
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 20))
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.RIGHT)
+
+        win.bind("<Escape>", lambda e: self._cancel())
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        win.update_idletasks()
+        root = parent_widget.winfo_toplevel()
+        px, py = root.winfo_rootx(), root.winfo_rooty()
+        pw, ph = root.winfo_width(), root.winfo_height()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        x = px + max(0, (pw - w) // 2)
+        y = py + max(0, (ph - h) // 2)
+        win.geometry(f"+{x}+{y}")
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+
+    def _cancel(self):
+        self.win.destroy()
+
+    def _do_rollback(self, n):
+        if not dlg.ask_yes_no(self.win, t("local.rollback_title"), t("local.rollback_confirm", n=n)):
+            return
+        sent = 0
+        for s in self.cluster.shards:
+            proc = self.tab.manager.get(self.cluster.path, s.name)
+            if proc and proc.status == ServerStatus.RUNNING and proc.send_command(f"c_rollback({n})"):
+                sent += 1
+        self.win.destroy()
+        if sent:
+            dlg.show_info(self._parent.winfo_toplevel(), t("local.rollback_title"), t("local.rollback_sent", n=n))
+        else:
+            dlg.show_warning(self._parent.winfo_toplevel(), t("local.rollback_title"), t("local.rollback_none_running"))
 
 
 def _show_not_found_warning(parent) -> None:
@@ -274,6 +354,10 @@ class LocalServiceTab:
         self._start_all_btn.pack(side=tk.LEFT, padx=(0, 5))
         self._stop_all_btn = ttk.Button(btn_row, text=t("local.stop_all_btn"), command=self._stop_all)
         self._stop_all_btn.pack(side=tk.LEFT)
+        # "回档"是整个 cluster 级别的操作（分片式集群要同时对 Master+Caves
+        # 发指令），不挂在某一个分片自己的行上——见 _RollbackDialog 的说明。
+        self._rollback_btn = ttk.Button(btn_row, text=t("local.rollback_btn"), command=self._open_rollback_dialog)
+        self._rollback_btn.pack(side=tk.LEFT, padx=(5, 0))
         self._shard_list = BgFrame(left, app, bg=theme.CARD_BG)
         self._shard_list.pack(fill=tk.BOTH, expand=True)
 
@@ -313,6 +397,7 @@ class LocalServiceTab:
             self._local_banner.pack_forget()
             self._refresh_shard_rows(c)
         else:
+            self._rollback_btn.configure(state=tk.DISABLED)
             self._refresh_shard_rows(None)
             self._local_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self._body)
 
@@ -333,6 +418,25 @@ class LocalServiceTab:
         else:
             for row in self._shard_rows.values():
                 row.update()
+        self._update_rollback_btn_state(cluster)
+
+    def _update_rollback_btn_state(self, cluster):
+        """"回档"必须靠正在运行的分片控制台才能发指令——一个分片都没在
+        跑就没有地方能发送 c_rollback()，按钮相应地灰掉。"""
+        running = False
+        if cluster:
+            for s in cluster.shards:
+                proc = self.manager.get(cluster.path, s.name)
+                if proc is not None and proc.status == ServerStatus.RUNNING:
+                    running = True
+                    break
+        self._rollback_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
+
+    def _open_rollback_dialog(self):
+        c = self._get_cluster()
+        if not c or c.source != SaveSource.SERVER:
+            return
+        _RollbackDialog(self.frame, self, c, _max_rollback_days(c))
 
     # ── 安装目录检测 ────────────────────────────────────────────────
 
@@ -481,6 +585,7 @@ class LocalServiceTab:
             pane.pump()
         for row in self._shard_rows.values():
             row.update()
+        self._update_rollback_btn_state(self._get_cluster())
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 
     # ── 关闭确认（由 app.py 的 WM_DELETE_WINDOW 处理调用） ───────────
@@ -498,6 +603,7 @@ class LocalServiceTab:
         self._install_recheck_btn.configure(text=t("local.install_recheck_btn"))
         self._start_all_btn.configure(text=t("local.start_all_btn"))
         self._stop_all_btn.configure(text=t("local.stop_all_btn"))
+        self._rollback_btn.configure(text=t("local.rollback_btn"))
         if self._install_dir is None:
             self._install_path_var.set(t("local.install_not_found"))
         else:
