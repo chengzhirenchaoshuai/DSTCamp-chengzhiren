@@ -237,8 +237,9 @@ class _ShardRow:
 class _ConsolePane:
     """一个正在运行的世界的控制台标签：只读日志 + 命令输入框。"""
 
-    def __init__(self, notebook, proc):
+    def __init__(self, notebook, proc, on_close):
         self.proc = proc
+        self._on_close = on_close
         self.frame = ttk.Frame(notebook)
 
         # bottom 先 pack（side=BOTTOM，固定高度）再 pack 会 expand 撑满的
@@ -269,6 +270,13 @@ class _ConsolePane:
         self.announce_btn.pack(side=tk.LEFT, padx=(0, 4))
         self.list_players_btn = ttk.Button(quick_row, text=t("local.console_list_players_btn"), command=self._list_players)
         self.list_players_btn.pack(side=tk.LEFT)
+        # "关闭"跟其它几个不一样，不受 can_send 控制（见 pump()）——世界
+        # 已经停了的标签页也要能关掉，不然切换存档、反复开关世界之后这些
+        # 标签页只会越攒越多。点击行为交给调用方（LocalServiceTab），因
+        # 为这里需要停止进程 + 从 Notebook/_console_panes 里摘掉这个标签
+        # 页，这个 pane 自己不知道也不该知道 Notebook/字典这些外部状态。
+        self.close_btn = ttk.Button(quick_row, text=t("local.console_close_btn"), command=self._on_close)
+        self.close_btn.pack(side=tk.RIGHT)
 
         body = ttk.Frame(self.frame)
         body.pack(fill=tk.BOTH, expand=True)
@@ -584,11 +592,38 @@ class LocalServiceTab:
             existing.rebind(proc)
             self._console_nb.select(existing.frame)
         else:
-            pane = _ConsolePane(self._console_nb, proc)
+            pane = _ConsolePane(self._console_nb, proc, on_close=lambda: self._close_console_pane(key, cluster, shard))
             self._console_panes[key] = pane
             self._console_nb.add(pane.frame, text=shard.name)
             self._console_nb.select(pane.frame)
         self._refresh_shard_rows(self._get_cluster())
+
+    def _close_console_pane(self, key, cluster, shard):
+        """控制台标签页自己的"关闭"按钮——停止服务器（如果还在跑）之后
+        整个摘掉这个标签页，而不只是停掉服务器却留着标签页不管。不这样
+        做的话，切换存档、反复开关世界会让标签页只增不减（旧 cluster 的
+        标签页永远留在 Notebook 里，见 _do_start_shard 的"复用"逻辑——
+        只有同一个 cluster+分片重新启动才会复用，换了存档就是全新的
+        key，永远对不上旧标签页）。"""
+        proc = self.manager.get(cluster.path, shard.name)
+        if proc and proc.status in (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING):
+            self.manager.stop(cluster.path, shard.name,
+                               on_done=lambda p: self.frame.after(0, lambda: self._on_pane_close_stopped(key, cluster)))
+        else:
+            self._remove_console_pane(key)
+
+    def _on_pane_close_stopped(self, key, cluster):
+        # 复用"停止后"既有逻辑（刷新分片行状态 + 该 cluster 名下分片全停
+        # 才触发一次自动备份），不重新写一遍。
+        self._on_stop_done(cluster)
+        self._remove_console_pane(key)
+
+    def _remove_console_pane(self, key):
+        pane = self._console_panes.pop(key, None)
+        if pane is None:
+            return
+        self._console_nb.forget(pane.frame)
+        pane.frame.destroy()
 
     def stop_shard(self, cluster, shard):
         self.manager.stop(cluster.path, shard.name,
