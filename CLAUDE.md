@@ -36,7 +36,7 @@ python scripts/build_exe.py        # 打包为单文件 DSTCamp.exe（需 pip in
                                     # 打包后必须真的跑一次 dist/DSTCamp.exe，
                                     # 只看"打包成功"日志不够，modulegraph 漏掉
                                     # 子包时打包照样"成功"，只有真启动才暴露 ModuleNotFoundError）
-python tests/test_e2e.py           # 核心模块测试（25 项）
+python tests/test_e2e.py           # 核心模块测试（28 项）
 python tests/test_e2e_phase2.py    # i18n/模型字段/exe-gui 可导入性测试（5 项）
 ```
 
@@ -60,7 +60,9 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 **只读素材 vs 运行时缓存是两套路径体系**：`bundled_resource_dir()` 是只读素材根目录（源码直跑是仓库根目录，打包后是 `sys._MEIPASS`——每次启动解压到新临时目录，进程退出即清空，**不能写任何需要持久化的内容进去**）；`cache_dir(name)` 是运行时缓存根目录（默认 `%APPDATA%/DSTCamp/cache/<name>/`，勾选"缓存存放在程序所在目录"后改成 exe 目录下，这个开关**重启后生效**）。四个缓存子目录：`mod_icons`/`character_icons`/`mod_full_resolve`/`background`，各自的 mtime 失效策略见对应模块。
 
-`app_settings.py`（`%APPDATA%/DSTCamp/settings.json`，原子写入）存：服务器安装目录、主题名、玩家备注、`minimize_on_close`、`cache_use_exe_dir`、`custom_bg_filename`/`custom_bg_opacity`、`window_pos`（见"系统托盘"一节）。
+`app_settings.py`（`%APPDATA%/DSTCamp/settings.json`，原子写入）存：服务器安装目录、主题名、玩家备注、`minimize_on_close`、`cache_use_exe_dir`、`custom_bg_filename`/`custom_bg_opacity`、`window_pos`（见"系统托盘"一节）、`backup_retention`/`backup_interval_minutes`（见下方"存档备份/恢复/回档"一节）。
+
+**存档备份是第三套路径体系**，既不是 `bundled_resource_dir()` 的只读素材也不是这里的 `%APPDATA%` 缓存——`core/backup_manager.py` 把备份 zip 放在**每个存档目录自己内部**（`<cluster_path>/dstcamp_backups/`），跟随存档本身走，换电脑整个存档目录一起复制时备份不会丢。
 
 ### GUI 主题 (`gui/theme.py`)
 
@@ -131,11 +133,76 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 角色名/头像都查不到时统一用 `icons/ui/character_icon_default.png` 兜底，不走运行时缓存（这张图跟装了什么 mod 无关，每次都一样）。头像列固定 `icon_size × icon_size` 容器再居中贴图（`Image.thumbnail()` 不保证正方形，不固定容器宽度会导致同列每行头像宽度不一样，后面文字跟着错位）；固定宽度的文字容器同样要显式给 `height`，只给 `width` 配 `pack_propagate(False)` 会把内容压扁到看不见。
 
+### 存档备份/恢复/回档 (`core/backup_manager.py`)
+
+**这里的 zip 备份和"回档"是两套完全独立的机制，不要混为一谈**：回档
+（见下方"服务器配置"一节旁边的 `local_service_tab.py._RollbackDialog`）
+靠的是游戏自己维护的历史存档快照（`cluster.ini` 的 `max_snapshots`），
+通过给运行中的分片控制台发 `c_rollback(n)` 指令触发；这里的 zip 备份是
+dstools 自己在存档目录里打包的独立文件，两者互不依赖，回档不会影响这
+里的备份文件，恢复这里的备份也不会影响游戏自己的快照计数。
+
+备份内容 = 每个分片的 `save/`（世界数据）+ `modoverrides.lua`/
+`leveldataoverride.lua`/`server.ini`，加上 cluster 级别的 `cluster.ini`/
+`cluster_token.txt`/`adminlist.txt`/`blocklist.txt`；故意跳过游戏自己
+在每个分片下维护的 `backup/` 目录和日志文件——那些是 mod 修改历史和日
+志，跟世界存档数据无关，游戏自己已经在滚动维护。备份文件存在
+`<cluster_path>/dstcamp_backups/` 里（不会被 `discovery.py` 误认成分
+片，分片判定要求目录里有 `server.ini`），保留份数由
+`app_settings.get_backup_retention()` 控制（默认 10，范围 5~99）。
+
+`restore_backup()` **必须先删掉会被覆盖的每一项再解压，不能只是在旧文
+件上覆盖解压**——不这样做的话，备份之后又产生的新存档槽文件会跟备份里
+的旧槽位混在一起，游戏很可能还是照常挑编号最新的槽位，恢复了个寂寞。
+调用方（`gui/save_browser_tab.py`）自己负责确认对应分片都已停止（文件
+被进程占着时 Windows 上的删除/覆盖会直接失败），恢复前还会自动给"当前
+状态"打一份保险备份，让恢复本身也能撤销。
+
+`create_backup()` 同一秒内被连续调用两次（比如"全部停止"时两个分片几
+乎同时触发自动备份）会在文件名后加 `_2`/`_3`… 后缀，避免互相覆盖——但
+这个去重机制假设"同一秒内不会连续调用超过保留份数次"，真实使用（手动
+点击/停服触发/几分钟一次的定时触发）不会撞到这个假设，写测试/脚本连续
+调用 `create_backup()` 验证保留份数裁剪时要注意避开（改用手工构造不同
+时间戳文件名的方式，见 `tests/test_e2e.py` 的 Test 27）。
+
+服务器运行期间的定时自动备份（`local_service_tab.py._maybe_periodic_
+backup()`）按 `app_settings.get_backup_interval_minutes()`（默认 10，
+范围 2~30）触发，独立于"停服后自动备份一次"这条路径，两者都存在。
+
+### 服务器配置 (`core/config_manager.py` / `core/ini_field_info.py` / `gui/cluster_config_tab.py`)
+
+游戏本身只在值被改动过时才会把它写进 `cluster.ini`——很多存档里
+`max_snapshots`/`tick_rate` 这类字段干脆不存在，不代表没有默认行为，只
+是"文件里没有、GUI 上也就看不到"。`config_manager.CLUSTER_INI_DEFAULTS`
+收录了确认过的官方默认值，`backfill_cluster_defaults(config)` 只补缺
+的字段（`dict.setdefault`），**绝不覆盖已经存在的值**——这是最容易被后
+续重构不小心破坏、后果是用户已保存配置被吞掉的一类 bug，改这个函数时
+留意。只在服务器存档（`SaveSource.SERVER`）时调用，本地存档由客户端自
+己管理，不需要（也不应该）补默认值。补上的默认值点"保存"之后就会变成
+文件里的真实值。
+
+`ini_field_info.py` 另外两张表：`RANGE_FIELDS`/`get_range_limits()` 给
+有官方明确取值范围的数字字段（比如 `tick_rate` 15-60）用，`cluster_
+config_tab.py` 据此在按键时过滤非数字输入、在"保存"时整体校验范围，任
+何一个越界就整个中止保存（不是自动纠正，纠正会让用户不知道自己填的值
+被悄悄改了）；`ALWAYS_READONLY_FIELDS` 给游戏自己生成、没有官方文档说
+明具体用途的字段（比如 `cluster_cloud_id`）用，不管是不是服务器存档一
+律只读，不提供一个看起来能编辑、改了却可能有副作用的输入框。
+
+`cluster_config_tab.py` 的"Cluster"标签页是三列布局（原来是两列，补全
+默认值之后内容变多，两列装不下）：NETWORK 单独一列（字段最多，拆不
+开），GAMEPLAY+MISC 一列，SHARD 一列——分组按字段数量配平，不是按"看起
+来像不像一类"配对。
+
 ### 本地服务器启动前的令牌检查 (`gui/local_service_tab.py`)
 
 点"启动"/"全部启动"时，如果 `cluster_token.txt` 缺失或格式不像真令牌（`token_manager.is_valid_token()`），弹一个"是否仍要继续"确认框——专用服务器进程能拉起来，但连不上 Klei 账号验证，会直接启动失败退出。**唯一例外是"离线模式"**（`cluster.ini` 的 `NETWORK.offline_cluster`），开了这个本来就不需要令牌，直接放行。
 
 `_confirm_token_ok(cluster)` 只在"启动"这个动作的入口调一次，不是对每个分片各调一次：实际启动逻辑拆到了 `_do_start_shard()`（不含检查），`_start_all()` 只在循环外检查一次——同一个存档下所有分片共用同一个令牌文件，每个分片各自弹一次会导致"全部启动"要连续确认好几次一模一样的对话框。
+
+**`_ShardRow` 的启动/停止按钮不能缓存构造时传入的 `cluster` 对象**，必须点击那一刻现查 `tab._get_cluster()`：`_refresh_shard_rows()` 只有分片集合/存档路径变化时才会真的重建这些行，路径没变的话行对象一直留着，闭包里存的 `cluster` 就还是当初构造时那个引用——如果之后发生过一次"刷新"（`discover_environment()` 会造出全新的 Cluster 对象）但分片集合没变，这行闭包里的 `cluster` 就是刷新前的旧对象，`token_path` 等字段可能是过时的（曾经导致"启动"单分片误报"令牌未设置"而"全部启动"没事，因为后者每次都现查）。
+
+`stop_shard()`/关闭控制台标签页共用 `_stop_and_then(cluster, shard, on_done)` 这个辅助方法（封装"停止分片+转回 Tk 主线程执行回调"）。控制台标签页自己的"关闭窗口"按钮：世界还在运行时点击会先弹确认框（关窗口=停服务器，比单纯关标签页重得多），已经停止的直接关、不弹确认。
 
 ### Mod 配置解析 (`core/modinfo_reader.py`)
 
