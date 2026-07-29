@@ -199,11 +199,21 @@ class _ShardRow:
         self.frame.bind("<Configure>", lambda e: self._redraw_text(), add="+")
         self.status_var = tk.StringVar()
 
+        # 启动/停止按钮不用构造时传进来的 cluster 快照，改成点击那一刻现
+        # 查 tab._get_cluster()——_refresh_shard_rows() 只有分片集合/存档
+        # 路径变化时才会真的重建这些行，路径没变的话行对象会一直留着，
+        # 闭包里存的 cluster 就还是当初构造时那一个对象引用。如果用户在
+        # 这之后（没触发重建）改了令牌之类的信息——"服务器配置"页那边改
+        # 的是当前 self._get_cluster() 返回的对象——只要中途发生过一次
+        # "刷新"（重新 discover_environment() 会造出全新的 Cluster 对
+        # 象），这行闭包里存的就是刷新前那份旧对象，token_path 还是没刷
+        # 新之前的旧值，导致"启动"误报"令牌未设置"而"全部启动"（现查
+        # tab._get_cluster()）不会。
         self.start_btn = ttk.Button(self.frame, text=t("local.start_btn"), width=8,
-                                     command=lambda: tab.start_shard(cluster, shard))
+                                     command=lambda: tab.start_shard(tab._get_cluster(), shard))
         self.start_btn.pack(side=tk.LEFT, padx=(_NAME_COL_W + _STATUS_COL_W, 4))
         self.stop_btn = ttk.Button(self.frame, text=t("local.stop_btn"), width=8,
-                                    command=lambda: tab.stop_shard(cluster, shard))
+                                    command=lambda: tab.stop_shard(tab._get_cluster(), shard))
         self.stop_btn.pack(side=tk.LEFT)
         self.update()
 
@@ -232,6 +242,61 @@ class _ShardRow:
 
     def destroy(self):
         self.frame.destroy()
+
+
+class _AnnounceDialog:
+    """"公告"输入框——不用 tkinter.simpledialog.askstring()：那是原生系
+    统弹窗，窗口偏小，也不跟着当前主题走（永远是系统默认灰白配色）。
+    跟 _RollbackDialog、cluster_config_tab.py 的 _TokenInputDialog 同一
+    套自绘 Toplevel 做法，配色套 theme.BG_SOFT，跟当前皮肤保持一致。"""
+
+    def __init__(self, parent_widget):
+        self.result = None
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("local.console_announce_btn"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+        WIN_W = 480
+
+        ttk.Label(win, text=t("local.console_announce_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+                  wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
+        self.var = tk.StringVar()
+        entry = ttk.Entry(win, textvariable=self.var, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE))
+        entry.pack(fill=tk.X, padx=20, pady=(0, 20))
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 20))
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
+
+        entry.focus_set()
+        win.bind("<Return>", lambda e: self._confirm())
+        win.bind("<Escape>", lambda e: self._cancel())
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        win.update_idletasks()
+        WIN_H = win.winfo_reqheight() + 20
+        root = parent_widget.winfo_toplevel()
+        px, py = root.winfo_rootx(), root.winfo_rooty()
+        pw, ph = root.winfo_width(), root.winfo_height()
+        x = px + max(0, (pw - WIN_W) // 2)
+        y = py + max(0, (ph - WIN_H) // 2)
+        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _confirm(self):
+        self.result = self.var.get()
+        self.win.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.win.destroy()
 
 
 class _ConsolePane:
@@ -300,8 +365,7 @@ class _ConsolePane:
             self.cmd_var.set("")
 
     def _announce(self):
-        from tkinter import simpledialog
-        text = simpledialog.askstring(t("local.console_announce_btn"), t("local.console_announce_prompt"))
+        text = _AnnounceDialog(self.frame).result
         if not text:
             return
         text = text.strip()
@@ -599,14 +663,21 @@ class LocalServiceTab:
         self._refresh_shard_rows(self._get_cluster())
 
     def _close_console_pane(self, key, cluster, shard):
-        """控制台标签页自己的"关闭"按钮——停止服务器（如果还在跑）之后
-        整个摘掉这个标签页，而不只是停掉服务器却留着标签页不管。不这样
-        做的话，切换存档、反复开关世界会让标签页只增不减（旧 cluster 的
-        标签页永远留在 Notebook 里，见 _do_start_shard 的"复用"逻辑——
-        只有同一个 cluster+分片重新启动才会复用，换了存档就是全新的
-        key，永远对不上旧标签页）。"""
+        """控制台标签页自己的"关闭窗口"按钮——停止服务器（如果还在跑）
+        之后整个摘掉这个标签页，而不只是停掉服务器却留着标签页不管。不
+        这样做的话，切换存档、反复开关世界会让标签页只增不减（旧
+        cluster 的标签页永远留在 Notebook 里，见 _do_start_shard 的"复
+        用"逻辑——只有同一个 cluster+分片重新启动才会复用，换了存档就
+        是全新的 key，永远对不上旧标签页）。
+
+        世界还在运行时点这个按钮会先弹一次确认（关窗口=停服务器，比单
+        纯"关个标签页"重得多，误触代价是把正在跑的世界关掉）；已经停
+        了的标签页直接关，不弹确认——本来就没什么可损失的。"""
         proc = self.manager.get(cluster.path, shard.name)
         if proc and proc.status in (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING):
+            if not dlg.ask_yes_no(self.app.root, t("local.console_close_btn"),
+                                   t("local.console_close_confirm", shard=shard.name)):
+                return
             self.manager.stop(cluster.path, shard.name,
                                on_done=lambda p: self.frame.after(0, lambda: self._on_pane_close_stopped(key, cluster)))
         else:
