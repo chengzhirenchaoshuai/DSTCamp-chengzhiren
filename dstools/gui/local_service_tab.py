@@ -136,16 +136,26 @@ class _RollbackDialog:
             return
         if not dlg.ask_yes_no(self.win, t("local.rollback_title"), t("local.rollback_confirm", n=n)):
             return
-        sent = 0
+        # 明确告诉用户具体发到了哪些分片、跳过了哪些（没在运行）——回档在
+        # Caves 里生效可能比 Master 慢很多（社区反馈过"Caves 回档要等很
+        # 久"），只看 Caves 控制台一时没反应，容易被误以为是"没发送成
+        # 功"，这里至少把"发送"这一步的结果说清楚，避免混淆。
+        sent_names, skipped_names = [], []
         for s in self.cluster.shards:
             proc = self.tab.manager.get(self.cluster.path, s.name)
             if proc and proc.status == ServerStatus.RUNNING and proc.send_command(f"c_rollback({n})"):
-                sent += 1
+                sent_names.append(s.name)
+            else:
+                skipped_names.append(s.name)
         self.win.destroy()
-        if sent:
-            dlg.show_info(self._parent.winfo_toplevel(), t("local.rollback_title"), t("local.rollback_sent", n=n))
+        root = self._parent.winfo_toplevel()
+        if sent_names:
+            msg = t("local.rollback_sent", n=n, shards="、".join(sent_names))
+            if skipped_names:
+                msg += t("local.rollback_skipped", shards="、".join(skipped_names))
+            dlg.show_info(root, t("local.rollback_title"), msg)
         else:
-            dlg.show_warning(self._parent.winfo_toplevel(), t("local.rollback_title"), t("local.rollback_none_running"))
+            dlg.show_warning(root, t("local.rollback_title"), t("local.rollback_none_running"))
 
 
 def _show_not_found_warning(parent) -> None:
@@ -250,6 +260,16 @@ class _ConsolePane:
         self.send_btn = ttk.Button(bottom, text=t("local.console_send_btn"), command=self._send)
         self.send_btn.pack(side=tk.LEFT)
 
+        # 常用指令快捷按钮——省得每次都要记 c_announce()/c_listallplayers()
+        # 确切的 Lua 语法，只挑最基础、没有破坏性的几个（保存/回档已经有
+        # 专门的入口，重置世界这类高危操作应用户要求暂不加）。
+        quick_row = ttk.Frame(self.frame)
+        quick_row.pack(side=tk.BOTTOM, fill=tk.X, padx=2)
+        self.announce_btn = ttk.Button(quick_row, text=t("local.console_announce_btn"), command=self._announce)
+        self.announce_btn.pack(side=tk.LEFT, padx=(0, 4))
+        self.list_players_btn = ttk.Button(quick_row, text=t("local.console_list_players_btn"), command=self._list_players)
+        self.list_players_btn.pack(side=tk.LEFT)
+
         body = ttk.Frame(self.frame)
         body.pack(fill=tk.BOTH, expand=True)
         vsb = ttk.Scrollbar(body, orient=tk.VERTICAL)
@@ -270,6 +290,21 @@ class _ConsolePane:
         cmd = self.cmd_var.get().strip()
         if cmd and self.proc.send_command(cmd):
             self.cmd_var.set("")
+
+    def _announce(self):
+        from tkinter import simpledialog
+        text = simpledialog.askstring(t("local.console_announce_btn"), t("local.console_announce_prompt"))
+        if not text:
+            return
+        text = text.strip()
+        if not text:
+            return
+        # 转义反斜杠/双引号，避免公告文字里带双引号时提前把 Lua 字符串截断。
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+        self.proc.send_command(f'c_announce("{escaped}")')
+
+    def _list_players(self):
+        self.proc.send_command("c_listallplayers()")
 
     def rebind(self, proc):
         """同一个世界停止后重新启动时复用这个标签页/控制台，而不是每次都
@@ -301,6 +336,8 @@ class _ConsolePane:
         can_send = status == ServerStatus.RUNNING
         self.cmd_entry.configure(state=tk.NORMAL if can_send else tk.DISABLED)
         self.send_btn.configure(state=tk.NORMAL if can_send else tk.DISABLED)
+        self.announce_btn.configure(state=tk.NORMAL if can_send else tk.DISABLED)
+        self.list_players_btn.configure(state=tk.NORMAL if can_send else tk.DISABLED)
 
 
 class LocalServiceTab:
