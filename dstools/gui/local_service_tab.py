@@ -6,11 +6,12 @@
 （ttk.Notebook 动态 add，日志/命令都通过管道，不弹出真实控制台窗口）。
 """
 
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 
-from dstools.core.app_settings import set_dedicated_server_path
+from dstools.core.app_settings import get_backup_interval_minutes, set_dedicated_server_path
 from dstools.core.backup_manager import create_backup
 from dstools.core.config_manager import backfill_cluster_defaults, load_cluster_config
 from dstools.core.dedicated_server import (
@@ -70,15 +71,18 @@ def _max_rollback_days(cluster) -> int:
 
 
 class _RollbackDialog:
-    """"回档"窗口：列出当前可用的回退天数，点哪个就往这个 cluster 下所有
-    正在运行的分片控制台各发一次对应的 c_rollback(n)。分片式集群
+    """"回档"窗口：下拉选择回退天数，点"回退"就往这个 cluster 下所有正
+    在运行的分片控制台各发一次对应的 c_rollback(n)。分片式集群
     （Master+Caves）必须两边的控制台都发一遍，只发给其中一个分片会导致
     两边世界天数不同步——这不是我们自己拍脑袋定的规则，是 Klei 官方论坛
-    原话确认过的机制。"""
+    原话确认过的机制。
 
-    _COLS = 5
+    下拉选择而不是每个天数各一个按钮——max_snapshots 现在能在"服务器
+    配置"里自由调大（比如设成 30），可选天数跟着涨到几十个的话，一堆按
+    钮铺成的方阵会占掉一整个屏幕，下拉框不管选项多少都是同样大小。"""
 
     def __init__(self, parent_widget, tab, cluster, max_days):
+        from dstools.gui.menu_combo import MenuCombo
         self.tab = tab
         self.cluster = cluster
         self._parent = parent_widget
@@ -88,32 +92,36 @@ class _RollbackDialog:
         win.title(t("local.rollback_title"))
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
+        WIN_W = 380
 
         ttk.Label(win, text=t("local.rollback_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD),
-                  wraplength=360, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 10))
+                  wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 10))
 
-        grid = ttk.Frame(win)
-        grid.pack(padx=20, pady=(0, 10))
-        for i in range(1, max_days + 1):
-            b = ttk.Button(grid, text=t("local.rollback_n_days", n=i), width=10,
-                           command=lambda n=i: self._do_rollback(n))
-            b.grid(row=(i - 1) // self._COLS, column=(i - 1) % self._COLS, padx=4, pady=4)
+        row = ttk.Frame(win)
+        row.pack(fill=tk.X, padx=20, pady=(0, 10))
+        ttk.Label(row, text=t("local.rollback_days_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
+        self._days_var = tk.StringVar()
+        combo = MenuCombo(row, textvariable=self._days_var, width=10)
+        combo["values"] = [str(i) for i in range(1, max_days + 1)]
+        combo.current(0)
+        combo.pack(side=tk.RIGHT)
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 20))
-        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text=t("local.rollback_confirm_btn"), command=self._do_rollback).pack(side=tk.RIGHT)
 
         win.bind("<Escape>", lambda e: self._cancel())
         win.protocol("WM_DELETE_WINDOW", self._cancel)
 
         win.update_idletasks()
+        WIN_H = win.winfo_reqheight() + 20
         root = parent_widget.winfo_toplevel()
         px, py = root.winfo_rootx(), root.winfo_rooty()
         pw, ph = root.winfo_width(), root.winfo_height()
-        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
-        x = px + max(0, (pw - w) // 2)
-        y = py + max(0, (ph - h) // 2)
-        win.geometry(f"+{x}+{y}")
+        x = px + max(0, (pw - WIN_W) // 2)
+        y = py + max(0, (ph - WIN_H) // 2)
+        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
         win.transient(root)
         win.deiconify()
         win.grab_set()
@@ -121,7 +129,11 @@ class _RollbackDialog:
     def _cancel(self):
         self.win.destroy()
 
-    def _do_rollback(self, n):
+    def _do_rollback(self):
+        try:
+            n = int(self._days_var.get())
+        except (TypeError, ValueError):
+            return
         if not dlg.ask_yes_no(self.win, t("local.rollback_title"), t("local.rollback_confirm", n=n)):
             return
         sent = 0
@@ -308,6 +320,9 @@ class LocalServiceTab:
         self._shard_rows_cluster_path: str | None = None
         self._console_panes: dict[tuple[str, str], _ConsolePane] = {}
         self._install_dir: Path | None = None
+        # cluster.path 字符串 -> 上一次给它做"运行时定期自动备份"的
+        # time.monotonic() 时间戳，见 _maybe_periodic_backup()。
+        self._last_auto_backup_ts: dict[str, float] = {}
 
         # "存档"选择器已经搬到顶部的全局选择栏（DSToolsApp._cluster_bar），
         # 这里不再重复一份。
@@ -586,7 +601,36 @@ class LocalServiceTab:
         for row in self._shard_rows.values():
             row.update()
         self._update_rollback_btn_state(self._get_cluster())
+        self._maybe_periodic_backup()
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
+
+    def _maybe_periodic_backup(self):
+        """"设置备份策略"里配的自动备份周期——只要某个 cluster 名下还有
+        分片在跑，每隔这么多分钟就给它整体备份一次，跟当前 UI 上选中哪
+        个存档无关（用户可能切到别的存档在看，后台那个仍然按周期备份）。
+        不是"每次轮询都检查一遍间隔"里带着误差累积的计时——每个 cluster
+        第一次被发现在运行时先记一次时间戳，真正过了配置的分钟数才备份
+        并重新计时；分片全停了就把这个 cluster 的计时记录清掉，避免下次
+        重新开始跑的时候，被一个很久以前的旧时间戳骗到立刻触发一次备份。
+        """
+        interval_s = get_backup_interval_minutes() * 60
+        now = time.monotonic()
+        running_paths = {str(p.cluster_path) for p in self.manager.running()
+                          if p.status == ServerStatus.RUNNING}
+        for key in list(self._last_auto_backup_ts):
+            if key not in running_paths:
+                del self._last_auto_backup_ts[key]
+        for path_str in running_paths:
+            last = self._last_auto_backup_ts.get(path_str)
+            if last is None:
+                self._last_auto_backup_ts[path_str] = now
+                continue
+            if now - last >= interval_s:
+                try:
+                    create_backup(Path(path_str))
+                except OSError:
+                    pass
+                self._last_auto_backup_ts[path_str] = now
 
     # ── 关闭确认（由 app.py 的 WM_DELETE_WINDOW 处理调用） ───────────
 

@@ -82,6 +82,15 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
         "en": ("Cluster Language", "Which language category this server is grouped under when players "
                "filter the server browser by language."),
     },
+    ("NETWORK", "cluster_cloud_id"): {
+        "zh": ("云端标识符", "游戏自己在服务器首次注册/运行后生成写入的一串内部标识符，具体用途"
+               "没有在官方文档中找到明确说明，推测跟 Klei 服务器列表/匹配后台有关。只读展示，"
+               "不建议手动修改。"),
+        "en": ("Cloud ID", "An internal identifier the game itself generates once the server has "
+               "registered/run -- its exact purpose isn't documented anywhere official; likely "
+               "related to Klei's server-list/matchmaking backend. Read-only -- editing it manually "
+               "isn't recommended."),
+    },
     ("MISC", "console_enabled"): {
         "zh": ("启用控制台", "是否允许通过服务器终端执行 Lua 控制台指令。"),
         "en": ("Console Enabled", "Whether Lua console commands can be executed from the server terminal."),
@@ -184,6 +193,24 @@ def get_enum_choices(section: str, key: str) -> list[tuple[str, str]] | None:
         return None
     zh = get_lang() == "zh"
     return [(raw, zh_label if zh else en_label) for raw, zh_label, en_label in entries]
+
+
+# (section, key) -> (最小值, 最大值)——官方文档明确给出取值范围的数值字
+# 段，界面上禁止输入/保存范围之外的值，而不是等游戏启动失败才发现。
+RANGE_FIELDS: dict[tuple[str, str], tuple[int, int]] = {
+    ("NETWORK", "tick_rate"): (15, 60),
+}
+
+
+def get_range_limits(section: str, key: str) -> tuple[int, int] | None:
+    return RANGE_FIELDS.get((section, key))
+
+
+# 游戏自己生成、用途没有官方文档说明的字段——不管是不是服务器存档，一律
+# 只读展示，不提供看起来能编辑但改了很可能没意义甚至有副作用的输入框。
+ALWAYS_READONLY_FIELDS: set[tuple[str, str]] = {
+    ("NETWORK", "cluster_cloud_id"),
+}
 
 
 def get_field_info(section: str, key: str, is_shard: bool = False) -> tuple[str, str] | None:

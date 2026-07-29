@@ -14,7 +14,7 @@ from tkinter import font as tkfont, ttk
 from PIL import Image, ImageTk
 
 from dstools.core.app_settings import get_player_note, set_player_note
-from dstools.core.backup_manager import create_backup, list_backups, restore_backup
+from dstools.core.backup_manager import create_backup, get_backup_summary, list_backups, restore_backup
 from dstools.core.character_icons import resolve_character
 from dstools.core.config_manager import load_cluster_config
 from dstools.core.dedicated_server import ServerStatus
@@ -155,9 +155,15 @@ def _format_backup_label(path, cluster_name: str) -> str:
 
 class _RestoreBackupDialog:
     """"从备份恢复"窗口：列出这个存档目录下 dstcamp_backups/ 里的历史备
-    份（新的在前），选中后点"恢复"才把结果交回调用方，实际的运行中检查/
-    二次确认/覆盖逻辑都在 SaveBrowserTab._on_restore_backup 里做——这个
-    类只负责"选哪一份"。"""
+    份（新的在前，配好滚动条——保留份数现在能设到 99，列表可能很长），
+    选中后点"恢复"才把结果交回调用方，实际的运行中检查/二次确认/覆盖逻
+    辑都在 SaveBrowserTab._on_restore_backup 里做——这个类只负责"选哪一
+    份"。
+
+    列表本身只放时间戳（列出全部备份时不需要逐个解压，很快）；选中某一
+    项才现查那一份备份的详情（存档名称/游戏模式/人数/进度摘要，来自
+    backup_manager.get_backup_summary，需要解压一次，稍慢但只做一次不
+    会卡列表本身）。"""
 
     def __init__(self, parent_widget, cluster, backups):
         self.result = None
@@ -167,18 +173,31 @@ class _RestoreBackupDialog:
         win.title(t("save.restore_backup"))
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
-        WIN_W = 420
+        WIN_W = 560
 
         ttk.Label(win, text=t("save.restore_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
                   wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
 
-        listbox = tk.Listbox(win, height=min(8, len(backups)), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE))
-        listbox.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
+        list_frame = ttk.Frame(win)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        listbox = tk.Listbox(list_frame, height=12, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+                             yscrollcommand=scrollbar.set, exportselection=False)
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.configure(command=listbox.yview)
         for b in backups:
             listbox.insert(tk.END, _format_backup_label(b, cluster.path.name))
-        listbox.selection_set(0)
         self._listbox = listbox
         self._backups = backups
+
+        self._detail_var = tk.StringVar()
+        ttk.Label(win, textvariable=self._detail_var, foreground=theme.TEXT_MUTED, justify=tk.LEFT,
+                 wraplength=WIN_W - 40, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20, pady=(0, 8))
+
+        listbox.bind("<<ListboxSelect>>", self._on_select)
+        listbox.selection_set(0)
+        self._on_select()
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
@@ -202,6 +221,22 @@ class _RestoreBackupDialog:
         win.grab_set()
         win.wait_window()
 
+    def _on_select(self, event=None):
+        sel = self._listbox.curselection()
+        if not sel:
+            self._detail_var.set("")
+            return
+        info = get_backup_summary(self._backups[sel[0]])
+        parts = []
+        if info.get("cluster_name"):
+            parts.append(str(info["cluster_name"]))
+        if info.get("game_mode"):
+            mp = info.get("max_players")
+            parts.append(f"{info['game_mode']}/{mp}{t('save.restore_players_suffix')}" if mp else str(info["game_mode"]))
+        if info.get("summary"):
+            parts.append(info["summary"])
+        self._detail_var.set(" · ".join(parts) if parts else t("save.restore_no_detail"))
+
     def _confirm(self):
         sel = self._listbox.curselection()
         if not sel:
@@ -211,6 +246,93 @@ class _RestoreBackupDialog:
 
     def _cancel(self):
         self.result = None
+        self.win.destroy()
+
+
+class _BackupPolicyDialog:
+    """"设置备份策略"窗口：备份保留份数（5~99）+ 服务器运行时自动备份的
+    间隔分钟数（2~30）。全局设置，不分存档，存在跟主题/窗口位置同一份
+    %APPDATA%/DSTCamp/settings.json 里。点"确认"才真正写入并生效——保留
+    份数下次备份时才用得到，间隔分钟数下一次轮询就会用新值。"""
+
+    def __init__(self, parent_widget):
+        from dstools.core.app_settings import (
+            get_backup_interval_minutes, get_backup_retention,
+            set_backup_interval_minutes, set_backup_retention,
+        )
+        self._set_retention = set_backup_retention
+        self._set_interval = set_backup_interval_minutes
+
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("save.backup_policy_title"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+        WIN_W = 420
+        vcmd = (win.register(lambda s: s == "" or s.isdigit()), "%P")
+
+        row1 = ttk.Frame(win)
+        row1.pack(fill=tk.X, padx=20, pady=(20, 4))
+        ttk.Label(row1, text=t("save.backup_retention_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
+        self._retention_var = tk.StringVar(value=str(get_backup_retention()))
+        ttk.Entry(row1, textvariable=self._retention_var, width=8, validate="key", validatecommand=vcmd,
+                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.RIGHT)
+        ttk.Label(win, text=t("save.backup_retention_hint"), foreground=theme.TEXT_MUTED,
+                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
+
+        row2 = ttk.Frame(win)
+        row2.pack(fill=tk.X, padx=20, pady=(14, 4))
+        ttk.Label(row2, text=t("save.backup_interval_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
+        self._interval_var = tk.StringVar(value=str(get_backup_interval_minutes()))
+        ttk.Entry(row2, textvariable=self._interval_var, width=8, validate="key", validatecommand=vcmd,
+                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.RIGHT)
+        ttk.Label(win, text=t("save.backup_interval_hint"), foreground=theme.TEXT_MUTED,
+                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
+
+        self._err_var = tk.StringVar()
+        ttk.Label(win, textvariable=self._err_var, foreground=theme.ERROR,
+                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20, pady=(8, 0))
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
+
+        win.bind("<Escape>", lambda e: self._cancel())
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        win.update_idletasks()
+        WIN_H = win.winfo_reqheight() + 20
+        root = parent_widget.winfo_toplevel()
+        px, py = root.winfo_rootx(), root.winfo_rooty()
+        pw, ph = root.winfo_width(), root.winfo_height()
+        x = px + max(0, (pw - WIN_W) // 2)
+        y = py + max(0, (ph - WIN_H) // 2)
+        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _confirm(self):
+        try:
+            retention = int(self._retention_var.get())
+            interval = int(self._interval_var.get())
+        except (TypeError, ValueError):
+            self._err_var.set(t("save.backup_policy_invalid"))
+            return
+        if not (5 <= retention <= 99):
+            self._err_var.set(t("save.backup_retention_range_error"))
+            return
+        if not (2 <= interval <= 30):
+            self._err_var.set(t("save.backup_interval_range_error"))
+            return
+        self._set_retention(retention)
+        self._set_interval(interval)
+        self.win.destroy()
+
+    def _cancel(self):
         self.win.destroy()
 
 
@@ -843,6 +965,7 @@ class SaveBrowserTab:
         self._players_header_label.redraw()
         self._backup_btn.configure(text=t("save.backup_now"))
         self._restore_btn.configure(text=t("save.restore_backup"))
+        self._backup_policy_btn.configure(text=t("save.backup_policy_btn"))
 
     def retheme(self):
         """主题切换时调用——make_toolbar_label() 画的说明文字、以及
@@ -877,6 +1000,8 @@ class SaveBrowserTab:
         self._restore_btn.pack(side=tk.RIGHT, padx=(0, 2))
         self._backup_btn = ttk.Button(env_header_row, text=t("save.backup_now"), command=self._on_backup_now)
         self._backup_btn.pack(side=tk.RIGHT, padx=(0, 2))
+        self._backup_policy_btn = ttk.Button(env_header_row, text=t("save.backup_policy_btn"), command=self._on_backup_policy)
+        self._backup_policy_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
         # 不再是"全部存档"的可滚动列表——顶部全局选择栏已经选了具体是哪
         # 个存档，这里只需要现查、现画那一个存档自己的详情（存档位置/
@@ -887,6 +1012,9 @@ class SaveBrowserTab:
         # 知就没必要保留旧控件"思路一致。
         self._selected_cluster_frame = BgFrame(env_section, self.app, bg=theme.CARD_BG)
         self._selected_cluster_frame.pack(fill=tk.X, padx=10, pady=(0,4))
+
+    def _on_backup_policy(self):
+        _BackupPolicyDialog(self.app.root)
 
     def _on_backup_now(self):
         c = self._get_cluster()

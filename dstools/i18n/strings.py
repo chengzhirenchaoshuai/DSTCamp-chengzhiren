@@ -73,6 +73,17 @@ STRINGS = {
         "save.restore_confirm": "确定要恢复到这份备份吗？当前状态会先自动备份一份，然后被这份备份覆盖，且无法撤销（除非再从自动保留的这份里恢复回来）。",
         "save.restore_failed": "恢复失败：{error}",
         "save.restore_ok": "恢复完成，请重新启动对应的分片。",
+        "save.restore_players_suffix": "人",
+        "save.restore_no_detail": "暂无法读取这份备份的详情。",
+        "save.backup_policy_btn": "设置备份策略",
+        "save.backup_policy_title": "备份策略",
+        "save.backup_retention_label": "备份保留份数：",
+        "save.backup_retention_hint": "超过这个数量时自动删除最旧的备份，范围 5~99。",
+        "save.backup_interval_label": "自动备份间隔（分钟）：",
+        "save.backup_interval_hint": "服务器运行时每隔这么久自动备份一次，范围 2~30。",
+        "save.backup_policy_invalid": "请输入有效的数字。",
+        "save.backup_retention_range_error": "备份保留份数需在 5~99 之间。",
+        "save.backup_interval_range_error": "自动备份间隔需在 2~30 分钟之间。",
         "save.storage_location": "存档位置",
 
         # Per-player character status (in the selected session's detail area)
@@ -131,6 +142,8 @@ STRINGS = {
         "cluster.bool_on": "开启",
         "cluster.bool_off": "关闭",
         "cluster.port_conflict": "「{field}」的值 {value} 和分片「{shard}」冲突，每个分片的这个端口都必须各不相同，请改成其它值再保存。",
+        "cluster.range_hint": "取值范围：{min}~{max}",
+        "cluster.range_error": "「{field}」需要在 {min}~{max} 之间，请修改后再保存。",
 
         # Status bar
         "status.klei": "Klei",
@@ -302,7 +315,8 @@ STRINGS = {
         "local.rollback_btn": "回档",
         "local.rollback_title": "回档",
         "local.rollback_prompt": "选择要回退的天数（基于游戏保留的历史存档快照）：",
-        "local.rollback_n_days": "回退 {n} 天",
+        "local.rollback_days_label": "回退天数：",
+        "local.rollback_confirm_btn": "回退",
         "local.rollback_confirm": "确定要回退 {n} 天吗？这之后的进度会丢失，且无法撤销。",
         "local.rollback_sent": "已发送回退 {n} 天的指令。",
         "local.rollback_none_running": "没有正在运行的分片，无法发送回档指令。",
@@ -420,6 +434,17 @@ STRINGS = {
         "save.restore_confirm": "Restore to this backup? The current state will be backed up automatically first, then overwritten by this backup. This can't be undone (except by restoring that auto-backup again).",
         "save.restore_failed": "Restore failed: {error}",
         "save.restore_ok": "Restore complete -- please restart the affected shard(s).",
+        "save.restore_players_suffix": "p",
+        "save.restore_no_detail": "Couldn't read details for this backup.",
+        "save.backup_policy_btn": "Backup Policy",
+        "save.backup_policy_title": "Backup Policy",
+        "save.backup_retention_label": "Backups to keep:",
+        "save.backup_retention_hint": "The oldest backups are auto-deleted past this count. Range: 5-99.",
+        "save.backup_interval_label": "Auto-backup interval (minutes):",
+        "save.backup_interval_hint": "While the server is running, back up automatically this often. Range: 2-30.",
+        "save.backup_policy_invalid": "Please enter valid numbers.",
+        "save.backup_retention_range_error": "Backups to keep must be between 5 and 99.",
+        "save.backup_interval_range_error": "Auto-backup interval must be between 2 and 30 minutes.",
         "save.storage_location": "Save Location",
 
         # Per-player character status (in the selected session's detail area)
@@ -478,6 +503,8 @@ STRINGS = {
         "cluster.bool_on": "On",
         "cluster.bool_off": "Off",
         "cluster.port_conflict": "“{field}” value {value} conflicts with shard “{shard}” -- this port must be unique per shard. Change it and save again.",
+        "cluster.range_hint": "Valid range: {min}-{max}",
+        "cluster.range_error": "“{field}” must be between {min} and {max}. Fix it and save again.",
 
         # Status bar
         "status.klei": "Klei",
@@ -649,7 +676,8 @@ STRINGS = {
         "local.rollback_btn": "Rollback",
         "local.rollback_title": "Rollback",
         "local.rollback_prompt": "Choose how many days to roll back (based on the game's kept save snapshots):",
-        "local.rollback_n_days": "Roll back {n} day(s)",
+        "local.rollback_days_label": "Days to roll back:",
+        "local.rollback_confirm_btn": "Roll Back",
         "local.rollback_confirm": "Roll back {n} day(s)? Progress after that point will be lost and this can't be undone.",
         "local.rollback_sent": "Rollback command for {n} day(s) sent.",
         "local.rollback_none_running": "No shard is currently running -- can't send a rollback command.",

@@ -7,21 +7,23 @@ log/chat_log 文件——那些是 mod 修改历史和日志，跟世界存档�
 自己已经在滚动维护，没必要跟着备份一遍。
 
 备份文件存在 cluster 目录下的 dstcamp_backups/ 子目录里（不会被
-discovery.py 误认成分片，因为分片判定要求目录里有 server.ini），保留最近
-_MAX_BACKUPS 份，超过的自动删掉最旧的。
+discovery.py 误认成分片，因为分片判定要求目录里有 server.ini），保留份数
+由 app_settings.get_backup_retention() 控制（用户可在"设置备份策略"里
+调整，默认 10），超过的自动删掉最旧的。
 """
 
 import shutil
+import tempfile
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
+from dstools.core.app_settings import get_backup_retention
 from dstools.core.discovery import list_shards
 
 _BACKUP_DIR_NAME = "dstcamp_backups"
 _SHARD_ITEMS = ("save", "modoverrides.lua", "leveldataoverride.lua", "server.ini")
 _CLUSTER_ITEMS = ("cluster.ini", "cluster_token.txt", "adminlist.txt", "blocklist.txt")
-_MAX_BACKUPS = 10
 
 
 def backup_dir(cluster_path: Path) -> Path:
@@ -96,5 +98,40 @@ def restore_backup(cluster_path: Path, backup_zip: Path) -> None:
 
 def _prune_old_backups(dest_dir: Path) -> None:
     backups = sorted(dest_dir.glob("*.zip"), key=lambda p: p.name, reverse=True)
-    for old in backups[_MAX_BACKUPS:]:
+    for old in backups[get_backup_retention():]:
         old.unlink()
+
+
+def get_backup_summary(zip_path: Path) -> dict:
+    """从一份备份 zip 里取一点基本信息（存档名称/游戏模式/最大玩家数/
+    进度摘要），给"从备份恢复"列表用——解压到临时目录后直接复用
+    config_manager/save_reader 现成的读取逻辑，不重新写一遍解析代码，
+    临时目录用完即删，不碰真实文件。解析失败的字段直接不出现在结果
+    里，不擅自猜测。"""
+    from dstools.core.config_manager import load_cluster_config
+    from dstools.core.save_reader import get_save_summary, list_save_sessions
+
+    info: dict = {}
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_dir = Path(tmp)
+            with zipfile.ZipFile(zip_path) as zf:
+                zf.extractall(tmp_dir)
+
+            config = load_cluster_config(tmp_dir)
+            if config.network.get("cluster_name"):
+                info["cluster_name"] = config.network["cluster_name"]
+            if config.gameplay.get("game_mode"):
+                info["game_mode"] = config.gameplay["game_mode"]
+            if config.gameplay.get("max_players"):
+                info["max_players"] = config.gameplay["max_players"]
+
+            shards = list_shards(tmp_dir)
+            shard_dir = next((s for s in shards if s.name == "Master"), shards[0] if shards else None)
+            if shard_dir:
+                sessions = list_save_sessions(shard_dir)
+                if sessions:
+                    info["summary"] = get_save_summary(sessions[-1])
+    except (OSError, zipfile.BadZipFile):
+        pass
+    return info

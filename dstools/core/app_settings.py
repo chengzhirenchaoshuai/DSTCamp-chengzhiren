@@ -19,6 +19,10 @@ _KEY_CUSTOM_BG_FILENAME = "custom_bg_filename"
 _KEY_CUSTOM_BG_OPACITY = "custom_bg_opacity"
 _DEFAULT_CUSTOM_BG_OPACITY = 0.35
 _KEY_WINDOW_POS = "window_pos"
+_KEY_BACKUP_RETENTION = "backup_retention"
+_DEFAULT_BACKUP_RETENTION = 10
+_KEY_BACKUP_INTERVAL_MIN = "backup_interval_minutes"
+_DEFAULT_BACKUP_INTERVAL_MIN = 10
 
 
 def get_settings_dir() -> Path:
@@ -169,6 +173,40 @@ def set_custom_bg_filename(name: str | None) -> None:
         data[_KEY_CUSTOM_BG_FILENAME] = name
     else:
         data.pop(_KEY_CUSTOM_BG_FILENAME, None)
+    save_settings(data)
+
+
+def get_backup_retention() -> int:
+    """存档备份最多保留几份，超过的自动删掉最旧的，范围 5~99，默认 10。
+    全局设置，不分存档——UI 上校验过范围，这里再夹一次是防着直接改
+    settings.json 文件塞进范围外的值。"""
+    value = load_settings().get(_KEY_BACKUP_RETENTION, _DEFAULT_BACKUP_RETENTION)
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_BACKUP_RETENTION
+    return min(99, max(5, value))
+
+
+def set_backup_retention(value: int) -> None:
+    data = load_settings()
+    data[_KEY_BACKUP_RETENTION] = min(99, max(5, int(value)))
+    save_settings(data)
+
+
+def get_backup_interval_minutes() -> int:
+    """服务器运行时自动备份的间隔分钟数，范围 2~30，默认 10。"""
+    value = load_settings().get(_KEY_BACKUP_INTERVAL_MIN, _DEFAULT_BACKUP_INTERVAL_MIN)
+    try:
+        value = int(value)
+    except (TypeError, ValueError):
+        return _DEFAULT_BACKUP_INTERVAL_MIN
+    return min(30, max(2, value))
+
+
+def set_backup_interval_minutes(value: int) -> None:
+    data = load_settings()
+    data[_KEY_BACKUP_INTERVAL_MIN] = min(30, max(2, int(value)))
     save_settings(data)
 
 

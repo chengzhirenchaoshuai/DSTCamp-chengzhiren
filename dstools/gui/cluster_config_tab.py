@@ -12,7 +12,9 @@ from dstools.core.config_manager import (
     save_cluster_config, save_shard_config,
     set_cluster_option, set_shard_option,
 )
-from dstools.core.ini_field_info import get_field_info, get_enum_choices
+from dstools.core.ini_field_info import (
+    ALWAYS_READONLY_FIELDS, get_enum_choices, get_field_info, get_range_limits,
+)
 from dstools.core.token_manager import is_valid_token, mask_token, read_token, write_token
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
@@ -450,6 +452,11 @@ class ClusterConfigTab:
         parent.grid_columnconfigure(1, weight=1)
         is_shard_section = section.startswith("SHARD_")
         ini_section = section[len("SHARD_"):] if is_shard_section else section
+        # 游戏自己生成、没有官方文档说明具体用途的字段（比如
+        # cluster_cloud_id）——不管是不是服务器存档，一律只读，不提供一
+        # 个看起来能编辑、改了却可能有副作用的输入框。
+        if not is_shard_section and (ini_section, key) in ALWAYS_READONLY_FIELDS:
+            readonly = True
         info = get_field_info(ini_section, key, is_shard=is_shard_section)
         label_text, desc = info if info else (key, "")
         # 不再固定 width=26 -- 那是按英文字段名调的宽度，中文标签普遍短
@@ -464,6 +471,7 @@ class ClusterConfigTab:
         # 结果（不是靠猜的），可以放心据此判断要不要画成开关。
         is_bool = isinstance(value, bool)
         enum_choices = None if is_shard_section else get_enum_choices(ini_section, key)
+        range_limits = None if is_shard_section else get_range_limits(ini_section, key)
 
         if readonly:
             # 只读字段直接用 Label 展示，不再创建输入框 -- 本地存档的配置
@@ -500,6 +508,18 @@ class ClusterConfigTab:
             var = _EnumVar(display_var, display_to_raw)
         elif (ini_section, key) in self._WRAPPED_TEXT_FIELDS:
             var = self._make_wrapped_text_row(parent, row, value)
+        elif range_limits is not None:
+            # 有官方明确取值范围的数字字段（比如 tick_rate 15-60）——按键
+            # 时只允许数字字符（挡住手滑打进字母/符号），真正的范围校验
+            # 放到"保存"时做（见 _save_cluster_ini），这里只挡明显打错的
+            # 输入，不在用户还没打完整数字时就报错。
+            lo, hi = range_limits
+            var = tk.StringVar(value=str(value) if value is not None else "")
+            vcmd = (parent.register(lambda s: s == "" or s.isdigit()), "%P")
+            entry = ttk.Entry(parent, textvariable=var, width=38, font=self._ROW_VALUE_FONT,
+                              validate="key", validatecommand=vcmd)
+            entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
+            Tooltip(entry, t("cluster.range_hint", min=lo, max=hi))
         else:
             var = tk.StringVar(value=str(value) if value is not None else "")
             ttk.Entry(parent, textvariable=var, width=38,
@@ -522,23 +542,24 @@ class ClusterConfigTab:
         # 本地存档的 cluster.ini/server.ini 由游戏客户端自己管理和重写，
         # 工具这边的修改实际上留不住，因此本地存档下所有字段一律只读展示
         # （对应的"保存"按钮也一并禁用）。GAMEPLAY/NETWORK/MISC/SHARD 分成
-        # 左右两列显示（而不是全部竖排成一整条）-- 竖排时内容太长，默认
-        # 窗口大小下要滚动才能看到保存按钮，两列并排能砍掉将近一半高度。
-        # 分组按字段数量配平，而不是按"看起来像不像一类"配对 --
-        # GAMEPLAY(4)+SHARD(5)=9 项 与 NETWORK(7)+MISC(1)=8 项 几乎相等，
-        # 明显比"GAMEPLAY+NETWORK"(11项) 对 "MISC+SHARD"(6项) 更均衡，
-        # 这样最长的那一列才是决定整体高度的瓶颈，两列都能矮一些。
+        # 三列显示（原来是两列，补齐 cluster.ini 缺失默认值之后总项数变
+        # 多，两列的话最高的一列会超出默认窗口高度看不全）。分组按字段数
+        # 量配平，而不是按"看起来像不像一类"配对——NETWORK 一家就有 11
+        # 项，比其它任何一个 section 都多，拆不开，只能整节放一列；
+        # GAMEPLAY(5)+MISC(2)=7 项配一列，SHARD(5) 单独一列，三列高度
+        # 11/7/5 行，比两列时最高的一列 13 行明显矮。
         outer = self._section_frames["Cluster"]
-        # weight=1 on both columns + sticky including E lets left_frame/
-        # right_frame actually claim any extra width the window/card grows
-        # by, instead of staying pinned at their natural size with a big
-        # blank strip of background showing to the right (see _make_row's
-        # own columnconfigure(1) for the same fix one level down, on the
+        # weight=1 on every column + sticky including E lets each column
+        # actually claim its share of any extra width the window/card grows
+        # by, instead of staying pinned at natural size with a big blank
+        # strip of background to the right (see _make_row's own
+        # columnconfigure(1) for the same fix one level down, on the
         # label/field split within each column).
-        outer.grid_columnconfigure(0, weight=1)
-        outer.grid_columnconfigure(1, weight=1)
-        left_frame = ttk.Frame(outer); left_frame.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0,28))
-        right_frame = ttk.Frame(outer); right_frame.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E))
+        for col in range(3):
+            outer.grid_columnconfigure(col, weight=1)
+        col1 = ttk.Frame(outer); col1.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0,20))
+        col2 = ttk.Frame(outer); col2.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E), padx=(0,20))
+        col3 = ttk.Frame(outer); col3.grid(row=0, column=2, sticky=(tk.N, tk.W, tk.E))
 
         def _fill_column(col_frame, sections):
             row = 0
@@ -552,8 +573,9 @@ class ClusterConfigTab:
                     self._make_row(col_frame, sec_name, key, value, row, readonly=not is_server)
                     row += 1
 
-        _fill_column(left_frame, [("GAMEPLAY",config.gameplay), ("SHARD",config.shard)])
-        _fill_column(right_frame, [("NETWORK",config.network), ("MISC",config.misc)])
+        _fill_column(col1, [("NETWORK",config.network)])
+        _fill_column(col2, [("GAMEPLAY",config.gameplay), ("MISC",config.misc)])
+        _fill_column(col3, [("SHARD",config.shard)])
 
         # The button itself now lives in the tab's footer (created once,
         # outside the green scrollable card -- see the sub-tab page setup
@@ -837,6 +859,27 @@ class ClusterConfigTab:
         a single ini file)."""
         c = self._get_cluster()
         if not c: return
+        # 有官方取值范围的字段（比如 tick_rate）先整体校验一遍，任何一个
+        # 越界就整个中止保存、什么都不写——而不是走一个各自夹一下范围的
+        # "自动纠正"，那样用户可能都不知道自己填的值被悄悄改掉了。
+        for (section, key), (var, readonly) in self._entries.items():
+            if readonly or section not in ("GAMEPLAY","NETWORK","MISC","SHARD"):
+                continue
+            limits = get_range_limits(section, key)
+            if limits is None:
+                continue
+            lo, hi = limits
+            label = get_field_info(section, key)
+            field_name = label[0] if label else key
+            try:
+                n = int(var.get())
+            except (TypeError, ValueError):
+                dlg.show_error(self.app.root, t("dlg.save_ok"), t("cluster.range_error", field=field_name, min=lo, max=hi))
+                return
+            if not (lo <= n <= hi):
+                dlg.show_error(self.app.root, t("dlg.save_ok"), t("cluster.range_error", field=field_name, min=lo, max=hi))
+                return
+
         config = load_cluster_config(c.path)
         for (section, key), (var, readonly) in self._entries.items():
             if not readonly and section in ("GAMEPLAY","NETWORK","MISC","SHARD"):
