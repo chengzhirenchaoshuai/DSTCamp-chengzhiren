@@ -17,13 +17,13 @@ from dstools.core.app_settings import get_player_note, set_player_note
 from dstools.core.backup_manager import create_backup, get_backup_summary, list_backups, restore_backup
 from dstools.core.character_icons import resolve_character
 from dstools.core.config_manager import load_cluster_config
-from dstools.core.dedicated_server import ServerStatus
 from dstools.core.ini_field_info import get_enum_choices
 from dstools.core.mod_manager import list_mods, load_mod_overrides
 from dstools.core.resource_paths import bundled_resource_dir
 from dstools.core.save_reader import get_save_summary, list_save_sessions, list_session_players
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
+from dstools.gui.local_service_tab import _RUNNING_LIKE
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.gui.toolbar_widgets import make_toolbar_label
@@ -1042,7 +1042,7 @@ class SaveBrowserTab:
         # 唯一知道哪些进程还在跑的地方，跨页签直接访问 app.local_tab。
         running = [s.name for s in c.shards
                    if (proc := self.app.local_tab.manager.get(c.path, s.name))
-                   and proc.status == ServerStatus.RUNNING]
+                   and proc.status in _RUNNING_LIKE]
         if running:
             dlg.show_warning(self.app.root, t("save.restore_backup"),
                               t("save.restore_shards_running", shards="、".join(running)))

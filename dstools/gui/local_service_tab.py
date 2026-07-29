@@ -13,7 +13,7 @@ from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.core.app_settings import get_backup_interval_minutes, set_dedicated_server_path
 from dstools.core.backup_manager import create_backup
-from dstools.core.config_manager import backfill_cluster_defaults, load_cluster_config
+from dstools.core.config_manager import load_cluster_config
 from dstools.core.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
     find_dedicated_server_dir, is_valid_install_dir, resolve_conf_dir_arg,
@@ -62,7 +62,6 @@ def _max_rollback_days(cluster) -> int:
     一——第 1 份是"当前"，剩下的才是能回退到的历史点（Klei 官方确认过
     "最多回退 5 天"对应默认的 6 份快照）。"""
     config = load_cluster_config(cluster.path)
-    backfill_cluster_defaults(config)
     try:
         snapshots = int(config.misc.get("max_snapshots", 6))
     except (TypeError, ValueError):
@@ -678,8 +677,7 @@ class LocalServiceTab:
             if not dlg.ask_yes_no(self.app.root, t("local.console_close_btn"),
                                    t("local.console_close_confirm", shard=shard.name)):
                 return
-            self.manager.stop(cluster.path, shard.name,
-                               on_done=lambda p: self.frame.after(0, lambda: self._on_pane_close_stopped(key, cluster)))
+            self._stop_and_then(cluster, shard, lambda: self._on_pane_close_stopped(key, cluster))
         else:
             self._remove_console_pane(key)
 
@@ -696,9 +694,14 @@ class LocalServiceTab:
         self._console_nb.forget(pane.frame)
         pane.frame.destroy()
 
-    def stop_shard(self, cluster, shard):
+    def _stop_and_then(self, cluster, shard, on_done):
+        """停止一个分片、停完之后转回 Tk 主线程执行 on_done——stop_shard()/
+        _close_console_pane() 都要这段样板，只是停完之后要做的事不同。"""
         self.manager.stop(cluster.path, shard.name,
-                           on_done=lambda p: self.frame.after(0, lambda: self._on_stop_done(cluster)))
+                           on_done=lambda p: self.frame.after(0, on_done))
+
+    def stop_shard(self, cluster, shard):
+        self._stop_and_then(cluster, shard, lambda: self._on_stop_done(cluster))
 
     def _on_stop_done(self, cluster):
         self._refresh_shard_rows(self._get_cluster())
