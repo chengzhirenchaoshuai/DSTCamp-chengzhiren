@@ -23,6 +23,8 @@ _KEY_BACKUP_RETENTION = "backup_retention"
 _DEFAULT_BACKUP_RETENTION = 10
 _KEY_BACKUP_INTERVAL_MIN = "backup_interval_minutes"
 _DEFAULT_BACKUP_INTERVAL_MIN = 10
+_KEY_SAKURA_TOKEN = "sakura_api_token"
+_KEY_SAKURA_LAST_NODE = "sakura_last_node_id"
 
 
 def get_settings_dir() -> Path:
@@ -207,6 +209,39 @@ def get_backup_interval_minutes() -> int:
 def set_backup_interval_minutes(value: int) -> None:
     data = load_settings()
     data[_KEY_BACKUP_INTERVAL_MIN] = min(30, max(2, int(value)))
+    save_settings(data)
+
+
+def get_sakura_token() -> str | None:
+    """取用户设置过的 SakuraFrp API Token（从樱花网页后台复制来的凭据），
+    没设置过返回 None。"""
+    return load_settings().get(_KEY_SAKURA_TOKEN) or None
+
+
+def set_sakura_token(token: str | None) -> None:
+    data = load_settings()
+    if token:
+        data[_KEY_SAKURA_TOKEN] = token
+    else:
+        data.pop(_KEY_SAKURA_TOKEN, None)
+    save_settings(data)
+
+
+def get_sakura_last_node_id() -> int | None:
+    """记住上次选中的樱花节点 ID，纯 UI 偏好（下次预选），不是隧道映射状态。"""
+    raw = load_settings().get(_KEY_SAKURA_LAST_NODE)
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def set_sakura_last_node_id(node_id: int | None) -> None:
+    data = load_settings()
+    if node_id is not None:
+        data[_KEY_SAKURA_LAST_NODE] = int(node_id)
+    else:
+        data.pop(_KEY_SAKURA_LAST_NODE, None)
     save_settings(data)
 
 

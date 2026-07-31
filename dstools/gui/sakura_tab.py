@@ -1,0 +1,734 @@
+""""樱花映射"标签页：通过 SakuraFrp (natfrp.com) 的开放 API 把本地专用服务
+器映射到公网，配合饥荒自带的 c_connect() 直连功能实现好友联机，不需要路由
+器端口转发。
+
+跟"回档"（core/backup_manager.py 的 zip 备份）是完全独立的两回事，也跟本地
+`frpc.exe` 客户端进程管理（core/frpc_process.py）分工明确：本文件只管 UI +
+编排 API 调用；隧道创建后"把远程端口回写进 server.ini"这一步，是让跨分片
+传送（Master<->Caves）能通过隧道正常工作的关键，见 _enable_mapping()。
+"""
+
+import threading
+import time
+import tkinter as tk
+import webbrowser
+from tkinter import font as tkfont, ttk
+
+from dstools.core import app_settings, sakura_frp
+from dstools.core.config_manager import get_shard_option, load_shard_config, save_shard_config, set_shard_option
+from dstools.core.frpc_process import FrpcManager
+from dstools.core.resource_paths import bundled_resource_dir, cache_dir
+from dstools.core.token_manager import is_valid_token, mask_token
+from dstools.gui import theme, themed_dialog as dlg
+from dstools.gui.bg_frame import BgFrame
+from dstools.gui.local_service_tab import _RUNNING_LIKE
+from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
+from dstools.gui.tooltip import Tooltip
+from dstools.i18n import t
+
+# 在真实拿到 /user/info 的 tunnels 字段之前的兜底值（免费版目前是 2，但
+# 这个数字应该以账号自己查到的为准，这里只是"还没加载出来"时的占位）。
+_FALLBACK_MAX_TUNNELS = 2
+_FRPC_CACHE_NAME = "frpc_config"
+_NODE_GRID_COLS = 3
+
+
+def _frpc_exe_path():
+    return bundled_resource_dir() / "tools" / "frpc" / "frpc.exe"
+
+
+def _format_bytes_adaptive(num_bytes: float) -> str:
+    """按数量级自动换单位（1024 进制，跟账号卡片的 GiB 保持同一套单位
+    体系）：小于 1 MiB 显示 KiB，小于 1024 MiB 显示 MiB，否则显示 GiB——
+    "近 7 天用量"这种数字大部分时候很小，一律显示成 GiB 会全是 0.00。"""
+    kib = num_bytes / 1024
+    if kib < 1024:
+        return f"{kib:.2f} KiB"
+    mib = kib / 1024
+    if mib < 1024:
+        return f"{mib:.2f} MiB"
+    return f"{mib / 1024:.2f} GiB"
+
+
+class _SakuraTokenInputDialog:
+    """照抄 cluster_config_tab.py 的 _TokenInputDialog，只是校验/文案换成
+    SakuraFrp API Token 自己的。"""
+
+    def __init__(self, parent_widget, initial: str = ""):
+        self.result: str | None = None
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("token.change"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+        WIN_W, WIN_H = 620, 220
+
+        ttk.Label(win, text=t("sakura.token_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD)).pack(
+            anchor=tk.W, padx=20, pady=(20, 8))
+        self.var = tk.StringVar(value=initial)
+        entry = ttk.Entry(win, textvariable=self.var, font=("Consolas", 12))
+        entry.pack(fill=tk.X, padx=20, pady=(0, 6))
+        self.err_var = tk.StringVar()
+        ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR,
+                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20)
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
+
+        entry.focus_set()
+        win.bind("<Return>", lambda e: self._confirm())
+        win.bind("<Escape>", lambda e: self._cancel())
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        win.update_idletasks()
+        root = parent_widget.winfo_toplevel()
+        px, py = root.winfo_rootx(), root.winfo_rooty()
+        pw, ph = root.winfo_width(), root.winfo_height()
+        x = px + max(0, (pw - WIN_W) // 2)
+        y = py + max(0, (ph - WIN_H) // 2)
+        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _confirm(self):
+        val = self.var.get().strip()
+        if not is_valid_token(val):
+            self.err_var.set(t("sakura.token_invalid_hint"))
+            return
+        self.result = val
+        self.win.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.win.destroy()
+
+
+class _NodeSelectDialog:
+    """节点数量常常有几十上百个，下拉框展开会长得没法用——改成一个弹窗，
+    按 _NODE_GRID_COLS 列的网格铺开，每个节点一个按钮，账号 VIP 等级不够
+    用的节点直接置灰禁用（不是隐藏——让用户知道"还有这些但用不了"，跟
+    node_id 是不是免费可用一起在 SakuraTab._apply_loaded() 里算好）。"""
+
+    def __init__(self, parent_widget, node_choices: list[tuple[int, dict, bool]], current_id: int | None):
+        self.result: int | None = None
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("sakura.node_picker_title"))
+        win.configure(background=theme.BG_SOFT)
+        # 拿掉底部按钮栏之后窗口应该贴合内容，不留死板的固定高度空白——
+        # 高度按实际内容多高来算（封顶，超出的靠滚动条），不是写死一个数。
+        WIN_W, MAX_WIN_H = 940, 640
+
+        canvas = tk.Canvas(win, background=theme.BG_SOFT, highlightthickness=0)
+        vsb = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
+
+        grid_frame = ttk.Frame(canvas)
+        canvas.create_window((0, 0), window=grid_frame, anchor=tk.NW)
+
+        for col in range(_NODE_GRID_COLS):
+            grid_frame.grid_columnconfigure(col, weight=1, uniform="node_col")
+
+        for idx, (node_id, node, eligible) in enumerate(node_choices):
+            tag = t("sakura.node_tag_free") if node.get("vip", 0) == 0 else t("sakura.node_tag_vip", level=node.get("vip"))
+            label = f"{node.get('name', node_id)}\n{tag}"
+            btn = tk.Button(
+                grid_frame, text=label, width=26, height=2, wraplength=230, justify=tk.CENTER,
+                relief=tk.SUNKEN if node_id == current_id else tk.RAISED,
+                state=tk.NORMAL if eligible else tk.DISABLED,
+                fg=theme.TEXT if eligible else theme.TEXT_MUTED,
+                bg=theme.CARD_BG_ALT if node_id == current_id else theme.CARD_BG,
+                command=lambda nid=node_id: self._select(nid),
+            )
+            btn.grid(row=idx // _NODE_GRID_COLS, column=idx % _NODE_GRID_COLS,
+                     sticky=(tk.W, tk.E), padx=4, pady=4)
+
+        grid_frame.update_idletasks()
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # 没有底部"取消"按钮——右上角原生关闭按钮就是取消，不用重复一个。
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        content_h = grid_frame.winfo_reqheight() + 20  # + canvas 的 pady
+        WIN_H = min(MAX_WIN_H, max(160, content_h))
+        win.update_idletasks()
+        root = parent_widget.winfo_toplevel()
+        px, py = root.winfo_rootx(), root.winfo_rooty()
+        pw, ph = root.winfo_width(), root.winfo_height()
+        x = px + max(0, (pw - WIN_W) // 2)
+        y = py + max(0, (ph - WIN_H) // 2)
+        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _select(self, node_id):
+        self.result = node_id
+        self._close()
+
+    def _cancel(self):
+        self.result = None
+        self._close()
+
+    def _close(self):
+        self.win.unbind_all("<MouseWheel>")
+        self.win.destroy()
+
+
+class SakuraTab:
+    def _label(self, parent, text, *, fg=None, font=None):
+        """跟 gui/toolbar_widgets.py 的 make_toolbar_label() 同一个思路——
+        BgFrame + create_text，不用 ttk.Label：ttk.Label 的绘制区域永远是
+        不透明的一块实色，会把自定义背景图整个挡住。这里额外支持自定义
+        颜色（make_toolbar_label 固定用 theme.TEXT，这个页签要红色错误提
+        示、灰色"未映射"这些不同颜色）。返回的 BgFrame 不含 pack()/grid()，
+        调用方自己摆放；Canvas 不会像 Frame 那样自动按内容撑开尺寸，所以
+        这里手动按测量到的文字宽高设置一次。"""
+        f = tkfont.nametofont("TkDefaultFont") if font is None else tkfont.Font(font=font)
+        label_h = f.metrics("linespace") + 4
+        label = BgFrame(parent, self.app, bg=theme.CARD_BG)
+        label.configure(height=label_h, width=f.measure(text) + 4)
+        label.create_text(2, label_h / 2, text=text, anchor=tk.W,
+                           fill=fg or theme.TEXT, font=f, tags="label_text")
+        return label
+
+    def __init__(self, parent, app):
+        self.app = app
+        self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
+        self.frpc = FrpcManager()
+
+        # 每次刷新页签时对着真实隧道列表重新算出来的 (cluster_path,
+        # shard_name) -> tunnel dict，只是内存缓存，不持久化——权威数据源
+        # 永远是 list_tunnels()。
+        self._tunnels_by_key: dict[tuple[str, str], dict] = {}
+        self._nodes: dict[str, dict] = {}
+        # [(node_id, node_dict, 这个账号能不能用), ...]，给节点选择弹窗用。
+        self._node_choices: list[tuple[int, dict, bool]] = []
+        self._selected_node_id: int | None = None
+        self._my_group_level = 0
+        self._max_tunnels = _FALLBACK_MAX_TUNNELS
+
+        top = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        top.pack(fill=tk.X, padx=10, pady=(10, 5))
+
+        # Token 行——用 BgFrame 而不是 ttk.Frame 装这些行：ttk.Frame 是不
+        # 透明的实色容器，一层层叠上去会把自定义背景图整个挡住（跟
+        # local_service_tab.py 里"专用服务器工具:"那段文字是同一个问题），
+        # BgFrame 才是这个项目里"容器要透出背景图"的标准做法。
+        row1 = BgFrame(top, app, bg=theme.CARD_BG); row1.pack(fill=tk.X, pady=3)
+        self._label(row1, t("sakura.token_label")).pack(side=tk.LEFT)
+        self._token_display = tk.Text(row1, height=1, width=40, wrap=tk.NONE,
+                                       font=("Consolas", 10), bg=theme.CARD_BG, fg=theme.TEXT,
+                                       relief=tk.FLAT, highlightthickness=1,
+                                       highlightbackground=theme.CARD_BORDER, highlightcolor=theme.ACCENT)
+        self._token_display.pack(side=tk.LEFT, padx=8)
+        self._token_display.configure(state=tk.DISABLED)
+        ttk.Button(row1, text=t("token.change"), command=self._change_token).pack(side=tk.LEFT, padx=2)
+        ttk.Button(row1, text=t("sakura.open_dashboard_btn"),
+                   command=lambda: webbrowser.open("https://www.natfrp.com/user/")).pack(side=tk.LEFT, padx=2)
+
+        # 节点行——节点数量多（几十上百个），下拉框展开会长得很难用，改
+        # 成一个按钮，点击弹一个多列网格的选择窗口（_NodeSelectDialog）。
+        row2 = BgFrame(top, app, bg=theme.CARD_BG); row2.pack(fill=tk.X, pady=3)
+        self._label(row2, t("sakura.node_label")).pack(side=tk.LEFT)
+        self._node_display_var = tk.StringVar(value=t("sakura.node_none_selected"))
+        ttk.Button(row2, textvariable=self._node_display_var, command=self._open_node_picker).pack(
+            side=tk.LEFT, padx=8)
+        ttk.Button(row2, text=t("sakura.node_refresh_btn"), command=self._reload_async).pack(side=tk.LEFT, padx=2)
+
+        # 账号信息卡片——照樱花官网"账号信息"卡片的样式：用户组/限速/可用
+        # 流量三列，每列上面一行小字标题、下面一行大字数值。内容要等
+        # /user/info 加载完才有，这里先建好骨架，_render_account_info()
+        # 每次刷新时清空重建里面的数值那一行。
+        self._account_frame = BgFrame(top, app, bg=theme.CARD_BG)
+        self._account_frame.pack(fill=tk.X, pady=(6, 3))
+        for col, key in enumerate(("sakura.account_group", "sakura.account_speed", "sakura.account_traffic")):
+            self._account_frame.grid_columnconfigure(col, weight=1, uniform="acct_col")
+            self._label(self._account_frame, t(key), fg=theme.TEXT_MUTED,
+                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).grid(
+                row=0, column=col, sticky=tk.W, padx=(0, 15))
+        self._account_value_row = 1
+        self._render_account_info("--", "--", "--")
+
+        # 方案 B：不画图（/tunnel/traffic 只能查单条隧道，不是账号总量，
+        # 没法照搬官网那张账号维度的图），只汇总"这个存档自己映射的隧道"
+        # 最近 7 天用了多少流量，一行小字，没有映射就不显示。
+        self._recent_traffic_frame = BgFrame(top, app, bg=theme.CARD_BG)
+        self._recent_traffic_frame.pack(fill=tk.X, pady=(0, 3))
+
+        # 状态/错误提示——没有错误时这里不留任何控件（哪怕是空文字的
+        # Label 也会占一整行高度的不透明背景，见用户反馈"没有文字的区域
+        # 也不透明"），有错误才现建一个红色文字。
+        self._status_frame = BgFrame(top, app, bg=theme.CARD_BG)
+        self._status_frame.pack(fill=tk.X, pady=(3, 0))
+
+        # 分片状态区——每个分片一行，用 grid()（不是逐行各自 pack()）铺进
+        # 同一个容器，这样"已映射"和"未映射"两种内容长度不同的行，"复制
+        # 直连代码"这一列在所有行里都能对齐在同一条竖线上。
+        self._shards_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._shards_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # 操作按钮
+        action_row = BgFrame(self.frame, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
+        self._action_btn = ttk.Button(action_row, text=t("sakura.enable_btn"), command=self._on_action_btn)
+        self._action_btn.pack(side=tk.LEFT)
+
+        self._token_raw = ""
+        self._current_cluster = None
+        self._load_token_display()
+
+    # ── 跨页签接口：给 local_service_tab.py 用 ──────────────────────
+
+    def _frpc_pointer_path(self, cluster_path, shard_name):
+        """不是完整的 frpc 配置文件——frpc 用 `-f token:隧道ID` 启动，自己
+        向樱花服务器现拉配置，这里只需要落地这个分片对应的隧道 ID，供
+        maybe_start_frpc() 在 Tk 主线程零网络请求地读出来拼命令行。"""
+        return cache_dir(_FRPC_CACHE_NAME) / f"{cluster_path.name}__{shard_name}.txt"
+
+    def has_active_mapping(self, cluster, shard) -> bool:
+        """零网络请求——只查本地缓存文件是否存在，供 _do_start_shard()/
+        cluster_config_tab.py 的只读判断在 Tk 主线程同步调用。"""
+        return self._frpc_pointer_path(cluster.path, shard.name).exists()
+
+    def maybe_start_frpc(self, cluster, shard) -> None:
+        pointer_path = self._frpc_pointer_path(cluster.path, shard.name)
+        if not pointer_path.exists():
+            return
+        exe = _frpc_exe_path()
+        if not exe.exists():
+            return
+        if self.frpc.get(cluster.path, shard.name):
+            return
+        token = app_settings.get_sakura_token()
+        tunnel_id = pointer_path.read_text(encoding="utf-8").strip()
+        if not token or not tunnel_id:
+            return
+        self.frpc.start(cluster.path, shard.name, exe, token, int(tunnel_id))
+
+    def stop_frpc_for_shard(self, cluster, shard, on_done=None) -> None:
+        if not self.frpc.get(cluster.path, shard.name):
+            if on_done:
+                on_done()
+            return
+        self.frpc.stop(cluster.path, shard.name, on_done=lambda p: on_done() if on_done else None)
+
+    # ── 页签生命周期 ─────────────────────────────────────────────────
+
+    def _get_cluster(self):
+        return self.app.get_selected_cluster()
+
+    def on_cluster_changed(self, cluster=None):
+        self._current_cluster = self._get_cluster()
+        self._render_shard_placeholders()
+        self._reload_async()
+
+    def refresh(self):
+        self.on_cluster_changed()
+
+    # ── Token 显示/编辑 ──────────────────────────────────────────────
+
+    def _load_token_display(self):
+        self._token_raw = app_settings.get_sakura_token() or ""
+        self._token_display.configure(state=tk.NORMAL)
+        self._token_display.delete("1.0", tk.END)
+        self._token_display.insert("1.0", mask_token(self._token_raw) if self._token_raw else t("token.empty"))
+        self._token_display.configure(state=tk.DISABLED)
+
+    def _change_token(self):
+        input_dlg = _SakuraTokenInputDialog(self.frame, initial="")
+        if input_dlg.result is None:
+            return
+        app_settings.set_sakura_token(input_dlg.result)
+        self._load_token_display()
+        self._reload_async()
+
+    def _open_node_picker(self):
+        if not self._node_choices:
+            return
+        picker = _NodeSelectDialog(self.frame, self._node_choices, self._selected_node_id)
+        if picker.result is None:
+            return
+        self._selected_node_id = picker.result
+        app_settings.set_sakura_last_node_id(picker.result)
+        self._update_node_display()
+
+    def _update_node_display(self):
+        node = self._nodes.get(str(self._selected_node_id), {}) if self._selected_node_id else {}
+        self._node_display_var.set(node.get("name") or t("sakura.node_none_selected"))
+
+    def _render_account_info(self, group_name, speed, traffic_available):
+        for w in self._account_frame.grid_slaves(row=self._account_value_row):
+            w.destroy()
+        for col, value in enumerate((group_name, speed, traffic_available)):
+            self._label(self._account_frame, value,
+                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold")).grid(
+                row=self._account_value_row, column=col, sticky=tk.W, padx=(0, 15), pady=(0, 4))
+
+    def _render_recent_traffic(self, text):
+        # tk.Canvas（BgFrame 的底子）加子控件时会正确用 pack 传播算出新高
+        # 度（不管清空前是什么尺寸），但清空到"一个子控件都没有"时不会跟
+        # 着收缩——会停在最后一个子控件撑开的高度，甚至如果从来没加过子
+        # 控件，直接退回 Canvas 自己的默认尺寸（约 265px，实测过），凭空
+        # 占出一大块空白背景图（就是"空白区域"那个 bug 的根因）。所以只
+        # 有清空成"不放子控件"这个分支才需要显式收缩到 1px；有内容那个
+        # 分支不需要手动设置，pack() 自己会正确撑开/收缩到新子控件的尺寸。
+        for w in self._recent_traffic_frame.winfo_children():
+            w.destroy()
+        if text:
+            self._label(self._recent_traffic_frame, text, fg=theme.TEXT_MUTED,
+                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W)
+        else:
+            self._recent_traffic_frame.configure(height=1)
+
+    def _set_status(self, text):
+        # 同 _render_recent_traffic() 的道理，只有清空成没有文字这个分支
+        # 才需要显式收缩高度。
+        for w in self._status_frame.winfo_children():
+            w.destroy()
+        if text:
+            self._label(self._status_frame, text, fg=theme.ERROR,
+                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, fill=tk.X)
+        else:
+            self._status_frame.configure(height=1)
+
+    # ── 后台加载：Token/节点/隧道/流量 ───────────────────────────────
+
+    def _reload_async(self):
+        token = app_settings.get_sakura_token()
+        cluster = self._current_cluster
+        self._set_status("")
+        if not token:
+            self._render_account_info("--", "--", "--")
+            self._render_recent_traffic("")
+            return
+        self._render_account_info(t("sakura.loading"), "", "")
+
+        def _worker():
+            try:
+                user_info = sakura_frp.get_user_info(token)
+                nodes = sakura_frp.list_nodes(token)
+                tunnels = sakura_frp.list_tunnels(token)
+                by_key = {}
+                if cluster:
+                    for shard in cluster.shards:
+                        tunnel = sakura_frp.find_dstcamp_tunnel(tunnels, cluster.path.name, shard.name)
+                        if tunnel:
+                            by_key[(str(cluster.path), shard.name)] = tunnel
+                # 方案 B：汇总"这个存档自己映射的隧道"最近 7 天用了多少流
+                # 量——不是账号总量（/tunnel/traffic 只能查单条隧道）。
+                recent_bytes = 0
+                now = time.time()
+                cutoff = now - 7 * 86400
+                for tunnel in by_key.values():
+                    try:
+                        history = sakura_frp.get_traffic(token, tunnel["id"])
+                    except sakura_frp.SakuraApiError:
+                        continue
+                    for ts_str, val in history.items():
+                        try:
+                            ts = float(ts_str)
+                        except (TypeError, ValueError):
+                            continue
+                        if ts > now * 2:  # 明显是毫秒级时间戳，换算成秒
+                            ts /= 1000
+                        if ts >= cutoff:
+                            recent_bytes += val
+                self.frame.after(0, lambda: self._apply_loaded(user_info, nodes, by_key, recent_bytes))
+            except sakura_frp.SakuraApiError as e:
+                # `except ... as e` 在 except 块结束时会自动 del 掉这个名
+                # 字——lambda 要等 .after(0, ...) 真正调度执行时才引用它，
+                # 那时候早就删了，必须用默认参数在这里立刻把值捕获下来。
+                self.frame.after(0, lambda err=e: self._apply_error(err))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _apply_error(self, e):
+        self._render_account_info("--", "--", "--")
+        self._render_recent_traffic("")
+        self._set_status(t("sakura.api_error", detail=str(e)))
+
+    def _apply_loaded(self, user_info, nodes, by_key, recent_bytes):
+        self._nodes = nodes
+        self._tunnels_by_key = by_key
+        self._render_recent_traffic(
+            t("sakura.recent_traffic", size=_format_bytes_adaptive(recent_bytes)) if by_key else "")
+
+        # /user/info 的 tunnels(隧道数上限)/group.level(账号自己的 VIP 等
+        # 级)/traffic([今日已用, 总剩余])——用真实账号数据取代原来写死的
+        # "免费版=2 条隧道"猜测，也能真正判断一个节点这个账号能不能用（不
+        # 用等创建隧道失败才知道）。
+        self._max_tunnels = user_info.get("tunnels") or _FALLBACK_MAX_TUNNELS
+        group = user_info.get("group") or {}
+        self._my_group_level = group.get("level", 0)
+        _today_used, remaining = (user_info.get("traffic") or [0, 0])[:2]
+        # 照抄樱花官网"账号信息"卡片的三个字段：用户组名称、限速（接口自
+        # 己给的现成字符串，比如"10 Mbps"，不用自己拼）、可用流量（换算
+        # 成 GiB，跟官网单位一致——1024 进制，不是十进制 GB）。
+        self._render_account_info(
+            group.get("name", "--"),
+            user_info.get("speed") or "--",
+            f"{remaining / (1024**3):.2f} GiB",
+        )
+
+        self._node_choices = []
+        for node_id_str, node in nodes.items():
+            # 离线/满载/不支持 UDP 的节点直接排除——这些是"这个节点本身现
+            # 在能不能用"，跟"这个账号有没有权限用它"（VIP 等级）是两回
+            # 事，后者才需要展示出来让用户看到"为什么灰掉"。
+            if not sakura_frp.node_supports_udp(node) or not sakura_frp.node_accepts_new_tunnel(node):
+                continue
+            eligible = node.get("vip", 0) <= self._my_group_level
+            self._node_choices.append((int(node_id_str), node, eligible))
+        self._node_choices.sort(key=lambda item: (not item[2], item[1].get("vip", 0)))
+
+        last_node_id = app_settings.get_sakura_last_node_id()
+        eligible_ids = [nid for nid, _n, ok in self._node_choices if ok]
+        if last_node_id in eligible_ids:
+            self._selected_node_id = last_node_id
+        elif self._selected_node_id not in eligible_ids:
+            self._selected_node_id = eligible_ids[0] if eligible_ids else None
+        self._update_node_display()
+
+        self._render_shard_rows()
+
+    # ── 分片状态区渲染 ───────────────────────────────────────────────
+
+    def _clear_shards_frame(self):
+        for child in self._shards_frame.winfo_children():
+            child.destroy()
+
+    def _render_shard_placeholders(self):
+        self._clear_shards_frame()
+        cluster = self._current_cluster
+        if not cluster:
+            self._label(self._shards_frame, t("local.select_cluster_first")).pack(anchor=tk.W)
+            self._action_btn.pack_forget()
+            return
+        self._label(self._shards_frame, t("sakura.loading")).pack(anchor=tk.W)
+
+    @staticmethod
+    def _is_master_shard(shard) -> bool:
+        """饥荒的直连(c_connect)只能连主世界——副世界(Caves)不接受客户端
+        直接连接，玩家下洞是靠游戏内部的分片跳转，不是靠另外拿一条直连
+        地址。这里用 server.ini 里 [SHARD] is_master 判断，跟
+        cluster_config_tab.py 判断主/副分片用的是同一个字段，不用猜文件
+        夹名字（比如 "Master"）。"""
+        return load_shard_config(shard.path).shard.get("is_master", True)
+
+    # 每个分片行占用的 grid 竖直间距——原来 pady=2 太紧，行与行之间的按钮
+    # 几乎贴在一起，改成上下各留够呼吸空间。
+    _SHARD_ROW_PADY = (6, 6)
+
+    def _render_shard_rows(self):
+        self._clear_shards_frame()
+        cluster = self._current_cluster
+        if not cluster:
+            self._label(self._shards_frame, t("local.select_cluster_first")).pack(anchor=tk.W)
+            self._action_btn.pack_forget()
+            return
+        if not cluster.shards:
+            self._label(self._shards_frame, t("sakura.no_shards")).pack(anchor=tk.W)
+            self._action_btn.pack_forget()
+            return
+        if len(cluster.shards) > self._max_tunnels:
+            self._label(self._shards_frame, t("sakura.too_many_shards", count=len(cluster.shards),
+                        max=self._max_tunnels), fg=theme.ERROR).pack(anchor=tk.W)
+            self._action_btn.pack_forget()
+            return
+
+        # 用 grid() 而不是每行各自 pack() 一个 Frame——"已映射"和"未映射"
+        # 两种行内容长度不一样，各自 pack() 的话"复制直连代码"按钮在不同
+        # 行里会摆在不同的横坐标，看起来参差不齐；grid() 让同一列在所有
+        # 行里对齐到同一条竖线上。
+        any_mapped = False
+        for row_idx, shard in enumerate(cluster.shards):
+            key = (str(cluster.path), shard.name)
+            tunnel = self._tunnels_by_key.get(key)
+            self._label(self._shards_frame, shard.name).grid(
+                row=row_idx, column=0, sticky=tk.W, padx=(0, 3), pady=self._SHARD_ROW_PADY)
+            if tunnel:
+                any_mapped = True
+                local_port = tunnel.get("local_port", "?")
+                remote = tunnel.get("remote", "?")
+                self._label(self._shards_frame, t("sakura.shard_mapped"), fg=theme.ACCENT).grid(
+                    row=row_idx, column=1, sticky=tk.W, padx=3, pady=self._SHARD_ROW_PADY)
+                # 只显示远程端口，不再把"本地 X ↔ 远程 Y"都摆一行——_enable_
+                # mapping() 里 edit_tunnel() 已经强制本地端口=远程端口，两
+                # 个数字本来就该相等，一行显示两遍是冗余信息，还把默认窗
+                # 口宽度下的整行内容挤到窗口外面去了。真出现两者不一致这
+                # 种不该发生的情况，靠 Tooltip 兜底提示，不占用行宽。
+                port_lbl = self._label(self._shards_frame, t("sakura.port_display", remote=remote))
+                port_lbl.grid(row=row_idx, column=2, sticky=tk.W, padx=3, pady=self._SHARD_ROW_PADY)
+                if str(local_port) != str(remote):
+                    Tooltip(port_lbl, t("sakura.port_mismatch_hint", local=local_port, remote=remote))
+                is_master = self._is_master_shard(shard)
+                copy_btn = ttk.Button(self._shards_frame, text=t("sakura.copy_connect_btn"),
+                                      command=lambda t_=tunnel: self._copy_connect_string(t_),
+                                      state=tk.NORMAL if is_master else tk.DISABLED)
+                copy_btn.grid(row=row_idx, column=3, sticky=tk.W, padx=3, pady=self._SHARD_ROW_PADY)
+                if not is_master:
+                    # 饥荒直连只能连主世界，副世界给的直连码朋友那边根本
+                    # 连不上——不隐藏按钮（保持每行列对齐），置灰说明原因。
+                    Tooltip(copy_btn, t("sakura.copy_connect_master_only_hint"))
+            else:
+                self._label(self._shards_frame, t("sakura.shard_unmapped"), fg=theme.TEXT_MUTED).grid(
+                    row=row_idx, column=1, sticky=tk.W, padx=3, pady=self._SHARD_ROW_PADY)
+
+        self._action_btn.pack(side=tk.LEFT)
+        self._action_btn.configure(text=t("sakura.disable_btn") if any_mapped else t("sakura.enable_btn"))
+        self._any_mapped = any_mapped
+
+    def _copy_connect_string(self, tunnel: dict):
+        node = self._nodes.get(str(tunnel.get("node")), {})
+        host = node.get("host", "")
+        remote = tunnel.get("remote", "")
+        text = f'c_connect("{host}", {remote})'
+        self.frame.clipboard_clear()
+        self.frame.clipboard_append(text)
+        dlg.show_info(self.app.root, "", t("sakura.connect_copied"))
+
+    # ── 开启/关闭映射 ────────────────────────────────────────────────
+
+    def _on_action_btn(self):
+        if getattr(self, "_any_mapped", False):
+            self._disable_mapping()
+        else:
+            self._enable_mapping()
+
+    def _running_shard_names(self, cluster) -> list[str]:
+        return [s.name for s in cluster.shards
+                if (proc := self.app.local_tab.manager.get(cluster.path, s.name))
+                and proc.status in _RUNNING_LIKE]
+
+    def _enable_mapping(self):
+        cluster = self._current_cluster
+        if not cluster:
+            return
+        token = app_settings.get_sakura_token()
+        if not token:
+            dlg.show_warning(self.app.root, t("sakura.enable_btn"), t("sakura.token_missing"))
+            return
+        node_id = self._selected_node_id
+        if node_id is None:
+            dlg.show_warning(self.app.root, t("sakura.enable_btn"), t("sakura.select_node_first"))
+            return
+        running = self._running_shard_names(cluster)
+        if running:
+            dlg.show_warning(self.app.root, t("sakura.require_stopped_title"),
+                              t("sakura.require_stopped_msg", shards="、".join(running)))
+            return
+
+        progress = ModSyncLogDialog(self.frame, title=t("sakura.setup_progress_title"))
+        shards = list(cluster.shards)
+
+        def _worker():
+            try:
+                for shard in shards:
+                    self.frame.after(0, lambda s=shard: progress.append(t("sakura.setup_step_creating", shard=s.name)))
+                    shard_config = load_shard_config(shard.path)
+                    local_port = get_shard_option(shard_config, "NETWORK", "server_port")
+
+                    tunnels = sakura_frp.list_tunnels(token)
+                    name = sakura_frp.sanitize_tunnel_name(cluster.path.name, shard.name)
+                    existing = sakura_frp.find_dstcamp_tunnel(tunnels, cluster.path.name, shard.name)
+                    if existing:
+                        tunnel_id = existing["id"]
+                        remote = existing.get("remote")
+                    else:
+                        created = sakura_frp.create_tunnel(
+                            token, name=name, type="udp", node=node_id,
+                            local_ip="127.0.0.1", local_port=local_port,
+                            # 隧道名现在是不可读的哈希（樱花名字规则不允许
+                            # 短横线，塞不下"存档名-分片名"这种可读格式），
+                            # note 字段没有这个字符限制，用它留一份人能看
+                            # 懂的标识，方便在樱花网页后台对照。
+                            note=f"DSTCamp: {cluster.path.name}/{shard.name}")
+                        tunnel_id = created["id"]
+                        remote = created.get("remote")
+
+                    remote_port = int(remote) if remote and str(remote).isdigit() else None
+                    if remote_port is None or not (1 <= remote_port <= 65535):
+                        raise sakura_frp.SakuraApiError(f"invalid remote port for {name}: {remote}")
+
+                    # 隧道自己的 local_port 也要同步改成 remote_port，让它
+                    # 变成 R<->R 直通——不然回写完 server.ini 之后，frpc 转
+                    # 发的目标端口就和 DST 实际监听端口对不上了（见计划四）。
+                    sakura_frp.edit_tunnel(token, tunnel_id, local_port=remote_port)
+
+                    # frpc 用 `-f token:隧道ID` 启动、自己现拉配置，这里
+                    # 只需要落地隧道 ID 本身（见 maybe_start_frpc()）。
+                    pointer_path = self._frpc_pointer_path(cluster.path, shard.name)
+                    pointer_path.parent.mkdir(parents=True, exist_ok=True)
+                    pointer_path.write_text(str(tunnel_id), encoding="utf-8")
+
+                    set_shard_option(shard_config, "NETWORK", "server_port", remote_port)
+                    save_shard_config(shard_config, shard.path)
+
+                    self.frame.after(0, lambda s=shard, p=remote_port:
+                                      progress.append(t("sakura.setup_step_ready", shard=s.name, port=p)))
+
+                self.frame.after(0, lambda: self._on_enable_done(progress))
+            except sakura_frp.SakuraApiError as e:
+                # 同上：except 块结束会自动 del e，必须用默认参数立刻捕获。
+                self.frame.after(0, lambda err=e: self._on_enable_error(progress, err))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_enable_done(self, progress):
+        progress.finish()
+        # 只有分片真的在跑，才需要提醒"重启才能生效"——开启映射前面已经
+        # 要求全部分片先停止，正常情况下走到这里都是没跑的，不用弹一句
+        # "重启"这种对着没在运行的东西说的话；只有极少数情况（比如这个
+        # DSTCamp 会话没追踪到、但分片其实还在跑）才需要提醒。
+        cluster = self._current_cluster
+        running = self._running_shard_names(cluster) if cluster else []
+        if running:
+            dlg.show_info(self.app.root, t("sakura.setup_done_title"),
+                           t("sakura.setup_done_msg_restart", shards="、".join(running)))
+        self._reload_async()
+
+    def _on_enable_error(self, progress, e):
+        progress.append(t("sakura.api_error", detail=str(e)))
+        progress.finish()
+        # 前面的分片可能已经成功建好了隧道（比如 Master 建完才轮到 Caves
+        # 出错）——不刷新的话页面还停在点击前的旧状态，用户会以为什么都
+        # 没发生、也看不出该不该重试。重新拉一遍真实状态，且 _enable_
+        # mapping() 本身对每个分片都会先查有没有现成隧道再决定建/复用，
+        # 重新点一次"开启樱花映射"是安全的，不会把已经建好的分片重复建。
+        self._reload_async()
+
+    def _disable_mapping(self):
+        cluster = self._current_cluster
+        if not cluster:
+            return
+        if not dlg.ask_yes_no(self.app.root, t("sakura.disable_confirm_title"), t("sakura.disable_confirm_msg")):
+            return
+        token = app_settings.get_sakura_token()
+        ids = [tunnel["id"] for (path, _name), tunnel in self._tunnels_by_key.items() if path == str(cluster.path)]
+
+        def _worker():
+            try:
+                if ids:
+                    sakura_frp.delete_tunnel(token, ids)
+            except sakura_frp.SakuraApiError:
+                pass
+            for shard in cluster.shards:
+                self._frpc_pointer_path(cluster.path, shard.name).unlink(missing_ok=True)
+            self.frame.after(0, self._reload_async)
+
+        threading.Thread(target=_worker, daemon=True).start()

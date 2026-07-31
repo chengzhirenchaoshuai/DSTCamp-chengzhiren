@@ -236,7 +236,10 @@ class _ShardRow:
         self._status_fg = _status_color(status)
         self._redraw_text()
         running = status in _RUNNING_LIKE
-        self.start_btn.configure(state=tk.DISABLED if running else tk.NORMAL)
+        # 别的存档还有分片在跑的话，这个分片自己的"启动"也要锁住——"停止"
+        # 不受影响，当前分片自己已经在跑的话本来就要能停。
+        locked = (not running) and self.tab._other_cluster_running(self.cluster)
+        self.start_btn.configure(state=tk.DISABLED if (running or locked) else tk.NORMAL)
         self.stop_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
 
     def destroy(self):
@@ -463,6 +466,16 @@ class LocalServiceTab:
                                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
                                        anchor=tk.W, padx=10, pady=6)
 
+        # 切到另一个存档时，如果之前那个存档还有分片没停，"启动"/"全部
+        # 启动"要锁住——两个不同存档的服务器同时跑，端口/资源很容易撞在
+        # 一起，这个应用没打算支持"同时管理多个正在运行的存档"这种用法。
+        # 跟 _local_banner 一样默认不 pack，_update_start_lock_state() 按
+        # 需要显示/隐藏。
+        self._other_running_banner = tk.Label(self.frame, text="",
+                                               bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
+                                               font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
+                                               anchor=tk.W, padx=10, pady=6)
+
         # ttk.PanedWindow 本身保留原生（可拖拽分栏这个交互重写代价太
         # 高）——它自己的分隔条(sash)还是不透明的，但两侧塞进去的内容
         # 容器（left/right）改成 BgFrame，可拖拽分栏这个功能完全不受影响。
@@ -523,6 +536,35 @@ class LocalServiceTab:
             self._rollback_btn.configure(state=tk.DISABLED)
             self._refresh_shard_rows(None)
             self._local_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self._body)
+        self._update_start_lock_state(c)
+
+    def _other_cluster_running(self, cluster) -> bool:
+        """除了 cluster 自己之外，是不是还有别的存档也有分片在跑——两个
+        不同存档的服务器同时跑，端口/资源很容易撞在一起，这个应用没打算
+        支持"同时管理多个正在运行的存档"这种用法，"启动"/"全部启动"要
+        锁住，"停止"不受影响（当前存档自己已经在跑的分片还是要能停）。"""
+        if not cluster:
+            return False
+        return any(p.cluster_path != cluster.path for p in self.manager.running())
+
+    def _update_start_lock_state(self, cluster):
+        """本地存档（客户端自己托管进程，这里本来就只读）或没选存档时不
+        用管——on_cluster_changed() 已经把 _start_all_btn 设成 DISABLED
+        了，这个函数自己内部检查一遍 is_server，可以放心从 _poll() 每次
+        轮询都调用，不用外部先判断一次。"""
+        if not cluster or cluster.source != SaveSource.SERVER:
+            self._other_running_banner.pack_forget()
+            return
+        other = self._other_cluster_running(cluster)
+        if other:
+            running_names = sorted({p.cluster_name for p in self.manager.running()
+                                     if p.cluster_path != cluster.path})
+            self._other_running_banner.configure(
+                text=t("local.other_cluster_running_hint", clusters="、".join(running_names)))
+            self._other_running_banner.pack(fill=tk.X, padx=5, pady=(0, 5), before=self._body)
+        else:
+            self._other_running_banner.pack_forget()
+        self._start_all_btn.configure(state=tk.DISABLED if other else tk.NORMAL)
 
     def _refresh_shard_rows(self, cluster):
         if cluster is None:
@@ -647,6 +689,7 @@ class LocalServiceTab:
             dlg.show_error(self.app.root, t("local.install_title"), t("local.confdir_cross_drive_error"))
             return
         proc = self.manager.start(cluster.name, cluster.path, shard.name, self._install_dir, conf_dir_arg)
+        self.app.sakura_tab.maybe_start_frpc(cluster, shard)
         key = (str(cluster.path), shard.name)
         existing = self._console_panes.get(key)
         if existing is not None:
@@ -696,9 +739,15 @@ class LocalServiceTab:
 
     def _stop_and_then(self, cluster, shard, on_done):
         """停止一个分片、停完之后转回 Tk 主线程执行 on_done——stop_shard()/
-        _close_console_pane() 都要这段样板，只是停完之后要做的事不同。"""
-        self.manager.stop(cluster.path, shard.name,
-                           on_done=lambda p: self.frame.after(0, on_done))
+        _close_console_pane() 都要这段样板，只是停完之后要做的事不同。DST
+        进程停下之后顺带停掉这个分片的 frpc（如果配置过樱花映射的话）——
+        隧道本身不删，只是本地客户端进程跟着不需要再转发了；stop_frpc_
+        for_shard() 内部自己另起线程，这里统一用它的 on_done 转回主线程，
+        不管这个分片有没有配置过映射都只转一次。"""
+        def _dst_stopped(p):
+            self.app.sakura_tab.stop_frpc_for_shard(
+                cluster, shard, on_done=lambda: self.frame.after(0, on_done))
+        self.manager.stop(cluster.path, shard.name, on_done=_dst_stopped)
 
     def stop_shard(self, cluster, shard):
         self._stop_and_then(cluster, shard, lambda: self._on_stop_done(cluster))
@@ -747,6 +796,7 @@ class LocalServiceTab:
         for row in self._shard_rows.values():
             row.update()
         self._update_rollback_btn_state(self._get_cluster())
+        self._update_start_lock_state(self._get_cluster())
         self._maybe_periodic_backup()
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 

@@ -45,6 +45,7 @@ STRINGS = {
         "tab.saves": "  存档信息  ",
         "tab.mods": "  Mod管理  ",
         "tab.server": "  服务器配置  ",
+        "tab.sakura": "  樱花映射  ",
 
         # Save tab
         "save.cluster": "服务器:",
@@ -143,6 +144,7 @@ STRINGS = {
         "cluster.bool_off": "关闭",
         "cluster.port_conflict": "「{field}」的值 {value} 和分片「{shard}」冲突，每个分片的这个端口都必须各不相同，请改成其它值再保存。",
         "cluster.range_hint": "取值范围：{min}~{max}",
+        "cluster.server_port_sakura_locked": "该端口已被樱花映射接管，不能手动修改（改了会跟隧道对不上）。如需更改，请先去「樱花映射」页签关闭映射。",
         "cluster.range_error": "「{field}」需要在 {min}~{max} 之间，请修改后再保存。",
 
         # Status bar
@@ -226,6 +228,46 @@ STRINGS = {
         "token.prompt": "输入新的服务器令牌:",
         "token.invalid_hint": "令牌格式不正确（长度太短），请检查是否完整复制了令牌。",
 
+        # Sakura Frp mapping (NEW)
+        "sakura.token_label": "API Token:",
+        "sakura.token_prompt": "输入樱花内网穿透 API Token:",
+        "sakura.token_invalid_hint": "Token 格式不正确（太短），请检查是否完整复制。",
+        "sakura.open_dashboard_btn": "打开樱花面板",
+        "sakura.node_label": "节点:",
+        "sakura.node_refresh_btn": "刷新节点列表",
+        "sakura.account_group": "用户组",
+        "sakura.account_speed": "限速",
+        "sakura.account_traffic": "可用流量",
+        "sakura.recent_traffic": "本存档映射的隧道近 7 天用了 {size}",
+        "sakura.too_many_shards": "隧道数不够（此存档有 {count} 个分片，你的账号同时最多能开 {max} 个隧道）",
+        "sakura.node_none_selected": "请选择节点...",
+        "sakura.node_picker_title": "选择节点",
+        "sakura.node_tag_free": "免费",
+        "sakura.node_tag_vip": "VIP{level}",
+        "sakura.no_shards": "这个存档没有可映射的分片",
+        "sakura.shard_mapped": "已映射",
+        "sakura.shard_unmapped": "未映射",
+        "sakura.port_display": "端口 {remote}",
+        "sakura.port_mismatch_hint": "本地端口 {local} 和远程端口 {remote} 不一致，跨分片传送可能失效——正常情况下这两个应该相等，建议重新开启一次映射。",
+        "sakura.enable_btn": "开启樱花映射",
+        "sakura.disable_btn": "关闭映射",
+        "sakura.require_stopped_title": "需要先停止服务器",
+        "sakura.require_stopped_msg": "以下分片仍在运行，请先停止后再开启映射：{shards}",
+        "sakura.setup_progress_title": "正在配置樱花映射",
+        "sakura.setup_step_creating": "{shard}: 正在创建/复用隧道…",
+        "sakura.setup_step_ready": "{shard}: 隧道已就绪，远程端口 {port}",
+        "sakura.setup_done_title": "映射已就绪",
+        "sakura.setup_done_msg_restart": "以下分片仍在运行，需要重启才能生效新端口：{shards}",
+        "sakura.disable_confirm_title": "确认关闭映射",
+        "sakura.disable_confirm_msg": "这会删除樱花后台对应的隧道，地址将不可恢复，下次重新开启会分配新地址。确定继续吗？",
+        "sakura.copy_connect_btn": "复制直连代码",
+        "sakura.copy_connect_master_only_hint": "饥荒直连只能连主世界，副世界无法直接连接（下洞是游戏内自动传送，不需要另外直连）。",
+        "sakura.connect_copied": "连接字符串已复制到剪贴板",
+        "sakura.api_error": "樱花 API 出错: {detail}",
+        "sakura.loading": "加载中…",
+        "sakura.token_missing": "请先设置樱花 API Token",
+        "sakura.select_node_first": "请先选择一个节点",
+
         # Save source labels
         "save.server_clusters": "服务器存档",
         "save.local_clusters": "本地存档",
@@ -258,6 +300,7 @@ STRINGS = {
 
         # Updated labels
         "selector.archive": "存档:",
+        "selector.running_suffix": "  [运行中]",
 
         # World settings improved
         "world.rules": "世界规则",
@@ -297,6 +340,7 @@ STRINGS = {
         # Local service tab (NEW)
         "local.select_cluster_first": "请先选择一个服务器存档",
         "local.select_server_hint": "当前选中的是本地存档，无需在这里管理服务器进程。请在上方切换到一个服务器存档。",
+        "local.other_cluster_running_hint": "以下存档还有分片在运行，暂时锁定「启动」：{clusters}。请先停止后再启动这个存档，避免多个存档的服务器同时跑发生端口冲突。",
         "local.no_shards": "该存档下未找到任何分片",
         "local.install_status_label": "专用服务器工具:",
         "local.install_not_found": "未检测到",
@@ -412,6 +456,7 @@ STRINGS = {
         "tab.saves": "  Save Info  ",
         "tab.mods": "  Mods  ",
         "tab.server": "  Server Config  ",
+        "tab.sakura": "  Sakura Mapping  ",
 
         # Save tab
         "save.cluster": "Cluster:",
@@ -510,6 +555,7 @@ STRINGS = {
         "cluster.bool_off": "Off",
         "cluster.port_conflict": "“{field}” value {value} conflicts with shard “{shard}” -- this port must be unique per shard. Change it and save again.",
         "cluster.range_hint": "Valid range: {min}-{max}",
+        "cluster.server_port_sakura_locked": "This port is managed by Sakura Mapping and can't be edited manually (would break the tunnel). Disable mapping on the \"Sakura Mapping\" tab first if you need to change it.",
         "cluster.range_error": "“{field}” must be between {min} and {max}. Fix it and save again.",
 
         # Status bar
@@ -593,6 +639,46 @@ STRINGS = {
         "token.prompt": "Enter new server token:",
         "token.invalid_hint": "That doesn't look like a valid token (too short) -- check you copied the whole thing.",
 
+        # Sakura Frp mapping (NEW)
+        "sakura.token_label": "API Token:",
+        "sakura.token_prompt": "Enter your SakuraFrp API Token:",
+        "sakura.token_invalid_hint": "That doesn't look like a valid token (too short) -- check you copied the whole thing.",
+        "sakura.open_dashboard_btn": "Open SakuraFrp Dashboard",
+        "sakura.node_label": "Node:",
+        "sakura.node_refresh_btn": "Refresh Node List",
+        "sakura.account_group": "User Group",
+        "sakura.account_speed": "Speed Limit",
+        "sakura.account_traffic": "Available Traffic",
+        "sakura.recent_traffic": "This save's mapped tunnels used {size} in the last 7 days",
+        "sakura.too_many_shards": "Not enough tunnel slots (this save has {count} shards, your account allows {max} at once)",
+        "sakura.node_none_selected": "Select a node...",
+        "sakura.node_picker_title": "Select Node",
+        "sakura.node_tag_free": "Free",
+        "sakura.node_tag_vip": "VIP{level}",
+        "sakura.no_shards": "This save has no shards to map",
+        "sakura.shard_mapped": "Mapped",
+        "sakura.shard_unmapped": "Not mapped",
+        "sakura.port_display": "Port {remote}",
+        "sakura.port_mismatch_hint": "Local port {local} and remote port {remote} don't match -- cross-shard travel may break (these should normally be equal). Try re-enabling mapping.",
+        "sakura.enable_btn": "Enable Sakura Mapping",
+        "sakura.disable_btn": "Disable Mapping",
+        "sakura.require_stopped_title": "Servers must be stopped first",
+        "sakura.require_stopped_msg": "These shards are still running -- stop them before enabling mapping: {shards}",
+        "sakura.setup_progress_title": "Setting Up Sakura Mapping",
+        "sakura.setup_step_creating": "{shard}: creating/reusing tunnel...",
+        "sakura.setup_step_ready": "{shard}: tunnel ready, remote port {port}",
+        "sakura.setup_done_title": "Mapping Ready",
+        "sakura.setup_done_msg_restart": "These shards are still running -- restart them for the new port to take effect: {shards}",
+        "sakura.disable_confirm_title": "Confirm Disable Mapping",
+        "sakura.disable_confirm_msg": "This deletes the corresponding tunnels on SakuraFrp's side -- the address cannot be recovered, a new one will be assigned next time. Continue?",
+        "sakura.copy_connect_btn": "Copy Direct-Connect Code",
+        "sakura.copy_connect_master_only_hint": "DST direct-connect only works for the surface (Master) world -- Caves can't be connected to directly (traveling down is an automatic in-game shard hop, not a separate connection).",
+        "sakura.connect_copied": "Connect string copied to clipboard",
+        "sakura.api_error": "SakuraFrp API error: {detail}",
+        "sakura.loading": "Loading...",
+        "sakura.token_missing": "Set a SakuraFrp API Token first",
+        "sakura.select_node_first": "Select a node first",
+
         # Save source labels
         "save.server_clusters": "Server Saves",
         "save.local_clusters": "Local Saves",
@@ -625,6 +711,7 @@ STRINGS = {
 
         # Updated labels
         "selector.archive": "Archive:",
+        "selector.running_suffix": "  [Running]",
 
         # World settings improved
         "world.rules": "World Rules",
@@ -664,6 +751,7 @@ STRINGS = {
         # Local service tab (NEW)
         "local.select_cluster_first": "Select a server save first",
         "local.select_server_hint": "The selected save is a local one -- there's no server process to manage here. Switch to a server save above.",
+        "local.other_cluster_running_hint": "These saves still have running shards, so \"Start\" is locked here: {clusters}. Stop them first before starting this save, to avoid port conflicts from running multiple saves' servers at once.",
         "local.no_shards": "No shards found for this save",
         "local.install_status_label": "Dedicated Server Tool:",
         "local.install_not_found": "Not found",

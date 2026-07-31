@@ -25,6 +25,7 @@ from dstools.gui.cluster_select import cluster_label as _cluster_label
 from dstools.gui.local_service_tab import LocalServiceTab
 from dstools.gui.mod_manager_tab import ModManagerTab
 from dstools.gui.pill_tabs import PillTabBar
+from dstools.gui.sakura_tab import SakuraTab
 from dstools.gui.save_browser_tab import SaveBrowserTab
 from dstools.gui.world_settings_tab import WorldSettingsTab
 from dstools.i18n import get_lang, set_lang, t
@@ -93,7 +94,7 @@ class DSToolsApp:
         # refresh_shell=True（隐藏再显示一下触发任务栏重新扫描，见该函
         # 数文档字符串）特意放在这里、紧跟第一次 theme.apply_theme() 之
         # 后，而不是放到 __init__ 最后——放最后虽然闪烁的是已经建好的完
-        # 整界面、观感更平滑，但意味着任务栏图标要等标题栏/菜单/五个页
+        # 整界面、观感更平滑，但意味着任务栏图标要等标题栏/菜单/六个页
         # 签整棵控件树全部建完才会出现，真机反馈"等一会才出现"体验不如
         # 点击就近乎同时出现；放这里闪的是刚设完样式、内容还没填充的空
         # 窗口，代价是这一下闪烁可能更明显，换来任务栏图标基本跟点击启
@@ -118,7 +119,7 @@ class DSToolsApp:
         # three inner Notebooks (SaveBrowserTab.sub_notebook,
         # WorldSettingsTab._sub_nb, ClusterConfigTab._cc_notebook) keep
         # their native ttk shape and are just re-colored by apply_theme().
-        self._tab_keys = ["local", "mods", "world", "server", "saves"]
+        self._tab_keys = ["local", "mods", "world", "server", "saves", "sakura"]
         self._pill_bar = PillTabBar(
             self.root,
             tabs=[(k, t(f"tab.{k}")) for k in self._tab_keys],
@@ -151,7 +152,7 @@ class DSToolsApp:
         # 器/本地两个子页签分别）维护一份完全独立的存档下拉框，选完一个
         # 存档还要在另外几个页签里重新选一遍，容易选错/选漏，"存档信息"
         # 那份还额外造成了背景图错位的 bug（见 _on_tab_select 的说明）。
-        # 这里统一成一个控件，全部 5 个页签的 on_cluster_changed() 由
+        # 这里统一成一个控件，全部 6 个页签的 on_cluster_changed() 由
         # _on_global_cluster_select()/_refresh() 统一广播，全程常驻显
         # 示，不会因为切到哪个页签而隐藏。self._cluster_bar 是最外层
         # （描边色），真正的内容放在里面一层 CARD_BG 背景的
@@ -199,9 +200,13 @@ class DSToolsApp:
         self._global_selected_cluster = None
         self._global_cluster_menu_btn = ttk.Menubutton(
             cluster_bar_inner, textvariable=self._global_cluster_var,
-            width=26, style="Archive.TMenubutton")
+            width=38, style="Archive.TMenubutton")
         self._global_cluster_menu = tk.Menu(self._global_cluster_menu_btn, tearoff=0)
         self._global_cluster_menu_btn.configure(menu=self._global_cluster_menu)
+        # postcommand：每次真的点开这个菜单才重新算一遍每个存档"是不是在
+        # 运行"，不用一个额外的轮询定时器去维护这份下拉列表——用户没点开
+        # 看之前，这个信息新不新鲜不重要。
+        self._global_cluster_menu.configure(postcommand=lambda: self._populate_global_cluster_combo(preserve=True))
         # "存档:"文字不再是 pack() 进来的 Label，没法再靠"排在它后面"自动
         # 空出位置——左边距改成手动算：12（文字左内边距）+ 文字实际宽度 + 6
         # （原来 Label 自己的右内边距），跟以前视觉上对齐。
@@ -225,24 +230,25 @@ class DSToolsApp:
         self.mod_tab = ModManagerTab(self._tab_cards["mods"].body, self)
         self.world_tab = WorldSettingsTab(self._tab_cards["world"].body, self)
         self.cluster_tab = ClusterConfigTab(self._tab_cards["server"].body, self)
+        self.sakura_tab = SakuraTab(self._tab_cards["sakura"].body, self)
 
-        # 全局存档选择器广播给这 5 个页签时，只立即刷新当前正显示着的
+        # 全局存档选择器广播给这 6 个页签时，只立即刷新当前正显示着的
         # 那一个——世界设置/服务器配置/存档信息的 on_cluster_changed 都是
         # 同步的重活（PIL 面板重绘、几十个输入框整体重建、玩家头像解
-        # 析），5 个一起做每次切存档都要卡好几秒。没在看的页签只标脏
+        # 析），6 个一起做每次切存档都要卡好几秒。没在看的页签只标脏
         # （_stale_cluster_tabs），真正切过去的时候（_on_tab_select）才
         # 补一次——反正 on_cluster_changed() 不传 cluster 参数时会自己从
         # get_selected_cluster() 现查，不会读到过期的存档。
         self._cluster_tab_map = {"local": self.local_tab, "mods": self.mod_tab,
                                   "world": self.world_tab, "server": self.cluster_tab,
-                                  "saves": self.save_tab}
+                                  "saves": self.save_tab, "sakura": self.sakura_tab}
         self._stale_cluster_tabs: set[str] = set()
         self._current_tab_key = "local"
 
-        self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.cluster_tab, self.save_tab]
+        self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.cluster_tab, self.save_tab, self.sakura_tab]
         for key, tab in zip(self._tab_keys, self._tabs):
             tab.frame.pack(fill=tk.BOTH, expand=True)
-        # 只留 "local" 参与布局，其余 4 个先 grid_remove() 掉——之前是全部
+        # 只留 "local" 参与布局，其余 5 个先 grid_remove() 掉——之前是全部
         # 5 个一直 grid() 着、只用 tkraise() 切换可见性，导致拖动窗口时
         # Tk 要重新布局全部 5 个页签的完整控件树（实测 315 个控件），没在
         # 看的页签里的 ImageScrollPanel 也在后台白白重新裁切缩放，是窗口
@@ -748,16 +754,17 @@ class DSToolsApp:
         self._titlebar.apply_theme(bg=theme.CARD_BG)
         self._build_menu()
         self._tab_area.apply_theme()
-        # 5 张卡片全部叠在 _tab_area 同一个 grid(row=0, column=0) 格子里，
-        # 只有 self._current_tab_key 那张是真的 grid() 着、其余 4 张都
+        # 6 张卡片全部叠在 _tab_area 同一个 grid(row=0, column=0) 格子里，
+        # 只有 self._current_tab_key 那张是真的 grid() 着、其余 5 张都
         # grid_remove() 隐藏——Tk 的 grid_configure() 对一个已经
         # grid_remove() 的控件调用会把它重新映射回可见状态（哪怕只是改
-        # padx/pady 这种跟"要不要显示"无关的选项），之前这里对全部 5 张
-        # 卡片无条件 grid_configure()，会把隐藏的另外 4 个页签全部强制显
-        # 示出来，叠在最上面的是字典/_tab_keys 顺序里排最后的"存档信息"
-        # （"saves"），造成"切主题后页签跳到存档信息、但顶部页签高亮没
-        # 变"的错觉（真机反馈过）。这里在 configure 之后对非当前页签立刻
-        # 再 grid_remove() 一次——纯 Tk 几何管理器的批处理操作，中间不会
+        # padx/pady 这种跟"要不要显示"无关的选项），之前这里对全部 6 张
+        # 卡片无条件 grid_configure()，会把隐藏的另外 5 个页签全部强制显
+        # 示出来，叠在最上面的是字典/_tab_keys 顺序里排最后的"樱花映射"
+        # （"sakura"），造成"切主题后页签跳到樱花映射、但顶部页签高亮没
+        # 变"的错觉（真机反馈过——原本是排最后的"存档信息"，加了"樱花映
+        # 射"页签之后排最后的变成了它）。这里在 configure 之后对非当前
+        # 页签立刻再 grid_remove() 一次——纯 Tk 几何管理器的批处理操作，中间不会
         # 有真实的屏幕重绘，不会闪一下；grid_remove() 之后再次 grid() 时
         # （_on_tab_select）会带着这次刚更新过的 padx/pady，不会因为"被
         # 跳过"而停留在旧的 CARD_MARGIN 上。
@@ -772,12 +779,12 @@ class DSToolsApp:
         self._status_bar.apply_theme(bg=theme.CARD_BG)
         self._redraw_status_bar()
         self._force_refresh_bg_now()
-        # retheme() 只是重新上色/重画静态说明文字，很便宜，5 个页签都立
+        # retheme() 只是重新上色/重画静态说明文字，很便宜，6 个页签都立
         # 即做；refresh() 才是重活（on_cluster_changed 整块重载：Lua 沙箱
         # 扫描、PIL 面板重绘、几十个输入框重建），只对当前正显示的那个页
         # 签立即做，其余标脏、真正切过去时才补——跟 _refresh()（"刷新全
         # 部"）、_apply_global_cluster_change() 是同一套既有的懒加载规
-        # 范，不这样做的话切一次主题要把 5 个页签的重活全同步做一遍，实
+        # 范，不这样做的话切一次主题要把 6 个页签的重活全同步做一遍，实
         # 测就是用户反馈的"切主题很卡"的根因。
         for key, tab in zip(self._tab_keys, self._tabs):
             retheme = getattr(tab, "retheme", None)
@@ -1021,9 +1028,9 @@ class DSToolsApp:
         # 不存在了才退回第一项）。
         self._populate_global_cluster_combo(preserve=True)
         # 和 _apply_global_cluster_change 同样的道理："刷新"只立即重载当前
-        # 正显示的那个页签，另外 4 个标脏、真正切过去时再补（见
+        # 正显示的那个页签，另外 5 个标脏、真正切过去时再补（见
         # _on_tab_select）——世界设置/服务器配置/存档信息的刷新是同步重
-        # 活，5 个页签每次点"刷新"都全做一遍，看不见的页签也要陪着卡好几
+        # 活，6 个页签每次点"刷新"都全做一遍，看不见的页签也要陪着卡好几
         # 秒没有意义。
         for key, tab in self._cluster_tab_map.items():
             if key != self._current_tab_key:
@@ -1059,17 +1066,30 @@ class DSToolsApp:
         这一层往返正是之前那一串"文字被清空/画不出来"问题的根源。"""
         return self._global_selected_cluster
 
+    def _cluster_label_with_status(self, c) -> str:
+        """存档下拉文字 + 运行中标注——本地服务器页签的 ServerManager 是
+        唯一知道哪些分片真的在跑的地方，这里跨页签现查（跟
+        save_browser_tab.py 用 self.app.local_tab.manager 是同一个套
+        路），不在 app.py 自己再维护一份。local_tab 在 __init__ 里比这个
+        下拉框晚创建，第一次调用时可能还不存在，要用 getattr 兜底。"""
+        label = _cluster_label(c)
+        local_tab = getattr(self, "local_tab", None)
+        if local_tab and any(p.cluster_path == c.path for p in local_tab.manager.running()):
+            label += t("selector.running_suffix")
+        return label
+
     def _populate_global_cluster_combo(self, preserve=True):
         """重建下拉菜单的选项列表（存档增减、切换语言后 [服务器]/[本地]
-        标签文字变化时都要调用）。preserve=True 时按 path 找回同一个存档
-        （拿到的是这次重新 discover 出来的新 Cluster 对象，不是旧的），
-        找不到或 preserve=False 时退回第一项。"""
+        标签文字变化时都要调用，也被下拉菜单自己的 postcommand 在每次点
+        开时调用，顺便刷新"运行中"标注）。preserve=True 时按 path 找回
+        同一个存档（拿到的是这次重新 discover 出来的新 Cluster 对象，不
+        是旧的），找不到或 preserve=False 时退回第一项。"""
         prev = self._global_selected_cluster if preserve else None
         clusters = self.get_clusters()
         menu = self._global_cluster_menu
         menu.delete(0, tk.END)
         for c in clusters:
-            menu.add_command(label=_cluster_label(c),
+            menu.add_command(label=self._cluster_label_with_status(c),
                               command=lambda c=c: self._on_global_cluster_pick(c))
         if not clusters:
             self._global_selected_cluster = None
@@ -1077,14 +1097,14 @@ class DSToolsApp:
             return
         matched = next((c for c in clusters if prev is not None and c.path == prev.path), None)
         self._global_selected_cluster = matched or clusters[0]
-        self._global_cluster_var.set(_cluster_label(self._global_selected_cluster))
+        self._global_cluster_var.set(self._cluster_label_with_status(self._global_selected_cluster))
 
     def _on_global_cluster_pick(self, cluster):
         """菜单里选中某一项时调用——直接拿到的就是真实的 Cluster 对象
         （见 _populate_global_cluster_combo 里 add_command 的 lambda 闭包），
         不需要再从显示文字反解析。"""
         self._global_selected_cluster = cluster
-        self._global_cluster_var.set(_cluster_label(cluster))
+        self._global_cluster_var.set(self._cluster_label_with_status(cluster))
         # 广播给 4 个页签的实际工作丢到 after_idle 里做，不在菜单的
         # command 回调里同步执行——这里面 Mod管理/世界设置会各自触发一次
         # PIL 面板重新渲染，是相对重的操作，让 Tk 先把这次菜单收起的收尾

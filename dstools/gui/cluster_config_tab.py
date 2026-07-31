@@ -441,7 +441,7 @@ class ClusterConfigTab:
         Tooltip(text_widget, lambda tw=text_widget: tw.get("1.0", "end-1c"))
         return _TextVar(text_widget)
 
-    def _make_row(self, parent, section, key, value, row, readonly=False):
+    def _make_row(self, parent, section, key, value, row, readonly=False, tooltip=None):
         from dstools.gui.toggle_switch import ToggleSwitch
         from dstools.gui.tooltip import Tooltip
         # The label column (0) stays its natural width; the field column
@@ -484,8 +484,11 @@ class ClusterConfigTab:
                 text = next((disp for raw, disp in enum_choices if raw == value), str(value))
             else:
                 text = str(value) if value is not None else ""
-            ttk.Label(parent, text=text, anchor=tk.W, foreground=theme.TEXT_MUTED, justify=tk.LEFT,
-                     wraplength=260, font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=tk.W, pady=3)
+            value_lbl = ttk.Label(parent, text=text, anchor=tk.W, foreground=theme.TEXT_MUTED, justify=tk.LEFT,
+                     wraplength=260, font=self._ROW_VALUE_FONT)
+            value_lbl.grid(row=row, column=1, sticky=tk.W, pady=3)
+            if tooltip:
+                Tooltip(value_lbl, tooltip)
             var = tk.BooleanVar(value=bool(value)) if is_bool else tk.StringVar(value=str(value) if value is not None else "")
         elif is_bool:
             # 布尔值改成和 Mod 列表里启用/禁用完全一样样式的开关控件，而
@@ -689,7 +692,19 @@ class ClusterConfigTab:
                 ttk.Label(frame, text=f"[{sec}]", font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS, "bold")).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5,0))
                 row += 1
                 for key, value in data.items():
-                    var = self._make_row(frame, f"SHARD_{sec}", key, value, row, readonly=not is_server)
+                    # server_port 一旦被"樱花映射"接管（远程端口回写进这
+                    # 里），就不能再手改——改了会跟隧道的 local_port 对不
+                    # 上。零网络请求的本地缓存文件检查，不动 ALWAYS_
+                    # READONLY_FIELDS 那张全局表（那张表是"所有存档所有分
+                    # 片永远只读"，这里是"这一个分片配置过映射才只读"，两
+                    # 件事）。
+                    readonly = not is_server
+                    port_tooltip = None
+                    if sec == "NETWORK" and key == "server_port" and is_server:
+                        if self.app.sakura_tab.has_active_mapping(self._shard_config_cluster, self._shard_config_shard):
+                            readonly = True
+                            port_tooltip = t("cluster.server_port_sakura_locked")
+                    var = self._make_row(frame, f"SHARD_{sec}", key, value, row, readonly=readonly, tooltip=port_tooltip)
                     row += 1
                     if is_server and sec == "SHARD" and key == "is_master":
                         # 延到下一个空闲循环再重画，不要在这个 <Write> 回调
