@@ -205,7 +205,7 @@ class WorldSettingsTab:
                 self._wl_desc_var.set(preset.description or "")
 
                 from dstools.core.world_categories import (
-                    get_setting_info, get_categories, get_order, CATEGORY_COLORS,
+                    get_setting_info, get_categories, get_order,
                     _get_settings, localized_name,
                 )
                 rules_dict = _get_settings(loc, True)
@@ -229,6 +229,18 @@ class WorldSettingsTab:
                     filler = type('FillerOv', (), {
                         'key': wkey, 'name': localized_name(wname), 'value': 'default'})()
                     rules_by_cat.setdefault(wcat, []).append(filler)
+
+                # Fill in generation keys not in the save with defaults, same as
+                # rules above -- skip the noisy per-resource/creature-spawner
+                # categories, each has dozens of entries almost never touched.
+                for wkey, (wcat, wname) in gen_dict.items():
+                    if wkey in seen_keys:
+                        continue
+                    if wcat in ("resources", "creatures_spawners", "hostile_spawners"):
+                        continue
+                    filler = type('FillerOv', (), {
+                        'key': wkey, 'name': localized_name(wname), 'value': 'default'})()
+                    gen_by_cat.setdefault(wcat, []).append(filler)
 
                 for items in rules_by_cat.values():
                     items.sort(key=lambda ov: get_order(ov.key, loc, True))

@@ -158,7 +158,6 @@ class LuaTokenizer:
         # Block comment --[[ ... ]]
         if self.pos < len(self.text) and self.text[self.pos] == '[':
             # Find matching ]]
-            depth = 0
             if self.pos + 1 < len(self.text) and self.text[self.pos + 1] == '[':
                 # --[[ style
                 end_idx = self.text.find(']]', self.pos + 2)
@@ -280,7 +279,6 @@ class LuaTokenizer:
             return None  # Not a long string
 
         # This is a long bracket string
-        opener = '[' + '=' * eq_count + '['
         closer = ']' + '=' * eq_count + ']'
 
         # Skip the opening bracket sequence
