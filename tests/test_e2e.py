@@ -36,7 +36,10 @@ from dstools.core.mod_manager import (
 )
 from dstools.core.discovery import find_klei_root, discover_environment
 from dstools.core.save_reader import list_save_sessions, get_save_summary, list_session_players
-from dstools.core.config_manager import set_cluster_option, backfill_cluster_defaults
+from dstools.core.config_manager import (
+    set_cluster_option, backfill_cluster_defaults,
+    load_shard_config, save_shard_config, set_shard_option, get_shard_option,
+)
 from dstools.core.character_names import get_character_display_name
 from dstools.core.character_icons import find_mod_character_name, resolve_character
 from dstools.core.app_settings import (
@@ -51,6 +54,9 @@ from dstools.core.modinfo_reader import parse_modinfo
 from dstools.core.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
 from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
 from dstools.core.backup_utils import backup_file, _prune_old_backups
+from dstools.core.sakura_frp import find_dstcamp_tunnel, sanitize_tunnel_name
+from dstools.core.frpc_process import FrpcManager
+from dstools.core.app_settings import get_sakura_token, set_sakura_token
 from dstools.core.cluster_copy import (
     validate_cluster_folder_name, suggest_new_cluster_name, copy_local_cluster_to_server,
 )
@@ -1016,6 +1022,95 @@ def test_backfill_cluster_defaults_only_fills_missing():
     print("  PASS: missing fields are backfilled with official defaults")
 
 
+def test_sakura_frp_tunnel_matching():
+    """find_dstcamp_tunnel()/sanitize_tunnel_name() 是纯函数。樱花的真实
+    隧道名规则是 3-20 个字符、只能用字母数字和下划线（实测报错确认过，
+    连字符都不允许），所以命名约定不是直接拼"dstcamp-存档名-分片名"这种
+    可读字符串（会超长/带非法字符），是 (存档, 分片) 的短哈希——这里测的
+    是"格式始终合法" + "同样的输入每次都算出同一个名字"（find_dstcamp_
+    tunnel() 靠这个确定性现查匹配，不在本地存隧道 ID 缓存表）。"""
+    print("\n" + "=" * 60)
+    print("Test 29: SakuraFrp Tunnel Name Matching")
+
+    name = sanitize_tunnel_name("Cluster_1", "Master")
+    assert 3 <= len(name) <= 20, f"隧道名长度必须在 3-20 之间: {name}"
+    assert all(c.isalnum() or c == "_" for c in name), f"隧道名只能是字母数字和下划线: {name}"
+    print("  PASS: sanitize_tunnel_name() 输出符合樱花的命名规则")
+
+    assert sanitize_tunnel_name("Cluster_1", "Master") == name, "同样的输入应该每次都算出同一个名字"
+    assert sanitize_tunnel_name("Cluster_1", "Caves") != name, "不同分片应该算出不同的名字"
+    print("  PASS: 同一分片确定性可复现，不同分片不会撞名")
+
+    caves_name = sanitize_tunnel_name("Cluster_1", "Caves")
+    tunnels = [
+        {"id": 1, "name": name, "remote": "12345"},
+        {"id": 2, "name": caves_name, "remote": "12346"},
+        {"id": 3, "name": "someone_elses_tunnel", "remote": "8080"},
+    ]
+    found = find_dstcamp_tunnel(tunnels, "Cluster_1", "Master")
+    assert found is not None and found["id"] == 1, "应该按名字匹配到对应分片的隧道"
+    print("  PASS: find_dstcamp_tunnel() matches the right shard")
+
+    assert find_dstcamp_tunnel(tunnels, "Cluster_1", "Cave2") is None, "不存在的分片不应该匹配到任何隧道"
+    print("  PASS: no false match for a shard with no tunnel")
+
+
+def test_sakura_server_port_rewrite():
+    """"开启樱花映射"最关键的一步：把樱花分配的远程端口回写进这个分片自
+    己的 server.ini。这里只测这一步的读-改-写本身，不牵扯真实网络调用。"""
+    print("\n" + "=" * 60)
+    print("Test 30: Sakura Server Port Rewrite")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        shard_dir = Path(tmp) / "Master"
+        shard_dir.mkdir(parents=True)
+        (shard_dir / "server.ini").write_text("[NETWORK]\nserver_port=10999\n")
+
+        config = load_shard_config(shard_dir)
+        assert get_shard_option(config, "NETWORK", "server_port") == 10999
+        print("  PASS: original server_port read back correctly")
+
+        set_shard_option(config, "NETWORK", "server_port", 23456)
+        save_shard_config(config, shard_dir)
+
+        reloaded = load_shard_config(shard_dir)
+        assert get_shard_option(reloaded, "NETWORK", "server_port") == 23456, "回写的端口应该能重新读回来"
+        print("  PASS: rewritten server_port persists after save+reload")
+
+
+def test_sakura_token_settings_roundtrip():
+    """get_sakura_token()/set_sakura_token() 的读写往返，隔离在临时设置
+    目录里跑，绝不碰真实 %APPDATA%/DSTCamp/settings.json。"""
+    print("\n" + "=" * 60)
+    print("Test 31: Sakura Token Settings Roundtrip")
+
+    with _isolated_settings_dir():
+        assert get_sakura_token() is None, "没设置过应该是 None"
+        set_sakura_token("fake-token-for-test-only")
+        assert get_sakura_token() == "fake-token-for-test-only"
+        print("  PASS: token round-trips through settings.json")
+
+        set_sakura_token(None)
+        assert get_sakura_token() is None, "清空之后应该重新变回 None，而不是空字符串"
+        print("  PASS: clearing the token removes the key instead of storing an empty string")
+
+
+def test_frpc_manager_key_convention():
+    """FrpcManager 的 (cluster_path, shard_name) key 约定跟
+    dedicated_server.ServerManager 一致——纯函数，不真的起子进程。"""
+    print("\n" + "=" * 60)
+    print("Test 32: FrpcManager Key Convention")
+
+    mgr = FrpcManager()
+    key_a = mgr._key(Path("C:/saves/Cluster_1"), "Master")
+    key_b = mgr._key(Path("C:/saves/Cluster_1"), "Master")
+    key_c = mgr._key(Path("C:/saves/Cluster_1"), "Caves")
+    assert key_a == key_b, "同一个 (cluster_path, shard_name) 应该算出相同的 key"
+    assert key_a != key_c, "不同分片应该算出不同的 key"
+    assert mgr.get(Path("C:/saves/Cluster_1"), "Master") is None, "没启动过的分片应该查不到进程"
+    print("  PASS: FrpcManager._key() matches ServerManager's convention")
+
+
 def main():
     """Run all tests."""
     print("\n" + "█" * 60)
@@ -1052,6 +1147,10 @@ def main():
         test_backup_manager_restore_clears_stale_slots,
         test_backup_manager_prune_retention_boundary,
         test_backfill_cluster_defaults_only_fills_missing,
+        test_sakura_frp_tunnel_matching,
+        test_sakura_server_port_rewrite,
+        test_sakura_token_settings_roundtrip,
+        test_frpc_manager_key_convention,
     ]
 
     for test in tests:
