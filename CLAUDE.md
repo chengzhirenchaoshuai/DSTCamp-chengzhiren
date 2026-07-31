@@ -36,7 +36,7 @@ python scripts/build_exe.py        # 打包为单文件 DSTCamp.exe（需 pip in
                                     # 打包后必须真的跑一次 dist/DSTCamp.exe，
                                     # 只看"打包成功"日志不够，modulegraph 漏掉
                                     # 子包时打包照样"成功"，只有真启动才暴露 ModuleNotFoundError）
-python tests/test_e2e.py           # 核心模块测试（28 项）
+python tests/test_e2e.py           # 核心模块测试（32 项）
 python tests/test_e2e_phase2.py    # i18n/模型字段/exe-gui 可导入性测试（5 项）
 ```
 
@@ -80,7 +80,7 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 **纯说明性文字一律不用 `ttk.Label`/`tk.Label`**（绘制区域永远不透明，会挡背景图），改用 `create_text()` 或 `gui/toolbar_widgets.py` 的 `make_toolbar_label()`/`make_filter_chips()`。容器接入 `BgFrame` 后如果子控件换成直接画的 `create_text`，记得 `pack_propagate(False)`，否则容器会被压缩到只剩 1px。
 
-`PillTabBar`（`gui/pill_tabs.py`）不止顶层 5 个主页签用——`WorldSettingsTab`/`ClusterConfigTab` 内部原来的 `ttk.Notebook` 子页签条也换成了小一号的 `PillTabBar`（`height`/`pill_h`/`font_size` 可调），因为原生 `ttk.Notebook` 自己画不透明背景。它只画页签条本身，不像 `ttk.Notebook` 自带页面容器，各调用点自己维护 `{key: page_frame}` 字典手动 `pack()`/`pack_forget()`。`SaveBrowserTab` 原来也用过（见"存档信息"一节），后来合并成单页不再需要。
+`PillTabBar`（`gui/pill_tabs.py`）不止顶层 6 个主页签用——`WorldSettingsTab`/`ClusterConfigTab` 内部原来的 `ttk.Notebook` 子页签条也换成了小一号的 `PillTabBar`（`height`/`pill_h`/`font_size` 可调），因为原生 `ttk.Notebook` 自己画不透明背景。它只画页签条本身，不像 `ttk.Notebook` 自带页面容器，各调用点自己维护 `{key: page_frame}` 字典手动 `pack()`/`pack_forget()`。`SaveBrowserTab` 原来也用过（见"存档信息"一节），后来合并成单页不再需要。
 
 **几个页签内部原来各自遗留的局部"刷新"/"加载"按钮已经删掉**（`WorldSettingsTab`/`SaveBrowserTab` 的分片行、`ClusterConfigTab` 顶部）——顶部全局存档选择栏统一带一个"刷新"按钮之后，这些局部按钮触发的效果和 `on_cluster_changed()` 完全重复。以后再看到"某页签内部有个只做局部刷新的按钮"，先确认是不是已经被全局刷新覆盖。
 
@@ -118,7 +118,7 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 ### "存档信息"页签 (`gui/save_browser_tab.py`)
 
-单页展示（原来是"存档概览"/"会话详情"两个可切换子页签，已合并）：存档概览（当前全局选中存档的详情卡片）→ 分片选择器 → 基本信息（当前分片的会话信息）→ 每个玩家角色状态。不自己维护"存档:"下拉框，跟其它 4 个页签一样接顶部全局存档选择栏。合并成单页之后不再有"存档概览便宜、会话详情才是重活"这层子页签级懒加载——首次访问这个页签的开销回到约 1~2 秒（解析每个玩家的角色名/头像），占位符先行策略仍然保留（见下）。
+单页展示（原来是"存档概览"/"会话详情"两个可切换子页签，已合并）：存档概览（当前全局选中存档的详情卡片）→ 分片选择器 → 基本信息（当前分片的会话信息）→ 每个玩家角色状态。不自己维护"存档:"下拉框，跟其它 5 个页签一样接顶部全局存档选择栏。合并成单页之后不再有"存档概览便宜、会话详情才是重活"这层子页签级懒加载——首次访问这个页签的开销回到约 1~2 秒（解析每个玩家的角色名/头像），占位符先行策略仍然保留（见下）。
 
 **几个区块的左边缘对齐用同一个模块级常量 `_PAGE_PADX`（15）**，改的时候要保持一致；`_build_shard_row()` 的 `sf` 是唯一例外（`padx=_PAGE_PADX+10`，因为它直接用 `make_toolbar_label` 只有 2px 内缩，不像其它区块在外层容器基础上又包了一层 `padx=10`）。量文字/卡片实际对齐位置用 `canvas.bbox(tag)+winfo_rootx()`（canvas 文字）或直接 `widget.winfo_rootx()`（普通控件），不要凭感觉猜 padx 数字。
 
@@ -194,6 +194,119 @@ config_tab.py` 据此在按键时过滤非数字输入、在"保存"时整体校
 开），GAMEPLAY+MISC 一列，SHARD 一列——分组按字段数量配平，不是按"看起
 来像不像一类"配对。
 
+### 樱花映射 (`core/sakura_frp.py` / `core/frpc_process.py` / `gui/sakura_tab.py`)
+
+通过 SakuraFrp（樱花内网穿透 / natfrp.com）的开放 API 把本地专用服务器映
+射到公网，配合饥荒自带的 `c_connect("ip", port)` 直连功能实现好友联机，不
+需要路由器端口转发（给 CGNAT 后面没有公网 IP 的用户用）。**跟"回档"/
+`backup_manager.py` 的 zip 备份是三套完全独立的机制**，不要混为一谈。
+
+`core/sakura_frp.py` 是纯 `urllib.request` 实现的 REST 客户端（base URL
+`https://api.natfrp.com/v4`，Bearer Token 认证）。**必须给请求带上一个自
+定义 `User-Agent`**——实测确认樱花的 Cloudflare WAF 会把默认的
+`Python-urllib/x.y` 当脚本流量直接拦掉（`error code: 1010`），换成任意一
+个不在黑名单里的 UA（不需要伪装浏览器）就正常了。**不在本地存隧道 ID 映
+射表**——樱花账号里的隧道才是权威数据源，靠命名约定现查 `list_tunnels()`
+匹配发现已有隧道。**隧道名不是"dstcamp-存档名-分片名"这种可读拼接**——
+樱花的隧道名规则是 3-20 个字符、只能用字母数字和下划线（连字符都不允
+许，这条是实测报错确认的），存档目录名长度/字符集不可控，直接拼接大概
+率超长/带非法字符，改用 `sanitize_tunnel_name()`（对 `(存档目录名, 分片
+名)` 取短哈希 `dc_<12位hex>`）保证格式始终合法、且同一分片每次都能算出
+同一个名字，`find_dstcamp_tunnel()` 才能确定性地现查匹配；人类可读的标
+识改放进 `create_tunnel()` 的 `note` 字段（这个字段没有字符限制），方便
+在樱花网页后台对照。只有 API Token 本身
+（`app_settings.get_sakura_token()`/`set_sakura_token()`）和上次选中的节
+点 ID 是真正持久化的数据。
+
+**节点能不能用、隧道数上限、流量配额，都以 `GET /user/info`（`get_user_
+info()`）返回的真实账号数据为准，不用写死的猜测**：`tunnels` 字段是这个
+账号真正的隧道数上限（取代原来猜的"免费版=2"）；`group.level` 是账号自
+己的用户组等级，拿来跟每个节点的 `vip` 字段比，算出这个账号能不能用该节
+点（`/nodes` 本身不会说"你能不能用"，选了用不了的节点建隧道会报
+`"当前用户 [xxx] 无权使用该节点, 请检查 VIP 是否到期"`，这条已经实测确
+认过）；`traffic` 是 `[今日已用, 总剩余]` 字节数，配额显示直接用这个，
+不用再靠"没有查配额接口"这个假设去猜。节点数量常常有几十上百个，
+`gui/sakura_tab.py._NodeSelectDialog` 把节点选择做成一个多列网格弹窗
+（`_NODE_GRID_COLS` 控制列数），VIP 等级不够的节点置灰禁用但仍然显示出
+来（不是隐藏），让用户知道"还有这些，只是现在用不了"。
+
+**饥荒的直连（`c_connect`）只能连主世界，副世界（Caves）连不了**——已经
+查过 Klei 官方论坛确认，直连副世界端口会一直 `ID_DST_USER_CONNECTION_
+FAILED`，下洞永远是游戏内部自动跳转分片，不是玩家自己拿另一个地址连过
+去。所以 `_render_shard_rows()` 只有主分片（`server.ini` 的 `[SHARD]
+is_master`，不是猜文件夹名字叫不叫 "Master"）的"复制直连代码"按钮是可
+点的，副分片的按钮永远置灰（不隐藏，鼠标悬浮有 Tooltip 说明原因）——但
+副分片自己的隧道/端口回写照样要做，只是不提供直连码，因为跨分片传送这
+条路径仍然要靠隧道把 Caves 的 `server_port` 暴露到公网。
+
+分片状态区（`_shards_frame`）改成 `grid()` 而不是每行各自 `pack()` 一个
+子 `Frame`——"已映射"和"未映射"两种行内容长度不一样，各自 `pack()` 会导
+致"复制直连代码"按钮在不同分片行里出现在不同的横坐标，`grid()` 让所有
+行共享同一套列宽，按钮天然对齐。
+
+**这个页签下所有容器一律用 `BgFrame`，不能用 `ttk.Frame`**——`ttk.Frame`
+是不透明实色容器，套多层会把自定义背景图整个挡掉，跟 `gui/theme.py` 一
+节里"容器要透出背景图必须用 BgFrame"是同一条硬性规则，之前这个页签写的
+时候漏掉了，已经全部改正。**纯说明性文字也一律不用 `ttk.Label`**（同样
+是不透明背景，哪怕文字是空字符串也会占一整行不透明的"空白条"）——改用
+`SakuraTab._label()`（内部实现跟 `gui/toolbar_widgets.make_toolbar_label()`
+一样是 `BgFrame` + `create_text`，多一个自定义颜色参数，因为这个页签需要
+红色错误提示/灰色"未映射"这些不同颜色，`make_toolbar_label()` 本身颜色写
+死是 `theme.TEXT`）。状态/错误提示行（`_status_frame`）没有错误时干脆不
+放任何控件，而不是放一个空文字的 Label——避免"没有文字、但还有一条不透
+明背景"这种视觉上说不清是什么的空白条。
+
+**账号信息卡片**（用户组/限速/可用流量）照抄樱花官网自己"账号信息"卡片
+的三列布局，数据来自 `/user/info`：`group.name`（用户组名）、`speed`
+（接口自带的现成字符串如 `"10 Mbps"`，不用自己拼）、`traffic[1]`（总剩
+余字节数，换算成 GiB，跟官网单位一致——是 1024 进制，不是十进制 GB）。
+
+**核心硬约束（决定了"开启樱花映射"整个流程的形状）**：樱花分配的远程端口
+来自一个跨用户共享的端口池，没法指定"要哪个具体端口"；但 Master/Caves 两
+个分片之间的跨分片传送（下洞/回地面），要求 DST 引擎告诉客户端的"另一个
+分片端口"能通过外网访问到——这个值就是那个分片自己 `server.ini` 的
+`server_port`。所以 `sakura_tab.py._enable_mapping()` 的顺序是：①对存档
+里*每一个*分片创建（或复用）隧道 → ②读回樱花实际分配的远程端口 `R` →
+③`edit_tunnel()` 把隧道自己的 `local_port` 也改成 `R`（让隧道变成
+`R<->R` 直通）→ ④把 `R` 写回这个分片的 `server_port`（`config_manager.
+set_shard_option`/`save_shard_config`）→ ⑤如果这时候分片真的在运行才提
+示用户去"本地服务器"页签重启生效（没在运行就不弹这句没意义的提醒，见
+`_on_enable_done()`）。这五步必须对一个存档的所有分片一起做，不能只挑一
+个——隧道数上限以 `get_user_info()` 查到的账号真实 `tunnels` 字段为准
+（不是写死的"免费版=2"，见上面"节点能不能用"一段），分片数超过这个上限
+的存档直接拦截提示，不做变通。
+
+`core/frpc_process.py`（`FrpcStatus`/`FrpcProcess`/`FrpcManager`）结构照
+抄 `dedicated_server.py` 的 `ServerStatus`/`ServerProcess`/`ServerManager`
+三件套，唯一区别是 frpc 没有 `c_shutdown()` 这种优雅关闭指令，`stop_
+blocking()` 直接 `terminate()`→`kill()`。**frpc 本地客户端进程的启停跟着
+DST 分片本身的启停走**（`local_service_tab.py._do_start_shard()` 调
+`sakura_tab.maybe_start_frpc()`，`_stop_and_then()` 链式调用
+`sakura_tab.stop_frpc_for_shard()`），但**停止服务器不会删除远程隧道**
+——隧道要不要删只由页签里显式点"关闭映射"决定（会调 `delete_tunnel()`）。
+
+frpc 启动方式是官方"frpc 基本使用指南"里的 `-f <Token>:<隧道ID>`（不是传
+统 frp 的 `-c <配置文件>`）——frpc 自己拿 Token 向樱花服务器现拉配置，
+DSTCamp 不需要在本地生成/维护一份 frpc 配置文件，只需要知道这个分片对应
+的隧道 ID。"这个分片有没有配置过映射"这个判断必须零网络请求（`_do_start_
+shard` 在 Tk 主线程同步跑），做法是查本地一个纯文本指针文件是否存在：
+`cache_dir("frpc_config") / f"{cluster目录名}__{shard名}.txt"`（内容就是
+隧道 ID 本身，"开启映射"时写入，"关闭映射"时删除）——这是运行时可重建的缓
+存指针，不是"隧道 ID 映射表"那种权威数据源，随时可以靠 `list_tunnels()`
+重新核实/覆盖写入。`cluster_config_tab.py` 也用同一个检查
+（`sakura_tab.has_active_mapping()`）决定要不要把 `server_port` 输入框临
+时设成只读——**没有改动 `ALWAYS_READONLY_FIELDS` 这张全局表**，那张表是
+"所有存档所有分片永远只读"，这里是"这一个分片配置过映射才只读"，改错了会
+波及所有没用这个功能的用户。
+
+**`tools/frpc/frpc.exe` 必须是樱花后台"软件下载"页单独提供的独立版
+frpc，不能从 SakuraFrp Launcher 的安装目录（`SakuraFrpLauncher/frpc.exe`）
+里复制**——已经实测确认 Launcher 那份是锁死的，不管传什么参数都只打印
+"This file ... is not intended to be run directly"然后退出，只认它自己
+的 SakuraFrpService 调用。独立版下载后跟 `tools/ktools/ktech.exe` 同一套
+模式：gitignore 掉，开发者手动放一份进去，`build_exe.py` 现有的整个
+`tools/` 目录打包逻辑会自动带上，不需要单独加 `--add-data`。
+
 ### 本地服务器启动前的令牌检查 (`gui/local_service_tab.py`)
 
 点"启动"/"全部启动"时，如果 `cluster_token.txt` 缺失或格式不像真令牌（`token_manager.is_valid_token()`），弹一个"是否仍要继续"确认框——专用服务器进程能拉起来，但连不上 Klei 账号验证，会直接启动失败退出。**唯一例外是"离线模式"**（`cluster.ini` 的 `NETWORK.offline_cluster`），开了这个本来就不需要令牌，直接放行。
@@ -203,6 +316,8 @@ config_tab.py` 据此在按键时过滤非数字输入、在"保存"时整体校
 **`_ShardRow` 的启动/停止按钮不能缓存构造时传入的 `cluster` 对象**，必须点击那一刻现查 `tab._get_cluster()`：`_refresh_shard_rows()` 只有分片集合/存档路径变化时才会真的重建这些行，路径没变的话行对象一直留着，闭包里存的 `cluster` 就还是当初构造时那个引用——如果之后发生过一次"刷新"（`discover_environment()` 会造出全新的 Cluster 对象）但分片集合没变，这行闭包里的 `cluster` 就是刷新前的旧对象，`token_path` 等字段可能是过时的（曾经导致"启动"单分片误报"令牌未设置"而"全部启动"没事，因为后者每次都现查）。
 
 `stop_shard()`/关闭控制台标签页共用 `_stop_and_then(cluster, shard, on_done)` 这个辅助方法（封装"停止分片+转回 Tk 主线程执行回调"）。控制台标签页自己的"关闭窗口"按钮：世界还在运行时点击会先弹确认框（关窗口=停服务器，比单纯关标签页重得多），已经停止的直接关、不弹确认。
+
+**跨存档启动锁**：`ServerManager` 是全局单例（`_procs` 不分存档），技术上能同时管理多个不同存档的分片进程，但这个应用不打算支持"同时跑多个存档"这种用法——多个存档的服务器同时跑很容易端口冲突/抢资源。`_other_cluster_running(cluster)`（跟 `sakura_tab.py._running_shard_names()` 是同一个"跨 tab 查 ServerManager"套路）判断除了当前选中存档之外还有没有别的存档在跑，有的话 `_update_start_lock_state()` 锁住"启动"/"全部启动"（不锁"停止"——当前存档自己已经在跑的分片还是要能停），并弹出一条 `_other_running_banner` 说明是哪个存档。这个检查每次 `_poll()`（150ms 一次）都会重新算一遍，不需要手动刷新。顶部全局存档下拉框（`app.py._cluster_label_with_status()`）也会在每次点开菜单时（`tk.Menu` 的 `postcommand`）现查一遍哪些存档在运行，标一个"[运行中]"后缀——纯展示，不是这里锁定逻辑的数据来源。
 
 ### Mod 配置解析 (`core/modinfo_reader.py`)
 
@@ -228,12 +343,12 @@ config_tab.py` 据此在按键时过滤非数字输入、在"保存"时整体校
 
 Click 实现：`save`/`mod`/`cluster`/`env` 命令分组，全局 `--klei-path` 覆盖自动发现路径。跟 GUI/主题完全不相关。
 
-### GUI (`gui/app.py` + 五个页签各自独立文件)
+### GUI (`gui/app.py` + 六个页签各自独立文件)
 
-`gui/app.py` 只保留 `DSToolsApp` 主窗口本体 + `main()`；五个页签各自拆成独立模块：`local_service_tab.py`/`save_browser_tab.py`/`mod_manager_tab.py`/`world_settings_tab.py`/`cluster_config_tab.py`。三个跨页签共享的小控件/弹窗单独成模块：`toolbar_widgets.py`（`make_toolbar_label`/`make_filter_chips`）、`mod_sync_log_dialog.py`（`ModSyncLogDialog`）、`background_dialog.py`（`BackgroundImageDialog`）。
+`gui/app.py` 只保留 `DSToolsApp` 主窗口本体 + `main()`；六个页签各自拆成独立模块：`local_service_tab.py`/`save_browser_tab.py`/`mod_manager_tab.py`/`world_settings_tab.py`/`cluster_config_tab.py`/`sakura_tab.py`。三个跨页签共享的小控件/弹窗单独成模块：`toolbar_widgets.py`（`make_toolbar_label`/`make_filter_chips`）、`mod_sync_log_dialog.py`（`ModSyncLogDialog`）、`background_dialog.py`（`BackgroundImageDialog`）。
 
 **页签类构造函数故意不接 `app: DSToolsApp` 类型注解**（只写 `app`，鸭子类型）——反过来做类型注解会跟 `app.py` 形成循环 import。
 
-**页签 `__init__` 里不能塞重活**：默认打开的页签固定是"本地服务器"，其余四个页签的完整数据加载必须只由 `_refresh()`（当前页签立即刷新，其它标记 `_stale_cluster_tabs`）和 `_on_tab_select()`（切到 stale 页签时才补刷新）触发懒加载——否则不管用户停在哪个页签，几个页签的重活全部在启动瞬间抢着跑，实测能把启动时间从 0.5~0.9 秒拖到 3.86 秒。
+**页签 `__init__` 里不能塞重活**：默认打开的页签固定是"本地服务器"，其余五个页签的完整数据加载必须只由 `_refresh()`（当前页签立即刷新，其它标记 `_stale_cluster_tabs`）和 `_on_tab_select()`（切到 stale 页签时才补刷新）触发懒加载——否则不管用户停在哪个页签，几个页签的重活全部在启动瞬间抢着跑，实测能把启动时间从 0.5~0.9 秒拖到 3.86 秒。
 
 **下拉框一律用 `gui/menu_combo.py` 的 `MenuCombo`，禁止用 `ttk.Combobox`**：实测 `ttk.Combobox` 在这台机器上有个选中后内容消失、只能靠真实鼠标点击才能修复的渲染缺陷。同理**滑块用 `gui/slider.py` 的 `Slider`，禁止用 `ttk.Scale`**：实测点击滑轨会跳到随机位置而不是点击处，两个都是 ttk 在这台机器上确认损坏、改用自绘替代品。

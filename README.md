@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.2.0-orange)
+![Version](https://img.shields.io/badge/version-0.3.0-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -77,7 +77,9 @@ python scripts/run_gui.py
   "回档"（基于游戏自身保留的历史存档快照回退最近几天）、"复制为服务器
   存档"把本地存档变成一份新的服务器存档。启动前会检查令牌：`cluster_
   token.txt` 缺失/格式不对会提醒（离线模式除外），"服务器配置"页新增
-  了"申请令牌"按钮直达官网申请页。
+  了"申请令牌"按钮直达官网申请页。同一时间只支持管理一个存档的运行中服
+  务器——切到别的存档时如果原来那个还没停，顶部存档下拉框会标"[运行
+  中]"，这个存档的"启动"会锁住，避免两个存档的服务器同时跑造成端口冲突。
 - **Mod 管理**：查看/启用/禁用/删除已安装的 Mod，可视化编辑每个 Mod 的
   配置项（自动把自由输入换成下拉选择，避免手填出游戏不认的值），支持把
   本地已下载的 Mod 内容同步到专用服务器（增量复制，只有变化过的文件才
@@ -102,6 +104,15 @@ python scripts/run_gui.py
     要求对应分片都已停止。
   - **备份策略**：保留份数（5~99，默认 10）和自动备份间隔（2~30 分钟，
     默认 10 分钟）都可以调整。
+- **樱花映射**：通过樱花内网穿透（SakuraFrp / natfrp.com）的开放 API 把本
+  地专用服务器映射到公网，没有公网 IP / 在路由器后面也能让好友直连
+  （`c_connect("ip", port)`），不需要手动配置端口转发。一键"开启樱花映
+  射"会自动对存档里每个分片建好隧道、把樱花分配的公网端口回写进本地配
+  置（保证 Master/Caves 之间的传送能正常穿透），"关闭映射"会连带删掉对
+  应的隧道；同时能映射的分片数以账号实际隧道上限为准（现查 `/user/info`，
+  不是写死的免费版数字）。账号信息（用户组/限速/可用流量）、节点选择
+  （多列弹窗，按 VIP 等级置灰不可用的）、近 7 天用量都直接在页签里展示。
+  饥荒直连只支持主世界，副世界的"复制直连代码"按钮会相应置灰。
 
 其它功能：
 - **5 套配色主题**（灰/薄荷/暮光/篝火/樱花），"主题"菜单里随时切换，立
@@ -130,6 +141,9 @@ icons/            # 只读素材：世界设置图标（world/）、UI 图标（
 reference/        # 开发时人工核对用的参考资料（游戏原始数据快照、图标源图），
                   # 不是运行时依赖
 tools/ktools/     # 第三方 ktech.exe（纹理转换工具）
+tools/frpc/       # 第三方 frpc.exe（樱花内网穿透独立版客户端，需要从
+                  # 樱花后台"软件下载"页单独获取，不是 Launcher 安装包里
+                  # 那份——那份是锁死的，不能被第三方程序调用）
 ```
 
 运行时缓存（mod 图标、角色头像等）不放在项目目录里，默认存在
@@ -145,10 +159,10 @@ try/except 收集器（非 assert 抛出即视为失败）；涉及 DSTCamp 自�
 读写的测试全部跑在隔离的临时目录里，绝不会碰真实的 `%APPDATA%/DSTCamp/`：
 
 ```bash
-python tests/test_e2e.py          # 核心模块（28 项）：Lua/INI 解析、存档发现、
+python tests/test_e2e.py          # 核心模块（32 项）：Lua/INI 解析、存档发现、
                                     # Mod 管理、本地偏好设置、主题切换、自定义
                                     # 背景图裁剪/混合、存档备份/恢复/裁剪、
-                                    # cluster.ini 默认值回填等
+                                    # cluster.ini 默认值回填、樱花映射端口回写等
 python tests/test_e2e_phase2.py   # i18n、模型字段、exe/gui 模块可导入性（5 项）
 ```
 
