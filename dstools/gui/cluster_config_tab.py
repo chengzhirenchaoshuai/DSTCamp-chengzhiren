@@ -163,6 +163,19 @@ class ClusterConfigTab:
         "GAMEPLAY": "cluster.tab_gameplay", "NETWORK": "cluster.tab_network",
         "MISC": "cluster.tab_misc", "SHARD": "cluster.tab_shard",
     }
+    # 显示顺序覆盖——默认按 cluster.ini 里的物理书写顺序显示（字典本身
+    # 的插入顺序），但"世界互联"(shard_enabled) 要求固定排在"多层世界
+    # 设置"这一节最前面，"网络设置"这一节也要求固定顺序，不依赖具体某份
+    # cluster.ini 文件里这些字段实际写在哪一行。未列出的字段按它们原有
+    # 的相对顺序跟在后面。
+    _SECTION_FIELD_ORDER = {
+        "SHARD": ["shard_enabled"],
+        "NETWORK": [
+            "cluster_name", "cluster_description", "cluster_password", "cluster_intention",
+            "lan_only_cluster", "offline_cluster", "cluster_language", "tick_rate",
+            "autosaver_enabled", "whitelist_slots", "cluster_cloud_id",
+        ],
+    }
 
     def __init__(self, parent, app):
         # self.frame/sf 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
@@ -572,8 +585,10 @@ class ClusterConfigTab:
                 ttk.Label(col_frame, text=t(self._SECTION_HEADER_KEYS[sec_name]), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"),
                          foreground=theme.HEADING).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(10,3))
                 row += 1
-                for key, value in sec_data.items():
-                    self._make_row(col_frame, sec_name, key, value, row, readonly=not is_server)
+                order = self._SECTION_FIELD_ORDER.get(sec_name, [])
+                ordered_keys = [k for k in order if k in sec_data] + [k for k in sec_data if k not in order]
+                for key in ordered_keys:
+                    self._make_row(col_frame, sec_name, key, sec_data[key], row, readonly=not is_server)
                     row += 1
 
         _fill_column(col1, [("NETWORK",config.network)])

@@ -7,7 +7,6 @@ GUI 层自己用 Text 控件展示输出（见 dstools/gui/local_service_tab.py�
 
 import os
 import queue
-import re
 import subprocess
 import sys
 import threading
@@ -16,7 +15,7 @@ from enum import Enum
 from pathlib import Path
 
 from dstools.core import app_settings
-from dstools.core.modinfo_reader import find_steam_root
+from dstools.core.steam_discovery import find_all_steam_libraries
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -52,36 +51,10 @@ def get_documents_dir() -> Path:
 
 
 # ── Steam 专用服务器安装目录发现 ──────────────────────────────────
-
-def _find_steam_root_from_registry() -> Path | None:
-    if not IS_WINDOWS:
-        return None
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam") as key:
-            value, _ = winreg.QueryValueEx(key, "SteamPath")
-        path = Path(value)
-        return path if path.exists() else None
-    except OSError:
-        return None
-
-
-def _parse_library_folders(steam_root: Path) -> list[Path]:
-    """解析 steamapps/libraryfolders.vdf 找出全部 Steam 库目录（含 steam_root 自身）。
-    只用正则提取 "path" 行，不需要引入完整 VDF 解析器。"""
-    libraries = [steam_root]
-    vdf_path = steam_root / "steamapps" / "libraryfolders.vdf"
-    if not vdf_path.exists():
-        return libraries
-    try:
-        text = vdf_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return libraries
-    for m in re.finditer(r'"path"\s*"([^"]+)"', text):
-        path = Path(m.group(1).replace("\\\\", "\\"))
-        if path.exists() and path not in libraries:
-            libraries.append(path)
-    return libraries
-
+# 注册表读取 + libraryfolders.vdf 解析统一放到 steam_discovery.py（原来
+# 这里和 modinfo_reader.py 各写了一份，后者是硬编码猜路径的弱版本，导致
+# 不是开发者本人机器的 Steam 装哪儿都找不到——见 steam_discovery.py 顶部
+# 注释）。
 
 def is_valid_install_dir(path: Path) -> bool:
     """检查目录下 bin64/bin 是否存在对应的专用服务器可执行文件，并且确实
@@ -105,22 +78,14 @@ def pick_bitness(install_dir: Path) -> int:
 def find_dedicated_server_dir() -> Path | None:
     """按优先级探测专用服务器安装目录，找不到返回 None（调用方应弹出安装引导）。
 
-    优先级：用户手动确认过的路径 > 注册表 Steam 根目录的全部库文件夹 >
-    modinfo_reader 里现有的硬编码兜底候选。
+    优先级：用户手动确认过的路径 > find_all_steam_libraries() 找到的全部
+    Steam 库文件夹（注册表读真实值，游戏装在非默认库/盘符也能找到）。
     """
     remembered = app_settings.get_dedicated_server_path()
     if remembered and is_valid_install_dir(remembered):
         return remembered
 
-    libraries: list[Path] = []
-    steam_root = _find_steam_root_from_registry()
-    if steam_root:
-        libraries.extend(_parse_library_folders(steam_root))
-    legacy_root = find_steam_root()
-    if legacy_root and legacy_root not in libraries:
-        libraries.append(legacy_root)
-
-    for lib in libraries:
+    for lib in find_all_steam_libraries():
         install_dir = lib / "steamapps" / "common" / _INSTALL_DIR_NAME
         if is_valid_install_dir(install_dir):
             return install_dir
@@ -150,8 +115,15 @@ def resolve_conf_dir_arg(klei_root: Path) -> str | None:
         raise ConfDirCrossDriveError(str(klei_root)) from e
 
 
-def build_launch_args(cluster_name: str, shard_name: str, conf_dir_arg: str | None) -> list[str]:
+def build_launch_args(cluster_name: str, shard_name: str, conf_dir_arg: str | None,
+                       ugc_directory: str | None = None) -> list[str]:
+    """ugc_directory：真机验证过，传这台机器 Steam 的 steamapps/workshop
+    目录能让服务器直接读那份内容，不再各自建一份 ugc_mods（见
+    modinfo_reader.find_shared_ugc_directory()）；找不到就是 None，不传
+    这个参数，服务器退回默认行为，不影响正常启动。"""
     args = ["-console", "-cluster", cluster_name, "-shard", shard_name]
+    if ugc_directory:
+        args = args + ["-ugc_directory", ugc_directory]
     if conf_dir_arg:
         args = ["-conf_dir", conf_dir_arg] + args
     return args
@@ -202,13 +174,15 @@ class ServerProcess:
     发送控制台命令、优雅/强制关闭。"""
 
     def __init__(self, cluster_name: str, shard_name: str, cluster_path: Path,
-                 install_dir: Path, conf_dir_arg: str | None, is_master: bool = True):
+                 install_dir: Path, conf_dir_arg: str | None, is_master: bool = True,
+                 ugc_directory: str | None = None):
         self.cluster_name = cluster_name
         self.shard_name = shard_name
         self.cluster_path = cluster_path
         self.install_dir = install_dir
         self.conf_dir_arg = conf_dir_arg
         self.is_master = is_master
+        self.ugc_directory = ugc_directory
         self.status = ServerStatus.STARTING
         self.world_ready = False
         self.proc: subprocess.Popen | None = None
@@ -217,7 +191,7 @@ class ServerProcess:
     def start(self) -> None:
         bitness = pick_bitness(self.install_dir)
         exe = self.install_dir / _BIN_DIRS[bitness] / _EXE_NAMES[bitness]
-        args = build_launch_args(self.cluster_name, self.shard_name, self.conf_dir_arg)
+        args = build_launch_args(self.cluster_name, self.shard_name, self.conf_dir_arg, self.ugc_directory)
         creationflags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
         self.proc = subprocess.Popen(
             [str(exe)] + args,
@@ -325,8 +299,10 @@ class ServerManager:
         return (str(cluster_path), shard_name)
 
     def start(self, cluster_name: str, cluster_path: Path, shard_name: str,
-              install_dir: Path, conf_dir_arg: str | None, is_master: bool = True) -> ServerProcess:
-        proc = ServerProcess(cluster_name, shard_name, cluster_path, install_dir, conf_dir_arg, is_master)
+              install_dir: Path, conf_dir_arg: str | None, is_master: bool = True,
+              ugc_directory: str | None = None) -> ServerProcess:
+        proc = ServerProcess(cluster_name, shard_name, cluster_path, install_dir, conf_dir_arg,
+                              is_master, ugc_directory)
         proc.start()
         self._procs[self._key(cluster_path, shard_name)] = proc
         return proc

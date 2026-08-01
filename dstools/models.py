@@ -15,6 +15,15 @@ class SaveSource(Enum):
     LOCAL = "local"
 
 
+class Platform(Enum):
+    """存档所属的发行平台——Steam 版和 WeGame(Rail) 版的 Klei 根目录
+    （DoNotStarveTogether / DoNotStarveTogetherRail）、专用服务器安装目录
+    互不相同，但 cluster.ini/server.ini 等配置文件格式完全一致，因此按平台
+    区分只影响"去哪个根目录下找/存"，不影响配置读写本身。"""
+    STEAM = "steam"
+    WEGAME = "wegame"
+
+
 @dataclass
 class SaveMetadata:
     """存档元数据 (从 .meta 文件解析)."""
@@ -142,6 +151,7 @@ class Cluster:
     name: str
     path: Path
     source: SaveSource = SaveSource.SERVER   # 服务器存档 或 本地存档
+    platform: Platform = Platform.STEAM      # 所属发行平台（Steam / WeGame）
     config: ClusterConfig | None = None
     shards: list[Shard] = field(default_factory=list)
     mod_overrides_path: Path | None = None
@@ -152,9 +162,23 @@ class Cluster:
 
 @dataclass
 class DSTEnvironment:
-    """DST 环境信息."""
+    """DST 环境信息.
+
+    klei_root 一直是 Steam 版根目录（DoNotStarveTogether），保持这个字段
+    含义不变是为了不影响已经假设"只有一个根目录"的旧代码（比如 -conf_dir
+    的计算）；WeGame 版（DoNotStarveTogetherRail）是完全独立的第二棵目录
+    树，只在 wegame_klei_root 里单独记录，两边的 Cluster 会一起出现在
+    clusters 列表里，靠各自的 Cluster.platform 区分。"""
 
     klei_root: Path | None = None
+    wegame_klei_root: Path | None = None
     user_id: str = ""
+    wegame_user_id: str = ""
     clusters: list[Cluster] = field(default_factory=list)
     client_config: Path | None = None
+
+    def klei_root_for(self, platform: Platform) -> Path | None:
+        """按平台取对应的根目录——凡是要往"根目录"下新建/复制存档的地方
+        （比如把本地存档复制成服务器存档），都应该按 cluster.platform 现查
+        这个方法，而不是直接用 klei_root（那个永远是 Steam 版的）。"""
+        return self.wegame_klei_root if platform == Platform.WEGAME else self.klei_root

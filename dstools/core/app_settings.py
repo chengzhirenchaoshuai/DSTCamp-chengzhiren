@@ -10,6 +10,8 @@ from pathlib import Path
 
 _SETTINGS_FILE = "settings.json"
 _KEY_DEDICATED_SERVER_PATH = "dedicated_server_path"
+_KEY_WEGAME_ROOT_PATH = "wegame_root_path"
+_KEY_STEAM_MODS_PATH = "steam_mods_path"
 _KEY_THEME_NAME = "theme_name"
 _DEFAULT_THEME_NAME = "gray"
 _KEY_PLAYER_NOTES = "player_notes"
@@ -66,6 +68,45 @@ def set_dedicated_server_path(path: Path) -> None:
     """记住用户手动确认过的专用服务器安装目录。"""
     data = load_settings()
     data[_KEY_DEDICATED_SERVER_PATH] = str(path)
+    save_settings(data)
+
+
+def get_wegame_root_path() -> Path | None:
+    """取用户手动确认过的 WeGame 安装根目录（即 rail_apps 那一层，下面
+    有"饥荒：联机版(数字)"/"饥荒联机版专用服务器(数字)"两个子目录）。
+    没设置过则返回 None——WeGame 的安装位置没有可靠的注册表项能查（不
+    像 Steam），完全靠用户自己选一次、记住这一个值。"""
+    raw = load_settings().get(_KEY_WEGAME_ROOT_PATH)
+    return Path(raw) if raw else None
+
+
+def set_wegame_root_path(path: Path | None) -> None:
+    """记住用户手动确认过的 WeGame 安装根目录；传 None 清空。"""
+    data = load_settings()
+    if path:
+        data[_KEY_WEGAME_ROOT_PATH] = str(path)
+    else:
+        data.pop(_KEY_WEGAME_ROOT_PATH, None)
+    save_settings(data)
+
+
+def get_steam_mods_path() -> Path | None:
+    """取用户手动确认过的 Steam 客户端 mods 文件夹路径，没设置过返回
+    None——Steam 这边正常靠注册表+libraryfolders.vdf 自动识别（见
+    core/steam_discovery.py），这个只是自动识别失败/用户想手动指到别处
+    时的覆盖项，跟 get_wegame_root_path() 是同一类"手动兜底"设置。"""
+    raw = load_settings().get(_KEY_STEAM_MODS_PATH)
+    return Path(raw) if raw else None
+
+
+def set_steam_mods_path(path: Path | None) -> None:
+    """记住用户手动确认过的 Steam 客户端 mods 文件夹路径；传 None 清空
+    （清空后退回自动识别）。"""
+    data = load_settings()
+    if path:
+        data[_KEY_STEAM_MODS_PATH] = str(path)
+    else:
+        data.pop(_KEY_STEAM_MODS_PATH, None)
     save_settings(data)
 
 

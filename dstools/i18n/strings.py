@@ -108,7 +108,7 @@ STRINGS = {
         "mod.show_all": "全部",
         "mod.show_enabled": "已启用",
         "mod.show_disabled": "已禁用",
-        "mod.show_local": "查看本地模组",
+        "mod.show_local": "查看客户端模组",
         "mod.show_local_hover": "查看已订阅的本地mod",
         "mod.back_to_list": "返回Mod列表",
         "mod.reload_full": "重载Mod信息",
@@ -139,7 +139,7 @@ STRINGS = {
         "cluster.tab_gameplay": "玩法设置",
         "cluster.tab_network": "网络设置",
         "cluster.tab_misc": "其他设置",
-        "cluster.tab_shard": "服务器分片设置",
+        "cluster.tab_shard": "多层世界设置",
         "cluster.bool_on": "开启",
         "cluster.bool_off": "关闭",
         "cluster.port_conflict": "「{field}」的值 {value} 和分片「{shard}」冲突，每个分片的这个端口都必须各不相同，请改成其它值再保存。",
@@ -301,6 +301,7 @@ STRINGS = {
 
         # Updated labels
         "selector.archive": "存档:",
+        "selector.save_type": "存档类型:",
         "selector.running_suffix": "  [运行中]",
 
         # World settings improved
@@ -337,10 +338,16 @@ STRINGS = {
         "mod.read_only_local": "该模组为本地模组（client_only），不需要在存档中配置，此处仅供查看，不可编辑。",
         "mod.read_only_local_save": "当前选中的是本地存档：本地存档的 Mod 启用/配置状态实际由游戏客户端自己的账号级模组索引决定，直接修改这里的 modoverrides.lua 不保证生效，此处仅供查看，不可编辑。如需修改请在游戏内的 Mods 菜单操作。",
         "mod.local_view_only_banner": "⚠ 当前选中的是本地存档，Mod 管理仅支持查看，不支持修改。",
+        "mod.wegame_root_needed_banner": "⚠ 还没设置 WeGame 安装目录，Mod 名称/图标解析不出来，未启用的已装 Mod 也不会显示——点这里选择一次（rail_apps 文件夹）。",
+        "mod.location_label": "Mod位置:",
+        "mod.location_not_found": "未能自动识别",
+        "mod.location_picker_title": "选择 Steam 客户端 mods 文件夹",
+        "mod.location_recheck_not_found": "没能重新识别到 Mod 位置，请点「更换路径」手动指定。",
 
         # Local service tab (NEW)
         "local.select_cluster_first": "请先选择一个服务器存档",
         "local.select_server_hint": "当前选中的是本地存档，无需在这里管理服务器进程。请在上方切换到一个服务器存档。",
+        "local.wegame_manual_start_hint": "该存档是 WeGame 版专用服务器：启动/停止/公告/回档暂不支持在这里操作，请通过 WeGame 客户端点击「开始游戏」启动（这是平台限制，WeGame 要求专用服务器必须经客户端启动）。存档浏览、配置编辑、Mod 管理、备份、樱花映射等其它功能不受影响。",
         "local.other_cluster_running_hint": "以下存档还有分片在运行，暂时锁定「启动」：{clusters}。请先停止后再启动这个存档，避免多个存档的服务器同时跑发生端口冲突。",
         "local.no_shards": "该存档下未找到任何分片",
         "local.install_status_label": "专用服务器工具:",
@@ -388,31 +395,25 @@ STRINGS = {
         "tray.exit": "退出",
 
         # Mod sync (NEW)
-        "local.sync_mods_btn": "同步mod文件到服务器",
+        "local.sync_mods_btn": "软链接mods文件夹到服务器",
         "local.sync_running_btn": "同步中...",
-        "local.sync_hover": "将存档启用的本地已下载mod文件复制到服务器目录，并添加mod列表至服务器在线下载配置",
+        "local.sync_hover": "把服务器的 mods 文件夹整体替换为指向客户端 mods 文件夹的目录联接",
         "local.sync_running_hover": "请停止服务器后再进行同步",
         "local.sync_no_mods": "该存档没有启用的 Mod，无需同步。",
-        "local.sync_confirm_msg": "确认开始同步 {name} 的 Mod 吗？\n\n确保进入过一次游戏，并保证所有的 Mod 已在本地下载成功？",
+        "local.sync_no_client_mods_dir": "未找到客户端的 mods/ 文件夹，无法建立联接。",
+        "local.sync_replace_confirm_msg": "服务器 mods/ 目录需要先删除，才能整体替换成指向客户端 mods/ 文件夹的目录联接。\n\n{detail}\n\n确认删除并建立联接吗？",
+        "local.sync_replace_lost_detail": "删除后会丢失以下服务器独有的子项（客户端没有）：{items}",
+        "local.sync_replace_nothing_lost": "服务器这边没有客户端没有的独有内容，删除不会丢失任何东西。",
         "local.sync_result_title": "Mod 同步日志",
-        "local.sync_summary_online": "在线下载列表已写入 {count} 个 Mod：",
-        "local.sync_summary_copied": "本地复制成功 {count} 个：",
-        "local.sync_summary_not_local": "{count} 个本地未找到内容，仅走在线下载（如果启动服务器后仍未生效，请在客户端里进入一次游戏确保这些 Mod 已下载）：",
-        "local.sync_summary_client_only": "{count} 个是纯客户端 Mod，已跳过本地复制：",
-        "local.sync_summary_errors": "{count} 个同步出错：",
+        "local.wegame_root_picker_prompt": "WeGame 的安装位置没有办法自动找到，需要手动选择一次。\n\n是否现在选择 WeGame 的安装目录（rail_apps 那一层文件夹）？",
+        "local.wegame_root_picker_title": "选择 WeGame 安装目录（rail_apps 文件夹）",
+        "local.wegame_root_picker_invalid": "在选择的目录下没有找到「饥荒：联机版」和「饥荒联机版专用服务器」这两个文件夹，请确认选择的是 rail_apps 这一层。",
 
         # Mod sync progress log (core/mod_sync.py on_log narration)
-        "sync.enabled_count": "共 {count} 个已启用的 Mod。",
-        "sync.wrote_setup_lua": "已写入在线下载列表 mods/dedicated_server_mods_setup.lua（{count} 个）。",
-        "sync.nothing_to_sync": "没有需要同步的 Mod，结束。",
-        "sync.copied_acf": "已复制校验文件 appworkshop_{app_id}.acf 到 {shard}。",
-        "sync.no_acf_found": "本地未找到 Steam 的 appworkshop_{app_id}.acf 校验文件，跳过复制（不影响在线下载方式）。",
-        "sync.acf_error_detail": "appworkshop_{app_id}.acf ({shard}): {error}",
-        "sync.skip_not_local": "[跳过] {mod_id}：本地未找到内容，仅走在线下载。",
-        "sync.skip_client_only": "[跳过] {mod_id}：纯客户端 Mod，不需要同步到服务器。",
-        "sync.copied_mod": "[完成] {mod_id}：已复制到 {count} 个分片。",
+        "sync.no_client_mods_dir": "未找到客户端的 mods/ 文件夹，跳过。",
+        "sync.mods_dir_already_linked": "服务器 mods/ 已经是指向客户端 mods/ 的目录联接，无需处理。",
+        "sync.mods_dir_linked": "已将服务器 mods/ 目录整体替换为指向 {path} 的目录联接。",
         "sync.error_prefix": "[错误] {detail}",
-        "sync.summary": "同步完成：在线 {online} 个，本地复制成功 {copied} 个，跳过 {skipped} 个，出错 {errors} 个。",
     },
     "en": {
         # Window
@@ -714,6 +715,7 @@ STRINGS = {
 
         # Updated labels
         "selector.archive": "Archive:",
+        "selector.save_type": "Save Type:",
         "selector.running_suffix": "  [Running]",
 
         # World settings improved
@@ -750,10 +752,16 @@ STRINGS = {
         "mod.read_only_local": "This is a local (client_only) mod -- it doesn't need a save-file entry to work. Shown here for reference only, not editable.",
         "mod.read_only_local_save": "The selected save is a local one: which mods are actually enabled is determined by the game client's own account-level mod index, so editing modoverrides.lua here isn't guaranteed to take effect. Shown here for reference only -- to change this, use the in-game Mods menu.",
         "mod.local_view_only_banner": "⚠ The selected save is a local one -- Mod management is view-only here, editing isn't supported.",
+        "mod.wegame_root_needed_banner": "⚠ WeGame install directory not set yet -- mod names/icons can't be resolved, and installed-but-not-yet-enabled mods won't show either. Click here to select it once (the rail_apps folder).",
+        "mod.location_label": "Mod Location:",
+        "mod.location_not_found": "Not found",
+        "mod.location_picker_title": "Select the Steam client's mods folder",
+        "mod.location_recheck_not_found": "Couldn't re-detect the mod location -- click \"Change Path\" to set it manually.",
 
         # Local service tab (NEW)
         "local.select_cluster_first": "Select a server save first",
         "local.select_server_hint": "The selected save is a local one -- there's no server process to manage here. Switch to a server save above.",
+        "local.wegame_manual_start_hint": "This save is a WeGame dedicated server: start/stop/announce/rollback aren't available here -- launch it via the WeGame client's \"Start Game\" button instead (a platform requirement; WeGame dedicated servers must be launched through the client). Save browsing, config editing, mod management, backups, and Sakura tunnel mapping still work normally.",
         "local.other_cluster_running_hint": "These saves still have running shards, so \"Start\" is locked here: {clusters}. Stop them first before starting this save, to avoid port conflicts from running multiple saves' servers at once.",
         "local.no_shards": "No shards found for this save",
         "local.install_status_label": "Dedicated Server Tool:",
@@ -803,28 +811,22 @@ STRINGS = {
         # Mod sync (NEW)
         "local.sync_mods_btn": "Sync Mod Files to Server",
         "local.sync_running_btn": "Syncing...",
-        "local.sync_hover": "Copy locally downloaded mod files enabled for this save to the server directory, and add the mod list to the server's online-download config",
+        "local.sync_hover": "Replace the server's whole mods folder with a directory junction pointing at the client's mods folder",
         "local.sync_running_hover": "Stop the server before syncing",
         "local.sync_no_mods": "This save has no enabled mods -- nothing to sync.",
-        "local.sync_confirm_msg": "Start syncing mods for {name}?\n\nMake sure you've launched the game at least once and that all mods have finished downloading locally~",
+        "local.sync_no_client_mods_dir": "The client's mods/ folder wasn't found, can't create the junction.",
+        "local.sync_replace_confirm_msg": "The server's mods/ folder needs to be deleted first before it can be entirely replaced with a directory junction pointing at the client's mods/ folder.\n\n{detail}\n\nDelete and create the junction?",
+        "local.sync_replace_lost_detail": "The following server-only items (not present on the client) will be lost after deletion: {items}",
+        "local.sync_replace_nothing_lost": "The server side has no unique content the client doesn't have -- deleting it won't lose anything.",
         "local.sync_result_title": "Mod Sync Log",
-        "local.sync_summary_online": "Wrote {count} mod(s) to the online download list:",
-        "local.sync_summary_copied": "Copied {count} mod(s) locally:",
-        "local.sync_summary_not_local": "{count} mod(s) not found locally, relying on online download only (if they still don't work after starting the server, launch the game client once to make sure these mods are downloaded):",
-        "local.sync_summary_client_only": "{count} client-only mod(s) skipped for local copy:",
-        "local.sync_summary_errors": "{count} error(s) during sync:",
+        "local.wegame_root_picker_prompt": "WeGame's install location can't be found automatically -- it needs to be selected manually once.\n\nSelect the WeGame install directory now (the rail_apps folder)?",
+        "local.wegame_root_picker_title": "Select the WeGame install directory (rail_apps folder)",
+        "local.wegame_root_picker_invalid": "Couldn't find \"Don't Starve Together\" and \"Don't Starve Together Dedicated Server\" folders under the selected directory -- make sure you picked the rail_apps folder itself.",
 
         # Mod sync progress log (core/mod_sync.py on_log narration)
-        "sync.enabled_count": "{count} mod(s) enabled.",
-        "sync.wrote_setup_lua": "Wrote online-download list mods/dedicated_server_mods_setup.lua ({count} mod(s)).",
-        "sync.nothing_to_sync": "No mods need syncing, done.",
-        "sync.copied_acf": "Copied checksum file appworkshop_{app_id}.acf to {shard}.",
-        "sync.no_acf_found": "Steam's appworkshop_{app_id}.acf checksum file not found locally, skipping copy (doesn't affect online download).",
-        "sync.acf_error_detail": "appworkshop_{app_id}.acf ({shard}): {error}",
-        "sync.skip_not_local": "[Skipped] {mod_id}: not found locally, relying on online download only.",
-        "sync.skip_client_only": "[Skipped] {mod_id}: client-only mod, no need to sync to server.",
-        "sync.copied_mod": "[Done] {mod_id}: copied to {count} shard(s).",
+        "sync.no_client_mods_dir": "Client mods/ folder not found, skipping.",
+        "sync.mods_dir_already_linked": "The server's mods/ is already a junction pointing at the client's mods/ -- nothing to do.",
+        "sync.mods_dir_linked": "Replaced the server's mods/ folder with a junction pointing at {path}.",
         "sync.error_prefix": "[Error] {detail}",
-        "sync.summary": "Sync complete: {online} online, {copied} copied locally, {skipped} skipped, {errors} error(s).",
     }
 }

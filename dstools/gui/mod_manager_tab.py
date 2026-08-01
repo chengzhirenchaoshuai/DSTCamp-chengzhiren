@@ -8,26 +8,28 @@ Mod 列表复用 world_render.py 建立的"PIL 整图渲染 + ImageScrollPanel"�
 import queue
 import threading
 import tkinter as tk
-from tkinter import font as tkfont, ttk
+from pathlib import Path
+from tkinter import filedialog, font as tkfont, ttk
 from typing import Any
 
 from PIL import Image
 
+from dstools.core import app_settings
 from dstools.core.mod_icons import get_mod_icon_path
 from dstools.core.mod_manager import load_mod_overrides, save_mod_overrides, sync_mods
 from dstools.core.mod_resolve_cache import load_cached_result, save_result
 from dstools.core.modinfo_reader import (
-    find_mod_folder, list_installed_mod_ids, parse_modinfo, resolve_config_value,
-    resolve_full_modinfo,
+    find_game_mods_dir, find_mod_folder, find_wegame_client_dir, find_wegame_server_dir,
+    list_installed_mod_ids, parse_modinfo, resolve_config_value, resolve_full_modinfo,
 )
-from dstools.core.mod_sync import get_enabled_mod_ids, sync_mods_to_server
+from dstools.core.mod_sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync
 from dstools.gui import fonts, theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.gui.toolbar_widgets import make_filter_chips, make_toolbar_label
 from dstools.i18n import t
-from dstools.models import ModEntry, SaveSource
+from dstools.models import ModEntry, Platform, SaveSource
 
 
 def _apply_full_sandbox_result(mod_info, result: dict | None) -> None:
@@ -84,6 +86,25 @@ class ModManagerTab:
         self._full_resolved_cache: dict[str, "ModInfo"] = {}
         self._did_initial_full_load = False
 
+        # "Mod位置:"+ 实际路径——跟 local_service_tab.py 的"专用服务器工
+        # 具:"一行是同一个思路（BgFrame 的 Canvas 上 create_text 画字，
+        # 不用 ttk.Label 挡住背景图），显示的是当前"存档类型"筛选器对应
+        # 平台的客户端 mods/ 源头目录（Steam: find_game_mods_dir()；
+        # WeGame: 用户选过的 rail_apps 根目录下的客户端 mods/），跟着平台
+        # 筛选器切换自动更新（不是跟着具体选中哪个存档），"更换路径"/
+        # "重新检测"分别对应各自平台的手动覆盖/重新探测。
+        self._mod_location_row = mod_location_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        mod_location_row.pack(fill=tk.X, padx=5, pady=(5, 0))
+        self._mod_location_var = tk.StringVar()
+        self._mod_location_var.trace_add("write", lambda *a: self._redraw_mod_location_row_text())
+        mod_location_row.bind("<Configure>", lambda e: self._redraw_mod_location_row_text(), add="+")
+        self._mod_location_recheck_btn = ttk.Button(mod_location_row, text=t("local.install_recheck_btn"),
+                                                     command=self._recheck_mod_location)
+        self._mod_location_recheck_btn.pack(side=tk.RIGHT)
+        self._mod_location_change_btn = ttk.Button(mod_location_row, text=t("local.install_change_btn"),
+                                                    command=self._change_mod_location)
+        self._mod_location_change_btn.pack(side=tk.RIGHT, padx=(0, 5))
+
         sf = BgFrame(self.frame, app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=5, pady=5)
         # "存档"选择器已经搬到顶部的全局选择栏（见 DSToolsApp._cluster_bar），
         # 这里不再重复一份。"同步mod文件到服务器"仍然摆在这一行最前面、
@@ -124,19 +145,12 @@ class ModManagerTab:
         # 只在"查看本地模组"这个方向上给提示语——切回列表之后按钮变成
         # "返回列表"，含义已经很直白，不需要额外说明。
         Tooltip(self._md_rl, lambda: "" if self.show_local_var.get() else t("mod.show_local_hover"))
-        # 应用到所有分片" packed first (side=RIGHT lands it flush against
-        # the right edge), then "保存修改" packed right after it (also
-        # side=RIGHT) lands immediately to ITS left -- so the two sit
-        # adjacent, in that order, instead of "保存修改" being separated
-        # from "应用到所有分片" by the gap + "查看本地模组" button.
-        self._md_ba = ttk.Button(sf, text=t("mod.apply_all"), command=self._apply_all_shards); self._md_ba.pack(side=tk.RIGHT)
-        self._md_bs = ttk.Button(sf, text=t("mod.save_btn"), command=self._save_mods); self._md_bs.pack(side=tk.RIGHT, padx=(0,2))
         # 只有真的做过修改(切换mod开关，或在配置弹窗里应用过设置)之后，
         # 这两个按钮才应该能点 -- 没有任何改动时点"保存"/"同步"没有意义，
-        # 置灰能直接提示"当前没有待保存的修改"。
+        # 置灰能直接提示"当前没有待保存的修改"。这两个按钮的实际构造挪到
+        # __init__ 末尾、页签底部居中（跟"世界设置"页签"保存世界规则"按
+        # 钮的位置一致），这里先占位 self._dirty，构造顺序不影响这个值。
         self._dirty = False
-        self._md_bs.configure(state=tk.DISABLED)
-        self._md_ba.configure(state=tk.DISABLED)
 
         ff = BgFrame(self.frame, app, bg=theme.CARD_BG); ff.pack(fill=tk.X, padx=5)
         self._md_filt = make_toolbar_label(ff, app, lambda: t("mod.filter"))
@@ -156,11 +170,36 @@ class ModManagerTab:
                                           bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
                                           anchor=tk.W, padx=10, pady=6)
 
+        # WeGame 存档选中、但还没设置过 WeGame 安装目录时的提示——没有这
+        # 个目录就找不到客户端 mods/ 文件夹，"已安装但未在 modoverrides.
+        # lua 里出现过的 mod"这一步会直接查不到东西（只显示已启用的），
+        # 图标/名称也全解析不出来（见 _resolve_mod_folder_args()）。整条
+        # 幅可以点击，点了弹目录选择框，跟"同步到服务器"用的是同一个
+        # app_settings 设置项，这里设完那边也不用再选一次。
+        self._md_wegame_banner = tk.Label(self.frame, text=t("mod.wegame_root_needed_banner"),
+                                           bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
+                                           anchor=tk.W, padx=10, pady=6, cursor="hand2")
+        self._md_wegame_banner.bind("<Button-1>", lambda e: self._pick_wegame_root_and_reload())
+
         from dstools.gui.image_scroll import ImageScrollPanel
         from dstools.gui.mod_render import REF_WIDTH
         self.list_panel = ImageScrollPanel(self.frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
         self.list_panel.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.list_panel.on_settle = lambda w, h: self._render_list(ref_width=w)
+
+        # "保存修改"/"应用到所有分片"挪到页签底部居中——跟"世界设置"页签
+        # "保存世界规则"按钮的位置一致（pack(side=tk.BOTTOM) 不加 fill，
+        # 默认就是水平居中），不用之前塞在顶部工具栏最右边、容易跟"查看
+        # 本地模组"按钮挤在一起。视觉顺序保留原来的[保存修改][应用到所
+        # 有分片]（从左到右）。
+        btn_row_bottom = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        btn_row_bottom.pack(side=tk.BOTTOM, pady=(0, 5))
+        self._md_bs = ttk.Button(btn_row_bottom, text=t("mod.save_btn"), command=self._save_mods)
+        self._md_bs.pack(side=tk.LEFT, padx=(0, 5))
+        self._md_ba = ttk.Button(btn_row_bottom, text=t("mod.apply_all"), command=self._apply_all_shards)
+        self._md_ba.pack(side=tk.LEFT)
+        self._md_bs.configure(state=tk.DISABLED)
+        self._md_ba.configure(state=tk.DISABLED)
 
         # 不在这里现场 on_cluster_changed()——即使重活本身在后台线程做
         # （_load_mods_worker），"要不要开始做"这个决定不应该在构造这一
@@ -192,6 +231,11 @@ class ModManagerTab:
             self._md_local_banner.pack_forget()
         else:
             self._md_local_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self.list_panel.frame)
+        if self._wegame_root_missing(c):
+            self._md_wegame_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self.list_panel.frame)
+        else:
+            self._md_wegame_banner.pack_forget()
+        self._update_mod_location_display()
         if not c:
             self.shard_combo["values"] = []
             self.shard_var.set("")
@@ -203,6 +247,93 @@ class ModManagerTab:
                 if s.name == "Master": self.shard_combo.current(i); break
             else: self.shard_combo.current(0)
         self._on_shard_select()
+
+    def _wegame_root_missing(self, cluster) -> bool:
+        """这个存档是 WeGame 版、但 WeGame 安装目录还没配置/解析不出来——
+        提示条要不要显示就看这个。"""
+        if not cluster or cluster.platform != Platform.WEGAME:
+            return False
+        root = app_settings.get_wegame_root_path()
+        return root is None or find_wegame_client_dir(root) is None
+
+    def _pick_wegame_root_and_reload(self):
+        """点提示条弹目录选择框——跟"同步到服务器"用的是同一个
+        app_settings 设置项，这里设完那边也不用再选一次。选完立刻用
+        on_cluster_changed() 重新走一遍（刷新提示条 + 重新加载 mod 列
+        表），不用等用户手动点"重载mod信息"。"""
+        chosen = filedialog.askdirectory(title=t("local.wegame_root_picker_title"))
+        if not chosen:
+            return
+        root = Path(chosen)
+        if find_wegame_client_dir(root) is None or find_wegame_server_dir(root) is None:
+            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.wegame_root_picker_invalid"))
+            return
+        app_settings.set_wegame_root_path(root)
+        self.on_cluster_changed(self._get_cluster())
+
+    def _redraw_mod_location_row_text(self) -> None:
+        """跟 local_service_tab.py 的 _redraw_install_row_text() 是同一
+        个画法：StringVar 的 trace 和 Canvas 自己的 <Configure> 都会触发
+        这里，调用方不用关心具体是哪个触发的。"""
+        c = self._mod_location_row
+        c.delete("mod_location_text")
+        h = c.winfo_height()
+        if h < 4:
+            return
+        cy = h / 2
+        font = tkfont.nametofont("TkDefaultFont")
+        label_text = t("mod.location_label")
+        c.create_text(4, cy, text=label_text, anchor=tk.W, fill=theme.TEXT,
+                       font=font, tags="mod_location_text")
+        label_w = font.measure(label_text)
+        c.create_text(4 + label_w + 6, cy, text=self._mod_location_var.get(), anchor=tk.W,
+                       fill=theme.TEXT_MUTED, font=font, tags="mod_location_text")
+
+    def _detect_mod_location(self, platform):
+        """按平台找客户端 mods/ 源头目录——跟 _resolve_mod_folder_args()
+        用的是同一份底层数据。按"存档类型"筛选器这个平台找，不是按某个
+        具体存档，这样没选中任何存档时也能正常显示。"""
+        if platform == Platform.WEGAME:
+            root = app_settings.get_wegame_root_path()
+            if root:
+                client_dir = find_wegame_client_dir(root)
+                if client_dir:
+                    return client_dir / "mods"
+            return None
+        return find_game_mods_dir()
+
+    def _update_mod_location_display(self) -> None:
+        found = self._detect_mod_location(self.app._get_platform_filter())
+        self._mod_location_var.set(str(found) if found else t("mod.location_not_found"))
+
+    def _change_mod_location(self):
+        """WeGame 复用现成的 rail_apps 根目录选择流程（跟"同步到服务器"
+        用的是同一个设置项）；Steam 直接弹目录选择框覆盖自动识别结果，
+        存进 app_settings.set_steam_mods_path()，之后 find_game_mods_dir()
+        会优先用这个覆盖值。改完立刻重新加载 mod 列表。"""
+        if self.app._get_platform_filter() == Platform.WEGAME:
+            self._pick_wegame_root_and_reload()
+            return
+        picked = filedialog.askdirectory(parent=self.app.root, title=t("mod.location_picker_title"))
+        if not picked:
+            return
+        app_settings.set_steam_mods_path(Path(picked))
+        self._update_mod_location_display()
+        self._refresh_mods(full=True)
+
+    def _recheck_mod_location(self):
+        """重新探测一次（不清空已经保存的手动覆盖，find_game_mods_dir()/
+        _detect_mod_location() 本身就是"先查覆盖，没有才自动识别"）；找
+        不到才弹提示，找到了静默更新，跟 local_service_tab.py 的
+        _recheck_install_dir() 是同一个套路。"""
+        platform = self.app._get_platform_filter()
+        found = self._detect_mod_location(platform)
+        if found:
+            self._mod_location_var.set(str(found))
+            self._refresh_mods(full=True)
+        else:
+            self._mod_location_var.set(t("mod.location_not_found"))
+            dlg.show_warning(self.app.root, t("mod.location_label"), t("mod.location_recheck_not_found"))
 
     def _server_running_for(self, cluster) -> bool:
         """这个存档（不分具体哪个分片，同步是整个存档一起做的）是不是有
@@ -315,10 +446,29 @@ class ModManagerTab:
         self._loading_full = full
         self._loading_key = loading_key
         self._render_list()
-        threading.Thread(target=self._load_mods_worker, args=(gen, shard.mod_overrides_path, full),
+        platform, wegame_client_mods_dir = self._resolve_mod_folder_args(c)
+        threading.Thread(target=self._load_mods_worker,
+                         args=(gen, shard.mod_overrides_path, full, platform, wegame_client_mods_dir),
                          daemon=True).start()
 
-    def _load_mods_worker(self, gen, overrides_path, full):
+    def _resolve_mod_folder_args(self, cluster):
+        """给 find_mod_folder() 用的 (platform, wegame_client_mods_dir)
+        二元组——WeGame 存档的 mod 内容不在 Steam 目录下（真机验证过
+        WeGame 没有 Steam Workshop 那套独立内容缓存），得按这个存档的平
+        台去对应的客户端 mods/ 文件夹里找。这里只读 app_settings 里已经
+        记住的路径，没设置过就是 None（find_mod_folder 会优雅地找不到，
+        mod 照常显示、只是没有名字/图标，不在这种被动加载的路径上弹目录
+        选择框打扰用户；真要设置见"Mod管理"页签的"同步到服务器"按钮）。"""
+        platform = cluster.platform if cluster else Platform.STEAM
+        wegame_client_mods_dir = None
+        if platform == Platform.WEGAME:
+            wegame_root = app_settings.get_wegame_root_path()
+            if wegame_root:
+                wegame_client_dir = find_wegame_client_dir(wegame_root)
+                wegame_client_mods_dir = wegame_client_dir / "mods" if wegame_client_dir else None
+        return platform, wegame_client_mods_dir
+
+    def _load_mods_worker(self, gen, overrides_path, full, platform, wegame_client_mods_dir):
         """Runs off the Tk main thread -- must not touch any tkinter/Tcl
         object (that includes PhotoImage/canvas calls, but plain PIL
         Image.open()/convert() and resolve_full_modinfo()'s own
@@ -330,7 +480,7 @@ class ModManagerTab:
         try:
             overrides = load_mod_overrides(overrides_path)
             ids = list(overrides.mods.keys())
-            for wid in list_installed_mod_ids():
+            for wid in list_installed_mod_ids(platform, wegame_client_mods_dir):
                 if wid not in overrides.mods:
                     ids.append(wid)
 
@@ -348,7 +498,7 @@ class ModManagerTab:
                 # (and the tab itself, stuck showing "loading")
                 # unrendered.
                 try:
-                    mod_folder = find_mod_folder(wid)
+                    mod_folder = find_mod_folder(wid, platform, wegame_client_mods_dir)
                     cached = self._full_resolved_cache.get(wid)
                     if cached is not None:
                         mod_info = cached
@@ -374,7 +524,7 @@ class ModManagerTab:
                             self._full_resolved_cache[wid] = mod_info
                     mod_infos[wid] = mod_info
                     if mod_info and mod_folder:
-                        icon_path = get_mod_icon_path(mod_info, mod_folder)
+                        icon_path = get_mod_icon_path(mod_info, mod_folder, platform)
                         if icon_path:
                             icon_imgs[wid] = Image.open(icon_path).convert("RGBA")
                 except Exception:
@@ -520,7 +670,15 @@ class ModManagerTab:
         numeric_id = workshop_id.replace("workshop-", "")
         if not numeric_id.isdigit(): return
         import webbrowser
-        webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
+        c = self._get_cluster()
+        if c and c.platform == Platform.WEGAME:
+            # 2000004 是 WeGame 版《饥荒：联机版》客户端自己的 game_id
+            # （真机验证过：客户端安装目录下 rail_files/rail_game_identify.json
+            # 里就是这个值），是这个游戏本身固定的标识符，不随用户安装
+            # 位置变化，不需要现查。
+            webbrowser.open(f"https://www.wegame.com.cn/pc_game/assistant.html#/2000004/newMod/{numeric_id}")
+        else:
+            webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
 
     def _save_mods(self, silent=False):
         c = self._get_cluster(); s = self.app._current_shard
@@ -596,31 +754,78 @@ class ModManagerTab:
         dlg.show_info(self.app.root, t("mod.apply_all"), t("dlg.apply_done", count=cnt))
         self._refresh_mods()
 
+    def _resolve_wegame_sync_dirs(self):
+        """WeGame 版没有可靠的注册表项能查安装目录（不像 Steam），只能读
+        用户手动确认过的 rail_apps 根目录（app_settings.get_wegame_root_
+        path()）；没设置过，或者设置的路径下找不到"饥荒：联机版(数字)"/
+        "饥荒联机版专用服务器(数字)"这两个子目录，就弹一次文件夹选择框
+        让用户指到 rail_apps 这一层，选完立刻重新验证一次并记住。返回
+        (install_dir, client_mods_dir) 二元组，任何一步失败都返回
+        (None, None) 并已经弹过提示，调用方不需要再额外报错。"""
+        root = app_settings.get_wegame_root_path()
+        server_dir = find_wegame_server_dir(root) if root else None
+        client_dir = find_wegame_client_dir(root) if root else None
+        if server_dir is not None and client_dir is not None:
+            return server_dir, client_dir / "mods"
+
+        if not dlg.ask_yes_no(self.app.root, t("local.sync_mods_btn"), t("local.wegame_root_picker_prompt")):
+            return None, None
+        chosen = filedialog.askdirectory(title=t("local.wegame_root_picker_title"))
+        if not chosen:
+            return None, None
+        root = Path(chosen)
+        server_dir = find_wegame_server_dir(root)
+        client_dir = find_wegame_client_dir(root)
+        if server_dir is None or client_dir is None:
+            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.wegame_root_picker_invalid"))
+            return None, None
+        app_settings.set_wegame_root_path(root)
+        return server_dir, client_dir / "mods"
+
     def _sync_mods_to_server(self):
-        """把当前存档已启用的 mod 同步到专用服务器能实际加载的位置（在线
-        下载列表 + 本地复制到 ugc_mods，见 dstools/core/mod_sync.py）。不
-        受 self._dirty 门控——同步的是已经写进 modoverrides.lua 的状态，
-        跟这次编辑会话有没有点过"保存"无关，随时可以点。"""
+        """把服务器 mods/ 目录整体替换成指向客户端 mods/ 文件夹的目录联
+        接（见 dstools/core/mod_sync.py）——这是按这台机器一次性生效的，
+        不是针对某个具体存档，但入口还是放在这个按钮下，方便和"这个存档
+        有没有启用 mod"的前置判断放在一起。不受 self._dirty 门控——跟这
+        次编辑会话有没有点过"保存"无关，随时可以点。"""
         c = self._get_cluster()
         if not c or c.source != SaveSource.SERVER:
             dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.select_cluster_first"))
             return
-        local_tab = self.app.local_tab
-        if local_tab._install_dir is None and not local_tab._recheck_install_dir():
-            return
         if not get_enabled_mod_ids(c):
             dlg.show_info(self.app.root, t("local.sync_mods_btn"), t("local.sync_no_mods"))
             return
-        if not dlg.ask_yes_no(self.app.root, t("local.sync_mods_btn"), t("local.sync_confirm_msg", name=c.name)):
-            return
 
-        install_dir = local_tab._install_dir
+        if c.platform == Platform.WEGAME:
+            install_dir, client_mods_dir = self._resolve_wegame_sync_dirs()
+            if install_dir is None:
+                return
+        else:
+            local_tab = self.app.local_tab
+            if local_tab._install_dir is None and not local_tab._recheck_install_dir():
+                return
+            install_dir = local_tab._install_dir
+            client_mods_dir = find_game_mods_dir()
+
+        plan = plan_mod_sync(install_dir, client_mods_dir)
+        if plan.client_mods_dir is None:
+            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.sync_no_client_mods_dir"))
+            return
+        if plan.needs_confirm_delete:
+            if plan.lost_on_replace:
+                detail = t("local.sync_replace_lost_detail", items="、".join(plan.lost_on_replace))
+            else:
+                detail = t("local.sync_replace_nothing_lost")
+            if not dlg.ask_yes_no(self.app.root, t("local.sync_mods_btn"),
+                                   t("local.sync_replace_confirm_msg", detail=detail)):
+                return
+
         self._md_sync.configure(state=tk.DISABLED, text=t("local.sync_running_btn"))
         log_dialog = ModSyncLogDialog(self.app.root)
         log_queue: "queue.Queue" = queue.Queue()
 
         def _worker():
-            sync_mods_to_server(c, install_dir, on_log=log_queue.put)
+            apply_mod_sync(plan, install_dir, on_log=log_queue.put)
             log_queue.put(None)  # 哨兵：标记同步已经跑完
 
         def _poll_log():
@@ -651,6 +856,10 @@ class ModManagerTab:
         self._md_filter_chips.redraw()
         self._md_rl.configure(text=t("mod.back_to_list") if self.show_local_var.get() else t("mod.show_local"))
         self._md_local_banner.configure(text=t("mod.local_view_only_banner"))
+        self._md_wegame_banner.configure(text=t("mod.wegame_root_needed_banner"))
+        self._mod_location_recheck_btn.configure(text=t("local.install_recheck_btn"))
+        self._mod_location_change_btn.configure(text=t("local.install_change_btn"))
+        self._redraw_mod_location_row_text()
         self._refresh_mods()
 
     def retheme(self):
@@ -658,6 +867,8 @@ class ModManagerTab:
         文字都是 __init__ 里建一次就不再重建，refresh()/refresh_full() 都
         不会碰它们的颜色，需要显式重新上色/重画。"""
         self._md_local_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+        self._md_wegame_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+        self._redraw_mod_location_row_text()
         self._md_lbl2.redraw()
         self._md_filt.redraw()
         self._md_filter_chips.redraw()
@@ -987,7 +1198,8 @@ class ModConfigDialog:
         if mod_info.full_sandbox_tried:
             return
         mod_info.full_sandbox_tried = True
-        mod_folder = find_mod_folder(workshop_id)
+        platform, wegame_client_mods_dir = self.tab._resolve_mod_folder_args(self.tab._get_cluster())
+        mod_folder = find_mod_folder(workshop_id, platform, wegame_client_mods_dir)
         if not mod_folder:
             return
         modinfo_path = mod_folder / "modinfo.lua"

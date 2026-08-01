@@ -706,7 +706,7 @@ class SaveBrowserTab:
         哪一个，不用反过来从下拉框选中项现查。"""
         if cluster.source != SaveSource.LOCAL:
             return
-        klei_root = self.app.env.klei_root
+        klei_root = self.app.env.klei_root_for(cluster.platform)
         if not klei_root:
             dlg.show_error(self.app.root, t("save.copy_to_server"), t("save.no_saves"))
             return

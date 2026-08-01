@@ -25,8 +25,8 @@ from pathlib import Path
 from PIL import Image
 
 from dstools.core.atlas_utils import crop_by_uv, parse_atlas_xml
-from dstools.core.modinfo_reader import find_steam_root
 from dstools.core.resource_paths import cache_dir
+from dstools.core.steam_discovery import find_all_steam_libraries
 from dstools.core.tex_convert import tex_to_png
 
 _CACHE_DIR = cache_dir("character_icons")
@@ -94,14 +94,13 @@ def _convert_and_crop(tex_path: Path, xml_path: Path | None, cache_key: str) -> 
 
 def _find_official_install_dir() -> Path | None:
     """官方客户端/专用服务器安装目录（带 data/databundles/ 的那一层），
-    两种安装都试一遍，哪个先找到就用哪个。"""
-    steam = find_steam_root()
-    if not steam:
-        return None
-    for folder_name in ("Don't Starve Together", "Don't Starve Together Dedicated Server"):
-        candidate = steam / "steamapps" / "common" / folder_name
-        if (candidate / "data" / "databundles").exists():
-            return candidate
+    两种安装都试一遍，哪个先找到就用哪个——遍历全部 Steam 库文件夹，不只
+    是第一个（DST 完全可能装在跟 Steam 客户端本体不同的库/盘符下）。"""
+    for steam in find_all_steam_libraries():
+        for folder_name in ("Don't Starve Together", "Don't Starve Together Dedicated Server"):
+            candidate = steam / "steamapps" / "common" / folder_name
+            if (candidate / "data" / "databundles").exists():
+                return candidate
     return None
 
 

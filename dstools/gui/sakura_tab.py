@@ -272,8 +272,19 @@ class SakuraTab:
         # 方案 B：不画图（/tunnel/traffic 只能查单条隧道，不是账号总量，
         # 没法照搬官网那张账号维度的图），只汇总"这个存档自己映射的隧道"
         # 最近 7 天用了多少流量，一行小字，没有映射就不显示。
+        #
+        # **坑**：这一行的高度以前是"没内容收缩到 1px、有内容再撑开"——
+        # 切换瞬间的高度变化会把下面"状态提示/分片列表"这些元素一起顶
+        # 上去或顶下来，过渡瞬间还会露出一截 Canvas 默认背景色（用户反馈
+        # 的"白色框框"）。改成固定高度（按一行文字的字体量出来，构造时
+        # 定死，不再跟着有没有内容动），永远占着这个位置——没有映射时
+        # 文字清空，位置照样留着，下面元素不会跟着挪动。
         self._recent_traffic_frame = BgFrame(top, app, bg=theme.CARD_BG)
+        self._recent_traffic_frame.configure(
+            height=tkfont.nametofont("TkDefaultFont").metrics("linespace") + 4)
         self._recent_traffic_frame.pack(fill=tk.X, pady=(0, 3))
+        self._recent_traffic_text = ""
+        self._recent_traffic_frame.bind("<Configure>", lambda e: self._redraw_recent_traffic(), add="+")
 
         # 状态/错误提示——没有错误时这里不留任何控件（哪怕是空文字的
         # Label 也会占一整行高度的不透明背景，见用户反馈"没有文字的区域
@@ -384,24 +395,33 @@ class SakuraTab:
                 row=self._account_value_row, column=col, sticky=tk.W, padx=(0, 15), pady=(0, 4))
 
     def _render_recent_traffic(self, text):
-        # tk.Canvas（BgFrame 的底子）加子控件时会正确用 pack 传播算出新高
-        # 度（不管清空前是什么尺寸），但清空到"一个子控件都没有"时不会跟
-        # 着收缩——会停在最后一个子控件撑开的高度，甚至如果从来没加过子
-        # 控件，直接退回 Canvas 自己的默认尺寸（约 265px，实测过），凭空
-        # 占出一大块空白背景图（就是"空白区域"那个 bug 的根因）。所以只
-        # 有清空成"不放子控件"这个分支才需要显式收缩到 1px；有内容那个
-        # 分支不需要手动设置，pack() 自己会正确撑开/收缩到新子控件的尺寸。
-        for w in self._recent_traffic_frame.winfo_children():
-            w.destroy()
-        if text:
-            self._label(self._recent_traffic_frame, text, fg=theme.TEXT_MUTED,
-                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W)
-        else:
-            self._recent_traffic_frame.configure(height=1)
+        """存文字、触发重画——真正的画字在 _redraw_recent_traffic()，跟
+        __init__ 里绑的 <Configure> 是同一份，不用关心具体是"内容变了"
+        还是"尺寸变了"触发的。"""
+        self._recent_traffic_text = text
+        self._redraw_recent_traffic()
+
+    def _redraw_recent_traffic(self) -> None:
+        """直接在 _recent_traffic_frame 自己的 Canvas 上画/清除文字，不
+        靠增删子控件撑开/收缩高度——高度在 __init__ 里已经按一行文字固
+        定死了，没有映射时文字清空但这一行的位置照样留着，不会导致下面
+        "状态提示/分片列表"这些元素跟着挪动，也不会露出没画文字的那截
+        Canvas 默认背景色。"""
+        c = self._recent_traffic_frame
+        c.delete("recent_traffic_text")
+        h = c.winfo_height()
+        if h < 4 or not self._recent_traffic_text:
+            return
+        c.create_text(2, h / 2, text=self._recent_traffic_text, anchor=tk.W,
+                       fill=theme.TEXT_MUTED, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+                       tags="recent_traffic_text")
 
     def _set_status(self, text):
-        # 同 _render_recent_traffic() 的道理，只有清空成没有文字这个分支
-        # 才需要显式收缩高度。
+        # 这里跟 _render_recent_traffic() 不是同一套做法了：错误提示本来
+        # 就是偶发的（没错误时绝大多数时间不显示），不像"近7天流量"那样
+        # 每次正常加载都会出现/消失一次，没有"频繁跳动"的问题，所以还是
+        # 用增删子控件+清空时收缩到 1px 这种写法，没必要也改成固定高度
+        # 常驻占位。
         for w in self._status_frame.winfo_children():
             w.destroy()
         if text:

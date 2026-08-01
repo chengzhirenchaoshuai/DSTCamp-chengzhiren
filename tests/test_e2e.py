@@ -743,45 +743,50 @@ def test_app_settings_toggles():
         print("  PASS: cache_use_exe_dir round-trips")
 
 
-def test_mod_sync_incremental_copy():
-    """Test mod_sync.py's _skip_if_unchanged_copy2 -- the fix for "同步mod
-    文件到服务器每次都很慢" (it used to unconditionally re-copy every file
-    via shutil.copytree)."""
+def test_mod_sync_junction():
+    """Test mod_sync.py's _ensure_junction -- V1 mod 同步现在改用目录联接
+    (junction) 而不是复制（见 mod_sync.py 顶部注释：真机验证过 -ugc_directory
+    能让 V2 mod 直接共享 Steam 自己的 workshop 内容，V1/手动安装的 mod
+    则改成对客户端 mods/ 文件夹建联接，不再逐个存档复制一份）。这里只测
+    最关键、有真实数据丢失风险的部分：联接创建/幂等/安全替换真实文件夹，
+    不涉及真实 Windows 权限提升。"""
     print("\n" + "=" * 60)
-    print("Test 21: Mod Sync Incremental Copy")
+    print("Test 21: Mod Sync Junction")
 
-    from dstools.core.mod_sync import _skip_if_unchanged_copy2
+    from dstools.core.mod_sync import _ensure_junction
 
     with tempfile.TemporaryDirectory() as tmp:
-        src = os.path.join(tmp, "src.txt")
-        dst = os.path.join(tmp, "dst.txt")
+        src = Path(tmp) / "client_mods" / "workshop-123"
+        target = Path(tmp) / "server_mods" / "workshop-123"
+        src.mkdir(parents=True)
+        (src / "modinfo.lua").write_text("name = 'test'")
 
-        with open(src, "w") as f:
-            f.write("hello")
-        _skip_if_unchanged_copy2(src, dst)
-        assert open(dst).read() == "hello"
-        print("  PASS: first copy always happens (destination didn't exist)")
+        _ensure_junction(target, src)
+        assert os.path.isjunction(target), "target 应该变成指向 src 的目录联接"
+        assert (target / "modinfo.lua").read_text() == "name = 'test'", \
+            "透过联接应该能读到 src 里的真实内容"
+        print("  PASS: first call creates a junction pointing at the client mod folder")
 
-        # 目标 mtime 设成比源更新，但内容（大小）不同——size 校验应该
-        # 阻止误判为"没变化"而跳过。
-        future = time.time() + 100
-        os.utime(dst, (future, future))
-        with open(src, "w") as f:
-            f.write("changed, longer content")
-        _skip_if_unchanged_copy2(src, dst)
-        assert open(dst).read() == "changed, longer content", \
-            "Size mismatch must force a real copy even if dst mtime is newer"
-        print("  PASS: size mismatch forces a real copy (mtime alone isn't trusted)")
+        _ensure_junction(target, src)
+        assert os.path.isjunction(target), "重复调用应该保持联接，不报错"
+        print("  PASS: calling again on an already-correct junction is a no-op")
 
-        # 现在源和目标完全一致——上一步的真实复制（shutil.copy2）已经把
-        # dst 的 mtime 同步成源当时的 mtime 了，大小也相同。再调一次应该
-        # 直接跳过、不做任何真实复制；用 dst 的 mtime 有没有变化来验证
-        # "跳过"确实发生了（真复制一定会刷新 mtime，哪怕内容一样）。
-        dst_mtime_before = os.stat(dst).st_mtime
-        _skip_if_unchanged_copy2(src, dst)
-        assert os.stat(dst).st_mtime == dst_mtime_before, \
-            "Unchanged file (same mtime + size) should be skipped, not re-copied"
-        print("  PASS: unchanged file (same mtime + size) is skipped")
+        # 模拟旧版本"复制方式"留下的真实文件夹——_ensure_junction 必须能
+        # 安全地把它换成联接，且不能牵连删除 src 的内容。
+        real_target = Path(tmp) / "server_mods" / "workshop-456"
+        real_src = Path(tmp) / "client_mods" / "workshop-456"
+        real_src.mkdir(parents=True)
+        (real_src / "modinfo.lua").write_text("name = 'legacy copy source'")
+        real_target.mkdir(parents=True)
+        (real_target / "modinfo.lua").write_text("stale copied content")
+
+        _ensure_junction(real_target, real_src)
+        assert os.path.isjunction(real_target), "已存在的真实文件夹应该被替换成联接"
+        assert (real_target / "modinfo.lua").read_text() == "name = 'legacy copy source'", \
+            "替换后应该读到 src 的内容，不是残留的旧复制内容"
+        assert real_src.exists() and (real_src / "modinfo.lua").exists(), \
+            "删除 target 这个联接本身，绝不能牵连删除它指向的 src 真实内容"
+        print("  PASS: an existing real folder is safely replaced by a junction, source untouched")
 
 
 def test_theme_set_theme():
@@ -1139,7 +1144,7 @@ def main():
         test_cluster_copy,
         test_player_notes,
         test_app_settings_toggles,
-        test_mod_sync_incremental_copy,
+        test_mod_sync_junction,
         test_theme_set_theme,
         test_world_categories_bilingual,
         test_custom_background,

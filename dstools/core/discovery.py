@@ -2,23 +2,43 @@
 
 from pathlib import Path
 
+from dstools.core.dedicated_server import get_documents_dir
 from dstools.models import (
     Cluster,
     DSTEnvironment,
+    Platform,
     SaveSource,
     Shard,
 )
 
-# Common paths to search for Klei data
-_COMMON_KLEI_PATHS = [
-    Path.home() / "Documents" / "Klei" / "DoNotStarveTogether",
+# Klei 根目录的文件夹名——Steam 版叫 DoNotStarveTogether，WeGame(Rail)版
+# 叫 DoNotStarveTogetherRail，是完全独立的两棵目录树（真机验证过：两边可以
+# 同时存在，互不影响）。
+_STEAM_KLEI_FOLDER = "DoNotStarveTogether"
+_WEGAME_KLEI_FOLDER = "DoNotStarveTogetherRail"
+
+# 兜底候选——只在 get_documents_dir() 读注册表失败（非 Windows/极少数环境）
+# 时才用得上。**坑**：这里以前是唯一的探测方式，只覆盖了"系统目录/文档"和
+# "Documents"两种拼法，真实用户的"文档"目录被重定向到别的盘符时，命名可以
+# 是任意字符串（比如就叫"文档"，不带"系统目录"前缀）——穷举猜文件夹名本
+# 质上不可能覆盖全，读注册表里真实的特殊文件夹路径才是唯一可靠做法。
+_EXTRA_SEARCH_DRIVE_SUBPATHS = [
+    "系统目录/文档/Klei",
+    "文档/Klei",
+    "Documents/Klei",
 ]
 
-_EXTRA_SEARCH_ROOTS = [
-    Path("D:/系统目录/文档/Klei/DoNotStarveTogether"),
-    Path("D:/Documents/Klei/DoNotStarveTogether"),
-    Path("E:/Documents/Klei/DoNotStarveTogether"),
-]
+
+def _find_klei_root_impl(folder_name: str) -> Path | None:
+    p = get_documents_dir() / "Klei" / folder_name
+    if p.exists():
+        return p
+    for drive_letter in ["D:", "E:", "F:", "G:"]:
+        for subpath in _EXTRA_SEARCH_DRIVE_SUBPATHS:
+            p = Path(drive_letter) / subpath / folder_name
+            if p.exists():
+                return p
+    return None
 
 
 def _is_cluster_dir(path: Path) -> bool:
@@ -32,27 +52,21 @@ def _is_shard_dir(path: Path) -> bool:
 
 
 def _is_user_dir(path: Path) -> bool:
-    """Check if a directory is a Steam user ID directory (all digits)."""
+    """Check if a directory is a Steam/Rail user ID directory (all digits)."""
     return path.is_dir() and path.name.isdigit()
 
 
 def find_klei_root() -> Path | None:
-    """Auto-discover the Klei DoNotStarveTogether root directory."""
-    for base in _COMMON_KLEI_PATHS:
-        if base.exists():
-            return base
-    for base in _EXTRA_SEARCH_ROOTS:
-        if base.exists():
-            return base
-    for drive_letter in ["D:", "E:", "F:", "G:"]:
-        for subpath in [
-            "系统目录/文档/Klei/DoNotStarveTogether",
-            "Documents/Klei/DoNotStarveTogether",
-        ]:
-            p = Path(drive_letter) / subpath
-            if p.exists():
-                return p
-    return None
+    """Auto-discover the Steam 版 Klei DoNotStarveTogether root directory."""
+    return _find_klei_root_impl(_STEAM_KLEI_FOLDER)
+
+
+def find_wegame_klei_root() -> Path | None:
+    """Auto-discover the WeGame(Rail) 版 Klei DoNotStarveTogetherRail root
+    directory——真机验证过目录名固定是这个（跟 Steam 版并列存在于同一个
+    ..\\Klei\\ 目录下），内部 Cluster/Master/Caves/cluster_token.txt 等结构
+    跟 Steam 版字节级一致。"""
+    return _find_klei_root_impl(_WEGAME_KLEI_FOLDER)
 
 
 def find_user_dir(klei_root: Path) -> Path | None:
@@ -89,35 +103,53 @@ def list_shards(cluster_path: Path) -> list[Path]:
 
 # ── Environment Discovery ──────────────────────────────────────────────
 
-def discover_environment(klei_root: Path | None = None) -> DSTEnvironment:
-    """Discover the full DST environment.
+def discover_environment(klei_root: Path | None = None,
+                          wegame_klei_root: Path | None = None) -> DSTEnvironment:
+    """Discover the full DST environment, Steam 版和 WeGame 版一起扫描。
 
-    - Clusters at the Klei DST root (e.g., Cluster_3) → SaveSource.SERVER
+    - Clusters at a Klei root (e.g., Cluster_3) → SaveSource.SERVER
     - Clusters under the user ID dir (e.g., 280257116/Cluster_1) → SaveSource.LOCAL
+    - 两个平台的根目录是完全独立的两棵目录树，各自按上面规则扫一遍，
+      结果合并进同一个 clusters 列表，用 Cluster.platform 区分。
     """
     if klei_root is None:
         klei_root = find_klei_root()
+    if wegame_klei_root is None:
+        wegame_klei_root = find_wegame_klei_root()
 
-    env = DSTEnvironment(klei_root=klei_root)
+    env = DSTEnvironment(klei_root=klei_root, wegame_klei_root=wegame_klei_root)
 
-    if klei_root is None or not klei_root.exists():
-        return env
+    if klei_root is not None and klei_root.exists():
+        _scan_platform_root(env, klei_root, Platform.STEAM)
+    if wegame_klei_root is not None and wegame_klei_root.exists():
+        _scan_platform_root(env, wegame_klei_root, Platform.WEGAME)
 
-    user_dir = find_user_dir(klei_root)
+    return env
+
+
+def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> None:
+    """扫描一个平台的 Klei 根目录，把发现的 Cluster 追加进 env.clusters。"""
+    user_dir = find_user_dir(root)
     if user_dir:
-        env.user_id = user_dir.name
-        client_ini = user_dir / "client.ini"
-        if client_ini.exists():
-            env.client_config = client_ini
+        if platform == Platform.STEAM:
+            env.user_id = user_dir.name
+            client_ini = user_dir / "client.ini"
+            if client_ini.exists():
+                env.client_config = client_ini
+        else:
+            # WeGame 版的用户 ID 单独存一份（状态栏按"存档类型"筛选器切
+            # 换显示哪一份，见 gui/app.py._update_status()）——client_ini
+            # 目前没有哪里用到 WeGame 版的，不额外存。
+            env.wegame_user_id = user_dir.name
 
     # Clusters at root → SERVER
-    for cluster_path in list_clusters(klei_root):
-        cluster = _build_cluster(cluster_path, SaveSource.SERVER)
+    for cluster_path in list_clusters(root):
+        cluster = _build_cluster(cluster_path, SaveSource.SERVER, platform)
         env.clusters.append(cluster)
 
     # Clusters under user dir → LOCAL. Not deduped against the SERVER
     # names above: server clusters (root) and local clusters (under the
-    # Steam user id dir) are two entirely separate directory trees, so a
+    # user id dir) are two entirely separate directory trees, so a
     # same-named cluster in each (e.g. both called "Cluster_1" -- easy to
     # end up with after copying/renaming save folders) are genuinely two
     # different clusters, not the same one seen twice. An earlier
@@ -126,15 +158,14 @@ def discover_environment(klei_root: Path | None = None) -> DSTEnvironment:
     # a server cluster's name.
     if user_dir:
         for cluster_path in list_clusters(user_dir):
-            cluster = _build_cluster(cluster_path, SaveSource.LOCAL)
+            cluster = _build_cluster(cluster_path, SaveSource.LOCAL, platform)
             env.clusters.append(cluster)
 
-    return env
 
-
-def _build_cluster(cluster_path: Path, source: SaveSource) -> Cluster:
+def _build_cluster(cluster_path: Path, source: SaveSource,
+                    platform: Platform = Platform.STEAM) -> Cluster:
     """Build a Cluster object from a cluster directory."""
-    cluster = Cluster(name=cluster_path.name, path=cluster_path, source=source)
+    cluster = Cluster(name=cluster_path.name, path=cluster_path, source=source, platform=platform)
 
     # modoverrides.lua
     mod_path = cluster_path / "modoverrides.lua"

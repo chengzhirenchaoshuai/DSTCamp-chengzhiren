@@ -17,11 +17,19 @@ from dstools.core.atlas_utils import crop_by_uv, parse_atlas_xml
 from dstools.core.modinfo_reader import ModInfo
 from dstools.core.resource_paths import cache_dir
 from dstools.core.tex_convert import tex_to_png
+from dstools.models import Platform
 
-_CACHE_DIR = cache_dir("mod_icons")
+
+def _cache_dir_for(platform: Platform) -> Path:
+    """按平台分开的缓存子目录——Steam/WeGame 是两棵完全独立的目录树，
+    即使某个 workshop_id 数字凑巧一样，也可能是内容完全不同的两个 mod
+    （尤其 WeGame 是 19 位长数字，理论上不会跟 Steam 的短 ID 撞，但缓存
+    目录本身仍然按平台分开，不依赖"数字长得不像会撞"这个假设）。"""
+    return cache_dir("mod_icons") / platform.value
 
 
-def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path) -> Path | None:
+def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path,
+                       platform: Platform = Platform.STEAM) -> Path | None:
     """Return a cached PNG path for this mod's icon, converting on first use.
 
     Returns None if the mod has no icon fields, the referenced files are
@@ -36,13 +44,14 @@ def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path) -> Path | None:
     if not xml_path.exists() or not tex_path.exists():
         return None
 
-    cache_path = _CACHE_DIR / f"{mod_info.workshop_id}.png"
+    cache_dir_path = _cache_dir_for(platform)
+    cache_path = cache_dir_path / f"{mod_info.workshop_id}.png"
     src_mtime = tex_path.stat().st_mtime
     if cache_path.exists() and cache_path.stat().st_mtime >= src_mtime:
         return cache_path
 
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    atlas_png = _CACHE_DIR / f"_atlas_{mod_info.workshop_id}.png"
+    cache_dir_path.mkdir(parents=True, exist_ok=True)
+    atlas_png = cache_dir_path / f"_atlas_{mod_info.workshop_id}.png"
     if not tex_to_png(tex_path, atlas_png):
         return None
 

@@ -34,6 +34,10 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
         "zh": ("允许投票", "是否允许玩家发起投票（踢人、回档、重置世界等）。"),
         "en": ("Voting Enabled", "Whether players can start votes (kick, rollback, regenerate world, etc.)."),
     },
+    ("GAMEPLAY", "vote_kick_enabled"): {
+        "zh": ("投票踢人", "是否允许玩家发起投票，把其他玩家踢出服务器。"),
+        "en": ("Vote Kick Enabled", "Whether players can start a vote to kick another player from the server."),
+    },
     ("NETWORK", "cluster_name"): {
         "zh": ("服务器名称", "显示在服务器列表中的名称。"),
         "en": ("Cluster Name", "The name shown for this server in the server browser."),
@@ -64,7 +68,7 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
                "or support friend invites/other online features; a cluster_token.txt isn't required."),
     },
     ("NETWORK", "tick_rate"): {
-        "zh": ("网络刷新率 (Tick Rate)", "服务器每秒向客户端发送状态更新的次数，范围 15-60，"
+        "zh": ("通信频率", "服务器每秒向客户端发送状态更新的次数，范围 15-60，"
                "数值越高同步越精细但越占用带宽，官方建议默认值 15。"),
         "en": ("Tick Rate", "How many times per second the server sends updates to clients (15-60). "
                "Higher is more precise but uses more bandwidth; Klei's recommended default is 15."),
@@ -100,25 +104,25 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
         "en": ("Max Snapshots", "Maximum number of historical save snapshots kept for rollback, default 6."),
     },
     ("SHARD", "shard_enabled"): {
-        "zh": ("启用多分片", "是否启用主从分片架构（例如需要独立的洞穴世界时必须开启）。"),
+        "zh": ("世界互联", "是否启用主从分片架构（例如需要独立的洞穴世界时必须开启）。"),
         "en": ("Shard Enabled", "Whether the master/slave shard topology is enabled (required for a "
                "separate Caves world, for example)."),
     },
     ("SHARD", "bind_ip"): {
-        "zh": ("绑定地址", "主分片用于接受其他分片连接的网络地址，通常为 127.0.0.1 或 0.0.0.0。"),
+        "zh": ("监听ip", "主分片用于接受其他分片连接的网络地址，通常为 127.0.0.1 或 0.0.0.0。"),
         "en": ("Bind IP", "The address the master shard listens on for other shards' connections, "
                "typically 127.0.0.1 or 0.0.0.0."),
     },
     ("SHARD", "master_ip"): {
-        "zh": ("主分片地址", "从分片（如洞穴）连接主分片时使用的目标地址。"),
+        "zh": ("主世界ip", "从分片（如洞穴）连接主分片时使用的目标地址。"),
         "en": ("Master IP", "The address secondary shards (e.g. Caves) connect to reach the master shard."),
     },
     ("SHARD", "master_port"): {
-        "zh": ("主分片端口", "分片之间通信使用的 UDP 端口。"),
+        "zh": ("互联端口", "分片之间通信使用的 UDP 端口。"),
         "en": ("Master Port", "The UDP port used for inter-shard communication."),
     },
     ("SHARD", "cluster_key"): {
-        "zh": ("分片密钥", "各分片之间相互验证身份用的共享密钥，各分片必须一致。"),
+        "zh": ("互联密码", "各分片之间相互验证身份用的共享密钥，各分片必须一致。"),
         "en": ("Cluster Key", "Shared secret the shards use to authenticate each other -- must match "
                "across every shard."),
     },

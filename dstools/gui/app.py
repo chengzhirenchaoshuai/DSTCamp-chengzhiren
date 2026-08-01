@@ -23,13 +23,14 @@ from dstools.gui.card_frame import CardFrame
 from dstools.gui.cluster_config_tab import ClusterConfigTab
 from dstools.gui.cluster_select import cluster_label as _cluster_label
 from dstools.gui.local_service_tab import LocalServiceTab
+from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.mod_manager_tab import ModManagerTab
 from dstools.gui.pill_tabs import PillTabBar
 from dstools.gui.sakura_tab import SakuraTab
 from dstools.gui.save_browser_tab import SaveBrowserTab
 from dstools.gui.world_settings_tab import WorldSettingsTab
 from dstools.i18n import get_lang, set_lang, t
-from dstools.models import SaveSource, Shard
+from dstools.models import Platform, SaveSource, Shard
 
 
 class DSToolsApp:
@@ -171,18 +172,40 @@ class DSToolsApp:
         # 画字，跟 install_row/_ShardRow 是同一个思路。
         self._archive_label_font = tkfont.Font(size=12, weight="bold")
         self._archive_label_w = self._archive_label_font.measure(t("selector.archive"))
+        # "存档类型:"(Steam/WeGame 筛选器)排在最左边，跟"存档:"是同一支画
+        # 法——先画这个标签，"存档:"标签的 x 坐标不能再写死 12，得等
+        # "存档类型"这个 Menubutton 真的被 pack 布局完之后，现查它的实际
+        # 右边缘在哪（winfo_x()+winfo_width()），再往右让一段空隙——两个
+        # Menubutton 之间靠 pack() 自身的左右顺序自动排列，不需要手动算,
+        # 只有画在 Canvas 上的文字坐标需要跟着现查。
+        self._platform_label_w = self._archive_label_font.measure(t("selector.save_type"))
+
+        def _redraw_platform_label():
+            cluster_bar_inner.delete("platform_label")
+            h = cluster_bar_inner.winfo_height()
+            if h < 4:
+                return
+            cluster_bar_inner.create_text(12, h / 2, text=t("selector.save_type"), anchor=tk.W,
+                                           fill=theme.PRIMARY, font=self._archive_label_font,
+                                           tags="platform_label")
 
         def _redraw_archive_label():
             cluster_bar_inner.delete("archive_label")
             h = cluster_bar_inner.winfo_height()
             if h < 4:
                 return
-            cluster_bar_inner.create_text(12, h / 2, text=t("selector.archive"), anchor=tk.W,
+            platform_right = self._platform_menu_btn.winfo_x() + self._platform_menu_btn.winfo_width()
+            if platform_right <= 1:
+                return  # "存档类型"这个 Menubutton 还没被 pack 布局完，先不画，等下一次 <Configure>
+            x = platform_right + 12
+            cluster_bar_inner.create_text(x, h / 2, text=t("selector.archive"), anchor=tk.W,
                                            fill=theme.PRIMARY, font=self._archive_label_font,
                                            tags="archive_label")
 
+        self._redraw_platform_label = _redraw_platform_label
         self._redraw_archive_label = _redraw_archive_label
-        cluster_bar_inner.bind("<Configure>", lambda e: self._redraw_archive_label(), add="+")
+        cluster_bar_inner.bind("<Configure>", lambda e: (self._redraw_platform_label(),
+                                                          self._redraw_archive_label()), add="+")
         # 这里特意不用 ttk.Combobox：readonly Combobox 背后是一个真正的
         # Entry，实测（含用户本机反复验证）在"打开下拉/选中一项"之后，
         # 这个 Entry 有时会卡住不肯把新文字画出来——底层选中值其实一直是
@@ -196,6 +219,29 @@ class DSToolsApp:
         # 面不对"的问题），"选中了哪个存档"也不再靠反解析显示文字，而是
         # 直接存一份 Cluster 对象引用（self._global_selected_cluster），
         # 彻底不存在"文字被清空导致解析不到存档"这一类问题。
+        # "存档类型:"筛选器——Steam/WeGame 两棵目录树的存档混在同一个下拉
+        # 框里，只用文字标签区分（见 gui/cluster_select.py 的
+        # cluster_label()）容易选错，这里按平台先筛一遍，"存档:"那个下
+        # 拉框只列筛选后的那一部分。用 MenuCombo（同样是 Menubutton+Menu，
+        # 不是 ttk.Combobox）保持跟"存档:"一致的实现方式。默认 Steam。
+        self._platform_var = tk.StringVar(value="Steam")
+        self._platform_menu = MenuCombo(cluster_bar_inner, textvariable=self._platform_var,
+                                         width=8, style="Archive.TMenubutton")
+        self._platform_menu["values"] = ["Steam", "WeGame"]
+        self._platform_menu.bind("<<ComboboxSelected>>", lambda e: self._on_platform_change())
+        self._platform_menu.pack(side=tk.LEFT, padx=(12 + self._platform_label_w + 6, 10), ipady=3)
+        self._platform_menu_btn = self._platform_menu.widget
+        # cluster_bar_inner 自己的 <Configure> 有时候在这个 Menubutton
+        # 还没真正落位（winfo_width() 还是 1）的时候就先触发过一次，之后
+        # 如果 cluster_bar_inner 自身尺寸不再变化，就再也不会重新触发，
+        # "存档:"就永久画不出来——额外在这个 Menubutton 自己身上也绑一次
+        # <Configure>，它自己布局落位的那一刻必然会触发，用 update_
+        # idletasks() 强制立刻算一次当前布局，不用等真的进入事件循环。
+        self._platform_menu_btn.bind("<Configure>", lambda e: self._redraw_archive_label(), add="+")
+        cluster_bar_inner.update_idletasks()
+        self._redraw_platform_label()
+        self._redraw_archive_label()
+
         self._global_cluster_var = tk.StringVar()
         self._global_selected_cluster = None
         self._global_cluster_menu_btn = ttk.Menubutton(
@@ -802,6 +848,7 @@ class DSToolsApp:
         theme.apply_theme() 覆盖，不用管。"""
         self._cluster_bar.apply_theme(bg=theme.CARD_BORDER)
         self._cluster_bar_inner.apply_theme(bg=theme.CARD_BG)
+        self._redraw_platform_label()
         self._redraw_archive_label()
 
     # ── 自定义背景图：共享大图系统 ───────────────────────────────────
@@ -1015,13 +1062,24 @@ class DSToolsApp:
         self._pill_bar.relabel({k: t(f"tab.{k}") for k in self._tab_keys})
 
     def _update_status(self):
-        klei = str(self.env.klei_root) if self.env.klei_root else t("env.not_found")
-        sv = sum(1 for c in self.env.clusters if c.source == SaveSource.SERVER)
-        lc = sum(1 for c in self.env.clusters if c.source == SaveSource.LOCAL)
-        self.status_var.set(f"{t('status.klei')}: {klei}  |  {t('status.user')}: {self.env.user_id or '?'}  |  {t('status.clusters')}: {sv}  |  {t('status.local_saves')}: {lc}")
+        """状态栏跟着顶部"存档类型"筛选器切换——WeGame 根目录/用户 ID 是
+        单独一份（env.wegame_klei_root/wegame_user_id），存档数量按
+        get_clusters()（已经按平台筛过）统计，不能再用 self.env.clusters
+        这个未筛选的全量列表，否则 WeGame 筛选器下会把 Steam 存档也数
+        进去。"""
+        platform = self._get_platform_filter()
+        if platform == Platform.WEGAME:
+            klei_root, user_id = self.env.wegame_klei_root, self.env.wegame_user_id
+        else:
+            klei_root, user_id = self.env.klei_root, self.env.user_id
+        klei = str(klei_root) if klei_root else t("env.not_found")
+        clusters = self.get_clusters()
+        sv = sum(1 for c in clusters if c.source == SaveSource.SERVER)
+        lc = sum(1 for c in clusters if c.source == SaveSource.LOCAL)
+        self.status_var.set(f"{t('status.klei')}: {klei}  |  {t('status.user')}: {user_id or '?'}  |  {t('status.clusters')}: {sv}  |  {t('status.local_saves')}: {lc}")
 
     def _refresh(self):
-        self.env = discover_environment(self.env.klei_root)
+        self.env = discover_environment(self.env.klei_root, self.env.wegame_klei_root)
         self._update_status()
         # 重新拉一遍全局存档下拉框的选项列表——这样"刷新"才能真正识别新增
         # /消失的存档文件夹，而不只是重载当前选中项（尽量保留原来的选中项，
@@ -1054,7 +1112,21 @@ class DSToolsApp:
         self.status_var.set(f"{t('app.refreshed_hint')}  {self.status_var.get()}")
         self.root.after(1500, self._update_status)
 
-    def get_clusters(self): return self.env.clusters
+    def _get_platform_filter(self) -> Platform:
+        return Platform.WEGAME if self._platform_var.get() == "WeGame" else Platform.STEAM
+
+    def get_clusters(self):
+        platform = self._get_platform_filter()
+        return [c for c in self.env.clusters if c.platform == platform]
+
+    def _on_platform_change(self):
+        """"存档类型"筛选器切换 Steam/WeGame 时调用——重建"存档:"下拉框
+        （旧的选中项大概率不在筛选后的新列表里，_populate_global_cluster_
+        combo() 的按 path 匹配逻辑本来就处理了"找不到就退回第一项"，不需
+        要在这里特殊判断），然后跟"选中了某个存档"一样广播给当前页签。"""
+        self._populate_global_cluster_combo(preserve=True)
+        self._update_status()
+        self.root.after_idle(self._apply_global_cluster_change)
 
     def get_selected_cluster(self):
         """全局存档选择器当前选中的 Cluster——直接返回存好的对象引用

@@ -175,7 +175,7 @@ _VALUE_LABELS = {
 _PER_KEY_LABELS = {
     "specialevent": {"default": {"zh": "自动", "en": "Auto"}, "none": {"zh": "无", "en": "None"}},
     "ghostenabled": {"none": {"zh": "更改冒险家", "en": "New Character"},
-                     "always": {"zh": "变鬼混", "en": "Become a Ghost"}},
+                     "always": {"zh": "变鬼魂", "en": "Become a Ghost"}},
     "portalresurection": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
     "ghostsanitydrain": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
     "lessdamagetaken": {"default": {"zh": "较少", "en": "Less"}, "always": {"zh": "较少", "en": "Less"},

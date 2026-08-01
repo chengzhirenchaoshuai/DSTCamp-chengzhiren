@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from dstools.core.lua_parser import parse_lua_value
+from dstools.core.steam_discovery import find_all_steam_libraries
+from dstools.models import Platform
 
 # A double-quoted Lua string's contents: any char that isn't a quote/
 # backslash, or a backslash-escaped char (so `\"` inside the string, e.g.
@@ -226,68 +228,110 @@ class ModInfo:
 # Known DST App ID for Steam Workshop
 DST_APP_ID = "322330"
 
-# Common Steam library paths
-_STEAM_SEARCH_PATHS = [
-    Path("F:/MyGamePath/SteamGames"),
-    Path("D:/mysoftware/myplaygame/Steam"),
-    Path("C:/Program Files (x86)/Steam"),
-    Path.home() / ".steam" / "steam",
-]
-
-
-def find_steam_root() -> Path | None:
-    """Find the Steam installation root directory."""
-    for p in _STEAM_SEARCH_PATHS:
-        if p.exists():
-            return p
-    return None
-
 
 def find_workshop_dir() -> Path | None:
-    """Find the DST workshop content directory."""
-    steam = find_steam_root()
-    if not steam:
-        return None
-    workshop = steam / "steamapps" / "workshop" / "content" / DST_APP_ID
-    if workshop.exists():
-        return workshop
+    """Find the DST workshop content directory.
+
+    **坑**：这里以前只查 find_steam_root() 返回的"随便一个"根目录（还是
+    硬编码猜开发者自己机器路径的弱版本），DST 装在非默认 Steam 库、或者
+    Steam 装在别的机器上跟这里硬编码的路径对不上时，就永远找不到——mod
+    图标/名称/配置项全都读不出来，正是这个原因。现在遍历
+    find_all_steam_libraries()（注册表读真实值，含全部库文件夹）里每一个
+    库，不只是第一个。"""
+    for steam in find_all_steam_libraries():
+        workshop = steam / "steamapps" / "workshop" / "content" / DST_APP_ID
+        if workshop.exists():
+            return workshop
     return None
 
 
-def find_workshop_acf_path() -> Path | None:
-    """本地 Steam 客户端下载 Workshop mod 后生成的校验/清单文件
-    appworkshop_322330.acf，位于 workshop 内容目录 (content/322330) 的上
-    一级。专用服务器就算复制了 mod 的实际文件，没有这个校验文件也不会
-    真正生效——这一点 Klei 官方文档没有写，是社区/用户自己验证出来的
-    经验，同步 mod 到服务器时要把它一起复制过去。"""
-    steam = find_steam_root()
-    if not steam:
-        return None
-    acf = steam / "steamapps" / "workshop" / f"appworkshop_{DST_APP_ID}.acf"
-    return acf if acf.exists() else None
+def find_shared_ugc_directory() -> Path | None:
+    """专用服务器 `-ugc_directory` 启动参数要用的路径——真机验证过：直接
+    传这台机器 Steam 自己维护的 `steamapps/workshop` 目录（`content/322330/
+    <id>/` + `appworkshop_322330.acf` 都已经在这儿），服务器会直接读取，
+    完全不会在每个 cluster/shard 下再各建一份 `ugc_mods` 副本——之前
+    core/mod_sync.py 把每个 V2 mod 的内容复制进
+    `ugc_mods/<cluster>/<shard>/content/322330/<id>/`（外加复制校验文件）
+    的做法已经被这个参数取代：一份内容所有存档共享，客户端更新了服务器
+    立刻用到最新版本，不用重新同步。找不到 Steam 库就返回 None，调用方
+    （dedicated_server.py 的 build_launch_args）按"不传这个参数，服务器
+    退回默认的按 cluster/shard 各自建 ugc_mods"处理，不是错误。"""
+    for steam in find_all_steam_libraries():
+        workshop = steam / "steamapps" / "workshop"
+        if (workshop / "content" / DST_APP_ID).exists():
+            return workshop
+    return None
 
 
 def find_game_mods_dir() -> Path | None:
-    """Find the DST game mods directory (manually installed mods)."""
-    steam = find_steam_root()
-    if not steam:
-        return None
-    mods = steam / "steamapps" / "common" / "Don't Starve Together" / "mods"
-    if mods.exists():
-        return mods
-    # Also try Dedicated Server
-    mods = steam / "steamapps" / "common" / "Don't Starve Together Dedicated Server" / "mods"
-    if mods.exists():
-        return mods
+    """Find the DST game mods directory (manually installed mods).
+
+    用户手动确认过的覆盖路径（app_settings.get_steam_mods_path()，"Mod管
+    理"页签"更换路径"按钮设置）优先——跟 dedicated_server.
+    find_dedicated_server_dir() 先查 get_dedicated_server_path() 是同一个
+    "手动兜底"套路。没设置过/设置的路径不存在了才走自动识别。
+    """
+    from dstools.core import app_settings
+    override = app_settings.get_steam_mods_path()
+    if override and override.exists():
+        return override
+
+    for steam in find_all_steam_libraries():
+        mods = steam / "steamapps" / "common" / "Don't Starve Together" / "mods"
+        if mods.exists():
+            return mods
+        # Also try Dedicated Server
+        mods = steam / "steamapps" / "common" / "Don't Starve Together Dedicated Server" / "mods"
+        if mods.exists():
+            return mods
     return None
 
 
-def find_mod_folder(workshop_id: str) -> Path | None:
+# ── WeGame(Rail) / Mod path discovery ──────────────────────────────────
+#
+# WeGame 没有 Steam Workshop 那套独立内容缓存（steamapps/workshop/content/
+# <appid>/ 这种）——真机验证 + 多方社区资料互相印证过：所有 mod 内容都
+# 直接放在两个产品各自的 mods/ 文件夹里，没有第二套机制，也就用不上
+# -ugc_directory 那一套。WeGame 的 rail_apps 安装根目录没有可靠的注册表
+# 项能查（不像 Steam），只能读用户手动确认过的路径。
+
+def _find_wegame_product_dir(root: Path, name_prefix: str) -> Path | None:
+    """在 WeGame 根目录(rail_apps)下按前缀通配匹配"饥荒：联机版(数字)"/
+    "饥荒联机版专用服务器(数字)"这类文件夹——具体数字 ID 不同安装可能不
+    一样，不能写死，用 glob 通配，选第一个真的有 mods/ 子目录的匹配项。"""
+    if not root.exists():
+        return None
+    for candidate in sorted(root.glob(f"{name_prefix}(*)")):
+        if (candidate / "mods").exists():
+            return candidate
+    return None
+
+
+def find_wegame_client_dir(wegame_root: Path) -> Path | None:
+    """WeGame 版《饥荒：联机版》客户端安装目录（wegame_root 是 rail_apps
+    那一层，来自 app_settings.get_wegame_root_path()，调用方负责取）。"""
+    return _find_wegame_product_dir(wegame_root, "饥荒：联机版")
+
+
+def find_wegame_server_dir(wegame_root: Path) -> Path | None:
+    """WeGame 版《饥荒联机版专用服务器》安装目录。"""
+    return _find_wegame_product_dir(wegame_root, "饥荒联机版专用服务器")
+
+
+def find_mod_folder(workshop_id: str, platform: Platform = Platform.STEAM,
+                     wegame_client_mods_dir: Path | None = None) -> Path | None:
     """Find the mod folder for a given workshop ID.
 
-    Searches:
-    1. Workshop content dir: <steam>/steamapps/workshop/content/322330/<id>/
-    2. Game mods dir: <steam>/steamapps/common/Don't Starve Together/mods/<id>/
+    Steam(默认): Workshop content dir (<steam>/steamapps/workshop/content/
+    322330/<id>/) 优先，再退回 game mods dir (<steam>/steamapps/common/
+    Don't Starve Together/mods/<id>/)。
+
+    WeGame: 没有 Workshop 内容缓存那一套（真机验证过），只查
+    wegame_client_mods_dir（调用方传入，来自
+    find_wegame_client_dir(root)/"mods"，root 是用户手动选过的 WeGame 安
+    装根目录）——**坑**：以前这里不分平台，一律走 Steam 这两条路径，导致
+    WeGame 存档的 mod 图标/名称/配置项全都解析到了错误（或者根本不存在）
+    的 Steam 目录下。
 
     Args:
         workshop_id: Full workshop ID like "workshop-2797939615"
@@ -298,15 +342,16 @@ def find_mod_folder(workshop_id: str) -> Path | None:
     """
     mod_id = workshop_id.replace("workshop-", "")
 
-    # Check workshop
-    workshop_dir = find_workshop_dir()
-    if workshop_dir:
-        candidate = workshop_dir / mod_id
-        if candidate.exists() and (candidate / "modinfo.lua").exists():
-            return candidate
+    if platform == Platform.WEGAME:
+        game_mods = wegame_client_mods_dir
+    else:
+        workshop_dir = find_workshop_dir()
+        if workshop_dir:
+            candidate = workshop_dir / mod_id
+            if candidate.exists() and (candidate / "modinfo.lua").exists():
+                return candidate
+        game_mods = find_game_mods_dir()
 
-    # Check game mods dir
-    game_mods = find_game_mods_dir()
     if game_mods:
         candidate = game_mods / workshop_id  # Full ID with prefix
         if candidate.exists() and (candidate / "modinfo.lua").exists():
@@ -319,39 +364,8 @@ def find_mod_folder(workshop_id: str) -> Path | None:
     return None
 
 
-def find_mod_content_folder(workshop_id: str) -> Path | None:
-    """跟 find_mod_folder 类似，但要求宽松得多：只要 workshop 内容目录
-    本身存在且非空就认，不要求有 modinfo.lua。
-
-    专用服务器同步（core/mod_sync.py）只是把这个目录下的文件原样复制
-    给服务器用，不需要解析这个 mod 的名字/配置项/图标——find_mod_folder
-    那个"必须有 modinfo.lua"的门槛是给真的要解析 mod 内容的场景（Mod
-    管理列表、角色名解析等）准备的。真机验证过：Steam 有些老旧、长期
-    没更新的 workshop 内容只有一个 "<id>_legacy.bin"（Steam 自己的旧式
-    压缩包，没有解压成 modinfo.lua/modmain.lua 这些正常文件），但专用
-    服务器自己联网下载这个 mod 时落地的也是同一个 "_legacy.bin"、照样能
-    正常启动加载——服务器认得这个格式，不需要先解压成松散文件，所以只
-    要本地也有这份内容（哪怕只是这一个 bin 文件），原样复制过去就行，
-    不该因为没有 modinfo.lua 就判定"本地没有可用内容"而跳过。
-    """
-    mod_id = workshop_id.replace("workshop-", "")
-
-    workshop_dir = find_workshop_dir()
-    if workshop_dir:
-        candidate = workshop_dir / mod_id
-        if candidate.exists() and any(candidate.iterdir()):
-            return candidate
-
-    game_mods = find_game_mods_dir()
-    if game_mods:
-        for candidate in (game_mods / workshop_id, game_mods / mod_id):
-            if candidate.exists() and any(candidate.iterdir()):
-                return candidate
-
-    return None
-
-
-def list_installed_mod_ids() -> list[str]:
+def list_installed_mod_ids(platform: Platform = Platform.STEAM,
+                            wegame_client_mods_dir: Path | None = None) -> list[str]:
     """Enumerate every installed mod's ID, as it would appear as a
     modoverrides.lua key -- scanning both the Steam Workshop content
     directory and the game's local mods/ directory.
@@ -363,9 +377,23 @@ def list_installed_mod_ids() -> list[str]:
     by listing every installed mod folder and cross-referencing
     modoverrides.lua rather than iterating modoverrides.lua itself. This
     mirrors that.
+
+    **坑**：以前这里不分平台，一律扫 Steam 的两个目录，导致查看 WeGame
+    存档时，Steam 本地装的 mod 也会混进"已安装"列表里显示出来（WeGame 的
+    mod id 是 19 位长数字，跟 Steam 数字 ID 长度明显不同，混进去很显眼）。
+    platform=Platform.WEGAME 时只扫 wegame_client_mods_dir（调用方传入，
+    见 find_mod_folder() 同款参数的说明），不碰 Steam 那两个目录。
     """
     ids = []
     seen = set()
+
+    if platform == Platform.WEGAME:
+        if wegame_client_mods_dir and wegame_client_mods_dir.exists():
+            for child in sorted(wegame_client_mods_dir.iterdir()):
+                if child.is_dir() and (child / "modinfo.lua").exists() and child.name not in seen:
+                    seen.add(child.name)
+                    ids.append(child.name)
+        return ids
 
     workshop_dir = find_workshop_dir()
     if workshop_dir and workshop_dir.exists():

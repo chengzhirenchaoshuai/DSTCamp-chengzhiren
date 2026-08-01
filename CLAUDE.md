@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-DSTCamp（包名 `dstools`）是饥荒联机版 (Don't Starve Together) 本地服务器管理工具，提供 CLI (`dst`) 和 Tkinter GUI (`dst-gui`)，覆盖存档/Mod/世界设置/服务器配置/本地服务器管理。核心是在没有 Lua 运行时的情况下用纯 Python 解析并写回游戏自身的 Lua 表文件（`leveldataoverride.lua`、`modoverrides.lua`、`modinfo.lua`）和 INI 文件（`cluster.ini`、`server.ini`）。唯一例外见"Mod 配置解析"一节的 `core/lua_sandbox.py`：极少数 mod 用代码动态拼配置项，纯文本解析无法覆盖，为此收窄范围引入了一个沙箱化的真实 Lua 5.1 解释器。
+DSTCamp（包名 `dstools`）是饥荒联机版 (Don't Starve Together) 本地服务器管理工具，提供 CLI (`dst`) 和 Tkinter GUI (`dst-gui`)，覆盖存档/Mod/世界设置/服务器配置/本地服务器管理/内网穿透联机，同时支持 Steam 版和 WeGame 版存档。核心是在没有 Lua 运行时的情况下用纯 Python 解析并写回游戏自身的 Lua 表文件（`leveldataoverride.lua`、`modoverrides.lua`、`modinfo.lua`）和 INI 文件（`cluster.ini`、`server.ini`）。唯一例外见"Mod 配置解析"一节的 `core/lua_sandbox.py`：极少数 mod 用代码动态拼配置项，纯文本解析无法覆盖，为此收窄范围引入了一个沙箱化的真实 Lua 5.1 解释器。
 
 ## 项目结构
 
@@ -23,6 +23,7 @@ icons/            # 只读素材，被 core/resource_paths.py 引用，打包时
                   # world/（世界设置图标，含约 128 张当前未引用的 DLC 专属图标，故意保留给后续功能用）
 reference/        # 人工核对用的参考资料（游戏数据快照、图标源图），非运行时依赖
 tools/ktools/     # 第三方 ktech.exe + 依赖 DLL，被 core/tex_convert.py 调用，gitignore 掉
+tools/frpc/       # 第三方 frpc.exe（樱花独立版客户端），被 sakura_tab.py 调用，gitignore 掉
 ```
 
 `dstools/` 包直接在项目根目录下（非 `src/` 布局），`core/resource_paths.py` 靠 `Path(__file__).parent.parent.parent` 三层相对路径找回项目根目录；`scripts/`/`tests/` 下脚本同理各自反推。运行时缓存（mod 图标、角色头像等）不放项目目录里，默认在 `%APPDATA%/DSTCamp/cache/`（可在 GUI"设置"里改到 exe 所在目录）。
@@ -44,13 +45,19 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 ### 测试
 
-没有用 pytest/unittest，是两个手写函数列表 + try/except 收集器的脚本（非 assert 抛出即失败），只能整体运行。`test_e2e.py` 里的 `_isolated_settings_dir()`（猴子补丁 `get_settings_dir`）给所有会读写 DSTCamp 自身设置/缓存的测试用，绝不碰真实的 `%APPDATA%/DSTCamp/`——它要同时打两个模块的补丁（`app_settings.get_settings_dir` 给 `load_settings()`/`save_settings()`，`resource_paths.get_settings_dir` 给 `cache_dir()`，后者是 `from ... import` 抄过去的独立引用，只补前者不生效）。`scripts/diagnose_local_env.py` 不是测试（没有 assert，纯打印，需要真机 DST 数据），不要跟 `tests/` 下的脚本混淆。
+没有用 pytest/unittest，是两个手写函数列表 + try/except 收集器的脚本（非 assert 抛出即失败），只能整体运行。`test_e2e.py` 里的 `_isolated_settings_dir()`（猴子补丁 `get_settings_dir`）给所有会读写 DSTCamp 自身设置/缓存的测试用，绝不碰真实的 `%APPDATA%/DSTCamp/`——它要同时打两个模块的补丁（`app_settings.get_settings_dir` 给 `load_settings()`/`save_settings()`，`resource_paths.get_settings_dir` 给 `cache_dir()`，后者是 `from ... import` 抄过去的独立引用，只补前者不生效）。`scripts/diagnose_local_env.py` 不是测试（没有 assert，纯打印，需要真机 DST 数据），不要跟 `tests/` 下的脚本混淆。只测离线可测的纯逻辑，需要真实账号/网络的路径（樱花 API 真实调用、frpc 真的连上节点）按项目惯例不伪造外部服务，靠人工验证。
 
 ## 架构
 
 ### 数据模型 (`dstools/models.py`)
 
-`DSTEnvironment` → `Cluster`(`SaveSource.SERVER`/`.LOCAL`) → `Shard`(Master/Caves/...) → `SaveSession` → `SaveSlot`。`discovery.py` 自动发现 Klei 根目录并区分：**SERVER**（Klei 根目录下，如 `Cluster_3`，专用服务器存档）vs **LOCAL**（Steam 用户 ID 目录下，本地/客户端存档）。这个区分贯穿全代码库，改"选存档"相关逻辑前先确认是哪个分支。
+`DSTEnvironment` → `Cluster`(`SaveSource.SERVER`/`.LOCAL`, `Platform.STEAM`/`.WEGAME`) → `Shard`(Master/Caves/...) → `SaveSession` → `SaveSlot`。`discovery.py` 自动发现 Klei 根目录并区分：**SERVER**（Klei 根目录下，如 `Cluster_3`，专用服务器存档）vs **LOCAL**（用户 ID 目录下，本地/客户端存档）。这个区分贯穿全代码库，改"选存档"相关逻辑前先确认是哪个分支。Steam/WeGame 两棵目录树（`DoNotStarveTogether`/`DoNotStarveTogetherRail`）并行扫描、结果合并进同一个 `clusters` 列表；凡是要往"根目录"下新建/复制东西的地方，用 `env.klei_root_for(cluster.platform)`，不要直接用 `env.klei_root`（那个字段含义固定是 Steam 版根目录，是历史遗留，没有改名）。
+
+### WeGame 平台支持范围 (`core/discovery.py` / `gui/local_service_tab.py`)
+
+WeGame(Rail) 版专用服务器的 cluster.ini/server.ini 等配置文件格式跟 Steam 版字节级一致，存档发现/浏览、配置编辑、Mod 管理、备份回档、樱花映射这些纯文件操作对 WeGame 存档也完全适用。**但"一键启动服务器"做不到**：WeGame 版专用服务器启动需要一个只有 WeGame 客户端才能签发的一次性会话令牌（`--rail_channel_id`），每次都不一样、没有官方申请途径，复用旧值会卡死不报错；官方 `DedicatedServerLauncher.exe` 也会主动弹窗拒绝脱离 WeGame 客户端单独运行。**这是平台厂商刻意做的限制，不是技术难点，不要再花时间找绕过办法**。`local_service_tab.py` 对 `Cluster.platform == Platform.WEGAME` 只禁用启动/停止/公告/回档相关按钮，引导用户去 WeGame 客户端自己点"开始游戏"，其它页签不受影响。
+
+WeGame 的 `rail_apps` 安装根目录没有可靠的注册表项能查（不像 Steam 能读 `HKEY_CURRENT_USER\Software\Valve\Steam`），需要用户手动选一次并存进 `app_settings.get_wegame_root_path()`；`find_wegame_client_dir()`/`find_wegame_server_dir()` 在选定根目录下按 `饥荒：联机版(*)`/`饥荒联机版专用服务器(*)` 通配匹配。**WeGame 没有 Steam Workshop 那套独立内容缓存**（真机验证 + 社区资料印证），mod 内容直接放在各产品自己的 `mods/` 里。
 
 ### 无运行时 Lua 解析 (`core/lua_parser.py`)
 
@@ -58,15 +65,15 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 ### 资源路径与本地设置 (`core/resource_paths.py` / `core/app_settings.py`)
 
-**只读素材 vs 运行时缓存是两套路径体系**：`bundled_resource_dir()` 是只读素材根目录（源码直跑是仓库根目录，打包后是 `sys._MEIPASS`——每次启动解压到新临时目录，进程退出即清空，**不能写任何需要持久化的内容进去**）；`cache_dir(name)` 是运行时缓存根目录（默认 `%APPDATA%/DSTCamp/cache/<name>/`，勾选"缓存存放在程序所在目录"后改成 exe 目录下，这个开关**重启后生效**）。四个缓存子目录：`mod_icons`/`character_icons`/`mod_full_resolve`/`background`，各自的 mtime 失效策略见对应模块。
+**只读素材 vs 运行时缓存是两套路径体系**：`bundled_resource_dir()` 是只读素材根目录（源码直跑是仓库根目录，打包后是 `sys._MEIPASS`——每次启动解压到新临时目录，进程退出即清空，**不能写任何需要持久化的内容进去**）；`cache_dir(name)` 是运行时缓存根目录（默认 `%APPDATA%/DSTCamp/cache/<name>/`，勾选"缓存存放在程序所在目录"后改成 exe 目录下，这个开关**重启后生效**）。缓存子目录：`mod_icons/<platform>`、`character_icons`、`mod_full_resolve`、`background`、`frpc_config`，各自的失效策略见对应模块。
 
-`app_settings.py`（`%APPDATA%/DSTCamp/settings.json`，原子写入）存：服务器安装目录、主题名、玩家备注、`minimize_on_close`、`cache_use_exe_dir`、`custom_bg_filename`/`custom_bg_opacity`、`window_pos`（见"系统托盘"一节）、`backup_retention`/`backup_interval_minutes`（见下方"存档备份/恢复/回档"一节）。
+`app_settings.py`（`%APPDATA%/DSTCamp/settings.json`，原子写入）存：服务器/WeGame 安装目录、Steam mods 路径覆盖、主题名、玩家备注、`minimize_on_close`、`cache_use_exe_dir`、`custom_bg_filename`/`custom_bg_opacity`、`window_pos`、`backup_retention`/`backup_interval_minutes`、樱花 Token/上次选中节点。
 
-**存档备份是第三套路径体系**，既不是 `bundled_resource_dir()` 的只读素材也不是这里的 `%APPDATA%` 缓存——`core/backup_manager.py` 把备份 zip 放在**每个存档目录自己内部**（`<cluster_path>/dstcamp_backups/`），跟随存档本身走，换电脑整个存档目录一起复制时备份不会丢。
+**存档备份是第三套路径体系**，既不是只读素材也不是 `%APPDATA%` 缓存——`core/backup_manager.py` 把备份 zip 放在**每个存档目录自己内部**（`<cluster_path>/dstcamp_backups/`），跟随存档本身走，换电脑整个存档目录一起复制时备份不会丢。
 
 ### GUI 主题 (`gui/theme.py`)
 
-**共 5 套主题**：`gray`（默认）+ `mint`/`twilight`/`campfire`/`sakura`。加新主题只需在 `_THEMES` 加一个 dict（含 `gray` 那份的全部键）+ 追加到 `THEME_NAMES`。调色板是模块级常量，`set_theme()`/`gui/app.py._switch_theme()` 立即生效重新赋值，不需要重启。主题菜单单选项必须绑 `variable=`/`value=` 到同一个 `tk.StringVar`（`app._theme_menu_var`），否则勾选态在菜单重建（切语言）后会跟真实主题脱节。**自定义背景图片不是任何一套主题的属性**，跟主题选择完全解耦（见下一节）。
+**共 5 套主题**：`gray`（默认）+ `mint`/`twilight`/`campfire`/`sakura`。加新主题只需在 `_THEMES` 加一个 dict（含 `gray` 那份的全部键）+ 追加到 `THEME_NAMES`。调色板是模块级常量，`set_theme()`/`gui/app.py._switch_theme()` 立即生效重新赋值，不需要重启。主题菜单单选项必须绑 `variable=`/`value=` 到同一个 `tk.StringVar`（`app._theme_menu_var`），否则勾选态在菜单重建（切语言）后会跟真实主题脱节。自定义背景图片跟主题解耦（见下一节）。
 
 **硬性规则：任何消费方必须现查 `theme.X`，不能在 import/构造时缓存成自己的一份**——`from theme import PRIMARY` 或模块顶层 `_MY_COLOR = theme.PRIMARY` 都是一次性绑定。`CardFrame`/`PillTabBar` 这类构造一次、长期存活的容器需要显式 `apply_theme()` 方法重新读取。
 
@@ -74,37 +81,36 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 
 ### 自定义背景图片 (`core/custom_background.py` / `gui/bg_frame.py`)
 
-背景图跟颜色主题完全解耦——是独立于任意一套主题的全局功能，只要设置过图片就一直叠加显示，不受当前激活哪套主题影响。`render_background()` 居中裁剪到目标比例（不拉伸变形）再按不透明度跟当前主题的 `BG_SOFT` 色 `Image.blend()`。
+背景图跟颜色主题完全解耦——是独立于任意一套主题的全局功能，只要设置过图片就一直叠加显示。`render_background()` 居中裁剪到目标比例（不拉伸变形）再按不透明度跟当前主题的 `BG_SOFT` 色 `Image.blend()`。
 
 **架构：共享大图 + 各表面按偏移量裁一块**（`BgFrame` + `DSToolsApp._rebuild_shared_bg_image`/`_get_bg_slice`/`_refresh_all_bg_surfaces`），拖拽中便宜、停顿后精细（`_BG_SETTLE_MS`=150ms）：`DSToolsApp` 维护唯一一张跟 root 客户区同尺寸的共享大图，只在 `<Configure>` 停顿超过 150ms 才重新读盘/裁剪/混合；`BgFrame` 自己的 `<Configure>` 只做便宜的内存 crop。**这是硬性规则，不能绕开**——每个表面各自独立做读盘/缩放，在真实拖拽缩放时会跟原生钩子打架，出现过布局错位/闪烁/割裂。
 
 **纯说明性文字一律不用 `ttk.Label`/`tk.Label`**（绘制区域永远不透明，会挡背景图），改用 `create_text()` 或 `gui/toolbar_widgets.py` 的 `make_toolbar_label()`/`make_filter_chips()`。容器接入 `BgFrame` 后如果子控件换成直接画的 `create_text`，记得 `pack_propagate(False)`，否则容器会被压缩到只剩 1px。
 
-`PillTabBar`（`gui/pill_tabs.py`）不止顶层 6 个主页签用——`WorldSettingsTab`/`ClusterConfigTab` 内部原来的 `ttk.Notebook` 子页签条也换成了小一号的 `PillTabBar`（`height`/`pill_h`/`font_size` 可调），因为原生 `ttk.Notebook` 自己画不透明背景。它只画页签条本身，不像 `ttk.Notebook` 自带页面容器，各调用点自己维护 `{key: page_frame}` 字典手动 `pack()`/`pack_forget()`。`SaveBrowserTab` 原来也用过（见"存档信息"一节），后来合并成单页不再需要。
+**几个 Tk pack/Configure 布局坑（真机验证过，写小脚本确认过行为）**：
+1. `pack(side=tk.BOTTOM)` 不加 `fill` 时默认水平居中，且不用在乎跟同一父容器里 `fill=tk.BOTH, expand=True` 的兄弟控件谁先 pack——Tk 的 pack 是整体一起算 cavity，不是按注册顺序"先到先得"。"世界设置"的"保存世界规则"、"Mod管理"的"保存修改"/"应用到所有分片"都用这个位置（页签底部居中）。
+2. "选中某种存档时才出现"的提示条（如 `local_service_tab.py` 的 `_local_banner`/`_wegame_banner`），显示/隐藏必须用 `pack(side=tk.BOTTOM, ...)`，**不能**用 `pack(before=self._body, ...)`——后者会把提示条插到 `self._body`（含左右两栏 `PanedWindow`）上面，导致它整体上下挪位置，连带内部 `BgFrame` 裁的那块共享背景图跟着"错位"（挪位置后没有正确重新裁到新位置）。`side=tk.BOTTOM` 只在底部单独留一块，`self._body` 内容不随之移动，从根上避免这个问题。
+3. Canvas 上用 `create_text()` 画的说明文字**不会**跟着兄弟控件的 pack 顺序自动挪位置，依赖动态坐标（如 `winfo_x()+winfo_width()`）算文字位置时要留意：父容器的 `<Configure>` 可能在依赖的控件还没真正布局完成（`winfo_width()` 还是 1）时就先触发过一次，之后如果父容器尺寸不再变化就不会再触发，导致文字永久画不出来。修法：目标控件 pack 完后立即 `update_idletasks()` 强制布局并主动画一次，同时给目标控件自己也绑一次 `<Configure>` 兜底，不能只依赖父级 Canvas 的 `<Configure>`。
 
-**几个页签内部原来各自遗留的局部"刷新"/"加载"按钮已经删掉**（`WorldSettingsTab`/`SaveBrowserTab` 的分片行、`ClusterConfigTab` 顶部）——顶部全局存档选择栏统一带一个"刷新"按钮之后，这些局部按钮触发的效果和 `on_cluster_changed()` 完全重复。以后再看到"某页签内部有个只做局部刷新的按钮"，先确认是不是已经被全局刷新覆盖。
+`PillTabBar`（`gui/pill_tabs.py`）不止顶层 6 个主页签用——`WorldSettingsTab`/`ClusterConfigTab` 内部的子页签条也用它（原生 `ttk.Notebook` 自己画不透明背景），只画页签条本身，各调用点自己维护 `{key: page_frame}` 字典手动 `pack()`/`pack_forget()`。
 
-**拖拽缩放期间背景图整体冻结**（`_begin_bg_drag_suppress()`/`_end_bg_drag_suppress()`，仅用于真正的窗口拖拽缩放，不要用于页签切换的懒加载重活）：期间 `BgFrame._request_render()` 直接跳过，`clear_bg_image()` 清成纯色不留残影，松手才按最终尺寸整体重算一次。**验证务必用真实拖拽缩放**（`SetWindowPos` 连续改尺寸模拟），程序化测试正常、真实拖拽才暴露的问题出现过不止一次。
+**拖拽缩放期间背景图整体冻结**（`_begin_bg_drag_suppress()`/`_end_bg_drag_suppress()`，仅用于真正的窗口拖拽缩放，不要用于页签切换的懒加载重活）：期间 `BgFrame._request_render()` 直接跳过，`clear_bg_image()` 清成纯色不留残影，松手才按最终尺寸整体重算一次。验证务必用真实拖拽缩放（`SetWindowPos` 连续改尺寸模拟），程序化测试正常、真实拖拽才暴露的问题出现过不止一次。
 
 ### 自定义标题栏 (`gui/custom_titlebar.py`)
 
-已弃用 Windows 原生标题栏：`root.overrideredirect(True)` + 自绘 `CustomTitleBar` + 手写拖拽移动/缩放（`ResizeGrips`，宽高比锁定数学照抄 `win_aspect_lock.py` 的 `AspectLock._enforce()`，只是从改 ctypes RECT 变成算好 `(x,y,w,h)` 后调 `root.geometry()`）。**跟 `win_aspect_lock.py` 刻意分开**——这个文件全程只做一次性设置窗口样式位的 Win32 调用，不拦截任何消息，风险级别跟"替换 WNDPROC"完全不同。
+已弃用 Windows 原生标题栏：`root.overrideredirect(True)` + 自绘 `CustomTitleBar` + 手写拖拽移动/缩放（`ResizeGrips`，宽高比锁定数学照抄 `win_aspect_lock.py` 的 `AspectLock._enforce()`）。**跟 `win_aspect_lock.py` 刻意分开**——这个文件全程只做一次性设置窗口样式位的 Win32 调用，不拦截任何消息，风险级别跟"替换 WNDPROC"完全不同。
 
-已验证的坑：
-- 恢复阴影/圆角的公认做法在这台机器上会导致窗口空白/"玻璃"透视，已放弃——现在是没有阴影的直角窗口，只保留 `WS_EX_APPWINDOW`（任务栏/Alt+Tab 可见性）。
-- 最小化不能用 `root.iconify()`（overrideredirect 下报 TclError），改用原生 `ShowWindow(hwnd, SW_MINIMIZE)`；`root.deiconify()` 不受此限制。
-- 不做最大化按钮（项目锁定 1500:820 宽高比）。
-- `ResizeGrips` 的 8 个拖拽手柄默认会铺到窗口物理边缘、盖住标题栏/状态栏按钮，用 `top_reserve`/`bottom_reserve` 参数让开这两行。
+已验证的坑：恢复阴影/圆角会导致窗口空白/"玻璃"透视，已放弃，现在是直角窗口；最小化不能用 `root.iconify()`（overrideredirect 下报 TclError），改用原生 `ShowWindow(hwnd, SW_MINIMIZE)`；不做最大化按钮（项目锁定 1500:820 宽高比）；`ResizeGrips` 的 8 个拖拽手柄用 `top_reserve`/`bottom_reserve` 让开标题栏/状态栏按钮。
 
 ### 系统托盘 + 关闭/退出/启动位置 (`gui/tray_icon.py` / `gui/app.py`)
 
-托盘用 `pystray`（独立线程+消息循环），不是手写 WNDPROC——`win_aspect_lock.py` 的 `AspectLock` 是**已知架构禁区**：曾在它的 WM_SIZING 钩子里加一个回调 Tk 的分支（哪怕空操作），导致解释器级致命崩溃（`PyEval_RestoreThread: GIL 未持有`）。根因是"从替换过的原生窗口过程里回调 Tk/Python 代码"本身就危险。`pystray` 架构完全不同，但跨线程底线还是要守：`TrayIcon` 的回调必须包一层 `root.after(0, ...)` 转回 Tk 主线程。
+托盘用 `pystray`（独立线程+消息循环），不是手写 WNDPROC——`win_aspect_lock.py` 的 `AspectLock` 是**已知架构禁区**：曾在它的 WM_SIZING 钩子里加一个回调 Tk 的分支（哪怕空操作），导致解释器级致命崩溃（`PyEval_RestoreThread: GIL 未持有`），根因是"从替换过的原生窗口过程里回调 Tk/Python 代码"本身就危险。`pystray` 跨线程回调必须包一层 `root.after(0, ...)` 转回 Tk 主线程。
 
-**`win_aspect_lock.py` 现在是两个独立用途，都还活着，不要整个删掉**：`set_process_dpi_aware()` 一直在被 `app.py.__init__` 调用；`AspectLock` 类主窗口不再用（原生标题栏没了，Windows 不会再对它发 `WM_SIZING`），但 `gui/mod_manager_tab.py` 的 `ModConfigDialog` 弹窗仍然用它锁定自己的宽高比。
+**`win_aspect_lock.py` 现在两个独立用途都还活着，不要整个删掉**：`set_process_dpi_aware()` 一直被 `app.py.__init__` 调用；`AspectLock` 类主窗口不再用，但 `mod_manager_tab.py` 的 `ModConfigDialog` 弹窗仍用它锁宽高比。
 
-三条路径分开处理：标题栏最小化按钮 = 普通最小化任务栏，不碰托盘；关闭按钮（X）按 `get_minimize_on_close()` 分流——开则最小化到托盘，关则走 `_do_exit()`（有本地服务器在跑才问是否一并关闭）；菜单/托盘"退出"走同一个 `_do_exit()`。托盘图标常驻（`__init__` 里启动即 `.show()`，只有 `_do_exit()` 才 `.hide()`）。**还原窗口有两条独立路径**：Tk 的 `root.withdraw()`（`_minimize_to_tray()` 用）和原生 `ShowWindow(SW_MINIMIZE)`（标题栏最小化按钮）互不兼容，`custom_titlebar.restore_window()` 把 `SW_RESTORE`+`deiconify()`+`SetForegroundWindow` 一起做，托盘"显示主窗口"必须调这个。
+三条路径分开处理：标题栏最小化按钮 = 普通最小化任务栏，不碰托盘；关闭按钮（X）按 `get_minimize_on_close()` 分流（开则最小化到托盘，关则走 `_do_exit()`）；菜单/托盘"退出"走同一个 `_do_exit()`。**还原窗口有两条独立路径**：Tk 的 `root.withdraw()`（`_minimize_to_tray()` 用）和原生 `ShowWindow(SW_MINIMIZE)`（标题栏最小化用）互不兼容，`custom_titlebar.restore_window()` 把 `SW_RESTORE`+`deiconify()`+`SetForegroundWindow` 一起做，托盘"显示主窗口"必须调这个。
 
-**窗口启动位置**：`DSToolsApp._compute_startup_position()` 优先用 `get_window_position()` 读到的上次关闭坐标，`_quit_app()` 里 `set_window_position()` 存。**校验坐标有效性必须用 `_get_virtual_screen_bounds()`（`GetSystemMetrics(SM_XVIRTUALSCREEN` 等），不能用 `winfo_screenwidth()`**——后者只报主显示器尺寸，会把停在副屏的窗口误判成"超出屏幕"。没存过/校验不通过都退回屏幕正中央。
+**窗口启动位置**：`_compute_startup_position()` 优先用 `get_window_position()` 读到的上次关闭坐标。**校验坐标有效性必须用 `_get_virtual_screen_bounds()`（`GetSystemMetrics(SM_XVIRTUALSCREEN` 等），不能用 `winfo_screenwidth()`**——后者只报主显示器尺寸，会把停在副屏的窗口误判成"超出屏幕"。
 
 ### 世界设置 —— 关键架构，务必先理解再动手
 
@@ -112,248 +118,105 @@ CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Clu
 - **`core/world_categories.py`**：分类/排序/双语名唯一真源。**森林和洞穴是两个独立存档文件**，同名 key 两边值可能不同，设置表按"地图×类型"拆成 4 个独立字典（`FOREST_RULES_DICT`/`FOREST_GEN_DICT`/`CAVE_RULES_DICT`/`CAVE_GEN_DICT`）。注意还有同名但不同用途的**分类列表**变量（如 `CAVE_RULES`，list），别跟 `_DICT` 搞混。
 - **`core/world_icons.py`**：图标映射。
 - **`core/world_value_sets.py`**：每个 key 的合法取值（`VALUE_SETS`），数据来自游戏自身 `worldsettings_overrides.lua`，用错表会静默改坏设置。
-- **`gui/world_render.py`**：取值颜色/双语翻译 + 用 PIL 把整个分类面板渲染成单张图片（`render_world_panel()`），配合 `image_scroll.py` 滚动。间距常量必须和对应方向"侵入间隙"的圆角/描边侵蚀量相加后再参与位置计算，不能让固定像素留白单独存在——窗口放大重渲染时固定留白不会跟着变大，会被侵蚀量反超导致缝隙重叠。分类标题条的圆角要跟外框保持同一顶点（`corners=(True, True, False, False)`），否则直角顶点会比外框圆弧更凸出。
+- **`gui/world_render.py`**：取值颜色/双语翻译 + 用 PIL 把整个分类面板渲染成单张图片（`render_world_panel()`），配合 `image_scroll.py` 滚动。间距常量必须和对应方向"侵入间隙"的圆角/描边侵蚀量相加后再参与位置计算，窗口放大重渲染时固定留白不会跟着变大，会被侵蚀量反超导致缝隙重叠。分类标题条的圆角要跟外框保持同一顶点（`corners=(True, True, False, False)`）。
 
 改这块逻辑时森林/洞穴要分别验证（`reference/config_json/`、`reference/config_txt/` 有 ground-truth 数据）。
 
 ### "存档信息"页签 (`gui/save_browser_tab.py`)
 
-单页展示（原来是"存档概览"/"会话详情"两个可切换子页签，已合并）：存档概览（当前全局选中存档的详情卡片）→ 分片选择器 → 基本信息（当前分片的会话信息）→ 每个玩家角色状态。不自己维护"存档:"下拉框，跟其它 5 个页签一样接顶部全局存档选择栏。合并成单页之后不再有"存档概览便宜、会话详情才是重活"这层子页签级懒加载——首次访问这个页签的开销回到约 1~2 秒（解析每个玩家的角色名/头像），占位符先行策略仍然保留（见下）。
+单页展示：存档概览 → 分片选择器 → 基本信息 → 每个玩家角色状态。不自己维护"存档:"下拉框，跟其它页签一样接顶部全局存档选择栏。
 
-**几个区块的左边缘对齐用同一个模块级常量 `_PAGE_PADX`（15）**，改的时候要保持一致；`_build_shard_row()` 的 `sf` 是唯一例外（`padx=_PAGE_PADX+10`，因为它直接用 `make_toolbar_label` 只有 2px 内缩，不像其它区块在外层容器基础上又包了一层 `padx=10`）。量文字/卡片实际对齐位置用 `canvas.bbox(tag)+winfo_rootx()`（canvas 文字）或直接 `widget.winfo_rootx()`（普通控件），不要凭感觉猜 padx 数字。
+**几个区块的左边缘对齐用同一个模块级常量 `_PAGE_PADX`（15）**，改的时候要保持一致；`_build_shard_row()` 的 `sf` 是唯一例外（`padx=_PAGE_PADX+10`）。量文字/卡片实际对齐位置用 `canvas.bbox(tag)+winfo_rootx()`（canvas 文字）或 `widget.winfo_rootx()`（普通控件），不要凭感觉猜 padx 数字。
 
-**`info_frame` 变高顶着下面内容一起挪位置，是这个页签反复出现的一类 bug 的根源**：任何一个排在前面的兄弟容器变高/变矮，都会让排在后面的兄弟绝对屏幕位置跟着变，但 Tk **不会**因为"前一个兄弟变了"就给后面的兄弟重新触发 `<Configure>`——不显式补一次 `render_now()`，背景切片就会停在挪动前的旧坐标。两个应对办法：(1) `info_frame` 按固定行数（`_INFO_MAX_LINES`）预留高度，不管实际画了几行文字，从根上让它不再变高；(2) 万一还有别的地方会动态变高度，`_resync_players_section_bg()` 在"确定不会再有几何变化"的检查点上补一次全量 `render_now()` 兜底。**`_refresh_env()` 必须先于 `_on_shard_select()` 调用**——道理相同，存档概览卡片变高也会顶着下面挪位置。
+**`info_frame` 变高顶着下面内容一起挪位置，是这个页签反复出现的一类 bug 的根源**：任何一个排在前面的兄弟容器变高/变矮，都会让排在后面的兄弟绝对屏幕位置跟着变，但 Tk **不会**因为"前一个兄弟变了"就给后面的兄弟重新触发 `<Configure>`。两个应对办法：(1) `info_frame` 按固定行数（`_INFO_MAX_LINES`）预留高度，从根上让它不再变高；(2) 万一还有别的地方会动态变高度，在"确定不会再有几何变化"的检查点上补一次全量 `render_now()` 兜底。**`_refresh_env()` 必须先于 `_on_shard_select()` 调用**——道理相同。
 
-**两个 Tk-on-Windows 渲染时序坑，都已经在 `_resync_players_section_bg()`/`_refresh_saves()` 里修掉，别再犯**：
-1. 补渲染的 `render_now()` 扫一遍必须放在"确定不会再变"的检查点调用，**不能**放在挂了 `StringVar.trace_add` 的重画函数内部——那种函数一次逻辑更新会连续触发好几次，密集调用之间跟 Tk 自己的几何管理器抢时序，会画出压扁的黑线/错位色块。
-2. 同一个几何变化后，**要连续调用两次 `update()`（不是一次）** 才能把重绘真正冲刷到屏幕——第一次 `update()` 只是把这次变化对应的重绘 idle 任务处理掉，任务执行本身又产生了新的待处理重绘。
-3. 给多个 `StringVar` 设置"占位态"文字时，**顺序有讲究**：必须先清空"次要"字段、最后才设最主要的那个字段（比如先清 `summary`/`slots`，最后才把 `session_id` 设成"加载中…"）——反过来的话，中间某次 trace 触发的重绘会画出"新占位符 + 上一次的旧内容"这种新旧混杂的过渡态。
+**两个 Tk-on-Windows 渲染时序坑（已修，别再犯）**：(1) 补渲染的 `render_now()` 扫一遍必须放在"确定不会再变"的检查点调用，不能放在挂了 `StringVar.trace_add` 的重画函数内部——一次逻辑更新会连续触发好几次，密集调用之间跟 Tk 自己的几何管理器抢时序，会画出压扁的黑线/错位色块。(2) 同一个几何变化后，要连续调用两次 `update()`（不是一次）才能把重绘真正冲刷到屏幕。(3) 给多个 `StringVar` 设置"占位态"文字时顺序有讲究：必须先清空"次要"字段、最后才设最主要的那个（比如先清 `summary`/`slots`，最后才把 `session_id` 设成"加载中…"），反过来会画出新旧混杂的过渡态。
 
-`save_reader.list_session_players()`：玩家存档槽前后包了二进制帧头/尾，**必须**从 `return` 正向扫描花括号深度找表的真实结尾，不能用 `raw.rfind(b"}")`（真实结尾后常跟着垃圾字节）。**"最新槽位"不一定是最新数据**：跨分片传送/进程被异常打断保存时，编号最新的槽位可能是个 0 字节占位文件，挑槽位时优先选最新的**非空**文件。`character_icons.resolve_character()` 优先级：官方角色表 → 分片当前已启用模组的 `STRINGS.CHARACTER_NAMES` 声明 → 原样显示英文 prefab（不猜测）。图集 XML 解析共用 `core/atlas_utils.py`。
+`save_reader.list_session_players()`：玩家存档槽前后包了二进制帧头/尾，**必须**从 `return` 正向扫描花括号深度找表的真实结尾，不能用 `raw.rfind(b"}")`（真实结尾后常跟着垃圾字节）。**"最新槽位"不一定是最新数据**：跨分片传送/进程被异常打断保存时，编号最新的槽位可能是个 0 字节占位文件，挑槽位时优先选最新的**非空**文件。`character_icons.resolve_character()` 优先级：官方角色表 → 分片当前已启用模组的 `STRINGS.CHARACTER_NAMES` 声明 → 原样显示英文 prefab（不猜测）。**已知未修的缺口**：`resolve_character()` 内部调 `find_mod_folder(entry.workshop_id)` 没传 `platform`，WeGame 存档如果玩家用了 WeGame 版 mod 加的自定义角色，名字/头像解析不到。图集 XML 解析共用 `core/atlas_utils.py`。
 
-角色名/头像都查不到时统一用 `icons/ui/character_icon_default.png` 兜底，不走运行时缓存（这张图跟装了什么 mod 无关，每次都一样）。头像列固定 `icon_size × icon_size` 容器再居中贴图（`Image.thumbnail()` 不保证正方形，不固定容器宽度会导致同列每行头像宽度不一样，后面文字跟着错位）；固定宽度的文字容器同样要显式给 `height`，只给 `width` 配 `pack_propagate(False)` 会把内容压扁到看不见。
+角色名/头像都查不到时统一用 `icons/ui/character_icon_default.png` 兜底，不走运行时缓存。头像列固定 `icon_size × icon_size` 容器再居中贴图（`Image.thumbnail()` 不保证正方形）；固定宽度的文字容器同样要显式给 `height`，只给 `width` 配 `pack_propagate(False)` 会把内容压扁到看不见。
 
 ### 存档备份/恢复/回档 (`core/backup_manager.py`)
 
-**这里的 zip 备份和"回档"是两套完全独立的机制，不要混为一谈**：回档
-（见下方"服务器配置"一节旁边的 `local_service_tab.py._RollbackDialog`）
-靠的是游戏自己维护的历史存档快照（`cluster.ini` 的 `max_snapshots`），
-通过给运行中的分片控制台发 `c_rollback(n)` 指令触发；这里的 zip 备份是
-dstools 自己在存档目录里打包的独立文件，两者互不依赖，回档不会影响这
-里的备份文件，恢复这里的备份也不会影响游戏自己的快照计数。
+**这里的 zip 备份和"回档"是两套完全独立的机制**：回档（`local_service_tab.py._RollbackDialog`）靠游戏自己维护的历史存档快照（`cluster.ini` 的 `max_snapshots`），通过给运行中的分片控制台发 `c_rollback(n)` 指令触发；这里的 zip 备份是 dstools 自己在存档目录里打包的独立文件，两者互不依赖。
 
-备份内容 = 每个分片的 `save/`（世界数据）+ `modoverrides.lua`/
-`leveldataoverride.lua`/`server.ini`，加上 cluster 级别的 `cluster.ini`/
-`cluster_token.txt`/`adminlist.txt`/`blocklist.txt`；故意跳过游戏自己
-在每个分片下维护的 `backup/` 目录和日志文件——那些是 mod 修改历史和日
-志，跟世界存档数据无关，游戏自己已经在滚动维护。备份文件存在
-`<cluster_path>/dstcamp_backups/` 里（不会被 `discovery.py` 误认成分
-片，分片判定要求目录里有 `server.ini`），保留份数由
-`app_settings.get_backup_retention()` 控制（默认 10，范围 5~99）。
+备份内容 = 每个分片的 `save/`（世界数据）+ `modoverrides.lua`/`leveldataoverride.lua`/`server.ini`，加上 cluster 级别的 `cluster.ini`/`cluster_token.txt`/`adminlist.txt`/`blocklist.txt`；故意跳过游戏自己维护的 `backup/` 目录和日志文件。备份文件存在 `<cluster_path>/dstcamp_backups/` 里，保留份数由 `app_settings.get_backup_retention()` 控制（默认 10，范围 5~99）。
 
-`restore_backup()` **必须先删掉会被覆盖的每一项再解压，不能只是在旧文
-件上覆盖解压**——不这样做的话，备份之后又产生的新存档槽文件会跟备份里
-的旧槽位混在一起，游戏很可能还是照常挑编号最新的槽位，恢复了个寂寞。
-调用方（`gui/save_browser_tab.py`）自己负责确认对应分片都已停止（文件
-被进程占着时 Windows 上的删除/覆盖会直接失败），恢复前还会自动给"当前
-状态"打一份保险备份，让恢复本身也能撤销。
+`restore_backup()` **必须先删掉会被覆盖的每一项再解压，不能只是在旧文件上覆盖解压**——否则备份之后又产生的新存档槽文件会跟备份里的旧槽位混在一起。调用方自己负责确认对应分片都已停止，恢复前还会自动给"当前状态"打一份保险备份。
 
-`create_backup()` 同一秒内被连续调用两次（比如"全部停止"时两个分片几
-乎同时触发自动备份）会在文件名后加 `_2`/`_3`… 后缀，避免互相覆盖——但
-这个去重机制假设"同一秒内不会连续调用超过保留份数次"，真实使用（手动
-点击/停服触发/几分钟一次的定时触发）不会撞到这个假设，写测试/脚本连续
-调用 `create_backup()` 验证保留份数裁剪时要注意避开（改用手工构造不同
-时间戳文件名的方式，见 `tests/test_e2e.py` 的 Test 27）。
+`create_backup()` 同一秒内被连续调用两次会在文件名后加 `_2`/`_3`… 后缀避免互相覆盖——这个去重机制假设"同一秒内不会连续调用超过保留份数次"，写测试验证保留份数裁剪时要避开（改用手工构造不同时间戳文件名的方式，见 `tests/test_e2e.py` Test 27）。
 
-服务器运行期间的定时自动备份（`local_service_tab.py._maybe_periodic_
-backup()`）按 `app_settings.get_backup_interval_minutes()`（默认 10，
-范围 2~30）触发，独立于"停服后自动备份一次"这条路径，两者都存在。
+服务器运行期间的定时自动备份（`local_service_tab.py._maybe_periodic_backup()`）按 `app_settings.get_backup_interval_minutes()`（默认 10，范围 2~30）触发，独立于"停服后自动备份一次"这条路径。
 
 ### 服务器配置 (`core/config_manager.py` / `core/ini_field_info.py` / `gui/cluster_config_tab.py`)
 
-游戏本身只在值被改动过时才会把它写进 `cluster.ini`——很多存档里
-`max_snapshots`/`tick_rate` 这类字段干脆不存在，不代表没有默认行为，只
-是"文件里没有、GUI 上也就看不到"。`config_manager.CLUSTER_INI_DEFAULTS`
-收录了确认过的官方默认值，`backfill_cluster_defaults(config)` 只补缺
-的字段（`dict.setdefault`），**绝不覆盖已经存在的值**——这是最容易被后
-续重构不小心破坏、后果是用户已保存配置被吞掉的一类 bug，改这个函数时
-留意。只在服务器存档（`SaveSource.SERVER`）时调用，本地存档由客户端自
-己管理，不需要（也不应该）补默认值。补上的默认值点"保存"之后就会变成
-文件里的真实值。
+游戏本身只在值被改动过时才会把它写进 `cluster.ini`——很多存档里字段干脆不存在，不代表没有默认行为。`config_manager.CLUSTER_INI_DEFAULTS` 收录了确认过的官方默认值，`backfill_cluster_defaults(config)` 只补缺的字段（`dict.setdefault`），**绝不覆盖已经存在的值**——这是最容易被后续重构破坏、后果是用户已保存配置被吞掉的一类 bug。只在服务器存档（`SaveSource.SERVER`）时调用。
 
-`ini_field_info.py` 另外两张表：`RANGE_FIELDS`/`get_range_limits()` 给
-有官方明确取值范围的数字字段（比如 `tick_rate` 15-60）用，`cluster_
-config_tab.py` 据此在按键时过滤非数字输入、在"保存"时整体校验范围，任
-何一个越界就整个中止保存（不是自动纠正，纠正会让用户不知道自己填的值
-被悄悄改了）；`ALWAYS_READONLY_FIELDS` 给游戏自己生成、没有官方文档说
-明具体用途的字段（比如 `cluster_cloud_id`）用，不管是不是服务器存档一
-律只读，不提供一个看起来能编辑、改了却可能有副作用的输入框。
+`ini_field_info.py` 另外两张表：`RANGE_FIELDS`/`get_range_limits()` 给有官方明确取值范围的数字字段用，保存时整体校验范围，越界整个中止保存（不自动纠正）；`ALWAYS_READONLY_FIELDS` 给游戏自己生成、没有官方文档说明用途的字段用，一律只读。
 
-`cluster_config_tab.py` 的"Cluster"标签页是三列布局（原来是两列，补全
-默认值之后内容变多，两列装不下）：NETWORK 单独一列（字段最多，拆不
-开），GAMEPLAY+MISC 一列，SHARD 一列——分组按字段数量配平，不是按"看起
-来像不像一类"配对。
+`cluster_config_tab.py` 的"Cluster"标签页是三列布局：NETWORK 单独一列（字段最多），GAMEPLAY+MISC 一列，SHARD 一列——按字段数量配平。
 
-**坑**：`ini_parser.py`/`config_manager.py` 通用的"猜字段类型"逻辑（数
-字/布尔/字符串）会把纯数字密码（比如 `cluster_password = 0`）误转成
-`int`，真值判断 `if password` 就会把密码 `"0"` 当成"没设密码"。
-`ini_field_info.NO_TYPE_COERCE_FIELDS` 记录哪些字段必须永远当字符串，
-读（`ini_parser.py`）写（`config_manager.set_cluster_option`）两条路径
-都要查这张表。
+**坑**：`ini_parser.py`/`config_manager.py` 通用的"猜字段类型"逻辑会把纯数字密码（比如 `cluster_password = 0`）误转成 `int`，真值判断 `if password` 就会把密码 `"0"` 当成"没设密码"。`ini_field_info.NO_TYPE_COERCE_FIELDS` 记录哪些字段必须永远当字符串，读写两条路径都要查这张表。
 
 ### 樱花映射 (`core/sakura_frp.py` / `core/frpc_process.py` / `gui/sakura_tab.py`)
 
-通过 SakuraFrp（樱花内网穿透 / natfrp.com）的开放 API 把本地专用服务器映
-射到公网，配合饥荒自带的 `c_connect("ip", port)` 直连功能实现好友联机，不
-需要路由器端口转发（给 CGNAT 后面没有公网 IP 的用户用）。**跟"回档"/
-`backup_manager.py` 的 zip 备份是三套完全独立的机制**，不要混为一谈。
+通过 SakuraFrp（樱花内网穿透 / natfrp.com）的开放 API 把本地专用服务器映射到公网，配合饥荒自带的 `c_connect("ip", port)` 直连功能实现好友联机，不需要路由器端口转发。跟"回档"/zip 备份是三套完全独立的机制。
 
-`core/sakura_frp.py` 是纯 `urllib.request` 实现的 REST 客户端（base URL
-`https://api.natfrp.com/v4`，Bearer Token 认证）。**必须给请求带上一个自
-定义 `User-Agent`**——实测确认樱花的 Cloudflare WAF 会把默认的
-`Python-urllib/x.y` 当脚本流量直接拦掉（`error code: 1010`），换成任意一
-个不在黑名单里的 UA（不需要伪装浏览器）就正常了。**不在本地存隧道 ID 映
-射表**——樱花账号里的隧道才是权威数据源，靠命名约定现查 `list_tunnels()`
-匹配发现已有隧道。**隧道名不是"dstcamp-存档名-分片名"这种可读拼接**——
-樱花的隧道名规则是 3-20 个字符、只能用字母数字和下划线（连字符都不允
-许，这条是实测报错确认的），存档目录名长度/字符集不可控，直接拼接大概
-率超长/带非法字符，改用 `sanitize_tunnel_name()`（对 `(存档目录名, 分片
-名)` 取短哈希 `dc_<12位hex>`）保证格式始终合法、且同一分片每次都能算出
-同一个名字，`find_dstcamp_tunnel()` 才能确定性地现查匹配；人类可读的标
-识改放进 `create_tunnel()` 的 `note` 字段（这个字段没有字符限制），方便
-在樱花网页后台对照。只有 API Token 本身
-（`app_settings.get_sakura_token()`/`set_sakura_token()`）和上次选中的节
-点 ID 是真正持久化的数据。
+`core/sakura_frp.py` 是纯 `urllib.request` 实现的 REST 客户端（base URL `https://api.natfrp.com/v4`，Bearer Token）。**必须带自定义 `User-Agent`**——樱花的 Cloudflare WAF 会把默认的 `Python-urllib/x.y` 当脚本流量拦掉（`error code: 1010`）。**不在本地存隧道 ID 映射表**——樱花账号里的隧道是权威数据源，靠命名约定现查 `list_tunnels()` 匹配。**隧道名不是可读拼接**——樱花隧道名规则是 3-20 字符、只能字母数字和下划线（连字符都不允许），用 `sanitize_tunnel_name()` 对 `(存档目录名, 分片名)` 取短哈希 `dc_<12位hex>`，人类可读标识放进 `create_tunnel()` 的 `note` 字段。只有 Token（`app_settings.get_sakura_token()`）和上次选中节点 ID 是真正持久化的数据。
 
-**节点能不能用、隧道数上限、流量配额，都以 `GET /user/info`（`get_user_
-info()`）返回的真实账号数据为准，不用写死的猜测**：`tunnels` 字段是这个
-账号真正的隧道数上限（取代原来猜的"免费版=2"）；`group.level` 是账号自
-己的用户组等级，拿来跟每个节点的 `vip` 字段比，算出这个账号能不能用该节
-点（`/nodes` 本身不会说"你能不能用"，选了用不了的节点建隧道会报
-`"当前用户 [xxx] 无权使用该节点, 请检查 VIP 是否到期"`，这条已经实测确
-认过）；`traffic` 是 `[今日已用, 总剩余]` 字节数，配额显示直接用这个，
-不用再靠"没有查配额接口"这个假设去猜。节点数量常常有几十上百个，
-`gui/sakura_tab.py._NodeSelectDialog` 把节点选择做成一个多列网格弹窗
-（`_NODE_GRID_COLS` 控制列数），VIP 等级不够的节点置灰禁用但仍然显示出
-来（不是隐藏），让用户知道"还有这些，只是现在用不了"。
+**节点能不能用、隧道数上限、流量配额，都以 `GET /user/info`（`get_user_info()`）返回的真实账号数据为准，不用写死的猜测**：`tunnels` 是账号真正的隧道数上限；`group.level` 跟每个节点的 `vip` 字段比对，判断能不能用该节点（选了用不了的报 `"当前用户 [xxx] 无权使用该节点..."`）；`traffic` 是 `[今日已用, 总剩余]` 字节数。节点数量常有几十上百个，`gui/sakura_tab.py._NodeSelectDialog` 做成多列网格弹窗，VIP 不够的节点置灰但仍显示。
 
-**饥荒的直连（`c_connect`）只能连主世界，副世界（Caves）连不了**——已经
-查过 Klei 官方论坛确认，直连副世界端口会一直 `ID_DST_USER_CONNECTION_
-FAILED`，下洞永远是游戏内部自动跳转分片，不是玩家自己拿另一个地址连过
-去。所以 `_render_shard_rows()` 只有主分片（`server.ini` 的 `[SHARD]
-is_master`，不是猜文件夹名字叫不叫 "Master"）的"复制直连代码"按钮是可
-点的，副分片的按钮永远置灰（不隐藏，鼠标悬浮有 Tooltip 说明原因）——但
-副分片自己的隧道/端口回写照样要做，只是不提供直连码，因为跨分片传送这
-条路径仍然要靠隧道把 Caves 的 `server_port` 暴露到公网。
+**饥荒的直连（`c_connect`）只能连主世界，副世界（Caves）连不了**（Klei 官方论坛确认，下洞是引擎内部自动跳转，不是玩家自己连另一个地址）。`_render_shard_rows()` 只有主分片（`server.ini` 的 `[SHARD] is_master`）的"复制直连代码"按钮可点，副分片按钮永远置灰（不隐藏，有 Tooltip 说明）——但副分片自己的隧道/端口回写照样要做，因为跨分片传送仍要靠隧道把 Caves 的 `server_port` 暴露到公网。
 
-分片状态区（`_shards_frame`）改成 `grid()` 而不是每行各自 `pack()` 一个
-子 `Frame`——"已映射"和"未映射"两种行内容长度不一样，各自 `pack()` 会导
-致"复制直连代码"按钮在不同分片行里出现在不同的横坐标，`grid()` 让所有
-行共享同一套列宽，按钮天然对齐。
+**核心硬约束（决定"开启樱花映射"整个流程的形状）**：樱花分配的远程端口来自跨用户共享的端口池，没法指定"要哪个具体端口"；但 Master/Caves 之间的跨分片传送要求"另一个分片端口"能通过外网访问到，这个值就是那个分片自己 `server.ini` 的 `server_port`。所以 `sakura_tab.py._enable_mapping()` 的顺序是：①对存档里每一个分片创建/复用隧道 → ②读回樱花实际分配的远程端口 `R` → ③`edit_tunnel()` 把隧道自己的 `local_port` 也改成 `R`（隧道变成 `R<->R` 直通）→ ④把 `R` 写回这个分片的 `server_port` → ⑤分片真在运行才提示去"本地服务器"页签重启生效。这五步必须对一个存档的所有分片一起做，分片数超过账号真实隧道上限的存档直接拦截提示。
 
-**这个页签下所有容器一律用 `BgFrame`，不能用 `ttk.Frame`**——`ttk.Frame`
-是不透明实色容器，套多层会把自定义背景图整个挡掉，跟 `gui/theme.py` 一
-节里"容器要透出背景图必须用 BgFrame"是同一条硬性规则，之前这个页签写的
-时候漏掉了，已经全部改正。**纯说明性文字也一律不用 `ttk.Label`**（同样
-是不透明背景，哪怕文字是空字符串也会占一整行不透明的"空白条"）——改用
-`SakuraTab._label()`（内部实现跟 `gui/toolbar_widgets.make_toolbar_label()`
-一样是 `BgFrame` + `create_text`，多一个自定义颜色参数，因为这个页签需要
-红色错误提示/灰色"未映射"这些不同颜色，`make_toolbar_label()` 本身颜色写
-死是 `theme.TEXT`）。状态/错误提示行（`_status_frame`）没有错误时干脆不
-放任何控件，而不是放一个空文字的 Label——避免"没有文字、但还有一条不透
-明背景"这种视觉上说不清是什么的空白条。
+`core/frpc_process.py`（`FrpcStatus`/`FrpcProcess`/`FrpcManager`）结构照抄 `dedicated_server.py` 的三件套，唯一区别是 frpc 没有优雅关闭指令，`stop_blocking()` 直接 `terminate()`→`kill()`。**frpc 本地进程的启停跟着 DST 分片本身走**（`_do_start_shard()`/`_stop_and_then()` 调用 `sakura_tab.maybe_start_frpc()`/`stop_frpc_for_shard()`），但**停止服务器不会删除远程隧道**——隧道要不要删只由页签里显式点"关闭映射"决定。
 
-**账号信息卡片**（用户组/限速/可用流量）照抄樱花官网自己"账号信息"卡片
-的三列布局，数据来自 `/user/info`：`group.name`（用户组名）、`speed`
-（接口自带的现成字符串如 `"10 Mbps"`，不用自己拼）、`traffic[1]`（总剩
-余字节数，换算成 GiB，跟官网单位一致——是 1024 进制，不是十进制 GB）。
+frpc 启动方式是官方 `-f <Token>:<隧道ID>`（不是传统 frp 的 `-c <配置文件>`），DSTCamp 不需要本地维护 frpc 配置文件。"这个分片有没有配置过映射"判断必须零网络请求，靠 `cache_dir("frpc_config")/f"{cluster目录名}__{shard名}.txt"`（内容是隧道 ID）这个可重建的缓存指针，不是权威数据源。`cluster_config_tab.py` 用同一个检查（`sakura_tab.has_active_mapping()`）决定要不要把 `server_port` 输入框临时设只读——**没有改动 `ALWAYS_READONLY_FIELDS` 这张全局表**，改错了会波及所有没用这个功能的用户。
 
-**核心硬约束（决定了"开启樱花映射"整个流程的形状）**：樱花分配的远程端口
-来自一个跨用户共享的端口池，没法指定"要哪个具体端口"；但 Master/Caves 两
-个分片之间的跨分片传送（下洞/回地面），要求 DST 引擎告诉客户端的"另一个
-分片端口"能通过外网访问到——这个值就是那个分片自己 `server.ini` 的
-`server_port`。所以 `sakura_tab.py._enable_mapping()` 的顺序是：①对存档
-里*每一个*分片创建（或复用）隧道 → ②读回樱花实际分配的远程端口 `R` →
-③`edit_tunnel()` 把隧道自己的 `local_port` 也改成 `R`（让隧道变成
-`R<->R` 直通）→ ④把 `R` 写回这个分片的 `server_port`（`config_manager.
-set_shard_option`/`save_shard_config`）→ ⑤如果这时候分片真的在运行才提
-示用户去"本地服务器"页签重启生效（没在运行就不弹这句没意义的提醒，见
-`_on_enable_done()`）。这五步必须对一个存档的所有分片一起做，不能只挑一
-个——隧道数上限以 `get_user_info()` 查到的账号真实 `tunnels` 字段为准
-（不是写死的"免费版=2"，见上面"节点能不能用"一段），分片数超过这个上限
-的存档直接拦截提示，不做变通。
+**`tools/frpc/frpc.exe` 必须是樱花后台"软件下载"页单独提供的独立版，不能从 SakuraFrp Launcher 安装目录复制**——Launcher 那份锁死，不管传什么参数都只打印"not intended to be run directly"退出。独立版跟 `tools/ktools/ktech.exe` 同一套模式：gitignore 掉，开发者手动放一份，`build_exe.py` 的 `tools/` 整体打包逻辑自动带上。
 
-`core/frpc_process.py`（`FrpcStatus`/`FrpcProcess`/`FrpcManager`）结构照
-抄 `dedicated_server.py` 的 `ServerStatus`/`ServerProcess`/`ServerManager`
-三件套，唯一区别是 frpc 没有 `c_shutdown()` 这种优雅关闭指令，`stop_
-blocking()` 直接 `terminate()`→`kill()`。**frpc 本地客户端进程的启停跟着
-DST 分片本身的启停走**（`local_service_tab.py._do_start_shard()` 调
-`sakura_tab.maybe_start_frpc()`，`_stop_and_then()` 链式调用
-`sakura_tab.stop_frpc_for_shard()`），但**停止服务器不会删除远程隧道**
-——隧道要不要删只由页签里显式点"关闭映射"决定（会调 `delete_tunnel()`）。
-
-frpc 启动方式是官方"frpc 基本使用指南"里的 `-f <Token>:<隧道ID>`（不是传
-统 frp 的 `-c <配置文件>`）——frpc 自己拿 Token 向樱花服务器现拉配置，
-DSTCamp 不需要在本地生成/维护一份 frpc 配置文件，只需要知道这个分片对应
-的隧道 ID。"这个分片有没有配置过映射"这个判断必须零网络请求（`_do_start_
-shard` 在 Tk 主线程同步跑），做法是查本地一个纯文本指针文件是否存在：
-`cache_dir("frpc_config") / f"{cluster目录名}__{shard名}.txt"`（内容就是
-隧道 ID 本身，"开启映射"时写入，"关闭映射"时删除）——这是运行时可重建的缓
-存指针，不是"隧道 ID 映射表"那种权威数据源，随时可以靠 `list_tunnels()`
-重新核实/覆盖写入。`cluster_config_tab.py` 也用同一个检查
-（`sakura_tab.has_active_mapping()`）决定要不要把 `server_port` 输入框临
-时设成只读——**没有改动 `ALWAYS_READONLY_FIELDS` 这张全局表**，那张表是
-"所有存档所有分片永远只读"，这里是"这一个分片配置过映射才只读"，改错了会
-波及所有没用这个功能的用户。
-
-**`tools/frpc/frpc.exe` 必须是樱花后台"软件下载"页单独提供的独立版
-frpc，不能从 SakuraFrp Launcher 的安装目录（`SakuraFrpLauncher/frpc.exe`）
-里复制**——已经实测确认 Launcher 那份是锁死的，不管传什么参数都只打印
-"This file ... is not intended to be run directly"然后退出，只认它自己
-的 SakuraFrpService 调用。独立版下载后跟 `tools/ktools/ktech.exe` 同一套
-模式：gitignore 掉，开发者手动放一份进去，`build_exe.py` 现有的整个
-`tools/` 目录打包逻辑会自动带上，不需要单独加 `--add-data`。
+这个页签所有容器一律用 `BgFrame`，不能用 `ttk.Frame`（不透明会挡背景图）；说明性文字也不用 `ttk.Label`，用 `SakuraTab._label()`（`BgFrame`+`create_text`，带自定义颜色参数）。状态/错误提示行没有错误时干脆不放任何控件，避免"空文字但还有一条不透明背景"的视觉空白条。分片状态区用 `grid()` 而不是各行各自 `pack()`，让"已映射"/"未映射"两种长度不同的行内容仍共享同一套列宽，按钮天然对齐。
 
 ### 本地服务器启动前的令牌检查 (`gui/local_service_tab.py`)
 
-点"启动"/"全部启动"时，如果 `cluster_token.txt` 缺失或格式不像真令牌（`token_manager.is_valid_token()`），弹一个"是否仍要继续"确认框——专用服务器进程能拉起来，但连不上 Klei 账号验证，会直接启动失败退出。**唯一例外是"离线模式"**（`cluster.ini` 的 `NETWORK.offline_cluster`），开了这个本来就不需要令牌，直接放行。
+点"启动"/"全部启动"时，如果 `cluster_token.txt` 缺失或格式不像真令牌，弹一个"是否仍要继续"确认框。**唯一例外是"离线模式"**（`offline_cluster`），直接放行。`_confirm_token_ok(cluster)` 只在"启动"入口调一次，不是对每个分片各调一次——同一存档下所有分片共用同一个令牌文件。
 
-`_confirm_token_ok(cluster)` 只在"启动"这个动作的入口调一次，不是对每个分片各调一次：实际启动逻辑拆到了 `_do_start_shard()`（不含检查），`_start_all()` 只在循环外检查一次——同一个存档下所有分片共用同一个令牌文件，每个分片各自弹一次会导致"全部启动"要连续确认好几次一模一样的对话框。
+**`_ShardRow` 的启动/停止按钮不能缓存构造时传入的 `cluster` 对象**，必须点击那一刻现查 `tab._get_cluster()`：`_refresh_shard_rows()` 只有分片集合/存档路径变化时才重建这些行，如果之后刷新过（`discover_environment()` 造出全新对象）但分片集合没变，闭包里的 `cluster` 就是刷新前的旧对象，字段可能过时。
 
-**`_ShardRow` 的启动/停止按钮不能缓存构造时传入的 `cluster` 对象**，必须点击那一刻现查 `tab._get_cluster()`：`_refresh_shard_rows()` 只有分片集合/存档路径变化时才会真的重建这些行，路径没变的话行对象一直留着，闭包里存的 `cluster` 就还是当初构造时那个引用——如果之后发生过一次"刷新"（`discover_environment()` 会造出全新的 Cluster 对象）但分片集合没变，这行闭包里的 `cluster` 就是刷新前的旧对象，`token_path` 等字段可能是过时的（曾经导致"启动"单分片误报"令牌未设置"而"全部启动"没事，因为后者每次都现查）。
+`stop_shard()`/关闭控制台标签页共用 `_stop_and_then(cluster, shard, on_done)`（封装"停止分片+转回 Tk 主线程执行回调"）。控制台标签页"关闭窗口"按钮：世界还在运行时先弹确认框，已停止的直接关不弹确认。
 
-`stop_shard()`/关闭控制台标签页共用 `_stop_and_then(cluster, shard, on_done)` 这个辅助方法（封装"停止分片+转回 Tk 主线程执行回调"）。控制台标签页自己的"关闭窗口"按钮：世界还在运行时点击会先弹确认框（关窗口=停服务器，比单纯关标签页重得多），已经停止的直接关、不弹确认。
-
-**跨存档启动锁**：`ServerManager` 是全局单例（`_procs` 不分存档），技术上能同时管理多个不同存档的分片进程，但这个应用不打算支持"同时跑多个存档"这种用法——多个存档的服务器同时跑很容易端口冲突/抢资源。`_other_cluster_running(cluster)`（跟 `sakura_tab.py._running_shard_names()` 是同一个"跨 tab 查 ServerManager"套路）判断除了当前选中存档之外还有没有别的存档在跑，有的话 `_update_start_lock_state()` 锁住"启动"/"全部启动"（不锁"停止"——当前存档自己已经在跑的分片还是要能停），并弹出一条 `_other_running_banner` 说明是哪个存档。这个检查每次 `_poll()`（150ms 一次）都会重新算一遍，不需要手动刷新。顶部全局存档下拉框（`app.py._cluster_label_with_status()`）也会在每次点开菜单时（`tk.Menu` 的 `postcommand`）现查一遍哪些存档在运行，标一个"[运行中]"后缀——纯展示，不是这里锁定逻辑的数据来源。
+**跨存档启动锁**：`ServerManager` 是全局单例，技术上能同时管理多个不同存档的分片进程，但这个应用不支持"同时跑多个存档"（容易端口冲突）。`_other_cluster_running(cluster)` 判断除当前选中存档外还有没有别的存档在跑，有的话锁住"启动"/"全部启动"（不锁"停止"），每次 `_poll()`（150ms 一次）重新算一遍。
 
 ### 分片就绪判断与控制台标签页 (`core/dedicated_server.py` / `gui/local_service_tab.py`)
 
-分片进程 RUNNING 不等于世界真的加载完、能进游戏——`ServerProcess.
-world_ready` 才是"公告"/"玩家列表"/"回档"按钮启用的依据。Master 和非
-Master（Secondary，旧版本叫 Slave）判断不是一回事：Master 看日志里的
-`reset() returning`（玩家进游戏不需要等 Caves 连上）；Secondary 看
-`... is now ready!`。**坑**：游戏进程早期会先跑一遍只建 modindex 的预
-备流程，日志跟正式加载存档长得一模一样，两段都会打印 `reset()
-returning`——必须先看到 `about to start a shard with these settings`
-这一行才能开始判断就绪，否则 Master 会在预备阶段就被误判"已就绪"。
+分片进程 RUNNING 不等于世界真的加载完——`ServerProcess.world_ready` 才是"公告"/"玩家列表"/"回档"按钮启用的依据。Master 看日志里的 `reset() returning`；Secondary（旧版叫 Slave）看 `... is now ready!`。**坑**：游戏进程早期会先跑一遍只建 modindex 的预备流程，两段都会打印 `reset() returning`——必须先看到 `about to start a shard with these settings` 才能开始判断就绪，否则 Master 会在预备阶段被误判"已就绪"。
 
-"全部启动"依次启动每个分片会把控制台标签页切到最后一个分片，结束后
-`_select_master_console_tab()` 统一切回主分片（玩家最关心主世界，公告
-也发去主世界）。切换全局存档选择器时用 `Notebook.hide()`（不是
-`forget()`）隐藏不属于当前存档的控制台标签页，避免在另一个存档下还能
-对旧存档发"公告"/"关闭窗口"；进程和日志读取不受影响，切回来历史还在。
+"全部启动"依次启动每个分片会把控制台标签页切到最后一个分片，结束后 `_select_master_console_tab()` 统一切回主分片。切换全局存档选择器时用 `Notebook.hide()`（不是 `forget()`）隐藏不属于当前存档的控制台标签页，避免对旧存档发指令；进程和日志读取不受影响，切回来历史还在。
+
+### Steam 安装/库文件夹发现 (`core/steam_discovery.py`)
+
+找 Steam 装在哪、DST 装在哪个库只有这一份实现（读注册表 `HKEY_CURRENT_USER\Software\Valve\Steam` + 解析 `libraryfolders.vdf` 找全部库文件夹，游戏可能装在跟 Steam 本体不同的库/盘符）。所有需要"找 Steam 装在哪"的地方（`modinfo_reader.py`/`character_icons.py`/`dedicated_server.py`）都用 `find_all_steam_libraries()` 遍历全部库，不能只查第一个根目录——曾经各模块各写一份硬编码猜测路径的弱版本，导致在别人机器上 mod 图标/名称读不出来。
 
 ### Mod 配置解析 (`core/modinfo_reader.py`)
 
 `parse_modinfo()` 提取 `configuration_options`，绝大多数 mod 靠纯文本/正则覆盖。**唯一例外 `core/lua_sandbox.py`**：极少数 mod 用代码动态拼选项，退化到一个收窄的 Lua 5.1 沙箱（`lupa.lua51`）。关键约束：只在用户打开某个 mod 配置弹窗时触发；永远在**子进程**里跑、带硬超时；子进程里 `os`/`io`/`require`/`load`/`debug` 全局置空；任何失败一律返回 `None`，**从不猜测**。
 
-`resolve_full_modinfo()` 跑一次有明显耗时，`core/mod_resolve_cache.py` 按 workshop_id 做磁盘持久化缓存（`cache_dir("mod_full_resolve")`，`modinfo.lua` mtime 失效判断），配合内存缓存一起用，避免每次启动都重新跑一遍沙箱解析。
+`resolve_full_modinfo()` 跑一次有明显耗时，`core/mod_resolve_cache.py` 按 workshop_id 做磁盘持久化缓存（`modinfo.lua` mtime 失效判断），避免每次启动都重新跑一遍沙箱解析。
+
+`find_mod_folder(workshop_id, platform, wegame_client_mods_dir)`/`list_installed_mod_ids(platform, wegame_client_mods_dir)` 按平台分流：`platform=Platform.WEGAME` 时只查调用方传入的 `wegame_client_mods_dir`（`gui/mod_manager_tab.py._resolve_mod_folder_args()` 统一算），不查 Steam 那两条路径——这是被动加载路径，没配置过就优雅返回空/None，不弹目录选择框打扰用户。`core/mod_icons.py` 的图标缓存目录也按平台物理隔离（`cache_dir("mod_icons")/steam/` vs `.../wegame/`）。
+
+`gui/mod_manager_tab.py` 的"Mod位置:"行显示当前"存档类型"筛选器对应平台的客户端 mods/ 源头目录：Steam 用 `find_game_mods_dir()`（支持 `app_settings.get_steam_mods_path()` 手动覆盖，没设置才走自动识别）；WeGame 用 `find_wegame_client_dir(root)/"mods"`。改路径/重新检测成功后都会带一次 `_refresh_mods(full=True)`。
 
 ### Mod 同步到服务器 (`core/mod_sync.py`)
 
-两条独立路径同时做，不是二选一：①在线——无条件把所有已启用 mod 写进 `mods/dedicated_server_mods_setup.lua`，服务器启动时自己联网下载；②本地复制兜底——只有本地能找到内容才复制到 `ugc_mods/<cluster>/<shard>/content/322330/<id>/`，同时复制 `appworkshop_322330.acf` 校验文件（没有这个服务器不认为 mod 已生效）。
+两条路径，都不复制：①V2(UGC，Steam Workshop 订阅的)——启动参数加 `-ugc_directory <这台机器 Steam 的 steamapps/workshop 目录>`（`dedicated_server.py.build_launch_args()`，路径来自 `find_shared_ugc_directory()`），真机验证过服务器会直接读 Steam 自己维护的 workshop 内容，不会再往每个 cluster/shard 下建一份 `ugc_mods`；②V1/手动装的——把服务器**整个** `mods/` 目录换成指向客户端 `mods/` 文件夹的目录联接(junction)，不是逐个 mod 建联接。WeGame 没有 Workshop 缓存机制，只用得上②。两边都是"客户端有什么服务器就看到什么"，客户端更新了服务器立刻可见。
 
-本地内容判断用 `modinfo_reader.find_mod_content_folder()`，**不是** `find_mod_folder()`——后者要求必须有 `modinfo.lua`，是给"需要解析 mod 名字/配置项"的场景用的；前者只要求 workshop 内容目录存在且非空，专给同步场景用。长期没更新的老旧 workshop 内容可能是 `<id>_legacy.bin` 格式（没有解压），服务器自己联网下载的也是同一个 bin、照样能加载——原样复制即可，不需要先解压。
+**坑（决策记录，不要自作主张改回逐个 mod 建联接）**：一开始按 mod id 逐个建联接，用户核实两边 `mods/` 内容基本一致后明确要求改成整个目录一次性联接——`plan_mod_sync()`/`apply_mod_sync()` 因此不再依赖具体存档/mod id。代价：服务器自己独立的 `mods/dedicated_server_mods_setup.lua`（在线自动下载列表）不再由 DSTCamp 写；如果服务器 `mods/` 下有客户端没有的独有内容，整体替换成联接后会丢失——`plan_mod_sync()` 算出 `lost_on_replace` 名单，GUI 层弹窗必须列出来确认后才能删除+建联接。
+
+Windows 目录联接（`mklink /J`，不是符号链接）不需要管理员权限/开发者模式；`os.path.isjunction()`（3.12+）才能正确识别联接，`Path.is_symlink()`/`os.path.islink()` 对联接永远返回 `False`。删除联接本身必须用 `os.rmdir()`（只删链接，不牵连目标真实内容）；`shutil.rmtree()` 对着联接会直接抛 `OSError`——但删除"真实文件夹"换成联接这一步本身有数据丢失风险，`plan_mod_sync()`/`apply_mod_sync()` 分两步：前者只读计算，GUI 层弹窗确认后才调后者真正执行。
+
+`client_mods_dir` 由调用方（`gui/mod_manager_tab.py`）按 `Cluster.platform` 传入：Steam 用 `find_game_mods_dir()`；WeGame 用 `find_wegame_client_dir(root)/"mods"`，第一次同步时 `_resolve_wegame_sync_dirs()` 弹目录选择框让用户手动指一次，存进 `app_settings` 长期记住。
 
 ### 纹理转换 (`core/tex_convert.py`)
 
@@ -371,8 +234,12 @@ Click 实现：`save`/`mod`/`cluster`/`env` 命令分组，全局 `--klei-path` 
 
 `gui/app.py` 只保留 `DSToolsApp` 主窗口本体 + `main()`；六个页签各自拆成独立模块：`local_service_tab.py`/`save_browser_tab.py`/`mod_manager_tab.py`/`world_settings_tab.py`/`cluster_config_tab.py`/`sakura_tab.py`。三个跨页签共享的小控件/弹窗单独成模块：`toolbar_widgets.py`（`make_toolbar_label`/`make_filter_chips`）、`mod_sync_log_dialog.py`（`ModSyncLogDialog`）、`background_dialog.py`（`BackgroundImageDialog`）。
 
-**页签类构造函数故意不接 `app: DSToolsApp` 类型注解**（只写 `app`，鸭子类型）——反过来做类型注解会跟 `app.py` 形成循环 import。
+**页签类构造函数故意不接 `app: DSToolsApp` 类型注解**（只写 `app`，鸭子类型）——反过来会跟 `app.py` 形成循环 import。
 
-**页签 `__init__` 里不能塞重活**：默认打开的页签固定是"本地服务器"，其余五个页签的完整数据加载必须只由 `_refresh()`（当前页签立即刷新，其它标记 `_stale_cluster_tabs`）和 `_on_tab_select()`（切到 stale 页签时才补刷新）触发懒加载——否则不管用户停在哪个页签，几个页签的重活全部在启动瞬间抢着跑，实测能把启动时间从 0.5~0.9 秒拖到 3.86 秒。
+顶部存档栏"存档类型"(Steam/WeGame) 筛选器和"存档:"下拉框共用同一个 `cluster_bar_inner`（`BgFrame`/`tk.Canvas`）——两个 Menubutton 靠 `pack(side=tk.LEFT)` 自动前后排列；各自的说明文字是 `create_text()` 画在同一张 Canvas 上的，不会跟着 pack 顺序自动挪位置，`_redraw_archive_label()` 的 x 坐标必须现查 `_platform_menu_btn.winfo_x()+winfo_width()`（同类坑见上面"自定义背景图片"一节的 Configure 时序坑）。`get_clusters()` 按 `self._platform_var` 筛过滤，只有当前选中平台的存档出现在"存档:"下拉框里。
+
+状态栏（`_update_status()`）、"Mod管理"页签的"Mod位置:"行都要跟着"存档类型"筛选器切换显示 Steam/WeGame 各自的数据，不能用 `self.env.clusters`/`self.env.klei_root`/`self.env.user_id` 这些未经筛选的字段——`DSTEnvironment` 因此有 `wegame_user_id`（跟 `wegame_klei_root` 配对），`_on_platform_change()` 切换筛选器时要显式调 `_update_status()`。
+
+**页签 `__init__` 里不能塞重活**：默认打开的页签固定是"本地服务器"，其余页签的完整数据加载必须只由 `_refresh()`（当前页签立即刷新，其它标记 `_stale_cluster_tabs`）和 `_on_tab_select()`（切到 stale 页签时才补刷新）触发懒加载——否则不管用户停在哪个页签，几个页签的重活全部在启动瞬间抢着跑，实测能把启动时间从 0.5~0.9 秒拖到 3.86 秒。
 
 **下拉框一律用 `gui/menu_combo.py` 的 `MenuCombo`，禁止用 `ttk.Combobox`**：实测 `ttk.Combobox` 在这台机器上有个选中后内容消失、只能靠真实鼠标点击才能修复的渲染缺陷。同理**滑块用 `gui/slider.py` 的 `Slider`，禁止用 `ttk.Scale`**：实测点击滑轨会跳到随机位置而不是点击处，两个都是 ttk 在这台机器上确认损坏、改用自绘替代品。

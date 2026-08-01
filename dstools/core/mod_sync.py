@@ -1,41 +1,61 @@
-"""把某个 Cluster 已启用的 mod 同步到专用服务器能实际加载的位置。
+"""让专用服务器能实际加载到本地客户端已经装好的 mod。
 
 "Mod管理"标签页改配置只会写进存档目录下的 modoverrides.lua——那是给游戏
-客户端/服务器*读取要加载哪些 mod*用的，但专用服务器要真正把 mod 内容跑
-起来，还需要另外两处完全独立的东西：
-1) 在线方式：服务器 mods/dedicated_server_mods_setup.lua 里每行
-   `ServerModSetup("<workshop_id>")`，服务器启动时自动从 Workshop 下载/
-   更新对应 mod。
-2) 本地复制方式：把本地客户端已经下载好的 mod 内容直接放到服务器每个
-   分片自己的 ugc_mods/<cluster>/<shard>/content/322330/<mod_id>/ 下，
-   同时还要把 Steam 的校验文件 appworkshop_322330.acf 一并放过去——没
-   有这个文件，服务器就算能看到 mod 内容也不会认为它"已生效"（这一点
-   Klei 官方文档没有写，是用户自己验证出来的经验）。
+客户端/服务器*读取要加载哪些 mod*用的，专用服务器要真正把 mod 内容跑
+起来，靠的是另外两处完全独立的东西：
 
-两种方式同时采用而不是二选一：在线方式下载失败率不算低，本地复制作为
-兜底；两者互不冲突（服务器发现本地已有文件时不会重新下载）。
+1) V2(UGC) mod（Steam Workshop 订阅的）：**不复制**。真机验证过，专用
+   服务器启动时加 `-ugc_directory <这台机器 Steam 的 steamapps/workshop
+   目录>`（见 core/dedicated_server.py 的 build_launch_args()/
+   modinfo_reader.py 的 find_shared_ugc_directory()）之后，会直接读
+   Steam 客户端自己已经维护好的 workshop 内容，完全不会在每个
+   cluster/shard 下再各建一份 ugc_mods——一份内容所有存档共享，客户端
+   更新了服务器立刻用到最新版本。
+
+2) V1/手动装的 mod（客户端自己 mods/ 文件夹里的内容，不是 Workshop 订
+   阅内容）：把服务器自己的整个 mods/ 目录**整体**换成一个指向客户端
+   mods/ 文件夹的目录联接(junction)——用户核实过两边文件夹内容基本一致
+   （服务器那份多出来的几个是本地测试用的），比逐个 mod 建联接更省事。
+   联接不占额外空间，客户端更新了服务器立刻可见，Windows 建目录联接不
+   需要管理员权限/开发者模式（真机验证过）。
+
+   WeGame 版没有第 1) 条这套 Workshop 内容缓存机制（真机验证 + 多方社区
+   资料互相印证过：mod 内容就直接放在两个产品各自的 mods/ 文件夹里，没
+   有第二套机制）——只有第 2) 条这一种情况，逻辑完全一样，只是
+   client_mods_dir/install_dir 换成 WeGame 版客户端/专用服务器各自的
+   mods/ 文件夹（见 modinfo_reader.find_wegame_client_dir()/
+   find_wegame_server_dir()，根目录来自用户手动选一次的
+   app_settings.get_wegame_root_path()，没有可靠的注册表项能自动找）。
+
+   **坑**：服务器自己的 mods/ 目录下有 dedicated_server_mods_setup.lua/
+   modsettings.lua 这些"控制文件"，一旦整个目录变成联接，这些就是客户
+   端那份的文件，不再是服务器独立的一份——所以不再由 DSTCamp 写
+   dedicated_server_mods_setup.lua（在线自动下载）了，服务器现在完全依
+   赖"客户端已经下载好的内容"这一份真源，不再有单独的在线下载兜底路径。
+   如果服务器这个位置已经是真实文件夹（无论是旧版本复制方式留下的、还
+   是官方安装自带的），得先删除才能建联接，这一步有真实数据丢失风险，
+   必须由调用方（GUI 层）先弹窗确认——这里的 plan_mod_sync() 只负责算出
+   "删除后会丢失哪些服务器独有的子项"（ModSyncPlan.lost_on_replace），
+   不会未经确认就删；apply_mod_sync() 假定调用方已经拿到确认，直接执行。
 """
 
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dstools.core.mod_manager import load_mod_overrides
-from dstools.core.modinfo_reader import (
-    DST_APP_ID, find_game_mods_dir, find_mod_content_folder, find_workshop_acf_path, parse_modinfo,
-)
 from dstools.i18n import t
 from dstools.models import Cluster
 
 
 def get_enabled_mod_ids(cluster: Cluster) -> list[str]:
     """并集 cluster 下每个分片 modoverrides.lua 里 enabled=True 的 mod，
-    去掉 "workshop-" 前缀，返回排序去重后的纯数字 ID 列表。
-
-    游戏要求各分片的 mod 状态保持一致，取并集只是为了对偶尔的临时不
-    一致更容错，不是假设某个分片才是唯一真源。
-    """
+    去掉 "workshop-" 前缀，返回排序去重后的纯数字 ID 列表。只用于"这个
+    存档有没有启用任何 mod"这个前置判断（没启用就不需要点同步），跟下面
+    整个 mods/ 目录联接的动作本身无关——那是按这台机器一次性生效的，不
+    分具体是哪个存档。"""
     ids: set[str] = set()
     for shard in cluster.shards:
         if not shard.mod_overrides_path:
@@ -47,138 +67,110 @@ def get_enabled_mod_ids(cluster: Cluster) -> list[str]:
     return sorted(ids)
 
 
+def _same_target(junction: Path, target: Path) -> bool:
+    try:
+        return junction.resolve() == target.resolve()
+    except OSError:
+        return False
+
+
+@dataclass
+class ModSyncPlan:
+    """plan_mod_sync() 的结果——只读计算，不做任何文件系统改动。"""
+    client_mods_dir: Path | None = None       # 客户端的 mods/ 文件夹，None 表示找不到，没法建联接
+    already_linked: bool = False              # 服务器 mods/ 已经是指向它的联接，不需要做任何事
+    needs_confirm_delete: bool = False        # 服务器 mods/ 目前是真实文件夹/别的联接，删除前需要用户确认
+    lost_on_replace: list[str] = field(default_factory=list)  # 仅供确认弹窗展示：删除后会丢失的、服务器独有的子项名字
+
+
+def plan_mod_sync(install_dir: Path, client_mods_dir: Path | None) -> ModSyncPlan:
+    """纯计算，不碰文件系统的写操作（只有只读的 exists()/iterdir()/
+    resolve() 检查）。client_mods_dir 由调用方按存档的平台传入——Steam
+    用 modinfo_reader.find_game_mods_dir()，WeGame 用
+    modinfo_reader.find_wegame_client_dir(root) / "mods"（root 来自
+    app_settings.get_wegame_root_path()，需要 GUI 层引导用户手动选一次），
+    这里不关心具体是哪个平台。GUI 层应该先调这个，如果 needs_confirm_
+    delete 为 True 就弹窗确认（把 lost_on_replace 列给用户看），再调
+    apply_mod_sync()。"""
+    plan = ModSyncPlan()
+    plan.client_mods_dir = client_mods_dir
+    if client_mods_dir is None or not client_mods_dir.exists():
+        plan.client_mods_dir = None
+        return plan
+
+    target = install_dir / "mods"
+    if os.path.isjunction(target):
+        plan.already_linked = _same_target(target, client_mods_dir)
+        if plan.already_linked:
+            return plan
+        plan.needs_confirm_delete = True
+        return plan
+
+    if os.path.lexists(target):
+        plan.needs_confirm_delete = True
+        if target.is_dir():
+            client_names = {p.name for p in client_mods_dir.iterdir()} if client_mods_dir.exists() else set()
+            plan.lost_on_replace = sorted(p.name for p in target.iterdir() if p.name not in client_names)
+
+    return plan
+
+
 @dataclass
 class ModSyncResult:
-    online_ids: list[str] = field(default_factory=list)
-    copied_ids: list[str] = field(default_factory=list)
-    skipped_not_local: list[str] = field(default_factory=list)
-    skipped_client_only: list[str] = field(default_factory=list)
+    linked: bool = False
+    already_linked: bool = False
+    skipped_no_client_mods: bool = False
     errors: list[str] = field(default_factory=list)
 
 
-def sync_mods_to_server(cluster: Cluster, install_dir: Path, on_log=None) -> ModSyncResult:
-    """核心入口：纯逻辑，不含 tkinter。
-
-    on_log(可选)：每完成一步就调用一次，传入一行人类可读的说明文字，供
-    GUI 层实时展示同步日志。这个回调会在调用方所在的线程里同步执行——
-    如果调用方把整个函数扔进了后台线程跑（GUI 层就是这么做的，见
-    ModManagerTab._sync_mods_to_server），on_log 本身也是在那个后台线程
-    里被调用，要不要转回 Tk 主线程更新界面是调用方自己的事（通常是塞进
-    一个 queue.Queue，再用 .after() 轮询），这里不关心。
-    """
+def apply_mod_sync(plan: ModSyncPlan, install_dir: Path, on_log=None) -> ModSyncResult:
+    """执行 plan 里算好的同步动作——调用方（GUI 层）必须已经就
+    plan.needs_confirm_delete 拿到用户确认；这里不会再检查一遍，也不会
+    因为看到需要删除就跳过，直接按 plan 执行。"""
     def log(line: str) -> None:
         if on_log:
             on_log(line)
 
-    mod_ids = get_enabled_mod_ids(cluster)
-    result = ModSyncResult(online_ids=list(mod_ids))
-    log(t("sync.enabled_count", count=len(mod_ids)))
-    _write_dedicated_server_mods_setup(install_dir, mod_ids)
-    log(t("sync.wrote_setup_lua", count=len(mod_ids)))
-    if not mod_ids:
-        log(t("sync.nothing_to_sync"))
+    result = ModSyncResult()
+
+    if plan.client_mods_dir is None:
+        result.skipped_no_client_mods = True
+        log(t("sync.no_client_mods_dir"))
         return result
 
-    acf_path = find_workshop_acf_path()
-    if acf_path is not None:
-        for shard in cluster.shards:
-            try:
-                _copy_acf_checksum(acf_path, cluster.name, shard.name, install_dir)
-                log(t("sync.copied_acf", app_id=DST_APP_ID, shard=shard.name))
-            except OSError as e:
-                msg = t("sync.acf_error_detail", app_id=DST_APP_ID, shard=shard.name, error=e)
-                result.errors.append(msg)
-                log(t("sync.error_prefix", detail=msg))
-    else:
-        log(t("sync.no_acf_found", app_id=DST_APP_ID))
+    if plan.already_linked:
+        result.linked = True
+        result.already_linked = True
+        log(t("sync.mods_dir_already_linked"))
+        return result
 
-    game_mods_dir = find_game_mods_dir()
+    target = install_dir / "mods"
+    try:
+        _ensure_junction(target, plan.client_mods_dir)
+        result.linked = True
+        log(t("sync.mods_dir_linked", path=str(plan.client_mods_dir)))
+    except OSError as e:
+        result.errors.append(str(e))
+        log(t("sync.error_prefix", detail=str(e)))
 
-    for mod_id in mod_ids:
-        mod_folder = find_mod_content_folder(mod_id)
-        if mod_folder is None:
-            result.skipped_not_local.append(mod_id)
-            log(t("sync.skip_not_local", mod_id=mod_id))
-            continue
-
-        info = None
-        try:
-            info = parse_modinfo(mod_folder)
-        except Exception:
-            pass
-        if info is not None and info.client_only:
-            result.skipped_client_only.append(mod_id)
-            log(t("sync.skip_client_only", mod_id=mod_id))
-            continue
-
-        try:
-            for shard in cluster.shards:
-                _copy_mod_content_to_ugc(mod_folder, mod_id, cluster.name, shard.name, install_dir)
-            if game_mods_dir is not None:
-                _copy_mod_info_folder(game_mods_dir, mod_id, install_dir)
-            result.copied_ids.append(mod_id)
-            log(t("sync.copied_mod", mod_id=mod_id, count=len(cluster.shards)))
-        except OSError as e:
-            detail = f"{mod_id}: {e}"
-            result.errors.append(detail)
-            log(t("sync.error_prefix", detail=detail))
-
-    log(t("sync.summary", online=len(result.online_ids), copied=len(result.copied_ids),
-          skipped=len(result.skipped_not_local) + len(result.skipped_client_only),
-          errors=len(result.errors)))
     return result
 
 
-def _write_dedicated_server_mods_setup(install_dir: Path, mod_ids: list[str]) -> None:
-    """整个文件重新生成（覆盖旧的），避免已经禁用的旧 mod 条目一直累积。"""
-    mods_dir = install_dir / "mods"
-    mods_dir.mkdir(parents=True, exist_ok=True)
-    lines = [f'ServerModSetup("{mid}")' for mid in mod_ids]
-    text = "\n".join(lines) + ("\n" if lines else "")
-    (mods_dir / "dedicated_server_mods_setup.lua").write_text(text, encoding="utf-8")
-
-
-def _skip_if_unchanged_copy2(src: str, dst: str) -> None:
-    """跟目标已存在的文件比一次大小+修改时间，没变就跳过，变了/目标
-    不存在才真的复制——同步过一次之后再点，之前已经原样没动过的文件
-    (占绝大多数) 不用每次都整个重新拷一遍，这是同步变快的关键。跟用户
-    自己那份 .bat 脚本用 xcopy /d（按修改时间跳过）是同一个思路，只是
-    多加了一个大小校验，比单看时间戳更保险一点。"""
-    try:
-        src_stat = os.stat(src)
-        dst_stat = os.stat(dst)
-        if (dst_stat.st_mtime >= src_stat.st_mtime
-                and dst_stat.st_size == src_stat.st_size):
+def _ensure_junction(target: Path, src: Path) -> None:
+    """让 target 变成指向 src 的目录联接(junction)——已经是对的联接就
+    什么都不做；是别的联接/真实文件夹就先原地删掉。联接只用 os.rmdir()
+    删链接本身（真机验证过：不会牵连删除它指向的真实内容）；真实文件夹
+    才用 shutil.rmtree() 整个删除——调用方（apply_mod_sync 的调用方）必
+    须已经为"删除真实文件夹"这一步拿到过用户确认，这里不重复确认。"""
+    if os.path.isjunction(target):
+        if _same_target(target, src):
             return
-    except OSError:
-        pass
-    shutil.copy2(src, dst)
+        os.rmdir(target)
+    elif os.path.lexists(target):
+        shutil.rmtree(target)
 
-
-def _copy_mod_content_to_ugc(mod_folder: Path, mod_id: str, cluster_name: str,
-                              shard_name: str, install_dir: Path) -> None:
-    target = install_dir / "ugc_mods" / cluster_name / shard_name / "content" / DST_APP_ID / mod_id
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(mod_folder, target, dirs_exist_ok=True,
-                     copy_function=_skip_if_unchanged_copy2)
-
-
-def _copy_acf_checksum(acf_path: Path, cluster_name: str, shard_name: str, install_dir: Path) -> None:
-    target_dir = install_dir / "ugc_mods" / cluster_name / shard_name
-    target_dir.mkdir(parents=True, exist_ok=True)
-    _skip_if_unchanged_copy2(str(acf_path), str(target_dir / acf_path.name))
-
-
-def _copy_mod_info_folder(game_mods_dir: Path, mod_id: str, install_dir: Path) -> None:
-    """把客户端 mods/workshop-<id>/（modinfo.lua + 本地配置，不含实际
-    Workshop 内容）复制到服务器自己顶层的 mods/ 目录——服务器要认得这个
-    mod 的存在/配置项，光有 ugc_mods 里的内容文件还不够。"""
-    src = game_mods_dir / f"workshop-{mod_id}"
-    if not src.exists():
-        src = game_mods_dir / mod_id
-    if not src.exists():
-        return
-    target = install_dir / "mods" / f"workshop-{mod_id}"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, target, dirs_exist_ok=True,
-                     copy_function=_skip_if_unchanged_copy2)
+    result = subprocess.run(["cmd", "/c", "mklink", "/J", str(target), str(src)],
+                             capture_output=True, text=True)
+    if result.returncode != 0:
+        raise OSError(f"mklink /J failed: {(result.stderr or result.stdout).strip()}")

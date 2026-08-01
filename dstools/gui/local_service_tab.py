@@ -18,12 +18,13 @@ from dstools.core.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
     find_dedicated_server_dir, is_valid_install_dir, resolve_conf_dir_arg,
 )
+from dstools.core.modinfo_reader import find_shared_ugc_directory
 from dstools.core.token_manager import is_valid_token, read_token
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.tooltip import Tooltip
 from dstools.i18n import t
-from dstools.models import SaveSource
+from dstools.models import Platform, SaveSource
 
 _POLL_MS = 150
 
@@ -237,8 +238,10 @@ class _ShardRow:
         self._redraw_text()
         running = status in _RUNNING_LIKE
         # 别的存档还有分片在跑的话，这个分片自己的"启动"也要锁住——"停止"
-        # 不受影响，当前分片自己已经在跑的话本来就要能停。
-        locked = (not running) and self.tab._other_cluster_running(self.cluster)
+        # 不受影响，当前分片自己已经在跑的话本来就要能停。WeGame 分片则
+        # 是彻底不支持从这里启动（见 _do_start_shard 的说明），永远锁住。
+        is_wegame = self.cluster.platform == Platform.WEGAME
+        locked = (not running) and (is_wegame or self.tab._other_cluster_running(self.cluster))
         self.start_btn.configure(state=tk.DISABLED if (running or locked) else tk.NORMAL)
         self.stop_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
 
@@ -470,10 +473,32 @@ class LocalServiceTab:
         # 选中本地存档时显示的醒目提示——风格和"Mod管理"/"世界设置"的
         # 本地存档提示条保持一致（黄底加粗），跨整个页签宽度，而不是像
         # 之前那样塞在左侧分片列表那个窄栏里、字又小又不显眼。默认不 pack。
+        #
+        # **坑**：这条提示（以及下面的 _wegame_banner）显示/隐藏时用
+        # pack(side=tk.BOTTOM)，不能用 before=self._body——后者会把提示
+        # 条插到 self._body 上面，这一显示/隐藏会让 self._body 整体上下
+        # 挪位置，连带"全部启动/全部停止/回档"这几个 BgFrame（btn_row/
+        # _shard_list）也跟着挪，真机验证过这会导致它们裁的那一小块共享
+        # 背景图看起来"错位"（挪位置前后没有正确地重新裁到新位置对应的
+        # 那一块）。side=tk.BOTTOM 只在 self.frame 底部单独留一块给提示
+        # 条，self._body 的内容不会跟着挪动。
         self._local_banner = tk.Label(self.frame, text=t("local.select_server_hint"),
                                        bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
                                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
                                        anchor=tk.W, padx=10, pady=6)
+
+        # WeGame 版分片不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
+        # 客户端才能签发的一次性会话令牌，DSTCamp 拼不出来）——选中一个
+        # WeGame 存档时用这条提示替代 _local_banner，其余展示（分片列表/
+        # 状态）照常，只是启动类按钮全部禁用。
+        # wraplength 写死 600 在正常窗口宽度下会把这一段较长的说明文字
+        # 挤成五六行，看着很别扭——改成跟着 self.frame 实际宽度动态调整
+        # （<Configure> 触发），窗口多宽就用多宽，一般只需要换行一两次。
+        self._wegame_banner = tk.Label(self.frame, text=t("local.wegame_manual_start_hint"),
+                                        bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
+                                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
+                                        anchor=tk.W, padx=10, pady=6, justify=tk.LEFT)
+        self.frame.bind("<Configure>", lambda e: self._resize_wegame_banner(), add="+")
 
         # 切到另一个存档时，如果之前那个存档还有分片没停，"启动"/"全部
         # 启动"要锁住——两个不同存档的服务器同时跑，端口/资源很容易撞在
@@ -535,16 +560,30 @@ class LocalServiceTab:
         个页签只读——本地存档走客户端自己托管的进程，不通过这里管理。"""
         c = cluster if cluster is not None else self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
-        state = tk.NORMAL if is_server else tk.DISABLED
+        is_wegame = bool(c and c.platform == Platform.WEGAME)
+        state = tk.NORMAL if (is_server and not is_wegame) else tk.DISABLED
         self._start_all_btn.configure(state=state)
+        # "专用服务器工具:"这一行找的是 Steam 版专用服务器安装目录，跟
+        # WeGame 完全无关（WeGame 分片本来就不走这里启动，见
+        # _do_start_shard 的说明）——选中 WeGame 存档时"更换路径"/"重新
+        # 检测"两个按钮也置灰，不给用户一种"这里能管 WeGame 安装目录"的
+        # 错觉。
+        install_btn_state = tk.DISABLED if is_wegame else tk.NORMAL
+        self._install_change_btn.configure(state=install_btn_state)
+        self._install_recheck_btn.configure(state=install_btn_state)
         self._update_stop_all_btn_state(c)
         if is_server:
             self._local_banner.pack_forget()
+            if is_wegame:
+                self._wegame_banner.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(5, 0))
+            else:
+                self._wegame_banner.pack_forget()
             self._refresh_shard_rows(c)
         else:
+            self._wegame_banner.pack_forget()
             self._rollback_btn.configure(state=tk.DISABLED)
             self._refresh_shard_rows(None)
-            self._local_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self._body)
+            self._local_banner.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(5, 0))
         self._sync_console_tabs_visibility(c if is_server else None)
         self._update_start_lock_state(c)
 
@@ -576,6 +615,13 @@ class LocalServiceTab:
         了，这个函数自己内部检查一遍 is_server，可以放心从 _poll() 每次
         轮询都调用，不用外部先判断一次。"""
         if not cluster or cluster.source != SaveSource.SERVER:
+            self._other_running_banner.pack_forget()
+            return
+        if cluster.platform == Platform.WEGAME:
+            # WeGame 分片的"启动"按钮一直是禁用的（on_cluster_changed()
+            # 已经设过），这里不用管"别的存档在跑"这套锁定逻辑，直接跳过，
+            # 否则每 150ms 轮询一次会把这里的 NORMAL 重新写回去，盖掉
+            # on_cluster_changed() 设的 DISABLED。
             self._other_running_banner.pack_forget()
             return
         other = self._other_cluster_running(cluster)
@@ -660,6 +706,16 @@ class LocalServiceTab:
         c.create_text(4 + label_w + 6, cy, text=self._install_path_var.get(), anchor=tk.W,
                        fill=theme.TEXT_MUTED, font=font, tags="install_text")
 
+    def _resize_wegame_banner(self) -> None:
+        """WeGame 提示条的 wraplength 跟着 self.frame 实际宽度走，不用固
+        定的 600——那个固定值在正常窗口宽度下会把这段说明文字挤成五六
+        行。减掉的量是 tk.Label 自己的左右 padx(10*2) 加左右各留一点边
+        距，跟 pack(padx=5) 大致对上，不需要算得多精确。"""
+        w = self.frame.winfo_width()
+        if w < 4:
+            return
+        self._wegame_banner.configure(wraplength=max(200, w - 40))
+
     def _detect_install_dir(self):
         self._install_dir = find_dedicated_server_dir()
         self._install_path_var.set(str(self._install_dir) if self._install_dir else t("local.install_not_found"))
@@ -716,6 +772,12 @@ class LocalServiceTab:
         self._do_start_shard(cluster, shard)
 
     def _do_start_shard(self, cluster, shard):
+        # WeGame 版分片不走这里——Rail SDK 要求一个只有 WeGame 客户端才能
+        # 签发的一次性会话令牌(--rail_channel_id)，DSTCamp 直接拼命令行
+        # 启动子进程的方式在这个平台上做不到，只能引导用户去 WeGame 客户
+        # 端自己点启动（按钮本身已经在 UI 上禁用，这里是双重保险）。
+        if cluster.platform == Platform.WEGAME:
+            return
         if self._install_dir is None:
             if not self._recheck_install_dir():
                 return
@@ -729,8 +791,15 @@ class LocalServiceTab:
         # MARKERS)，这里读一下 server.ini 的 [SHARD] is_master 告诉它按
         # 哪一套判断——跟 sakura_tab.py._is_master_shard() 判断方式一致。
         is_master = load_shard_config(shard.path).shard.get("is_master", True)
+        # 传给 -ugc_directory：真机验证过，指向这台机器 Steam 的
+        # steamapps/workshop 目录能让服务器直接读那份内容，不用
+        # mod_sync.py 再往每个 cluster/shard 下复制一份（见
+        # modinfo_reader.find_shared_ugc_directory() 的说明）。找不到就是
+        # None，build_launch_args() 会跳过这个参数，退回默认行为。
+        ugc_directory = find_shared_ugc_directory()
         proc = self.manager.start(cluster.name, cluster.path, shard.name, self._install_dir,
-                                   conf_dir_arg, is_master)
+                                   conf_dir_arg, is_master,
+                                   str(ugc_directory) if ugc_directory else None)
         self.app.sakura_tab.maybe_start_frpc(cluster, shard)
         key = (str(cluster.path), shard.name)
         existing = self._console_panes.get(key)

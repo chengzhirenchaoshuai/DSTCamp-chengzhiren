@@ -1,14 +1,15 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.4.0-orange)
+![Version](https://img.shields.io/badge/version-0.5.0-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 Don't Starve Together 本地服务器管理工具：一键启动/管理本地专用服务器、
 存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、内网穿透
-联机。CLI 与 Tkinter GUI 双形态，也可以打包成单文件 `DSTCamp.exe` 分发给
-不装 Python 的用户。
+联机。同时支持 **Steam 版和 WeGame 版**存档（顶部"存档类型"筛选器切换），
+CLI 与 Tkinter GUI 双形态，也可以打包成单文件 `DSTCamp.exe` 分发给不装
+Python 的用户。
 
 ## 安装
 
@@ -73,9 +74,13 @@ python scripts/run_gui.py
 - **本地服务器**：一键启动/停止本地专用服务器，每个世界独立控制台，支持
   发送指令，以及公告、玩家列表、关闭窗口三个快捷按钮；支持"回档"、"复制为
   服务器存档"。启动前自动检查令牌是否有效。同一时间只支持运行一个存档，
-  切换存档或已有服务器在跑时会有提示和锁定，避免冲突。
+  切换存档或已有服务器在跑时会有提示和锁定，避免冲突。**WeGame 版存档不
+  支持一键启动**（平台限制，需要去 WeGame 客户端自己点"开始游戏"），其它
+  管理功能不受影响。
 - **Mod 管理**：查看/启用/禁用/删除已安装的 Mod，可视化编辑每个 Mod 的配
-  置项，支持把本地 Mod 同步到专用服务器。
+  置项，一键把客户端 Mod 同步到专用服务器（Steam 用启动参数直接共享
+  Workshop 内容，WeGame 用目录联接指向客户端 `mods/` 文件夹，两者都不占
+  用额外磁盘空间、客户端更新后立即生效）。
 - **世界设置**：编辑世界规则与世界生成参数，森林和洞穴分开管理，按分类展
   示、带图标和取值说明，支持中英文切换。
 - **服务器配置**：编辑游戏模式、语言、分片设置等服务器配置，三列布局展
