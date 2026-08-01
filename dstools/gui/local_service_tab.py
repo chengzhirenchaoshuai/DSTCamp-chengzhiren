@@ -13,7 +13,7 @@ from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.core.app_settings import get_backup_interval_minutes, set_dedicated_server_path
 from dstools.core.backup_manager import create_backup
-from dstools.core.config_manager import load_cluster_config
+from dstools.core.config_manager import load_cluster_config, load_shard_config
 from dstools.core.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
     find_dedicated_server_dir, is_valid_install_dir, resolve_conf_dir_arg,
@@ -337,6 +337,14 @@ class _ConsolePane:
         self.announce_btn.pack(side=tk.LEFT, padx=(0, 4))
         self.list_players_btn = ttk.Button(quick_row, text=t("local.console_list_players_btn"), command=self._list_players)
         self.list_players_btn.pack(side=tk.LEFT)
+        # 进程起来了(status==RUNNING)不代表世界真的加载完——这两个按钮额
+        # 外要求 proc.world_ready（见 dedicated_server.py 对启动日志的检
+        # 测），世界没加载完时置灰，鼠标放上去提示原因。
+        not_ready_hint = lambda: (t("local.world_not_ready_hint")
+                                   if self.proc.status == ServerStatus.RUNNING and not self.proc.world_ready
+                                   else "")
+        Tooltip(self.announce_btn, not_ready_hint)
+        Tooltip(self.list_players_btn, not_ready_hint)
         # "关闭"跟其它几个不一样，不受 can_send 控制（见 pump()）——世界
         # 已经停了的标签页也要能关掉，不然切换存档、反复开关世界之后这些
         # 标签页只会越攒越多。点击行为交给调用方（LocalServiceTab），因
@@ -408,10 +416,11 @@ class _ConsolePane:
         self.status_var.set(t(_STATUS_KEYS[status]))
         self.status_lbl.configure(fg=_status_color(status))
         can_send = status == ServerStatus.RUNNING
+        world_ready = can_send and self.proc.world_ready
         self.cmd_entry.configure(state=tk.NORMAL if can_send else tk.DISABLED)
         self.send_btn.configure(state=tk.NORMAL if can_send else tk.DISABLED)
-        self.announce_btn.configure(state=tk.NORMAL if can_send else tk.DISABLED)
-        self.list_players_btn.configure(state=tk.NORMAL if can_send else tk.DISABLED)
+        self.announce_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
+        self.list_players_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
 
 
 class LocalServiceTab:
@@ -528,7 +537,7 @@ class LocalServiceTab:
         is_server = bool(c and c.source == SaveSource.SERVER)
         state = tk.NORMAL if is_server else tk.DISABLED
         self._start_all_btn.configure(state=state)
-        self._stop_all_btn.configure(state=state)
+        self._update_stop_all_btn_state(c)
         if is_server:
             self._local_banner.pack_forget()
             self._refresh_shard_rows(c)
@@ -536,7 +545,21 @@ class LocalServiceTab:
             self._rollback_btn.configure(state=tk.DISABLED)
             self._refresh_shard_rows(None)
             self._local_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self._body)
+        self._sync_console_tabs_visibility(c if is_server else None)
         self._update_start_lock_state(c)
+
+    def _sync_console_tabs_visibility(self, cluster):
+        """全局存档选择器切到别的存档（或者切到本地存档）时，把不属于
+        当前选中存档的控制台标签页隐藏起来——不然还能在这个页面上对另一
+        个存档发"公告"/"玩家列表"/"关闭窗口"，容易搞混。分片进程/后台读
+        取线程照常跑，只是标签页暂时不可见/点不到；用 Notebook.hide()
+        而不是 forget()，切回来的时候日志历史还在，不用重新创建。"""
+        current_path = str(cluster.path) if cluster else None
+        for (cluster_path, shard_name), pane in self._console_panes.items():
+            if cluster_path == current_path:
+                self._console_nb.add(pane.frame, text=shard_name)
+            else:
+                self._console_nb.hide(pane.frame)
 
     def _other_cluster_running(self, cluster) -> bool:
         """除了 cluster 自己之外，是不是还有别的存档也有分片在跑——两个
@@ -566,6 +589,17 @@ class LocalServiceTab:
             self._other_running_banner.pack_forget()
         self._start_all_btn.configure(state=tk.DISABLED if other else tk.NORMAL)
 
+    def _update_stop_all_btn_state(self, cluster):
+        """所有分片都是"停止"状态时"全部停止"没有意义，置灰——只有这个
+        存档自己至少有一个分片在跑（含正在启动/正在停止这些过渡态）才
+        点得动，跟 _other_cluster_running() 判断"是不是别的存档在跑"是
+        两回事，这里只看当前选中的这个存档自己。"""
+        if not cluster or cluster.source != SaveSource.SERVER:
+            self._stop_all_btn.configure(state=tk.DISABLED)
+            return
+        any_running = any(p.cluster_path == cluster.path for p in self.manager.running())
+        self._stop_all_btn.configure(state=tk.NORMAL if any_running else tk.DISABLED)
+
     def _refresh_shard_rows(self, cluster):
         if cluster is None:
             for row in self._shard_rows.values():
@@ -586,16 +620,18 @@ class LocalServiceTab:
         self._update_rollback_btn_state(cluster)
 
     def _update_rollback_btn_state(self, cluster):
-        """"回档"必须靠正在运行的分片控制台才能发指令——一个分片都没在
-        跑就没有地方能发送 c_rollback()，按钮相应地灰掉。"""
-        running = False
+        """"回档"要等主世界真正加载完(world_ready)才有意义——主世界进程
+        起来了(RUNNING)但世界还没加载完时发 c_rollback() 大概率没用，跟
+        "公告"/"玩家列表"要求 world_ready 是同一个道理（见 dedicated_
+        server.py 的就绪判断）。"""
+        ready = False
         if cluster:
             for s in cluster.shards:
-                proc = self.manager.get(cluster.path, s.name)
-                if proc is not None and proc.status == ServerStatus.RUNNING:
-                    running = True
+                if load_shard_config(s.path).shard.get("is_master", True):
+                    proc = self.manager.get(cluster.path, s.name)
+                    ready = bool(proc and proc.status == ServerStatus.RUNNING and proc.world_ready)
                     break
-        self._rollback_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
+        self._rollback_btn.configure(state=tk.NORMAL if ready else tk.DISABLED)
 
     def _open_rollback_dialog(self):
         c = self._get_cluster()
@@ -688,7 +724,13 @@ class LocalServiceTab:
         except ConfDirCrossDriveError:
             dlg.show_error(self.app.root, t("local.install_title"), t("local.confdir_cross_drive_error"))
             return
-        proc = self.manager.start(cluster.name, cluster.path, shard.name, self._install_dir, conf_dir_arg)
+        # Master 和非 Master(Caves 等) 的"真正就绪"判断不是同一回事(见
+        # dedicated_server.py 的 _MASTER_READY_MARKERS/_SECONDARY_READY_
+        # MARKERS)，这里读一下 server.ini 的 [SHARD] is_master 告诉它按
+        # 哪一套判断——跟 sakura_tab.py._is_master_shard() 判断方式一致。
+        is_master = load_shard_config(shard.path).shard.get("is_master", True)
+        proc = self.manager.start(cluster.name, cluster.path, shard.name, self._install_dir,
+                                   conf_dir_arg, is_master)
         self.app.sakura_tab.maybe_start_frpc(cluster, shard)
         key = (str(cluster.path), shard.name)
         existing = self._console_panes.get(key)
@@ -780,6 +822,19 @@ class LocalServiceTab:
             return
         for s in _ordered_shards(c):
             self._do_start_shard(c, s)
+        # _do_start_shard() 每次都会把控制台标签页切到刚启动的那个分片，
+        # 循环下来会停在最后一个分片上；玩家最关心的是主世界有没有起来，
+        # 公告一般也发到主世界，"全部启动"结束后统一切回主分片，不管启
+        # 动了几个分片、顺序是什么。
+        self._select_master_console_tab(c)
+
+    def _select_master_console_tab(self, cluster):
+        for s in cluster.shards:
+            if load_shard_config(s.path).shard.get("is_master", True):
+                pane = self._console_panes.get((str(cluster.path), s.name))
+                if pane:
+                    self._console_nb.select(pane.frame)
+                return
 
     def _stop_all(self):
         c = self._get_cluster()
@@ -797,6 +852,7 @@ class LocalServiceTab:
             row.update()
         self._update_rollback_btn_state(self._get_cluster())
         self._update_start_lock_state(self._get_cluster())
+        self._update_stop_all_btn_state(self._get_cluster())
         self._maybe_periodic_backup()
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 

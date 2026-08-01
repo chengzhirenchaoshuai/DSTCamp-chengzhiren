@@ -238,6 +238,7 @@ STRINGS = {
         "sakura.account_group": "用户组",
         "sakura.account_speed": "限速",
         "sakura.account_traffic": "可用流量",
+        "sakura.account_tunnels": "隧道上限",
         "sakura.recent_traffic": "本存档映射的隧道近 7 天用了 {size}",
         "sakura.too_many_shards": "隧道数不够（此存档有 {count} 个分片，你的账号同时最多能开 {max} 个隧道）",
         "sakura.node_none_selected": "请选择节点...",
@@ -370,6 +371,7 @@ STRINGS = {
         "local.console_announce_btn": "公告",
         "local.console_announce_prompt": "输入要发送的服务器公告：",
         "local.console_list_players_btn": "玩家列表",
+        "local.world_not_ready_hint": "世界还在加载中，等分片真正启动完成（能加入游戏）后才能用。",
         "local.console_close_btn": "关闭窗口",
         "local.console_close_confirm": "「{shard}」正在运行，关闭窗口会先停止服务器，确定吗？",
         "local.install_title": "未检测到专用服务器工具",
@@ -379,7 +381,7 @@ STRINGS = {
         "local.token_missing_title": "令牌未设置",
         "local.token_missing_confirm": "令牌未设置，服务器会启动失败，是否继续？",
         "local.confirm_close_title": "有服务器正在运行",
-        "local.confirm_close_msg": "有 {count} 个服务器正在运行，是否关闭服务器并退出软件？",
+        "local.confirm_close_msg": "有 {count} 个分片正在运行，\n是否关闭所有分片并退出软件？",
 
         # System tray (NEW)
         "tray.show": "显示主窗口",
@@ -649,6 +651,7 @@ STRINGS = {
         "sakura.account_group": "User Group",
         "sakura.account_speed": "Speed Limit",
         "sakura.account_traffic": "Available Traffic",
+        "sakura.account_tunnels": "Tunnel Limit",
         "sakura.recent_traffic": "This save's mapped tunnels used {size} in the last 7 days",
         "sakura.too_many_shards": "Not enough tunnel slots (this save has {count} shards, your account allows {max} at once)",
         "sakura.node_none_selected": "Select a node...",
@@ -781,6 +784,7 @@ STRINGS = {
         "local.console_announce_btn": "Announce",
         "local.console_announce_prompt": "Enter the server announcement to send:",
         "local.console_list_players_btn": "List Players",
+        "local.world_not_ready_hint": "The world is still loading -- available once the shard has actually finished starting (joinable).",
         "local.console_close_btn": "Close Window",
         "local.console_close_confirm": "“{shard}” is running -- closing this window will stop the server first. Continue?",
         "local.install_title": "Dedicated Server Tool Not Found",
@@ -790,7 +794,7 @@ STRINGS = {
         "local.token_missing_title": "Token Not Set",
         "local.token_missing_confirm": "No cluster token is set -- the server will fail to start. Continue anyway?",
         "local.confirm_close_title": "Servers Still Running",
-        "local.confirm_close_msg": "{count} server(s) are still running. Close them and exit?",
+        "local.confirm_close_msg": "{count} shard(s) are still running,\nclose all shards and exit?",
 
         # System tray (NEW)
         "tray.show": "Show Main Window",

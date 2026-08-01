@@ -212,6 +212,14 @@ ALWAYS_READONLY_FIELDS: set[tuple[str, str]] = {
     ("NETWORK", "cluster_cloud_id"),
 }
 
+# 这些字段即使值看起来像数字/布尔（密码设成"0"这种纯数字很常见），也必
+# 须原样当字符串处理，不能被 ini_parser.py/config_manager.py 里"猜类型"
+# 的通用逻辑转成 int/bool——转成 int 后 `if password:` 会把密码"0"误判成
+# "没有密码"。
+NO_TYPE_COERCE_FIELDS: set[tuple[str, str]] = {
+    ("NETWORK", "cluster_password"),
+}
+
 
 def get_field_info(section: str, key: str, is_shard: bool = False) -> tuple[str, str] | None:
     """查找某个 cluster.ini/server.ini 字段的 (显示名, 说明)，取当前界面语言的版本。

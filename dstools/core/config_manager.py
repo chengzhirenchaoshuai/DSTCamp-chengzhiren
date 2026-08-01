@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import Any
 
+from dstools.core.ini_field_info import NO_TYPE_COERCE_FIELDS
 from dstools.core.ini_parser import (
     parse_cluster_ini,
     parse_server_ini,
@@ -89,8 +90,9 @@ def set_cluster_option(config: ClusterConfig, section: str, key: str,
         raise ValueError(f"Unknown cluster.ini section: {section}. "
                          f"Valid sections: GAMEPLAY, NETWORK, MISC, SHARD")
 
-    # Type coercion
-    if isinstance(value, str):
+    # Type coercion——密码这类字段即使值看起来像数字/布尔（比如密码就是
+    # "0"），也必须原样存成字符串，不然真值判断会把密码"0"当成"没有密码"。
+    if isinstance(value, str) and (section_lower, key) not in NO_TYPE_COERCE_FIELDS:
         if value.lower() == "true":
             value = True
         elif value.lower() == "false":

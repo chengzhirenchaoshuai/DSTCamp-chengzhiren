@@ -167,18 +167,50 @@ class ServerStatus(Enum):
     CRASHED = "crashed"
 
 
+# 进程起来了(RUNNING)不代表世界真的加载完、能进游戏了——Master 和非
+# Master(Secondary/老版本叫 Slave) 的"真正就绪"判断不是同一回事，用真
+# 实 server_log.txt 核对过（用户亲测的当前版本日志 + 一份 2019 年的历史
+# 存档日志：https://github.com/rawii22/DSTSaves）：
+#
+# - Master：玩家能进游戏不需要等副本(Caves 等)连上——它自己的日志里
+#   "Reset() returning"（紧跟在 "ModIndex: Load sequence finished
+#   successfully." 后面）是世界读盘/建好之后的最后一步，在这之后才是
+#   portal 校验/Sim paused/向 Klei 注册这些收尾动作，跟副本有没有连上
+#   完全无关；旧版本额外会打一个 IPC 信号 "DST_Master_Ready"，当前版本
+#   实测已经不打了，但留着也不影响（多一条能匹配的标记，不会误判）。
+# - Secondary：必须真的连上 Master 之后才有意义，日志里打
+#   "... is now ready!"（当前版本叫 "secondary shard LUA is now
+#   ready!"，旧版本叫 "Slave LUA is now ready!"）。
+#
+# 坑：真机日志实测发现，游戏进程启动早期会先跑一遍"仅建 modindex"的预
+# 备流程（"ModIndex: Beginning normal load sequence..." -> 一样会打印
+# "ModIndex: Load sequence finished successfully."/"Reset() returning"），
+# 跟真正加载这个存档世界的流程长得一样，比"About to start a shard with
+# these settings:"这行早得多——如果不管三七二十一见到 "reset() returning"
+# 就认为世界加载完，Master 会在这个预备流程里被误判成"已就绪"。所以要求
+# 先看到 "about to start a shard with these settings"（真正开始加载这个
+# 存档世界的分界线，预备流程里不会出现这行）之后，才开始检查上面两组就
+# 绪标记；这一步对 Secondary 无害——它的 ready 行本来就只会在这行之后
+# 才出现。
+_REAL_START_MARKER = "about to start a shard with these settings"
+_MASTER_READY_MARKERS = ("reset() returning", "dst_master_ready")
+_SECONDARY_READY_MARKERS = ("is now ready!",)
+
+
 class ServerProcess:
     """一个 (cluster, shard) 对应的专用服务器子进程：启动、读取控制台输出、
     发送控制台命令、优雅/强制关闭。"""
 
     def __init__(self, cluster_name: str, shard_name: str, cluster_path: Path,
-                 install_dir: Path, conf_dir_arg: str | None):
+                 install_dir: Path, conf_dir_arg: str | None, is_master: bool = True):
         self.cluster_name = cluster_name
         self.shard_name = shard_name
         self.cluster_path = cluster_path
         self.install_dir = install_dir
         self.conf_dir_arg = conf_dir_arg
+        self.is_master = is_master
         self.status = ServerStatus.STARTING
+        self.world_ready = False
         self.proc: subprocess.Popen | None = None
         self._out_queue: "queue.Queue[str]" = queue.Queue()
 
@@ -198,9 +230,19 @@ class ServerProcess:
         threading.Thread(target=self._read_loop, daemon=True).start()
 
     def _read_loop(self) -> None:
+        markers = _MASTER_READY_MARKERS if self.is_master else _SECONDARY_READY_MARKERS
+        real_start_seen = False
         try:
             for line in self.proc.stdout:
-                self._out_queue.put(line.rstrip("\n"))
+                line = line.rstrip("\n")
+                if not self.world_ready:
+                    lowered = line.lower()
+                    if not real_start_seen:
+                        if _REAL_START_MARKER in lowered:
+                            real_start_seen = True
+                    elif any(marker in lowered for marker in markers):
+                        self.world_ready = True
+                self._out_queue.put(line)
         except (OSError, ValueError):
             pass
 
@@ -283,8 +325,8 @@ class ServerManager:
         return (str(cluster_path), shard_name)
 
     def start(self, cluster_name: str, cluster_path: Path, shard_name: str,
-              install_dir: Path, conf_dir_arg: str | None) -> ServerProcess:
-        proc = ServerProcess(cluster_name, shard_name, cluster_path, install_dir, conf_dir_arg)
+              install_dir: Path, conf_dir_arg: str | None, is_master: bool = True) -> ServerProcess:
+        proc = ServerProcess(cluster_name, shard_name, cluster_path, install_dir, conf_dir_arg, is_master)
         proc.start()
         self._procs[self._key(cluster_path, shard_name)] = proc
         return proc

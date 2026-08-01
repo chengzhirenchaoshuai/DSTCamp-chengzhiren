@@ -8,6 +8,7 @@ from configparser import ConfigParser
 from pathlib import Path
 from typing import Any
 
+from dstools.core.ini_field_info import NO_TYPE_COERCE_FIELDS
 from dstools.models import ClusterConfig, ShardConfig
 
 
@@ -77,9 +78,11 @@ def _coerce_value(value: str) -> Any:
     return value
 
 
-def _coerce_dict_values(d: dict[str, str]) -> dict:
-    """Coerce all values in a dict."""
-    return {k: _coerce_value(v) for k, v in d.items()}
+def _coerce_dict_values(d: dict[str, str], section: str = "") -> dict:
+    """Coerce all values in a dict, except fields in NO_TYPE_COERCE_FIELDS
+    (比如密码类字段，纯数字密码"0"/"123456"不能被误转成 int/bool)。"""
+    return {k: (v if (section, k) in NO_TYPE_COERCE_FIELDS else _coerce_value(v))
+            for k, v in d.items()}
 
 
 # ── Cluster INI ────────────────────────────────────────────────────────
@@ -95,10 +98,10 @@ def parse_cluster_ini(path: Path) -> ClusterConfig:
     """
     parser = _read_ini(path)
     return ClusterConfig(
-        gameplay=_coerce_dict_values(_section_to_dict(parser, "GAMEPLAY")),
-        network=_coerce_dict_values(_section_to_dict(parser, "NETWORK")),
-        misc=_coerce_dict_values(_section_to_dict(parser, "MISC")),
-        shard=_coerce_dict_values(_section_to_dict(parser, "SHARD")),
+        gameplay=_coerce_dict_values(_section_to_dict(parser, "GAMEPLAY"), "GAMEPLAY"),
+        network=_coerce_dict_values(_section_to_dict(parser, "NETWORK"), "NETWORK"),
+        misc=_coerce_dict_values(_section_to_dict(parser, "MISC"), "MISC"),
+        shard=_coerce_dict_values(_section_to_dict(parser, "SHARD"), "SHARD"),
     )
 
 
@@ -144,10 +147,10 @@ def parse_server_ini(path: Path) -> ShardConfig:
     """
     parser = _read_ini(path)
     return ShardConfig(
-        network=_coerce_dict_values(_section_to_dict(parser, "NETWORK")),
-        shard=_coerce_dict_values(_section_to_dict(parser, "SHARD")),
-        account=_coerce_dict_values(_section_to_dict(parser, "ACCOUNT")),
-        steam=_coerce_dict_values(_section_to_dict(parser, "STEAM")),
+        network=_coerce_dict_values(_section_to_dict(parser, "NETWORK"), "NETWORK"),
+        shard=_coerce_dict_values(_section_to_dict(parser, "SHARD"), "SHARD"),
+        account=_coerce_dict_values(_section_to_dict(parser, "ACCOUNT"), "ACCOUNT"),
+        steam=_coerce_dict_values(_section_to_dict(parser, "STEAM"), "STEAM"),
     )
 
 

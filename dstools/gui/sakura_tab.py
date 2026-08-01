@@ -15,7 +15,10 @@ import webbrowser
 from tkinter import font as tkfont, ttk
 
 from dstools.core import app_settings, sakura_frp
-from dstools.core.config_manager import get_shard_option, load_shard_config, save_shard_config, set_shard_option
+from dstools.core.config_manager import (
+    get_cluster_option, get_shard_option, load_cluster_config, load_shard_config,
+    save_shard_config, set_shard_option,
+)
 from dstools.core.frpc_process import FrpcManager
 from dstools.core.resource_paths import bundled_resource_dir, cache_dir
 from dstools.core.token_manager import is_valid_token, mask_token
@@ -257,13 +260,14 @@ class SakuraTab:
         # 每次刷新时清空重建里面的数值那一行。
         self._account_frame = BgFrame(top, app, bg=theme.CARD_BG)
         self._account_frame.pack(fill=tk.X, pady=(6, 3))
-        for col, key in enumerate(("sakura.account_group", "sakura.account_speed", "sakura.account_traffic")):
+        for col, key in enumerate(("sakura.account_group", "sakura.account_speed",
+                                    "sakura.account_traffic", "sakura.account_tunnels")):
             self._account_frame.grid_columnconfigure(col, weight=1, uniform="acct_col")
             self._label(self._account_frame, t(key), fg=theme.TEXT_MUTED,
                         font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).grid(
                 row=0, column=col, sticky=tk.W, padx=(0, 15))
         self._account_value_row = 1
-        self._render_account_info("--", "--", "--")
+        self._render_account_info("--", "--", "--", "--")
 
         # 方案 B：不画图（/tunnel/traffic 只能查单条隧道，不是账号总量，
         # 没法照搬官网那张账号维度的图），只汇总"这个存档自己映射的隧道"
@@ -371,10 +375,10 @@ class SakuraTab:
         node = self._nodes.get(str(self._selected_node_id), {}) if self._selected_node_id else {}
         self._node_display_var.set(node.get("name") or t("sakura.node_none_selected"))
 
-    def _render_account_info(self, group_name, speed, traffic_available):
+    def _render_account_info(self, group_name, speed, traffic_available, tunnels_limit):
         for w in self._account_frame.grid_slaves(row=self._account_value_row):
             w.destroy()
-        for col, value in enumerate((group_name, speed, traffic_available)):
+        for col, value in enumerate((group_name, speed, traffic_available, tunnels_limit)):
             self._label(self._account_frame, value,
                         font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold")).grid(
                 row=self._account_value_row, column=col, sticky=tk.W, padx=(0, 15), pady=(0, 4))
@@ -413,10 +417,12 @@ class SakuraTab:
         cluster = self._current_cluster
         self._set_status("")
         if not token:
-            self._render_account_info("--", "--", "--")
+            self._render_account_info("--", "--", "--", "--")
             self._render_recent_traffic("")
             return
-        self._render_account_info(t("sakura.loading"), "", "")
+        # 不在这里同步写一个"加载中"过渡态——账号信息卡片是 BgFrame/Canvas，
+        # 每次销毁重建都会有一瞬间背景图消失的闪烁；刷新时旧数值大概率还
+        # 没过期，直接留着旧值等新数据到了再一次性换过去，观感更稳定。
 
         def _worker():
             try:
@@ -458,7 +464,7 @@ class SakuraTab:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _apply_error(self, e):
-        self._render_account_info("--", "--", "--")
+        self._render_account_info("--", "--", "--", "--")
         self._render_recent_traffic("")
         self._set_status(t("sakura.api_error", detail=str(e)))
 
@@ -483,6 +489,7 @@ class SakuraTab:
             group.get("name", "--"),
             user_info.get("speed") or "--",
             f"{remaining / (1024**3):.2f} GiB",
+            str(self._max_tunnels),
         )
 
         self._node_choices = []
@@ -519,7 +526,17 @@ class SakuraTab:
             self._label(self._shards_frame, t("local.select_cluster_first")).pack(anchor=tk.W)
             self._action_btn.pack_forget()
             return
-        self._label(self._shards_frame, t("sakura.loading")).pack(anchor=tk.W)
+        if not cluster.shards:
+            self._label(self._shards_frame, t("sakura.loading")).pack(anchor=tk.W)
+            return
+        # 每个分片各占一行、跟 _render_shard_rows() 用一样的行高——这样加
+        # 载完成前后行数不变，下面"关闭映射"按钮不会因为这块区域忽大忽小
+        # 而跟着跳动。
+        for row_idx, shard in enumerate(cluster.shards):
+            self._label(self._shards_frame, shard.name).grid(
+                row=row_idx, column=0, sticky=tk.W, padx=(0, 3), pady=self._SHARD_ROW_PADY)
+            self._label(self._shards_frame, t("sakura.loading"), fg=theme.TEXT_MUTED).grid(
+                row=row_idx, column=1, sticky=tk.W, padx=3, pady=self._SHARD_ROW_PADY)
 
     @staticmethod
     def _is_master_shard(shard) -> bool:
@@ -597,7 +614,15 @@ class SakuraTab:
         node = self._nodes.get(str(tunnel.get("node")), {})
         host = node.get("host", "")
         remote = tunnel.get("remote", "")
-        text = f'c_connect("{host}", {remote})'
+        # c_connect() 支持第三个可选参数直接带密码进去，免得对方连上后还
+        # 要再手动输一遍——房间没设密码（cluster_password 为空）就不加。
+        cluster = self._current_cluster
+        password = get_cluster_option(load_cluster_config(cluster.path), "NETWORK", "cluster_password") \
+            if cluster else None
+        if password:
+            text = f'c_connect("{host}", {remote}, "{password}")'
+        else:
+            text = f'c_connect("{host}", {remote})'
         self.frame.clipboard_clear()
         self.frame.clipboard_append(text)
         dlg.show_info(self.app.root, "", t("sakura.connect_copied"))
