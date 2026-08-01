@@ -22,7 +22,7 @@ from dstools.core.mod_resolve_cache import load_cached_result, save_result
 from dstools.core.modinfo_reader import (
     find_game_mods_dir, find_mod_folder, find_wegame_client_dir, find_wegame_server_dir,
     list_installed_mod_ids, parse_modinfo, resolve_config_value, resolve_full_modinfo,
-    resolve_wegame_client_mods_dir,
+    resolve_wegame_client_mods_dir, visible_config_options,
 )
 from dstools.core.mod_sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync
 from dstools.gui import fonts, theme, themed_dialog as dlg
@@ -1021,6 +1021,15 @@ class ModConfigDialog:
         self.read_only = read_only
         self.vars: dict[str, tk.StringVar] = {}
         self.choice_maps: dict[str, dict[str, Any]] = {}
+        # 部分 mod 借助第三方共享库"Configs Extended"（工坊 3317960157）实
+        # 现比原生下拉框更丰富的配置项——集合(is_set_config)/数组
+        # (is_array_config)/纯文本(is_text_config)。核实过它最终仍然是调
+        # KnownModIndex:SaveConfigurationOptions() 写回同一份 modoverrides.lua
+        # （跟原生配置弹窗同一个引擎 API），只是值不是固定选项能表达的，
+        # 所以这几种类型不走 self.vars/choice_maps 那套下拉框机制，改成
+        # 多行文本框/单行输入框，这里单独记录 (kind, widget)，见
+        # _render_raw_value_editor()/_read_raw_widget_value()。
+        self.raw_widgets: dict[str, tuple[str, dict]] = {}
 
         self._try_full_sandbox_parse(workshop_id, mod_info)
         self._resolve_dynamic_options(mod_info)
@@ -1149,7 +1158,7 @@ class ModConfigDialog:
             return (text + "...") if text else "..."
 
         real_options = 0
-        for opt in mod_info.config_options:
+        for opt in visible_config_options(mod_info.config_options):
             if opt.is_header:
                 # A purely visual divider the mod author added to organize
                 # its own config screen -- not a real setting, so it gets
@@ -1170,6 +1179,12 @@ class ModConfigDialog:
                 continue
 
             real_options += 1
+
+            if opt.is_set_config or opt.is_array_config or opt.is_text_config:
+                current_value = mod.configuration_options.get(opt.name, opt.default)
+                self._render_raw_value_editor(body, opt, current_value)
+                continue
+
             row = ttk.Frame(body, padding=(10,8), relief=tk.GROOVE, borderwidth=1)
             row.pack(fill=tk.X, padx=5, pady=3)
 
@@ -1275,6 +1290,112 @@ class ModConfigDialog:
         win.grab_set()
         win.protocol("WM_DELETE_WINDOW", self._close)
         self._guard_main_window()
+
+    def _render_raw_value_editor(self, parent, opt, current_value) -> None:
+        """画"Configs Extended"风格的集合(is_set_config)/数组(is_array_config)/
+        纯文本(is_text_config)配置项——真实值是自由文本集合，不是几个固
+        定选项，原生下拉框机制（self.vars/choice_maps）在这里不适用。
+        集合/数组用"+/×"逐条管理的输入框列表（跟游戏内 Configs Extended
+        实际的编辑体验一致：点"+"新增一行输入框，每行右边一个"×"删
+        除），纯文本用单行输入框。不接 self.vars/choice_maps，记录进
+        self.raw_widgets，_reset()/_apply() 走单独的分支读写（见
+        _read_raw_widget_value()）。"""
+        from dstools.gui.tooltip import Tooltip
+
+        row = ttk.Frame(parent, padding=(10, 8), relief=tk.GROOVE, borderwidth=1)
+        row.pack(fill=tk.X, padx=5, pady=3)
+
+        header = ttk.Frame(row)
+        header.pack(fill=tk.X)
+        label_full = opt.label or opt.name
+        ttk.Label(header, text=label_full, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"),
+                  anchor=tk.W).pack(side=tk.LEFT)
+        if opt.hover:
+            info_lbl = ttk.Label(header, text="ⓘ", foreground=theme.ACCENT,
+                                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD))
+            info_lbl.pack(side=tk.RIGHT)
+            Tooltip(info_lbl, opt.hover)
+
+        if opt.is_text_config:
+            var = tk.StringVar(value="" if current_value is None else str(current_value))
+            ttk.Entry(row, textvariable=var).pack(fill=tk.X, pady=(6, 0))
+            self.raw_widgets[opt.name] = ("text", {"var": var})
+            return
+
+        kind = "set" if opt.is_set_config else "array"
+        values = self._raw_value_to_lines(kind, current_value)
+        self._render_item_list_editor(row, opt.name, kind, values)
+
+    def _render_item_list_editor(self, row, name: str, kind: str, values: list) -> None:
+        """"+/×"逐条管理的值列表：每个值一个 Entry+"×"删除按钮，顶部
+        "+"按钮在末尾新增一个空白输入行。self.raw_widgets[name] 存的是
+        (kind, {"vars": [...], "items_frame": ..., "add_row": 回调})——
+        _reset() 靠 items_frame/add_row 整体清空重建（不是逐行找差异），
+        _apply()/_read_raw_widget_value() 只需要 vars 这一份。"""
+        items_frame = ttk.Frame(row)
+        items_frame.pack(fill=tk.X, pady=(6, 0))
+        entry_vars: list[tk.StringVar] = []
+
+        def _add_row(initial: str = ""):
+            var = tk.StringVar(value=initial)
+            entry_vars.append(var)
+            item_row = ttk.Frame(items_frame)
+            item_row.pack(fill=tk.X, pady=2)
+            ttk.Entry(item_row, textvariable=var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            def _remove():
+                entry_vars.remove(var)
+                item_row.destroy()
+
+            ttk.Button(item_row, text="×", width=3, command=_remove).pack(side=tk.LEFT, padx=(4, 0))
+
+        add_bar = ttk.Frame(row)
+        add_bar.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(add_bar, text=t("mod.add_value_btn"), command=lambda: _add_row("")).pack(side=tk.LEFT)
+
+        for v in values:
+            _add_row(v)
+
+        self.raw_widgets[name] = (kind, {"vars": entry_vars, "items_frame": items_frame, "add_row": _add_row})
+
+    @staticmethod
+    def _raw_value_to_lines(kind: str, value) -> list:
+        """集合(is_set_config)——真实存储是 Lua 里"字符串当 key"的集合写
+        法（{["heatrock"]=true, ...}，见 Configs Extended 的
+        EditSet()：`for k in pairs(option.value) do ...`），没有顺序概
+        念，排序只是让显示稳定，不影响写回的值。
+        数组(is_array_config)——EditArray() 用 ipairs 遍历，是要保序的
+        普通数组，按当前顺序逐行显示、按列表里的行序写回。
+        值形状跟预期不符（比如还没被任何一方写过，仍是模组自己声明的
+        占位默认值）时兜底成空列表，不猜测/不硬转。"""
+        if kind == "set":
+            return sorted(str(k) for k in value.keys()) if isinstance(value, dict) else []
+        return [str(v) for v in value] if isinstance(value, (list, tuple)) else []
+
+    def _read_raw_widget_value(self, kind: str, data: dict) -> Any:
+        """把 _render_raw_value_editor() 画的控件当前内容转回可以直接写
+        进 modoverrides.lua 的 Python 值——跟 Configs Extended 实际读取
+        的形状对应：集合是"字符串当 key"的 dict，数组是普通 list，文本
+        是原始字符串。空白行统一去掉（集合/数组场景下空行没有意义）。"""
+        if kind == "text":
+            return data["var"].get()
+        lines = [v.get().strip() for v in data["vars"] if v.get().strip()]
+        if kind == "set":
+            return {line: True for line in lines}
+        return lines
+
+    def _reset_raw_widget(self, opt, kind: str, data: dict) -> None:
+        """把集合/数组/文本编辑器整体复原成 mod 自己声明的默认值——集合/
+        数组是"清空现有的每一行输入框，按默认值重新逐条铺开"，不是找差
+        异增量修改（默认值的条数跟当前编辑中的条数通常对不上）。"""
+        if kind == "text":
+            data["var"].set("" if opt.default is None else str(opt.default))
+            return
+        for child in list(data["items_frame"].winfo_children()):
+            child.destroy()
+        data["vars"].clear()
+        for v in self._raw_value_to_lines(kind, opt.default):
+            data["add_row"](v)
 
     def _try_full_sandbox_parse(self, workshop_id, mod_info):
         """Try resolving this mod's metadata and *entire*
@@ -1469,10 +1590,16 @@ class ModConfigDialog:
     def _reset(self):
         """Revert every dropdown to the mod's own default (UI only, not yet saved)."""
         for opt in self.mod_info.config_options:
-            # Headers, and options whose choices couldn't be resolved
-            # (opt.name not in self.vars -- see the dynamic-option
-            # fallback above), have nothing to reset.
-            if opt.is_header or opt.name not in self.vars:
+            if opt.is_header:
+                continue
+            if opt.name in self.raw_widgets:
+                kind, data = self.raw_widgets[opt.name]
+                self._reset_raw_widget(opt, kind, data)
+                continue
+            # Options whose choices couldn't be resolved (opt.name not in
+            # self.vars -- see the dynamic-option fallback above) have
+            # nothing to reset.
+            if opt.name not in self.vars:
                 continue
             desc_to_data = self.choice_maps[opt.name]
             default_desc = next((desc for desc, data in desc_to_data.items() if data == opt.default), None)
@@ -1481,7 +1608,13 @@ class ModConfigDialog:
 
     def _apply(self):
         for opt in self.mod_info.config_options:
-            if opt.is_header or opt.name not in self.vars:
+            if opt.is_header:
+                continue
+            if opt.name in self.raw_widgets:
+                kind, data = self.raw_widgets[opt.name]
+                self.mod.configuration_options[opt.name] = self._read_raw_widget_value(kind, data)
+                continue
+            if opt.name not in self.vars:
                 continue
             desc = self.vars[opt.name].get()
             desc_to_data = self.choice_maps[opt.name]

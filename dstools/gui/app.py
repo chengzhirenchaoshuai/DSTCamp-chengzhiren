@@ -35,6 +35,11 @@ from dstools.models import Platform, SaveSource, Shard
 
 
 class DSToolsApp:
+    # 窗口锁死的宽高比基准——启动尺寸、ResizeGrips 拖拽缩放、伪最大化计
+    # 算都用这一对值，改窗口比例只需要改这里。
+    WINDOW_BASE_W = 1500
+    WINDOW_BASE_H = 820
+
     def __init__(self, klei_path: Path | None = None):
         self.env = discover_environment(klei_path)
         self._current_shard: Shard | None = None
@@ -68,9 +73,15 @@ class DSToolsApp:
         # 类情况），没存过或者校验不通过就退回屏幕正中央（比默认贴左上
         # 角更合理的首次启动体验）。
         x, y = self._compute_startup_position()
-        self.root.geometry(f"1500x820+{x}+{y}")
+        self.root.geometry(f"{self.WINDOW_BASE_W}x{self.WINDOW_BASE_H}+{x}+{y}")
         self.root.minsize(900, 580)
         self.root.resizable(True, True)
+
+        # 标题栏"伪最大化"按钮的状态——见 _toggle_pseudo_maximize()。
+        # _pre_maximize_geom 只在"已经伪最大化"期间有意义（记住点击前的
+        # 位置/大小，供再点一次还原），初始必然是 None。
+        self._is_pseudo_maximized = False
+        self._pre_maximize_geom: tuple[int, int, int, int] | None = None
 
         # 自定义标题栏：弃用原生标题栏，改成自己画一条 + 手写拖拽移动/
         # 缩放，见 gui/custom_titlebar.py 顶部说明——那边跟这次的
@@ -433,7 +444,7 @@ class DSToolsApp:
         # 一点、需要稍微精确一点的鼠标定位。
         self.root.update_idletasks()
         top_reserve = self._titlebar.winfo_height() + self._menu_strip.winfo_height()
-        custom_titlebar.ResizeGrips(self.root, self, 1500, 820,
+        custom_titlebar.ResizeGrips(self.root, self, self.WINDOW_BASE_W, self.WINDOW_BASE_H,
                                      bottom_reserve=0, top_reserve=top_reserve,
                                      bottom_grip=3, top_grip=2)
 
@@ -609,14 +620,56 @@ class DSToolsApp:
         pos = get_window_position()
         if pos is not None:
             x, y = pos
-            # 不要求整个 1500x820 窗口都落在范围内（用户可能就是想贴着
-            # 某块屏幕的边缘摆），只要标题栏这一段还有个至少 100px 能看
-            # 见、点得到，就采信保存的坐标。
+            # 不要求整个窗口都落在范围内（用户可能就是想贴着某块屏幕的
+            # 边缘摆），只要标题栏这一段还有个至少 100px 能看见、点得
+            # 到，就采信保存的坐标。
             MIN_VISIBLE = 100
-            if (vx - 1500 + MIN_VISIBLE <= x <= vx + vw - MIN_VISIBLE
+            if (vx - self.WINDOW_BASE_W + MIN_VISIBLE <= x <= vx + vw - MIN_VISIBLE
                     and vy <= y <= vy + vh - MIN_VISIBLE):
                 return x, y
-        return vx + max(0, (vw - 1500) // 2), vy + max(0, (vh - 820) // 2)
+        return (vx + max(0, (vw - self.WINDOW_BASE_W) // 2),
+                vy + max(0, (vh - self.WINDOW_BASE_H) // 2))
+
+    def _toggle_pseudo_maximize(self) -> None:
+        """标题栏"伪最大化"按钮的实际逻辑——不是原生"真最大化"（那样会
+        撑破锁死的 1500:820 宽高比，见 custom_titlebar.CustomTitleBar 顶
+        部说明），而是"缩放到当前显示器工作区能放下的、仍然保持
+        1500:820 比例的最大尺寸，并居中"，再点一次还原回点击前的位置/
+        大小。
+
+        这个实现完全不碰 win_aspect_lock.py 的 WM_SIZING 钩子——那边的
+        铁律是"绝对不能从替换过的窗口过程里回调 Tk/Python 代码"，而这
+        里是标题栏按钮点击触发的普通 Tk 回调，运行在 Tk 主线程上，跟钩
+        子内部是完全不相干的两条路径，不存在触发那个已知崩溃
+        （PyEval_RestoreThread: GIL not held）的风险。"""
+        from dstools.gui import custom_titlebar
+
+        if self._is_pseudo_maximized:
+            if self._pre_maximize_geom is not None:
+                x, y, w, h = self._pre_maximize_geom
+                self.root.geometry(f"{w}x{h}+{x}+{y}")
+            self._is_pseudo_maximized = False
+            self._pre_maximize_geom = None
+            return
+
+        self.root.update_idletasks()
+        self._pre_maximize_geom = (self.root.winfo_x(), self.root.winfo_y(),
+                                    self.root.winfo_width(), self.root.winfo_height())
+
+        aspect = self.WINDOW_BASE_W / self.WINDOW_BASE_H
+        left, top, right, bottom = custom_titlebar.get_monitor_work_area(self.root)
+        avail_w, avail_h = right - left, bottom - top
+
+        candidate_w = avail_h * aspect
+        if candidate_w <= avail_w:
+            w, h = int(candidate_w), avail_h
+        else:
+            w, h = avail_w, int(avail_w / aspect)
+
+        x = left + max(0, (avail_w - w) // 2)
+        y = top + max(0, (avail_h - h) // 2)
+        self.root.geometry(f"{w}x{h}+{x}+{y}")
+        self._is_pseudo_maximized = True
 
     def _build_menu(self):
         """原生 tk.Menu 挂成 Windows 系统菜单条(root.config(menu=...))时，
@@ -634,6 +687,7 @@ class DSToolsApp:
         # 是重复入口。_do_exit 方法本身还留着，_on_close（关闭按钮，设置
         # 未勾选"关闭时最小化到任务栏"时）、托盘菜单"退出"都还在用它。
         fm.add_command(label=t("app.refresh"), command=self._refresh, accelerator="F5")
+        fm.add_command(label=t("app.open_cache_dir"), command=self._open_cache_dir)
         # "语言"已经搬进"设置"弹窗里了（跟"关闭时最小化到任务栏"那两个开
         # 关放一起，不再单独占一个菜单位置）。
         # 四套颜色主题统一用 add_radiobutton 互斥选择。variable/value 必须
@@ -1204,6 +1258,18 @@ class DSToolsApp:
         # 成 _update_status() 本来的内容，纯视觉反馈，不影响任何刷新逻辑。
         self.status_var.set(f"{t('app.refreshed_hint')}  {self.status_var.get()}")
         self.root.after(1500, self._update_status)
+
+    def _open_cache_dir(self) -> None:
+        """"文件"菜单"打开缓存目录"——跟 save_browser_tab.py"一键打开存
+        档文件夹"同一个模式（os.startfile()）。缓存目录不保证已经存在
+        （全新安装、还没触发过任何一次 mod 图标/角色头像/mod 完整解析，
+        目录可能还没创建过），先建好再打开，不让用户对着一个"找不到该
+        文件"的系统错误弹窗摸不着头脑。"""
+        import os
+        from dstools.core.resource_paths import cache_root_dir
+        d = cache_root_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(d))
 
     def _get_platform_filter(self) -> Platform:
         return Platform.WEGAME if self._platform_var.get() == "WeGame" else Platform.STEAM

@@ -7,6 +7,7 @@ STRINGS = {
         "app.ready": "就绪",
         "app.refresh": "刷新全部",
         "app.refreshed_hint": "✓ 已刷新",
+        "app.open_cache_dir": "打开缓存目录",
         "app.update_available": "发现新版本 v{version}，点击查看 →",
 
         # Menu
@@ -342,6 +343,7 @@ STRINGS = {
         "mod.loading": "正在加载 Mod 列表...",
         "mod.dynamic_option": "由模组内部逻辑动态生成，无法在此编辑，请在游戏内修改",
         "mod.no_choices": "未声明可选值，请在游戏内修改",
+        "mod.add_value_btn": "+ 新增",
         "mod.unsupported_schema": "⚠ 该模组的配置定义格式比较特殊（例如依赖翻译表或游戏内部函数），本工具暂不支持解析，请在游戏内的 Mod 配置菜单中修改设置。开启/关闭该模组不受影响。",
         "mod.dynamic_banner": "⚠ 有 {count} 项设置由模组内部逻辑动态生成，已尝试自动解析但未成功，无法在此编辑，请在游戏内修改。",
         "mod.read_only_local": "该模组为本地模组（client_only），不需要在存档中配置，此处仅供查看，不可编辑。",
@@ -453,6 +455,7 @@ STRINGS = {
         "app.ready": "Ready",
         "app.refresh": "Refresh All",
         "app.refreshed_hint": "✓ Refreshed",
+        "app.open_cache_dir": "Open Cache Folder",
         "app.update_available": "New version v{version} available, click to view →",
 
         # Menu
@@ -788,6 +791,7 @@ STRINGS = {
         "mod.loading": "Loading mod list...",
         "mod.dynamic_option": "Computed by the mod's own logic, can't edit here -- change it in-game",
         "mod.no_choices": "No selectable values declared -- change it in-game",
+        "mod.add_value_btn": "+ Add",
         "mod.unsupported_schema": "⚠ This mod defines its configuration in an unusual format (e.g. relying on translation tables or in-game engine functions) that this tool can't parse yet -- please change its settings from the in-game Mod Configuration menu instead. Enabling/disabling this mod is not affected.",
         "mod.dynamic_banner": "⚠ {count} setting(s) are computed by the mod's own logic; automatic resolution was attempted but didn't succeed, so they can't be edited here -- please change them in-game.",
         "mod.read_only_local": "This is a local (client_only) mod -- it doesn't need a save-file entry to work. Shown here for reference only, not editable.",

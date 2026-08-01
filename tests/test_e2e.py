@@ -53,7 +53,7 @@ from dstools.core.app_settings import (
 )
 from dstools.core.backup_manager import backup_dir, create_backup, restore_backup, list_backups
 from dstools.models import SaveSession, SaveSource
-from dstools.core.modinfo_reader import parse_modinfo
+from dstools.core.modinfo_reader import parse_modinfo, visible_config_options
 from dstools.core.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
 from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
 from dstools.core.backup_utils import backup_file, _prune_old_backups
@@ -598,6 +598,69 @@ def test_modinfo_reader():
         assert parse_modinfo(server_folder).client_only is False
         print("  PASS: server_only_mod=true overrides client_only_mod, treated as a server mod")
 
+        # 单个配置项自己标 client = true（真实案例：某模组把"服务端设置"/
+        # "客户端设置"分成两组，后者的每个选项都带这个字段）——不是引擎
+        # 认的字段（真机对照过 modconfigurationscreen.lua 源码，压根没有
+        # 引用），是给"开服工具"这类第三方管理软件的约定：这类设置只影
+        # 响玩家自己客户端本地表现（快捷键、UI 位置），对着服务端存档的
+        # modoverrides.lua 改了没有任何实际效果，本地服务器工具应该隐藏
+        # 掉，见 ModConfigDialog 里 visible_config_options() 的调用。
+        client_folder = Path(tmp) / "654323"
+        client_folder.mkdir()
+        (client_folder / "modinfo.lua").write_text(
+            '''
+            name = "Mixed Config Mod"
+            configuration_options = {
+                { name = "", label = "Server Settings", options = {{description = "", data = false}}, default = false },
+                { name = "server_opt", label = "Server Opt", options = {{description = "On", data = true}}, default = true },
+                { name = "", label = "Client Settings", options = {{description = "", data = false}}, default = false },
+                { name = "client_opt", label = "Client Opt", options = {{description = "On", data = true}}, default = true, client = true },
+            }
+            ''',
+            encoding="utf-8",
+        )
+        info = parse_modinfo(client_folder)
+        by_name = {o.name: o for o in info.config_options}
+        assert by_name["server_opt"].client is False
+        assert by_name["client_opt"].client is True
+        print("  PASS: 单个配置项的 client = true 字段解析正确")
+
+        visible = visible_config_options(info.config_options)
+        visible_names = [o.name for o in visible]
+        assert visible_names == ["", "server_opt"], \
+            f"应该只剩服务端标题+选项，客户端标题和选项整组一起隐藏: {visible_names}"
+        print("  PASS: visible_config_options() 过滤纯客户端选项，且连带隐藏底下选项全被过滤的分组标题")
+
+        # 共享库 mod "Configs Extended"（创意工坊 3317960157）的约定字段
+        # ——真机读过它的源码确认最终仍然写回同一份 modoverrides.lua，只
+        # 是值的形状不是固定选项，ModConfigDialog 改用专门的编辑控件
+        # （见 is_set_config/is_array_config/is_text_config 字段上的说
+        # 明）。这里只测字段解析，控件层面的读写用真实 mod 文件
+        # （3686724289）人工验证过。
+        configs_extended_folder = Path(tmp) / "654324"
+        configs_extended_folder.mkdir()
+        (configs_extended_folder / "modinfo.lua").write_text(
+            '''
+            name = "Configs Extended Style Mod"
+            configuration_options = {
+                { name = "ban_recipe_list", label = "Ban List", is_set_config = true,
+                  options = {{description = "请启用配置扩展模组！", data = {}}}, default = {} },
+                { name = "priority_list", label = "Priority List", is_array_config = true,
+                  options = {{description = "请启用配置扩展模组！", data = {}}}, default = {} },
+                { name = "welcome_msg", label = "Welcome Message", is_text_config = true,
+                  options = {{description = "请启用配置扩展模组！", data = ""}}, default = "" },
+            }
+            ''',
+            encoding="utf-8",
+        )
+        info = parse_modinfo(configs_extended_folder)
+        by_name = {o.name: o for o in info.config_options}
+        assert by_name["ban_recipe_list"].is_set_config is True
+        assert by_name["ban_recipe_list"].is_header is False
+        assert by_name["priority_list"].is_array_config is True
+        assert by_name["welcome_msg"].is_text_config is True
+        print("  PASS: Configs Extended 风格的 is_set_config/is_array_config/is_text_config 解析正确")
+
 
 def test_admin_manager():
     """Test adminlist.txt read/write round-trip (admin_manager.py)."""
@@ -978,6 +1041,27 @@ def test_mod_resolve_cache():
             os.utime(modinfo_path, (future, future))
             assert load_cached_result(workshop_id, modinfo_path) is None
             print("  PASS: cache invalidated once modinfo.lua's mtime moves past it")
+
+            # 真机复现过的坑：缓存文件没有 _cache_format_version 字段
+            # （模拟 ModConfigOption 加 client/is_set_config 这几个新字
+            # 段之前生成的旧缓存）——mtime 没过期不代表内容对当前代码仍
+            # 然正确，缺这层版本号判断的话旧缓存会被当成"仍然新鲜"直接
+            # 复用，新加的字段永远读不到（表现为"明明修了 bug，但界面还
+            # 是老样子"）。这里手工写一份没有版本号的旧格式缓存，mtime
+            # 故意设置得比 modinfo.lua 更新，确保测的是版本号判断本身，
+            # 不是又测了一遍上面的 mtime 判断。
+            from dstools.core.mod_resolve_cache import _cache_path
+            stale_path = _cache_path(workshop_id)
+            stale_path.write_text(
+                json.dumps({"name": "旧格式测试Mod",
+                            "config_options": [{"name": "opt1", "label": "选项1", "default": "a"}]}),
+                encoding="utf-8",
+            )
+            newer = time.time() + 200
+            os.utime(stale_path, (newer, newer))
+            assert load_cached_result(workshop_id, modinfo_path) is None, \
+                "没有 _cache_format_version 的旧格式缓存应该被当成失效"
+            print("  PASS: 没有 _cache_format_version 的旧格式缓存被判定失效，强制重新走一遍 sandbox")
 
 
 def test_backup_manager_restore_clears_stale_slots():

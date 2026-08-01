@@ -37,7 +37,7 @@ python scripts/build_exe.py        # 打包为单文件 DSTCamp.exe（需 pip in
                                     # 打包后必须真的跑一次 dist/DSTCamp.exe，
                                     # 只看"打包成功"日志不够，modulegraph 漏掉
                                     # 子包时打包照样"成功"，只有真启动才暴露 ModuleNotFoundError）
-python tests/test_e2e.py           # 核心模块测试（32 项）
+python tests/test_e2e.py           # 核心模块测试（34 项）
 python tests/test_e2e_phase2.py    # i18n/模型字段/exe-gui 可导入性测试（5 项）
 ```
 
@@ -65,7 +65,7 @@ WeGame 的 `rail_apps` 安装根目录没有可靠的注册表项能查（不像
 
 ### 资源路径与本地设置 (`core/resource_paths.py` / `core/app_settings.py`)
 
-**只读素材 vs 运行时缓存是两套路径体系**：`bundled_resource_dir()` 是只读素材根目录（源码直跑是仓库根目录，打包后是 `sys._MEIPASS`——每次启动解压到新临时目录，进程退出即清空，**不能写任何需要持久化的内容进去**）；`cache_dir(name)` 是运行时缓存根目录（默认 `%APPDATA%/DSTCamp/cache/<name>/`，勾选"缓存存放在程序所在目录"后改成 exe 目录下，这个开关**重启后生效**）。缓存子目录：`mod_icons/<platform>`、`character_icons`、`mod_full_resolve`、`background`、`frpc_config`，各自的失效策略见对应模块。
+**只读素材 vs 运行时缓存是两套路径体系**：`bundled_resource_dir()` 是只读素材根目录（源码直跑是仓库根目录，打包后是 `sys._MEIPASS`——每次启动解压到新临时目录，进程退出即清空，**不能写任何需要持久化的内容进去**）；`cache_dir(name)` 是运行时缓存根目录（默认 `%APPDATA%/DSTCamp/cache/<name>/`，勾选"缓存存放在程序所在目录"后改成 exe 目录下，这个开关**重启后生效**）。缓存子目录：`mod_icons/<platform>`、`character_icons`、`mod_full_resolve`、`background`、`frpc_config`，各自的失效策略见对应模块。`cache_root_dir()` 返回缓存根目录本身（`cache_dir(name)` 在这基础上拼子目录），"文件"菜单"打开缓存目录"用它。
 
 `app_settings.py`（`%APPDATA%/DSTCamp/settings.json`，原子写入）存：服务器/WeGame 安装目录、Steam mods 路径覆盖、主题名、玩家备注、`minimize_on_close`、`cache_use_exe_dir`、`custom_bg_filename`/`custom_bg_opacity`、`window_pos`、`backup_retention`/`backup_interval_minutes`、樱花 Token/上次选中节点。
 
@@ -100,7 +100,11 @@ WeGame 的 `rail_apps` 安装根目录没有可靠的注册表项能查（不像
 
 已弃用 Windows 原生标题栏：`root.overrideredirect(True)` + 自绘 `CustomTitleBar` + 手写拖拽移动/缩放（`ResizeGrips`，宽高比锁定数学照抄 `win_aspect_lock.py` 的 `AspectLock._enforce()`）。**跟 `win_aspect_lock.py` 刻意分开**——这个文件全程只做一次性设置窗口样式位的 Win32 调用，不拦截任何消息，风险级别跟"替换 WNDPROC"完全不同。
 
-已验证的坑：恢复阴影/圆角会导致窗口空白/"玻璃"透视，已放弃，现在是直角窗口；最小化不能用 `root.iconify()`（overrideredirect 下报 TclError），改用原生 `ShowWindow(hwnd, SW_MINIMIZE)`；不做最大化按钮（项目锁定 1500:820 宽高比）；`ResizeGrips` 的 8 个拖拽手柄用 `top_reserve`/`bottom_reserve` 让开标题栏/状态栏按钮。
+已验证的坑：恢复阴影/圆角会导致窗口空白/"玻璃"透视，已放弃，现在是直角窗口；最小化不能用 `root.iconify()`（overrideredirect 下报 TclError），改用原生 `ShowWindow(hwnd, SW_MINIMIZE)`；`ResizeGrips` 的 8 个拖拽手柄用 `top_reserve`/`bottom_reserve` 让开标题栏/状态栏按钮。
+
+**"伪最大化"按钮**（`DSToolsApp._toggle_pseudo_maximize()`）：不是原生"真最大化"（会撑破锁死的 `WINDOW_BASE_W`:`WINDOW_BASE_H`=1500:820 宽高比），而是缩放到当前显示器工作区（`custom_titlebar.get_monitor_work_area()`，`MonitorFromWindow`+`GetMonitorInfoW`，跟 `_get_virtual_screen_bounds()` 横跨全部显示器不同）能放下的、仍保持这个比例的最大尺寸并居中，再点一次还原成点击前的位置/大小。点击回调运行在 Tk 主线程，跟 `win_aspect_lock.py` 的 `WM_SIZING` 钩子是完全不相干的两条路径，不触碰那个已知崩溃禁区。图标是手画的方框（`create_rectangle`），不用字体符号——Segoe UI 没有能保证所有机器都渲染正确的"方框轮廓"字形。
+
+**拖拽缩放节流间隔**（`ResizeGrips._DRAG_THROTTLE_MS`）：真机测过（脚本连续调用 `root.geometry()`+`update_idletasks()` 模拟拖拽）各页签单次 resize+relayout 耗时，"服务器配置"/"存档信息"等页签能到 21~23ms，比原来 16ms（60fps）的节流间隔还长，节流定时器还没到点就要再触发一次，会积压跟不上鼠标——这才是"拖拽卡顿"的根因，不是背景图（拖拽期间背景图整个跳过重绘，见下方说明）。已调到 33ms（~30fps），实测所有页签的最大耗时都能在一个节流周期内跑完。
 
 ### 系统托盘 + 关闭/退出/启动位置 (`gui/tray_icon.py` / `gui/app.py`)
 
@@ -190,6 +194,16 @@ frpc 启动方式是官方 `-f <Token>:<隧道ID>`（不是传统 frp 的 `-c <�
 
 **跨存档启动锁**：`ServerManager` 是全局单例，技术上能同时管理多个不同存档的分片进程，但这个应用不支持"同时跑多个存档"（容易端口冲突）。`_other_cluster_running(cluster)` 判断除当前选中存档外还有没有别的存档在跑，有的话锁住"启动"/"全部启动"（不锁"停止"），每次 `_poll()`（150ms 一次）重新算一遍。
 
+### LuaJIT 性能补丁 (`core/luajit_injector.py`)
+
+给 Steam 版专用服务器一键安装第三方开源项目 [DontStarveLuaJIT2](https://github.com/fesily/DontStarveLuaJIT2)（非官方，Steam 版专属，WeGame 不支持）。**隔离副本模式**：真实的 `bin64/` 从头到尾不被触碰，整个复制一份到同级的 `luajit/` 目录（`get_luajit_dir()`），注入文件装进这份副本；"启用/关闭"变成"专用服务器启动时从哪个文件夹起 exe"（`resolve_launch_bin64_dir()`）。
+
+**注入文件（连同配套 Mod）统一从 Steam 创意工坊订阅内容里取，不联网下载**——作者确认过 GitHub 更新太频繁不稳定，应以订阅内容里的稳定版为准：只要账号订阅过配套 Mod（工坊 ID 固定，`WORKSHOP_MOD_KEY`），内容（含 `bin64/windows/` 下的全部注入文件）就已经在本地，DSTCamp 不维护下载/缓存逻辑。配套 Mod 的启用走标准 Workshop 命名，`find_mod_folder()` 天然能找到。
+
+**过期检测靠标记文件 `luajit/version.json`**（`LuajitMarker`）记录生成副本时的 `DST_version`（`read_game_version_file()`）和 `luajit_version`（配套 Mod 自己 `modinfo.lua` 的 `version` 字段，不是 Steam 的 manifest 哈希）。`needs_regeneration()` 对比当前实际值，任一不一致就提示重新生成；`regenerate()` **按哪个变了选择性更新**——只有 `DST_version` 变了才整个重新复制 bin64（GB 级、耗时），只有 `luajit_version` 变了就只重新套注入文件，不做没必要的整份重建。
+
+配套 Mod 的 `folder_name:find("workshop-")` 这类代码依赖游戏引擎注入的 `folder_name` 全局变量（真机对照过 `modindex.lua` 源码：`env.folder_name = modname`）——`core/lua_sandbox.py` 的沙箱环境必须提供这个变量，否则引用它的 mod 代码会在沙箱里报错，连该 mod 其它已经算好的字段（比如 `name`）都会一起丢失，见 `resolve_full_config_options(folder_name=...)`。
+
 ### 分片就绪判断与控制台标签页 (`core/dedicated_server.py` / `gui/local_service_tab.py`)
 
 分片进程 RUNNING 不等于世界真的加载完——`ServerProcess.world_ready` 才是"公告"/"玩家列表"/"回档"按钮启用的依据。Master 看日志里的 `reset() returning`；Secondary（旧版叫 Slave）看 `... is now ready!`。**坑**：游戏进程早期会先跑一遍只建 modindex 的预备流程，两段都会打印 `reset() returning`——必须先看到 `about to start a shard with these settings` 才能开始判断就绪，否则 Master 会在预备阶段被误判"已就绪"。
@@ -200,11 +214,19 @@ frpc 启动方式是官方 `-f <Token>:<隧道ID>`（不是传统 frp 的 `-c <�
 
 找 Steam 装在哪、DST 装在哪个库只有这一份实现（读注册表 `HKEY_CURRENT_USER\Software\Valve\Steam` + 解析 `libraryfolders.vdf` 找全部库文件夹，游戏可能装在跟 Steam 本体不同的库/盘符）。所有需要"找 Steam 装在哪"的地方（`modinfo_reader.py`/`character_icons.py`/`dedicated_server.py`）都用 `find_all_steam_libraries()` 遍历全部库，不能只查第一个根目录——曾经各模块各写一份硬编码猜测路径的弱版本，导致在别人机器上 mod 图标/名称读不出来。
 
+**真机复现过的坑（大小写）**：注册表 `SteamPath` 的大小写有时跟磁盘上实际大小写不一致（Windows 文件系统本身不区分大小写，目录能正常打开），而专用服务器进程内部对创意工坊内容做的路径查找是大小写敏感的，大小写不对会导致完全识别不到 mod。`parse_library_folders()` 现在优先信任 `libraryfolders.vdf` 里 Steam 自己记录的大小写（更可靠），用小写字符串去重，不再依赖 `Path.__eq__` 在 Windows 上的大小写不敏感比较（那样会把 vdf 里大小写正确的记录当成跟注册表原始值重复而丢弃）。
+
+`read_game_version_file(install_dir)` 读专用服务器安装目录下的 `version.txt`（游戏自己写的内部版本号）——比读 Steam appmanifest 的 `buildid` 字段更简单可靠：不需要知道 app_id、不需要跳两级目录找 acf、跟 LuaJIT 补丁按精确游戏版本绑定的内存特征码语义上也更贴近。`core/luajit_injector.py` 的 `needs_regeneration()` 用这个判断游戏是否被更新过。
+
 ### Mod 配置解析 (`core/modinfo_reader.py`)
 
 `parse_modinfo()` 提取 `configuration_options`，绝大多数 mod 靠纯文本/正则覆盖。**唯一例外 `core/lua_sandbox.py`**：极少数 mod 用代码动态拼选项，退化到一个收窄的 Lua 5.1 沙箱（`lupa.lua51`）。关键约束：只在用户打开某个 mod 配置弹窗时触发；永远在**子进程**里跑、带硬超时；子进程里 `os`/`io`/`require`/`load`/`debug` 全局置空；任何失败一律返回 `None`，**从不猜测**。
 
-`resolve_full_modinfo()` 跑一次有明显耗时，`core/mod_resolve_cache.py` 按 workshop_id 做磁盘持久化缓存（`modinfo.lua` mtime 失效判断），避免每次启动都重新跑一遍沙箱解析。
+`resolve_full_modinfo()` 跑一次有明显耗时，`core/mod_resolve_cache.py` 按 workshop_id 做磁盘持久化缓存（`modinfo.lua` mtime 失效判断），避免每次启动都重新跑一遍沙箱解析。**这个缓存另有一层 `_CACHE_FORMAT_VERSION` 版本号判断**：mtime 没过期不代表缓存内容对当前代码仍然正确——`ModConfigOption` 加字段后，旧缓存里没有新字段时 `ModConfigOption(**o)` 会用默认值悄悄补上、不报错，新字段永远读不到。**改 `ModConfigOption` 的字段形状时必须把这个版本号加一**，否则表现为"明明修了 bug，界面还是老样子"。
+
+**两类不走原生下拉框的配置项**（`gui/mod_manager_tab.py` 的 `ModConfigDialog`）：
+- `client = true`（单个选项级别，不是整个 mod）——不是引擎字段，是给"开服工具"的约定，标记这个选项只影响玩家本地客户端表现（快捷键、UI 位置），编辑服务端 `modoverrides.lua` 对它没有实际效果。`visible_config_options()` 渲染前过滤掉，连带隐藏底下选项全被过滤空了的分组标题。
+- 共享库 mod "Configs Extended"（工坊 3317960157）的 `is_set_config`/`is_array_config`/`is_text_config` 约定——真机读过它的源码确认最终仍然调 `KnownModIndex:SaveConfigurationOptions()` 写回同一份 `modoverrides.lua`，只是值的形状不是固定选项（集合是 Lua"字符串当 key"写法、数组是普通有序表、文本是纯字符串）。`ModConfigDialog` 改用"+/×"逐条管理的输入框列表/单行输入框编辑，跟游戏内该 mod 实际的编辑体验一致。
 
 `find_mod_folder(workshop_id, platform, wegame_client_mods_dir)`/`list_installed_mod_ids(platform, wegame_client_mods_dir)` 按平台分流：`platform=Platform.WEGAME` 时只查调用方传入的 `wegame_client_mods_dir`（`gui/mod_manager_tab.py._resolve_mod_folder_args()` 统一算），不查 Steam 那两条路径——这是被动加载路径，没配置过就优雅返回空/None，不弹目录选择框打扰用户。`core/mod_icons.py` 的图标缓存目录也按平台物理隔离（`cache_dir("mod_icons")/steam/` vs `.../wegame/`）。
 

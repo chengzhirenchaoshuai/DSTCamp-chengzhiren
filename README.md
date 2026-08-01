@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.7.0-orange)
+![Version](https://img.shields.io/badge/version-0.8.0-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -85,7 +85,9 @@ python scripts/run_gui.py
 - **Mod 管理**：查看/启用/禁用/删除已安装的 Mod，可视化编辑每个 Mod 的配
   置项，一键把客户端 Mod 同步到专用服务器（Steam 用启动参数直接共享
   Workshop 内容，WeGame 用目录联接指向客户端 `mods/` 文件夹，两者都不占
-  用额外磁盘空间、客户端更新后立即生效）。
+  用额外磁盘空间、客户端更新后立即生效）。自动识别纯客户端专属设置（快捷
+  键、界面显示位置等）并隐藏，避免误改无效设置；也支持"配置扩展"
+  (Configs Extended) 这类 Mod 用到的集合/数组/文本输入配置项。
 - **世界设置**：编辑世界规则与世界生成参数，森林和洞穴分开管理，按分类展
   示、带图标和取值说明，支持中英文切换。
 - **服务器配置**：编辑游戏模式、语言、分片设置等服务器配置，三列布局展
@@ -107,11 +109,13 @@ python scripts/run_gui.py
 其它功能：
 - **5 套配色主题**（灰/薄荷/暮光/篝火/樱花），随时切换，立即生效；支持自
   定义背景图片，可调不透明度。
-- 自绘标题栏：支持拖动、缩放、最小化到任务栏。
+- 自绘标题栏：支持拖动、缩放、最小化到任务栏、一键放大到当前屏幕最大可用
+  尺寸（保持窗口比例，再点一次还原）。
 - 系统托盘图标常驻；可选择关闭窗口时直接退出还是最小化到托盘。
 - 记住上次窗口位置，下次启动自动还原。
 - 界面支持中/英文实时切换。
 - 启动时自动检查 GitHub 上的新版本，"关于"窗口里也能随时手动检查。
+- "文件"菜单支持一键打开本地缓存目录（Mod 图标、角色头像等）。
 
 ## 项目结构
 
@@ -134,6 +138,10 @@ python tests/test_e2e_phase2.py   # i18n、模型字段、exe/gui 模块可导�
 ```
 
 `scripts/diagnose_local_env.py` 不是测试，是本机真实环境的人工诊断脚本。
+
+## 更新日志
+
+详见 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases)，每个版本附带打包好的 `DSTCamp.exe`。
 
 ## 许可
 

@@ -64,6 +64,21 @@ if IS_WINDOWS:
     SW_MINIMIZE = 6
     SW_RESTORE = 9
 
+    MONITOR_DEFAULTTONEAREST = 2
+
+    class _RECT(ctypes.Structure):
+        _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                    ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+    class _MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", _RECT), ("rcWork", _RECT),
+                    ("dwFlags", wintypes.DWORD)]
+
+    user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+    user32.MonitorFromWindow.restype = wintypes.HANDLE
+    user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(_MONITORINFO)]
+    user32.GetMonitorInfoW.restype = wintypes.BOOL
+
 
 def minimize_window(root: tk.Tk) -> None:
     """最小化到任务栏——不能用 Tk 自己的 root.iconify()：
@@ -113,6 +128,32 @@ def restore_window(root: tk.Tk) -> None:
 def _get_hwnd(root: tk.Tk) -> int:
     root.update_idletasks()
     return user32.GetParent(root.winfo_id()) or root.winfo_id()
+
+
+def get_monitor_work_area(root: tk.Tk) -> tuple[int, int, int, int]:
+    """窗口当前所在显示器的工作区（left, top, right, bottom）——已经扣掉
+    任务栏，跟 app.py 的 _get_virtual_screen_bounds()（横跨全部显示器，
+    给"上次关闭位置还有没有效"这种校验用）刻意不同：伪最大化要贴的是
+    "这个窗口当前所在这一块屏幕"，不是整个虚拟桌面，窗口跨越两块显示
+    器分界线时拿虚拟桌面整体宽度去算最大尺寸会直接跨到另一块屏幕上
+    去。用 MonitorFromWindow(..., MONITOR_DEFAULTTONEAREST) 找窗口当前
+    所在的显示器（窗口哪怕跨了分界线，也会按"多数面积在哪块屏幕"就近
+    归到一个），GetMonitorInfoW 拿它的 rcWork（已经排除任务栏占用的区
+    域，跟 Windows 原生"最大化"贴的范围一致）。非 Windows/调用失败退回
+    Tk 内置的主显示器尺寸（只有主屏、从 (0,0) 起）兜底。"""
+    if IS_WINDOWS:
+        try:
+            hwnd = _get_hwnd(root)
+            monitor = user32.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)
+            info = _MONITORINFO()
+            info.cbSize = ctypes.sizeof(_MONITORINFO)
+            if monitor and user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                rc = info.rcWork
+                if rc.right > rc.left and rc.bottom > rc.top:
+                    return rc.left, rc.top, rc.right, rc.bottom
+        except Exception:
+            pass
+    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
 
 
 def ensure_taskbar_visible(root: tk.Tk, refresh_shell: bool = False) -> bool:
@@ -235,7 +276,17 @@ class ResizeGrips:
     """
 
     _GRIP = 6  # 边缘手柄粗细（像素）；四角手柄用同样的边长做成正方形
-    _DRAG_THROTTLE_MS = 16  # ~60fps，跟项目里其它 resize 节流保持一致
+    # 真机测过（脚本连续调用 root.geometry()+update_idletasks() 模拟拖拽，
+    # 各页签实测单次 resize+relayout 真实耗时）：本地服务器约 12~14ms，
+    # 世界设置约 7~12ms，都在 16ms（60fps）预算内；但服务器配置约
+    # 21~23ms、存档信息约 12~20ms、樱花映射约 11~18ms——这几个页签单次
+    # 就已经超过 16ms，节流定时器每 16ms 触发一次却要等更久才真正处理
+    # 完，会积压/跟不上鼠标，这正是"卡顿明显"的根因，不是背景图那部分
+    # （拖拽期间背景图整个跳过重绘，见下方说明，本来就不参与这个开销）。
+    # 调到 33ms（~30fps）后，这几个页签实测的最大耗时都能在一个节流周
+    # 期内跑完，不再积压；代价是拖拽中间帧变少、手感没有 60fps 那么"跟
+    # 手"，但比"该慢的页签持续卡顿"换来的观感明显更好。
+    _DRAG_THROTTLE_MS = 33
 
     def __init__(self, root: tk.Tk, app, base_width: int, base_height: int,
                  bottom_reserve: int = 0, top_reserve: int = 0,
@@ -435,9 +486,13 @@ class ResizeGrips:
 
 
 class CustomTitleBar(BgFrame):
-    """自绘标题栏：左边 app 图标 + 标题文字，右边最小化/关闭按钮（不做
-    最大化——这个项目锁定 1500:820 宽高比，原生"真最大化"会破坏比例，干
-    脆不做这个按钮）。标题栏本身可拖拽移动窗口（排除按钮区域）。
+    """自绘标题栏：左边 app 图标 + 标题文字，右边最小化/"伪最大化"/关闭
+    按钮。**不是原生"真最大化"**——这个项目锁定 1500:820 宽高比，真最大
+    化那种"铺满整个显示器工作区"会直接撑破比例。点这个按钮改成"在保持
+    1500:820 比例的前提下，缩放到当前显示器工作区能放下的最大尺寸并居
+    中"，再点一次还原成点击前的位置/大小（见 DSToolsApp.
+    _toggle_pseudo_maximize()，按钮点击只是转发过去，实际的窗口几何计
+    算/状态记忆都在那边）。标题栏本身可拖拽移动窗口（排除按钮区域）。
     """
 
     _HEIGHT = 32
@@ -543,22 +598,47 @@ class CustomTitleBar(BgFrame):
         self.create_text(x, cy, text=t("app.title"), anchor=tk.W, fill=theme.TEXT,
                           font=self._title_font, tags="titlebar_content")
 
-        # 右侧按钮：关闭在最右，最小化紧挨着它左边——从右往左排列。整组
-        # 起点从 w 让开 _EDGE_MARGIN，只影响"关闭"按钮离窗口真实右边缘的
-        # 距离，"最小化"按钮相对"关闭"按钮的位置不受影响（不需要单独再
-        # 让一次）。
+        # 右侧按钮：关闭在最右，往左依次是"伪最大化"、最小化——从右往左排
+        # 列。整组起点从 w 让开 _EDGE_MARGIN，只影响"关闭"按钮离窗口真实
+        # 右边缘的距离，其余按钮的相对位置不受影响（不需要单独再让一
+        # 次）。
         self._btn_regions = []
         bx = w - self._EDGE_MARGIN
+        is_maxed = getattr(self._app, "_is_pseudo_maximized", False)
         for key, glyph, font, hover_bg in (("close", "×", self._close_font, theme.ERROR),
+                                            ("maximize", None, None, theme.BG_SOFT),
                                             ("minimize", "−", self._min_font, theme.BG_SOFT)):
             x1 = bx - self._BTN_W
             rect_id = self.create_rectangle(x1, self._EDGE_MARGIN, bx, h, fill="", outline="",
                                              tags="titlebar_content")
-            self.create_text((x1 + bx) / 2, cy, text=glyph, anchor=tk.CENTER, fill=theme.TEXT,
-                              font=font, tags="titlebar_content")
+            if key == "maximize":
+                self._draw_maximize_glyph((x1 + bx) / 2, cy, is_maxed)
+            else:
+                self.create_text((x1 + bx) / 2, cy, text=glyph, anchor=tk.CENTER, fill=theme.TEXT,
+                                  font=font, tags="titlebar_content")
             self._btn_regions.append({"x1": x1, "x2": bx, "key": key, "rect_id": rect_id,
                                        "hover_bg": hover_bg})
             bx = x1
+
+    def _draw_maximize_glyph(self, cx: float, cy: float, is_maxed: bool) -> None:
+        """手画方框代替字体符号——Segoe UI 里没有一个能保证在所有机器上
+        都渲染正确的"方框轮廓"符号字形（不像"−"/"×"那两个基本符号，方
+        框轮廓/双方框这类图标字形的字体支持没那么普遍），手画矩形不依
+        赖任何字体，不会出现缺字方块。未伪最大化画一个方框（"放大"），
+        已经伪最大化画两个错开的方框（经典"还原"图标样式，双方框只画
+        轮廓不填充，透出两者都在场）。"""
+        size = 10
+        if not is_maxed:
+            self.create_rectangle(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2,
+                                   outline=theme.TEXT, fill="", width=1, tags="titlebar_content")
+            return
+        offset = 3
+        self.create_rectangle(cx - size / 2 - offset, cy - size / 2 + offset,
+                               cx + size / 2 - offset, cy + size / 2 + offset,
+                               outline=theme.TEXT, fill="", width=1, tags="titlebar_content")
+        self.create_rectangle(cx - size / 2 + offset, cy - size / 2 - offset,
+                               cx + size / 2 + offset, cy + size / 2 - offset,
+                               outline=theme.TEXT, fill="", width=1, tags="titlebar_content")
 
     def _on_motion(self, event):
         for b in self._btn_regions:
@@ -577,6 +657,9 @@ class CustomTitleBar(BgFrame):
             if b["x1"] <= event.x <= b["x2"]:
                 if b["key"] == "close":
                     self._app._on_close()
+                elif b["key"] == "maximize":
+                    self._app._toggle_pseudo_maximize()
+                    self._redraw()
                 else:
                     minimize_window(self.root)
                 return

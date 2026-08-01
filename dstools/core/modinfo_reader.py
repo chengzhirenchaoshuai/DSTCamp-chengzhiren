@@ -146,7 +146,13 @@ def _unescape_lua_string(s: str) -> str:
 
 @dataclass
 class ModConfigOption:
-    """A single mod configuration option definition from modinfo.lua."""
+    """A single mod configuration option definition from modinfo.lua.
+
+    **加/删/改字段时记得把 mod_resolve_cache._CACHE_FORMAT_VERSION 加
+    一**——真机复现过的坑：磁盘缓存只按 modinfo.lua 的 mtime 判断新鲜
+    度，不知道"DSTCamp 自己的解析代码变了"，字段形状一变，缓存里没有新
+    字段时 `ModConfigOption(**o)` 会用默认值悄悄补上（不报错，不会触发
+    重新解析），表现为"明明修了 bug，但界面还是老样子"。"""
     name: str = ""      # config key name
     label: str = ""     # display label
     hover: str = ""     # tooltip
@@ -171,6 +177,34 @@ class ModConfigOption:
     # ModInfo.dynamic_preamble, to try actually running it through a real
     # sandboxed Lua interpreter on demand, without re-parsing the file.
     raw_options_expr: str = ""
+    # `client = true` on this individual option -- not an engine-recognized
+    # field (confirmed: the real game's own scripts/screens/
+    # modconfigurationscreen.lua never references a "client" key at all),
+    # but a convention some mod authors use to mark an option as only
+    # meaningful on the player's own client machine (a hotkey binding, a
+    # HUD element's screen position, ...) as opposed to a server-side
+    # gameplay setting. A dedicated server tool like this one only ever
+    # edits a save's modoverrides.lua -- which is server-side config -- so
+    # showing/editing a client-only option here would just be misleading
+    # (changing it here has no effect on what any connecting player's
+    # client actually does). See visible_config_options() below, which
+    # ModConfigDialog uses to hide these entirely.
+    client: bool = False
+    # 下面三个同样不是引擎字段，是共享库 mod "Configs Extended"（创意工坊
+    # 3317960157）的约定——真机读过它的 scripts/widgets/
+    # remi_newmodconfigurationscreen.lua 源码确认：这套东西最终仍然调
+    # KnownModIndex:SaveConfigurationOptions() 写回同一份 modoverrides.lua
+    # （跟原生配置弹窗同一个引擎 API），只是值的形状不是"从几个固定选项
+    # 里选一个"，原生下拉框机制表达不了，ModConfigDialog 改用专门的编辑
+    # 控件（见 visible_config_options() 旁边的 _render_raw_value_editor()）：
+    # - is_set_config：真实存储是 Lua"字符串当 key"的集合写法
+    #   （{["heatrock"]=true, ...}，EditSet() 用 `pairs()` 遍历，没有顺
+    #   序概念）。
+    # - is_array_config：普通有序数组（EditArray() 用 `ipairs()` 遍历）。
+    # - is_text_config：纯字符串，不是选项/集合/数组。
+    is_set_config: bool = False
+    is_array_config: bool = False
+    is_text_config: bool = False
 
 
 @dataclass
@@ -232,6 +266,37 @@ class ModInfo:
     # mod`/`all_clients_require_mod` 只要有一个为真就要盖过
     # `client_only_mod`——见 parse_modinfo() 里的组合逻辑。
     client_only: bool = False
+
+
+def visible_config_options(config_options: list[ModConfigOption]) -> list[ModConfigOption]:
+    """过滤掉标记为 client=true 的纯客户端配置项（见 ModConfigOption.client
+    上的说明），供 ModConfigDialog 渲染前调用。
+
+    按"标题 + 紧随其后的选项"分组处理，不是简单地逐条丢弃：如果某个分
+    组标题（比如这个模组自己的"Client Settings"分区标题）底下的选项全
+    部因为是纯客户端设置被过滤掉了，这个标题本身也一起去掉，不留一个
+    后面空空如也的孤立标题。分组边界就是 config_options 列表里天然的
+    顺序（is_header 的条目本身没有真实设置，只是视觉分隔符）。"""
+    sections: list[tuple[ModConfigOption | None, list[ModConfigOption]]] = []
+    current_header: ModConfigOption | None = None
+    current_options: list[ModConfigOption] = []
+    for opt in config_options:
+        if opt.is_header:
+            sections.append((current_header, current_options))
+            current_header, current_options = opt, []
+        else:
+            current_options.append(opt)
+    sections.append((current_header, current_options))
+
+    result: list[ModConfigOption] = []
+    for header, options in sections:
+        visible = [o for o in options if not o.client]
+        if not visible:
+            continue
+        if header is not None:
+            result.append(header)
+        result.extend(visible)
+    return result
 
 
 # ── Steam / Mod path discovery ────────────────────────────────────────
@@ -1032,6 +1097,11 @@ def _parse_single_option(block: str, local_tables: dict | None = None) -> ModCon
     if default_raw is not None:
         opt.default = _coerce_lua_value(default_raw)
 
+    opt.client = bool(re.search(r'\bclient\s*=\s*true\b', block))
+    opt.is_set_config = bool(re.search(r'\bis_set_config\s*=\s*true\b', block))
+    opt.is_array_config = bool(re.search(r'\bis_array_config\s*=\s*true\b', block))
+    opt.is_text_config = bool(re.search(r'\bis_text_config\s*=\s*true\b', block))
+
     opt.choices = _extract_choices(block, local_tables)
 
     # A section-title/divider entry, not a real setting -- two independent
@@ -1365,6 +1435,10 @@ def _options_from_lua_result(result: Any) -> list[ModConfigOption] | None:
         opt.hover = _resolve_localized_value(d.get("hover"))
         if "default" in d:
             opt.default = d["default"]
+        opt.client = bool(d.get("client"))
+        opt.is_set_config = bool(d.get("is_set_config"))
+        opt.is_array_config = bool(d.get("is_array_config"))
+        opt.is_text_config = bool(d.get("is_text_config"))
         opt.choices = _choices_from_lua_value(d.get("options"))
 
         # Same two header tells as _parse_single_option (see its

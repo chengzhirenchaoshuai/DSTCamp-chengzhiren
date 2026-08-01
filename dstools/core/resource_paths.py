@@ -38,10 +38,18 @@ def exe_dir() -> Path:
     return Path(__file__).parent.parent.parent
 
 
+def cache_root_dir() -> Path:
+    """运行时缓存的根目录（不含任何具体子目录名）——默认
+    %APPDATA%/DSTCamp/cache/，用户在"设置"里开启"缓存存放在程序所在目
+    录"后改成 exe_dir()/cache/。`cache_dir(name)` 在这基础上再拼一层
+    具体子目录；"文件"菜单"打开缓存目录"这类需要拿到整棵缓存目录（而
+    不是某一个具体子目录）的地方用这个。"""
+    from dstools.core.app_settings import get_cache_use_exe_dir
+    return exe_dir() / "cache" if get_cache_use_exe_dir() else get_settings_dir() / "cache"
+
+
 def cache_dir(name: str) -> Path:
     """运行时缓存的根目录：默认 %APPDATA%/DSTCamp/cache/<name>/，不随
     源码/打包运行方式或重启次数变化；用户在"设置"里开启"缓存存放在程
     序所在目录"后改成 exe_dir()/cache/<name>/。"""
-    from dstools.core.app_settings import get_cache_use_exe_dir
-    base = exe_dir() / "cache" if get_cache_use_exe_dir() else get_settings_dir() / "cache"
-    return base / name
+    return cache_root_dir() / name
