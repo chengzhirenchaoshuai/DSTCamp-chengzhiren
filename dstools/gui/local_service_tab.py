@@ -6,11 +6,14 @@
 （ttk.Notebook 动态 add，日志/命令都通过管道，不弹出真实控制台窗口）。
 """
 
+import queue
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 
+from dstools.core import luajit_injector
 from dstools.core.app_settings import (
     get_backup_auto_enabled, get_backup_interval_minutes, set_dedicated_server_path,
 )
@@ -18,12 +21,13 @@ from dstools.core.backup_manager import create_backup
 from dstools.core.config_manager import load_cluster_config, load_shard_config
 from dstools.core.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
-    find_dedicated_server_dir, is_valid_install_dir, resolve_conf_dir_arg,
+    find_bin64_dir, find_dedicated_server_dir, is_valid_install_dir, resolve_conf_dir_arg,
 )
 from dstools.core.modinfo_reader import find_shared_ugc_directory
 from dstools.core.token_manager import is_valid_token, read_token
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
+from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.gui.tooltip import Tooltip
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
@@ -472,6 +476,25 @@ class LocalServiceTab:
                                                command=self._change_install_dir)
         self._install_change_btn.pack(side=tk.RIGHT, padx=(0, 5))
 
+        # LuaJIT 性能补丁行——只服务 Steam 版专用服务器（core/luajit_
+        # injector.py 顶部说明：WeGame 专用服务器永远是玩家自己在 WeGame
+        # 客户端启动的，DSTCamp 看不到它是否在跑，范围上直接排除，不在
+        # 这里出现任何 WeGame 分支）。文字画法照抄上面 install_row 的
+        # create_text 方式，不用 ttk.Label。
+        self._luajit_row = luajit_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        luajit_row.pack(fill=tk.X, padx=5, pady=(0, 5))
+        self._luajit_status_var = tk.StringVar()
+        self._luajit_status_var.trace_add("write", lambda *a: self._redraw_luajit_row_text())
+        luajit_row.bind("<Configure>", lambda e: self._redraw_luajit_row_text(), add="+")
+        self._luajit_bin64_dir: Path | None = None
+
+        self._luajit_uninstall_btn = ttk.Button(luajit_row, text=t("local.luajit_uninstall_btn"),
+                                                 command=self._on_luajit_uninstall_clicked)
+        self._luajit_uninstall_btn.pack(side=tk.RIGHT)
+        self._luajit_install_btn = ttk.Button(luajit_row, text=t("local.luajit_install_btn"),
+                                               command=self._on_luajit_install_clicked)
+        self._luajit_install_btn.pack(side=tk.RIGHT, padx=(0, 5))
+
         # 选中本地存档时显示的醒目提示——风格和"Mod管理"/"世界设置"的
         # 本地存档提示条保持一致（黄底加粗），跨整个页签宽度，而不是像
         # 之前那样塞在左侧分片列表那个窄栏里、字又小又不显眼。默认不 pack。
@@ -588,6 +611,7 @@ class LocalServiceTab:
             self._local_banner.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(5, 0))
         self._sync_console_tabs_visibility(c if is_server else None)
         self._update_start_lock_state(c)
+        self._update_luajit_row(c)
 
     def _sync_console_tabs_visibility(self, cluster):
         """全局存档选择器切到别的存档（或者切到本地存档）时，把不属于
@@ -708,6 +732,21 @@ class LocalServiceTab:
         c.create_text(4 + label_w + 6, cy, text=self._install_path_var.get(), anchor=tk.W,
                        fill=theme.TEXT_MUTED, font=font, tags="install_text")
 
+    def _redraw_luajit_row_text(self) -> None:
+        c = self._luajit_row
+        c.delete("luajit_text")
+        h = c.winfo_height()
+        if h < 4:
+            return
+        cy = h / 2
+        font = tkfont.nametofont("TkDefaultFont")
+        label_text = t("local.luajit_state_label")
+        c.create_text(4, cy, text=label_text, anchor=tk.W, fill=theme.TEXT,
+                       font=font, tags="luajit_text")
+        label_w = font.measure(label_text)
+        c.create_text(4 + label_w + 6, cy, text=self._luajit_status_var.get(), anchor=tk.W,
+                       fill=theme.TEXT_MUTED, font=font, tags="luajit_text")
+
     def _resize_wegame_banner(self) -> None:
         """WeGame 提示条的 wraplength 跟着 self.frame 实际宽度走，不用固
         定的 600——那个固定值在正常窗口宽度下会把这段说明文字挤成五六
@@ -747,6 +786,152 @@ class LocalServiceTab:
             return True
         _show_not_found_warning(self.app.root)
         return False
+
+    # ── LuaJIT 性能补丁（core/luajit_injector.py） ───────────────────
+    # 只服务 Steam 版专用服务器——WeGame 完全不出现在这一节的任何分支里，
+    # 见 luajit_row 构造处的说明。
+
+    def _any_running_for_bin64(self, bin64_dir: Path) -> bool:
+        """bin64 是整个安装共享的，同一个 install_dir 下可能有多个
+        cluster——锁的粒度是"这个 bin64 所属的 install_dir 下有没有任何
+        分片在跑"，不是"当前选中的 cluster 在不在跑"（会漏锁同一安装目
+        录下另一个 cluster 在跑的情况），也不是全局 any_running()（会误
+        锁其它安装目录下的分片）。ServerProcess.install_dir 是 start() 时
+        存的安装根目录，bin64_dir.parent 换算回去正好对上。"""
+        install_dir = bin64_dir.parent
+        return any(p.install_dir == install_dir for p in self.manager.running())
+
+    def _update_luajit_row(self, cluster) -> None:
+        # 这一行永远保持 pack()（构造时已经就位），只切换按钮可用性/文
+        # 字，不 pack_forget()/重新 pack()——CLAUDE.md 记录过的既有坑：
+        # 这一行排在 self._body 上方，动态显示/隐藏会改变它上方内容的
+        # 总高度，连带把 self._body 整体挤上下移位，跟它内部 BgFrame 裁
+        # 的那块共享背景图对不上。跟 install_row 对 WeGame 存档的处理方
+        # 式一致（整行常驻，只禁用按钮），不是本页签里第一次这么做。
+        is_steam_server = bool(cluster and cluster.source == SaveSource.SERVER
+                                and cluster.platform == Platform.STEAM)
+        if not is_steam_server:
+            self._luajit_bin64_dir = None
+            self._luajit_status_var.set(t("local.luajit_steam_only_hint"))
+            self._luajit_install_btn.configure(state=tk.DISABLED, text=t("local.luajit_install_btn"))
+            self._luajit_uninstall_btn.configure(state=tk.DISABLED)
+            return
+
+        bin64_dir = find_bin64_dir(self._install_dir) if self._install_dir else None
+        self._luajit_bin64_dir = bin64_dir
+        if bin64_dir is None:
+            self._luajit_status_var.set(t("local.luajit_bin64_not_found"))
+            self._luajit_install_btn.configure(state=tk.DISABLED)
+            self._luajit_uninstall_btn.configure(state=tk.DISABLED)
+            return
+
+        if self._any_running_for_bin64(bin64_dir):
+            self._luajit_status_var.set(t("local.luajit_blocked_running"))
+            self._luajit_install_btn.configure(state=tk.DISABLED)
+            self._luajit_uninstall_btn.configure(state=tk.DISABLED)
+            return
+
+        state = luajit_injector.detect_state(bin64_dir)
+        if state is luajit_injector.InjectorState.ACTIVE:
+            self._luajit_status_var.set(t("local.luajit_state_active"))
+            self._luajit_install_btn.configure(state=tk.NORMAL, text=t("local.luajit_reinstall_btn"))
+            self._luajit_uninstall_btn.configure(state=tk.NORMAL)
+        elif state is luajit_injector.InjectorState.DISABLED_LEFTOVER:
+            self._luajit_status_var.set(t("local.luajit_state_leftover"))
+            self._luajit_install_btn.configure(state=tk.NORMAL, text=t("local.luajit_reinstall_btn"))
+            self._luajit_uninstall_btn.configure(state=tk.DISABLED)
+        else:
+            self._luajit_status_var.set(t("local.luajit_state_not_installed"))
+            self._luajit_install_btn.configure(state=tk.NORMAL, text=t("local.luajit_install_btn"))
+            self._luajit_uninstall_btn.configure(state=tk.DISABLED)
+
+    def _on_luajit_install_clicked(self) -> None:
+        bin64_dir = self._luajit_bin64_dir
+        server_running = bin64_dir is not None and self._any_running_for_bin64(bin64_dir)
+        plan = luajit_injector.plan_install(bin64_dir, server_running)
+        if plan.blocked_reason == "bin64_not_found":
+            dlg.show_warning(self.app.root, t("local.luajit_confirm_install_title"),
+                              t("local.luajit_bin64_not_found"))
+            return
+        if plan.blocked_reason == "server_running":
+            dlg.show_warning(self.app.root, t("local.luajit_confirm_install_title"),
+                              t("local.luajit_blocked_running"))
+            return
+        if plan.blocked_reason == "workshop_not_subscribed":
+            # 引导手动订阅，不假装能代劳——订阅是 Steam 账号操作，这个项
+            # 目之前试过 steam:// 协议链接/网页商店页两种"自动化"，都没
+            # 法真正完成订阅这个动作（见 _show_not_found_warning() 的说
+            # 明，同一个教训），这里直接用同款思路：只负责把创意工坊页面
+            # 打开，订阅这一步用户自己在 Steam 里点。
+            if dlg.ask_yes_no(self.app.root, t("local.luajit_confirm_install_title"),
+                               t("local.luajit_workshop_not_subscribed_msg")):
+                import webbrowser
+                webbrowser.open(luajit_injector.WORKSHOP_PAGE_URL)
+            return
+
+        cluster = self._get_cluster()
+        mod_overrides_paths = [s.mod_overrides_path for s in cluster.shards if s.mod_overrides_path] \
+            if cluster else []
+
+        # 这段风险声明比 ask_yes_no() 默认给短提示留的宽度（320px）长得
+        # 多，用默认宽度会挤成很多行、窗口又高又窄；加宽显著减少行数。
+        if not dlg.ask_yes_no(self.app.root, t("local.luajit_confirm_install_title"),
+                               t("local.luajit_confirm_install_msg"),
+                               wraplength=520, min_width=560):
+            return
+
+        self._luajit_install_btn.configure(state=tk.DISABLED)
+        self._luajit_uninstall_btn.configure(state=tk.DISABLED)
+        log_dialog = ModSyncLogDialog(self.app.root, title=t("local.luajit_confirm_install_title"))
+        log_q: "queue.Queue" = queue.Queue()
+
+        def _worker():
+            result = luajit_injector.apply_install(plan.bin64_dir, mod_overrides_paths,
+                                                     on_log=log_q.put)
+            log_q.put(result)  # 哨兵：一个 InstallResult 实例，标志"跑完了"——
+                                # 不拆成"None + result"两条分开 put，避免万一
+                                # 两次 put 被切到不同的轮询 tick 之间，
+                                # _poll_log() 局部变量 done 每次重新算，会
+                                # 永远等不到两者同时为真，日志弹窗卡死关不掉。
+
+        def _poll_log():
+            result = None
+            while True:
+                try:
+                    item = log_q.get_nowait()
+                except queue.Empty:
+                    break
+                if isinstance(item, luajit_injector.InstallResult):
+                    result = item
+                    continue
+                log_dialog.append(item)
+            if result is not None:
+                log_dialog.finish()
+                if not result.ok:
+                    dlg.show_error(self.app.root, t("local.luajit_confirm_install_title"),
+                                    "\n".join(result.errors))
+                self._update_luajit_row(self._get_cluster())
+                return
+            self.frame.after(100, _poll_log)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self.frame.after(100, _poll_log)
+
+    def _on_luajit_uninstall_clicked(self) -> None:
+        bin64_dir = self._luajit_bin64_dir
+        if bin64_dir is None:
+            return
+        if self._any_running_for_bin64(bin64_dir):
+            dlg.show_warning(self.app.root, t("local.luajit_confirm_uninstall_title"),
+                              t("local.luajit_blocked_running"))
+            return
+        if not dlg.ask_yes_no(self.app.root, t("local.luajit_confirm_uninstall_title"),
+                               t("local.luajit_confirm_uninstall_msg")):
+            return
+        lines: list[str] = []
+        luajit_injector.apply_uninstall(bin64_dir, on_log=lines.append)
+        dlg.show_info(self.app.root, t("local.luajit_confirm_uninstall_title"), "\n".join(lines))
+        self._update_luajit_row(self._get_cluster())
 
     # ── 启动/停止 ────────────────────────────────────────────────────
 
@@ -788,6 +973,53 @@ class LocalServiceTab:
         except ConfDirCrossDriveError:
             dlg.show_error(self.app.root, t("local.install_title"), t("local.confdir_cross_drive_error"))
             return
+
+        # LuaJIT 隔离副本（core/luajit_injector.py）：已启用但游戏被 Steam
+        # 更新过时，副本里的 exe 已经过期，不能直接拿去用——这一步纯本地
+        # 文件读取，便宜，可以每次启动前都查一遍。真的要重新生成则是整个
+        # 复制一遍 bin64（真机验证过这台机器上约 4.2GB），不能在这里同步
+        # 静默做，弹确认框+进度条，用户确认、后台复制完成后才继续启动。
+        if luajit_injector.needs_regeneration(self._install_dir):
+            if not dlg.ask_yes_no(self.app.root, t("local.luajit_regenerate_title"),
+                                   t("local.luajit_regenerate_confirm_msg")):
+                return
+            self._regenerate_luajit_then_start(cluster, shard, conf_dir_arg)
+            return
+        self._continue_start_shard(cluster, shard, conf_dir_arg)
+
+    def _regenerate_luajit_then_start(self, cluster, shard, conf_dir_arg):
+        bin64_dir = find_bin64_dir(self._install_dir)
+        log_dialog = ModSyncLogDialog(self.app.root, title=t("local.luajit_regenerate_title"))
+        log_q: "queue.Queue" = queue.Queue()
+
+        def _worker():
+            result = luajit_injector.regenerate(bin64_dir, on_log=log_q.put)
+            log_q.put(result)
+
+        def _poll_log():
+            result = None
+            while True:
+                try:
+                    item = log_q.get_nowait()
+                except queue.Empty:
+                    break
+                if isinstance(item, luajit_injector.InstallResult):
+                    result = item
+                    continue
+                log_dialog.append(item)
+            if result is not None:
+                log_dialog.finish()
+                if result.ok:
+                    self._continue_start_shard(cluster, shard, conf_dir_arg)
+                else:
+                    dlg.show_error(self.app.root, t("local.luajit_regenerate_title"), "\n".join(result.errors))
+                return
+            self.frame.after(100, _poll_log)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self.frame.after(100, _poll_log)
+
+    def _continue_start_shard(self, cluster, shard, conf_dir_arg):
         # Master 和非 Master(Caves 等) 的"真正就绪"判断不是同一回事(见
         # dedicated_server.py 的 _MASTER_READY_MARKERS/_SECONDARY_READY_
         # MARKERS)，这里读一下 server.ini 的 [SHARD] is_master 告诉它按
@@ -799,9 +1031,15 @@ class LocalServiceTab:
         # modinfo_reader.find_shared_ugc_directory() 的说明）。找不到就是
         # None，build_launch_args() 会跳过这个参数，退回默认行为。
         ugc_directory = find_shared_ugc_directory()
+        # LuaJIT 已启用且副本有效时返回副本目录，否则 None（回退到真实
+        # bin64）——见 luajit_injector.resolve_launch_bin64_dir() 的说明；
+        # 这里不做任何联网/重新生成，_do_start_shard() 已经处理过"要不要
+        # 先重新生成"这件事。
+        bin64_override = luajit_injector.resolve_launch_bin64_dir(self._install_dir)
         proc = self.manager.start(cluster.name, cluster.path, shard.name, self._install_dir,
                                    conf_dir_arg, is_master,
-                                   str(ugc_directory) if ugc_directory else None)
+                                   str(ugc_directory) if ugc_directory else None,
+                                   bin64_override=bin64_override)
         self.app.sakura_tab.maybe_start_frpc(cluster, shard)
         key = (str(cluster.path), shard.name)
         existing = self._console_panes.get(key)
@@ -924,6 +1162,7 @@ class LocalServiceTab:
         self._update_rollback_btn_state(self._get_cluster())
         self._update_start_lock_state(self._get_cluster())
         self._update_stop_all_btn_state(self._get_cluster())
+        self._update_luajit_row(self._get_cluster())
         self._maybe_periodic_backup()
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 

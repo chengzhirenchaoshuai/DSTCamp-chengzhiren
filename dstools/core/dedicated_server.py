@@ -22,7 +22,7 @@ IS_WINDOWS = sys.platform == "win32"
 if IS_WINDOWS:
     import winreg
 
-DEDICATED_SERVER_APP_ID = "343080"
+DEDICATED_SERVER_APP_ID = "343050"  # 真机 appmanifest 文件名验证过（曾经错写成 343080，无路径逻辑受影响，只是展示文案错了）
 _INSTALL_DIR_NAME = "Don't Starve Together Dedicated Server"
 _EXE_NAMES = {64: "dontstarve_dedicated_server_nullrenderer_x64.exe", 32: "dontstarve_dedicated_server_nullrenderer.exe"}
 _BIN_DIRS = {64: "bin64", 32: "bin"}
@@ -73,6 +73,18 @@ def pick_bitness(install_dir: Path) -> int:
         if (install_dir / _BIN_DIRS[b] / _EXE_NAMES[b]).exists():
             return b
     raise FileNotFoundError(f"未在 {install_dir} 找到专用服务器可执行文件")
+
+
+def find_bin64_dir(install_dir: Path) -> Path | None:
+    """install_dir 是专用服务器安装根目录（bin64/bin 的上一级）——给
+    core/luajit_injector.py 这类需要直接操作 bin64 内容的功能用，跟
+    pick_bitness() 不同，这里找不到对应 exe 时返回 None 而不是抛异常，方
+    便调用方优雅处理"还没检测到安装目录"这种情况。"""
+    try:
+        b = pick_bitness(install_dir)
+    except FileNotFoundError:
+        return None
+    return install_dir / _BIN_DIRS[b]
 
 
 def find_dedicated_server_dir() -> Path | None:
@@ -175,7 +187,7 @@ class ServerProcess:
 
     def __init__(self, cluster_name: str, shard_name: str, cluster_path: Path,
                  install_dir: Path, conf_dir_arg: str | None, is_master: bool = True,
-                 ugc_directory: str | None = None):
+                 ugc_directory: str | None = None, bin64_override: Path | None = None):
         self.cluster_name = cluster_name
         self.shard_name = shard_name
         self.cluster_path = cluster_path
@@ -183,14 +195,21 @@ class ServerProcess:
         self.conf_dir_arg = conf_dir_arg
         self.is_master = is_master
         self.ugc_directory = ugc_directory
+        # 给 core/luajit_injector.py 用：真的要跑起来的 exe 所在目录改成
+        # 别的地方（LuaJIT 隔离副本），而不是 install_dir 下的 bin64/。
+        # install_dir 本身语义不变，仍然是"这份安装归哪个 cluster 管"这
+        # 层判断（_any_running_for_bin64() 之类）依据的安装根目录。
+        self.bin64_override = bin64_override
         self.status = ServerStatus.STARTING
         self.world_ready = False
         self.proc: subprocess.Popen | None = None
         self._out_queue: "queue.Queue[str]" = queue.Queue()
 
     def start(self) -> None:
-        bitness = pick_bitness(self.install_dir)
-        exe = self.install_dir / _BIN_DIRS[bitness] / _EXE_NAMES[bitness]
+        bitness = pick_bitness(self.install_dir)  # 位数判断始终用真实安装目录
+        bin64_dir = self.bin64_override if self.bin64_override is not None \
+            else self.install_dir / _BIN_DIRS[bitness]
+        exe = bin64_dir / _EXE_NAMES[bitness]
         args = build_launch_args(self.cluster_name, self.shard_name, self.conf_dir_arg, self.ugc_directory)
         creationflags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
         self.proc = subprocess.Popen(
@@ -300,9 +319,9 @@ class ServerManager:
 
     def start(self, cluster_name: str, cluster_path: Path, shard_name: str,
               install_dir: Path, conf_dir_arg: str | None, is_master: bool = True,
-              ugc_directory: str | None = None) -> ServerProcess:
+              ugc_directory: str | None = None, bin64_override: Path | None = None) -> ServerProcess:
         proc = ServerProcess(cluster_name, shard_name, cluster_path, install_dir, conf_dir_arg,
-                              is_master, ugc_directory)
+                              is_master, ugc_directory, bin64_override)
         proc.start()
         self._procs[self._key(cluster_path, shard_name)] = proc
         return proc

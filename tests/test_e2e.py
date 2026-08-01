@@ -1,7 +1,9 @@
 """End-to-end verification tests for dstools."""
 
 import contextlib
+import json
 import os
+import shutil
 import sys
 import tempfile
 import time
@@ -58,9 +60,18 @@ from dstools.core.backup_utils import backup_file, _prune_old_backups
 from dstools.core.sakura_frp import find_dstcamp_tunnel, sanitize_tunnel_name
 from dstools.core.frpc_process import FrpcManager
 from dstools.core.app_settings import get_sakura_token, set_sakura_token
+from dstools.core.app_settings import get_luajit_enabled, set_luajit_enabled
 from dstools.core.cluster_copy import (
     validate_cluster_folder_name, suggest_new_cluster_name, copy_local_cluster_to_server,
 )
+from dstools.core.dedicated_server import find_bin64_dir
+from dstools.core.luajit_injector import (
+    WORKSHOP_ID, InjectorState, LuajitMarker, apply_uninstall,
+    cleanup_legacy_local_mod_entry, detect_state, get_luajit_dir,
+    is_workshop_subscribed, needs_regeneration, plan_install, read_marker, regenerate,
+    resolve_launch_bin64_dir, write_marker,
+)
+from dstools.core.steam_discovery import parse_library_folders, read_game_version_file
 
 
 @contextlib.contextmanager
@@ -567,6 +578,25 @@ def test_modinfo_reader():
         # 不存在 modinfo.lua 的文件夹：明确返回 None，不抛异常。
         assert parse_modinfo(Path(tmp) / "does_not_exist") is None
         print("  PASS: Missing modinfo.lua returns None")
+
+        # client_only_mod=true 但同时 server_only_mod=true（DontStarveLuaJIT2
+        # 的真实写法，作者确认过：饥荒引擎本身不读 server_only_mod，是给开
+        # 服工具用的约定，表示"仍然当服务器 mod 处理，配置可编辑"）——不
+        # 应该被判定成 client_only，见 ModInfo.client_only 的说明。
+        local_folder = Path(tmp) / "654321"
+        local_folder.mkdir()
+        (local_folder / "modinfo.lua").write_text(
+            'name = "Local Only Mod"\nclient_only_mod = true\n', encoding="utf-8")
+        assert parse_modinfo(local_folder).client_only is True
+        print("  PASS: plain client_only_mod=true (no server_only_mod) stays client_only")
+
+        server_folder = Path(tmp) / "654322"
+        server_folder.mkdir()
+        (server_folder / "modinfo.lua").write_text(
+            'name = "LuaJIT-style Mod"\nclient_only_mod = true\nserver_only_mod = true\n',
+            encoding="utf-8")
+        assert parse_modinfo(server_folder).client_only is False
+        print("  PASS: server_only_mod=true overrides client_only_mod, treated as a server mod")
 
 
 def test_admin_manager():
@@ -1124,6 +1154,283 @@ def test_frpc_manager_key_convention():
     print("  PASS: FrpcManager._key() matches ServerManager's convention")
 
 
+@contextlib.contextmanager
+def _fake_workshop_dir(root: Path, subscribed_ids: list[str], with_injector_files: bool = False,
+                       mod_version: str | None = None):
+    """猴子补丁 luajit_injector.find_workshop_dir()（这里也是 "from ...
+    import" 抄过去的独立引用，同 _isolated_settings_dir() 的道理，只补
+    modinfo_reader 自己那份不生效），指向
+    root/steamapps/workshop/content/322330/，按 subscribed_ids 建好
+    <id>/modinfo.lua。root 由调用方提供（不是这个函数自己另开一个临时目
+    录），这样能跟专用服务器安装目录建在同一个 fake Steam 库根目录下，
+    模拟真实"专用服务器和创意工坊内容同属一个 Steam 库"的目录关系（
+    needs_regeneration() 的组合测试需要这个前提）。
+
+    with_injector_files=True 时在 WORKSHOP_ID 对应的文件夹下现造一份假
+    的 bin64/windows/ 注入文件，够 _injector_source_dir()/apply_install()
+    的测试用（不再涉及 zip/下载——作者确认过注入文件直接取自订阅内容，
+    见 luajit_injector.py 顶部说明）。mod_version 给 WORKSHOP_ID 这个物
+    品的 modinfo.lua 写一行 `version = "<mod_version>"`（真机验证过真实
+    格式是这样，比如 "1.10.1"），够 current_injector_version()/
+    needs_regeneration() 的测试用——不再需要伪造 appworkshop_322330.acf，
+    因为 current_injector_version() 现在直接读 modinfo.lua 自己的
+    version 字段。"""
+    import dstools.core.luajit_injector as lj
+
+    workshop_dir = root / "steamapps" / "workshop" / "content" / "322330"
+    for wid in subscribed_ids:
+        d = workshop_dir / wid
+        d.mkdir(parents=True, exist_ok=True)  # 允许同一个 root 反复调用，模拟 Steam 原地更新订阅内容
+        lines = ["name = 'test'"]
+        if wid == WORKSHOP_ID and mod_version is not None:
+            lines.append(f'version = "{mod_version}"')
+        (d / "modinfo.lua").write_text("\n".join(lines), encoding="utf-8")
+        if with_injector_files and wid == WORKSHOP_ID:
+            bin64_win = d / "bin64" / "windows"
+            bin64_win.mkdir(parents=True, exist_ok=True)
+            (bin64_win / "Winmm.dll").write_bytes(b"fake winmm")
+            (bin64_win / "Injector.dll").write_bytes(b"fake injector")
+
+    original = lj.find_workshop_dir
+    lj.find_workshop_dir = lambda: workshop_dir
+    try:
+        yield workshop_dir
+    finally:
+        lj.find_workshop_dir = original
+
+
+def _make_fake_install_dir(root: Path, build_id: str | None = None) -> Path:
+    """现造一份 <root>/steamapps/common/<产品名>/ 目录结构（安装目录），
+    可选带上 version.txt（游戏自己写的内部版本号），模拟"这是某个 Steam
+    库里的专用服务器安装目录"这个前提，不需要真的装 Steam。"""
+    install_dir = root / "steamapps" / "common" / "Don't Starve Together Dedicated Server"
+    install_dir.mkdir(parents=True)
+    if build_id is not None:
+        (install_dir / "version.txt").write_text(f"{build_id}\n", encoding="utf-8")
+    return install_dir
+
+
+def test_luajit_injector():
+    """core/luajit_injector.py 只测离线可测的纯逻辑（游戏版本读取/隔离副
+    本三态检测/resolve_launch_bin64_dir/标记文件往返/需要重新生成的判
+    断/重新生成/创意工坊订阅检测/plan_install 的只读判断/卸载的幂等
+    性），真实网络调用和真实注入效果按项目惯例不测，属于人工验证项。"""
+    print("\n" + "=" * 60)
+    print("Test 33: LuaJIT Injector")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        install_dir = _make_fake_install_dir(Path(tmp), build_id="111")
+        assert read_game_version_file(install_dir) == "111"
+        assert read_game_version_file(install_dir.parent) is None, "没有 version.txt 应该返回 None"
+    print("  PASS: steam_discovery.read_game_version_file() 正确读取 version.txt")
+
+    with _isolated_settings_dir():
+        with tempfile.TemporaryDirectory() as tmp:
+            install_dir = _make_fake_install_dir(Path(tmp))
+            bin64 = install_dir / "bin64"
+            bin64.mkdir()
+            luajit_dir = get_luajit_dir(install_dir)
+
+            assert detect_state(bin64) is InjectorState.NOT_INSTALLED
+            luajit_dir.mkdir(parents=True)
+            (luajit_dir / "Injector.dll").write_bytes(b"x")
+            assert detect_state(bin64) is InjectorState.DISABLED_LEFTOVER, \
+                "副本存在但还没启用，应该是已关闭残留"
+            set_luajit_enabled(True)
+            assert detect_state(bin64) is InjectorState.ACTIVE
+            set_luajit_enabled(False)
+            assert detect_state(bin64) is InjectorState.DISABLED_LEFTOVER
+        print("  PASS: detect_state() 新语义（副本是否存在 + 是否启用）判定正确")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            install_dir = _make_fake_install_dir(Path(tmp))
+            assert resolve_launch_bin64_dir(install_dir) is None, "未启用应该返回 None"
+            set_luajit_enabled(True)
+            assert resolve_launch_bin64_dir(install_dir) is None, \
+                "已启用但副本还没装过（缺锚点文件）应该返回 None"
+            luajit_dir = get_luajit_dir(install_dir)
+            luajit_dir.mkdir(parents=True)
+            (luajit_dir / "Injector.dll").write_bytes(b"x")
+            assert resolve_launch_bin64_dir(install_dir) == luajit_dir, \
+                "已启用且副本有效应该返回副本目录，给 ServerProcess 用来覆盖启动目录"
+        print("  PASS: resolve_launch_bin64_dir() 按启用状态 + 副本有效性判定正确")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            assert read_marker(d) is None, "没有标记文件应该返回 None，不抛异常"
+            write_marker(d, LuajitMarker(DST_version="123", luajit_version="1.0.0"))
+            m = read_marker(d)
+            assert m.DST_version == "123" and m.luajit_version == "1.0.0"
+            # 落盘的 version.json 里 DST_version 应该是不带引号的数字（用户
+            # 指定的格式），luajit_version 是语义化版本号字符串。
+            raw = json.loads((d / "version.json").read_text(encoding="utf-8"))
+            assert raw == {"DST_version": 123, "luajit_version": "1.0.0"}, \
+                f"version.json 落盘格式不对: {raw}"
+        print("  PASS: read_marker()/write_marker() 往返正确，version.json 字段名/格式符合预期")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            install_dir = _make_fake_install_dir(root, build_id="111")
+            set_luajit_enabled(False)  # 上一个子测试可能留下 True，这里显式复位
+            with _fake_workshop_dir(root, [WORKSHOP_ID], mod_version="1.10.1"):
+                assert needs_regeneration(install_dir) is False, "未启用应该是 False"
+                set_luajit_enabled(True)
+                assert needs_regeneration(install_dir) is False, "没有标记（还没成功装过）应该是 False"
+
+                luajit_dir = get_luajit_dir(install_dir)
+                luajit_dir.mkdir(parents=True)
+                write_marker(luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.1"))
+                assert needs_regeneration(install_dir) is False, "游戏版本、配套 Mod 版本都一致，不需要重新生成"
+
+                write_marker(luajit_dir, LuajitMarker(DST_version="000", luajit_version="1.10.1"))
+                assert needs_regeneration(install_dir) is True, "游戏版本不一致（被更新过），需要重新生成"
+
+                write_marker(luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.0"))
+                assert needs_regeneration(install_dir) is True, \
+                    "配套 Mod 版本不一致（作者发布了新版本），也需要重新生成"
+        print("  PASS: needs_regeneration() 按 DST_version/luajit_version 是否过期判定正确")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            install_dir = _make_fake_install_dir(root, build_id="222")
+            bin64 = install_dir / "bin64"
+            bin64.mkdir()
+            (bin64 / "game.exe").write_bytes(b"fake game exe")  # 模拟真实 bin64 里的游戏文件
+
+            with _fake_workshop_dir(root, [WORKSHOP_ID], with_injector_files=True, mod_version="1.10.1"):
+                luajit_dir = get_luajit_dir(install_dir)
+                luajit_dir.mkdir(parents=True)
+                write_marker(luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.0"))
+
+                result = regenerate(bin64)
+                assert result.ok is True, f"应该成功: {result.errors}"
+                assert (luajit_dir / "game.exe").read_bytes() == b"fake game exe", \
+                    "重新生成应该带上真实 bin64 里当前的游戏文件"
+                assert (luajit_dir / "Winmm.dll").read_bytes() == b"fake winmm", \
+                    "注入文件应该直接取自订阅内容，不是重新联网下载"
+                new_marker = read_marker(luajit_dir)
+                assert new_marker.DST_version == "222", "标记里的 DST_version 应该更新成当前真实值"
+                assert new_marker.luajit_version == "1.10.1", "luajit_version 也应该更新成当前配套 Mod 的版本"
+                print("  PASS: regenerate() 用当前配套 Mod 内容重新生成副本，标记同步更新")
+
+                # 只有配套 Mod 版本变了、游戏本体没变时，选择性更新不应该
+                # 碰 bin64 部分——放一个不在真实 bin64 里的哨兵文件，只有
+                # "整个重新 copytree"才会让它消失，用它反向验证没有做没
+                # 必要的整份重建。
+                (luajit_dir / "existing_bin64_marker.txt").write_text("untouched", encoding="utf-8")
+                with _fake_workshop_dir(root, [WORKSHOP_ID], with_injector_files=True, mod_version="1.10.2"):
+                    result2 = regenerate(bin64)
+                    assert result2.ok is True, f"应该成功: {result2.errors}"
+                    assert (luajit_dir / "existing_bin64_marker.txt").exists(), \
+                        "只有 luajit_version 变了，DST_version 没变，不应该整个重新复制 bin64"
+                    marker2 = read_marker(luajit_dir)
+                    assert marker2.DST_version == "222", "DST_version 应该保持不变"
+                    assert marker2.luajit_version == "1.10.2", "luajit_version 应该更新成新的配套 Mod 版本"
+                    print("  PASS: regenerate() 只有配套 Mod 版本变了时选择性更新，不重新复制 bin64")
+
+            # 没有订阅内容时应该优雅失败，不联网、不崩溃——必须用全新的
+            # workshop 根目录，不能复用上面那个 root：_fake_workshop_dir()
+            # 只按 subscribed_ids 新建文件夹，不会清空之前调用已经在磁盘
+            # 上留下的 3444078585/bin64/windows/ 内容，传空列表并不会让
+            # 已经写盘的注入文件消失。
+            with tempfile.TemporaryDirectory() as tmp_empty:
+                with _fake_workshop_dir(Path(tmp_empty), []):
+                    shutil.rmtree(luajit_dir)
+                    result_no_source = regenerate(bin64)
+                    assert result_no_source.ok is False, "找不到订阅内容应该失败"
+                    print("  PASS: regenerate() 找不到订阅内容时优雅失败")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with _fake_workshop_dir(root, []):
+                assert is_workshop_subscribed() is False
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with _fake_workshop_dir(root, [WORKSHOP_ID]):
+                assert is_workshop_subscribed() is True
+        print("  PASS: is_workshop_subscribed() 按创意工坊本地内容目录判定正确")
+
+        with tempfile.TemporaryDirectory() as tmp_mo:
+            mo = load_mod_overrides(Path(tmp_mo) / "modoverrides.lua")
+            enable_mod(mo, "dstcamp_luajit_mod")  # 早前版本遗留的旧 key
+            enable_mod(mo, "workshop-123456")     # 无关的其它 mod，不该被动到
+            assert cleanup_legacy_local_mod_entry(mo) is True
+            assert "dstcamp_luajit_mod" not in mo.mods
+            assert "workshop-123456" in mo.mods
+            assert cleanup_legacy_local_mod_entry(mo) is False, "已经清过一次，重复调用应该是无操作"
+        print("  PASS: cleanup_legacy_local_mod_entry() 只清掉旧 key，不动其它 mod")
+
+        plan_missing = plan_install(None, server_running=False)
+        assert plan_missing.blocked_reason == "bin64_not_found"
+        print("  PASS: plan_install(bin64_dir=None) 判定 bin64_not_found")
+
+        with tempfile.TemporaryDirectory() as tmp2:
+            real_bin64 = Path(tmp2) / "bin64"
+            real_bin64.mkdir()
+            plan_running = plan_install(real_bin64, server_running=True)
+            assert plan_running.blocked_reason == "server_running"
+            print("  PASS: plan_install() 服务器运行中时判定 server_running")
+
+            with _fake_workshop_dir(Path(tmp2), []):
+                plan_not_subscribed = plan_install(real_bin64, server_running=False)
+                assert plan_not_subscribed.blocked_reason == "workshop_not_subscribed"
+            print("  PASS: plan_install() 未订阅创意工坊配套 Mod 时判定 workshop_not_subscribed")
+
+            with _fake_workshop_dir(Path(tmp2), [WORKSHOP_ID]):
+                plan_ok = plan_install(real_bin64, server_running=False)
+                assert plan_ok.blocked_reason is None
+                assert plan_ok.current_state is InjectorState.NOT_INSTALLED
+            print("  PASS: plan_install() 已订阅、未运行时判定正常可安装")
+
+            set_luajit_enabled(True)
+            assert apply_uninstall(real_bin64) is True
+            assert get_luajit_enabled() is False, "关闭应该只是把开关关掉"
+            assert apply_uninstall(real_bin64) is False, "已经关闭时重复调用应该幂等，不报错"
+            print("  PASS: apply_uninstall() 只关闭 app_settings 开关（不删除任何文件），且重复调用是幂等的")
+
+    with tempfile.TemporaryDirectory() as tmp3:
+        install_dir = Path(tmp3)
+        assert find_bin64_dir(install_dir) is None, "空目录应该返回 None"
+        (install_dir / "bin64").mkdir()
+        (install_dir / "bin64" / "dontstarve_dedicated_server_nullrenderer_x64.exe").write_bytes(b"x")
+        assert find_bin64_dir(install_dir) == install_dir / "bin64"
+        print("  PASS: dedicated_server.find_bin64_dir() 找到/找不到都符合预期")
+
+
+def test_steam_library_folder_casing():
+    """真机复现过的真实 bug：注册表 SteamPath 大小写可能跟磁盘上真实目录
+    名（也是 libraryfolders.vdf 里 Steam 自己记录的大小写）不一致，而这
+    个大小写差异不是纯装饰性的——专用服务器进程内部按路径字符串做创意工
+    坊内容查找，大小写不对会导致完全识别不到 mod（尽管 Windows 文件系统
+    本身访问这个目录不区分大小写）。parse_library_folders() 必须优先信
+    vdf 里的大小写，不能让 Path.__eq__ 在 Windows 上的大小写不敏感比较
+    把"两份大小写不同但其实是同一个目录"误判成合法的两个库，进而把 vdf
+    里正确大小写的版本当成重复项丢弃。"""
+    print("\n" + "=" * 60)
+    print("Test 34: Steam Library Folder Casing")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        real_dir = root / "Steam"  # 磁盘上真实的目录名，大小写正确
+        (real_dir / "steamapps").mkdir(parents=True)
+        vdf_text = (
+            '"libraryfolders"\n{\n'
+            f'\t"0"\n\t{{\n\t\t"path"\t\t"{str(real_dir).replace(chr(92), chr(92) * 2)}"\n\t}}\n'
+            "}\n"
+        )
+        (real_dir / "steamapps" / "libraryfolders.vdf").write_text(vdf_text, encoding="utf-8")
+
+        # 模拟注册表返回的大小写跟磁盘真实大小写不一致（Windows 文件系统
+        # 不区分大小写，这个路径本身照样能正常访问/exists() 判断为真）。
+        steam_root_wrong_case = Path(str(real_dir).lower())
+        assert steam_root_wrong_case.exists(), "Windows 上大小写不影响路径是否存在"
+
+        libraries = parse_library_folders(steam_root_wrong_case)
+        assert str(libraries[0]) == str(real_dir), \
+            f"应该优先用 libraryfolders.vdf 里 Steam 自己记录的正确大小写，结果是 {libraries[0]}"
+        print("  PASS: parse_library_folders() 优先采用 vdf 里的正确大小写，不被注册表的错误大小写覆盖")
+
+
 def main():
     """Run all tests."""
     print("\n" + "█" * 60)
@@ -1164,6 +1471,8 @@ def main():
         test_sakura_server_port_rewrite,
         test_sakura_token_settings_roundtrip,
         test_frpc_manager_key_convention,
+        test_luajit_injector,
+        test_steam_library_folder_casing,
     ]
 
     for test in tests:

@@ -41,6 +41,13 @@ class ImageScrollPanel:
 
         self.master_img = Image.new("RGB", (ref_width, 10), bg)
         self.hit_regions: list[tuple[int, int, int, int, object]] = []
+        # 跟 hit_regions 同一套坐标系/命中测试逻辑，但用于鼠标悬停而不是
+        # 点击——payload 不是回调，是"当前悬停在哪个区域"的任意标识（比如
+        # 一段提示文字），实际展示成什么由 owner 通过 on_hover_change 决
+        # 定，这里只负责坐标换算和"变了才通知"。
+        self.hover_regions: list[tuple[int, int, int, int, object]] = []
+        self.on_hover_change = None  # callable(payload | None, x_root, y_root)
+        self._last_hover_payload = None
         self.scroll_y = 0.0  # in reference (unscaled) pixel coords
 
         self._photo = None
@@ -60,6 +67,8 @@ class ImageScrollPanel:
         self.canvas.bind("<Button-4>", lambda e: self._scroll_by_screen(-50))
         self.canvas.bind("<Button-5>", lambda e: self._scroll_by_screen(50))
         self.canvas.bind("<Button-1>", self._on_click)
+        self.canvas.bind("<Motion>", self._on_motion)
+        self.canvas.bind("<Leave>", lambda e: self._update_hover(None, 0, 0))
 
     def current_width(self, default: int) -> int:
         """Real on-screen canvas width if already known (>4px), else `default`.
@@ -74,7 +83,8 @@ class ImageScrollPanel:
         w = self.canvas.winfo_width()
         return w if w > 4 else default
 
-    def set_image(self, img: Image.Image, hit_regions: list, keep_scroll: bool = False):
+    def set_image(self, img: Image.Image, hit_regions: list, keep_scroll: bool = False,
+                  hover_regions: list | None = None):
         """Replace the master content image and its clickable regions.
 
         keep_scroll: preserve the current scroll position. If the new image
@@ -86,6 +96,7 @@ class ImageScrollPanel:
         self.master_img = img
         self.ref_width = img.width
         self.hit_regions = hit_regions
+        self.hover_regions = hover_regions or []
         if keep_scroll and old_width:
             self.scroll_y *= img.width / old_width
         else:
@@ -219,3 +230,26 @@ class ImageScrollPanel:
             if x1 <= rx <= x2 and y1 <= ry <= y2:
                 callback()
                 return
+
+    def _on_motion(self, event):
+        if self._scale <= 0:
+            self._update_hover(None, event.x_root, event.y_root)
+            return
+        rx = event.x / self._scale
+        ry = self.scroll_y + event.y / self._scale
+        payload = None
+        for (x1, y1, x2, y2, p) in self.hover_regions:
+            if x1 <= rx <= x2 and y1 <= ry <= y2:
+                payload = p
+                break
+        self._update_hover(payload, event.x_root, event.y_root)
+
+    def _update_hover(self, payload, x_root, y_root):
+        # 只在"悬停的区域真的变了"（进入/离开某个区域，或者换到另一个区
+        # 域）才通知 owner，不是每次鼠标移动的像素级事件都通知——同一个
+        # 区域内来回小幅移动不应该让提示框反复闪烁重建。
+        if payload == self._last_hover_payload:
+            return
+        self._last_hover_payload = payload
+        if self.on_hover_change:
+            self.on_hover_change(payload, x_root, y_root)

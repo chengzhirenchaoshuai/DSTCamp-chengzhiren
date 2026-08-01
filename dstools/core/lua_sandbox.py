@@ -234,11 +234,30 @@ _FIELDS_TO_READ_BACK = (
 )
 
 
-def resolve_full_config_options(file_text: str, timeout: float = FULL_FILE_TIMEOUT) -> Any:
+def resolve_full_config_options(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
+                                 folder_name: str | None = None) -> Any:
     """Run an entire modinfo.lua's text through the sandbox and read back
     every top-level field this project cares about (name, author,
     version, description, icon, icon_atlas, configuration_options) as one
     dict, in a single execution.
+
+    folder_name: the real game engine injects this exact global into
+    every modinfo.lua's execution environment (confirmed against the
+    actual engine source, ModIndex:InitializeModInfo() in modindex.lua:
+    `env.folder_name = modname`) -- mods commonly use it to tell a
+    Workshop-subscribed copy apart from a manually-installed/GitHub one
+    (`if not folder_name:find("workshop-") then ... end`, a real mod's
+    actual code). Left unset, indexing/calling it (`folder_name:find(...)`)
+    raises a Lua error and aborts the *entire* script -- including
+    fields that were already correctly assigned earlier in the same file
+    (a real mod's `name` was computed successfully several lines before
+    its `folder_name` check, but the whole run still came back as a
+    total failure, silently losing that name). Caller passes this in as
+    the same "workshop-<id>" string modinfo_reader.py already derives
+    from the mod's folder name elsewhere (see
+    modinfo_reader._workshop_id_from_folder()); prepended as a plain
+    Lua assignment ahead of file_text since this sandbox's stdin protocol
+    is just raw Lua source, not structured per-invocation parameters.
 
     Unlike resolve_dynamic_option() (which only runs the part of the file
     before configuration_options is assigned, plus a single unresolved
@@ -268,7 +287,11 @@ def resolve_full_config_options(file_text: str, timeout: float = FULL_FILE_TIMEO
     function's.
     """
     fields = ", ".join(f"{f} = {f}" for f in _FIELDS_TO_READ_BACK)
-    return run_lua_snippet(f"{file_text}\nreturn {{{fields}}}\n", timeout=timeout)
+    preamble = ""
+    if folder_name is not None:
+        escaped = folder_name.replace("\\", "\\\\").replace('"', '\\"')
+        preamble = f'folder_name = "{escaped}"\n'
+    return run_lua_snippet(f"{preamble}{file_text}\nreturn {{{fields}}}\n", timeout=timeout)
 
 
 def resolve_dynamic_option(preamble: str, raw_options_expr: str,

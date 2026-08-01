@@ -132,6 +132,7 @@ def show_error(parent, title, message):
     _show(parent, title, message, "error", [(t("dlg.confirm_btn"), True, True)])
 
 
-def ask_yes_no(parent, title, message) -> bool:
+def ask_yes_no(parent, title, message, wraplength=320, min_width=360) -> bool:
     return bool(_show(parent, title, message, "question",
-                       [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)]))
+                       [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)],
+                       wraplength=wraplength, min_width=min_width))

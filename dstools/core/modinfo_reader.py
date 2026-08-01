@@ -220,6 +220,17 @@ class ModInfo:
     # -- Combined Status, Connection Manager, the 群鸟绘卷 series, etc. --
     # has client_only_mod = true and all_clients_require_mod = false,
     # and no ordinary gameplay mod checked alongside them does).
+    #
+    # **坑**：`client_only_mod = true` 不是唯一要看的字段——DontStarveLuaJIT2
+    # 的作者直接确认过（2026-08-01 联系沟通）：`server_only_mod` 这个字段
+    # 饥荒引擎本身根本不读（读过官方 modindex.lua 源码验证过，全文没有一
+    # 处引用），是给"开服工具"这类第三方管理软件用的约定——`modinfo.lua`
+    # 里同时写 `client_only_mod = true` + `server_only_mod = true`，是想让
+    # 这类工具仍然把它当"服务器 mod"处理（配置能在 modoverrides.lua 里正
+    # 常编辑），只是不出现在游戏内"服务器 mod 列表"里、不要求连服玩家都
+    # 装。所以判定要不要走"客户端专属、配置只读"这条分支时，`server_only_
+    # mod`/`all_clients_require_mod` 只要有一个为真就要盖过
+    # `client_only_mod`——见 parse_modinfo() 里的组合逻辑。
     client_only: bool = False
 
 
@@ -434,6 +445,18 @@ def list_installed_mod_ids(platform: Platform = Platform.STEAM,
 
 # ── modinfo.lua parser ─────────────────────────────────────────────────
 
+def _workshop_id_from_folder(mod_folder: Path) -> str:
+    """按标准 Workshop 命名把 mod 文件夹名换成 "workshop-<id>"——本地/手动
+    装的 mod 文件夹名本来就没有这个前缀，Workshop 订阅内容的文件夹名是
+    裸的数字 ID，两种情况统一成同一个约定。这也是真实游戏引擎注入进每个
+    modinfo.lua 执行环境的 `folder_name` 全局变量的值（真机验证过：
+    `modindex.lua` 的 `ModIndex:InitializeModInfo()` 直接把这个 mod 的标
+    识符设成 `env.folder_name`），沙箱执行 modinfo.lua 时也要提供同一个
+    值，见 resolve_full_modinfo() 调用 lua_sandbox.resolve_full_config_
+    options() 时传的 folder_name 参数。"""
+    return "workshop-" + mod_folder.name if not mod_folder.name.startswith("workshop-") else mod_folder.name
+
+
 def parse_modinfo(mod_folder: Path) -> ModInfo | None:
     """Parse a mod's modinfo.lua to extract metadata and config options.
 
@@ -450,9 +473,7 @@ def parse_modinfo(mod_folder: Path) -> ModInfo | None:
     text = modinfo_path.read_text(encoding="utf-8", errors="replace")
     text = _strip_lua_comments(text)
 
-    # Extract workshop ID from folder name
-    workshop_id = "workshop-" + mod_folder.name if not mod_folder.name.startswith("workshop-") else mod_folder.name
-
+    workshop_id = _workshop_id_from_folder(mod_folder)
     info = ModInfo(workshop_id=workshop_id)
 
     # Simple top-level fields (name/author/version/icon/.../description)
@@ -475,9 +496,16 @@ def parse_modinfo(mod_folder: Path) -> ModInfo | None:
     _extract_string(header, "icon", info)
     _extract_string(header, "icon_atlas", info)
     _extract_description(header, info)
-    m = re.search(r'\bclient_only_mod\s*=\s*(true|false)\b', header)
-    if m:
-        info.client_only = (m.group(1) == "true")
+    def _flag(name: str) -> bool:
+        fm = re.search(rf'\b{name}\s*=\s*(true|false)\b', header)
+        return bool(fm) and fm.group(1) == "true"
+
+    # server_only_mod/all_clients_require_mod 只要有一个为真，就说明作者
+    # 明确想让这个 mod 被"开服工具"当服务器 mod 处理（配置走
+    # modoverrides.lua，不是只读）——盖过 client_only_mod 的默认结论。见
+    # ModInfo.client_only 字段上的说明。
+    if _flag("client_only_mod") and not (_flag("server_only_mod") or _flag("all_clients_require_mod")):
+        info.client_only = True
 
     # Parse configuration_options table
     config_opts = _extract_configuration_options(text)
@@ -1393,7 +1421,8 @@ def resolve_full_modinfo(mod_folder: Path, timeout: float | None = None) -> dict
     text = _strip_lua_comments(text)
 
     from dstools.core.lua_sandbox import FULL_FILE_TIMEOUT, resolve_full_config_options
-    result = resolve_full_config_options(text, timeout=timeout or FULL_FILE_TIMEOUT)
+    folder_name = _workshop_id_from_folder(mod_folder)
+    result = resolve_full_config_options(text, timeout=timeout or FULL_FILE_TIMEOUT, folder_name=folder_name)
     if not isinstance(result, dict):
         return None
 

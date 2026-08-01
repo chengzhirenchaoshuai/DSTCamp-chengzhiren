@@ -14,9 +14,10 @@ from typing import Any
 
 from PIL import Image
 
-from dstools.core import app_settings
+from dstools.core import app_settings, luajit_injector
+from dstools.core.dedicated_server import find_bin64_dir
 from dstools.core.mod_icons import get_mod_icon_path
-from dstools.core.mod_manager import load_mod_overrides, save_mod_overrides, sync_mods
+from dstools.core.mod_manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
 from dstools.core.mod_resolve_cache import load_cached_result, save_result
 from dstools.core.modinfo_reader import (
     find_game_mods_dir, find_mod_folder, find_wegame_client_dir, find_wegame_server_dir,
@@ -72,8 +73,21 @@ class ModManagerTab:
         self._mod_data = {}     # workshop_id -> ModEntry
         self._mod_infos = {}    # workshop_id -> ModInfo | None
         self._icon_imgs = {}    # workshop_id -> PIL.Image (RGBA)
+        # (workshop_id, icon_size) -> 缩放后的缩略图，memoize
+        # render_mod_list() 里的 LANCZOS 缩放——真机测过 100 个 mod 时这
+        # 一步单独占整个渲染耗时的一半，而每次开关切换都会触发两次全量
+        # 重渲染（见 _on_toggle()/_clear_flash()），是"切换 mod 卡顿"的
+        # 主因之一。跟 self._icon_imgs 的生命周期绑在一起，两处重置的地
+        # 方必须一起清（否则旧缩略图会一直冒充新图标）。
+        self._icon_thumb_cache = {}
+        self._luajit_mod_locked = False  # LuaJIT 补丁生效中：配套 mod 开关强制只读
         self._flash_wid = None
         self._flash_after_id = None
+        # 搜索框防抖——不给这个加防抖的话，连续打字每敲一个字都会触发一次
+        # 全量重画整个列表（_render_list()），跟切换开关同样的成本问题，
+        # 打字越快越明显。跟 image_scroll.py 的 SETTLE_DELAY_MS 同一个套
+        # 路：只在停顿超过这个时长之后才真的重画，敲字期间只取消重排。
+        self._filter_render_after_id = None
         self._loading = False
         self._loading_key = None
         self._refresh_gen = 0
@@ -155,7 +169,7 @@ class ModManagerTab:
 
         ff = BgFrame(self.frame, app, bg=theme.CARD_BG); ff.pack(fill=tk.X, padx=5)
         self._md_filt = make_toolbar_label(ff, app, lambda: t("mod.filter"))
-        self.filter_var = tk.StringVar(); self.filter_var.trace_add("write", lambda *a: self._render_list())
+        self.filter_var = tk.StringVar(); self.filter_var.trace_add("write", self._on_filter_changed)
         ttk.Entry(ff, textvariable=self.filter_var, width=30).pack(side=tk.LEFT, padx=(0,10))
         self.show_var = tk.StringVar(value="all")
         self._md_filter_chips = make_filter_chips(
@@ -187,6 +201,8 @@ class ModManagerTab:
         self.list_panel = ImageScrollPanel(self.frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
         self.list_panel.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.list_panel.on_settle = lambda w, h: self._render_list(ref_width=w)
+        self.list_panel.on_hover_change = self._on_mod_list_hover
+        self._mod_list_tip = None
 
         # "保存修改"/"应用到所有分片"挪到页签底部居中——跟"世界设置"页签
         # "保存世界规则"按钮的位置一致（pack(side=tk.BOTTOM) 不加 fill，
@@ -439,6 +455,7 @@ class ModManagerTab:
         self.app._current_shard = shard
         if not shard or not shard.mod_overrides_path:
             self._mod_data.clear(); self._mod_infos.clear(); self._icon_imgs.clear()
+            self._icon_thumb_cache.clear()
             self._loading = False
             self._loading_key = None
             self._render_list()
@@ -448,8 +465,19 @@ class ModManagerTab:
         self._loading_key = loading_key
         self._render_list()
         platform, wegame_client_mods_dir = self._resolve_mod_folder_args(c)
+        # LuaJIT 补丁只服务 Steam 版专用服务器（core/luajit_injector.py），
+        # 这里现查一次 bin64 目录是不是真的处于"生效中"——纯 Path.exists()
+        # 检查，够便宜，放主线程算完再传给后台线程，跟 platform/
+        # wegame_client_mods_dir 是同一个"主线程先收集上下文，worker 只读
+        # 不猜"的套路。
+        luajit_bin64_dir = None
+        if c and c.source == SaveSource.SERVER and c.platform == Platform.STEAM:
+            install_dir = self.app.local_tab._install_dir
+            if install_dir:
+                luajit_bin64_dir = find_bin64_dir(install_dir)
         threading.Thread(target=self._load_mods_worker,
-                         args=(gen, shard.mod_overrides_path, full, platform, wegame_client_mods_dir),
+                         args=(gen, shard.mod_overrides_path, full, platform, wegame_client_mods_dir,
+                               luajit_bin64_dir),
                          daemon=True).start()
 
     def _resolve_mod_folder_args(self, cluster):
@@ -460,7 +488,8 @@ class ModManagerTab:
         platform = cluster.platform if cluster else Platform.STEAM
         return platform, resolve_wegame_client_mods_dir(platform)
 
-    def _load_mods_worker(self, gen, overrides_path, full, platform, wegame_client_mods_dir):
+    def _load_mods_worker(self, gen, overrides_path, full, platform, wegame_client_mods_dir,
+                           luajit_bin64_dir):
         """Runs off the Tk main thread -- must not touch any tkinter/Tcl
         object (that includes PhotoImage/canvas calls, but plain PIL
         Image.open()/convert() and resolve_full_modinfo()'s own
@@ -469,8 +498,38 @@ class ModManagerTab:
         directly, so a still-running refresh from a previous cluster/
         shard switch can never clobber a newer one (see gen)."""
         mod_data, mod_infos, icon_imgs = {}, {}, {}
+        luajit_active = False
         try:
             overrides = load_mod_overrides(overrides_path)
+
+            # 早前一版实现（这次会话里已经废弃、改成走创意工坊订阅）曾经
+            # 把配套 Mod 当本地/手动装的 mod 处理，装成服务器 mods/ 下的
+            # 一个文件夹并在这里启用——手动删掉那个文件夹之后，这个旧 key
+            # 会变成一行"有 enabled 状态但 modinfo.lua 已经不存在"的幽灵
+            # 条目，顺手清掉。
+            overrides_dirty = luajit_injector.cleanup_legacy_local_mod_entry(overrides)
+
+            # LuaJIT 补丁生效时，创意工坊配套 Mod（作者确认必须走订阅，不
+            # 是本地/手动装的 mod，见 luajit_injector.py 顶部说明）的开关
+            # 必须强制是开——按作者的建议（装了注入 DLL 却不启用配套
+            # Mod，设置调不了、行为不完整），这里直接自愈：发现没启用就
+            # 补上，不等用户自己去点。只碰这一个 DSTCamp 自己认识的 key，
+            # 不影响其它 mod 的 enabled 状态。额外要求真的订阅过
+            # （is_workshop_subscribed()）——bin64 注入生效但没订阅这个
+            # 工坊物品的话，强行写一个指向不存在内容的 key 没有意义。
+            if luajit_bin64_dir is not None:
+                luajit_active = (luajit_injector.detect_state(luajit_bin64_dir)
+                                  is luajit_injector.InjectorState.ACTIVE
+                                  and luajit_injector.is_workshop_subscribed())
+            if luajit_active:
+                entry = overrides.mods.get(luajit_injector.WORKSHOP_MOD_KEY)
+                if entry is None or not entry.enabled:
+                    enable_mod(overrides, luajit_injector.WORKSHOP_MOD_KEY)
+                    overrides_dirty = True
+
+            if overrides_dirty:
+                save_mod_overrides(overrides)
+
             ids = list(overrides.mods.keys())
             for wid in list_installed_mod_ids(platform, wegame_client_mods_dir):
                 if wid not in overrides.mods:
@@ -490,7 +549,21 @@ class ModManagerTab:
                 # (and the tab itself, stuck showing "loading")
                 # unrendered.
                 try:
+                    # luajit_injector.WORKSHOP_MOD_KEY 是标准 "workshop-<id>"
+                    # 格式，不需要任何特判——find_mod_folder() 自己的
+                    # Workshop 内容目录查找那条路径天然能找到它（前提是
+                    # 真订阅过，内容就在
+                    # <steam>/steamapps/workshop/content/322330/<id>/）。
                     mod_folder = find_mod_folder(wid, platform, wegame_client_mods_dir)
+                    if mod_folder is None:
+                        # 这个 mod 的物理文件夹这次找不到了（被手动删掉/
+                        # 取消订阅/目录改了）——之前这个进程活着的时候可
+                        # 能已经把它的 ModInfo 缓存进
+                        # self._full_resolved_cache 了，那份缓存只按
+                        # workshop_id 存，从来不会因为"文件夹后来消失了"
+                        # 而失效，不清掉的话名字/配置项会一直照着内容已
+                        # 经不存在的旧数据显示，看起来像"删了还在"。
+                        self._full_resolved_cache.pop(wid, None)
                     cached = self._full_resolved_cache.get(wid)
                     if cached is not None:
                         mod_info = cached
@@ -526,12 +599,14 @@ class ModManagerTab:
             # main thread must always hear back -- otherwise _loading
             # stays True forever and the tab is stuck showing "loading"
             # with no way to recover short of restarting the app.
-            self.frame.after(0, self._apply_loaded_mods, gen, mod_data, mod_infos, icon_imgs)
+            self.frame.after(0, self._apply_loaded_mods, gen, mod_data, mod_infos, icon_imgs, luajit_active)
 
-    def _apply_loaded_mods(self, gen, mod_data, mod_infos, icon_imgs):
+    def _apply_loaded_mods(self, gen, mod_data, mod_infos, icon_imgs, luajit_active):
         if gen != self._refresh_gen or not self.frame.winfo_exists():
             return  # superseded by a newer refresh (or tab already closed)
         self._mod_data, self._mod_infos, self._icon_imgs = mod_data, mod_infos, icon_imgs
+        self._icon_thumb_cache.clear()
+        self._luajit_mod_locked = luajit_active
         self._loading = False
         # Freshly (re)loaded from disk -- whatever was "dirty" before this
         # point is now moot, since the displayed state IS the saved state
@@ -573,11 +648,18 @@ class ModManagerTab:
             name = info.name if info else ""
             if ft and ft not in wid.lower() and ft not in name.lower(): continue
             numeric_id = wid.replace("workshop-", "")
+            # LuaJIT 补丁生效时，配套 mod 的开关强制显示为开、锁住不能点
+            # （按作者的建议：装了注入 DLL 却手滑关掉配套 mod，设置调不
+            # 了、行为不完整）——_load_mods_worker() 已经在磁盘层面自愈
+            # 成 enabled=True 了，这里只是让开关本身不能再被点掉。配置按
+            # 钮不受影响，正常可以点开调整。
+            locked = bool(self._luajit_mod_locked and wid == luajit_injector.WORKSHOP_MOD_KEY)
             rows.append({
                 "workshop_id": wid,
                 "name": name,
                 "enabled": mod.enabled,
                 "is_local": is_local,
+                "locked": locked,
                 "has_config": bool(info and (info.config_options or info.unsupported_schema)),
                 "has_link": numeric_id.isdigit(),
             })
@@ -602,11 +684,36 @@ class ModManagerTab:
         # is_local(客户端模组) 那一行不接 on_toggle 是同一个套路，不用在
         # mod_render.py 里再加一套"禁用态"绘制。"配置"按钮仍然接 on_config，
         # 点开的弹窗会自己按 read_only 只显示不给改（见 _on_config）。
-        img, hits = render_mod_list(rows, self._icon_imgs,
+        img, hits, hovers = render_mod_list(rows, self._icon_imgs,
                                     on_toggle=self._on_toggle if is_server else None,
                                     on_config=self._on_config, on_link=self._on_link,
-                                    ref_width=ref_width, flash=self._flash_wid)
-        self.list_panel.set_image(img, hits, keep_scroll=True)
+                                    ref_width=ref_width, flash=self._flash_wid,
+                                    icon_thumb_cache=self._icon_thumb_cache)
+        self.list_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
+
+    def _on_mod_list_hover(self, payload, x_root, y_root):
+        """list_panel.on_hover_change 的回调——payload 是
+        mod_render.render_mod_list() 算好的提示文字（目前只有锁住的开关
+        会给这个），None 表示鼠标移出了所有悬停区域。跟 gui/tooltip.py
+        的 Tooltip 类同一套浮动小窗外观，只是那个类锚定在"某个具体控件"
+        上，这里的悬停区域是 PIL 整图里的一小块像素矩形，没有对应的真实
+        控件可以绑 <Enter>/<Leave>，只能自己按鼠标当前位置摆放。"""
+        if self._mod_list_tip is not None:
+            self._mod_list_tip.destroy()
+            self._mod_list_tip = None
+        if not payload:
+            return
+        tip = tk.Toplevel(self.frame)
+        self._mod_list_tip = tip
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x_root + 14}+{y_root + 18}")
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        tk.Label(tip, text=payload, justify=tk.LEFT, background="#ffffe0",
+                relief=tk.SOLID, borderwidth=1, wraplength=280,
+                font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(ipadx=4, ipady=2)
 
     def _render_placeholder(self, text, ref_width=None):
         from PIL import Image as _Image, ImageDraw as _ImageDraw
@@ -624,6 +731,9 @@ class ModManagerTab:
         # 区域，正常点不到这里；这里再挡一道防止别的路径漏调。
         c = self._get_cluster()
         if not c or c.source != SaveSource.SERVER: return
+        # LuaJIT 补丁生效时配套 mod 强制锁开——同上，正常点不到这里（渲染
+        # 时就没注册点击区域），这里是第二道防线。
+        if self._luajit_mod_locked and workshop_id == luajit_injector.WORKSHOP_MOD_KEY: return
         mod = self._mod_data.get(workshop_id)
         if not mod: return
         mod.enabled = not mod.enabled
@@ -638,6 +748,15 @@ class ModManagerTab:
 
     def _clear_flash(self):
         self._flash_wid = None; self._flash_after_id = None
+        self._render_list()
+
+    def _on_filter_changed(self, *_args):
+        if self._filter_render_after_id is not None:
+            self.frame.after_cancel(self._filter_render_after_id)
+        self._filter_render_after_id = self.frame.after(150, self._do_filter_render)
+
+    def _do_filter_render(self):
+        self._filter_render_after_id = None
         self._render_list()
 
     def _on_config(self, workshop_id):

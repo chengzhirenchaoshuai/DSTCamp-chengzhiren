@@ -28,6 +28,7 @@ _DEFAULT_BACKUP_INTERVAL_MIN = 10
 _KEY_BACKUP_AUTO_ENABLED = "backup_auto_enabled"
 _KEY_SAKURA_TOKEN = "sakura_api_token"
 _KEY_SAKURA_LAST_NODE = "sakura_last_node_id"
+_KEY_LUAJIT_ENABLED = "luajit_enabled"
 
 
 def get_settings_dir() -> Path:
@@ -312,4 +313,18 @@ def get_custom_bg_opacity() -> float:
 def set_custom_bg_opacity(value: float) -> None:
     data = load_settings()
     data[_KEY_CUSTOM_BG_OPACITY] = value
+    save_settings(data)
+
+
+def get_luajit_enabled() -> bool:
+    """是否启用 LuaJIT 隔离副本模式（core/luajit_injector.py）——全局布
+    尔值，不分存档：这个开关对应的是"专用服务器启动时从哪个文件夹起
+    exe"，而 bin64 是整个 Steam 安装共享的，不是每个 cluster 各一份。默
+    认关闭。"""
+    return load_settings().get(_KEY_LUAJIT_ENABLED, False)
+
+
+def set_luajit_enabled(value: bool) -> None:
+    data = load_settings()
+    data[_KEY_LUAJIT_ENABLED] = bool(value)
     save_settings(data)

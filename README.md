@@ -1,15 +1,15 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.6.0-orange)
+![Version](https://img.shields.io/badge/version-0.7.0-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 Don't Starve Together 本地服务器管理工具：一键启动/管理本地专用服务器、
 存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、内网穿透
-联机。同时支持 **Steam 版和 WeGame 版**存档（顶部"存档类型"筛选器切换），
-CLI 与 Tkinter GUI 双形态，也可以打包成单文件 `DSTCamp.exe` 分发给不装
-Python 的用户。
+联机、LuaJIT 性能补丁一键安装。同时支持 **Steam 版和 WeGame 版**存档（顶
+部"存档类型"筛选器切换），CLI 与 Tkinter GUI 双形态，也可以打包成单文件
+`DSTCamp.exe` 分发给不装 Python 的用户。
 
 ## 安装
 
@@ -77,6 +77,11 @@ python scripts/run_gui.py
   切换存档或已有服务器在跑时会有提示和锁定，避免冲突。**WeGame 版存档不
   支持一键启动**（平台限制，需要去 WeGame 客户端自己点"开始游戏"），其它
   管理功能不受影响。
+  - **LuaJIT 加速补丁**（Steam 版专用）：一键安装第三方开源项目
+    [DontStarveLuaJIT2](https://github.com/fesily/DontStarveLuaJIT2) 提供
+    的性能补丁，注入文件和配套 Mod 都直接取自已订阅的创意工坊内容（不联
+    网下载）。采用隔离副本方案，专用服务器真实安装目录全程不被修改；游戏
+    或补丁更新后会自动提示重新生成副本，且只重建真正变化的部分。
 - **Mod 管理**：查看/启用/禁用/删除已安装的 Mod，可视化编辑每个 Mod 的配
   置项，一键把客户端 Mod 同步到专用服务器（Steam 用启动参数直接共享
   Workshop 内容，WeGame 用目录联接指向客户端 `mods/` 文件夹，两者都不占
@@ -124,7 +129,7 @@ tools/frpc/       # 第三方 frpc.exe（樱花内网穿透客户端）
 ## 测试
 
 ```bash
-python tests/test_e2e.py          # 核心模块（32 项）
+python tests/test_e2e.py          # 核心模块（34 项）
 python tests/test_e2e_phase2.py   # i18n、模型字段、exe/gui 模块可导入性（5 项）
 ```
 

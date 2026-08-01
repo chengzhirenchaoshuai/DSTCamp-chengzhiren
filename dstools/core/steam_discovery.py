@@ -50,19 +50,39 @@ def parse_library_folders(steam_root: Path) -> list[Path]:
     """解析 steamapps/libraryfolders.vdf 找出全部 Steam 库目录（含
     steam_root 自身）——具体某个游戏完全可能装在跟 Steam 客户端本体不同
     的库/盘符下，只看 steam_root 会漏掉。只用正则提取 "path" 行，不需要
-    引入完整 VDF 解析器。"""
-    libraries = [steam_root]
+    引入完整 VDF 解析器。
+
+    真机验证过的坑：注册表 SteamPath 的大小写不一定跟 Steam 自己内部认
+    的大小写一致（同一台机器上见过注册表整个是小写、libraryfolders.vdf
+    里同一个库却是正确大小写的情况），而这个大小写差异不是纯装饰性
+    的——专用服务器进程内部按路径字符串做创意工坊内容查找，`-ugc_directory`
+    传大小写不对的路径会导致完全识别不到 mod，尽管 Windows 文件系统本
+    身访问这个路径不区分大小写、目录能正常打开。libraryfolders.vdf 现在
+    的格式会把 steam_root 自己也列成一条 "path" 记录（比如 "0" 这一
+    项），这条记录的大小写是 Steam 自己写的，比注册表原始值更可靠，所以
+    大小写只有一处不一致时优先信 vdf 里的版本，只有 vdf 完全没提到这个
+    位置（找不到匹配项）时才退回注册表原始的 steam_root。用小写字符串
+    去重/匹配，避免 Path.__eq__ 在 Windows 上本来就大小写不敏感、误把
+    "两份大小写不同但其实是同一个目录"当成合法的两个不同库。"""
     vdf_path = steam_root / "steamapps" / "libraryfolders.vdf"
     if not vdf_path.exists():
-        return libraries
+        return [steam_root]
     try:
         text = vdf_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return libraries
+        return [steam_root]
+
+    libraries: list[Path] = []
+    seen_lower: set[str] = set()
     for m in re.finditer(r'"path"\s*"([^"]+)"', text):
         path = Path(m.group(1).replace("\\\\", "\\"))
-        if path.exists() and path not in libraries:
+        key = str(path).lower()
+        if path.exists() and key not in seen_lower:
             libraries.append(path)
+            seen_lower.add(key)
+
+    if str(steam_root).lower() not in seen_lower:
+        libraries.insert(0, steam_root)
     return libraries
 
 
@@ -87,3 +107,22 @@ def find_steam_root() -> Path | None:
     查这一个根目录。"""
     libs = find_all_steam_libraries()
     return libs[0] if libs else None
+
+
+def read_game_version_file(install_dir: Path) -> str | None:
+    """读 install_dir 下游戏自己写的 version.txt——Klei 自己维护的内部版
+    本号（真机验证过，跟 Steam appmanifest 的 buildid 是两个独立编号：
+    同一台机器上 version.txt 是 "740477"，buildid 是 "24080846"），用来
+    判断"这个游戏是不是被更新过"（见 core/luajit_injector.py 的
+    needs_regeneration()）。选它而不是 appmanifest buildid：不需要知道
+    app_id、不需要跳两级目录去找 acf、不需要解析 Steam 特有格式，就是安
+    装目录下一个文件，游戏自己写的版本号跟 LuaJIT 补丁按精确游戏版本绑
+    定的内存特征码语义上也更贴近。文件不存在/读取失败返回 None，内容去
+    掉首尾空白后返回。"""
+    version_path = install_dir / "version.txt"
+    if not version_path.exists():
+        return None
+    try:
+        return version_path.read_text(encoding="utf-8", errors="replace").strip() or None
+    except OSError:
+        return None
