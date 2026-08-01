@@ -194,6 +194,13 @@ config_tab.py` 据此在按键时过滤非数字输入、在"保存"时整体校
 开），GAMEPLAY+MISC 一列，SHARD 一列——分组按字段数量配平，不是按"看起
 来像不像一类"配对。
 
+**坑**：`ini_parser.py`/`config_manager.py` 通用的"猜字段类型"逻辑（数
+字/布尔/字符串）会把纯数字密码（比如 `cluster_password = 0`）误转成
+`int`，真值判断 `if password` 就会把密码 `"0"` 当成"没设密码"。
+`ini_field_info.NO_TYPE_COERCE_FIELDS` 记录哪些字段必须永远当字符串，
+读（`ini_parser.py`）写（`config_manager.set_cluster_option`）两条路径
+都要查这张表。
+
 ### 樱花映射 (`core/sakura_frp.py` / `core/frpc_process.py` / `gui/sakura_tab.py`)
 
 通过 SakuraFrp（樱花内网穿透 / natfrp.com）的开放 API 把本地专用服务器映
@@ -318,6 +325,23 @@ frpc，不能从 SakuraFrp Launcher 的安装目录（`SakuraFrpLauncher/frpc.ex
 `stop_shard()`/关闭控制台标签页共用 `_stop_and_then(cluster, shard, on_done)` 这个辅助方法（封装"停止分片+转回 Tk 主线程执行回调"）。控制台标签页自己的"关闭窗口"按钮：世界还在运行时点击会先弹确认框（关窗口=停服务器，比单纯关标签页重得多），已经停止的直接关、不弹确认。
 
 **跨存档启动锁**：`ServerManager` 是全局单例（`_procs` 不分存档），技术上能同时管理多个不同存档的分片进程，但这个应用不打算支持"同时跑多个存档"这种用法——多个存档的服务器同时跑很容易端口冲突/抢资源。`_other_cluster_running(cluster)`（跟 `sakura_tab.py._running_shard_names()` 是同一个"跨 tab 查 ServerManager"套路）判断除了当前选中存档之外还有没有别的存档在跑，有的话 `_update_start_lock_state()` 锁住"启动"/"全部启动"（不锁"停止"——当前存档自己已经在跑的分片还是要能停），并弹出一条 `_other_running_banner` 说明是哪个存档。这个检查每次 `_poll()`（150ms 一次）都会重新算一遍，不需要手动刷新。顶部全局存档下拉框（`app.py._cluster_label_with_status()`）也会在每次点开菜单时（`tk.Menu` 的 `postcommand`）现查一遍哪些存档在运行，标一个"[运行中]"后缀——纯展示，不是这里锁定逻辑的数据来源。
+
+### 分片就绪判断与控制台标签页 (`core/dedicated_server.py` / `gui/local_service_tab.py`)
+
+分片进程 RUNNING 不等于世界真的加载完、能进游戏——`ServerProcess.
+world_ready` 才是"公告"/"玩家列表"/"回档"按钮启用的依据。Master 和非
+Master（Secondary，旧版本叫 Slave）判断不是一回事：Master 看日志里的
+`reset() returning`（玩家进游戏不需要等 Caves 连上）；Secondary 看
+`... is now ready!`。**坑**：游戏进程早期会先跑一遍只建 modindex 的预
+备流程，日志跟正式加载存档长得一模一样，两段都会打印 `reset()
+returning`——必须先看到 `about to start a shard with these settings`
+这一行才能开始判断就绪，否则 Master 会在预备阶段就被误判"已就绪"。
+
+"全部启动"依次启动每个分片会把控制台标签页切到最后一个分片，结束后
+`_select_master_console_tab()` 统一切回主分片（玩家最关心主世界，公告
+也发去主世界）。切换全局存档选择器时用 `Notebook.hide()`（不是
+`forget()`）隐藏不属于当前存档的控制台标签页，避免在另一个存档下还能
+对旧存档发"公告"/"关闭窗口"；进程和日志读取不受影响，切回来历史还在。
 
 ### Mod 配置解析 (`core/modinfo_reader.py`)
 
