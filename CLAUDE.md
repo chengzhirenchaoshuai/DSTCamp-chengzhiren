@@ -140,13 +140,15 @@ WeGame 的 `rail_apps` 安装根目录没有可靠的注册表项能查（不像
 
 **这里的 zip 备份和"回档"是两套完全独立的机制**：回档（`local_service_tab.py._RollbackDialog`）靠游戏自己维护的历史存档快照（`cluster.ini` 的 `max_snapshots`），通过给运行中的分片控制台发 `c_rollback(n)` 指令触发；这里的 zip 备份是 dstools 自己在存档目录里打包的独立文件，两者互不依赖。
 
-备份内容 = 每个分片的 `save/`（世界数据）+ `modoverrides.lua`/`leveldataoverride.lua`/`server.ini`，加上 cluster 级别的 `cluster.ini`/`cluster_token.txt`/`adminlist.txt`/`blocklist.txt`；故意跳过游戏自己维护的 `backup/` 目录和日志文件。备份文件存在 `<cluster_path>/dstcamp_backups/` 里，保留份数由 `app_settings.get_backup_retention()` 控制（默认 10，范围 5~99）。
+备份内容 = 每个分片的 `save/`（世界数据）+ `modoverrides.lua`/`leveldataoverride.lua`/`server.ini`，加上 cluster 级别的 `cluster.ini`/`cluster_token.txt`/`adminlist.txt`/`blocklist.txt`；故意跳过游戏自己维护的 `backup/` 目录和日志文件。
+
+**备份目录是跟存档同级的统一位置，不在存档目录自己内部**：`backup_manager.backup_dir(cluster_path)` 返回 `<cluster_path 的上一级>/dstcamp_backups/<cluster_path.name>/`（如 `<Klei根>/dstcamp_backups/Cluster_3/`）——换电脑/打包分享存档目录时不会把 DSTCamp 自己的备份也一起带上。保留份数由 `app_settings.get_backup_retention()` 控制（默认 10，范围 5~99），对自动/手动备份一视同仁。
 
 `restore_backup()` **必须先删掉会被覆盖的每一项再解压，不能只是在旧文件上覆盖解压**——否则备份之后又产生的新存档槽文件会跟备份里的旧槽位混在一起。调用方自己负责确认对应分片都已停止，恢复前还会自动给"当前状态"打一份保险备份。
 
 `create_backup()` 同一秒内被连续调用两次会在文件名后加 `_2`/`_3`… 后缀避免互相覆盖——这个去重机制假设"同一秒内不会连续调用超过保留份数次"，写测试验证保留份数裁剪时要避开（改用手工构造不同时间戳文件名的方式，见 `tests/test_e2e.py` Test 27）。
 
-服务器运行期间的定时自动备份（`local_service_tab.py._maybe_periodic_backup()`）按 `app_settings.get_backup_interval_minutes()`（默认 10，范围 2~30）触发，独立于"停服后自动备份一次"这条路径。
+服务器运行期间的定时自动备份（`local_service_tab.py._maybe_periodic_backup()`）按 `app_settings.get_backup_interval_minutes()`（默认 10，范围 2~30）触发，独立于"停服后自动备份一次"这条路径。**这两条自动触发路径能不能跑，由 `app_settings.get_backup_auto_enabled()` 一个开关统一控制**（"设置备份策略"页签，默认开启）——"立即备份"按钮和恢复前的保险备份是用户当下的明确操作，不受这个开关影响，不要把它们也塞进同一个判断里。
 
 ### 服务器配置 (`core/config_manager.py` / `core/ini_field_info.py` / `gui/cluster_config_tab.py`)
 

@@ -19,6 +19,7 @@ from dstools.core.character_icons import resolve_character
 from dstools.core.config_manager import load_cluster_config
 from dstools.core.ini_field_info import get_enum_choices
 from dstools.core.mod_manager import list_mods, load_mod_overrides
+from dstools.core.modinfo_reader import resolve_wegame_client_mods_dir
 from dstools.core.resource_paths import bundled_resource_dir
 from dstools.core.save_reader import get_save_summary, list_save_sessions, list_session_players
 from dstools.gui import theme, themed_dialog as dlg
@@ -26,9 +27,10 @@ from dstools.gui.bg_frame import BgFrame
 from dstools.gui.local_service_tab import _RUNNING_LIKE
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
+from dstools.gui.toggle_switch import ToggleSwitch
 from dstools.gui.toolbar_widgets import make_toolbar_label
 from dstools.i18n import t
-from dstools.models import SaveSource
+from dstools.models import Platform, SaveSource
 
 # "每个玩家角色状态"小节标题的字号（"分片信息"标题应用户要求删掉了，
 # 不用再跟它保持一致，但字号常量还留着给"每个玩家角色状态"单独用）。
@@ -250,15 +252,17 @@ class _RestoreBackupDialog:
 
 
 class _BackupPolicyDialog:
-    """"设置备份策略"窗口：备份保留份数（5~99）+ 服务器运行时自动备份的
-    间隔分钟数（2~30）。全局设置，不分存档，存在跟主题/窗口位置同一份
-    %APPDATA%/DSTCamp/settings.json 里。点"确认"才真正写入并生效——保留
-    份数下次备份时才用得到，间隔分钟数下一次轮询就会用新值。"""
+    """"设置备份策略"窗口："启用自动备份"开关 + 备份保留份数（5~99）+
+    服务器运行时自动备份的间隔分钟数（2~30）。全局设置，不分存档，存在
+    跟主题/窗口位置同一份 %APPDATA%/DSTCamp/settings.json 里。开关直接
+    点击立即生效（跟主题切换同一套即时生效的交互，不用等"确认"）；保留
+    份数/间隔分钟数点"确认"才真正写入——保留份数下次备份时才用得到，间
+    隔分钟数下一次轮询就会用新值。"""
 
     def __init__(self, parent_widget):
         from dstools.core.app_settings import (
-            get_backup_interval_minutes, get_backup_retention,
-            set_backup_interval_minutes, set_backup_retention,
+            get_backup_auto_enabled, get_backup_interval_minutes, get_backup_retention,
+            set_backup_auto_enabled, set_backup_interval_minutes, set_backup_retention,
         )
         self._set_retention = set_backup_retention
         self._set_interval = set_backup_interval_minutes
@@ -272,8 +276,22 @@ class _BackupPolicyDialog:
         WIN_W = 420
         vcmd = (win.register(lambda s: s == "" or s.isdigit()), "%P")
 
+        row0 = ttk.Frame(win)
+        row0.pack(fill=tk.X, padx=20, pady=(20, 4))
+        ttk.Label(row0, text=t("save.backup_auto_enabled_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
+        self._auto_enabled_var = tk.BooleanVar(value=get_backup_auto_enabled())
+
+        def _on_auto_toggle():
+            enabled = self._auto_enabled_var.get()
+            set_backup_auto_enabled(enabled)
+            interval_entry.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+
+        ToggleSwitch(row0, variable=self._auto_enabled_var, command=_on_auto_toggle).pack(side=tk.RIGHT)
+        ttk.Label(win, text=t("save.backup_auto_enabled_hint"), foreground=theme.TEXT_MUTED,
+                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
+
         row1 = ttk.Frame(win)
-        row1.pack(fill=tk.X, padx=20, pady=(20, 4))
+        row1.pack(fill=tk.X, padx=20, pady=(14, 4))
         ttk.Label(row1, text=t("save.backup_retention_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
         self._retention_var = tk.StringVar(value=str(get_backup_retention()))
         ttk.Entry(row1, textvariable=self._retention_var, width=8, validate="key", validatecommand=vcmd,
@@ -285,8 +303,11 @@ class _BackupPolicyDialog:
         row2.pack(fill=tk.X, padx=20, pady=(14, 4))
         ttk.Label(row2, text=t("save.backup_interval_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
         self._interval_var = tk.StringVar(value=str(get_backup_interval_minutes()))
-        ttk.Entry(row2, textvariable=self._interval_var, width=8, validate="key", validatecommand=vcmd,
-                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.RIGHT)
+        interval_entry = ttk.Entry(row2, textvariable=self._interval_var, width=8, validate="key", validatecommand=vcmd,
+                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE))
+        interval_entry.pack(side=tk.RIGHT)
+        if not self._auto_enabled_var.get():
+            interval_entry.configure(state=tk.DISABLED)
         ttk.Label(win, text=t("save.backup_interval_hint"), foreground=theme.TEXT_MUTED,
                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
 
@@ -617,6 +638,8 @@ class SaveBrowserTab:
         self._resync_players_section_bg()
 
         c = self._get_cluster()
+        platform = c.platform if c else Platform.STEAM
+        wegame_client_mods_dir = resolve_wegame_client_mods_dir(platform)
         sessions = []
         mod_overrides_path = None
         if c:
@@ -632,7 +655,7 @@ class SaveBrowserTab:
             self._session_id_var.set(t("save.no_saves")); self._summary_var.set(""); self._slots_var.set("")
             self._extra_sessions_var.set("")
             self._resync_players_section_bg()
-            self._refresh_players(None, mod_overrides_path)
+            self._refresh_players(None, mod_overrides_path, platform, wegame_client_mods_dir)
             return
 
         # 这台机器实测每个分片都只有一个会话——正常"继续游戏"一直复用同一
@@ -658,7 +681,7 @@ class SaveBrowserTab:
         self._resync_players_section_bg()
 
         session.players = list_session_players(session)
-        self._refresh_players(session, mod_overrides_path)
+        self._refresh_players(session, mod_overrides_path, platform, wegame_client_mods_dir)
 
     def _resync_players_section_bg(self):
         """"基本信息"（info_frame）每次变高/变矮，都会把下面 pf 这一整
@@ -776,7 +799,8 @@ class SaveBrowserTab:
         for w in rows_frame.winfo_children(): w.destroy()
         ttk.Label(rows_frame, text=t("save.loading"), foreground=theme.TEXT_MUTED).pack(pady=10)
 
-    def _refresh_players(self, session, mod_overrides_path=None):
+    def _refresh_players(self, session, mod_overrides_path=None,
+                          platform=Platform.STEAM, wegame_client_mods_dir=None):
         rows_frame = self._players_rows_frame
         canvas = self._players_canvas
         for w in rows_frame.winfo_children(): w.destroy()
@@ -800,11 +824,13 @@ class SaveBrowserTab:
                 (id_font.measure(id_prefix + p.player_id) for p in players), default=0,
             ) + 6
             for player in players:
-                self._build_player_row(rows_frame, player, mod_overrides_path, photo_refs, id_col_width)
+                self._build_player_row(rows_frame, player, mod_overrides_path, photo_refs, id_col_width,
+                                        platform, wegame_client_mods_dir)
         self._canvas_bind_mousewheel(canvas, canvas)
         self._canvas_bind_mousewheel(rows_frame, canvas)
 
-    def _build_player_row(self, parent, player, mod_overrides_path, photo_refs, id_col_width):
+    def _build_player_row(self, parent, player, mod_overrides_path, photo_refs, id_col_width,
+                           platform=Platform.STEAM, wegame_client_mods_dir=None):
         bg = theme.CARD_BG_ALT
         row = tk.Frame(parent, background=bg, highlightbackground=theme.CARD_BORDER,
                        highlightthickness=1)
@@ -814,7 +840,8 @@ class SaveBrowserTab:
 
         name, icon_path = "?", None
         if not player.parse_error and player.character:
-            name, icon_path = resolve_character(player.character, mod_overrides_path)
+            name, icon_path = resolve_character(player.character, mod_overrides_path,
+                                                 platform, wegame_client_mods_dir)
         if not icon_path:
             # 要么是解析失败的玩家（parse_error，根本没走上面的
             # resolve_character），要么是查到了名字但查不到这个角色自己

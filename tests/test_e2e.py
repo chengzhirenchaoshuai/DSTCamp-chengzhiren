@@ -46,9 +46,10 @@ from dstools.core.app_settings import (
     load_settings, save_settings, get_player_note, set_player_note,
     get_minimize_on_close, set_minimize_on_close,
     get_cache_use_exe_dir, set_cache_use_exe_dir,
+    get_backup_auto_enabled, set_backup_auto_enabled,
     set_backup_retention,
 )
-from dstools.core.backup_manager import create_backup, restore_backup, list_backups
+from dstools.core.backup_manager import backup_dir, create_backup, restore_backup, list_backups
 from dstools.models import SaveSession, SaveSource
 from dstools.core.modinfo_reader import parse_modinfo
 from dstools.core.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
@@ -742,6 +743,13 @@ def test_app_settings_toggles():
         assert get_cache_use_exe_dir() is False
         print("  PASS: cache_use_exe_dir round-trips")
 
+        assert get_backup_auto_enabled() is True, "Default should be enabled"
+        set_backup_auto_enabled(False)
+        assert get_backup_auto_enabled() is False
+        set_backup_auto_enabled(True)
+        assert get_backup_auto_enabled() is True
+        print("  PASS: backup_auto_enabled defaults to True and round-trips")
+
 
 def test_mod_sync_junction():
     """Test mod_sync.py's _ensure_junction -- V1 mod 同步现在改用目录联接
@@ -994,10 +1002,10 @@ def test_backup_manager_prune_retention_boundary():
             cluster.mkdir(parents=True)
             (cluster / "cluster.ini").write_text("[GAMEPLAY]\nmax_players=4\n")
 
-            backup_dir = cluster / "dstcamp_backups"
-            backup_dir.mkdir(parents=True)
+            dest = backup_dir(cluster)  # 跟存档同级的统一备份目录，不是存档目录自己内部
+            dest.mkdir(parents=True)
             for i in range(1, 8):  # 7 份时间戳递增的旧备份（都早于"现在"）
-                (backup_dir / f"Cluster_2_2026010{i}_000000.zip").write_bytes(b"")
+                (dest / f"Cluster_2_2026010{i}_000000.zip").write_bytes(b"")
 
             newest = create_backup(cluster)  # 第 8 份，真实时间戳，必然是最新的
             backups = list_backups(cluster)

@@ -28,6 +28,7 @@ from dstools.core.atlas_utils import crop_by_uv, parse_atlas_xml
 from dstools.core.resource_paths import cache_dir
 from dstools.core.steam_discovery import find_all_steam_libraries
 from dstools.core.tex_convert import tex_to_png
+from dstools.models import Platform
 
 _CACHE_DIR = cache_dir("character_icons")
 
@@ -203,12 +204,18 @@ def get_mod_avatar_path(mod_folder: Path, workshop_id: str, prefab: str) -> Path
     return None
 
 
-def resolve_character(prefab: str, mod_overrides_path: Path | None) -> tuple[str, Path | None]:
+def resolve_character(prefab: str, mod_overrides_path: Path | None,
+                       platform: Platform = Platform.STEAM,
+                       wegame_client_mods_dir: Path | None = None) -> tuple[str, Path | None]:
     """解析一个角色 prefab 的显示名 + 头像路径。
 
     先查官方角色表；查不到（说明是模组角色）再去这个分片当前启用的模组
     里找同名声明，连带该模组自带的头像一起用；都找不到就原样显示英文
     prefab、不给头像——不去猜测未知模组的命名规则。
+
+    platform/wegame_client_mods_dir 透传给 find_mod_folder()——WeGame 存
+    档的 mod 内容不在 Steam 目录下，不传就永远找不到 WeGame 玩家用的自
+    定义角色模组，只能回退显示英文 prefab。
     """
     from dstools.core.character_names import CHARACTER_NAMES, get_character_display_name
     if prefab in CHARACTER_NAMES:
@@ -221,7 +228,7 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None) -> tuple[str
         for entry in list_mods(overrides):
             if not entry.enabled:
                 continue
-            mod_folder = find_mod_folder(entry.workshop_id)
+            mod_folder = find_mod_folder(entry.workshop_id, platform, wegame_client_mods_dir)
             if not mod_folder:
                 continue
             name = find_mod_character_name(mod_folder, prefab)

@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.5.0-orange)
+![Version](https://img.shields.io/badge/version-0.6.0-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -92,7 +92,9 @@ python scripts/run_gui.py
   - **自动备份**：服务器停止后自动备份一次，运行期间也按设定间隔定期备份。
   - **手动备份**："立即备份"按钮随时手动打一份。
   - **从备份恢复**：列出历史备份并搜索，选中后整体覆盖恢复。
-  - **备份策略**：保留份数和自动备份间隔均可调整。
+  - **备份策略**：保留份数、自动备份间隔均可调整，自动备份也可以整体关闭
+    （手动备份和恢复前的保险备份不受影响）；备份文件统一存在存档同级的
+    `dstcamp_backups/` 目录下，不占用存档目录本身。
 - **樱花映射**：通过内网穿透把本地专用服务器映射到公网，没有公网 IP 也能
   让好友直接连接，不需要手动配置路由器端口转发。一键开启映射、一键关闭；
   账号信息、节点选择、近期用量都在页签里直接查看。饥荒直连目前只支持主世界。
@@ -104,6 +106,7 @@ python scripts/run_gui.py
 - 系统托盘图标常驻；可选择关闭窗口时直接退出还是最小化到托盘。
 - 记住上次窗口位置，下次启动自动还原。
 - 界面支持中/英文实时切换。
+- 启动时自动检查 GitHub 上的新版本，"关于"窗口里也能随时手动检查。
 
 ## 项目结构
 

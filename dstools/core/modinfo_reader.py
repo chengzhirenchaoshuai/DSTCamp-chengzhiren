@@ -318,6 +318,22 @@ def find_wegame_server_dir(wegame_root: Path) -> Path | None:
     return _find_wegame_product_dir(wegame_root, "饥荒联机版专用服务器")
 
 
+def resolve_wegame_client_mods_dir(platform: Platform) -> Path | None:
+    """给 find_mod_folder() 用的 wegame_client_mods_dir 参数——Steam 平台
+    不需要这个参数，永远返回 None；WeGame 平台读用户手动选过的
+    app_settings.get_wegame_root_path()，没设置过就是 None（调用方应优雅
+    处理成"这个 mod 没有名字/图标"，不弹目录选择框打扰用户，真要设置见
+    "Mod管理"页签的"同步到服务器"按钮）。"""
+    if platform != Platform.WEGAME:
+        return None
+    from dstools.core.app_settings import get_wegame_root_path
+    root = get_wegame_root_path()
+    if not root:
+        return None
+    client_dir = find_wegame_client_dir(root)
+    return client_dir / "mods" if client_dir else None
+
+
 def find_mod_folder(workshop_id: str, platform: Platform = Platform.STEAM,
                      wegame_client_mods_dir: Path | None = None) -> Path | None:
     """Find the mod folder for a given workshop ID.

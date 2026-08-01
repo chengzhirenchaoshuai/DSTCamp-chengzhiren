@@ -25,6 +25,7 @@ _KEY_BACKUP_RETENTION = "backup_retention"
 _DEFAULT_BACKUP_RETENTION = 10
 _KEY_BACKUP_INTERVAL_MIN = "backup_interval_minutes"
 _DEFAULT_BACKUP_INTERVAL_MIN = 10
+_KEY_BACKUP_AUTO_ENABLED = "backup_auto_enabled"
 _KEY_SAKURA_TOKEN = "sakura_api_token"
 _KEY_SAKURA_LAST_NODE = "sakura_last_node_id"
 
@@ -250,6 +251,21 @@ def get_backup_interval_minutes() -> int:
 def set_backup_interval_minutes(value: int) -> None:
     data = load_settings()
     data[_KEY_BACKUP_INTERVAL_MIN] = min(30, max(2, int(value)))
+    save_settings(data)
+
+
+def get_backup_auto_enabled() -> bool:
+    """是否启用"自动备份"（服务器停止后备份一次 + 运行期间按间隔定期备
+    份），默认开启。只控制这两条自动触发路径——"立即备份"手动按钮和"从
+    备份恢复"前的保险备份都是用户当下的明确操作，关掉自动备份不应该影
+    响这两处，也不影响 get_backup_retention() 的裁剪规则（对已有的备份
+    一视同仁，不分是自动还是手动打的）。"""
+    return load_settings().get(_KEY_BACKUP_AUTO_ENABLED, True)
+
+
+def set_backup_auto_enabled(value: bool) -> None:
+    data = load_settings()
+    data[_KEY_BACKUP_AUTO_ENABLED] = bool(value)
     save_settings(data)
 
 

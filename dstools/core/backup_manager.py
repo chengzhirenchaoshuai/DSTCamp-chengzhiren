@@ -6,10 +6,17 @@ blocklist.txt。故意跳过游戏自己在每个分片下维护的 backup/ 目�
 log/chat_log 文件——那些是 mod 修改历史和日志，跟世界存档数据无关，游戏
 自己已经在滚动维护，没必要跟着备份一遍。
 
-备份文件存在 cluster 目录下的 dstcamp_backups/ 子目录里（不会被
-discovery.py 误认成分片，因为分片判定要求目录里有 server.ini），保留份数
-由 app_settings.get_backup_retention() 控制（用户可在"设置备份策略"里
-调整，默认 10），超过的自动删掉最旧的。
+备份文件存在**跟存档同级**的统一 dstcamp_backups/ 目录下、按存档名分子
+目录（如 `<Klei根>/dstcamp_backups/Cluster_3/`），不放进存档目录自己内
+部——换电脑/打包分享存档目录时不会把 DSTCamp 自己的备份也一起带上，跟
+真正的存档内容混在一起；代价是新位置换电脑不会跟着走，是权衡后特意的
+取舍。
+
+保留份数由 app_settings.get_backup_retention() 控制（用户可在"设置备份
+策略"里调整，默认 10），超过的自动删掉最旧的——这条规则对所有备份一视
+同仁，不区分是自动触发还是手动打的。"自动备份"（停服后一次 + 运行期间
+定期）能不能触发，由 app_settings.get_backup_auto_enabled() 单独控制，
+"立即备份"按钮和"恢复前保险备份"这两处手动/防御性备份不受这个开关影响。
 """
 
 import shutil
@@ -27,7 +34,8 @@ _CLUSTER_ITEMS = ("cluster.ini", "cluster_token.txt", "adminlist.txt", "blocklis
 
 
 def backup_dir(cluster_path: Path) -> Path:
-    return cluster_path / _BACKUP_DIR_NAME
+    """这个存档的备份目录：`<存档目录的上一级>/dstcamp_backups/<存档目录名>/`。"""
+    return cluster_path.parent / _BACKUP_DIR_NAME / cluster_path.name
 
 
 def list_backups(cluster_path: Path) -> list[Path]:

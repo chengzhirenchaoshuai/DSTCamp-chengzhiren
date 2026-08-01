@@ -7,6 +7,7 @@ STRINGS = {
         "app.ready": "就绪",
         "app.refresh": "刷新全部",
         "app.refreshed_hint": "✓ 已刷新",
+        "app.update_available": "发现新版本 v{version}，点击查看 →",
 
         # Menu
         "menu.file": "文件",
@@ -39,6 +40,10 @@ STRINGS = {
 
         # About (NEW)
         "about.message": "DSTCamp {version}\n\nDon't Starve Together 本地服务器管理工具\n\n作者：橙之刃\n交流群：463227692",
+        "about.check_update_btn": "检查更新",
+        "about.checking_update": "正在检查更新…",
+        "about.check_update_failed": "检查失败，请检查网络连接",
+        "about.up_to_date": "已是最新版本",
 
         # Tabs
         "tab.local": "  本地服务器  ",
@@ -78,6 +83,9 @@ STRINGS = {
         "save.restore_no_detail": "暂无法读取这份备份的详情。",
         "save.backup_policy_btn": "设置备份策略",
         "save.backup_policy_title": "备份策略",
+        "save.backup_auto_enabled_label": "启用自动备份：",
+        "save.backup_auto_enabled_hint": "关闭后服务器停止/运行期间都不会自动备份，"
+            "但「立即备份」按钮和恢复前的保险备份不受影响。",
         "save.backup_retention_label": "备份保留份数：",
         "save.backup_retention_hint": "超过这个数量时自动删除最旧的备份，范围 5~99。",
         "save.backup_interval_label": "自动备份间隔（分钟）：",
@@ -421,6 +429,7 @@ STRINGS = {
         "app.ready": "Ready",
         "app.refresh": "Refresh All",
         "app.refreshed_hint": "✓ Refreshed",
+        "app.update_available": "New version v{version} available, click to view →",
 
         # Menu
         "menu.file": "File",
@@ -453,6 +462,10 @@ STRINGS = {
 
         # About (NEW)
         "about.message": "DSTCamp {version}\n\nDon't Starve Together local server manager\n\nAuthor：橙之刃\nQQ group：463227692",
+        "about.check_update_btn": "Check for Updates",
+        "about.checking_update": "Checking for updates…",
+        "about.check_update_failed": "Check failed, please verify your network connection",
+        "about.up_to_date": "You're on the latest version",
 
         # Tabs
         "tab.local": "  Local Server  ",
@@ -492,6 +505,9 @@ STRINGS = {
         "save.restore_no_detail": "Couldn't read details for this backup.",
         "save.backup_policy_btn": "Backup Policy",
         "save.backup_policy_title": "Backup Policy",
+        "save.backup_auto_enabled_label": "Enable auto-backup:",
+        "save.backup_auto_enabled_hint": "When off, backups won't happen automatically on server stop or "
+            "while running, but the \"Backup Now\" button and the safety backup before a restore are unaffected.",
         "save.backup_retention_label": "Backups to keep:",
         "save.backup_retention_hint": "The oldest backups are auto-deleted past this count. Range: 5-99.",
         "save.backup_interval_label": "Auto-backup interval (minutes):",

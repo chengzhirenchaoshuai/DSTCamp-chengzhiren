@@ -11,7 +11,9 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 
-from dstools.core.app_settings import get_backup_interval_minutes, set_dedicated_server_path
+from dstools.core.app_settings import (
+    get_backup_auto_enabled, get_backup_interval_minutes, set_dedicated_server_path,
+)
 from dstools.core.backup_manager import create_backup
 from dstools.core.config_manager import load_cluster_config, load_shard_config
 from dstools.core.dedicated_server import (
@@ -869,7 +871,7 @@ class LocalServiceTab:
         # 联动），只有这个 cluster 名下所有分片都真正停下来之后备份才是一
         # 个一致的快照——不是每停一个分片就各自备份一次。
         running = self.manager.running()
-        if not any(str(p.cluster_path) == str(cluster.path) for p in running):
+        if get_backup_auto_enabled() and not any(str(p.cluster_path) == str(cluster.path) for p in running):
             try:
                 create_backup(cluster.path)
             except OSError:
@@ -933,7 +935,13 @@ class LocalServiceTab:
         第一次被发现在运行时先记一次时间戳，真正过了配置的分钟数才备份
         并重新计时；分片全停了就把这个 cluster 的计时记录清掉，避免下次
         重新开始跑的时候，被一个很久以前的旧时间戳骗到立刻触发一次备份。
+
+        "设置备份策略"里的"启用自动备份"开关关掉时整个方法直接返回——
+        跟"停服后自动备份一次"共用同一个开关，两条自动触发路径要么一起
+        开要么一起关，不单独拆分。
         """
+        if not get_backup_auto_enabled():
+            return
         interval_s = get_backup_interval_minutes() * 60
         now = time.monotonic()
         running_paths = {str(p.cluster_path) for p in self.manager.running()

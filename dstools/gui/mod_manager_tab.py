@@ -21,6 +21,7 @@ from dstools.core.mod_resolve_cache import load_cached_result, save_result
 from dstools.core.modinfo_reader import (
     find_game_mods_dir, find_mod_folder, find_wegame_client_dir, find_wegame_server_dir,
     list_installed_mod_ids, parse_modinfo, resolve_config_value, resolve_full_modinfo,
+    resolve_wegame_client_mods_dir,
 )
 from dstools.core.mod_sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync
 from dstools.gui import fonts, theme, themed_dialog as dlg
@@ -453,20 +454,11 @@ class ModManagerTab:
 
     def _resolve_mod_folder_args(self, cluster):
         """给 find_mod_folder() 用的 (platform, wegame_client_mods_dir)
-        二元组——WeGame 存档的 mod 内容不在 Steam 目录下（真机验证过
-        WeGame 没有 Steam Workshop 那套独立内容缓存），得按这个存档的平
-        台去对应的客户端 mods/ 文件夹里找。这里只读 app_settings 里已经
-        记住的路径，没设置过就是 None（find_mod_folder 会优雅地找不到，
-        mod 照常显示、只是没有名字/图标，不在这种被动加载的路径上弹目录
-        选择框打扰用户；真要设置见"Mod管理"页签的"同步到服务器"按钮）。"""
+        二元组——具体逻辑见 modinfo_reader.resolve_wegame_client_mods_dir()
+        （save_browser_tab.py 解析模组自定义角色时也要用同一份逻辑，故提
+        取成 core 层共享函数，这里只是按当前存档取 platform 后转调）。"""
         platform = cluster.platform if cluster else Platform.STEAM
-        wegame_client_mods_dir = None
-        if platform == Platform.WEGAME:
-            wegame_root = app_settings.get_wegame_root_path()
-            if wegame_root:
-                wegame_client_dir = find_wegame_client_dir(wegame_root)
-                wegame_client_mods_dir = wegame_client_dir / "mods" if wegame_client_dir else None
-        return platform, wegame_client_mods_dir
+        return platform, resolve_wegame_client_mods_dir(platform)
 
     def _load_mods_worker(self, gen, overrides_path, full, platform, wegame_client_mods_dir):
         """Runs off the Tk main thread -- must not touch any tkinter/Tcl

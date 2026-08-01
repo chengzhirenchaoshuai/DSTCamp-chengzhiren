@@ -1,6 +1,6 @@
 """GUI for DST save tool. Tabs: Saves | Mods | World | Config | Env."""
 
-import sys, tkinter as tk, weakref
+import sys, threading, tkinter as tk, weakref
 from pathlib import Path
 from tkinter import font as tkfont, ttk
 
@@ -16,6 +16,7 @@ from dstools.core.app_settings import (
 )
 from dstools.core.custom_background import get_custom_bg_path, render_background
 from dstools.core.discovery import discover_environment
+from dstools.core.update_check import check_latest_version, is_newer_version
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.background_dialog import BackgroundImageDialog
 from dstools.gui.bg_frame import BgFrame
@@ -325,10 +326,30 @@ class DSToolsApp:
         self._status_bar.configure(height=status_h)
         self._status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
+        # 有新版本时才出现的提示——右对齐画在状态栏同一张 Canvas 上，跟左
+        # 边的 status_text 共用一行，不额外占高度；没有更新时这个 tag 不
+        # 存在，状态栏观感跟以前完全一样。self._update_notice 是
+        # (version, url) 或 None，只由 _start_update_check() 的后台线程
+        # 通过 root.after(0, ...) 设置一次。
+        self._update_notice: tuple[str, str] | None = None
+
         def _redraw_status_bar():
-            self._status_bar.delete("status_text")
+            self._status_bar.delete("status_text", "update_notice")
             self._status_bar.create_text(6, self._status_text_h / 2, text=self.status_var.get(), anchor=tk.W,
                                           fill=theme.TEXT, font=self._status_font, tags="status_text")
+            if self._update_notice is not None:
+                version, _url = self._update_notice
+                w = self._status_bar.winfo_width()
+                self._status_bar.create_text(
+                    w - 8, self._status_text_h / 2, text=t("app.update_available", version=version),
+                    anchor=tk.E, fill=theme.PRIMARY, font=self._status_font,
+                    tags=("update_notice",),
+                )
+                self._status_bar.tag_bind("update_notice", "<Enter>",
+                                           lambda e: self._status_bar.configure(cursor="hand2"))
+                self._status_bar.tag_bind("update_notice", "<Leave>",
+                                           lambda e: self._status_bar.configure(cursor=""))
+                self._status_bar.tag_bind("update_notice", "<Button-1>", self._open_update_url)
 
         self._redraw_status_bar = _redraw_status_bar
         self.status_var.trace_add("write", lambda *a: _redraw_status_bar())
@@ -369,6 +390,7 @@ class DSToolsApp:
         self._rebuild_shared_bg_image()
         self._refresh_all_bg_surfaces()
         self._update_status(); self._refresh()
+        self._start_update_check()
 
         # 缩放手柄放在 __init__ 最后——它们是直接 place() 在 root 上的
         # 普通控件，Tk 里同一父容器下后创建的控件在层叠顺序里更靠上，必
@@ -1022,8 +1044,54 @@ class DSToolsApp:
             tk.Label(card, text=body_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
                     justify=tk.LEFT, anchor=tk.W).pack(fill=tk.X, padx=24)
 
+        # "检查更新"结果展示行——初始为空，点了按钮才有内容。found_url 用
+        # 一个可变容器装"这次查到的 release 网页地址"，只有查到确实更新
+        # 时才非 None，点这行文字直接跳转（跟状态栏那条提示同样的交互）。
+        found = {"url": None}
+        update_var = tk.StringVar(value="")
+        update_label = tk.Label(card, textvariable=update_var, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+                                fg=theme.TEXT_MUTED, bg=theme.CARD_BG, justify=tk.LEFT, anchor=tk.W)
+        update_label.pack(fill=tk.X, padx=24, pady=(10, 0))
+
+        def _open_found_url(_event=None):
+            if found["url"]:
+                import webbrowser
+                webbrowser.open(found["url"])
+
+        update_label.bind("<Button-1>", _open_found_url)
+
+        def _do_check_update():
+            check_btn.configure(state=tk.DISABLED)
+            update_var.set(t("about.checking_update"))
+            update_label.configure(fg=theme.TEXT_MUTED, cursor="")
+
+            def _worker():
+                result = check_latest_version()
+
+                def _apply():
+                    if not win.winfo_exists():
+                        return
+                    check_btn.configure(state=tk.NORMAL)
+                    if result is None:
+                        update_var.set(t("about.check_update_failed"))
+                        return
+                    latest_version, url = result
+                    if is_newer_version(__version__, latest_version):
+                        found["url"] = url
+                        update_var.set(t("app.update_available", version=latest_version))
+                        update_label.configure(fg=theme.PRIMARY, cursor="hand2")
+                        self._show_update_notice(latest_version, url)
+                    else:
+                        update_var.set(t("about.up_to_date"))
+
+                win.after(0, _apply)
+
+            threading.Thread(target=_worker, daemon=True).start()
+
         btn_row = tk.Frame(card, background=theme.CARD_BG)
         btn_row.pack(fill=tk.X, padx=24, pady=(18, 24))
+        check_btn = ttk.Button(btn_row, text=t("about.check_update_btn"), command=_do_check_update)
+        check_btn.pack(side=tk.LEFT)
         ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=win.destroy).pack(side=tk.RIGHT)
 
         win.protocol("WM_DELETE_WINDOW", win.destroy)
@@ -1060,6 +1128,31 @@ class DSToolsApp:
 
     def _refresh_tab_labels(self):
         self._pill_bar.relabel({k: t(f"tab.{k}") for k in self._tab_keys})
+
+    def _start_update_check(self) -> None:
+        """启动时后台线程查一次 GitHub 最新 Release，跟樱花映射页签查账
+        号信息是同一个道理——网络请求没有上限延迟，不能在 Tk 主线程同步
+        跑；查不到/没有更新就什么都不做，不弹窗、不重试，只在确实有更新
+        时通过 root.after(0, ...) 回到主线程点亮状态栏右侧那行提示。"""
+        def _worker():
+            result = check_latest_version()
+            if result is None:
+                return
+            latest_version, url = result
+            if is_newer_version(__version__, latest_version):
+                self.root.after(0, self._show_update_notice, latest_version, url)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _show_update_notice(self, version: str, url: str) -> None:
+        self._update_notice = (version, url)
+        self._redraw_status_bar()
+
+    def _open_update_url(self, _event=None) -> None:
+        if self._update_notice is None:
+            return
+        import webbrowser
+        webbrowser.open(self._update_notice[1])
 
     def _update_status(self):
         """状态栏跟着顶部"存档类型"筛选器切换——WeGame 根目录/用户 ID 是
