@@ -102,6 +102,7 @@ def parse_cluster_ini(path: Path) -> ClusterConfig:
         network=_coerce_dict_values(_section_to_dict(parser, "NETWORK"), "NETWORK"),
         misc=_coerce_dict_values(_section_to_dict(parser, "MISC"), "MISC"),
         shard=_coerce_dict_values(_section_to_dict(parser, "SHARD"), "SHARD"),
+        steam=_coerce_dict_values(_section_to_dict(parser, "STEAM"), "STEAM"),
     )
 
 
@@ -117,6 +118,7 @@ def write_cluster_ini(config: ClusterConfig, path: Path) -> None:
         ("NETWORK", config.network),
         ("MISC", config.misc),
         ("SHARD", config.shard),
+        ("STEAM", config.steam),
     ]
 
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -463,6 +463,12 @@ class SakuraTab:
         if not token:
             self._render_account_info("--", "--", "--", "--", "--")
             self._render_recent_traffic("")
+            # 没有 Token 这条分支直接 return，不会走到下面 _apply_loaded()
+            # ->_render_shard_rows() 那条真正换掉分片状态文字的路径——
+            # _render_shard_placeholders() 在选中存档那一刻画的"加载中"
+            # 会一直留着（真机反馈过"一直显示加载中，是不是卡死了"），
+            # 这里换成更准确的"待配置 API"。
+            self._render_shard_placeholders(t("sakura.token_not_configured"))
             return
         # 不在这里同步写一个"加载中"过渡态——账号信息卡片是 BgFrame/Canvas，
         # 每次销毁重建都会有一瞬间背景图消失的闪烁；刷新时旧数值大概率还
@@ -574,15 +580,24 @@ class SakuraTab:
         for child in self._shards_frame.winfo_children():
             child.destroy()
 
-    def _render_shard_placeholders(self):
+    def _render_shard_placeholders(self, status_text: str | None = None):
+        """选中存档那一刻先画一次这个当占位，`_reload_async()` 后台线程
+        真正查完隧道状态后 `_apply_loaded()` 会调 `_render_shard_rows()`
+        换成真实数据——但**没有配置 Token 时 `_reload_async()` 直接提前
+        return，压根不会走到 `_render_shard_rows()`**，如果这里默认画的
+        "加载中"没人接手替换掉，会一直卡在"加载中"，看起来像卡死/一直
+        在重试，其实只是这行字从来没被换过（真机反馈过的坑）。`status_
+        text` 就是留给 `_reload_async()` 在"没有 Token"这个分支里传
+        "待配置 API"这类更准确的文字，不传时用默认的"加载中"。"""
         self._clear_shards_frame()
         cluster = self._current_cluster
+        text = status_text if status_text is not None else t("sakura.loading")
         if not cluster:
             self._label(self._shards_frame, t("local.select_cluster_first")).pack(anchor=tk.W)
             self._action_btn.pack_forget()
             return
         if not cluster.shards:
-            self._label(self._shards_frame, t("sakura.loading")).pack(anchor=tk.W)
+            self._label(self._shards_frame, text).pack(anchor=tk.W)
             return
         # 每个分片各占一行、跟 _render_shard_rows() 用一样的行高——这样加
         # 载完成前后行数不变，下面"关闭映射"按钮不会因为这块区域忽大忽小
@@ -590,7 +605,7 @@ class SakuraTab:
         for row_idx, shard in enumerate(cluster.shards):
             self._label(self._shards_frame, shard.name).grid(
                 row=row_idx, column=0, sticky=tk.W, padx=(0, 3), pady=self._SHARD_ROW_PADY)
-            self._label(self._shards_frame, t("sakura.loading"), fg=theme.TEXT_MUTED).grid(
+            self._label(self._shards_frame, text, fg=theme.TEXT_MUTED).grid(
                 row=row_idx, column=1, sticky=tk.W, padx=3, pady=self._SHARD_ROW_PADY)
 
     @staticmethod

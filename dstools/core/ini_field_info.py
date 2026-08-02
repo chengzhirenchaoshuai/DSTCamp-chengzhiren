@@ -86,6 +86,21 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
         "en": ("Cluster Language", "Which language category this server is grouped under when players "
                "filter the server browser by language."),
     },
+    ("NETWORK", "connection_timeout"): {
+        "zh": ("连接超时", "客户端连接握手允许的最长等待时间，单位毫秒，默认 8000。"),
+        "en": ("Connection Timeout", "Maximum time (ms) allowed for a client connection handshake, "
+               "default 8000."),
+    },
+    ("NETWORK", "idle_timeout"): {
+        "zh": ("挂机超时", "玩家无操作多长时间后会被自动踢出，单位秒，默认 1800。"),
+        "en": ("Idle Timeout", "How long (seconds) a player can be idle before being auto-kicked, "
+               "default 1800."),
+    },
+    ("NETWORK", "override_dns"): {
+        "zh": ("自定义 DNS", "给服务器指定使用的 DNS 地址，没有默认值，一般不需要手动设置。"),
+        "en": ("Override DNS", "A custom DNS address for the server to use. No default -- usually "
+               "doesn't need to be set manually."),
+    },
     ("NETWORK", "cluster_cloud_id"): {
         "zh": ("云端标识符", "游戏自己在服务器首次注册/运行后生成写入的一串内部标识符，具体用途"
                "没有在官方文档中找到明确说明，推测跟 Klei 服务器列表/匹配后台有关。只读展示，"
@@ -109,22 +124,50 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
                "separate Caves world, for example)."),
     },
     ("SHARD", "bind_ip"): {
-        "zh": ("监听ip", "主分片用于接受其他分片连接的网络地址，通常为 127.0.0.1 或 0.0.0.0。"),
+        "zh": ("监听ip", "主分片用于接受其他分片连接的网络地址，通常为 127.0.0.1 或 0.0.0.0。"
+               "世界互联开启后由游戏自己生成写入，真机反馈过：手动删掉这个字段、又保持"
+               "shard_enabled=true 会导致开服直接报错，不是“文件里没有就用内置默认值”这种安全缺省。"),
         "en": ("Bind IP", "The address the master shard listens on for other shards' connections, "
-               "typically 127.0.0.1 or 0.0.0.0."),
+               "typically 127.0.0.1 or 0.0.0.0. The game itself writes this once shard_enabled is on -- "
+               "deleting it while shard_enabled stays true causes the server to fail to start, it's not "
+               "a value that's safe to omit."),
     },
     ("SHARD", "master_ip"): {
-        "zh": ("主世界ip", "从分片（如洞穴）连接主分片时使用的目标地址。"),
-        "en": ("Master IP", "The address secondary shards (e.g. Caves) connect to reach the master shard."),
+        "zh": ("主世界ip", "从分片（如洞穴）连接主分片时使用的目标地址，同样是游戏自己生成写入，"
+               "手动删掉+shard_enabled=true 会导致开服报错。"),
+        "en": ("Master IP", "The address secondary shards (e.g. Caves) connect to reach the master "
+               "shard -- also written by the game itself; deleting it while shard_enabled stays true "
+               "causes the server to fail to start."),
     },
     ("SHARD", "master_port"): {
-        "zh": ("互联端口", "分片之间通信使用的 UDP 端口。"),
-        "en": ("Master Port", "The UDP port used for inter-shard communication."),
+        "zh": ("互联端口", "分片之间通信使用的 UDP 端口，游戏自己生成写入，手动删掉+"
+               "shard_enabled=true 会导致开服报错。"),
+        "en": ("Master Port", "The UDP port used for inter-shard communication, written by the game "
+               "itself; deleting it while shard_enabled stays true causes the server to fail to start."),
     },
     ("SHARD", "cluster_key"): {
-        "zh": ("互联密码", "各分片之间相互验证身份用的共享密钥，各分片必须一致。"),
+        "zh": ("互联密码", "各分片之间相互验证身份用的共享密钥，各分片必须一致，游戏自己生成写入，"
+               "手动删掉+shard_enabled=true 会导致开服报错。"),
         "en": ("Cluster Key", "Shared secret the shards use to authenticate each other -- must match "
-               "across every shard."),
+               "across every shard, written by the game itself; deleting it while shard_enabled stays "
+               "true causes the server to fail to start."),
+    },
+    ("STEAM", "steam_group_only"): {
+        "zh": ("仅限 Steam 群组", "开启后只允许指定 Steam 群组的成员加入服务器，默认关闭。"),
+        "en": ("Steam Group Only", "When enabled, only members of the specified Steam group can join. "
+               "Default off."),
+    },
+    ("STEAM", "steam_group_id"): {
+        "zh": ("Steam 群组 ID", "配合 steam_group_only/steam_group_admins 使用的 Steam 群组 ID，"
+               "没有默认值。"),
+        "en": ("Steam Group ID", "The Steam group ID used together with steam_group_only/"
+               "steam_group_admins. No default."),
+    },
+    ("STEAM", "steam_group_admins"): {
+        "zh": ("Steam 群组管理员", "开启后，上面指定 Steam 群组的管理员在这个服务器上自动拥有管理权限，"
+               "默认关闭。"),
+        "en": ("Steam Group Admins", "When enabled, admins of the specified Steam group automatically "
+               "get admin privileges on this server. Default off."),
     },
 }
 

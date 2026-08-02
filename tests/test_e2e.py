@@ -1138,7 +1138,7 @@ def test_backfill_cluster_defaults_only_fills_missing():
     print("\n" + "=" * 60)
     print("Test 28: Cluster Defaults Backfill Only Fills Missing")
 
-    config = ClusterConfig(gameplay={"vote_enabled": False}, network={}, misc={}, shard={})
+    config = ClusterConfig(gameplay={"vote_enabled": False}, network={}, misc={}, shard={}, steam={})
     backfill_cluster_defaults(config)
 
     assert config.gameplay["vote_enabled"] is False, "已经显式设置的值不应该被默认值覆盖"
@@ -1147,6 +1147,59 @@ def test_backfill_cluster_defaults_only_fills_missing():
     assert config.network["tick_rate"] == 15, "缺失的字段应该被补上官方默认值"
     assert config.misc["max_snapshots"] == 6
     print("  PASS: missing fields are backfilled with official defaults")
+
+    # 用户拿真实存档手工核对过一轮之后新补的默认值（见 reference/带注释
+    # 版本的cluster.ini）——顺带确认 STEAM 这个新分区也会被正确回填。
+    assert config.gameplay["pvp"] is False
+    assert config.gameplay["pause_when_empty"] is True
+    assert config.network["cluster_name"] == "[Host]'s World"
+    assert config.network["cluster_language"] == "en"
+    assert config.misc["console_enabled"] is True
+    assert config.steam["steam_group_only"] is False
+    assert config.steam["steam_group_admins"] is False
+    print("  PASS: newly-verified defaults (incl. the new STEAM section) are backfilled too")
+
+    # bind_ip/master_ip/master_port/cluster_key 这几个字段真机反馈过是
+    # 游戏自己生成写入的，删掉+shard_enabled=true 会导致开服报错，不是
+    # 安全缺省——backfill_cluster_defaults() 必须不去补它们，补了会让
+    # GUI 显示成"文件里有这个值、一切正常"，掩盖真实的损坏状态。
+    assert "bind_ip" not in config.shard
+    assert "master_ip" not in config.shard
+    assert "master_port" not in config.shard
+    assert "cluster_key" not in config.shard
+    print("  PASS: game-generated SHARD fields (bind_ip/master_ip/master_port/cluster_key) are NOT auto-backfilled")
+
+
+def test_cluster_ini_steam_section_roundtrip():
+    """真机反馈过的数据丢失 bug：parse_cluster_ini()/write_cluster_ini()
+    原来只认 GAMEPLAY/NETWORK/MISC/SHARD 四个分区，完全不知道 [STEAM]
+    这个分区的存在——如果用户的 cluster.ini 里已经配置了 Steam 群组相关
+    设置，只要在这个工具里点一次"保存"，整个 [STEAM] 分区会被静默吞掉，
+    因为 write_cluster_ini() 会用只认识的四个分区重新生成整个文件。这里
+    测的是"解析出来的 ClusterConfig 里要有 steam 字段" + "写回文件后
+    [STEAM] 分区必须还在，值也要一致"。"""
+    print("\n" + "=" * 60)
+    print("Test 35: cluster.ini [STEAM] Section Round-Trip")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path = Path(tmpdir) / "cluster.ini"
+        path.write_text(
+            "[GAMEPLAY]\nmax_players=8\n\n"
+            "[STEAM]\nsteam_group_only=true\nsteam_group_id=123456\nsteam_group_admins=false\n",
+            encoding="utf-8",
+        )
+        config = parse_cluster_ini(path)
+        assert config.steam.get("steam_group_only") is True
+        assert config.steam.get("steam_group_id") == 123456
+        assert config.steam.get("steam_group_admins") is False
+        print("  PASS: parse_cluster_ini() reads the [STEAM] section")
+
+        write_cluster_ini(config, path)
+        reloaded = parse_cluster_ini(path)
+        assert reloaded.steam.get("steam_group_only") is True
+        assert reloaded.steam.get("steam_group_id") == 123456
+        assert reloaded.gameplay.get("max_players") == 8, "保存 [STEAM] 的同时不能弄丢其它分区"
+        print("  PASS: write_cluster_ini() keeps the [STEAM] section instead of silently dropping it")
 
 
 def test_sakura_frp_tunnel_matching():
@@ -1563,6 +1616,7 @@ def main():
         test_backup_manager_restore_clears_stale_slots,
         test_backup_manager_prune_retention_boundary,
         test_backfill_cluster_defaults_only_fills_missing,
+        test_cluster_ini_steam_section_roundtrip,
         test_sakura_frp_tunnel_matching,
         test_sakura_server_port_rewrite,
         test_sakura_token_settings_roundtrip,

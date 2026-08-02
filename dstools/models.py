@@ -120,6 +120,7 @@ class ClusterConfig:
     network: dict = field(default_factory=dict)
     misc: dict = field(default_factory=dict)
     shard: dict = field(default_factory=dict)
+    steam: dict = field(default_factory=dict)
 
 
 @dataclass

@@ -152,6 +152,7 @@ STRINGS = {
         "cluster.tab_network": "网络设置",
         "cluster.tab_misc": "其他设置",
         "cluster.tab_shard": "多层世界设置",
+        "cluster.tab_steam": "Steam 群组设置",
         "cluster.bool_on": "开启",
         "cluster.bool_off": "关闭",
         "cluster.port_conflict": "「{field}」的值 {value} 和分片「{shard}」冲突，每个分片的这个端口都必须各不相同，请改成其它值再保存。",
@@ -285,6 +286,7 @@ STRINGS = {
         "sakura.connect_copied": "连接字符串已复制到剪贴板",
         "sakura.api_error": "樱花 API 出错: {detail}",
         "sakura.loading": "加载中…",
+        "sakura.token_not_configured": "待配置 API",
         "sakura.token_missing": "请先设置樱花 API Token",
         "sakura.select_node_first": "请先选择一个节点",
 
@@ -615,6 +617,7 @@ STRINGS = {
         "cluster.tab_network": "Network",
         "cluster.tab_misc": "Misc",
         "cluster.tab_shard": "Server Shard Settings",
+        "cluster.tab_steam": "Steam Group Settings",
         "cluster.bool_on": "On",
         "cluster.bool_off": "Off",
         "cluster.port_conflict": "“{field}” value {value} conflicts with shard “{shard}” -- this port must be unique per shard. Change it and save again.",
@@ -748,6 +751,7 @@ STRINGS = {
         "sakura.connect_copied": "Connect string copied to clipboard",
         "sakura.api_error": "SakuraFrp API error: {detail}",
         "sakura.loading": "Loading...",
+        "sakura.token_not_configured": "API not set",
         "sakura.token_missing": "Set a SakuraFrp API Token first",
         "sakura.select_node_first": "Select a node first",
 

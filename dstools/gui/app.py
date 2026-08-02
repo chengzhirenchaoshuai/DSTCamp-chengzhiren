@@ -2,6 +2,7 @@
 
 import sys, threading, tkinter as tk, weakref
 from pathlib import Path
+from types import SimpleNamespace
 from tkinter import font as tkfont, ttk
 
 from PIL import ImageTk
@@ -13,6 +14,8 @@ from dstools.core.app_settings import (
     get_cache_use_exe_dir, set_cache_use_exe_dir,
     get_custom_bg_opacity,
     get_window_position, set_window_position,
+    get_last_platform, set_last_platform,
+    get_last_cluster_path, set_last_cluster_path,
 )
 from dstools.core.custom_background import get_custom_bg_path, render_background
 from dstools.core.discovery import discover_environment
@@ -37,8 +40,12 @@ from dstools.models import Platform, SaveSource, Shard
 class DSToolsApp:
     # 窗口锁死的宽高比基准——启动尺寸、ResizeGrips 拖拽缩放、伪最大化计
     # 算都用这一对值，改窗口比例只需要改这里。
-    WINDOW_BASE_W = 1500
-    WINDOW_BASE_H = 820
+    # 服务器配置页签这一轮新加了 STEAM 分区 + connection_timeout/
+    # idle_timeout/override_dns 三个字段之后，NETWORK 这一列变成最高的
+    # 一列，真机反馈过默认窗口高度下"保存"按钮被顶到看不见——按 16:9 调
+    # 大一圈，给纵向留更多余量。
+    WINDOW_BASE_W = 1600
+    WINDOW_BASE_H = 900
 
     def __init__(self, klei_path: Path | None = None):
         self.env = discover_environment(klei_path)
@@ -236,7 +243,7 @@ class DSToolsApp:
         # cluster_label()）容易选错，这里按平台先筛一遍，"存档:"那个下
         # 拉框只列筛选后的那一部分。用 MenuCombo（同样是 Menubutton+Menu，
         # 不是 ttk.Combobox）保持跟"存档:"一致的实现方式。默认 Steam。
-        self._platform_var = tk.StringVar(value="Steam")
+        self._platform_var = tk.StringVar(value=get_last_platform() or "Steam")
         self._platform_menu = MenuCombo(cluster_bar_inner, textvariable=self._platform_var,
                                          width=8, style="Archive.TMenubutton")
         self._platform_menu["values"] = ["Steam", "WeGame"]
@@ -255,7 +262,13 @@ class DSToolsApp:
         self._redraw_archive_label()
 
         self._global_cluster_var = tk.StringVar()
-        self._global_selected_cluster = None
+        # 用上次记住的存档路径占个位——_populate_global_cluster_combo()
+        # 的 preserve=True 分支只看 prev.path，不需要一个真的 Cluster 对
+        # 象，这里拿 SimpleNamespace 撑一下就够，调用完就被换成 discover_
+        # environment() 现查出来的真实 Cluster 对象（同一路径但对象本身
+        # 不是同一个引用），不会带着这份假对象到处传。
+        last_path = get_last_cluster_path()
+        self._global_selected_cluster = SimpleNamespace(path=Path(last_path)) if last_path else None
         self._global_cluster_menu_btn = ttk.Menubutton(
             cluster_bar_inner, textvariable=self._global_cluster_var,
             width=38, style="Archive.TMenubutton")
@@ -272,7 +285,7 @@ class DSToolsApp:
         ttk.Button(cluster_bar_inner, text=t("save.refresh"), command=self._refresh,
                    style="Big.TButton").pack(side=tk.LEFT, padx=(0, 10))
         self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
-        self._populate_global_cluster_combo(preserve=False)
+        self._populate_global_cluster_combo(preserve=True)
 
         # SaveBrowserTab folds in what used to be a separate "环境信息"
         # tab as a second sub-tab (存档概览/会话详情) -- both were
@@ -1312,6 +1325,7 @@ class DSToolsApp:
         （旧的选中项大概率不在筛选后的新列表里，_populate_global_cluster_
         combo() 的按 path 匹配逻辑本来就处理了"找不到就退回第一项"，不需
         要在这里特殊判断），然后跟"选中了某个存档"一样广播给当前页签。"""
+        set_last_platform(self._platform_var.get())
         self._populate_global_cluster_combo(preserve=True)
         self._update_status()
         self.root.after_idle(self._apply_global_cluster_change)
@@ -1358,6 +1372,7 @@ class DSToolsApp:
         matched = next((c for c in clusters if prev is not None and c.path == prev.path), None)
         self._global_selected_cluster = matched or clusters[0]
         self._global_cluster_var.set(self._cluster_label_with_status(self._global_selected_cluster))
+        set_last_cluster_path(str(self._global_selected_cluster.path))
 
     def _on_global_cluster_pick(self, cluster):
         """菜单里选中某一项时调用——直接拿到的就是真实的 Cluster 对象
@@ -1365,6 +1380,7 @@ class DSToolsApp:
         不需要再从显示文字反解析。"""
         self._global_selected_cluster = cluster
         self._global_cluster_var.set(self._cluster_label_with_status(cluster))
+        set_last_cluster_path(str(cluster.path))
         # 广播给 4 个页签的实际工作丢到 after_idle 里做，不在菜单的
         # command 回调里同步执行——这里面 Mod管理/世界设置会各自触发一次
         # PIL 面板重新渲染，是相对重的操作，让 Tk 先把这次菜单收起的收尾

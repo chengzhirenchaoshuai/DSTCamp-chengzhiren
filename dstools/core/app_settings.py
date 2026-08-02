@@ -29,6 +29,8 @@ _KEY_BACKUP_AUTO_ENABLED = "backup_auto_enabled"
 _KEY_SAKURA_TOKEN = "sakura_api_token"
 _KEY_SAKURA_LAST_NODE = "sakura_last_node_id"
 _KEY_LUAJIT_ENABLED = "luajit_enabled"
+_KEY_LAST_PLATFORM = "last_platform"
+_KEY_LAST_CLUSTER_PATH = "last_cluster_path"
 
 
 def get_settings_dir() -> Path:
@@ -126,6 +128,33 @@ def set_theme_name(name: str) -> None:
     """记住用户选定的界面主题名——下次启动时 gui/theme.py 据此初始化调色板。"""
     data = load_settings()
     data[_KEY_THEME_NAME] = name
+    save_settings(data)
+
+
+def get_last_platform() -> str | None:
+    """取用户上次选中的"存档类型"筛选器值（"Steam"/"WeGame"），没设置过
+    返回 None——app.py 据此决定启动时默认筛选哪个平台，不这样记的话每次
+    启动都固定回到 Steam，跟"记住上次选的存档"这个需求配套（存档在哪个
+    平台下，筛选器不切过去存档下拉框里根本看不到它）。"""
+    return load_settings().get(_KEY_LAST_PLATFORM)
+
+
+def set_last_platform(name: str) -> None:
+    data = load_settings()
+    data[_KEY_LAST_PLATFORM] = name
+    save_settings(data)
+
+
+def get_last_cluster_path() -> str | None:
+    """取用户上次选中的存档完整路径（字符串形式），没设置过返回 None。
+    路径本身天然唯一标识一个存档，不需要额外存平台/来源——app.py 用它
+    在重新 discover_environment() 之后的存档列表里按路径找回同一个。"""
+    return load_settings().get(_KEY_LAST_CLUSTER_PATH)
+
+
+def set_last_cluster_path(path: str) -> None:
+    data = load_settings()
+    data[_KEY_LAST_CLUSTER_PATH] = path
     save_settings(data)
 
 

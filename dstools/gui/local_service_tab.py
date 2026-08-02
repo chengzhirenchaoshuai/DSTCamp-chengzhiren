@@ -500,7 +500,7 @@ class LocalServiceTab:
         # ——同一批 side=RIGHT 控件里最后 pack 的离右边缘最远，正好排在
         # 安装/卸载左边、紧挨着状态文字，不需要单独占一行。
         ttk.Button(luajit_row, text=t("local.luajit_help_btn"),
-                   command=lambda: webbrowser.open("https://www.bilibili.com/video/BV1Mc33eAE8b/")
+                   command=lambda: webbrowser.open("https://github.com/fesily/dontstarveluajit2")
                    ).pack(side=tk.RIGHT, padx=(0, 5))
 
         # 选中本地存档时显示的醒目提示——风格和"Mod管理"/"世界设置"的

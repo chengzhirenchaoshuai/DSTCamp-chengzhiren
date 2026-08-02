@@ -162,6 +162,7 @@ class ClusterConfigTab:
     _SECTION_HEADER_KEYS = {
         "GAMEPLAY": "cluster.tab_gameplay", "NETWORK": "cluster.tab_network",
         "MISC": "cluster.tab_misc", "SHARD": "cluster.tab_shard",
+        "STEAM": "cluster.tab_steam",
     }
     # 显示顺序覆盖——默认按 cluster.ini 里的物理书写顺序显示（字典本身
     # 的插入顺序），但"世界互联"(shard_enabled) 要求固定排在"多层世界
@@ -173,8 +174,10 @@ class ClusterConfigTab:
         "NETWORK": [
             "cluster_name", "cluster_description", "cluster_password", "cluster_intention",
             "lan_only_cluster", "offline_cluster", "cluster_language", "tick_rate",
-            "autosaver_enabled", "whitelist_slots", "cluster_cloud_id",
+            "autosaver_enabled", "whitelist_slots", "connection_timeout", "idle_timeout",
+            "override_dns", "cluster_cloud_id",
         ],
+        "STEAM": ["steam_group_only", "steam_group_id", "steam_group_admins"],
     }
 
     def __init__(self, parent, app):
@@ -593,7 +596,7 @@ class ClusterConfigTab:
 
         _fill_column(col1, [("NETWORK",config.network)])
         _fill_column(col2, [("GAMEPLAY",config.gameplay), ("MISC",config.misc)])
-        _fill_column(col3, [("SHARD",config.shard)])
+        _fill_column(col3, [("SHARD",config.shard), ("STEAM",config.steam)])
 
         # The button itself now lives in the tab's footer (created once,
         # outside the green scrollable card -- see the sub-tab page setup
@@ -883,17 +886,22 @@ class ClusterConfigTab:
         self._load_token(c)
 
     def _save_cluster_ini(self):
-        """"保存" button on GAMEPLAY/NETWORK/MISC/SHARD -- all four live
-        in the same cluster.ini, so any one of these buttons writes the
-        whole file (there's no such thing as saving "only" one section of
-        a single ini file)."""
+        """"保存" button on GAMEPLAY/NETWORK/MISC/SHARD/STEAM -- all five
+        live in the same cluster.ini, so any one of these buttons writes
+        the whole file (there's no such thing as saving "only" one section
+        of a single ini file). Both hardcoded section tuples below must
+        include every section that has a real editable row, or that
+        section's edits get silently ignored on save (real bug: adding
+        the STEAM column without updating these two forgot exactly that,
+        so toggling a Steam group setting and saving wrote nothing back to
+        the file)."""
         c = self._get_cluster()
         if not c: return
         # 有官方取值范围的字段（比如 tick_rate）先整体校验一遍，任何一个
         # 越界就整个中止保存、什么都不写——而不是走一个各自夹一下范围的
         # "自动纠正"，那样用户可能都不知道自己填的值被悄悄改掉了。
         for (section, key), (var, readonly) in self._entries.items():
-            if readonly or section not in ("GAMEPLAY","NETWORK","MISC","SHARD"):
+            if readonly or section not in ("GAMEPLAY","NETWORK","MISC","SHARD","STEAM"):
                 continue
             limits = get_range_limits(section, key)
             if limits is None:
@@ -912,7 +920,7 @@ class ClusterConfigTab:
 
         config = load_cluster_config(c.path)
         for (section, key), (var, readonly) in self._entries.items():
-            if not readonly and section in ("GAMEPLAY","NETWORK","MISC","SHARD"):
+            if not readonly and section in ("GAMEPLAY","NETWORK","MISC","SHARD","STEAM"):
                 set_cluster_option(config, section, key, var.get())
         save_cluster_config(config, c.path)
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=c.name))
