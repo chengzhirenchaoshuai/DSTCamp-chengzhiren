@@ -177,7 +177,7 @@ class ClusterConfigTab:
             "autosaver_enabled", "whitelist_slots", "connection_timeout", "idle_timeout",
             "override_dns", "cluster_cloud_id",
         ],
-        "STEAM": ["steam_group_only", "steam_group_id", "steam_group_admins"],
+        "STEAM": ["steam_group_only", "steam_group_admins", "steam_group_id"],
     }
 
     def __init__(self, parent, app):

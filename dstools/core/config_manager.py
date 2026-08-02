@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from dstools.core.ini_field_info import NO_TYPE_COERCE_FIELDS
+from dstools.core.ini_field_info import CLUSTER_FIELD_INFO, NO_TYPE_COERCE_FIELDS
 from dstools.core.ini_parser import (
     parse_cluster_ini,
     parse_server_ini,
@@ -26,6 +26,8 @@ CLUSTER_INI_DEFAULTS: dict[tuple[str, str], Any] = {
     ("GAMEPLAY", "vote_enabled"): True,
     ("GAMEPLAY", "vote_kick_enabled"): True,
     ("NETWORK", "cluster_name"): "[Host]'s World",
+    ("NETWORK", "cluster_description"): "",
+    ("NETWORK", "cluster_password"): "",
     ("NETWORK", "lan_only_cluster"): False,
     ("NETWORK", "cluster_intention"): "cooperative",
     ("NETWORK", "offline_cluster"): False,
@@ -40,35 +42,62 @@ CLUSTER_INI_DEFAULTS: dict[tuple[str, str], Any] = {
     # 文件里时才显示它，而这个字段几乎不会有人手动写进 cluster.ini（真
     # 机反馈过"这个参数也没有显示，也不能设置"）。放一个空字符串默认
     # 值只是为了让这一行始终出现、能被编辑，空值本身不代表"DNS 是空字
-    # 符串"这个具体含义，跟 cluster_password/cluster_description 已经
-    # 写在真实文件里的空值是同一种"留空 = 不生效"的语义。
+    # 符串"这个具体含义，跟 cluster_password/cluster_description 是同一
+    # 种"留空 = 不生效"的语义。
     ("NETWORK", "override_dns"): "",
     ("MISC", "console_enabled"): True,
     ("MISC", "max_snapshots"): 6,
     ("SHARD", "shard_enabled"): False,
+    # bind_ip/master_ip/master_port/cluster_key 这 4 项——真机反馈过它们
+    # 是游戏在 shard_enabled=true 时自己生成写入的，一旦被手动删掉、又
+    # 没被这个工具重新补上，服务器会直接报错拒绝启动。应用户明确要求
+    # （"清空 cluster.ini 也要全部配置项齐全，点保存直接刷新覆盖文件"），
+    # 这里改成主动补上确认过的官方默认值——效果反而是好的：只要用户在
+    # 这个工具里打开过"服务器配置"页签点一次保存，这 4 个字段就必定被
+    # 写成合法值，相当于顺手把"手动删掉导致开服报错"这个坑自动修复掉，
+    # 不再需要靠游戏自己重新生成。
+    ("SHARD", "bind_ip"): "127.0.0.1",
+    ("SHARD", "master_ip"): "127.0.0.1",
+    ("SHARD", "master_port"): 10888,
+    ("SHARD", "cluster_key"): "defaultPass",
     ("STEAM", "steam_group_only"): False,
     ("STEAM", "steam_group_id"): "",  # 同 override_dns，没有默认值但要常驻显示才能填
     ("STEAM", "steam_group_admins"): False,
 }
 
-# `[SHARD]` 的 bind_ip/master_ip/master_port/cluster_key 这 4 项**不**放
-# 进上面 CLUSTER_INI_DEFAULTS——真机反馈过：这几个字段是游戏自己在
-# shard_enabled=true 时生成写入的，一旦被手动删掉，服务器会直接报错拒
-# 绝启动，不是"文件里没有就用引擎内置默认值静默生效"这种安全缺省。如
-# 果这里照抄其它字段的做法自动补一个"看起来正常"的默认值，GUI 会显示
-# 成"文件里有这个值、一切正常"，反而掩盖了这个存档已经损坏、需要用户
-# 干预（重新生成或手动填回正确值）的真实状态。
+# CLUSTER_INI_DEFAULTS 只收录"确认过真实默认值"的字段——GAMEPLAY.
+# game_mode/max_players、NETWORK.cluster_cloud_id 故意不在这张表里（前
+# 两个没有查到确认过的具体缺省值，后者是 Klei 服务器分配的外部标识
+# 符），编一个假的填进去比"这里没有确认过的值"更糟糕。但 backfill_
+# cluster_defaults() 不能因此就让这些字段在文件里被删掉/清空时直接从
+# 界面上消失——见下面函数的说明，这三个字段照样会用空字符串占位显示
+# 出来，只是不会有值。
 
 
 def backfill_cluster_defaults(config: ClusterConfig) -> None:
-    """给缺失的字段补上官方默认值（只补缺的，已有的不动），让"服务器配置"
-    页面能看到并按需修改它们；点"保存"之后就会作为真实值写进 cluster.ini。"""
+    """给 CLUSTER_FIELD_INFO 里登记过的**每一个**字段都补上一份值——不是
+    只补"确认过默认值"的那一批。真机反馈过：用户手动删掉某个设置项之
+    后，因为它既不在 CLUSTER_INI_DEFAULTS 里、又不在文件里了，整行直
+    接从"服务器配置"页面消失，看起来像"这个工具把设置弄丢了"。
+
+    现在按 CLUSTER_FIELD_INFO 里全部登记过的 (section, key) 走一遍：
+    - 文件里已经有值、且不是空字符串——原样保留，不碰。
+    - 文件里没有这个 key，或者值是空字符串（等同于"没有"）——用
+      CLUSTER_INI_DEFAULTS 里确认过的默认值补上；没有确认过默认值的
+      字段（game_mode/max_players/cluster_cloud_id 等）就补空字符串，
+      让这一行照样出现在界面上，只是留空等用户自己填，不编造数据。
+
+    这样"删除任意一个已知设置"的效果，最多是它的值变回默认/空，绝不
+    会导致这一行直接从配置页面上消失。点"保存"之后这份补全过的完整
+    结果就会变成 cluster.ini 里的真实内容。"""
     section_map = {
         "GAMEPLAY": config.gameplay, "NETWORK": config.network,
         "MISC": config.misc, "SHARD": config.shard, "STEAM": config.steam,
     }
-    for (section, key), default in CLUSTER_INI_DEFAULTS.items():
-        section_map[section].setdefault(key, default)
+    for section, key in CLUSTER_FIELD_INFO:
+        current = section_map[section].get(key)
+        if current is None or current == "":
+            section_map[section][key] = CLUSTER_INI_DEFAULTS.get((section, key), "")
 
 
 def load_cluster_config(path: Path) -> ClusterConfig:

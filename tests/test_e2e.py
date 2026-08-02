@@ -1153,21 +1153,40 @@ def test_backfill_cluster_defaults_only_fills_missing():
     assert config.gameplay["pvp"] is False
     assert config.gameplay["pause_when_empty"] is True
     assert config.network["cluster_name"] == "[Host]'s World"
+    assert config.network["cluster_description"] == ""
+    assert config.network["cluster_password"] == ""
     assert config.network["cluster_language"] == "en"
     assert config.misc["console_enabled"] is True
     assert config.steam["steam_group_only"] is False
     assert config.steam["steam_group_admins"] is False
     print("  PASS: newly-verified defaults (incl. the new STEAM section) are backfilled too")
 
-    # bind_ip/master_ip/master_port/cluster_key 这几个字段真机反馈过是
-    # 游戏自己生成写入的，删掉+shard_enabled=true 会导致开服报错，不是
-    # 安全缺省——backfill_cluster_defaults() 必须不去补它们，补了会让
-    # GUI 显示成"文件里有这个值、一切正常"，掩盖真实的损坏状态。
-    assert "bind_ip" not in config.shard
-    assert "master_ip" not in config.shard
-    assert "master_port" not in config.shard
-    assert "cluster_key" not in config.shard
-    print("  PASS: game-generated SHARD fields (bind_ip/master_ip/master_port/cluster_key) are NOT auto-backfilled")
+    # bind_ip/master_ip/master_port/cluster_key 是游戏在 shard_enabled=
+    # true 时自己生成写入的——应用户明确要求（"清空 cluster.ini 也要全
+    # 部配置项齐全，点保存直接覆盖文件"），这里改成主动补上确认过的官
+    # 方默认值，相当于顺手修复"手动删掉这几个字段导致开服报错"这个坑。
+    assert config.shard["bind_ip"] == "127.0.0.1"
+    assert config.shard["master_ip"] == "127.0.0.1"
+    assert config.shard["master_port"] == 10888
+    assert config.shard["cluster_key"] == "defaultPass"
+    print("  PASS: game-generated SHARD fields (bind_ip/master_ip/master_port/cluster_key) are now backfilled too")
+
+    # game_mode/max_players/cluster_cloud_id 没有一个"确认过"的官方默认
+    # 值——但用户明确要求"删除任意设置都不能导致配置页面缺少这一项"，
+    # 所以这三个字段现在也会出现（不会从 config 里彻底消失），只是补的
+    # 是空字符串，不是编造一个看起来正常的假值。
+    assert config.gameplay["game_mode"] == ""
+    assert config.gameplay["max_players"] == ""
+    assert config.network["cluster_cloud_id"] == ""
+    print("  PASS: fields with no confirmed official default (game_mode/max_players/cluster_cloud_id) "
+          "still show up (blank), instead of disappearing or being faked")
+
+    # 空字符串等同于"没有"，也要被当成缺失补上默认值——用户明确要求"值
+    # 为空也用默认值"，不是只处理 key 整个不存在的情况。
+    config2 = ClusterConfig(gameplay={}, network={"cluster_name": ""}, misc={}, shard={}, steam={})
+    backfill_cluster_defaults(config2)
+    assert config2.network["cluster_name"] == "[Host]'s World", "空字符串也应该被当成缺失，补上默认值"
+    print("  PASS: an explicit empty string is treated the same as a missing key")
 
 
 def test_cluster_ini_steam_section_roundtrip():
