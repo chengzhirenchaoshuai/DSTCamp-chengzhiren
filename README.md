@@ -5,12 +5,11 @@
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-一站式的 Don't Starve Together 本地专用服务器管理工具——启动/停止服务
-器、存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、内
-网穿透联机、LuaJIT 性能补丁一键安装，覆盖开服/维护的日常操作。同时支持
-**Steam 版和 WeGame 版**存档（顶部"存档类型"筛选器一键切换），提供 CLI
-与 Tkinter GUI 双形态，也可以打包成单文件 `DSTCamp.exe` 分发给不装
-Python 的用户。
+一站式的 Don't Starve Together 本地专用服务器管理工具
+启动/停止服务器、存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、
+樱花内网穿透联机、LuaJIT 性能补丁一键安装，覆盖开服/维护的日常操作。
+同时支持**Steam 版和 WeGame 版**存档，
+提供 CLI与 Tkinter GUI 双形态，可以打包成单文件 `DSTCamp.exe`。
 
 ## 安装
 
