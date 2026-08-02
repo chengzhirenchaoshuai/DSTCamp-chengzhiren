@@ -21,7 +21,8 @@ from dstools.core.backup_manager import create_backup
 from dstools.core.config_manager import load_cluster_config, load_shard_config
 from dstools.core.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
-    find_bin64_dir, find_dedicated_server_dir, is_valid_install_dir, resolve_conf_dir_arg,
+    detect_external_shard_processes, find_bin64_dir, find_dedicated_server_dir,
+    is_valid_install_dir, resolve_conf_dir_arg,
 )
 from dstools.core.modinfo_reader import find_shared_ugc_directory
 from dstools.core.token_manager import is_valid_token, read_token
@@ -512,19 +513,6 @@ class LocalServiceTab:
                                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
                                        anchor=tk.W, padx=10, pady=6)
 
-        # WeGame 版分片不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
-        # 客户端才能签发的一次性会话令牌，DSTCamp 拼不出来）——选中一个
-        # WeGame 存档时用这条提示替代 _local_banner，其余展示（分片列表/
-        # 状态）照常，只是启动类按钮全部禁用。
-        # wraplength 写死 600 在正常窗口宽度下会把这一段较长的说明文字
-        # 挤成五六行，看着很别扭——改成跟着 self.frame 实际宽度动态调整
-        # （<Configure> 触发），窗口多宽就用多宽，一般只需要换行一两次。
-        self._wegame_banner = tk.Label(self.frame, text=t("local.wegame_manual_start_hint"),
-                                        bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
-                                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
-                                        anchor=tk.W, padx=10, pady=6, justify=tk.LEFT)
-        self.frame.bind("<Configure>", lambda e: self._resize_wegame_banner(), add="+")
-
         # 切到另一个存档时，如果之前那个存档还有分片没停，"启动"/"全部
         # 启动"要锁住——两个不同存档的服务器同时跑，端口/资源很容易撞在
         # 一起，这个应用没打算支持"同时管理多个正在运行的存档"这种用法。
@@ -553,6 +541,37 @@ class LocalServiceTab:
         # 发指令），不挂在某一个分片自己的行上——见 _RollbackDialog 的说明。
         self._rollback_btn = ttk.Button(btn_row, text=t("local.rollback_btn"), command=self._open_rollback_dialog)
         self._rollback_btn.pack(side=tk.LEFT, padx=(5, 0))
+
+        # WeGame 版分片不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
+        # 客户端才能签发的一次性会话令牌，DSTCamp 拼不出来）——选中一个
+        # WeGame 存档时这一组（提示+"检测服务器状态"+检测结果）替代原来
+        # 分片列表下面的空白，其余展示（分片列表/状态）照常，只是启动类
+        # 按钮全部禁用。应用户要求放在分片列表下方（"Caves 未启动"下
+        # 面），不是页签最底部——之前整页宽度跨栏的位置离分片列表太远。
+        #
+        # 三个都用 side=tk.BOTTOM 从下往上占：先注册的在最下面，后注册
+        # 的在它上面（跟 mod_sync_log_dialog.py 按钮栏踩过的坑同一个道
+        # 理，这里反过来利用这个规则）——所以注册顺序是 检测结果 ->
+        # 按钮 -> 提示文字，视觉上从上到下才是 提示 -> 按钮 -> 结果；最
+        # 后再 pack self._shard_list（默认 side=TOP，fill+expand），把
+        # btn_row 和这一组之间剩下的中间空间占满，不会被这一组抢走。
+        self._wegame_detect_text = tk.Text(left, height=6, wrap=tk.WORD, state=tk.DISABLED,
+                                            font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS),
+                                            bg=theme.CARD_BG, fg=theme.TEXT_MUTED, relief=tk.FLAT,
+                                            highlightthickness=1, highlightbackground=theme.CARD_BORDER)
+        self._wegame_detect_text.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
+        self._wegame_detect_btn = ttk.Button(left, text=t("local.wegame_detect_btn"),
+                                              command=self._on_wegame_detect)
+        self._wegame_detect_btn.pack(side=tk.BOTTOM, anchor=tk.W, padx=5, pady=(0, 5))
+        # wraplength 写死会在正常窗口宽度下把这段较长的说明文字挤成好几
+        # 行——改成跟着 left 面板的实际宽度动态调整（<Configure> 触发，
+        # 拖动 PanedWindow 分隔条也会触发），面板多宽就用多宽。
+        self._wegame_banner = tk.Label(left, text=t("local.wegame_manual_start_hint"),
+                                        bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
+                                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
+                                        anchor=tk.W, padx=10, pady=6, justify=tk.LEFT)
+        left.bind("<Configure>", lambda e: self._resize_wegame_banner(), add="+")
+
         self._shard_list = BgFrame(left, app, bg=theme.CARD_BG)
         self._shard_list.pack(fill=tk.BOTH, expand=True)
 
@@ -600,12 +619,28 @@ class LocalServiceTab:
         if is_server:
             self._local_banner.pack_forget()
             if is_wegame:
+                # pack() 调用顺序决定 side=tk.BOTTOM 这几个控件的上下叠放
+                # 顺序——真机截图验证过：先 pack 的在这一组的上方，后
+                # pack 的更靠近容器底边，所以这里必须按"提示 -> 按钮 ->
+                # 检测结果"这个视觉顺序对应的代码顺序写，不能按直觉写反
+                # 了（第一版真机截图跑出来是反的，改成这个顺序后重新截
+                # 图确认过是对的）。
+                self._wegame_detect_text.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
+                self._wegame_detect_btn.pack(side=tk.BOTTOM, anchor=tk.W, padx=5, pady=(0, 5))
                 self._wegame_banner.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(5, 0))
+                # 换了一个 WeGame 存档（或者从别的存档切过来）——上一个
+                # 存档检测出来的结果不该留着接着显示，误导成"这是当前存
+                # 档的状态"，先清空成占位文字，等用户重新点一次检测。
+                self._reset_wegame_detect_text()
             else:
                 self._wegame_banner.pack_forget()
+                self._wegame_detect_btn.pack_forget()
+                self._wegame_detect_text.pack_forget()
             self._refresh_shard_rows(c)
         else:
             self._wegame_banner.pack_forget()
+            self._wegame_detect_btn.pack_forget()
+            self._wegame_detect_text.pack_forget()
             self._rollback_btn.configure(state=tk.DISABLED)
             self._refresh_shard_rows(None)
             self._local_banner.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(5, 0))
@@ -748,14 +783,48 @@ class LocalServiceTab:
                        fill=theme.TEXT_MUTED, font=font, tags="luajit_text")
 
     def _resize_wegame_banner(self) -> None:
-        """WeGame 提示条的 wraplength 跟着 self.frame 实际宽度走，不用固
-        定的 600——那个固定值在正常窗口宽度下会把这段说明文字挤成五六
-        行。减掉的量是 tk.Label 自己的左右 padx(10*2) 加左右各留一点边
-        距，跟 pack(padx=5) 大致对上，不需要算得多精确。"""
-        w = self.frame.winfo_width()
+        """WeGame 提示条现在挪到分片列表下面、跟 left 这个窄栏同宽（应
+        用户要求，不再是跨整个页签宽度的通栏），wraplength 也要跟着
+        left 面板的实际宽度走，不是 self.frame 整个页签的宽度——拖动
+        PanedWindow 分隔条改变左右分栏比例时会重新触发 <Configure>。减
+        掉的量是 tk.Label 自己的左右 padx(10*2) 加左右各留一点边距，跟
+        pack(padx=5) 大致对上，不需要算得多精确。"""
+        w = self._wegame_banner.master.winfo_width()
         if w < 4:
             return
-        self._wegame_banner.configure(wraplength=max(200, w - 40))
+        self._wegame_banner.configure(wraplength=max(150, w - 40))
+
+    def _set_wegame_detect_text(self, text: str) -> None:
+        self._wegame_detect_text.configure(state=tk.NORMAL)
+        self._wegame_detect_text.delete("1.0", tk.END)
+        self._wegame_detect_text.insert(tk.END, text)
+        self._wegame_detect_text.configure(state=tk.DISABLED)
+
+    def _reset_wegame_detect_text(self) -> None:
+        self._set_wegame_detect_text(t("local.wegame_detect_placeholder"))
+
+    def _on_wegame_detect(self) -> None:
+        """WeGame 分片是玩家自己在 WeGame 客户端启动的，ServerManager 追
+        踪不到真实运行状态（见 detect_external_shard_processes() 的说
+        明）——按配置的 server_port 反查系统里真的绑定了这个端口的
+        dontstarve_dedicated_server*.exe 进程，而不是猜"进程存在就等于
+        这个分片在跑"。零参数直接同步跑：tasklist/netstat 都是本机瞬时
+        查询，不涉及网络请求，没必要开后台线程。"""
+        cluster = self._get_cluster()
+        if not cluster or cluster.platform != Platform.WEGAME:
+            return
+        result = detect_external_shard_processes(cluster)
+        lines = []
+        for shard in _ordered_shards(cluster):
+            info = result.get(shard.name, {})
+            port = info.get("configured_port")
+            port_display = port if port is not None else t("local.wegame_detect_unknown_port")
+            if info.get("running"):
+                lines.append(t("local.wegame_detect_running", shard=shard.name,
+                                pid=info["pid"], mem=info["mem_mb"], port=port_display))
+            else:
+                lines.append(t("local.wegame_detect_not_running", shard=shard.name, port=port_display))
+        self._set_wegame_detect_text("\n".join(lines))
 
     def _detect_install_dir(self):
         self._install_dir = find_dedicated_server_dir()

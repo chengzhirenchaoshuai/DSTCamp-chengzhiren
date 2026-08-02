@@ -75,14 +75,11 @@ class ModManagerTab:
         self._icon_imgs = {}    # workshop_id -> PIL.Image (RGBA)
         # (workshop_id, icon_size) -> 缩放后的缩略图，memoize
         # render_mod_list() 里的 LANCZOS 缩放——真机测过 100 个 mod 时这
-        # 一步单独占整个渲染耗时的一半，而每次开关切换都会触发两次全量
-        # 重渲染（见 _on_toggle()/_clear_flash()），是"切换 mod 卡顿"的
-        # 主因之一。跟 self._icon_imgs 的生命周期绑在一起，两处重置的地
-        # 方必须一起清（否则旧缩略图会一直冒充新图标）。
+        # 一步单独占整个渲染耗时的一半。跟 self._icon_imgs 的生命周期绑
+        # 在一起，两处重置的地方必须一起清（否则旧缩略图会一直冒充新图
+        # 标）。
         self._icon_thumb_cache = {}
         self._luajit_mod_locked = False  # LuaJIT 补丁生效中：配套 mod 开关强制只读
-        self._flash_wid = None
-        self._flash_after_id = None
         # 搜索框防抖——不给这个加防抖的话，连续打字每敲一个字都会触发一次
         # 全量重画整个列表（_render_list()），跟切换开关同样的成本问题，
         # 打字越快越明显。跟 image_scroll.py 的 SETTLE_DELAY_MS 同一个套
@@ -687,7 +684,7 @@ class ModManagerTab:
         img, hits, hovers = render_mod_list(rows, self._icon_imgs,
                                     on_toggle=self._on_toggle if is_server else None,
                                     on_config=self._on_config, on_link=self._on_link,
-                                    ref_width=ref_width, flash=self._flash_wid,
+                                    ref_width=ref_width,
                                     icon_thumb_cache=self._icon_thumb_cache)
         self.list_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
 
@@ -738,16 +735,6 @@ class ModManagerTab:
         if not mod: return
         mod.enabled = not mod.enabled
         self._mark_dirty()
-        # Brief "pressed" highlight on the clicked switch, matching the
-        # click feedback used in world_render.py.
-        self._flash_wid = workshop_id
-        if self._flash_after_id:
-            self.frame.after_cancel(self._flash_after_id)
-        self._flash_after_id = self.frame.after(140, self._clear_flash)
-        self._render_list()
-
-    def _clear_flash(self):
-        self._flash_wid = None; self._flash_after_id = None
         self._render_list()
 
     def _on_filter_changed(self, *_args):
@@ -999,6 +986,51 @@ class ModManagerTab:
         self._refresh_mods(full=True)
 
 
+_OPTION_DESC_WRAP_PX = 900
+_OPTION_DESC_MAX_LINES = 2
+
+
+def _hover_line_count(text: str, font: tkfont.Font, wrap_px: int) -> int:
+    """按像素宽度估算 `text` 用 `font` 在 `wrap_px` 自动换行宽度下会占几
+    行——只用来决定 `_pack_option_desc()` 该给 1 行还是 2 行高度，不需要
+    跟 Tk 内部真正的分词换行算法逐字节对齐，纯按宽度整除近似即可（这批
+    hover 文本几乎全是中文，本来就没有单词边界可言，逐字符宽度累加已经
+    很接近 Tk 自己的换行结果）。显式 `\\n` 换行按独立段落各自估算后相
+    加，空段落算 1 行（保留空行本身占的高度）。"""
+    total = 0
+    for para in text.split("\n"):
+        if not para:
+            total += 1
+            continue
+        width = font.measure(para)
+        total += max(1, -(-width // wrap_px))  # 向上取整
+    return max(total, 1)
+
+
+def _pack_option_desc(parent, hover_text: str) -> None:
+    """在设置行下方常驻显示这一项的说明文字（原来靠鼠标悬停"ⓘ"图标才弹
+    出，应用户要求改成直接显示）。按实际需要的行数给高度（最多 2 行，
+    `ttk.Label` 的 height 按文本行数算，不是像素）——只有 1 行的说明不
+    再多留一行空白，真要用到第 2 行（不少 mod 的 hover 文本本身带 \n
+    换行）时才占那份高度；超过 2 行的部分照样会被裁掉，不做省略号/展开
+    之类的额外交互。`ModConfigDialog.__init__`（下拉框行）和
+    `_render_raw_value_editor`（Configs Extended 集合/数组/文本行）共用
+    这一个函数，改字号/行数上限只需要改这一处。
+
+    用 `tk.Label` 而不是 `ttk.Label`——`height`（按文本行数，不是像素）
+    只有原生 `tk.Label` 支持，`ttk.Label` 传这个参数会直接抛
+    `TclError: unknown option "-height"`；因此背景色不能像 ttk 控件那样
+    自动跟主题联动，要显式给成当前行所在容器的背景色（`row`/`top` 这类
+    `ttk.Frame` 没设自定义 style，用的是 `theme.py` 里 `TFrame` 的全局
+    背景 `BG_SOFT`）。"""
+    desc_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
+    lines = min(_OPTION_DESC_MAX_LINES, _hover_line_count(hover_text, desc_font, _OPTION_DESC_WRAP_PX))
+    tk.Label(parent, text=hover_text, foreground=theme.TEXT_MUTED, background=theme.BG_SOFT,
+            font=desc_font, justify=tk.LEFT,
+            anchor=tk.NW, wraplength=_OPTION_DESC_WRAP_PX, height=lines,
+            ).pack(fill=tk.X, anchor=tk.W, pady=(4, 0))
+
+
 class ModConfigDialog:
     """Per-mod configuration editor, modeled on the in-game config screen.
 
@@ -1137,12 +1169,13 @@ class ModConfigDialog:
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10,0), pady=10)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Every row is a fixed-size tile -- fixed name-column width, fixed
-        # combobox width, single line only -- instead of a wraplength that
-        # let each row's height vary with its label/hover text length
-        # (which read as inconsistent/"weird" next to world-settings'
-        # uniform grid). Hover text that no longer fits inline moves into
-        # a Tooltip popup instead, so it doesn't affect row height at all.
+        # Name column / combobox width are still fixed (single line, never
+        # grows with label length -- see NAME_W_PX truncation below) so the
+        # top line of every row stays a uniform grid like world-settings.
+        # opt.hover itself is no longer a hover-only Tooltip popup -- it's
+        # shown inline below that top line via _pack_option_desc(), with a
+        # fixed 2-line reservation so rows with/without a hover still line
+        # up close to consistently (see that function's docstring).
         from dstools.gui.tooltip import Tooltip
         NAME_W_PX = 520
         HEADER_W_PX = 900
@@ -1188,9 +1221,16 @@ class ModConfigDialog:
             row = ttk.Frame(body, padding=(10,8), relief=tk.GROOVE, borderwidth=1)
             row.pack(fill=tk.X, padx=5, pady=3)
 
+            # 名称+控件这一行单独放进 top 子容器，说明文字（如果有）打
+            # 在 top 下面、row 里——用嵌套子容器而不是直接在 row 上混用
+            # LEFT/RIGHT/TOP 三种 side，是为了不必依赖 Tk pack 在混合
+            # side 时的隐晦顺序规则,布局意图更直白。
+            top = ttk.Frame(row)
+            top.pack(fill=tk.X)
+
             label_full = opt.label or opt.name
             label_shown = _truncate(label_full, name_font, NAME_W_PX)
-            name_lbl = ttk.Label(row, text=label_shown, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"), anchor=tk.W)
+            name_lbl = ttk.Label(top, text=label_shown, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"), anchor=tk.W)
             name_lbl.pack(side=tk.LEFT)
             if label_shown != label_full:
                 Tooltip(name_lbl, label_full)
@@ -1211,12 +1251,10 @@ class ModConfigDialog:
                 # choice_maps, so _reset()/_apply() skip it (nothing to
                 # write back -- editing it here isn't safe either way).
                 reason = t("mod.dynamic_option") if opt.is_dynamic else t("mod.no_choices")
-                ttk.Label(row, text=f"{current_display}  ({reason})",
+                ttk.Label(top, text=f"{current_display}  ({reason})",
                          foreground=theme.TEXT_MUTED, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "italic")).pack(side=tk.RIGHT)
                 if opt.hover:
-                    info_lbl = ttk.Label(row, text="ⓘ", foreground=theme.ACCENT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD))
-                    info_lbl.pack(side=tk.RIGHT, padx=(0,6))
-                    Tooltip(info_lbl, opt.hover)
+                    _pack_option_desc(row, opt.hover)
                 continue
 
             # Keyed by description (always a hashable string), not by
@@ -1240,23 +1278,16 @@ class ModConfigDialog:
             # 依然保持"就算是 read_only 弹窗也能点开浏览"（不会真的存盘，
             # 因为 read_only 弹窗根本不建 应用/重置 按钮）——跟原来的行为
             # 一致，不额外区分。
-            menu_btn = ttk.Menubutton(row, textvariable=var, width=COMBO_CHARS,
+            menu_btn = ttk.Menubutton(top, textvariable=var, width=COMBO_CHARS,
                                       style="ModOption.TMenubutton")
             opt_menu = tk.Menu(menu_btn, tearoff=0)
             for desc in desc_to_data.keys():
                 opt_menu.add_command(label=desc, command=lambda d=desc, v=var: v.set(d))
             menu_btn.configure(menu=opt_menu)
-            # Packed *before* the info icon (both side=tk.RIGHT) so the
-            # icon always lands immediately to the dropdown's left,
-            # anchored to the row's right edge -- previously it sat right
-            # after the name label instead, so its position drifted left
-            # or right depending on how long that label happened to be.
             menu_btn.pack(side=tk.RIGHT)
 
             if opt.hover:
-                info_lbl = ttk.Label(row, text="ⓘ", foreground=theme.ACCENT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD))
-                info_lbl.pack(side=tk.RIGHT, padx=(0,6))
-                Tooltip(info_lbl, opt.hover)
+                _pack_option_desc(row, opt.hover)
 
             # Per-choice hover (item 6): a note attached to whichever value
             # is currently selected, not the option as a whole -- shown as
@@ -1300,8 +1331,6 @@ class ModConfigDialog:
         除），纯文本用单行输入框。不接 self.vars/choice_maps，记录进
         self.raw_widgets，_reset()/_apply() 走单独的分支读写（见
         _read_raw_widget_value()）。"""
-        from dstools.gui.tooltip import Tooltip
-
         row = ttk.Frame(parent, padding=(10, 8), relief=tk.GROOVE, borderwidth=1)
         row.pack(fill=tk.X, padx=5, pady=3)
 
@@ -1311,10 +1340,7 @@ class ModConfigDialog:
         ttk.Label(header, text=label_full, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"),
                   anchor=tk.W).pack(side=tk.LEFT)
         if opt.hover:
-            info_lbl = ttk.Label(header, text="ⓘ", foreground=theme.ACCENT,
-                                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD))
-            info_lbl.pack(side=tk.RIGHT)
-            Tooltip(info_lbl, opt.hover)
+            _pack_option_desc(row, opt.hover)
 
         if opt.is_text_config:
             var = tk.StringVar(value="" if current_value is None else str(current_value))

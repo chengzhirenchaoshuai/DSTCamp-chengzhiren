@@ -28,6 +28,7 @@ from dstools.gui.local_service_tab import _RUNNING_LIKE
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.gui.tooltip import Tooltip
 from dstools.i18n import t
+from dstools.models import SaveSource
 
 # 在真实拿到 /user/info 的 tunnels 字段之前的兜底值（免费版目前是 2，但
 # 这个数字应该以账号自己查到的为准，这里只是"还没加载出来"时的占位）。
@@ -225,6 +226,8 @@ class SakuraTab:
         self._selected_node_id: int | None = None
         self._my_group_level = 0
         self._max_tunnels = _FALLBACK_MAX_TUNNELS
+        self._tunnel_count = 0  # 账号下全部隧道数，_apply_loaded() 加载完才有真实值
+        self._tunnels_exhausted = False  # _render_shard_rows() 每次刷新时重算
 
         top = BgFrame(self.frame, app, bg=theme.CARD_BG)
         top.pack(fill=tk.X, padx=10, pady=(10, 5))
@@ -254,20 +257,23 @@ class SakuraTab:
             side=tk.LEFT, padx=8)
         ttk.Button(row2, text=t("sakura.node_refresh_btn"), command=self._reload_async).pack(side=tk.LEFT, padx=2)
 
-        # 账号信息卡片——照樱花官网"账号信息"卡片的样式：用户组/限速/可用
-        # 流量三列，每列上面一行小字标题、下面一行大字数值。内容要等
-        # /user/info 加载完才有，这里先建好骨架，_render_account_info()
-        # 每次刷新时清空重建里面的数值那一行。
+        # 账号信息卡片——照樱花官网"账号信息"卡片的样式：每列上面一行小
+        # 字标题、下面一行大字数值。"隧道上限"跟"已用隧道"应用户要求拆
+        # 成两块独立区域（原来"隧道数"这一列只显示上限，看不出账号还剩
+        # 多少配额），内容要等 /user/info+/tunnels 都加载完才有，这里先
+        # 建好骨架，_render_account_info() 每次刷新时清空重建里面的数值
+        # 那一行。
         self._account_frame = BgFrame(top, app, bg=theme.CARD_BG)
         self._account_frame.pack(fill=tk.X, pady=(6, 3))
         for col, key in enumerate(("sakura.account_group", "sakura.account_speed",
-                                    "sakura.account_traffic", "sakura.account_tunnels")):
+                                    "sakura.account_traffic", "sakura.account_tunnels",
+                                    "sakura.account_tunnels_used")):
             self._account_frame.grid_columnconfigure(col, weight=1, uniform="acct_col")
             self._label(self._account_frame, t(key), fg=theme.TEXT_MUTED,
                         font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).grid(
                 row=0, column=col, sticky=tk.W, padx=(0, 15))
         self._account_value_row = 1
-        self._render_account_info("--", "--", "--", "--")
+        self._render_account_info("--", "--", "--", "--", "--")
 
         # 方案 B：不画图（/tunnel/traffic 只能查单条隧道，不是账号总量，
         # 没法照搬官网那张账号维度的图），只汇总"这个存档自己映射的隧道"
@@ -302,6 +308,24 @@ class SakuraTab:
         action_row = BgFrame(self.frame, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
         self._action_btn = ttk.Button(action_row, text=t("sakura.enable_btn"), command=self._on_action_btn)
         self._action_btn.pack(side=tk.LEFT)
+        # 按钮本身是常驻控件（不像分片行那样每次刷新都销毁重建），Tooltip
+        # 只在这里绑一次、用取值函数动态取文字——跟 mod_manager_tab.py 的
+        # _sync_button_hover_text() 同一个套路；如果每次 _render_shard_
+        # rows() 都重新 Tooltip(self._action_btn, ...)，Tooltip 内部用
+        # add="+" 追加绑定，同一个按钮身上会越叠越多个悬浮提示。
+        Tooltip(self._action_btn, self._action_btn_hover_text)
+
+        # frpc 状态行——只在这个存档确实映射过（_any_mapped）才显示，没
+        # 映射过就没有 frpc 可控制，显示这一行只会让人误以为随便哪个存
+        # 档都能在这里单独启停 frpc。真实状态按"这个存档所有映射过的分
+        # 片是不是全部都在跑"算，跟 _action_btn 的开启/关闭是同一个粒度
+        # （整个存档一起，不细分到单个分片）。
+        self._frpc_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._frpc_status_label = self._label(self._frpc_row, self._frpc_status_text(False))
+        self._frpc_status_label.pack(side=tk.LEFT)
+        self._frpc_toggle_btn = ttk.Button(self._frpc_row, text=t("sakura.frpc_start_btn"),
+                                            command=self._on_frpc_toggle)
+        self._frpc_toggle_btn.pack(side=tk.LEFT, padx=(10, 0))
 
         self._token_raw = ""
         self._current_cluster = None
@@ -386,10 +410,10 @@ class SakuraTab:
         node = self._nodes.get(str(self._selected_node_id), {}) if self._selected_node_id else {}
         self._node_display_var.set(node.get("name") or t("sakura.node_none_selected"))
 
-    def _render_account_info(self, group_name, speed, traffic_available, tunnels_limit):
+    def _render_account_info(self, group_name, speed, traffic_available, tunnels_limit, tunnels_used):
         for w in self._account_frame.grid_slaves(row=self._account_value_row):
             w.destroy()
-        for col, value in enumerate((group_name, speed, traffic_available, tunnels_limit)):
+        for col, value in enumerate((group_name, speed, traffic_available, tunnels_limit, tunnels_used)):
             self._label(self._account_frame, value,
                         font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold")).grid(
                 row=self._account_value_row, column=col, sticky=tk.W, padx=(0, 15), pady=(0, 4))
@@ -437,7 +461,7 @@ class SakuraTab:
         cluster = self._current_cluster
         self._set_status("")
         if not token:
-            self._render_account_info("--", "--", "--", "--")
+            self._render_account_info("--", "--", "--", "--", "--")
             self._render_recent_traffic("")
             return
         # 不在这里同步写一个"加载中"过渡态——账号信息卡片是 BgFrame/Canvas，
@@ -450,9 +474,15 @@ class SakuraTab:
                 nodes = sakura_frp.list_nodes(token)
                 tunnels = sakura_frp.list_tunnels(token)
                 by_key = {}
-                if cluster:
+                # 本地存档不参与映射匹配（见 _render_shard_rows() 的说
+                # 明）——不止是不显示，这里干脆不查，避免 self._tunnels_
+                # by_key 存进一份跟当前存档并不真正对应的隧道数据，被其
+                # 它读它的地方（比如"复制直连代码"）误用。
+                if cluster and cluster.source == SaveSource.SERVER:
                     for shard in cluster.shards:
-                        tunnel = sakura_frp.find_dstcamp_tunnel(tunnels, cluster.path.name, shard.name)
+                        tunnel = sakura_frp.find_dstcamp_tunnel(
+                            tunnels, cluster.path.name, shard.name,
+                            cluster.source.value, cluster.platform.value)
                         if tunnel:
                             by_key[(str(cluster.path), shard.name)] = tunnel
                 # 方案 B：汇总"这个存档自己映射的隧道"最近 7 天用了多少流
@@ -474,7 +504,7 @@ class SakuraTab:
                             ts /= 1000
                         if ts >= cutoff:
                             recent_bytes += val
-                self.frame.after(0, lambda: self._apply_loaded(user_info, nodes, by_key, recent_bytes))
+                self.frame.after(0, lambda: self._apply_loaded(user_info, nodes, by_key, recent_bytes, len(tunnels)))
             except sakura_frp.SakuraApiError as e:
                 # `except ... as e` 在 except 块结束时会自动 del 掉这个名
                 # 字——lambda 要等 .after(0, ...) 真正调度执行时才引用它，
@@ -484,13 +514,17 @@ class SakuraTab:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _apply_error(self, e):
-        self._render_account_info("--", "--", "--", "--")
+        self._render_account_info("--", "--", "--", "--", "--")
         self._render_recent_traffic("")
         self._set_status(t("sakura.api_error", detail=str(e)))
 
-    def _apply_loaded(self, user_info, nodes, by_key, recent_bytes):
+    def _apply_loaded(self, user_info, nodes, by_key, recent_bytes, tunnel_count):
         self._nodes = nodes
         self._tunnels_by_key = by_key
+        # 账号下全部隧道数（不只是 DSTCamp 建的那几条，樱花账号里手动建
+        # 的隧道也占同一个配额）——跟 _max_tunnels 一起决定"已用是否达到
+        # 上限"，见 _render_shard_rows() 对 _action_btn 的置灰判断。
+        self._tunnel_count = tunnel_count
         self._render_recent_traffic(
             t("sakura.recent_traffic", size=_format_bytes_adaptive(recent_bytes)) if by_key else "")
 
@@ -510,6 +544,7 @@ class SakuraTab:
             user_info.get("speed") or "--",
             f"{remaining / (1024**3):.2f} GiB",
             str(self._max_tunnels),
+            str(self._tunnel_count),
         )
 
         self._node_choices = []
@@ -578,6 +613,16 @@ class SakuraTab:
             self._label(self._shards_frame, t("local.select_cluster_first")).pack(anchor=tk.W)
             self._action_btn.pack_forget()
             return
+        if cluster.source != SaveSource.SERVER:
+            # 映射的是"本地专用服务器"，跟 local_service_tab.py 一样只针
+            # 对 SaveSource.SERVER——本地/客户端存档没有独立的专用服务器
+            # 进程可映射，这里显式挡住。sanitize_tunnel_name() 现在已经
+            # 把 source/platform 也一起哈希进隧道名了，本地存档跟服务器
+            # 存档同名不会再互相冒充，但本地存档本来就不该走到"开启映
+            # 射"这条路，该挡还是要挡。
+            self._label(self._shards_frame, t("sakura.local_save_hint")).pack(anchor=tk.W)
+            self._action_btn.pack_forget()
+            return
         if not cluster.shards:
             self._label(self._shards_frame, t("sakura.no_shards")).pack(anchor=tk.W)
             self._action_btn.pack_forget()
@@ -629,6 +674,23 @@ class SakuraTab:
         self._action_btn.pack(side=tk.LEFT)
         self._action_btn.configure(text=t("sakura.disable_btn") if any_mapped else t("sakura.enable_btn"))
         self._any_mapped = any_mapped
+        if any_mapped:
+            self._frpc_row.pack(fill=tk.X, padx=10, pady=(0, 5))
+            self._refresh_frpc_row()
+        else:
+            self._frpc_row.pack_forget()
+        # 账号隧道配额已经用满（已用 >= 上限）时，"开启映射"点了也只会在
+        # 创建隧道那一步直接报 API 错误——提前在按钮这一步挡住，不用等
+        # 用户点了才知道。已经映射过的这个存档走"关闭映射"不受这条限
+        # 制（关闭不消耗新配额，配额来自 list_tunnels() 的账号总数，不
+        # 是这个存档自己的隧道数）。
+        self._tunnels_exhausted = not any_mapped and self._tunnel_count >= self._max_tunnels
+        self._action_btn.configure(state=tk.DISABLED if self._tunnels_exhausted else tk.NORMAL)
+
+    def _action_btn_hover_text(self) -> str:
+        if self._tunnels_exhausted:
+            return t("sakura.tunnels_exhausted_hint", max=self._max_tunnels)
+        return ""
 
     def _copy_connect_string(self, tunnel: dict):
         node = self._nodes.get(str(tunnel.get("node")), {})
@@ -654,6 +716,54 @@ class SakuraTab:
             self._disable_mapping()
         else:
             self._enable_mapping()
+
+    # ── frpc 本地进程状态/启停 ───────────────────────────────────────
+    # 跟"开启/关闭映射"（樱花账号那边的隧道配置）是两回事：这里控制的
+    # 是本机负责真正转发流量的 frpc.exe 子进程本身。WeGame 存档尤其需
+    # 要——WeGame 专用服务器不是 DSTCamp 启动的，maybe_start_frpc() 唯
+    # 一的自动触发点（local_service_tab.py._do_start_shard()）永远不会
+    # 命中，只能在这里手动补。
+
+    def _mapped_shards(self, cluster):
+        return [s for s in cluster.shards if self.has_active_mapping(cluster, s)]
+
+    def _frpc_all_running(self, cluster) -> bool:
+        shards = self._mapped_shards(cluster)
+        return bool(shards) and all(self.frpc.get(cluster.path, s.name) is not None for s in shards)
+
+    @staticmethod
+    def _frpc_status_text(running: bool) -> str:
+        return t("sakura.frpc_status_running" if running else "sakura.frpc_status_stopped")
+
+    def _refresh_frpc_row(self) -> None:
+        cluster = self._current_cluster
+        running = bool(cluster) and self._frpc_all_running(cluster)
+        self._frpc_status_label.itemconfig(
+            "label_text", text=self._frpc_status_text(running),
+            fill=theme.ACCENT if running else theme.TEXT_MUTED)
+        self._frpc_toggle_btn.configure(text=t("sakura.frpc_stop_btn") if running else t("sakura.frpc_start_btn"))
+
+    def _on_frpc_toggle(self):
+        cluster = self._current_cluster
+        if not cluster:
+            return
+        shards = self._mapped_shards(cluster)
+        if not shards:
+            return
+        if self._frpc_all_running(cluster):
+            remaining = [len(shards)]
+
+            def _one_done():
+                remaining[0] -= 1
+                if remaining[0] <= 0:
+                    self._refresh_frpc_row()
+
+            for s in shards:
+                self.stop_frpc_for_shard(cluster, s, on_done=lambda: self.frame.after(0, _one_done))
+        else:
+            for s in shards:
+                self.maybe_start_frpc(cluster, s)
+            self._refresh_frpc_row()
 
     def _running_shard_names(self, cluster) -> list[str]:
         return [s.name for s in cluster.shards
@@ -689,8 +799,11 @@ class SakuraTab:
                     local_port = get_shard_option(shard_config, "NETWORK", "server_port")
 
                     tunnels = sakura_frp.list_tunnels(token)
-                    name = sakura_frp.sanitize_tunnel_name(cluster.path.name, shard.name)
-                    existing = sakura_frp.find_dstcamp_tunnel(tunnels, cluster.path.name, shard.name)
+                    name = sakura_frp.sanitize_tunnel_name(
+                        cluster.path.name, shard.name, cluster.source.value, cluster.platform.value)
+                    existing = sakura_frp.find_dstcamp_tunnel(
+                        tunnels, cluster.path.name, shard.name,
+                        cluster.source.value, cluster.platform.value)
                     if existing:
                         tunnel_id = existing["id"]
                         remote = existing.get("remote")

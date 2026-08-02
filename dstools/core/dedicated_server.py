@@ -5,6 +5,7 @@
 GUI 层自己用 Text 控件展示输出（见 dstools/gui/local_service_tab.py）。
 """
 
+import csv
 import os
 import queue
 import subprocess
@@ -15,6 +16,7 @@ from enum import Enum
 from pathlib import Path
 
 from dstools.core import app_settings
+from dstools.core.config_manager import get_shard_option, load_shard_config
 from dstools.core.steam_discovery import find_all_steam_libraries
 
 IS_WINDOWS = sys.platform == "win32"
@@ -370,3 +372,97 @@ class ServerManager:
 
         for p in procs:
             threading.Thread(target=_worker, args=(p,), daemon=True).start()
+
+
+# ── WeGame 等外部启动的分片进程探测 ──────────────────────────────────
+# WeGame 版专用服务器不是 DSTCamp 自己拉起的子进程（Rail 会话令牌只有
+# WeGame 客户端能签发，见 gui/local_service_tab.py 顶部说明），
+# ServerManager 那套"记着自己启动的 subprocess.Popen 句柄"完全用不上。
+# 只能反过来扫系统进程——用 tasklist 按可执行文件名找 dontstarve_
+# dedicated_server*.exe 进程，netstat 查它们各自绑定的 UDP 端口，跟每
+# 个分片 server.ini 里配置的 server_port 比对：端口能对上，说明这个进
+# 程确实是这个分片、而且真的绑定成功（不是进程起来了但端口被占用/绑
+# 定失败）。真机验证过这个匹配方式：两个不同的进程不可能绑定同一个
+# UDP 端口，用端口反查比试图读命令行参数可靠——命令行/可执行文件路径
+# 在没有管理员权限的前提下，`Get-CimInstance`/`wmic` 对不是当前会话
+# 启动的进程一律返回空，读不到。
+
+
+def _find_dst_process_pids() -> dict[int, float]:
+    """返回 {pid: 内存占用(MB)}，两种历史可执行文件名（32/64 位）都扫。
+    单个 tasklist 找不到时输出为空，不当异常处理。"""
+    pids: dict[int, float] = {}
+    for exe_name in set(_EXE_NAMES.values()):
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0,
+            ).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        for row in csv.reader(out.splitlines()):
+            if len(row) < 5:
+                continue
+            try:
+                pid = int(row[1])
+            except ValueError:
+                continue
+            mem_str = row[4].replace(",", "").replace("K", "").strip()
+            try:
+                pids[pid] = int(mem_str) / 1024
+            except ValueError:
+                pids[pid] = 0.0
+    return pids
+
+
+def _udp_ports_by_pid() -> dict[int, set[int]]:
+    """返回 {pid: {绑定的本地 UDP 端口, ...}}——`netstat -ano` 是 Windows
+    自带命令，不需要管理员权限就能看到别的进程绑的端口（跟命令行参数
+    那种需要权限的信息不是一回事）。"""
+    result: dict[int, set[int]] = {}
+    try:
+        out = subprocess.run(
+            ["netstat", "-ano", "-p", "UDP"], capture_output=True, text=True, timeout=10,
+            creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0,
+        ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return result
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) < 3 or parts[0] != "UDP":
+            continue
+        try:
+            pid = int(parts[-1])
+            port = int(parts[1].rsplit(":", 1)[-1])
+        except ValueError:
+            continue
+        result.setdefault(pid, set()).add(port)
+    return result
+
+
+def detect_external_shard_processes(cluster) -> dict[str, dict]:
+    """按 (进程存在, 端口真的绑定成功) 探测这个存档每个分片的运行状态，
+    不依赖 DSTCamp 自己有没有启动过它——给 WeGame 存档"检测服务器状态"
+    用。返回 {分片名: {"configured_port": int|None, "running": bool,
+    "pid": int|None, "mem_mb": float|None}}；`running` 只在"存在这个端
+    口绑定成功的 dontstarve 进程"时才是 True，进程列表里有 dontstarve
+    进程但端口对不上（比如是另一个存档的分片）不算这个分片在跑。"""
+    pid_mem = _find_dst_process_pids()
+    pid_ports = _udp_ports_by_pid()
+    result: dict[str, dict] = {}
+    for shard in cluster.shards:
+        config = load_shard_config(shard.path)
+        raw_port = get_shard_option(config, "NETWORK", "server_port")
+        info = {"configured_port": raw_port, "running": False, "pid": None, "mem_mb": None}
+        try:
+            port = int(raw_port)
+        except (TypeError, ValueError):
+            port = None
+        if port is not None:
+            for pid, ports in pid_ports.items():
+                if port in ports and pid in pid_mem:
+                    info.update(running=True, pid=pid, mem_mb=round(pid_mem[pid], 1))
+                    break
+        result[shard.name] = info
+    return result

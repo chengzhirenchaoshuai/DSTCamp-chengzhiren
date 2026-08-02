@@ -1153,33 +1153,45 @@ def test_sakura_frp_tunnel_matching():
     """find_dstcamp_tunnel()/sanitize_tunnel_name() 是纯函数。樱花的真实
     隧道名规则是 3-20 个字符、只能用字母数字和下划线（实测报错确认过，
     连字符都不允许），所以命名约定不是直接拼"dstcamp-存档名-分片名"这种
-    可读字符串（会超长/带非法字符），是 (存档, 分片) 的短哈希——这里测的
-    是"格式始终合法" + "同样的输入每次都算出同一个名字"（find_dstcamp_
-    tunnel() 靠这个确定性现查匹配，不在本地存隧道 ID 缓存表）。"""
+    可读字符串（会超长/带非法字符），是短哈希——这里测的是"格式始终合
+    法" + "同样的输入每次都算出同一个名字"（find_dstcamp_tunnel() 靠这个
+    确定性现查匹配，不在本地存隧道 ID 缓存表），以及 source/platform 也
+    必须参与哈希（真机复现过的 bug：本地存档"复制为服务器存档"后目录名
+    相同，如果只按目录名+分片名算隧道名，两边会互相冒充对方的映射状
+    态；同理 Steam/WeGame 两边如果有同名存档也会撞）。"""
     print("\n" + "=" * 60)
     print("Test 29: SakuraFrp Tunnel Name Matching")
 
-    name = sanitize_tunnel_name("Cluster_1", "Master")
+    name = sanitize_tunnel_name("Cluster_1", "Master", "server", "steam")
     assert 3 <= len(name) <= 20, f"隧道名长度必须在 3-20 之间: {name}"
     assert all(c.isalnum() or c == "_" for c in name), f"隧道名只能是字母数字和下划线: {name}"
     print("  PASS: sanitize_tunnel_name() 输出符合樱花的命名规则")
 
-    assert sanitize_tunnel_name("Cluster_1", "Master") == name, "同样的输入应该每次都算出同一个名字"
-    assert sanitize_tunnel_name("Cluster_1", "Caves") != name, "不同分片应该算出不同的名字"
+    assert sanitize_tunnel_name("Cluster_1", "Master", "server", "steam") == name, "同样的输入应该每次都算出同一个名字"
+    assert sanitize_tunnel_name("Cluster_1", "Caves", "server", "steam") != name, "不同分片应该算出不同的名字"
     print("  PASS: 同一分片确定性可复现，不同分片不会撞名")
 
-    caves_name = sanitize_tunnel_name("Cluster_1", "Caves")
+    assert sanitize_tunnel_name("Cluster_1", "Master", "local", "steam") != name, \
+        "同名存档不同来源（本地 vs 服务器）不应该撞名"
+    assert sanitize_tunnel_name("Cluster_1", "Master", "server", "wegame") != name, \
+        "同名存档不同平台（Steam vs WeGame）不应该撞名"
+    print("  PASS: source/platform 不同时不会撞名（本地/服务器存档同名、Steam/WeGame 同名两种场景）")
+
+    caves_name = sanitize_tunnel_name("Cluster_1", "Caves", "server", "steam")
     tunnels = [
         {"id": 1, "name": name, "remote": "12345"},
         {"id": 2, "name": caves_name, "remote": "12346"},
         {"id": 3, "name": "someone_elses_tunnel", "remote": "8080"},
     ]
-    found = find_dstcamp_tunnel(tunnels, "Cluster_1", "Master")
+    found = find_dstcamp_tunnel(tunnels, "Cluster_1", "Master", "server", "steam")
     assert found is not None and found["id"] == 1, "应该按名字匹配到对应分片的隧道"
     print("  PASS: find_dstcamp_tunnel() matches the right shard")
 
-    assert find_dstcamp_tunnel(tunnels, "Cluster_1", "Cave2") is None, "不存在的分片不应该匹配到任何隧道"
-    print("  PASS: no false match for a shard with no tunnel")
+    assert find_dstcamp_tunnel(tunnels, "Cluster_1", "Cave2", "server", "steam") is None, \
+        "不存在的分片不应该匹配到任何隧道"
+    assert find_dstcamp_tunnel(tunnels, "Cluster_1", "Master", "local", "steam") is None, \
+        "同名本地存档不应该匹配到服务器存档的隧道"
+    print("  PASS: no false match for a shard with no tunnel, nor for a same-named save of a different source")
 
 
 def test_sakura_server_port_rewrite():

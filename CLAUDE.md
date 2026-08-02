@@ -136,7 +136,7 @@ WeGame 的 `rail_apps` 安装根目录没有可靠的注册表项能查（不像
 
 **两个 Tk-on-Windows 渲染时序坑（已修，别再犯）**：(1) 补渲染的 `render_now()` 扫一遍必须放在"确定不会再变"的检查点调用，不能放在挂了 `StringVar.trace_add` 的重画函数内部——一次逻辑更新会连续触发好几次，密集调用之间跟 Tk 自己的几何管理器抢时序，会画出压扁的黑线/错位色块。(2) 同一个几何变化后，要连续调用两次 `update()`（不是一次）才能把重绘真正冲刷到屏幕。(3) 给多个 `StringVar` 设置"占位态"文字时顺序有讲究：必须先清空"次要"字段、最后才设最主要的那个（比如先清 `summary`/`slots`，最后才把 `session_id` 设成"加载中…"），反过来会画出新旧混杂的过渡态。
 
-`save_reader.list_session_players()`：玩家存档槽前后包了二进制帧头/尾，**必须**从 `return` 正向扫描花括号深度找表的真实结尾，不能用 `raw.rfind(b"}")`（真实结尾后常跟着垃圾字节）。**"最新槽位"不一定是最新数据**：跨分片传送/进程被异常打断保存时，编号最新的槽位可能是个 0 字节占位文件，挑槽位时优先选最新的**非空**文件。`character_icons.resolve_character()` 优先级：官方角色表 → 分片当前已启用模组的 `STRINGS.CHARACTER_NAMES` 声明 → 原样显示英文 prefab（不猜测）。**已知未修的缺口**：`resolve_character()` 内部调 `find_mod_folder(entry.workshop_id)` 没传 `platform`，WeGame 存档如果玩家用了 WeGame 版 mod 加的自定义角色，名字/头像解析不到。图集 XML 解析共用 `core/atlas_utils.py`。
+`save_reader.list_session_players()`：玩家存档槽前后包了二进制帧头/尾，**必须**从 `return` 正向扫描花括号深度找表的真实结尾，不能用 `raw.rfind(b"}")`（真实结尾后常跟着垃圾字节）。**"最新槽位"不一定是最新数据**：跨分片传送/进程被异常打断保存时，编号最新的槽位可能是个 0 字节占位文件，挑槽位时优先选最新的**非空**文件。`character_icons.resolve_character()` 优先级：官方角色表 → 分片当前已启用模组的 `STRINGS.CHARACTER_NAMES` 声明 → 原样显示英文 prefab（不猜测）。**`platform`/`wegame_client_mods_dir` 必须透传给内部的 `find_mod_folder()`**（0.6.0 已修）——不传就找不到 WeGame 存档里玩家用的自定义角色模组，只能回退显示英文 prefab；调用方 `save_browser_tab.py._build_player_row()` 已经带上当前存档的平台信息。图集 XML 解析共用 `core/atlas_utils.py`。
 
 角色名/头像都查不到时统一用 `icons/ui/character_icon_default.png` 兜底，不走运行时缓存。头像列固定 `icon_size × icon_size` 容器再居中贴图（`Image.thumbnail()` 不保证正方形）；固定宽度的文字容器同样要显式给 `height`，只给 `width` 配 `pack_propagate(False)` 会把内容压扁到看不见。
 

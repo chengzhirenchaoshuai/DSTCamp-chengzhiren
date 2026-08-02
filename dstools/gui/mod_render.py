@@ -52,14 +52,13 @@ CFG_H = 40
 LINK_W = 160
 
 _OFF_COLOR = "#bdbdbd"
-_SWITCH_FLASH = "#ffca28"
 _CFG_DISABLED_COLOR = "#cfd8dc"
 _CFG_TEXT_DISABLED = "#90a4ae"
 _LINK_DISABLED = "#bdbdbd"
 
 
 def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=None,
-                     ref_width=None, flash=None, icon_thumb_cache=None):
+                     ref_width=None, icon_thumb_cache=None):
     """Render the mod list to a PIL image.
 
     Args:
@@ -78,17 +77,11 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
             up when has_link is True)
         ref_width: exact pixel width to render at (defaults to
             BASE_REF_WIDTH); all sizes scale proportionally.
-        flash: workshop_id of a switch just clicked, drawn with a brief
-            "pressed" highlight.
         icon_thumb_cache: optional dict[(workshop_id, icon_size) ->
             PIL.Image], caller-owned, memoizing the per-row LANCZOS resize
             below -- real measurement: with 100 mods all having icons,
             re-resizing every icon on every call costs ~100ms on its own
-            (half of the ~200ms full render), and every mod toggle
-            re-renders the *entire* list twice (once immediately, once
-            140ms later to clear the click-flash highlight), so this
-            alone was worth a large chunk of the 0.5-1s lag reported when
-            toggling a mod with a large list. Caller must clear/replace
+            (half of the ~200ms full render). Caller must clear/replace
             this dict whenever icon_images itself changes (see
             ModManagerTab._icon_thumb_cache) -- keyed by identity of
             workshop_id + target size, not by the source image, so a
@@ -173,8 +166,7 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
             _draw_local_badge(draw, switch_x, cy, switch_w, switch_h, id_font)
         else:
             locked = bool(row.get("locked"))
-            _draw_switch(draw, switch_x, cy, switch_w, switch_h, row["enabled"],
-                        pressed=(flash == wid), locked=locked)
+            _draw_switch(draw, switch_x, cy, switch_w, switch_h, row["enabled"], locked=locked)
             # "locked" 行（目前只有 LuaJIT 补丁生效时的配套 mod）——开关灰
             # 掉、不注册点击区域，点了没反应，跟 is_local 的"不给 on_toggle"
             # 是同一个做法，只是这里外观还是正常开关（灰色）而不是徽章
@@ -223,7 +215,7 @@ def _draw_local_badge(draw, x, cy, w, h, font):
     draw.text((x + w / 2, cy), t("mod.local_badge"), font=font, fill=theme.TEXT_MUTED, anchor="mm")
 
 
-def _draw_switch(draw, x, cy, w, h, on, pressed=False, locked=False):
+def _draw_switch(draw, x, cy, w, h, on, locked=False):
     r = h / 2
     # locked（目前只有 LuaJIT 补丁生效时的配套 mod）：不管 on 是什么，一律
     # 用跟"配置"按钮禁用态同一个灰色——跟正常的"开"(PRIMARY)/"关"(_OFF_COLOR)
@@ -232,7 +224,7 @@ def _draw_switch(draw, x, cy, w, h, on, pressed=False, locked=False):
     if locked:
         color = _CFG_DISABLED_COLOR
     else:
-        color = _SWITCH_FLASH if pressed else (theme.PRIMARY if on else _OFF_COLOR)
+        color = theme.PRIMARY if on else _OFF_COLOR
     draw.rounded_rectangle([x, cy - r, x + w, cy + r], radius=r, fill=color)
     knob_cx = x + w - r if on else x + r
     knob_r = r - 3
