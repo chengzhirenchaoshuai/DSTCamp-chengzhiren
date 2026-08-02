@@ -1080,7 +1080,13 @@ class DSToolsApp:
         _play_beep("info")（Windows 上是 winsound 的"系统提示音"），这
         里不需要——纯粹展示信息，不是需要引起注意的通知，不播声音。"""
         message = t("about.message", version=__version__)
-        header_text, _, body_text = message.partition("\n\n")
+        # 三段：标题（版本号）、简介、作者/交流群——项目地址应用户要求要
+        # 插在"简介"和"作者"这两段中间，原来 body_text 是一个整块 Label
+        # （简介+作者+交流群拼一起，中间靠字符串里的 \n\n 空一行），插不
+        # 进中间，改成再切一刀分成 desc_text/contact_text 两段各自一个
+        # Label，项目地址这行摆在两者之间。
+        header_text, _, rest = message.partition("\n\n")
+        desc_text, _, contact_text = rest.partition("\n\n")
 
         win = tk.Toplevel(self.root)
         win.withdraw()  # 跟其它自定义弹窗一样：先藏起来，建完内容/定位好才显示，避免一闪而过
@@ -1094,9 +1100,32 @@ class DSToolsApp:
         tk.Label(card, text=header_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_XL, "bold"), fg=theme.PRIMARY,
                 bg=theme.CARD_BG).pack(anchor=tk.W, padx=24, pady=(24, 4))
         ttk.Separator(card, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=24, pady=(0, 14))
-        if body_text:
-            tk.Label(card, text=body_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
+        if desc_text:
+            tk.Label(card, text=desc_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
                     justify=tk.LEFT, anchor=tk.W).pack(fill=tk.X, padx=24)
+
+        # 项目地址——"项目地址："是纯说明文字，只有"Github"这几个字是超
+        # 链接，两段分开放才能只给后半段配 accent 色/hand2 光标/点击事
+        # 件，前缀文字不能被误点。跟下面"检查更新"查到结果后那条可点击
+        # 链接同一个交互套路，这里是常驻显示，不需要等任何操作触发。
+        repo_url = "https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren"
+        repo_row = tk.Frame(card, background=theme.CARD_BG)
+        repo_row.pack(fill=tk.X, padx=24, pady=(10, 0))
+        tk.Label(repo_row, text=t("about.repo_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+                fg=theme.TEXT, bg=theme.CARD_BG).pack(side=tk.LEFT)
+        repo_link = tk.Label(repo_row, text=t("about.repo_link_text"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+                             fg=theme.PRIMARY, bg=theme.CARD_BG, cursor="hand2")
+        repo_link.pack(side=tk.LEFT)
+
+        def _open_repo_url(_event=None):
+            import webbrowser
+            webbrowser.open(repo_url)
+
+        repo_link.bind("<Button-1>", _open_repo_url)
+
+        if contact_text:
+            tk.Label(card, text=contact_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
+                    justify=tk.LEFT, anchor=tk.W).pack(fill=tk.X, padx=24, pady=(10, 0))
 
         # "检查更新"结果展示行——初始为空，点了按钮才有内容。found_url 用
         # 一个可变容器装"这次查到的 release 网页地址"，只有查到确实更新

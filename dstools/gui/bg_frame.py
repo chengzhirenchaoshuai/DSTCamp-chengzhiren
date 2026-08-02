@@ -71,7 +71,20 @@ class BgFrame(tk.Canvas):
     def render_now(self) -> None:
         """便宜的一步：从共享大图裁一块贴上去。真正的重活（读盘/裁剪比
         例/缩放/混合）由 DSToolsApp 在窗口停顿后单独触发一次，这里从不
-        做。"""
+        做。
+
+        真机实测过：DSToolsApp._refresh_all_bg_surfaces() 对全部注册过
+        的表面（这台机器上有 90 个，含隐藏标签页/未选中存档的控制台面
+        板等）逐个做这一步，单次就要 250ms+，是"自定义背景图"弹窗拖不
+        透明度滑块卡顿的真正瓶颈（不是共享大图本身的裁剪/缩放/混合，那
+        一步只要 10ms 量级）。当前不可见（`Notebook.hide()`/未选中的标
+        签页）的表面在这里跳过——不是不刷新，是现在刷新了也没人看得
+        见：这类表面重新可见时，Tk 自己的几何管理会先触发一次真正的
+        `<Configure>`（页签内容从"未托管/隐藏"变成"已托管/显示"本身就
+        是一次几何变化），走 `_request_render()` 的常规节流路径用当时最
+        新的共享大图重新裁一次，不会显示过期内容。"""
+        if not self.winfo_ismapped():
+            return
         self.delete("bg_image")
         w, h = self.winfo_width(), self.winfo_height()
         if w < 2 or h < 2:

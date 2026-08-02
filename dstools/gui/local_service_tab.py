@@ -10,6 +10,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 
@@ -495,6 +496,12 @@ class LocalServiceTab:
         self._luajit_install_btn = ttk.Button(luajit_row, text=t("local.luajit_install_btn"),
                                                command=self._on_luajit_install_clicked)
         self._luajit_install_btn.pack(side=tk.RIGHT, padx=(0, 5))
+        # "说明"按钮跟安装/卸载按钮是同一批 side=tk.RIGHT 控件、最后 pack
+        # ——同一批 side=RIGHT 控件里最后 pack 的离右边缘最远，正好排在
+        # 安装/卸载左边、紧挨着状态文字，不需要单独占一行。
+        ttk.Button(luajit_row, text=t("local.luajit_help_btn"),
+                   command=lambda: webbrowser.open("https://www.bilibili.com/video/BV1Mc33eAE8b/")
+                   ).pack(side=tk.RIGHT, padx=(0, 5))
 
         # 选中本地存档时显示的醒目提示——风格和"Mod管理"/"世界设置"的
         # 本地存档提示条保持一致（黄底加粗），跨整个页签宽度，而不是像

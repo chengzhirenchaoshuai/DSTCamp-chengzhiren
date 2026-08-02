@@ -84,6 +84,16 @@ def _load_source_image(path: Path) -> Image.Image:
     return img
 
 
+# 裁剪+缩放到目标尺寸、还没跟主题色混合的中间结果缓存——拖不透明度滑块
+# 时窗口尺寸和源图片都没变，只有 opacity 在变，但 render_background()
+# 原来每次都会重新跑一遍裁剪比例 + LANCZOS 缩放，这两步（尤其是缩放）
+# 比后面的 Image.blend() 贵得多，是拖动滑块卡顿的真正原因（真机反馈过
+# "调不透明度会卡"）。缓存 key 只要 path/mtime/尺寸没变就复用，opacity
+# 变化时只需要重新做很便宜的 Image.blend()。只会有一张背景图在用，命中
+# 不了就直接整个换掉，没必要囤多份。
+_resized_cache: dict[tuple[Path, float, int, int], Image.Image] = {}
+
+
 def render_background(path: Path, width: int, height: int, opacity: float, blend_color: str) -> Image.Image:
     """居中裁剪到 (width, height) 的宽高比（多出来的部分裁掉，绝不拉伸变
     形）再缩放到目标像素大小，然后跟 blend_color 按 opacity 混合：
@@ -91,11 +101,16 @@ def render_background(path: Path, width: int, height: int, opacity: float, blend
     的背景色），越低越像"淡淡衬在主题色底下"。返回 RGB 的 PIL Image，
     调用方自己转 ImageTk.PhotoImage。"""
     width, height = max(1, int(width)), max(1, int(height))
-    img = _load_source_image(path)
-    img = _center_crop_to_ratio(img, width / height)
-    img = img.resize((width, height), Image.LANCZOS)
+    cache_key = (path, path.stat().st_mtime, width, height)
+    resized = _resized_cache.get(cache_key)
+    if resized is None:
+        img = _load_source_image(path)
+        img = _center_crop_to_ratio(img, width / height)
+        resized = img.resize((width, height), Image.LANCZOS)
+        _resized_cache.clear()
+        _resized_cache[cache_key] = resized
     solid = Image.new("RGB", (width, height), blend_color)
-    return Image.blend(solid, img, max(0.0, min(1.0, opacity)))
+    return Image.blend(solid, resized, max(0.0, min(1.0, opacity)))
 
 
 def _center_crop_to_ratio(img: Image.Image, target_ratio: float) -> Image.Image:

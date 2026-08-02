@@ -41,6 +41,8 @@ STRINGS = {
 
         # About (NEW)
         "about.message": "DSTCamp {version}\n\nDon't Starve Together 本地服务器管理工具\n\n作者：橙之刃\n交流群：463227692",
+        "about.repo_label": "项目地址：",
+        "about.repo_link_text": "Github",
         "about.check_update_btn": "检查更新",
         "about.checking_update": "正在检查更新…",
         "about.check_update_failed": "检查失败，请检查网络连接",
@@ -378,6 +380,7 @@ STRINGS = {
         "local.install_change_btn": "更换路径",
         "local.install_recheck_btn": "重新检测",
         "local.luajit_install_btn": "安装",
+        "local.luajit_help_btn": "说明",
         "local.luajit_reinstall_btn": "更新/重新安装",
         "local.luajit_uninstall_btn": "卸载",
         "local.luajit_state_label": "LuaJIT 加速补丁:",
@@ -501,6 +504,8 @@ STRINGS = {
 
         # About (NEW)
         "about.message": "DSTCamp {version}\n\nDon't Starve Together local server manager\n\nAuthor：橙之刃\nQQ group：463227692",
+        "about.repo_label": "Project: ",
+        "about.repo_link_text": "Github",
         "about.check_update_btn": "Check for Updates",
         "about.checking_update": "Checking for updates…",
         "about.check_update_failed": "Check failed, please verify your network connection",
@@ -838,6 +843,7 @@ STRINGS = {
         "local.install_change_btn": "Change Path",
         "local.install_recheck_btn": "Re-detect",
         "local.luajit_install_btn": "Install",
+        "local.luajit_help_btn": "Guide",
         "local.luajit_reinstall_btn": "Update / Reinstall",
         "local.luajit_uninstall_btn": "Uninstall",
         "local.luajit_state_label": "LuaJIT Speed Patch:",
