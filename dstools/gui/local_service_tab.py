@@ -29,7 +29,9 @@ from dstools.core.modinfo_reader import find_shared_ugc_directory
 from dstools.core.token_manager import is_valid_token, read_token
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
+from dstools.gui.dialog_geometry import center_over_parent
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
+from dstools.gui.toolbar_widgets import ReadonlyBanner
 from dstools.gui.tooltip import Tooltip
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
@@ -125,11 +127,7 @@ class _RollbackDialog:
         win.update_idletasks()
         WIN_H = win.winfo_reqheight() + 20
         root = parent_widget.winfo_toplevel()
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - WIN_W) // 2)
-        y = py + max(0, (ph - WIN_H) // 2)
-        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        center_over_parent(win, root, width=WIN_W, height=WIN_H)
         win.transient(root)
         win.deiconify()
         win.grab_set()
@@ -292,11 +290,7 @@ class _AnnounceDialog:
         win.update_idletasks()
         WIN_H = win.winfo_reqheight() + 20
         root = parent_widget.winfo_toplevel()
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - WIN_W) // 2)
-        y = py + max(0, (ph - WIN_H) // 2)
-        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        center_over_parent(win, root, width=WIN_W, height=WIN_H)
 
         win.transient(root)
         win.deiconify()
@@ -533,31 +527,17 @@ class LocalServiceTab:
                    ).pack(side=tk.RIGHT, padx=(0, 5))
 
         # 选中本地存档时显示的醒目提示——风格和"Mod管理"/"世界设置"的
-        # 本地存档提示条保持一致（黄底加粗），跨整个页签宽度，而不是像
-        # 之前那样塞在左侧世界列表那个窄栏里、字又小又不显眼。默认不 pack。
-        #
-        # **坑**：这条提示（以及下面的 _wegame_banner）显示/隐藏时用
-        # pack(side=tk.BOTTOM)，不能用 before=self._body——后者会把提示
-        # 条插到 self._body 上面，这一显示/隐藏会让 self._body 整体上下
-        # 挪位置，连带"全部启动/全部停止/回档"这几个 BgFrame（btn_row/
-        # _shard_list）也跟着挪，真机验证过这会导致它们裁的那一小块共享
-        # 背景图看起来"错位"（挪位置前后没有正确地重新裁到新位置对应的
-        # 那一块）。side=tk.BOTTOM 只在 self.frame 底部单独留一块给提示
-        # 条，self._body 的内容不会跟着挪动。
-        self._local_banner = tk.Label(self.frame, text=t("local.select_server_hint"),
-                                       bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
-                                       font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
-                                       anchor=tk.W, padx=10, pady=6)
+        # 本地存档提示条保持一致（黄底加粗，ReadonlyBanner 统一封装），
+        # 跨整个页签宽度，而不是像之前那样塞在左侧世界列表那个窄栏里、
+        # 字又小又不显眼。默认不 show()。
+        self._local_banner = ReadonlyBanner(self.frame, text=t("local.select_server_hint"))
 
         # 切到另一个存档时，如果之前那个存档还有世界没停，"启动"/"全部
         # 启动"要锁住——两个不同存档的服务器同时跑，端口/资源很容易撞在
         # 一起，这个应用没打算支持"同时管理多个正在运行的存档"这种用法。
-        # 跟 _local_banner 一样默认不 pack，_update_start_lock_state() 按
-        # 需要显示/隐藏。
-        self._other_running_banner = tk.Label(self.frame, text="",
-                                               bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
-                                               font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
-                                               anchor=tk.W, padx=10, pady=6)
+        # 跟 _local_banner 一样默认不 show()，_update_start_lock_state()
+        # 按需要显示/隐藏。
+        self._other_running_banner = ReadonlyBanner(self.frame)
 
         # ttk.PanedWindow 本身保留原生（可拖拽分栏这个交互重写代价太
         # 高）——它自己的分隔条(sash)还是不透明的，但两侧塞进去的内容
@@ -602,10 +582,7 @@ class LocalServiceTab:
         # wraplength 写死会在正常窗口宽度下把这段较长的说明文字挤成好几
         # 行——改成跟着 left 面板的实际宽度动态调整（<Configure> 触发，
         # 拖动 PanedWindow 分隔条也会触发），面板多宽就用多宽。
-        self._wegame_banner = tk.Label(left, text=t("local.wegame_manual_start_hint"),
-                                        bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
-                                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
-                                        anchor=tk.W, padx=10, pady=6, justify=tk.LEFT)
+        self._wegame_banner = ReadonlyBanner(left, text=t("local.wegame_manual_start_hint"))
         left.bind("<Configure>", lambda e: self._resize_wegame_banner(), add="+")
 
         self._shard_list = BgFrame(left, app, bg=theme.CARD_BG)
@@ -653,7 +630,7 @@ class LocalServiceTab:
         self._install_recheck_btn.configure(state=install_btn_state)
         self._update_stop_all_btn_state(c)
         if is_server:
-            self._local_banner.pack_forget()
+            self._local_banner.hide()
             if is_wegame:
                 # pack() 调用顺序决定 side=tk.BOTTOM 这几个控件的上下叠放
                 # 顺序——真机截图验证过：先 pack 的在这一组的上方，后
@@ -663,23 +640,23 @@ class LocalServiceTab:
                 # 图确认过是对的）。
                 self._wegame_detect_text.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
                 self._wegame_detect_btn.pack(side=tk.BOTTOM, anchor=tk.W, padx=5, pady=(0, 5))
-                self._wegame_banner.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(5, 0))
+                self._wegame_banner.show()
                 # 换了一个 WeGame 存档（或者从别的存档切过来）——上一个
                 # 存档检测出来的结果不该留着接着显示，误导成"这是当前存
                 # 档的状态"，先清空成占位文字，等用户重新点一次检测。
                 self._reset_wegame_detect_text()
             else:
-                self._wegame_banner.pack_forget()
+                self._wegame_banner.hide()
                 self._wegame_detect_btn.pack_forget()
                 self._wegame_detect_text.pack_forget()
             self._refresh_shard_rows(c)
         else:
-            self._wegame_banner.pack_forget()
+            self._wegame_banner.hide()
             self._wegame_detect_btn.pack_forget()
             self._wegame_detect_text.pack_forget()
             self._rollback_btn.configure(state=tk.DISABLED)
             self._refresh_shard_rows(None)
-            self._local_banner.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(5, 0))
+            self._local_banner.show()
         self._sync_console_tabs_visibility(c if is_server else None)
         self._update_start_lock_state(c)
         self._update_luajit_row(c)
@@ -712,24 +689,24 @@ class LocalServiceTab:
         了，这个函数自己内部检查一遍 is_server，可以放心从 _poll() 每次
         轮询都调用，不用外部先判断一次。"""
         if not cluster or cluster.source != SaveSource.SERVER:
-            self._other_running_banner.pack_forget()
+            self._other_running_banner.hide()
             return
         if cluster.platform == Platform.WEGAME:
             # WeGame 世界的"启动"按钮一直是禁用的（on_cluster_changed()
             # 已经设过），这里不用管"别的存档在跑"这套锁定逻辑，直接跳过，
             # 否则每 150ms 轮询一次会把这里的 NORMAL 重新写回去，盖掉
             # on_cluster_changed() 设的 DISABLED。
-            self._other_running_banner.pack_forget()
+            self._other_running_banner.hide()
             return
         other = self._other_cluster_running(cluster)
         if other:
             running_names = sorted({p.cluster_name for p in self.manager.running()
                                      if p.cluster_path != cluster.path})
-            self._other_running_banner.configure(
-                text=t("local.other_cluster_running_hint", clusters="、".join(running_names)))
-            self._other_running_banner.pack(fill=tk.X, padx=5, pady=(0, 5), before=self._body)
+            self._other_running_banner.set_text(
+                t("local.other_cluster_running_hint", clusters="、".join(running_names)))
+            self._other_running_banner.show()
         else:
-            self._other_running_banner.pack_forget()
+            self._other_running_banner.hide()
         self._start_all_btn.configure(state=tk.DISABLED if other else tk.NORMAL)
 
     def _update_stop_all_btn_state(self, cluster):
@@ -825,10 +802,10 @@ class LocalServiceTab:
         PanedWindow 分隔条改变左右分栏比例时会重新触发 <Configure>。减
         掉的量是 tk.Label 自己的左右 padx(10*2) 加左右各留一点边距，跟
         pack(padx=5) 大致对上，不需要算得多精确。"""
-        w = self._wegame_banner.master.winfo_width()
+        w = self._wegame_banner.label.master.winfo_width()
         if w < 4:
             return
-        self._wegame_banner.configure(wraplength=max(150, w - 40))
+        self._wegame_banner.set_wraplength(w - 40)
 
     def _set_wegame_detect_text(self, text: str) -> None:
         self._wegame_detect_text.configure(state=tk.NORMAL)
@@ -1338,13 +1315,13 @@ class LocalServiceTab:
             # StringVar 没变但"专用服务器工具:"这段标签文字要跟着切语言
             # ——trace 只在 set() 真的改变值时触发，这里手动补一次重画。
             self._redraw_install_row_text()
-        self._local_banner.configure(text=t("local.select_server_hint"))
+        self._local_banner.set_text(t("local.select_server_hint"))
 
     def retheme(self):
         """主题切换时调用——这个横幅在 __init__ 里建一次就不再重建，
         refresh() 不会碰它的颜色，需要显式重新上色。install_row 直接画的
         文字（_redraw_install_row_text）同理要跟着重新上色一次。"""
-        self._local_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+        self._local_banner.apply_theme()
         self._install_row.apply_theme(bg=theme.CARD_BG)
         self._redraw_install_row_text()
 

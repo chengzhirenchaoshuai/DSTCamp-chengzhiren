@@ -4,16 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概述
 
-DSTCamp（包名 `dstools`）是饥荒联机版 (Don't Starve Together) 本地服务器管理工具，提供 CLI (`dst`) 和 Tkinter GUI (`dst-gui`)，覆盖存档/Mod/世界设置/服务器配置/本地服务器管理/内网穿透联机，同时支持 Steam 版和 WeGame 版存档。核心是在没有 Lua 运行时的情况下用纯 Python 解析并写回游戏自身的 Lua 表文件（`leveldataoverride.lua`、`modoverrides.lua`、`modinfo.lua`）和 INI 文件（`cluster.ini`、`server.ini`）。唯一例外见"Mod 配置解析"一节的 `core/lua_sandbox.py`：极少数 mod 用代码动态拼配置项，纯文本解析无法覆盖，为此收窄范围引入了一个沙箱化的真实 Lua 5.1 解释器。
+DSTCamp（包名 `dstools`）是饥荒联机版 (Don't Starve Together) 本地服务器管理工具，Tkinter GUI（入口 `dst-gui`）覆盖存档/Mod/世界设置/服务器配置/本地服务器管理/内网穿透联机等日常操作，同时支持 Steam 版和 WeGame 版存档。核心是在没有 Lua 运行时的情况下用纯 Python 解析并写回游戏自身的 Lua 表文件（`leveldataoverride.lua`、`modoverrides.lua`、`modinfo.lua`）和 INI 文件（`cluster.ini`、`server.ini`）。唯一例外见"Mod 配置解析"一节的 `core/lua_sandbox.py`：极少数 mod 用代码动态拼配置项，纯文本解析无法覆盖，为此收窄范围引入了一个沙箱化的真实 Lua 5.1 解释器。
 
 ## 项目结构
 
 ```
-dstools/          # 核心包，pyproject.toml 的 dst/dst-gui 入口点指向这里
+dstools/          # 核心包，pyproject.toml 的 dst-gui 入口点指向这里
 ├── core/         # 无 GUI 依赖的纯逻辑（Lua/INI 解析、存档发现、Mod 管理……）
 ├── gui/          # Tkinter 界面（app.py 是主窗口，其余是自绘控件/子模块）
-├── i18n/         # 中英文文案（strings.py 是唯一来源）
-└── cli/          # Click 命令行
+└── i18n/         # 中英文文案（strings.py 是唯一来源）
 scripts/          # 开发/打包脚本：run_gui.py（GUI 入口，打包用）、
                   # build_exe.py（PyInstaller 打包）、
                   # diagnose_local_env.py（真机诊断脚本，非测试，见下）
@@ -40,8 +39,6 @@ python scripts/build_exe.py        # 打包为单文件 DSTCamp.exe（需 pip in
 python tests/test_e2e.py           # 核心模块测试（34 项）
 python tests/test_e2e_phase2.py    # i18n/模型字段/exe-gui 可导入性测试（5 项）
 ```
-
-CLI 示例（详见 README.md）：`dst env info` / `dst save list --cluster Cluster_3` / `dst mod list --cluster Cluster_3 --shard Master` / `dst cluster config get Cluster_3 GAMEPLAY max_players`
 
 ### 测试
 
@@ -268,10 +265,6 @@ Windows 目录联接（`mklink /J`，不是符号链接）不需要管理员权�
 ### i18n (`dstools/i18n/`)
 
 `strings.py` 的 `STRINGS = {"zh":{...}, "en":{...}}` 是界面文案唯一来源，两语言 key 集合必须一致（`test_e2e_phase2.py` 有断言）。跟 `world_categories.py`/`world_render.py` 自己的双语机制是**两套独立系统**，没有交集。
-
-### CLI (`cli/main.py`)
-
-Click 实现：`save`/`mod`/`cluster`/`env` 命令分组，全局 `--klei-path` 覆盖自动发现路径。跟 GUI/主题完全不相关。
 
 ### GUI (`gui/app.py` + 六个页签各自独立文件)
 

@@ -24,6 +24,7 @@ from dstools.core.resource_paths import bundled_resource_dir
 from dstools.core.save_reader import get_save_summary, list_save_sessions, list_session_players
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
+from dstools.gui.dialog_geometry import center_over_parent
 from dstools.gui.local_service_tab import _RUNNING_LIKE
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
@@ -116,12 +117,7 @@ class _CopyToServerDialog:
         # 清文字的细边（这正是之前这个弹窗被反馈"按钮上没有文字"的真正
         # 原因：不是文字没画，是按钮本身大半截被截在窗口外面）。
         WIN_H = win.winfo_reqheight() + 20
-        root = parent_widget.winfo_toplevel()
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - WIN_W) // 2)
-        y = py + max(0, (ph - WIN_H) // 2)
-        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        center_over_parent(win, parent_widget.winfo_toplevel(), width=WIN_W, height=WIN_H)
 
         win.transient(root)
         win.deiconify()
@@ -212,11 +208,7 @@ class _RestoreBackupDialog:
         win.update_idletasks()
         WIN_H = win.winfo_reqheight() + 20
         root = parent_widget.winfo_toplevel()
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - WIN_W) // 2)
-        y = py + max(0, (ph - WIN_H) // 2)
-        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        center_over_parent(win, root, width=WIN_W, height=WIN_H)
 
         win.transient(root)
         win.deiconify()
@@ -326,11 +318,7 @@ class _BackupPolicyDialog:
         win.update_idletasks()
         WIN_H = win.winfo_reqheight() + 20
         root = parent_widget.winfo_toplevel()
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - WIN_W) // 2)
-        y = py + max(0, (ph - WIN_H) // 2)
-        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        center_over_parent(win, root, width=WIN_W, height=WIN_H)
         win.transient(root)
         win.deiconify()
         win.grab_set()

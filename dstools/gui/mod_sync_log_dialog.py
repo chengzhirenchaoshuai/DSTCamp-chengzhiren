@@ -6,6 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from dstools.gui import theme
+from dstools.gui.dialog_geometry import center_over_parent
 from dstools.i18n import t
 
 
@@ -67,15 +68,8 @@ class ModSyncLogDialog:
         # 让人误以为"点了叉就是中断同步了"，其实后台线程还在继续跑。
         win.protocol("WM_DELETE_WINDOW", lambda: None)
 
-        win.update_idletasks()
-        w = win.winfo_reqwidth()
-        h = win.winfo_reqheight()
         root = parent_widget.winfo_toplevel()
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - w) // 2)
-        y = py + max(0, (ph - h) // 2)
-        win.geometry(f"{w}x{h}+{x}+{y}")
+        center_over_parent(win, root)
         win.transient(root)
         win.deiconify()
         win.grab_set()

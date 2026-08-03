@@ -26,6 +26,7 @@ from dstools.gui.bg_frame import BgFrame
 from dstools.gui.card_frame import CardFrame
 from dstools.gui.cluster_config_tab import ClusterConfigTab
 from dstools.gui.cluster_select import cluster_label as _cluster_label
+from dstools.gui.dialog_geometry import center_over_parent
 from dstools.gui.local_service_tab import LocalServiceTab
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.mod_manager_tab import ModManagerTab
@@ -1194,14 +1195,7 @@ class DSToolsApp:
         win.bind("<Return>", lambda e: win.destroy())
         win.bind("<Escape>", lambda e: win.destroy())
 
-        win.update_idletasks()
-        w = max(360, win.winfo_reqwidth())
-        h = win.winfo_reqheight()
-        px, py = self.root.winfo_rootx(), self.root.winfo_rooty()
-        pw, ph = self.root.winfo_width(), self.root.winfo_height()
-        x = px + max(0, (pw - w) // 2)
-        y = py + max(0, (ph - h) // 2)
-        win.geometry(f"{w}x{h}+{x}+{y}")
+        center_over_parent(win, self.root, min_width=360)
 
         win.transient(self.root)
         win.deiconify()

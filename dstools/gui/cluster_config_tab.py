@@ -18,6 +18,7 @@ from dstools.core.ini_field_info import (
 from dstools.core.token_manager import is_valid_token, mask_token, read_token, write_token
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
+from dstools.gui.dialog_geometry import center_over_parent
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.pill_tabs import PillTabBar
 from dstools.i18n import t
@@ -121,20 +122,8 @@ class _TokenInputDialog:
         win.bind("<Escape>", lambda e: self._cancel())
         win.protocol("WM_DELETE_WINDOW", self._cancel)
 
-        # 窗口尺寸让 Tk 自己按实际内容算（不再写死 WIN_W/WIN_H）——高
-        # DPI 缩放下同样的控件/字体需要更多逻辑像素才放得下，固定像素
-        # 尺寸在缩放比例较高时会把按钮之类的内容挤没（真机反馈过 225%
-        # 缩放下这个弹窗看不到"确认"/"取消"按钮，见 CLAUDE.md"弹窗尺寸"
-        # 一节）。
-        win.update_idletasks()
-        w = max(500, win.winfo_reqwidth())
-        h = win.winfo_reqheight()
         root = parent_widget.winfo_toplevel()
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - w) // 2)
-        y = py + max(0, (ph - h) // 2)
-        win.geometry(f"{w}x{h}+{x}+{y}")
+        center_over_parent(win, root, min_width=500)
 
         win.transient(root)
         win.deiconify()

@@ -27,9 +27,10 @@ from dstools.core.modinfo_reader import (
 from dstools.core.mod_sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync
 from dstools.gui import fonts, theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
+from dstools.gui.dialog_geometry import center_over_parent
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
-from dstools.gui.toolbar_widgets import make_filter_chips, make_toolbar_label
+from dstools.gui.toolbar_widgets import ReadonlyBanner, make_filter_chips, make_toolbar_label
 from dstools.i18n import t
 from dstools.models import ModEntry, Platform, SaveSource
 
@@ -177,10 +178,8 @@ class ModManagerTab:
             self.show_var, self._render_list)
 
         # 本地存档选中时显示的醒目提示——本地存档的 mod 启用/配置实际由
-        # 客户端账号级 modindex 决定，这里只读查看，默认不 pack。
-        self._md_local_banner = tk.Label(self.frame, text=t("mod.local_view_only_banner"),
-                                          bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
-                                          anchor=tk.W, padx=10, pady=6)
+        # 客户端账号级 modindex 决定，这里只读查看，默认不 show()。
+        self._md_local_banner = ReadonlyBanner(self.frame, text=t("mod.local_view_only_banner"))
 
         # WeGame 存档选中、但还没设置过 WeGame 安装目录时的提示——没有这
         # 个目录就找不到客户端 mods/ 文件夹，"已安装但未在 modoverrides.
@@ -188,10 +187,8 @@ class ModManagerTab:
         # 图标/名称也全解析不出来（见 _resolve_mod_folder_args()）。整条
         # 幅可以点击，点了弹目录选择框，跟"同步到服务器"用的是同一个
         # app_settings 设置项，这里设完那边也不用再选一次。
-        self._md_wegame_banner = tk.Label(self.frame, text=t("mod.wegame_root_needed_banner"),
-                                           bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
-                                           anchor=tk.W, padx=10, pady=6, cursor="hand2")
-        self._md_wegame_banner.bind("<Button-1>", lambda e: self._pick_wegame_root_and_reload())
+        self._md_wegame_banner = ReadonlyBanner(self.frame, text=t("mod.wegame_root_needed_banner"),
+                                                 on_click=self._pick_wegame_root_and_reload)
 
         from dstools.gui.image_scroll import ImageScrollPanel
         from dstools.gui.mod_render import REF_WIDTH
@@ -242,13 +239,13 @@ class ModManagerTab:
         self._md_bs.configure(state=save_state)
         self._md_ba.configure(state=save_state)
         if is_server:
-            self._md_local_banner.pack_forget()
+            self._md_local_banner.hide()
         else:
-            self._md_local_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self.list_panel.frame)
+            self._md_local_banner.show()
         if self._wegame_root_missing(c):
-            self._md_wegame_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self.list_panel.frame)
+            self._md_wegame_banner.show()
         else:
-            self._md_wegame_banner.pack_forget()
+            self._md_wegame_banner.hide()
         self._update_mod_location_display()
         if not c:
             self.shard_combo["values"] = []
@@ -953,8 +950,8 @@ class ModManagerTab:
         self._md_filt.redraw()
         self._md_filter_chips.redraw()
         self._md_rl.configure(text=t("mod.back_to_list") if self.show_local_var.get() else t("mod.show_local"))
-        self._md_local_banner.configure(text=t("mod.local_view_only_banner"))
-        self._md_wegame_banner.configure(text=t("mod.wegame_root_needed_banner"))
+        self._md_local_banner.set_text(t("mod.local_view_only_banner"))
+        self._md_wegame_banner.set_text(t("mod.wegame_root_needed_banner"))
         self._mod_location_recheck_btn.configure(text=t("local.install_recheck_btn"))
         self._mod_location_change_btn.configure(text=t("local.install_change_btn"))
         self._redraw_mod_location_row_text()
@@ -964,8 +961,8 @@ class ModManagerTab:
         """主题切换时调用——这个横幅、以及 make_toolbar_label() 画的说明
         文字都是 __init__ 里建一次就不再重建，refresh()/refresh_full() 都
         不会碰它们的颜色，需要显式重新上色/重画。"""
-        self._md_local_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
-        self._md_wegame_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+        self._md_local_banner.apply_theme()
+        self._md_wegame_banner.apply_theme()
         self._redraw_mod_location_row_text()
         self._md_lbl2.redraw()
         self._md_filt.redraw()
@@ -1308,7 +1305,7 @@ class ModConfigDialog:
         # ahead of that default binding and stops it from firing.
         self._bind_mousewheel(win)
 
-        self._center_over_parent(win, DIALOG_W, DIALOG_H)
+        center_over_parent(win, self.tab.frame.winfo_toplevel(), width=DIALOG_W, height=DIALOG_H)
 
         # Lock the window's aspect ratio to how it was laid out, the same
         # native WM_SIZING hook the main window uses -- otherwise dragging
@@ -1697,14 +1694,6 @@ class ModConfigDialog:
             self.win.after_cancel(self._poll_after_id)
         self.win.destroy()
 
-    def _center_over_parent(self, win, width, height):
-        win.update_idletasks()
-        parent = self.tab.frame.winfo_toplevel()
-        px, py = parent.winfo_rootx(), parent.winfo_rooty()
-        pw, ph = parent.winfo_width(), parent.winfo_height()
-        x = px + max(0, (pw - width) // 2)
-        y = py + max(0, (ph - height) // 2)
-        win.geometry(f"{width}x{height}+{x}+{y}")
 
     def _reset(self):
         """Revert every dropdown to the mod's own default (UI only, not yet saved)."""

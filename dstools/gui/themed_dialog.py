@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from dstools.gui import theme
+from dstools.gui.dialog_geometry import center_over_parent
 from dstools.i18n import t
 
 def _icon_for(kind: str) -> tuple[str, str]:
@@ -102,14 +103,7 @@ def _show(parent, title, message, kind, buttons, wraplength=320, min_width=360):
     win.bind("<Return>", lambda e: choose(next((v for _, v, d in buttons if d), None)))
     win.bind("<Escape>", lambda e: choose(None))
 
-    win.update_idletasks()
-    w = max(min_width, win.winfo_reqwidth())
-    h = win.winfo_reqheight()
-    px, py = parent.winfo_rootx(), parent.winfo_rooty()
-    pw, ph = parent.winfo_width(), parent.winfo_height()
-    x = px + max(0, (pw - w) // 2)
-    y = py + max(0, (ph - h) // 2)
-    win.geometry(f"{w}x{h}+{x}+{y}")
+    center_over_parent(win, parent, min_width=min_width)
     win.deiconify()
     _play_beep(kind)
     if default_btn is not None:

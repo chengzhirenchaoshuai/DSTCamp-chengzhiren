@@ -8,7 +8,7 @@ from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.pill_tabs import PillTabBar
-from dstools.gui.toolbar_widgets import make_toolbar_label
+from dstools.gui.toolbar_widgets import ReadonlyBanner, make_toolbar_label
 from dstools.i18n import t
 from dstools.models import SaveSource
 
@@ -45,10 +45,8 @@ class WorldSettingsTab:
         # DSToolsApp._refresh() -> tab.refresh() -> on_cluster_changed()
         # -> _on_shard_select() -> _load_world()，效果跟这里重复。
         # 本地存档选中时显示的醒目提示——本地存档的世界设置不保证编辑
-        # 生效，这里只读查看，默认不 pack。
-        self._wl_local_banner = tk.Label(self.frame, text=t("world.local_view_only_banner"),
-                                          bg=theme.BANNER_BG, fg=theme.BANNER_TEXT, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
-                                          anchor=tk.W, padx=10, pady=6)
+        # 生效，这里只读查看，默认不 show()。
+        self._wl_local_banner = ReadonlyBanner(self.frame, text=t("world.local_view_only_banner"))
         # Preset name/id/location + description -- BgFrame（不是
         # tk.Frame）+ create_text（不是 tk.Label）好透出背景图；
         # create_text 原生支持 width= 自动换行，照抄原来
@@ -173,9 +171,9 @@ class WorldSettingsTab:
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
         if is_server:
-            self._wl_local_banner.pack_forget()
+            self._wl_local_banner.hide()
         else:
-            self._wl_local_banner.pack(fill=tk.X, padx=5, pady=(0,5), before=self._wl_info_frame)
+            self._wl_local_banner.show()
         if not c:
             self._wl_title_var.set(""); self._wl_desc_var.set("")
             self._rules_panel.set_image(*self._empty_image())
@@ -349,13 +347,13 @@ class WorldSettingsTab:
         self._wl_lbl2.redraw()
         self._wl_bs.configure(text=t("world.save_rules"))
         self._sub_tab_bar.relabel({"rules": self._rules_tab_label(), "gen": t("world.generation")})
-        self._wl_local_banner.configure(text=t("world.local_view_only_banner"))
+        self._wl_local_banner.set_text(t("world.local_view_only_banner"))
 
     def retheme(self):
         """主题切换时调用——这个横幅、以及 make_toolbar_label() 画的说明
         文字都是 __init__ 里建一次就不再重建，refresh() 不会碰它们的颜
         色，需要显式重新上色/重画。_sub_tab_bar 同理。"""
-        self._wl_local_banner.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+        self._wl_local_banner.apply_theme()
         self._wl_lbl2.redraw()
         self._redraw_wl_info()
         self._sub_tab_bar.apply_theme()

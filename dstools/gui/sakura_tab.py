@@ -24,6 +24,7 @@ from dstools.core.resource_paths import bundled_resource_dir, cache_dir
 from dstools.core.token_manager import is_valid_token, mask_token
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
+from dstools.gui.dialog_geometry import center_over_parent
 from dstools.gui.local_service_tab import _RUNNING_LIKE
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.gui.tooltip import Tooltip
@@ -86,19 +87,8 @@ class _SakuraTokenInputDialog:
         win.bind("<Escape>", lambda e: self._cancel())
         win.protocol("WM_DELETE_WINDOW", self._cancel)
 
-        # 窗口尺寸让 Tk 自己按实际内容算（不再写死 WIN_W/WIN_H）——高 DPI
-        # 缩放下同样的控件/字体需要更多逻辑像素才放得下，固定像素尺寸在
-        # 缩放比例较高时会把按钮之类的内容挤没（真机反馈过 225% 缩放下
-        # 这个弹窗看不到"确认"/"取消"按钮，见 CLAUDE.md"弹窗尺寸"一节）。
-        win.update_idletasks()
-        w = max(500, win.winfo_reqwidth())
-        h = win.winfo_reqheight()
         root = parent_widget.winfo_toplevel()
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - w) // 2)
-        y = py + max(0, (ph - h) // 2)
-        win.geometry(f"{w}x{h}+{x}+{y}")
+        center_over_parent(win, root, min_width=500)
 
         win.transient(root)
         win.deiconify()
@@ -173,13 +163,8 @@ class _NodeSelectDialog:
 
         content_h = grid_frame.winfo_reqheight() + 20  # + canvas 的 pady
         WIN_H = min(MAX_WIN_H, max(160, content_h))
-        win.update_idletasks()
         root = parent_widget.winfo_toplevel()
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - WIN_W) // 2)
-        y = py + max(0, (ph - WIN_H) // 2)
-        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        center_over_parent(win, root, width=WIN_W, height=WIN_H)
 
         win.transient(root)
         win.deiconify()

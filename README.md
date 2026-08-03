@@ -9,7 +9,7 @@
 启动/停止服务器、存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、
 樱花内网穿透联机、LuaJIT 性能补丁一键安装，覆盖开服/维护的日常操作。
 同时支持**Steam 版和 WeGame 版**存档，
-提供 CLI与 Tkinter GUI 双形态，可以打包成单文件 `DSTCamp.exe`。
+基于 Tkinter 打造的图形界面，可以打包成单文件 `DSTCamp.exe`。
 
 ## 安装
 
@@ -22,43 +22,6 @@ pip install -e .
 ```bash
 python scripts/build_exe.py
 # 产物：dist/DSTCamp.exe
-```
-
-## CLI 使用
-
-```bash
-# 查看环境信息
-dst env info
-
-# 列出存档
-dst save list --cluster Cluster_3
-
-# 查看存档详情
-dst save info 5A1B35DD180DA49E --cluster Cluster_3
-
-# 列出 Mod
-dst mod list --cluster Cluster_3
-dst mod list --cluster Cluster_3 --shard Caves
-
-# 查看 Mod 配置
-dst mod info workshop-1289779251 --cluster Cluster_3
-
-# 启用/禁用 Mod
-dst mod enable workshop-378160973 --cluster Cluster_3
-dst mod disable workshop-378160973 --cluster Cluster_3 --all-shards
-
-# 修改 Mod 配置
-dst mod config set workshop-1289779251 language "en" --cluster Cluster_3
-dst mod config get workshop-1289779251 language --cluster Cluster_3
-
-# 同步 Mod 配置
-dst mod sync --from-cluster Cluster_3 --to-cluster Cluster_1
-
-# 管理服务器配置
-dst cluster list
-dst cluster info --cluster Cluster_3
-dst cluster config get GAMEPLAY max_players --cluster Cluster_3
-dst cluster config set GAMEPLAY max_players 8 --cluster Cluster_3
 ```
 
 ## GUI 使用
@@ -126,7 +89,7 @@ python scripts/run_gui.py
 
 ```
 dstools/          # 核心包：core/（无 GUI 依赖的纯逻辑）、gui/（Tkinter 界面）、
-                  # i18n/（中英文文案）、cli/（命令行）
+                  # i18n/（中英文文案）
 scripts/          # 开发/打包用脚本
 tests/            # 自动化测试脚本（见下方"测试"一节）
 icons/            # 只读素材：世界设置图标、UI 图标、app 图标

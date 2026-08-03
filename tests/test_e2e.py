@@ -399,15 +399,6 @@ def test_config_manager():
         print("  PASS: Read back cluster.ini preserves values")
 
 
-def test_cli_import():
-    """Test that CLI module imports correctly."""
-    print("\n" + "=" * 60)
-    print("Test 10: CLI Import")
-    from dstools.cli.main import cli
-    assert cli is not None
-    print("  PASS: CLI module imports successfully")
-
-
 def test_list_session_players():
     """Test per-player character save discovery/parsing under a session dir."""
     print("\n" + "=" * 60)
@@ -1653,7 +1644,6 @@ def main():
         test_save_reader,
         test_mod_manager,
         test_config_manager,
-        test_cli_import,
         test_list_session_players,
         test_character_names,
         test_character_icons,

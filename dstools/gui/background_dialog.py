@@ -5,6 +5,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from dstools.gui import theme
+from dstools.gui.dialog_geometry import center_over_parent
 from dstools.gui.slider import Slider
 from dstools.i18n import t
 
@@ -88,15 +89,7 @@ class BackgroundImageDialog:
         win.bind("<Return>", lambda e: win.destroy())
         win.bind("<Escape>", lambda e: win.destroy())
 
-        win.update_idletasks()
-        w = max(360, win.winfo_reqwidth())
-        h = win.winfo_reqheight()
-        root = self.app.root
-        px, py = root.winfo_rootx(), root.winfo_rooty()
-        pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - w) // 2)
-        y = py + max(0, (ph - h) // 2)
-        win.geometry(f"{w}x{h}+{x}+{y}")
+        center_over_parent(win, self.app.root, min_width=360)
 
         win.transient(parent_widget.winfo_toplevel())
         win.deiconify()

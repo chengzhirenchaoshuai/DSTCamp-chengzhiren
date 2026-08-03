@@ -12,6 +12,56 @@ from dstools.gui import theme
 from dstools.gui.bg_frame import BgFrame
 
 
+class ReadonlyBanner:
+    """"当前存档只读/需要额外设置"这类醒目提示条（黄底加粗），供各页签
+    共享——local_service_tab.py（本地存档/WeGame 手动启动提示/别的存档
+    还在跑）、mod_manager_tab.py（本地存档/WeGame 未设置目录）、
+    world_settings_tab.py（本地存档）原来各自手写了一份几乎逐字相同的
+    tk.Label 构造代码（一次代码审查扫描确认过），现在统一收进这一个类。
+
+    **硬性规则：只能用 show()/hide()，不要自己再手写 pack()/pack_forget()
+    ——show() 内部固定用 pack(side=tk.BOTTOM, ...)，不能改成
+    pack(before=其它容器)**：这条提示显示/隐藏时如果插到别的容器"前面"，
+    会让下面那些用 BgFrame 裁剪共享背景图的控件跟着整体挪位置，但裁剪
+    区域不会跟着重新计算，真机验证过这会导致背景图错位（CLAUDE.md"背
+    景图"一节有记录）。side=tk.BOTTOM 只在页签底部单独留一块给提示条，
+    不会牵动上面任何控件的位置。这个坑之前在 3 个文件的 6 处提示条里出
+    现过 3 次（mod_manager_tab.py 两处、world_settings_tab.py 一处，还
+    有 local_service_tab.py 一处虽然文件顶部写了这条规则但自己漏改了）
+    ——统一封装之后不会再有第 4 处踩坑的机会。
+    """
+
+    def __init__(self, parent, text: str = "", on_click=None, justify=tk.LEFT):
+        kwargs = {"cursor": "hand2"} if on_click is not None else {}
+        self.label = tk.Label(parent, text=text, bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
+                               font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
+                               anchor=tk.W, padx=10, pady=6, justify=justify, **kwargs)
+        if on_click is not None:
+            self.label.bind("<Button-1>", lambda e: on_click())
+
+    def show(self) -> None:
+        self.label.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(5, 0))
+
+    def hide(self) -> None:
+        self.label.pack_forget()
+
+    def set_text(self, text: str) -> None:
+        self.label.configure(text=text)
+
+    def set_wraplength(self, px: int) -> None:
+        """给需要跟着容器宽度动态换行的提示条用（比如
+        local_service_tab.py 的 WeGame 提示条，跟着 left 面板宽度走，见
+        _resize_wegame_banner()）——固定 wraplength 会在正常窗口宽度下
+        把较长的说明文字挤成好几行。"""
+        self.label.configure(wraplength=max(150, px))
+
+    def apply_theme(self) -> None:
+        """主题切换后重新上色——跟其它手写 tk.Label 的地方一样，ttk 主题
+        切换不会自动波及 tk.Label，需要每个用到 BANNER_BG/BANNER_TEXT 的
+        地方各自重新 configure 一次。"""
+        self.label.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+
+
 def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None,
                         side=tk.LEFT, anchor=tk.W) -> BgFrame:
     """在工具栏行(BgFrame)里插入一小块只画一行说明文字的子画布，跟其它
