@@ -6,7 +6,7 @@ instead of a plain ttk.Checkbutton.
 
 import tkinter as tk
 
-from dstools.gui import theme
+from dstools.shared.gui import theme
 
 _OFF_COLOR = "#bdbdbd"
 

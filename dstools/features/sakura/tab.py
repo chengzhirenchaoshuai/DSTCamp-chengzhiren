@@ -14,21 +14,21 @@ import tkinter as tk
 import webbrowser
 from tkinter import font as tkfont, ttk
 
-from dstools.core import app_settings
+from dstools.shared import app_settings
 from dstools.features.sakura import api as sakura_frp
 from dstools.features.cluster_config.config_manager import (
     get_cluster_option, get_shard_option, load_cluster_config, load_shard_config,
     save_shard_config, set_shard_option,
 )
 from dstools.features.sakura.frpc import FrpcManager
-from dstools.core.resource_paths import bundled_resource_dir, cache_dir
-from dstools.core.token_manager import is_valid_token, mask_token
-from dstools.gui import theme, themed_dialog as dlg
-from dstools.gui.bg_frame import BgFrame
-from dstools.gui.dialog_geometry import center_over_parent
+from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
+from dstools.shared.token_manager import is_valid_token, mask_token
+from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.features.local_service.tab import _RUNNING_LIKE
-from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
-from dstools.gui.tooltip import Tooltip
+from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
+from dstools.shared.gui.tooltip import Tooltip
 from dstools.i18n import t
 from dstools.models import SaveSource
 

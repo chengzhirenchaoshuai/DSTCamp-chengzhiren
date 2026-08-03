@@ -14,11 +14,11 @@ icons are drawn natively at that size instead of being raster-upscaled.
 
 from PIL import Image, ImageDraw
 
-from dstools.core.resource_paths import bundled_resource_dir
+from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.features.world.icons import get_pil_icon
 from dstools.features.world.value_sets import DEFAULT_SET, get_value_set
-from dstools.gui import theme
-from dstools.gui.fonts import get_font
+from dstools.shared.gui import theme
+from dstools.shared.gui.fonts import get_font
 from dstools.i18n import get_lang, t
 
 BASE_REF_WIDTH = 1300

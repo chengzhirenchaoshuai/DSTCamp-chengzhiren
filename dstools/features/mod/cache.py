@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from dstools.features.mod.parser import ModConfigOption
-from dstools.core.resource_paths import cache_dir
+from dstools.shared.resource_paths import cache_dir
 
 _CACHE_DIR = cache_dir("mod_full_resolve")
 

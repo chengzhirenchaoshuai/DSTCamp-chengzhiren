@@ -15,7 +15,7 @@ from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.features.local_service import luajit_injector
-from dstools.core.app_settings import (
+from dstools.shared.app_settings import (
     get_backup_auto_enabled, get_backup_interval_minutes, set_dedicated_server_path,
 )
 from dstools.features.local_service.backup_manager import create_backup
@@ -26,13 +26,13 @@ from dstools.features.local_service.dedicated_server import (
     is_valid_install_dir, resolve_conf_dir_arg,
 )
 from dstools.features.mod.parser import find_shared_ugc_directory
-from dstools.core.token_manager import is_valid_token, read_token
-from dstools.gui import theme, themed_dialog as dlg
-from dstools.gui.bg_frame import BgFrame
-from dstools.gui.dialog_geometry import center_over_parent
-from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
-from dstools.gui.toolbar_widgets import ReadonlyBanner
-from dstools.gui.tooltip import Tooltip
+from dstools.shared.token_manager import is_valid_token, read_token
+from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui.dialog_geometry import center_over_parent
+from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
+from dstools.shared.gui.toolbar_widgets import ReadonlyBanner
+from dstools.shared.gui.tooltip import Tooltip
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
@@ -92,7 +92,7 @@ class _RollbackDialog:
     钮铺成的方阵会占掉一整个屏幕，下拉框不管选项多少都是同样大小。"""
 
     def __init__(self, parent_widget, tab, cluster, max_days):
-        from dstools.gui.menu_combo import MenuCombo
+        from dstools.shared.gui.menu_combo import MenuCombo
         self.tab = tab
         self.cluster = cluster
         self._parent = parent_widget

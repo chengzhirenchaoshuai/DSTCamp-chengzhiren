@@ -6,7 +6,7 @@ Reads .meta files and save session directories to extract world information
 
 from pathlib import Path
 
-from dstools.core.lua_parser import LuaParseError, parse_lua_file, parse_lua_table
+from dstools.shared.lua_parser import LuaParseError, parse_lua_file, parse_lua_table
 from dstools.models import PlayerCharacterSave, SaveMetadata, SaveSession, SaveSlot, SaveSource
 
 

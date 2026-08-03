@@ -8,7 +8,7 @@ from tkinter import font as tkfont, ttk
 from PIL import ImageTk
 
 from dstools import __version__
-from dstools.core.app_settings import (
+from dstools.shared.app_settings import (
     get_theme_name, set_theme_name,
     get_minimize_on_close, set_minimize_on_close,
     get_cache_use_exe_dir, set_cache_use_exe_dir,
@@ -17,20 +17,20 @@ from dstools.core.app_settings import (
     get_last_platform, set_last_platform,
     get_last_cluster_path, set_last_cluster_path,
 )
-from dstools.core.custom_background import get_custom_bg_path, render_background
-from dstools.core.discovery import discover_environment
-from dstools.core.update_check import check_latest_version, is_newer_version
-from dstools.gui import theme, themed_dialog as dlg
-from dstools.gui.background_dialog import BackgroundImageDialog
-from dstools.gui.bg_frame import BgFrame
-from dstools.gui.card_frame import CardFrame
+from dstools.shared.custom_background import get_custom_bg_path, render_background
+from dstools.shared.discovery import discover_environment
+from dstools.shared.update_check import check_latest_version, is_newer_version
+from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui.background_dialog import BackgroundImageDialog
+from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui.card_frame import CardFrame
 from dstools.features.cluster_config.tab import ClusterConfigTab
-from dstools.gui.cluster_select import cluster_label as _cluster_label
-from dstools.gui.dialog_geometry import center_over_parent
+from dstools.shared.gui.cluster_select import cluster_label as _cluster_label
+from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.features.local_service.tab import LocalServiceTab
-from dstools.gui.menu_combo import MenuCombo
+from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.features.mod.tab import ModManagerTab
-from dstools.gui.pill_tabs import PillTabBar
+from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.features.sakura.tab import SakuraTab
 from dstools.features.save_browser.tab import SaveBrowserTab
 from dstools.features.world.tab import WorldSettingsTab
@@ -56,12 +56,12 @@ class DSToolsApp:
         # the process as DPI-unaware and bitmap-stretches the whole window
         # to the display's scale factor, which looks blurry everywhere
         # (not just PIL-rendered panels).
-        from dstools.gui.win_aspect_lock import set_process_dpi_aware
+        from dstools.shared.gui.win_aspect_lock import set_process_dpi_aware
         set_process_dpi_aware()
 
         self.root = tk.Tk()
         self.root.title(t("app.title"))
-        from dstools.core.resource_paths import bundled_resource_dir
+        from dstools.shared.resource_paths import bundled_resource_dir
         _icon_dir = bundled_resource_dir() / "icons" / "app"
         try:
             self.root.iconbitmap(default=str(_icon_dir / "icon.ico"))
@@ -99,7 +99,7 @@ class DSToolsApp:
         # Windows 不会再对这个窗口发 WM_SIZING，AspectLock 从此不再对
         # root 生效（也就不再调用），宽高比锁定改成
         # custom_titlebar.ResizeGrips 里同一套数学重新算一遍。
-        from dstools.gui import custom_titlebar
+        from dstools.shared.gui import custom_titlebar
         custom_titlebar.apply_borderless_style(self.root)
 
         self.style = ttk.Style(); self.style.theme_use("clam")
@@ -391,7 +391,7 @@ class DSToolsApp:
         # 主线程）。注意：标题栏"最小化"按钮不会触碰这个类——那是 Windows
         # 自己处理的普通最小化到任务栏，跟托盘图标是否常驻是两件独立的
         # 事，不要在 <Unmap> 上接一个"最小化=进托盘"的分支。
-        from dstools.gui.tray_icon import TrayIcon
+        from dstools.shared.gui.tray_icon import TrayIcon
         self._tray = TrayIcon(
             icon_image_path=str(_icon_dir / "icon.png"),
             tooltip=t("app.title"),
@@ -573,7 +573,7 @@ class DSToolsApp:
         # custom_titlebar.restore_window() 两条路径都处理，见该函数说明。
         # 局部 import，理由跟 __init__/_switch_theme() 里那两处一样：避
         # 免非 Windows 平台在模块加载时就碰 ctypes.windll。
-        from dstools.gui import custom_titlebar
+        from dstools.shared.gui import custom_titlebar
         custom_titlebar.restore_window(self.root)
 
     def _do_exit(self):
@@ -656,7 +656,7 @@ class DSToolsApp:
         里是标题栏按钮点击触发的普通 Tk 回调，运行在 Tk 主线程上，跟钩
         子内部是完全不相干的两条路径，不存在触发那个已知崩溃
         （PyEval_RestoreThread: GIL not held）的风险。"""
-        from dstools.gui import custom_titlebar
+        from dstools.shared.gui import custom_titlebar
 
         if self._is_pseudo_maximized:
             if self._pre_maximize_geom is not None:
@@ -885,7 +885,7 @@ class DSToolsApp:
         # 了）。同 __init__ 里的调用点——theme.apply_theme() 会冲掉
         # WS_EX_APPWINDOW，见 custom_titlebar.ensure_taskbar_visible()
         # 的说明，切主题时也要重新找补一遍。
-        from dstools.gui import custom_titlebar
+        from dstools.shared.gui import custom_titlebar
         custom_titlebar.ensure_taskbar_visible(self.root)
         self._titlebar.apply_theme(bg=theme.CARD_BG)
         self._build_menu()
@@ -1302,7 +1302,7 @@ class DSToolsApp:
         目录可能还没创建过），先建好再打开，不让用户对着一个"找不到该
         文件"的系统错误弹窗摸不着头脑。"""
         import os
-        from dstools.core.resource_paths import cache_root_dir
+        from dstools.shared.resource_paths import cache_root_dir
         d = cache_root_dir()
         d.mkdir(parents=True, exist_ok=True)
         os.startfile(str(d))

@@ -9,7 +9,7 @@ only does raw Lua I/O.
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dstools.core.lua_parser import parse_lua_file
+from dstools.shared.lua_parser import parse_lua_file
 
 
 # ── World data model ───────────────────────────────────────────────────
@@ -81,8 +81,8 @@ def save_leveldata(preset: WorldPreset, path: Path) -> None:
         preset: The WorldPreset with potentially modified overrides.
         path: Destination file path.
     """
-    from dstools.core.lua_parser import parse_lua_file
-    from dstools.core.lua_parser import serialize_lua_table
+    from dstools.shared.lua_parser import parse_lua_file
+    from dstools.shared.lua_parser import serialize_lua_table
 
     # Read original file to preserve structure
     if path.exists():

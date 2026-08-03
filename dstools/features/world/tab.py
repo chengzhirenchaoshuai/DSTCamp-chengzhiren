@@ -4,11 +4,11 @@ import tkinter as tk
 from tkinter import font as tkfont, ttk
 
 from dstools.features.world.reader import parse_leveldata, save_leveldata
-from dstools.gui import theme, themed_dialog as dlg
-from dstools.gui.bg_frame import BgFrame
-from dstools.gui.menu_combo import MenuCombo
-from dstools.gui.pill_tabs import PillTabBar
-from dstools.gui.toolbar_widgets import ReadonlyBanner, make_toolbar_label
+from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui.menu_combo import MenuCombo
+from dstools.shared.gui.pill_tabs import PillTabBar
+from dstools.shared.gui.toolbar_widgets import ReadonlyBanner, make_toolbar_label
 from dstools.i18n import t
 from dstools.models import SaveSource
 
@@ -97,7 +97,7 @@ class WorldSettingsTab:
         self._sub_content = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._sub_content.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0,5))
 
-        from dstools.gui.image_scroll import ImageScrollPanel
+        from dstools.shared.gui.image_scroll import ImageScrollPanel
         from dstools.features.world.render import REF_WIDTH
 
         self._rules_panel = ImageScrollPanel(self._sub_content, ref_width=REF_WIDTH, bg=theme.CARD_BG)

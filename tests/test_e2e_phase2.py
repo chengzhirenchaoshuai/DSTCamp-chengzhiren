@@ -126,7 +126,7 @@ def test_gui_imports():
     from dstools.features.mod.tab import ModManagerTab
     from dstools.features.cluster_config.tab import ClusterConfigTab
     assert DSToolsApp and ModManagerTab and ClusterConfigTab
-    from dstools.gui.theme import SERVER_COLOR
+    from dstools.shared.gui.theme import SERVER_COLOR
     assert SERVER_COLOR == "#2e7d32"
     print(f"  PASS: GUI imports OK")
 
@@ -134,7 +134,7 @@ def test_gui_imports():
     # Windows 平台在模块加载时就碰 ctypes.windll），这里单独补一次模块级
     # 可导入性检查——否则这个文件里的语法错误/ctypes 符号错误只有真正启
     # 动一次 GUI 才会暴露。
-    import dstools.gui.custom_titlebar as custom_titlebar
+    import dstools.shared.gui.custom_titlebar as custom_titlebar
     assert hasattr(custom_titlebar, "apply_borderless_style")
     assert hasattr(custom_titlebar, "ResizeGrips")
     assert hasattr(custom_titlebar, "CustomTitleBar")

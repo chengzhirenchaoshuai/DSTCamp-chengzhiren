@@ -13,10 +13,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from dstools.core.atlas_utils import crop_by_uv, parse_atlas_xml
+from dstools.shared.atlas_utils import crop_by_uv, parse_atlas_xml
 from dstools.features.mod.parser import ModInfo
-from dstools.core.resource_paths import cache_dir
-from dstools.core.tex_convert import tex_to_png
+from dstools.shared.resource_paths import cache_dir
+from dstools.shared.tex_convert import tex_to_png
 from dstools.models import Platform
 
 

@@ -5,8 +5,8 @@
   运行时就在仓库里，PyInstaller `--onefile` 打包后会解压到
   `sys._MEIPASS`——每次启动都重新解压、退出后就清掉的临时目录，只读
   用途完全够用。
-- 运行时缓存（mod 图标、角色头像，见 core/mod_icons.py、
-  core/character_icons.py）如果也放进 `sys._MEIPASS`，写下去的文件在
+- 运行时缓存（mod 图标、角色头像，见 features/mod/icons.py、
+  features/save_browser/character_icons.py）如果也放进 `sys._MEIPASS`，写下去的文件在
   下次启动、_MEIPASS 换成新的临时目录后就会消失——缓存等于每次启动都
   失效，白白重新跑一遍 ktech.exe。这类数据必须放在一个跟 exe 生命周期
   无关、持久存在的位置，复用 app_settings.py 已经在用的
@@ -16,7 +16,7 @@
 import sys
 from pathlib import Path
 
-from dstools.core.app_settings import get_settings_dir
+from dstools.shared.app_settings import get_settings_dir
 
 
 def bundled_resource_dir() -> Path:
@@ -44,7 +44,7 @@ def cache_root_dir() -> Path:
     录"后改成 exe_dir()/cache/。`cache_dir(name)` 在这基础上再拼一层
     具体子目录；"文件"菜单"打开缓存目录"这类需要拿到整棵缓存目录（而
     不是某一个具体子目录）的地方用这个。"""
-    from dstools.core.app_settings import get_cache_use_exe_dir
+    from dstools.shared.app_settings import get_cache_use_exe_dir
     return exe_dir() / "cache" if get_cache_use_exe_dir() else get_settings_dir() / "cache"
 
 

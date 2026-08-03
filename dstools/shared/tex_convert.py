@@ -44,7 +44,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from dstools.core.resource_paths import bundled_resource_dir
+from dstools.shared.resource_paths import bundled_resource_dir
 
 _TOOLS_DIR = bundled_resource_dir() / "tools" / "ktools"
 _KTECH_EXE = _TOOLS_DIR / "ktech.exe"

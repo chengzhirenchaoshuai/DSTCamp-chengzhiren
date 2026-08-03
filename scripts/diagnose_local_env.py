@@ -12,8 +12,8 @@ import sys
 # 才能 import dstools。
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dstools.core.lua_parser import parse_lua_file, serialize_lua_table, LuaTableParser
-from dstools.core.discovery import find_klei_root, discover_environment
+from dstools.shared.lua_parser import parse_lua_file, serialize_lua_table, LuaTableParser
+from dstools.shared.discovery import find_klei_root, discover_environment
 from dstools.features.save_browser.reader import (
     list_save_sessions, get_save_summary, list_session_players,
 )

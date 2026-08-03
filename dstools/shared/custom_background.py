@@ -12,8 +12,8 @@ from pathlib import Path
 
 from PIL import Image
 
-from dstools.core.app_settings import get_custom_bg_filename, set_custom_bg_filename
-from dstools.core.resource_paths import cache_dir
+from dstools.shared.app_settings import get_custom_bg_filename, set_custom_bg_filename
+from dstools.shared.resource_paths import cache_dir
 
 _CACHE_NAME = "background"
 

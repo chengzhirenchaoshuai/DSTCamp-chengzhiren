@@ -12,12 +12,12 @@ that keeps every call site a plain `theme.PRIMARY` instead of
 `theme.palette()["PRIMARY"]` everywhere. The one rule this imposes on every
 other gui/ file: colors must be read as `theme.PRIMARY` at the point they're
 *used* (inside a function/method body), never copied into a separate name
-at import time (`from dstools.gui.theme import PRIMARY` or
+at import time (`from dstools.shared.gui.theme import PRIMARY` or
 `_MY_COLOR = theme.PRIMARY` at module scope) -- a plain Python name binding
 freezes whatever value `theme.PRIMARY` held at that instant, and `set_theme()`
 reassigning `theme.py`'s own globals later has no way to reach into some
 other module's already-bound local name. This bit DSToolsApp.py once (it
-used to `from dstools.gui.theme import ERROR, HEADING, ...`) and a handful
+used to `from dstools.shared.gui.theme import ERROR, HEADING, ...`) and a handful
 of gui/ modules that cached derived colors as module constants
 (toggle_switch.py, mod_render.py, world_render.py, themed_dialog.py,
 local_service_tab.py) -- all fixed to read `theme.X` live instead.
@@ -45,7 +45,7 @@ from tkinter import ttk
 
 from PIL import Image, ImageDraw, ImageTk
 
-from dstools.core.app_settings import get_theme_name
+from dstools.shared.app_settings import get_theme_name
 
 # ── Named palettes ───────────────────────────────────────────────────────
 # "gray"（灰色，默认）+ 四套纯色主题：mint（薄荷绿）/twilight（暮色蓝）/

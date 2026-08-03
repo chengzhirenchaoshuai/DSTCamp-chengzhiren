@@ -15,12 +15,12 @@ from dstools.features.cluster_config.config_manager import (
 from dstools.features.cluster_config.ini_field_info import (
     ALWAYS_READONLY_FIELDS, get_enum_choices, get_field_info, get_range_limits,
 )
-from dstools.core.token_manager import is_valid_token, mask_token, read_token, write_token
-from dstools.gui import theme, themed_dialog as dlg
-from dstools.gui.bg_frame import BgFrame
-from dstools.gui.dialog_geometry import center_over_parent
-from dstools.gui.menu_combo import MenuCombo
-from dstools.gui.pill_tabs import PillTabBar
+from dstools.shared.token_manager import is_valid_token, mask_token, read_token, write_token
+from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui.dialog_geometry import center_over_parent
+from dstools.shared.gui.menu_combo import MenuCombo
+from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.i18n import t
 from dstools.models import SaveSource
 
@@ -442,7 +442,7 @@ class ClusterConfigTab:
     _WRAPPED_TEXT_LINES = 3
 
     def _make_wrapped_text_row(self, parent, row, value):
-        from dstools.gui.tooltip import Tooltip
+        from dstools.shared.gui.tooltip import Tooltip
         # width 和其他行的 Entry(width=38) 保持一致，视觉上对齐成一列。
         text_widget = tk.Text(parent, width=38, height=self._WRAPPED_TEXT_LINES,
                               wrap=tk.WORD, font=self._ROW_VALUE_FONT)
@@ -453,8 +453,8 @@ class ClusterConfigTab:
         return _TextVar(text_widget)
 
     def _make_row(self, parent, section, key, value, row, readonly=False, tooltip=None):
-        from dstools.gui.toggle_switch import ToggleSwitch
-        from dstools.gui.tooltip import Tooltip
+        from dstools.shared.gui.toggle_switch import ToggleSwitch
+        from dstools.shared.gui.tooltip import Tooltip
         # The label column (0) stays its natural width; the field column
         # (1) gets the weight so Entry/Combobox/Text actually grow to fill
         # whatever extra width the window/card has, instead of staying at

@@ -11,13 +11,13 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dstools.core.lua_parser import (
+from dstools.shared.lua_parser import (
     LuaTableParser,
     parse_lua_table,
     serialize_lua_table,
     parse_lua_file,
 )
-from dstools.core.ini_parser import (
+from dstools.shared.ini_parser import (
     parse_cluster_ini,
     parse_server_ini,
     write_cluster_ini,
@@ -36,7 +36,7 @@ from dstools.features.mod.manager import (
     diff_mods,
     sync_mods,
 )
-from dstools.core.discovery import find_klei_root, discover_environment
+from dstools.shared.discovery import find_klei_root, discover_environment
 from dstools.features.save_browser.reader import list_save_sessions, get_save_summary, list_session_players
 from dstools.features.cluster_config.config_manager import (
     set_cluster_option, backfill_cluster_defaults,
@@ -44,7 +44,7 @@ from dstools.features.cluster_config.config_manager import (
 )
 from dstools.features.save_browser.character_names import get_character_display_name
 from dstools.features.save_browser.character_icons import find_mod_character_name, resolve_character
-from dstools.core.app_settings import (
+from dstools.shared.app_settings import (
     load_settings, save_settings, get_player_note, set_player_note,
     get_minimize_on_close, set_minimize_on_close,
     get_cache_use_exe_dir, set_cache_use_exe_dir,
@@ -55,12 +55,12 @@ from dstools.features.local_service.backup_manager import backup_dir, create_bac
 from dstools.models import SaveSession, SaveSource
 from dstools.features.mod.parser import parse_modinfo, visible_config_options
 from dstools.features.cluster_config.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
-from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
+from dstools.shared.token_manager import read_token, write_token, mask_token, is_valid_token
 from dstools.features.mod.backup_utils import backup_file, _prune_old_backups
 from dstools.features.sakura.api import find_dstcamp_tunnel, sanitize_tunnel_name
 from dstools.features.sakura.frpc import FrpcManager
-from dstools.core.app_settings import get_sakura_token, set_sakura_token
-from dstools.core.app_settings import get_luajit_enabled, set_luajit_enabled
+from dstools.shared.app_settings import get_sakura_token, set_sakura_token
+from dstools.shared.app_settings import get_luajit_enabled, set_luajit_enabled
 from dstools.features.save_browser.cluster_copy import (
     validate_cluster_folder_name, suggest_new_cluster_name, copy_local_cluster_to_server,
 )
@@ -71,7 +71,7 @@ from dstools.features.local_service.luajit_injector import (
     is_workshop_subscribed, needs_regeneration, plan_install, read_marker, regenerate,
     resolve_launch_bin64_dir, write_marker,
 )
-from dstools.core.steam_discovery import parse_library_folders, read_game_version_file
+from dstools.shared.steam_discovery import parse_library_folders, read_game_version_file
 
 
 @contextlib.contextmanager
@@ -84,14 +84,14 @@ def _isolated_settings_dir():
     过，不需要指望 finally 里的恢复逻辑生效。
 
     要打两个补丁，不是一个：resource_paths.py 是用
-    `from dstools.core.app_settings import get_settings_dir` 把函数抄
+    `from dstools.shared.app_settings import get_settings_dir` 把函数抄
     了一份到自己的模块命名空间里，只改 app_settings 模块自己的属性，
     resource_paths.cache_dir() 用的还是抄过去的那份旧引用——两个模块
     各自的 `get_settings_dir` 名字都要替换掉才能让 load_settings()/
     save_settings()（走 app_settings 自己那份）和 cache_dir()（走
     resource_paths 抄的那份）同时生效。"""
-    import dstools.core.app_settings as app_settings
-    import dstools.core.resource_paths as resource_paths
+    import dstools.shared.app_settings as app_settings
+    import dstools.shared.resource_paths as resource_paths
 
     original_in_app_settings = app_settings.get_settings_dir
     original_in_resource_paths = resource_paths.get_settings_dir
@@ -930,7 +930,7 @@ def test_theme_set_theme():
     print("\n" + "=" * 60)
     print("Test 22: Theme Live Switch")
 
-    from dstools.gui import theme
+    from dstools.shared.gui import theme
 
     original_primary = theme.PRIMARY
     try:
@@ -997,7 +997,7 @@ def test_custom_background():
 
     from PIL import Image
 
-    from dstools.core.custom_background import _center_crop_to_ratio, render_background
+    from dstools.shared.custom_background import _center_crop_to_ratio, render_background
 
     # 宽图裁窄比例：裁掉左右两侧，裁完的宽高比必须刚好等于目标比例
     # （不是拉伸变形出来的），且没有超出原图尺寸。

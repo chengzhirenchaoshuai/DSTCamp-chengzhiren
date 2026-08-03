@@ -10,9 +10,9 @@ ImageScrollPanel to hit-test.
 
 from PIL import Image, ImageDraw
 
-from dstools.core.resource_paths import bundled_resource_dir
-from dstools.gui import theme
-from dstools.gui.fonts import draw_mixed_text, get_font, measure_mixed
+from dstools.shared.resource_paths import bundled_resource_dir
+from dstools.shared.gui import theme
+from dstools.shared.gui.fonts import draw_mixed_text, get_font, measure_mixed
 from dstools.i18n import t
 
 # Real in-game default mod-icon background (images/ui.tex's "portrait_bg.tex"

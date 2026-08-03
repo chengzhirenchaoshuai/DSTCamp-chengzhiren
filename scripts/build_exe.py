@@ -76,7 +76,7 @@ def build():
         # still needs its own copy to read via resource_paths.bundled_
         # resource_dir()). All four runtime cache subfolders (mod_icons/
         # character_icons/mod_full_resolve/background -- see
-        # dstools/core/resource_paths.py's cache_dir()) live under
+        # dstools/shared/resource_paths.py's cache_dir()) live under
         # %APPDATA%/DSTCamp/cache/ instead, never under icons/, so there's
         # nothing cache-related to accidentally bundle here.
         # icons/app/ ships only icon.ico + icon.png -- the source PNG used
@@ -86,7 +86,7 @@ def build():
         f"--add-data={ui_icons_src}{sep}icons{os.sep}ui",
         f"--add-data={app_icons_src}{sep}icons{os.sep}app",
         # Bundled ktech.exe (tools/ktools/) used to convert mod icon
-        # textures -- see dstools/core/tex_convert.py.
+        # textures -- see dstools/shared/tex_convert.py.
         f"--add-data={tools_src}{sep}tools",
         # lupa ships several compiled Lua-version backends as separate
         # .pyd submodules (lua51/52/53/.../luajit); only lua51 is ever

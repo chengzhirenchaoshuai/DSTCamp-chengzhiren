@@ -13,23 +13,23 @@ from tkinter import font as tkfont, ttk
 
 from PIL import Image, ImageTk
 
-from dstools.core.app_settings import get_player_note, set_player_note
+from dstools.shared.app_settings import get_player_note, set_player_note
 from dstools.features.local_service.backup_manager import create_backup, get_backup_summary, list_backups, restore_backup
 from dstools.features.save_browser.character_icons import resolve_character
 from dstools.features.cluster_config.config_manager import load_cluster_config
 from dstools.features.cluster_config.ini_field_info import get_enum_choices
 from dstools.features.mod.manager import list_mods, load_mod_overrides
 from dstools.features.mod.parser import resolve_wegame_client_mods_dir
-from dstools.core.resource_paths import bundled_resource_dir
+from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.features.save_browser.reader import get_save_summary, list_save_sessions, list_session_players
-from dstools.gui import theme, themed_dialog as dlg
-from dstools.gui.bg_frame import BgFrame
-from dstools.gui.dialog_geometry import center_over_parent
+from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.features.local_service.tab import _RUNNING_LIKE
-from dstools.gui.menu_combo import MenuCombo
-from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
-from dstools.gui.toggle_switch import ToggleSwitch
-from dstools.gui.toolbar_widgets import make_toolbar_label
+from dstools.shared.gui.menu_combo import MenuCombo
+from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
+from dstools.shared.gui.toggle_switch import ToggleSwitch
+from dstools.shared.gui.toolbar_widgets import make_toolbar_label
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
@@ -252,7 +252,7 @@ class _BackupPolicyDialog:
     隔分钟数下一次轮询就会用新值。"""
 
     def __init__(self, parent_widget):
-        from dstools.core.app_settings import (
+        from dstools.shared.app_settings import (
             get_backup_auto_enabled, get_backup_interval_minutes, get_backup_retention,
             set_backup_auto_enabled, set_backup_interval_minutes, set_backup_retention,
         )

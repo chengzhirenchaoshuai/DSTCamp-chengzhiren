@@ -6,7 +6,7 @@ PNG icons are loaded from dstools/icons/world/ at runtime.
 from pathlib import Path
 from typing import Optional
 
-from dstools.core.resource_paths import bundled_resource_dir
+from dstools.shared.resource_paths import bundled_resource_dir
 
 # ── Icon directory ─────────────────────────────────────────────────────
 

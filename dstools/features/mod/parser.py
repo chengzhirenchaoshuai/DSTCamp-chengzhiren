@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from dstools.core.lua_parser import parse_lua_value
-from dstools.core.steam_discovery import find_all_steam_libraries
+from dstools.shared.lua_parser import parse_lua_value
+from dstools.shared.steam_discovery import find_all_steam_libraries
 from dstools.models import Platform
 
 # A double-quoted Lua string's contents: any char that isn't a quote/
@@ -351,7 +351,7 @@ def find_game_mods_dir() -> Path | None:
     find_dedicated_server_dir() 先查 get_dedicated_server_path() 是同一个
     "手动兜底"套路。没设置过/设置的路径不存在了才走自动识别。
     """
-    from dstools.core import app_settings
+    from dstools.shared import app_settings
     override = app_settings.get_steam_mods_path()
     if override and override.exists():
         return override
@@ -406,7 +406,7 @@ def resolve_wegame_client_mods_dir(platform: Platform) -> Path | None:
     "Mod管理"页签的"同步到服务器"按钮）。"""
     if platform != Platform.WEGAME:
         return None
-    from dstools.core.app_settings import get_wegame_root_path
+    from dstools.shared.app_settings import get_wegame_root_path
     root = get_wegame_root_path()
     if not root:
         return None

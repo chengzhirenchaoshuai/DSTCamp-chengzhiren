@@ -25,8 +25,8 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-from dstools.core.app_settings import get_backup_retention
-from dstools.core.discovery import list_shards
+from dstools.shared.app_settings import get_backup_retention
+from dstools.shared.discovery import list_shards
 
 _BACKUP_DIR_NAME = "dstcamp_backups"
 _SHARD_ITEMS = ("save", "modoverrides.lua", "leveldataoverride.lua", "server.ini")

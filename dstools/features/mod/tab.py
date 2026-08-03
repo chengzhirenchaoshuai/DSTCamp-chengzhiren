@@ -14,7 +14,7 @@ from typing import Any
 
 from PIL import Image
 
-from dstools.core import app_settings
+from dstools.shared import app_settings
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.dedicated_server import find_bin64_dir
 from dstools.features.mod.icons import get_mod_icon_path
@@ -26,12 +26,12 @@ from dstools.features.mod.parser import (
     resolve_wegame_client_mods_dir, visible_config_options,
 )
 from dstools.features.mod.sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync
-from dstools.gui import fonts, theme, themed_dialog as dlg
-from dstools.gui.bg_frame import BgFrame
-from dstools.gui.dialog_geometry import center_over_parent
-from dstools.gui.menu_combo import MenuCombo
-from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
-from dstools.gui.toolbar_widgets import ReadonlyBanner, make_filter_chips, make_toolbar_label
+from dstools.shared.gui import fonts, theme, themed_dialog as dlg
+from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui.dialog_geometry import center_over_parent
+from dstools.shared.gui.menu_combo import MenuCombo
+from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
+from dstools.shared.gui.toolbar_widgets import ReadonlyBanner, make_filter_chips, make_toolbar_label
 from dstools.i18n import t
 from dstools.models import ModEntry, Platform, SaveSource
 
@@ -129,7 +129,7 @@ class ModManagerTab:
         # 时置灰（见 on_cluster_changed）。
         self._md_sync = ttk.Button(sf, text=t("local.sync_mods_btn"), command=self._sync_mods_to_server)
         self._md_sync.pack(side=tk.LEFT, padx=(0,10))
-        from dstools.gui.tooltip import Tooltip
+        from dstools.shared.gui.tooltip import Tooltip
         Tooltip(self._md_sync, self._sync_button_hover_text)
         self._md_lbl2 = make_toolbar_label(sf, app, lambda: t("mod.shard"))
         self.shard_var = tk.StringVar(value="Master")
@@ -191,7 +191,7 @@ class ModManagerTab:
         self._md_wegame_banner = ReadonlyBanner(self.frame, text=t("mod.wegame_root_needed_banner"),
                                                  on_click=self._pick_wegame_root_and_reload)
 
-        from dstools.gui.image_scroll import ImageScrollPanel
+        from dstools.shared.gui.image_scroll import ImageScrollPanel
         from dstools.features.mod.render import REF_WIDTH
         self.list_panel = ImageScrollPanel(self.frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
         self.list_panel.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -712,7 +712,7 @@ class ModManagerTab:
 
     def _render_placeholder(self, text, ref_width=None):
         from PIL import Image as _Image, ImageDraw as _ImageDraw
-        from dstools.gui.fonts import get_font
+        from dstools.shared.gui.fonts import get_font
         from dstools.features.mod.render import REF_WIDTH
         w = ref_width or self.list_panel.current_width(REF_WIDTH)
         img = _Image.new("RGB", (w, 60), theme.CARD_BG)
@@ -1174,7 +1174,7 @@ class ModConfigDialog:
         # shown inline below that top line via _pack_option_desc(), with a
         # fixed 2-line reservation so rows with/without a hover still line
         # up close to consistently (see that function's docstring).
-        from dstools.gui.tooltip import Tooltip
+        from dstools.shared.gui.tooltip import Tooltip
         NAME_W_PX = 520
         HEADER_W_PX = 900
         COMBO_CHARS = 26
@@ -1312,7 +1312,7 @@ class ModConfigDialog:
         # native WM_SIZING hook the main window uses -- otherwise dragging
         # a single edge stretches only width or only height and the fixed-
         # size rows end up surrounded by a lopsided amount of empty space.
-        from dstools.gui.win_aspect_lock import AspectLock
+        from dstools.shared.gui.win_aspect_lock import AspectLock
         self._aspect_lock = AspectLock(win, DIALOG_W, DIALOG_H)
         self._aspect_lock.install()
 

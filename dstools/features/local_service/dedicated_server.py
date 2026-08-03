@@ -15,9 +15,9 @@ import time
 from enum import Enum
 from pathlib import Path
 
-from dstools.core import app_settings
+from dstools.shared import app_settings
 from dstools.features.cluster_config.config_manager import get_shard_option, load_shard_config
-from dstools.core.steam_discovery import find_all_steam_libraries
+from dstools.shared.steam_discovery import find_all_steam_libraries
 
 IS_WINDOWS = sys.platform == "win32"
 
