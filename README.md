@@ -88,8 +88,9 @@ python scripts/run_gui.py
 ## 项目结构
 
 ```
-dstools/          # 核心包：core/（无 GUI 依赖的纯逻辑）、gui/（Tkinter 界面）、
-                  # i18n/（中英文文案）
+dstools/          # 核心包：gui/app.py（主窗口）、features/（按功能分包，每个包
+                  # 装同一功能的逻辑+界面代码）、shared/（跨功能复用的基础设施，
+                  # shared/gui/ 是通用 Tkinter 控件）、i18n/（中英文文案）
 scripts/          # 开发/打包用脚本
 tests/            # 自动化测试脚本（见下方"测试"一节）
 icons/            # 只读素材：世界设置图标、UI 图标、app 图标
