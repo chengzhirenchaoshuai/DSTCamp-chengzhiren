@@ -2,7 +2,7 @@
 
 Parses world generation presets and override settings. Chinese names,
 categories, ordering and icons are resolved separately by
-dstools.core.world_categories / dstools.core.world_icons — this module
+dstools.features.world.categories / dstools.features.world.icons — this module
 only does raw Lua I/O.
 """
 

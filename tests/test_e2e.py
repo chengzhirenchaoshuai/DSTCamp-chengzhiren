@@ -961,7 +961,7 @@ def test_world_categories_bilingual():
     print("\n" + "=" * 60)
     print("Test 23: World Categories Bilingual")
 
-    from dstools.core.world_categories import get_setting_info, get_categories
+    from dstools.features.world.categories import get_setting_info, get_categories
     from dstools.i18n import get_lang, set_lang
 
     original_lang = get_lang()

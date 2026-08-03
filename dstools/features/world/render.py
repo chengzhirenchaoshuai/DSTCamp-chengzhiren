@@ -15,8 +15,8 @@ icons are drawn natively at that size instead of being raster-upscaled.
 from PIL import Image, ImageDraw
 
 from dstools.core.resource_paths import bundled_resource_dir
-from dstools.core.world_icons import get_pil_icon
-from dstools.core.world_value_sets import DEFAULT_SET, get_value_set
+from dstools.features.world.icons import get_pil_icon
+from dstools.features.world.value_sets import DEFAULT_SET, get_value_set
 from dstools.gui import theme
 from dstools.gui.fonts import get_font
 from dstools.i18n import get_lang, t
@@ -106,7 +106,7 @@ CAT_HEADER_ITEM_GAP = 16
 COLS = 3
 
 # Kept for backwards compatibility; the real per-key value sets now live in
-# dstools.core.world_value_sets (each key can have its own vocabulary --
+# dstools.features.world.value_sets (each key can have its own vocabulary --
 # cycling every key through this one list would silently corrupt settings
 # like season length or world size that don't use it).
 CYCLE_VALUES = DEFAULT_SET
