@@ -19,7 +19,7 @@ from dstools.core.app_settings import (
     get_backup_auto_enabled, get_backup_interval_minutes, set_dedicated_server_path,
 )
 from dstools.core.backup_manager import create_backup
-from dstools.core.config_manager import load_cluster_config, load_shard_config
+from dstools.features.cluster_config.config_manager import load_cluster_config, load_shard_config
 from dstools.core.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
     detect_external_shard_processes, find_bin64_dir, find_dedicated_server_dir,
@@ -258,7 +258,7 @@ class _ShardRow:
 class _AnnounceDialog:
     """"公告"输入框——不用 tkinter.simpledialog.askstring()：那是原生系
     统弹窗，窗口偏小，也不跟着当前主题走（永远是系统默认灰白配色）。
-    跟 _RollbackDialog、cluster_config_tab.py 的 _TokenInputDialog 同一
+    跟 _RollbackDialog、features/cluster_config/tab.py 的 _TokenInputDialog 同一
     套自绘 Toplevel 做法，配色套 theme.BG_SOFT，跟当前皮肤保持一致。"""
 
     def __init__(self, parent_widget):

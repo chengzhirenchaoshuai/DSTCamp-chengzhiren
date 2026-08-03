@@ -1,7 +1,7 @@
 """Toplevel 弹窗的居中定位——高 DPI 缩放安全，供全项目所有弹窗共用。
 
 之前这段逻辑在 themed_dialog.py/background_dialog.py/mod_sync_log_dialog.py/
-sakura_tab.py/save_browser_tab.py/local_service_tab.py/cluster_config_tab.py/
+sakura_tab.py/save_browser_tab.py/local_service_tab.py/features/cluster_config/tab.py/
 mod_manager_tab.py/app.py 里各自重复了一份（mod_manager_tab.py 甚至已经封
 装成方法 _center_over_parent，但只在本文件内复用），一次代码审查扫描确认
 了这一点。CLAUDE.md"弹窗尺寸与高 DPI 缩放"一节把 themed_dialog.py._show()

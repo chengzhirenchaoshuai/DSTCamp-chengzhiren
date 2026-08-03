@@ -124,7 +124,7 @@ def test_gui_imports():
     from dstools.gui.app import DSToolsApp
     from dstools.features.save_browser.tab import SaveBrowserTab
     from dstools.features.mod.tab import ModManagerTab
-    from dstools.gui.cluster_config_tab import ClusterConfigTab
+    from dstools.features.cluster_config.tab import ClusterConfigTab
     assert DSToolsApp and ModManagerTab and ClusterConfigTab
     from dstools.gui.theme import SERVER_COLOR
     assert SERVER_COLOR == "#2e7d32"

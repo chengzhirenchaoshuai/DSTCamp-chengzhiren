@@ -116,7 +116,7 @@ def get_backup_summary(zip_path: Path) -> dict:
     config_manager/save_reader 现成的读取逻辑，不重新写一遍解析代码，
     临时目录用完即删，不碰真实文件。解析失败的字段直接不出现在结果
     里，不擅自猜测。"""
-    from dstools.core.config_manager import load_cluster_config
+    from dstools.features.cluster_config.config_manager import load_cluster_config
     from dstools.features.save_browser.reader import get_save_summary, list_save_sessions
 
     info: dict = {}

@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from dstools.core.ini_field_info import CLUSTER_FIELD_INFO, NO_TYPE_COERCE_FIELDS
+from dstools.features.cluster_config.ini_field_info import CLUSTER_FIELD_INFO, NO_TYPE_COERCE_FIELDS
 from dstools.core.ini_parser import (
     parse_cluster_ini,
     parse_server_ini,

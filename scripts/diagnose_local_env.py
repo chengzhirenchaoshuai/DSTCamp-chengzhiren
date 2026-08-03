@@ -20,7 +20,7 @@ from dstools.features.save_browser.reader import (
 from dstools.features.save_browser.character_names import get_character_display_name, CHARACTER_NAMES
 from dstools.features.save_browser.character_icons import resolve_character
 from dstools.features.mod.manager import load_mod_overrides, list_mods
-from dstools.core.config_manager import load_cluster_config
+from dstools.features.cluster_config.config_manager import load_cluster_config
 
 # Find DST data
 klei_root = find_klei_root()

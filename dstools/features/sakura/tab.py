@@ -3,7 +3,7 @@
 器端口转发。
 
 跟"回档"（core/backup_manager.py 的 zip 备份）是完全独立的两回事，也跟本地
-`frpc.exe` 客户端进程管理（core/frpc_process.py）分工明确：本文件只管 UI +
+`frpc.exe` 客户端进程管理（features/sakura/frpc.py）分工明确：本文件只管 UI +
 编排 API 调用；隧道创建后"把远程端口回写进 server.ini"这一步，是让跨世界
 传送（Master<->Caves）能通过隧道正常工作的关键，见 _enable_mapping()。
 """
@@ -16,7 +16,7 @@ from tkinter import font as tkfont, ttk
 
 from dstools.core import app_settings
 from dstools.features.sakura import api as sakura_frp
-from dstools.core.config_manager import (
+from dstools.features.cluster_config.config_manager import (
     get_cluster_option, get_shard_option, load_cluster_config, load_shard_config,
     save_shard_config, set_shard_option,
 )
@@ -57,7 +57,7 @@ def _format_bytes_adaptive(num_bytes: float) -> str:
 
 
 class _SakuraTokenInputDialog:
-    """照抄 cluster_config_tab.py 的 _TokenInputDialog，只是校验/文案换成
+    """照抄 features/cluster_config/tab.py 的 _TokenInputDialog，只是校验/文案换成
     SakuraFrp API Token 自己的。"""
 
     def __init__(self, parent_widget, initial: str = ""):
@@ -332,7 +332,7 @@ class SakuraTab:
 
     def has_active_mapping(self, cluster, shard) -> bool:
         """零网络请求——只查本地缓存文件是否存在，供 _do_start_shard()/
-        cluster_config_tab.py 的只读判断在 Tk 主线程同步调用。"""
+        features/cluster_config/tab.py 的只读判断在 Tk 主线程同步调用。"""
         return self._frpc_pointer_path(cluster.path, shard.name).exists()
 
     def maybe_start_frpc(self, cluster, shard) -> None:
@@ -604,7 +604,7 @@ class SakuraTab:
         """饥荒的直连(c_connect)只能连主世界——副世界(Caves)不接受客户端
         直接连接，玩家下洞是靠游戏内部的世界跳转，不是靠另外拿一条直连
         地址。这里用 server.ini 里 [SHARD] is_master 判断，跟
-        cluster_config_tab.py 判断主/副世界用的是同一个字段，不用猜文件
+        features/cluster_config/tab.py 判断主/副世界用的是同一个字段，不用猜文件
         夹名字（比如 "Master"）。"""
         return load_shard_config(shard.path).shard.get("is_master", True)
 

@@ -16,8 +16,8 @@ from PIL import Image, ImageTk
 from dstools.core.app_settings import get_player_note, set_player_note
 from dstools.core.backup_manager import create_backup, get_backup_summary, list_backups, restore_backup
 from dstools.features.save_browser.character_icons import resolve_character
-from dstools.core.config_manager import load_cluster_config
-from dstools.core.ini_field_info import get_enum_choices
+from dstools.features.cluster_config.config_manager import load_cluster_config
+from dstools.features.cluster_config.ini_field_info import get_enum_choices
 from dstools.features.mod.manager import list_mods, load_mod_overrides
 from dstools.features.mod.parser import resolve_wegame_client_mods_dir
 from dstools.core.resource_paths import bundled_resource_dir
@@ -58,7 +58,7 @@ _DEFAULT_AVATAR_PATH = bundled_resource_dir() / "icons" / "ui" / "character_icon
 class _CopyToServerDialog:
     """"复制为服务器存档"点击后弹出的目标文件夹名输入框——只有一个字段
     （目标文件夹名，预填 cluster_copy.suggest_new_cluster_name 给的建
-    议值），跟 cluster_config_tab.py 的 _TokenInputDialog 同一个结构：宽
+    议值），跟 features/cluster_config/tab.py 的 _TokenInputDialog 同一个结构：宽
     Entry + 内联错误提示 + 确认/取消。校验（validate_cluster_folder_name
     + 目标是否已存在）由调用方（SaveBrowserTab._copy_to_server）在
     _confirm 里通过 validator 回调完成，不是这里自己判断——这样这个类不
@@ -558,7 +558,7 @@ class SaveBrowserTab:
 
     def on_cluster_changed(self, cluster=None):
         """顶部全局存档选择器变化时由 DSToolsApp 广播调用——跟
-        world_settings_tab.py/cluster_config_tab.py 是同一个接口约定。
+        world_settings_tab.py/features/cluster_config/tab.py 是同一个接口约定。
 
         存档概览（_refresh_env()）和会话详情（_on_shard_select() ->
         _refresh_saves()）合并成单页之后一起立即刷新——不再有"用户还没

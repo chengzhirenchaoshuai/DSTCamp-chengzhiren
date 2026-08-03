@@ -8,7 +8,7 @@ from configparser import ConfigParser
 from pathlib import Path
 from typing import Any
 
-from dstools.core.ini_field_info import NO_TYPE_COERCE_FIELDS
+from dstools.features.cluster_config.ini_field_info import NO_TYPE_COERCE_FIELDS
 from dstools.models import ClusterConfig, ShardConfig
 
 

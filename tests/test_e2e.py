@@ -38,7 +38,7 @@ from dstools.features.mod.manager import (
 )
 from dstools.core.discovery import find_klei_root, discover_environment
 from dstools.features.save_browser.reader import list_save_sessions, get_save_summary, list_session_players
-from dstools.core.config_manager import (
+from dstools.features.cluster_config.config_manager import (
     set_cluster_option, backfill_cluster_defaults,
     load_shard_config, save_shard_config, set_shard_option, get_shard_option,
 )
@@ -54,7 +54,7 @@ from dstools.core.app_settings import (
 from dstools.core.backup_manager import backup_dir, create_backup, restore_backup, list_backups
 from dstools.models import SaveSession, SaveSource
 from dstools.features.mod.parser import parse_modinfo, visible_config_options
-from dstools.core.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
+from dstools.features.cluster_config.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
 from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
 from dstools.features.mod.backup_utils import backup_file, _prune_old_backups
 from dstools.features.sakura.api import find_dstcamp_tunnel, sanitize_tunnel_name

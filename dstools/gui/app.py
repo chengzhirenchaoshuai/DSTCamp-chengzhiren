@@ -24,7 +24,7 @@ from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.background_dialog import BackgroundImageDialog
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.card_frame import CardFrame
-from dstools.gui.cluster_config_tab import ClusterConfigTab
+from dstools.features.cluster_config.tab import ClusterConfigTab
 from dstools.gui.cluster_select import cluster_label as _cluster_label
 from dstools.gui.dialog_geometry import center_over_parent
 from dstools.gui.local_service_tab import LocalServiceTab

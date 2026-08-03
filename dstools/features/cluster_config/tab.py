@@ -6,13 +6,13 @@ import re
 import tkinter as tk
 from tkinter import simpledialog, ttk
 
-from dstools.core.admin_manager import add_admin, read_adminlist, remove_admin
-from dstools.core.config_manager import (
+from dstools.features.cluster_config.admin_manager import add_admin, read_adminlist, remove_admin
+from dstools.features.cluster_config.config_manager import (
     backfill_cluster_defaults, load_cluster_config, load_shard_config,
     save_cluster_config, save_shard_config,
     set_cluster_option, set_shard_option,
 )
-from dstools.core.ini_field_info import (
+from dstools.features.cluster_config.ini_field_info import (
     ALWAYS_READONLY_FIELDS, get_enum_choices, get_field_info, get_range_limits,
 )
 from dstools.core.token_manager import is_valid_token, mask_token, read_token, write_token
