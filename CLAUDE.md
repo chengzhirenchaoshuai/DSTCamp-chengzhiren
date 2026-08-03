@@ -102,9 +102,28 @@ WeGame 的 `rail_apps` 安装根目录没有可靠的注册表项能查（不像
 
 已验证的坑：恢复阴影/圆角会导致窗口空白/"玻璃"透视，已放弃，现在是直角窗口；最小化不能用 `root.iconify()`（overrideredirect 下报 TclError），改用原生 `ShowWindow(hwnd, SW_MINIMIZE)`；`ResizeGrips` 的 8 个拖拽手柄用 `top_reserve`/`bottom_reserve` 让开标题栏/状态栏按钮。
 
-**"伪最大化"按钮**（`DSToolsApp._toggle_pseudo_maximize()`）：不是原生"真最大化"（会撑破锁死的 `WINDOW_BASE_W`:`WINDOW_BASE_H`=1500:820 宽高比），而是缩放到当前显示器工作区（`custom_titlebar.get_monitor_work_area()`，`MonitorFromWindow`+`GetMonitorInfoW`，跟 `_get_virtual_screen_bounds()` 横跨全部显示器不同）能放下的、仍保持这个比例的最大尺寸并居中，再点一次还原成点击前的位置/大小。点击回调运行在 Tk 主线程，跟 `win_aspect_lock.py` 的 `WM_SIZING` 钩子是完全不相干的两条路径，不触碰那个已知崩溃禁区。图标是手画的方框（`create_rectangle`），不用字体符号——Segoe UI 没有能保证所有机器都渲染正确的"方框轮廓"字形。
+**"伪最大化"按钮**（`DSToolsApp._toggle_pseudo_maximize()`）：不是原生"真最大化"（会撑破锁死的 `WINDOW_BASE_W`:`WINDOW_BASE_H`=1600:900 宽高比），而是缩放到当前显示器工作区（`custom_titlebar.get_monitor_work_area()`，`MonitorFromWindow`+`GetMonitorInfoW`，跟 `_get_virtual_screen_bounds()` 横跨全部显示器不同）能放下的、仍保持这个比例的最大尺寸并居中，再点一次还原成点击前的位置/大小。点击回调运行在 Tk 主线程，跟 `win_aspect_lock.py` 的 `WM_SIZING` 钩子是完全不相干的两条路径，不触碰那个已知崩溃禁区。图标是手画的方框（`create_rectangle`），不用字体符号——Segoe UI 没有能保证所有机器都渲染正确的"方框轮廓"字形。
 
 **拖拽缩放节流间隔**（`ResizeGrips._DRAG_THROTTLE_MS`）：真机测过（脚本连续调用 `root.geometry()`+`update_idletasks()` 模拟拖拽）各页签单次 resize+relayout 耗时，"服务器配置"/"存档信息"等页签能到 21~23ms，比原来 16ms（60fps）的节流间隔还长，节流定时器还没到点就要再触发一次，会积压跟不上鼠标——这才是"拖拽卡顿"的根因，不是背景图（拖拽期间背景图整个跳过重绘，见下方说明）。已调到 33ms（~30fps），实测所有页签的最大耗时都能在一个节流周期内跑完。
+
+### 弹窗尺寸与高 DPI 缩放——**硬性规则：禁止给 `Toplevel` 写死固定像素宽高**
+
+真机反馈过的 bug（4K 屏 225% 缩放下"樱花映射"的"修改令牌"弹窗，`_SakuraTokenInputDialog`/`cluster_config_tab._TokenInputDialog`）：这两个弹窗当初用 `WIN_W, WIN_H = 620, 220` 这种固定像素常量摆 `win.geometry()`，结果在缩放比例较高的机器上，同样的字体/控件本身需要更多逻辑像素才能放得下，但窗口尺寸不会跟着变大，"确认"/"取消"按钮被挤压成几乎看不见的细线（`mod_sync_log_dialog.py` 也踩过一次同类的坑，见该文件"按钮栏必须先 pack"那段说明）。
+
+`app.py.__init__` 已经调了 `win_aspect_lock.set_process_dpi_aware()`，让整个进程感知当前显示器的 DPI 缩放，`winfo_reqwidth()`/`winfo_reqheight()` 算出来的"这份内容实际需要多少逻辑像素"本身已经是缩放安全的——**唯一正确的做法是让 Tk 自己按真实内容算尺寸，不要手动指定任何像素数字**：
+
+```python
+win.update_idletasks()
+w = max(500, win.winfo_reqwidth())  # min_width 视内容而定，可选
+h = win.winfo_reqheight()
+win.geometry(f"{w}x{h}+{x}+{y}")
+```
+
+`themed_dialog.py._show()`（`show_info`/`show_warning`/`show_error`/`ask_yes_no` 共用）、`background_dialog.py`、`app.py._show_about()` 从一开始就是这个写法，是这条规则的参照实现；`cluster_config_tab._TokenInputDialog`、`sakura_tab._SakuraTokenInputDialog`、`mod_sync_log_dialog.ModSyncLogDialog` 原来是反例，已经改成同一套写法。
+
+**日志/文本类弹窗**（内容本身没有固定"自然大小"）不能靠"反正内容会撑开"就不管：给里面的 `tk.Text` 显式指定 `height=N`（文本行数）/`width=N`（字符数），不要用像素——这两个参数本来就是按当前字体度量换算的，缩放安全；`ModSyncLogDialog` 已经这样改（`height=22, width=64`）。
+
+新增任何 `Toplevel` 弹窗时，检查有没有 `WIN_W, WIN_H = <数字>, <数字>` 这种写法，有就说明没有遵守这条规则。
 
 ### 系统托盘 + 关闭/退出/启动位置 (`gui/tray_icon.py` / `gui/app.py`)
 

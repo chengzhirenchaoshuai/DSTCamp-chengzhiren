@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.9.2-orange)
+![Version](https://img.shields.io/badge/version-0.9.3-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)

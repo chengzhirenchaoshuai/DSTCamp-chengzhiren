@@ -32,14 +32,15 @@ class ModSyncLogDialog:
         # ModConfigDialog 的 _token_display 是同一个"补全 tk.Text 颜色，
         # 否则看起来像没套上主题"的道理。
         win.configure(background=theme.BG_SOFT)
-        WIN_W, WIN_H = 560, 480
 
         # 按钮栏必须先 pack，才能在 body（下面，fill=BOTH+expand=True）
-        # 吃掉剩余空间之前先占住自己的那一份——这个窗口用 geometry() 定
-        # 死了尺寸，body 如果先注册，会把 480px 高度全部吃光，后注册的
-        # 按钮分不到任何空间，看起来就是"根本没有确认按钮"（真机截图确
-        # 认过的真实 bug，不是显示错位）。ModConfigDialog 的按钮栏就是
-        # 反过来的顺序，同一个坑同一个解法。
+        # 吃掉剩余空间之前先占住自己的那一份——之前这里靠 geometry() 定
+        # 死了像素尺寸，body 如果先注册，会把高度全部吃光，后注册的按钮
+        # 分不到任何空间，看起来就是"根本没有确认按钮"（真机截图确认过
+        # 的真实 bug，不是显示错位）。ModConfigDialog 的按钮栏就是反过来
+        # 的顺序，同一个坑同一个解法。现在窗口尺寸改成让 Tk 按实际内容
+        # 算（见下面 winfo_reqwidth/reqheight），这条 pack 顺序仍然要保
+        # 留——不然 body 的 Text 一样会把按钮挤没。
         self.close_btn = ttk.Button(win, text=t("dlg.confirm_btn"), command=win.destroy, state=tk.DISABLED)
         self.close_btn.pack(side=tk.BOTTOM, pady=10)
 
@@ -48,7 +49,12 @@ class ModSyncLogDialog:
         # 不含中文字形，日志内容中英文混排时 Windows 会给中文字符静默
         # fallback 到另一款字重不同的 CJK 字体，视觉上"忽粗忽细"，换成默
         # 认字体（项目里其它 Label 也都这么用）从根上避免这个字体切换。
-        self.text = tk.Text(body, wrap=tk.WORD, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), state=tk.DISABLED,
+        # height/width 按文本行数/字符数给（不是像素）——高 DPI 缩放下
+        # Tk 会用当前实际字体度量换算成需要多少逻辑像素，这份换算本身
+        # 就是 DPI 安全的，不需要额外处理（不能反过来给窗口写死一个固
+        # 定像素高度，那样量出来的"能放下多少行"只在没缩放时准）。
+        self.text = tk.Text(body, wrap=tk.WORD, height=22, width=64,
+                             font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), state=tk.DISABLED,
                              bg=theme.CARD_BG, fg=theme.TEXT, relief=tk.FLAT,
                              highlightthickness=1, highlightbackground=theme.CARD_BORDER,
                              highlightcolor=theme.ACCENT)
@@ -62,12 +68,14 @@ class ModSyncLogDialog:
         win.protocol("WM_DELETE_WINDOW", lambda: None)
 
         win.update_idletasks()
+        w = win.winfo_reqwidth()
+        h = win.winfo_reqheight()
         root = parent_widget.winfo_toplevel()
         px, py = root.winfo_rootx(), root.winfo_rooty()
         pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - WIN_W) // 2)
-        y = py + max(0, (ph - WIN_H) // 2)
-        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        x = px + max(0, (pw - w) // 2)
+        y = py + max(0, (ph - h) // 2)
+        win.geometry(f"{w}x{h}+{x}+{y}")
         win.transient(root)
         win.deiconify()
         win.grab_set()

@@ -1035,6 +1035,17 @@ class LocalServiceTab:
         self._do_start_shard(cluster, shard)
 
     def _do_start_shard(self, cluster, shard):
+        # 真机反馈过的 bug：单独点某个分片的"启动"之后，再点"全部启动"，
+        # 那个已经在跑的分片会被再启动一次——_start_all() 无条件对每个
+        # 分片都调一次这个方法，不看它是不是已经在跑；ServerManager.
+        # start() 自己也没有这道防线，会直接再开一个新的子进程覆盖掉
+        # self._procs 里对旧进程的引用（旧进程变成没人管的孤儿进程，还
+        # 占着存档文件/端口，界面上却再也停不掉它）。单个分片自己的
+        # "启动"按钮已经靠 _ShardRow.update() 在运行时置灰挡住了双击，
+        # 但"全部启动"这条路径绕过了那层 UI 限制，必须在这里再挡一道。
+        existing = self.manager.get(cluster.path, shard.name)
+        if existing and existing.status in _RUNNING_LIKE:
+            return
         # WeGame 版分片不走这里——Rail SDK 要求一个只有 WeGame 客户端才能
         # 签发的一次性会话令牌(--rail_channel_id)，DSTCamp 直接拼命令行
         # 启动子进程的方式在这个平台上做不到，只能引导用户去 WeGame 客户

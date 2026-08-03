@@ -103,7 +103,6 @@ class _TokenInputDialog:
         win.title(t("token.change"))
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
-        WIN_W, WIN_H = 620, 220
 
         ttk.Label(win, text=t("token.prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD)).pack(anchor=tk.W, padx=20, pady=(20, 8))
         self.var = tk.StringVar(value=initial)
@@ -122,13 +121,20 @@ class _TokenInputDialog:
         win.bind("<Escape>", lambda e: self._cancel())
         win.protocol("WM_DELETE_WINDOW", self._cancel)
 
+        # 窗口尺寸让 Tk 自己按实际内容算（不再写死 WIN_W/WIN_H）——高
+        # DPI 缩放下同样的控件/字体需要更多逻辑像素才放得下，固定像素
+        # 尺寸在缩放比例较高时会把按钮之类的内容挤没（真机反馈过 225%
+        # 缩放下这个弹窗看不到"确认"/"取消"按钮，见 CLAUDE.md"弹窗尺寸"
+        # 一节）。
         win.update_idletasks()
+        w = max(500, win.winfo_reqwidth())
+        h = win.winfo_reqheight()
         root = parent_widget.winfo_toplevel()
         px, py = root.winfo_rootx(), root.winfo_rooty()
         pw, ph = root.winfo_width(), root.winfo_height()
-        x = px + max(0, (pw - WIN_W) // 2)
-        y = py + max(0, (ph - WIN_H) // 2)
-        win.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+        x = px + max(0, (pw - w) // 2)
+        y = py + max(0, (ph - h) // 2)
+        win.geometry(f"{w}x{h}+{x}+{y}")
 
         win.transient(root)
         win.deiconify()
