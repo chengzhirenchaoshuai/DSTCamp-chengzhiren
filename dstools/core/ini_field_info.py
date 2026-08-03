@@ -22,13 +22,12 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
         "en": ("Max Players", "Maximum number of players allowed online at once, typically 1-64."),
     },
     ("GAMEPLAY", "pvp"): {
-        "zh": ("玩家间伤害 (PVP)", "是否允许玩家之间互相造成伤害。"),
+        "zh": ("玩家对战 (PVP)", "是否允许玩家之间互相造成伤害。"),
         "en": ("PvP", "Whether players can damage each other."),
     },
     ("GAMEPLAY", "pause_when_empty"): {
-        "zh": ("无人时暂停", "服务器上没有玩家在线时是否暂停世界模拟（暂停饥饿/腐烂/季节等推进）。"),
-        "en": ("Pause When Empty", "Whether the world simulation pauses (hunger/decay/season "
-               "progression, etc.) while no players are online."),
+        "zh": ("无人时暂停", "服务器上没有玩家在线时是否暂停世界"),
+        "en": ("Pause When Empty", "Whether the world simulation pauses while no players are online."),
     },
     ("GAMEPLAY", "vote_enabled"): {
         "zh": ("允许投票", "是否允许玩家发起投票（踢人、回档、重置世界等）。"),
@@ -63,28 +62,27 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
     },
     ("NETWORK", "offline_cluster"): {
         "zh": ("离线模式", "开启后不会向 Klei 服务器列表注册，也不支持好友邀请等在线功能，"
-               "此时不需要 cluster_token.txt。"),
+               "此时不需要 cluster_token.txt"),
         "en": ("Offline Cluster", "When enabled, the server doesn't register with Klei's server list "
                "or support friend invites/other online features; a cluster_token.txt isn't required."),
     },
     ("NETWORK", "tick_rate"): {
         "zh": ("通信频率", "服务器每秒向客户端发送状态更新的次数，范围 15-60，"
-               "数值越高同步越精细但越占用带宽，官方建议默认值 15。"),
+               "数值越高同步越精细但越占用带宽，默认值15"),
         "en": ("Tick Rate", "How many times per second the server sends updates to clients (15-60). "
                "Higher is more precise but uses more bandwidth; Klei's recommended default is 15."),
     },
     ("NETWORK", "whitelist_slots"): {
-        "zh": ("白名单预留人数", "为白名单/已批准账号预留的玩家席位数量。"),
-        "en": ("Whitelist Slots", "Number of player slots reserved for whitelisted/approved accounts."),
+        "zh": ("白名单预留人数", "为白名单账号预留的玩家席位数量。"),
+        "en": ("Whitelist Slots", "Number of player slots reserved for whitelisted accounts."),
     },
     ("NETWORK", "autosaver_enabled"): {
         "zh": ("自动存档", "是否定期自动保存游戏进度。"),
         "en": ("Autosaver Enabled", "Whether the server periodically auto-saves game progress."),
     },
     ("NETWORK", "cluster_language"): {
-        "zh": ("服务器语言", "影响服务器列表按语言筛选时该服务器归属的语言分类。"),
-        "en": ("Cluster Language", "Which language category this server is grouped under when players "
-               "filter the server browser by language."),
+        "zh": ("服务器语言", "影响服务器内玩家说话台词的语言，默认为英语"),
+        "en": ("Cluster Language", "Language used by players in the server, default English"),
     },
     ("NETWORK", "connection_timeout"): {
         "zh": ("连接超时", "客户端连接握手允许的最长等待时间，单位毫秒，默认 8000。"),
@@ -119,38 +117,26 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
         "en": ("Max Snapshots", "Maximum number of historical save snapshots kept for rollback, default 6."),
     },
     ("SHARD", "shard_enabled"): {
-        "zh": ("世界互联", "是否启用主从分片架构（例如需要独立的洞穴世界时必须开启）。"),
+        "zh": ("世界互联", "是否启用主从世界架构（例如需要独立的洞穴世界时必须开启）。"),
         "en": ("Shard Enabled", "Whether the master/slave shard topology is enabled (required for a "
                "separate Caves world, for example)."),
     },
     ("SHARD", "bind_ip"): {
-        "zh": ("监听ip", "主分片用于接受其他分片连接的网络地址，通常为 127.0.0.1 或 0.0.0.0。"
-               "世界互联开启后由游戏自己生成写入，真机反馈过：手动删掉这个字段、又保持"
-               "shard_enabled=true 会导致开服直接报错，不是“文件里没有就用内置默认值”这种安全缺省。"),
-        "en": ("Bind IP", "The address the master shard listens on for other shards' connections, "
-               "typically 127.0.0.1 or 0.0.0.0. The game itself writes this once shard_enabled is on -- "
-               "deleting it while shard_enabled stays true causes the server to fail to start, it's not "
-               "a value that's safe to omit."),
+        "zh": ("监听ip", "主世界用于接受其他世界连接的网络地址，通常为 127.0.0.1 或 0.0.0.0。"),
+        "en": ("Bind IP", "The address the master shard listens on for other shards' connections, typically 127.0.0.1 or 0.0.0.0."),
     },
     ("SHARD", "master_ip"): {
-        "zh": ("主世界ip", "从分片（如洞穴）连接主分片时使用的目标地址，同样是游戏自己生成写入，"
-               "手动删掉+shard_enabled=true 会导致开服报错。"),
-        "en": ("Master IP", "The address secondary shards (e.g. Caves) connect to reach the master "
-               "shard -- also written by the game itself; deleting it while shard_enabled stays true "
-               "causes the server to fail to start."),
+        "zh": ("主世界ip", "从世界（如洞穴）连接主世界时使用的目标地址。"),
+        "en": ("Master IP", "The address secondary shards (e.g. Caves) connect to reach the master."),
     },
     ("SHARD", "master_port"): {
-        "zh": ("互联端口", "分片之间通信使用的 UDP 端口，游戏自己生成写入，手动删掉+"
-               "shard_enabled=true 会导致开服报错。"),
+        "zh": ("互联端口", "各世界之间通信使用的 UDP 端口。"),
         "en": ("Master Port", "The UDP port used for inter-shard communication, written by the game "
                "itself; deleting it while shard_enabled stays true causes the server to fail to start."),
     },
     ("SHARD", "cluster_key"): {
-        "zh": ("互联密码", "各分片之间相互验证身份用的共享密钥，各分片必须一致，游戏自己生成写入，"
-               "手动删掉+shard_enabled=true 会导致开服报错。"),
-        "en": ("Cluster Key", "Shared secret the shards use to authenticate each other -- must match "
-               "across every shard, written by the game itself; deleting it while shard_enabled stays "
-               "true causes the server to fail to start."),
+        "zh": ("互联密码", "各世界之间相互验证身份用的共享密钥，各世界必须一致。"),
+        "en": ("Cluster Key", "Shared secret the shards use to authenticate each other -- must match "),
     },
     ("STEAM", "steam_group_only"): {
         "zh": ("仅限 Steam 群组", "开启后只允许指定 Steam 群组的成员加入服务器，默认关闭。"),
@@ -173,21 +159,21 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
 
 SHARD_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
     ("NETWORK", "server_port"): {
-        "zh": ("游戏端口", "该分片供游戏客户端连接使用的 UDP 端口，每个分片需要各自独立、不冲突的端口。"),
+        "zh": ("游戏端口", "该世界供游戏客户端连接使用的 UDP 端口，每个世界需要各自独立、不冲突的端口。"),
         "en": ("Server Port", "The UDP port game clients connect to for this shard -- each shard needs "
                "its own, non-conflicting port."),
     },
     ("SHARD", "is_master"): {
-        "zh": ("是否为主分片", "true 表示这是主分片（地面世界），false 表示从分片（如洞穴）。"),
+        "zh": ("是否为主世界", "true 表示这是主世界（如地面），false 表示这是从世界（如洞穴）。"),
         "en": ("Is Master", "true for the master shard (the surface world), false for a secondary "
                "shard (e.g. Caves)."),
     },
     ("SHARD", "name"): {
-        "zh": ("分片名称", "该分片的显示名称，例如 Master、Caves。"),
+        "zh": ("世界名称", "该世界的显示名称，例如 Master、Caves。"),
         "en": ("Name", "The display name of this shard, e.g. Master, Caves."),
     },
     ("SHARD", "id"): {
-        "zh": ("分片编号", "该分片在集群内的唯一数字编号。"),
+        "zh": ("世界编号", "该世界在集群内的唯一数字编号。"),
         "en": ("ID", "This shard's unique numeric identifier within the cluster."),
     },
     ("ACCOUNT", "encode_user_path"): {
@@ -195,14 +181,12 @@ SHARD_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
         "en": ("Encode User Path", "Whether player user-IDs in save paths are obfuscated -- recommended on."),
     },
     ("STEAM", "master_server_port"): {
-        "zh": ("Steam 服务器列表端口", "该分片用于向 Steam 服务器列表广播/通信的端口，各分片需各自独立。"),
-        "en": ("Master Server Port", "The port this shard uses to communicate with the Steam server "
-               "list -- must be unique per shard."),
+        "zh": ("master_server_port", "STEAM使用的内部端口。服务器实际运行过程中并没有使用这个端口。每个服务器需要设置不同的端口。"),
+        "en": ("master_server_port", "The internal port used by STEAM. During the actual operation of the server, this port is not utilized. Each server requires a different port to be set."),
     },
     ("STEAM", "authentication_port"): {
-        "zh": ("Steam 身份验证端口", "该分片用于验证玩家 Steam 登录身份的端口，各分片需各自独立。"),
-        "en": ("Authentication Port", "The port this shard uses for Steam client authentication -- "
-               "must be unique per shard."),
+        "zh": ("authentication_port", "STEAM使用的内部端口。服务器实际运行过程中并没有使用这个端口。每个服务器需要设置不同的端口。"),
+        "en": ("authentication_port", "The internal port used by STEAM. During the actual operation of the server, this port is not utilized. Each server requires a different port to be set."),
     },
 }
 
@@ -213,15 +197,14 @@ SHARD_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
 # 不会因为翻译显示而改变游戏实际读取的内容。
 ENUM_FIELDS: dict[tuple[str, str], list[tuple[str, str, str]]] = {
     ("GAMEPLAY", "game_mode"): [
-        ("survival", "生存 (survival)", "Survival"),
-        ("endless", "无尽 (endless)", "Endless"),
-        ("wilderness", "荒野 (wilderness)", "Wilderness"),
+        ("survival", "生存", "Survival"),
+        ("endless", "无尽", "Endless"),
+        ("wilderness", "荒野", "Wilderness"),
     ],
-    # 服务器语言一般只需要中文/英文两种即可满足绝大多数使用场景 --
-    # cluster_language 实际上接受更多 locale 代码，但限制成这两项可以
-    # 避免手填出一个游戏认不出的语言代码。
+    # 服务器语言，仅支持中文、繁体中文、英文
     ("NETWORK", "cluster_language"): [
         ("zh", "中文", "Chinese"),
+        ("zht", "繁体中文", "Chinese (Traditional)"),
         ("en", "英文", "English"),
     ],
     ("NETWORK", "cluster_intention"): [
@@ -242,8 +225,7 @@ def get_enum_choices(section: str, key: str) -> list[tuple[str, str]] | None:
     return [(raw, zh_label if zh else en_label) for raw, zh_label, en_label in entries]
 
 
-# (section, key) -> (最小值, 最大值)——官方文档明确给出取值范围的数值字
-# 段，界面上禁止输入/保存范围之外的值，而不是等游戏启动失败才发现。
+# (section, key) -> (最小值, 最大值)——官方文档明确给出取值范围的数值字段，界面上禁止输入/保存范围之外的值。
 RANGE_FIELDS: dict[tuple[str, str], tuple[int, int]] = {
     ("NETWORK", "tick_rate"): (15, 60),
 }

@@ -145,8 +145,8 @@ STRINGS = {
         # Server config tab
         "cluster.cluster": "服务器:",
         "cluster.save_btn": "保存",
-        "cluster.shard_config": "分片配置(server.ini)",
-        "cluster.tab_cluster_ini": "服务器配置(cluster.ini)",
+        "cluster.shard_config": "世界设置(server.ini)",
+        "cluster.tab_cluster_ini": "房间设置(cluster.ini)",
         "cluster.editing": "编辑: {shard}/server.ini",
         "cluster.tab_gameplay": "玩法设置",
         "cluster.tab_network": "网络设置",
