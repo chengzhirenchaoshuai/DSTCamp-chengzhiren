@@ -37,13 +37,13 @@ from dstools.features.mod.manager import (
     sync_mods,
 )
 from dstools.core.discovery import find_klei_root, discover_environment
-from dstools.core.save_reader import list_save_sessions, get_save_summary, list_session_players
+from dstools.features.save_browser.reader import list_save_sessions, get_save_summary, list_session_players
 from dstools.core.config_manager import (
     set_cluster_option, backfill_cluster_defaults,
     load_shard_config, save_shard_config, set_shard_option, get_shard_option,
 )
-from dstools.core.character_names import get_character_display_name
-from dstools.core.character_icons import find_mod_character_name, resolve_character
+from dstools.features.save_browser.character_names import get_character_display_name
+from dstools.features.save_browser.character_icons import find_mod_character_name, resolve_character
 from dstools.core.app_settings import (
     load_settings, save_settings, get_player_note, set_player_note,
     get_minimize_on_close, set_minimize_on_close,
@@ -61,7 +61,7 @@ from dstools.features.sakura.api import find_dstcamp_tunnel, sanitize_tunnel_nam
 from dstools.features.sakura.frpc import FrpcManager
 from dstools.core.app_settings import get_sakura_token, set_sakura_token
 from dstools.core.app_settings import get_luajit_enabled, set_luajit_enabled
-from dstools.core.cluster_copy import (
+from dstools.features.save_browser.cluster_copy import (
     validate_cluster_folder_name, suggest_new_cluster_name, copy_local_cluster_to_server,
 )
 from dstools.core.dedicated_server import find_bin64_dir

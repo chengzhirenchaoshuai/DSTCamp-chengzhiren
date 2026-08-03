@@ -122,7 +122,7 @@ def test_gui_imports():
     # app.py 重新导出的副作用，这样才是真的在测这几个模块自己能不能
     # 正常导入。
     from dstools.gui.app import DSToolsApp
-    from dstools.gui.save_browser_tab import SaveBrowserTab
+    from dstools.features.save_browser.tab import SaveBrowserTab
     from dstools.features.mod.tab import ModManagerTab
     from dstools.gui.cluster_config_tab import ClusterConfigTab
     assert DSToolsApp and ModManagerTab and ClusterConfigTab

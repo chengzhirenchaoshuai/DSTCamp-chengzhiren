@@ -32,7 +32,7 @@ from dstools.gui.menu_combo import MenuCombo
 from dstools.features.mod.tab import ModManagerTab
 from dstools.gui.pill_tabs import PillTabBar
 from dstools.features.sakura.tab import SakuraTab
-from dstools.gui.save_browser_tab import SaveBrowserTab
+from dstools.features.save_browser.tab import SaveBrowserTab
 from dstools.features.world.tab import WorldSettingsTab
 from dstools.i18n import get_lang, set_lang, t
 from dstools.models import Platform, SaveSource, Shard

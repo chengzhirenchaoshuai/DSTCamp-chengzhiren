@@ -14,11 +14,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.core.lua_parser import parse_lua_file, serialize_lua_table, LuaTableParser
 from dstools.core.discovery import find_klei_root, discover_environment
-from dstools.core.save_reader import (
+from dstools.features.save_browser.reader import (
     list_save_sessions, get_save_summary, list_session_players,
 )
-from dstools.core.character_names import get_character_display_name, CHARACTER_NAMES
-from dstools.core.character_icons import resolve_character
+from dstools.features.save_browser.character_names import get_character_display_name, CHARACTER_NAMES
+from dstools.features.save_browser.character_icons import resolve_character
 from dstools.features.mod.manager import load_mod_overrides, list_mods
 from dstools.core.config_manager import load_cluster_config
 

@@ -217,7 +217,7 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None,
     档的 mod 内容不在 Steam 目录下，不传就永远找不到 WeGame 玩家用的自
     定义角色模组，只能回退显示英文 prefab。
     """
-    from dstools.core.character_names import CHARACTER_NAMES, get_character_display_name
+    from dstools.features.save_browser.character_names import CHARACTER_NAMES, get_character_display_name
     if prefab in CHARACTER_NAMES:
         return get_character_display_name(prefab), get_official_avatar_path(prefab)
 
