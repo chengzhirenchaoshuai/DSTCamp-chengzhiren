@@ -14,12 +14,13 @@ import tkinter as tk
 import webbrowser
 from tkinter import font as tkfont, ttk
 
-from dstools.core import app_settings, sakura_frp
+from dstools.core import app_settings
+from dstools.features.sakura import api as sakura_frp
 from dstools.core.config_manager import (
     get_cluster_option, get_shard_option, load_cluster_config, load_shard_config,
     save_shard_config, set_shard_option,
 )
-from dstools.core.frpc_process import FrpcManager
+from dstools.features.sakura.frpc import FrpcManager
 from dstools.core.resource_paths import bundled_resource_dir, cache_dir
 from dstools.core.token_manager import is_valid_token, mask_token
 from dstools.gui import theme, themed_dialog as dlg

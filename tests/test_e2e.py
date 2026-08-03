@@ -57,8 +57,8 @@ from dstools.features.mod.parser import parse_modinfo, visible_config_options
 from dstools.core.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
 from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
 from dstools.features.mod.backup_utils import backup_file, _prune_old_backups
-from dstools.core.sakura_frp import find_dstcamp_tunnel, sanitize_tunnel_name
-from dstools.core.frpc_process import FrpcManager
+from dstools.features.sakura.api import find_dstcamp_tunnel, sanitize_tunnel_name
+from dstools.features.sakura.frpc import FrpcManager
 from dstools.core.app_settings import get_sakura_token, set_sakura_token
 from dstools.core.app_settings import get_luajit_enabled, set_luajit_enabled
 from dstools.core.cluster_copy import (

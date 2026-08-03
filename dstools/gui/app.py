@@ -31,7 +31,7 @@ from dstools.gui.local_service_tab import LocalServiceTab
 from dstools.gui.menu_combo import MenuCombo
 from dstools.features.mod.tab import ModManagerTab
 from dstools.gui.pill_tabs import PillTabBar
-from dstools.gui.sakura_tab import SakuraTab
+from dstools.features.sakura.tab import SakuraTab
 from dstools.gui.save_browser_tab import SaveBrowserTab
 from dstools.features.world.tab import WorldSettingsTab
 from dstools.i18n import get_lang, set_lang, t
