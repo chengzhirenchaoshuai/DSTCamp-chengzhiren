@@ -1,6 +1,6 @@
-""""存档信息"标签页：单页展示——顶部"存档信息"标题 + 分片选择器，
+""""存档信息"标签页：单页展示——顶部"存档信息"标题 + 世界选择器，
 下面依次是存档概览（列出全部存档，服务器+本地，含"复制为服务器存档"）、
-基本信息（当前选中分片的会话信息）、每个玩家角色状态（角色名、头像、
+基本信息（当前选中世界的会话信息）、每个玩家角色状态（角色名、头像、
 血量/理智/饥饿/体温等）。原来是"存档概览"/"会话详情"两个可切换的子页
 签，应用户要求合并成一个页面，不再需要切换（见 __init__ 的说明）。
 """
@@ -32,12 +32,12 @@ from dstools.gui.toolbar_widgets import make_toolbar_label
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
-# "每个玩家角色状态"小节标题的字号（"分片信息"标题应用户要求删掉了，
+# "每个玩家角色状态"小节标题的字号（"世界信息"标题应用户要求删掉了，
 # 不用再跟它保持一致，但字号常量还留着给"每个玩家角色状态"单独用）。
 _SECTION_HEADER_FONT = ("", 11, "bold")
 
 # 页面顶部几个区块（存档概览的 2 行说明文字、"游戏模式"详情卡片、"分
-# 片:"下拉框行、"分片信息"内容块、"每个玩家角色状态"）统一用这个左右
+# 片:"下拉框行、"世界信息"内容块、"每个玩家角色状态"）统一用这个左右
 # 留白——应用户反馈这几处原来贴得太靠左边缘，整体往右挪了一些（从 5
 # 提到 15），几处必须用同一个值，不然又会重新出现"卡片跟下面对不齐"
 # 的问题（见上一轮"游戏模式"卡片偏移的教训）。
@@ -360,8 +360,8 @@ class _BackupPolicyDialog:
 class SaveBrowserTab:
     """单页展示，不再有可切换的子页签（应用户要求把原来的"存档概览"/
     "会话详情"两个子页签合并成一个页面）：存档概览（当前全局选中存档
-    的详情，含"复制为服务器存档"）-> 分片选择器 -> 分片信息（当前选
-    中分片的会话信息，原来叫"基本信息"，应用户要求改名）-> 每个玩家
+    的详情，含"复制为服务器存档"）-> 世界选择器 -> 世界信息（当前选
+    中世界的会话信息，原来叫"基本信息"，应用户要求改名）-> 每个玩家
     角色状态。没有页面级"存档信息"标题——顶部全局选择栏 + 主页签自己
     的页签文字已经说明了这是什么页面，应用户要求不再重复一遍。不自己
     维护一份"存档:"下拉框——直接跟其它 4 个页签一样接 DSToolsApp 的全
@@ -373,8 +373,8 @@ class SaveBrowserTab:
     时才刷新（跟其它 4 个页签一样受 DSToolsApp._stale_cluster_tabs 懒加
     载保护，见 app.py._on_tab_select()），只是"从存档概览切到会话详情"
     这一层子懒加载没有了，首次访问这个页签的开销从约 0.5~0.7 秒变回未
-    拆分前的约 1~2 秒（解析当前分片每个玩家的角色名/头像）——这是合并
-    成单页后不可避免的代价，存档概览/分片信息/占位符仍然会立即画出来
+    拆分前的约 1~2 秒（解析当前世界每个玩家的角色名/头像）——这是合并
+    成单页后不可避免的代价，存档概览/世界信息/占位符仍然会立即画出来
     （见 _refresh_saves() 的占位符先行策略），只是后面玩家数据这段同
     步阻塞挪不到"更晚才做"的时机了。"""
 
@@ -384,7 +384,7 @@ class SaveBrowserTab:
         # 义背景图。
         self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
         # 构建顺序即页面从上到下的顺序（应用户要求）：存档概览（原"存
-        # 档概览"子页签的内容）-> 分片选择器 -> 分片信息 / 每个玩家角
+        # 档概览"子页签的内容）-> 世界选择器 -> 世界信息 / 每个玩家角
         # 色状态（原"会话详情"子页签的内容）。页面级"存档信息"标题应用
         # 户要求删掉了——顶部全局选择栏 + "存档信息"这个主页签本身的
         # 页签文字已经说明了这是什么页面，不需要再重复一遍。
@@ -395,12 +395,12 @@ class SaveBrowserTab:
     def _build_shard_row(self, parent):
         # sf 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
         # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
-        # 义背景图；"分片:"这个纯说明文字改用 make_toolbar_label
+        # 义背景图；"世界:"这个纯说明文字改用 make_toolbar_label
         # （create_text，不挡背景图），下拉框/按钮仍是原生 ttk 控件不变。
         # "存档:"选择器已经搬到顶部的全局选择栏，这里不再重复一份。
         # 应用户要求整体收紧上下间距（少留空白）——pady 从 5 缩到 3。
         # padx 用 _PAGE_PADX+10（不是单纯的 _PAGE_PADX）——sf 自己没有像
-        # players_header_row 那样在 pf 外面再包一层 padx=10，"分片:" 文
+        # players_header_row 那样在 pf 外面再包一层 padx=10，"世界:" 文
         # 字这里如果只用 _PAGE_PADX 会比"游戏模式"/"每个玩家角色状态"
         # 那几处正文文字整体偏左 8~10px，真机截图量过 create_text 的
         # bbox 绝对坐标确认过这个偏差（应用户反馈"整体宽度不一致"修的
@@ -411,27 +411,27 @@ class SaveBrowserTab:
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_select)
-        # 分片下拉框旁边原来还有一个"刷新"按钮——应用户要求删掉了：顶部
+        # 世界下拉框旁边原来还有一个"刷新"按钮——应用户要求删掉了：顶部
         # 全局存档选择栏已经有一个"刷新"按钮，点了会走
         # DSToolsApp._refresh() -> tab.refresh() -> on_cluster_changed()，
         # 效果跟这里重复。
 
     def _build_session_panel(self, parent):
-        # 每个分片实测（这台机器全部 11 个分片，服务器+本地都算上）都只有
+        # 每个世界实测（这台机器全部 11 个世界，服务器+本地都算上）都只有
         # 一个会话——DST 只有"生成新世界"才会开一个新的会话 ID，正常"继续
         # 游戏"一直复用同一个，多个会话共存是很少见的边缘情况。既然是这样，
         # 不用再把它当"可能很多项、需要滚动+可以跟下面拖动分配空间"的列表
         # 处理，改成固定的一块头部信息，不做 PanedWindow（去掉拖动条），
-        # 直接和下面"每个玩家角色状态"衔接。真遇到一个分片有多个会话这种
+        # 直接和下面"每个玩家角色状态"衔接。真遇到一个世界有多个会话这种
         # 罕见情况，不会静默丢掉——只显示第一个，另外用一行小字提示"还有
         # N 个其他会话"，不会假装它们不存在。
         #
         # "每个玩家角色状态"小节标题字体大小用模块级 _SECTION_HEADER_FONT
-        # （"分片信息"标题应用户要求删掉了，见 info_header_row 的说明）。
+        # （"世界信息"标题应用户要求删掉了，见 info_header_row 的说明）。
 
         # info_frame 用 BgFrame 而不是 ttk.Frame(padding=...)——Canvas 没
         # 有 ttk 的 padding 选项，改成手动 create_text(x=10,...) 模拟左
-        # 内边距。"分片信息"标题、标题行、分隔线、"打开位置"按钮都应用
+        # 内边距。"世界信息"标题、标题行、分隔线、"打开位置"按钮都应用
         # 户要求删掉了，info_frame 现在只剩 3(~4) 行正文文字。
         info_frame = self._info_frame = BgFrame(parent, self.app, bg=theme.CARD_BG)
         info_frame.pack(fill=tk.X, padx=_PAGE_PADX, pady=(0,2))
@@ -447,9 +447,9 @@ class SaveBrowserTab:
         # 不画，等效于原来的 pack()/pack_forget()。
         info_frame.pack_propagate(False)
         info_text_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
-        # "分片信息"最多同时显示 4 行（会话ID/摘要/槽位+大小/其它会话提
+        # "世界信息"最多同时显示 4 行（会话ID/摘要/槽位+大小/其它会话提
         # 示），但最后一行（"其它会话"提示）绝大多数情况下是空的——真机
-        # 这台机器每个分片都只有一个会话，从没用到过第 4 行。之前按 4
+        # 这台机器每个世界都只有一个会话，从没用到过第 4 行。之前按 4
         # 行预留高度是为了让 info_frame 高度恒定、不会顶着下面"每个玩
         # 家角色状态"挪位置（见 _resync_players_section_bg() 的说明），
         # 但代价是"每个玩家角色状态"标题上方总空出一整行没用到的空白，
@@ -490,7 +490,7 @@ class SaveBrowserTab:
         # <Configure> 期间（拖拽缩放窗口）节流到 ~16ms 一次——
         # update_idletasks() 不是免费的，直接绑在原始 <Configure> 上会在
         # 拖拽过程中被连续调用很多次；StringVar 的 trace 不需要节流（只在
-        # 存档/分片真的切换时才触发，不是每帧都触发）。
+        # 存档/世界真的切换时才触发，不是每帧都触发）。
         info_redraw_after_id = None
 
         def _request_info_redraw(event=None):
@@ -658,7 +658,7 @@ class SaveBrowserTab:
             self._refresh_players(None, mod_overrides_path, platform, wegame_client_mods_dir)
             return
 
-        # 这台机器实测每个分片都只有一个会话——正常"继续游戏"一直复用同一
+        # 这台机器实测每个世界都只有一个会话——正常"继续游戏"一直复用同一
         # 个会话 ID，只有"生成新世界"才会开一个新的。真遇到不止一个的罕见
         # 情况，只展示第一个（跟原来"存档信息"这里一直隐含的假设一致），
         # 但不假装其余的不存在，用一行小字提示还有几个。
@@ -985,7 +985,7 @@ class SaveBrowserTab:
         # 会话信息(session_id_var 等)和玩家状态行都是每次 _refresh_saves()
         # /_refresh_players() 现拼文字的（不是常驻控件），语言切换后紧
         # 跟着的 tab.refresh() 会重新调一遍，到时候自然是新语言——这里
-        # 只需要更新"基本信息"/"分片:"/"每个玩家角色状态"这几个常驻的
+        # 只需要更新"基本信息"/"世界:"/"每个玩家角色状态"这几个常驻的
         # 标题 Label（"打开位置"按钮应用户要求删掉了，不用再刷新）。
         self._env_header_label.redraw()
         self._shard_label.redraw()
@@ -1032,7 +1032,7 @@ class SaveBrowserTab:
 
         # 不再是"全部存档"的可滚动列表——顶部全局选择栏已经选了具体是哪
         # 个存档，这里只需要现查、现画那一个存档自己的详情（存档位置/
-        # 游戏模式/最大玩家数/存档名称/各分片 Mod 数与存档会话数），不
+        # 游戏模式/最大玩家数/存档名称/各世界 Mod 数与存档会话数），不
         # 用列出其它没被选中的存档，自然也不需要滚动条/滚轮（应用户要
         # 求）。_selected_cluster_frame 是个普通容器，_refresh_env() 每
         # 次整个销毁重建里面的内容，跟 _refresh_players() 原来的"目标已
@@ -1064,8 +1064,8 @@ class SaveBrowserTab:
         if picker.result is None:
             return
 
-        # 分片文件被服务器进程占着的时候没法覆盖/删除，必须先确认这个
-        # cluster 名下所有分片都已经停止——"本地服务器"页签的 manager 是
+        # 世界文件被服务器进程占着的时候没法覆盖/删除，必须先确认这个
+        # cluster 名下所有世界都已经停止——"本地服务器"页签的 manager 是
         # 唯一知道哪些进程还在跑的地方，跨页签直接访问 app.local_tab。
         running = [s.name for s in c.shards
                    if (proc := self.app.local_tab.manager.get(c.path, s.name))

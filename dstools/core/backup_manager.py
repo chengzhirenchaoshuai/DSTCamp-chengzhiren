@@ -1,8 +1,8 @@
 """存档备份：把一个 cluster 当前状态（世界存档 + 相关配置）打包成 zip。
 
-备份内容 = 每个分片的 save/（世界数据）+ modoverrides.lua/leveldataoverride.lua/
+备份内容 = 每个世界的 save/（世界数据）+ modoverrides.lua/leveldataoverride.lua/
 server.ini，加上 cluster 级别的 cluster.ini/cluster_token.txt/adminlist.txt/
-blocklist.txt。故意跳过游戏自己在每个分片下维护的 backup/ 目录和各种
+blocklist.txt。故意跳过游戏自己在每个世界下维护的 backup/ 目录和各种
 log/chat_log 文件——那些是 mod 修改历史和日志，跟世界存档数据无关，游戏
 自己已经在滚动维护，没必要跟着备份一遍。
 
@@ -52,7 +52,7 @@ def create_backup(cluster_path: Path) -> Path:
     dest_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     zip_path = dest_dir / f"{cluster_path.name}_{stamp}.zip"
-    # 同一秒内被连续调用两次（比如"全部停止"时两个分片几乎同时停下，各
+    # 同一秒内被连续调用两次（比如"全部停止"时两个世界几乎同时停下，各
     # 自触发一次自动备份）不该让后一份静默覆盖前一份。
     n = 2
     while zip_path.exists():
@@ -81,11 +81,11 @@ def create_backup(cluster_path: Path) -> Path:
 def restore_backup(cluster_path: Path, backup_zip: Path) -> None:
     """用某一份备份 zip 覆盖 cluster_path 当前的状态。
 
-    先把这份备份会覆盖到的每一项（cluster 级配置 + 每个分片的 save/ 和
+    先把这份备份会覆盖到的每一项（cluster 级配置 + 每个世界的 save/ 和
     三个配置文件）整个删掉，再解压——不能只是在旧文件上覆盖解压：比如
     save/session/ 下比这份备份更新的存档槽文件如果不清掉，会跟备份里的
     旧槽位混在一起，游戏很可能还是照常挑编号最新的槽位，恢复了个寂寞。
-    调用方必须自己确认对应的分片都已经停止（文件被进程占着的话，
+    调用方必须自己确认对应的世界都已经停止（文件被进程占着的话，
     Windows 上这些删除/覆盖操作会直接失败）。
     """
     for name in _CLUSTER_ITEMS:

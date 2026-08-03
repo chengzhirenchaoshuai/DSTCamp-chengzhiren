@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.9.3-orange)
+![Version](https://img.shields.io/badge/version-0.9.4-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -77,7 +77,7 @@ python scripts/run_gui.py
   切换存档或已有服务器在跑时会有提示和锁定，避免冲突。**WeGame 版存档不
   支持一键启动**（平台限制，需要去 WeGame 客户端自己点"开始游戏"），其它
   管理功能不受影响；额外提供"检测服务器状态"按钮，反查系统进程 + 端口绑
-  定情况，确认 WeGame 客户端启动的分片是不是真的在跑。
+  定情况，确认 WeGame 客户端启动的世界是不是真的在跑。
   - **LuaJIT 加速补丁**（Steam 版专用）：一键安装第三方开源项目
     [DontStarveLuaJIT2](https://github.com/fesily/DontStarveLuaJIT2) 提供
     的性能补丁，注入文件和配套 Mod 都直接取自已订阅的创意工坊内容（不联
@@ -92,10 +92,10 @@ python scripts/run_gui.py
   这类 Mod 用到的集合/数组/文本输入配置项。
 - **世界设置**：编辑世界规则与世界生成参数，森林和洞穴分开管理，按分类展
   示、带图标和取值说明，支持中英文切换。
-- **服务器配置**：编辑游戏模式、语言、分片设置等服务器配置，三列布局展
+- **服务器配置**：编辑游戏模式、语言、世界设置等服务器配置，三列布局展
   示，数值字段按官方范围校验；此外还有管理员列表、黑名单、服务器 Token 管
   理。
-- **存档信息**：展示当前存档的详情（游戏模式/最大玩家数/分片 Mod 数与会
+- **存档信息**：展示当前存档的详情（游戏模式/最大玩家数/世界 Mod 数与会
   话数）、当前会话每个玩家的角色状态（角色名、头像、血量/理智/饥饿/体温
   等），支持给玩家标识加备注、一键打开存档文件夹。配套的存档备份体系：
   - **自动备份**：服务器停止后自动备份一次，运行期间也按设定间隔定期备份。

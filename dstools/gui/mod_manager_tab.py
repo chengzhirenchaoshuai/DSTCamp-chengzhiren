@@ -120,8 +120,8 @@ class ModManagerTab:
         sf = BgFrame(self.frame, app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=5, pady=5)
         # "存档"选择器已经搬到顶部的全局选择栏（见 DSToolsApp._cluster_bar），
         # 这里不再重复一份。"同步mod文件到服务器"仍然摆在这一行最前面、
-        # "分片:"标签左边——同步针对的是整个存档(所有分片)的 Mod，不是当前
-        # 选中的某一个分片，放在分片选择器左边能提示"这不是只同步当前分片"。
+        # "世界:"标签左边——同步针对的是整个存档(所有世界)的 Mod，不是当前
+        # 选中的某一个世界，放在世界选择器左边能提示"这不是只同步当前世界"。
         # 不受 self._dirty 门控，同步的是已经写进 modoverrides.lua 的状态，
         # 跟这次编辑有没有存盘无关；本地存档不需要这个功能，选中本地存档
         # 时置灰（见 on_cluster_changed）。
@@ -201,11 +201,11 @@ class ModManagerTab:
         self.list_panel.on_hover_change = self._on_mod_list_hover
         self._mod_list_tip = None
 
-        # "保存修改"/"应用到所有分片"挪到页签底部居中——跟"世界设置"页签
+        # "保存修改"/"应用到所有世界"挪到页签底部居中——跟"世界设置"页签
         # "保存世界规则"按钮的位置一致（pack(side=tk.BOTTOM) 不加 fill，
         # 默认就是水平居中），不用之前塞在顶部工具栏最右边、容易跟"查看
         # 本地模组"按钮挤在一起。视觉顺序保留原来的[保存修改][应用到所
-        # 有分片]（从左到右）。
+        # 有世界]（从左到右）。
         btn_row_bottom = BgFrame(self.frame, app, bg=theme.CARD_BG)
         btn_row_bottom.pack(side=tk.BOTTOM, pady=(0, 5))
         self._md_bs = ttk.Button(btn_row_bottom, text=t("mod.save_btn"), command=self._save_mods)
@@ -350,8 +350,8 @@ class ModManagerTab:
             dlg.show_warning(self.app.root, t("mod.location_label"), t("mod.location_recheck_not_found"))
 
     def _server_running_for(self, cluster) -> bool:
-        """这个存档（不分具体哪个分片，同步是整个存档一起做的）是不是有
-        分片正被这个工具自己启动的本地服务器进程占着——服务器跑起来的时候
+        """这个存档（不分具体哪个世界，同步是整个存档一起做的）是不是有
+        世界正被这个工具自己启动的本地服务器进程占着——服务器跑起来的时候
         直接复制/替换存档目录下的文件，可能因为文件被占用而失败。"""
         if not cluster:
             return False
@@ -788,8 +788,8 @@ class ModManagerTab:
         save_mod_overrides(overrides)
         if not silent:
             dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.saved_mods", count=len(overrides.mods), shard=s.name))
-            # DST 默认要求各分片的 mod 状态一致，单个分片单独修改会导致
-            # 主从不同步等问题，因此保存后主动询问是否同步到其他分片。
+            # DST 默认要求各世界的 mod 状态一致，单个世界单独修改会导致
+            # 主从不同步等问题，因此保存后主动询问是否同步到其他世界。
             other_shards = [sh for sh in c.shards if sh.name != s.name and sh.mod_overrides_path]
             if other_shards and dlg.ask_yes_no(self.app.root, t("mod.save_btn"), t("dlg.sync_all_shards_confirm")):
                 cnt = 0
@@ -1213,7 +1213,7 @@ class ModConfigDialog:
 
             real_options += 1
 
-            if opt.is_set_config or opt.is_array_config or opt.is_text_config:
+            if opt.is_set_config or opt.is_array_config or opt.is_text_config or opt.is_dictionary_config:
                 current_value = mod.configuration_options.get(opt.name, opt.default)
                 self._render_raw_value_editor(body, opt, current_value)
                 continue
@@ -1324,13 +1324,14 @@ class ModConfigDialog:
 
     def _render_raw_value_editor(self, parent, opt, current_value) -> None:
         """画"Configs Extended"风格的集合(is_set_config)/数组(is_array_config)/
-        纯文本(is_text_config)配置项——真实值是自由文本集合，不是几个固
-        定选项，原生下拉框机制（self.vars/choice_maps）在这里不适用。
-        集合/数组用"+/×"逐条管理的输入框列表（跟游戏内 Configs Extended
-        实际的编辑体验一致：点"+"新增一行输入框，每行右边一个"×"删
-        除），纯文本用单行输入框。不接 self.vars/choice_maps，记录进
-        self.raw_widgets，_reset()/_apply() 走单独的分支读写（见
-        _read_raw_widget_value()）。"""
+        纯文本(is_text_config)/字典(is_dictionary_config)配置项——真实值
+        是自由文本集合，不是几个固定选项，原生下拉框机制（self.vars/
+        choice_maps）在这里不适用。集合/数组用"+/×"逐条管理的输入框列
+        表（跟游戏内 Configs Extended 实际的编辑体验一致：点"+"新增一
+        行输入框，每行右边一个"×"删除），字典是同一套交互但每行两个输
+        入框（键+值），纯文本用单行输入框。不接 self.vars/choice_maps，
+        记录进 self.raw_widgets，_reset()/_apply() 走单独的分支读写
+        （见 _read_raw_widget_value()）。"""
         row = ttk.Frame(parent, padding=(10, 8), relief=tk.GROOVE, borderwidth=1)
         row.pack(fill=tk.X, padx=5, pady=3)
 
@@ -1346,6 +1347,11 @@ class ModConfigDialog:
             var = tk.StringVar(value="" if current_value is None else str(current_value))
             ttk.Entry(row, textvariable=var).pack(fill=tk.X, pady=(6, 0))
             self.raw_widgets[opt.name] = ("text", {"var": var})
+            return
+
+        if opt.is_dictionary_config:
+            pairs = self._raw_value_to_pairs(current_value)
+            self._render_dict_list_editor(row, opt.name, pairs)
             return
 
         kind = "set" if opt.is_set_config else "array"
@@ -1384,6 +1390,54 @@ class ModConfigDialog:
 
         self.raw_widgets[name] = (kind, {"vars": entry_vars, "items_frame": items_frame, "add_row": _add_row})
 
+    def _render_dict_list_editor(self, row, name: str, pairs: list) -> None:
+        """字典(is_dictionary_config)专用的"+/×"逐条管理编辑器——跟
+        _render_item_list_editor() 同一套交互，区别是每一行要管两个值
+        （键、值），不是一个，所以单独写，不硬塞进那个只认单值的方法
+        里。self.raw_widgets[name] 存 ("dict", {"vars": [(key_var,
+        val_var), ...], ...})，_read_raw_widget_value()/_reset_raw_widget()
+        据此单独分支处理。"""
+        items_frame = ttk.Frame(row)
+        items_frame.pack(fill=tk.X, pady=(6, 0))
+        entry_vars: list[tuple[tk.StringVar, tk.StringVar]] = []
+
+        def _add_row(initial_key: str = "", initial_val: str = ""):
+            key_var = tk.StringVar(value=initial_key)
+            val_var = tk.StringVar(value=initial_val)
+            entry_vars.append((key_var, val_var))
+            item_row = ttk.Frame(items_frame)
+            item_row.pack(fill=tk.X, pady=2)
+            ttk.Entry(item_row, textvariable=key_var, width=18).pack(side=tk.LEFT)
+            ttk.Label(item_row, text="=").pack(side=tk.LEFT, padx=4)
+            ttk.Entry(item_row, textvariable=val_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+            def _remove():
+                entry_vars.remove((key_var, val_var))
+                item_row.destroy()
+
+            ttk.Button(item_row, text="×", width=3, command=_remove).pack(side=tk.LEFT, padx=(4, 0))
+
+        add_bar = ttk.Frame(row)
+        add_bar.pack(fill=tk.X, pady=(4, 0))
+        ttk.Button(add_bar, text=t("mod.add_value_btn"), command=lambda: _add_row("", "")).pack(side=tk.LEFT)
+
+        for k, v in pairs:
+            _add_row(k, v)
+
+        self.raw_widgets[name] = ("dict", {"vars": entry_vars, "items_frame": items_frame, "add_row": _add_row})
+
+    @staticmethod
+    def _raw_value_to_pairs(value) -> list:
+        """字典(is_dictionary_config)——真实存储是普通 Lua 表，键值都是
+        字符串（{["草"]="6个", ...}），跟集合(is_set_config)"值固定为
+        true"不同，键和值都要取出来才能编辑。按键排序只是为了显示稳
+        定，Lua 的 pairs() 遍历本来就没有顺序概念，不影响写回的值。值
+        形状跟预期不符（比如还没被任何一方写过，仍是模组自己声明的占
+        位默认值）时兜底成空列表，不猜测/不硬转。"""
+        if not isinstance(value, dict):
+            return []
+        return sorted((str(k), str(v)) for k, v in value.items())
+
     @staticmethod
     def _raw_value_to_lines(kind: str, value) -> list:
         """集合(is_set_config)——真实存储是 Lua 里"字符串当 key"的集合写
@@ -1392,34 +1446,73 @@ class ModConfigDialog:
         念，排序只是让显示稳定，不影响写回的值。
         数组(is_array_config)——EditArray() 用 ipairs 遍历，是要保序的
         普通数组，按当前顺序逐行显示、按列表里的行序写回。
-        值形状跟预期不符（比如还没被任何一方写过，仍是模组自己声明的
-        占位默认值）时兜底成空列表，不猜测/不硬转。"""
+
+        **真机复现过的坑（数据丢失）**：这个项目的 Lua 解析器（无论是
+        modinfo.lua 的 default，还是 load_mod_overrides() 读游戏已经存
+        盘的 modoverrides.lua）统一把 Lua 数组字面量解析成"1"/"2"/"3"...
+        这种字符串数字 key 的 dict（Lua 本身数组和普通表是同一种数据结
+        构，parse_lua_table()/parse_lua_value() 忠实保留了这一点，不会
+        主动转换成原生 Python list——见 lua_parser.py._parse_table()），
+        不是原生 list。之前这里只认 `isinstance(value, (list, tuple))`，
+        任何真实存过的数组（不管是已经写进存档的，还是 mod 自己声明的
+        非空 default）传进来的都是这种"数组形状的 dict"，判断失败直接
+        兜底成空列表——表现为"打开配置项一看是空的"，如果这时候不小心点
+        了应用，还会把这份假的空列表覆盖写回文件，真正吃掉原有数据。
+        现在额外识别这种形状：键排序后正好是从 1 开始连续的整数序列，
+        就按这个顺序取值当数组处理；空 dict `{}` 单独按"合法的空数组"
+        处理（Lua 的空表 `{}` 本身也没法区分是空数组还是空集合/字典，
+        这里两种解读的结果都是空列表，不影响正确性）。"""
         if kind == "set":
             return sorted(str(k) for k in value.keys()) if isinstance(value, dict) else []
-        return [str(v) for v in value] if isinstance(value, (list, tuple)) else []
+        if isinstance(value, (list, tuple)):
+            return [str(v) for v in value]
+        if isinstance(value, dict):
+            if not value:
+                return []
+            try:
+                idx_keys = sorted(int(k) for k in value.keys())
+            except (TypeError, ValueError):
+                return []
+            if idx_keys == list(range(1, len(idx_keys) + 1)):
+                return [str(value[str(k)]) for k in idx_keys]
+        return []
 
     def _read_raw_widget_value(self, kind: str, data: dict) -> Any:
         """把 _render_raw_value_editor() 画的控件当前内容转回可以直接写
         进 modoverrides.lua 的 Python 值——跟 Configs Extended 实际读取
-        的形状对应：集合是"字符串当 key"的 dict，数组是普通 list，文本
-        是原始字符串。空白行统一去掉（集合/数组场景下空行没有意义）。"""
+        的形状对应：集合是"字符串当 key"的 dict，数组是普通 list，字典
+        是"键值都是字符串"的 dict，文本是原始字符串。空白行/空键统一去
+        掉（集合/数组/字典场景下都没有意义——字典的键是 Lua 表的索引，
+        空字符串当 key 存不出语义明确的数据）。"""
         if kind == "text":
             return data["var"].get()
+        if kind == "dict":
+            result = {}
+            for key_var, val_var in data["vars"]:
+                k = key_var.get().strip()
+                if k:
+                    result[k] = val_var.get().strip()
+            return result
         lines = [v.get().strip() for v in data["vars"] if v.get().strip()]
         if kind == "set":
             return {line: True for line in lines}
         return lines
 
     def _reset_raw_widget(self, opt, kind: str, data: dict) -> None:
-        """把集合/数组/文本编辑器整体复原成 mod 自己声明的默认值——集合/
-        数组是"清空现有的每一行输入框，按默认值重新逐条铺开"，不是找差
-        异增量修改（默认值的条数跟当前编辑中的条数通常对不上）。"""
+        """把集合/数组/字典/文本编辑器整体复原成 mod 自己声明的默认值——
+        集合/数组/字典都是"清空现有的每一行输入框，按默认值重新逐条铺
+        开"，不是找差异增量修改（默认值的条数跟当前编辑中的条数通常对
+        不上）。"""
         if kind == "text":
             data["var"].set("" if opt.default is None else str(opt.default))
             return
         for child in list(data["items_frame"].winfo_children()):
             child.destroy()
         data["vars"].clear()
+        if kind == "dict":
+            for k, v in self._raw_value_to_pairs(opt.default):
+                data["add_row"](k, v)
+            return
         for v in self._raw_value_to_lines(kind, opt.default):
             data["add_row"](v)
 
@@ -1649,9 +1742,9 @@ class ModConfigDialog:
         # _save_mods(silent=True) writes this mod's own config to the
         # currently selected shard right away (matching the in-game
         # config screen), but that doesn't mean there's nothing left to
-        # do -- "应用到所有分片" still hasn't propagated this change to
+        # do -- "应用到所有世界" still hasn't propagated this change to
         # any sibling shards, so mark dirty (enabling 保存修改/应用到所有
-        # 分片) rather than leaving them grayed out as if nothing happened.
+        # 世界) rather than leaving them grayed out as if nothing happened.
         self.tab._mark_dirty()
         self.tab._save_mods(silent=True)
         self.tab._render_list()

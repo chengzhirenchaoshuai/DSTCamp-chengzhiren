@@ -282,7 +282,7 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     # 内部的问题。Menubutton 没有 Entry，不存在这一类问题。
     #
     # 基础 "TMenubutton" 样式给不特意指定 style= 的那些 MenuCombo 用
-    # （分片选择器之类，原来的 Combobox 也没有指定过字体，跟着主题默认
+    # （世界选择器之类，原来的 Combobox 也没有指定过字体，跟着主题默认
     # 字体走），做成跟 TCombobox 一样的白底+边框观感，不做成实心色块的
     # 按钮样子，因为它们视觉上都是"选择器"不是"动作按钮"。
     style.configure("TMenubutton", background=CARD_BG, foreground=TEXT,

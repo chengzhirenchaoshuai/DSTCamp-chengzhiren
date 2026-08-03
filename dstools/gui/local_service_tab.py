@@ -1,7 +1,7 @@
 """"本地服务"标签页：一键启动/管理饥荒专用服务器（Dedicated Server）。
 
 只针对 SaveSource.SERVER 类型的 Cluster；一个 Cluster 下有几个世界
-（Master/Caves/其他分片）完全来自 Cluster.shards（discovery.py 已经自动
+（Master/Caves/其他世界）完全来自 Cluster.shards（discovery.py 已经自动
 扫描过），不在这里假设固定层数。每个已启动的世界有自己独立的控制台标签
 （ttk.Notebook 动态 add，日志/命令都通过管道，不弹出真实控制台窗口）。
 """
@@ -59,7 +59,7 @@ _RUNNING_LIKE = (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPP
 
 
 def _ordered_shards(cluster):
-    """主分片(Master，即地面世界)排在最前面，其余分片保持原有的相对顺序
+    """主世界(Master，即地面世界)排在最前面，其余世界保持原有的相对顺序
     排在后面——discovery.py 是按文件夹名字母序扫描的，"Caves" 会排在
     "Master" 前面，不改全局排序（避免影响其它 Tab），只在这个标签页
     的显示/启动顺序上按 Master 优先重排。"""
@@ -80,8 +80,8 @@ def _max_rollback_days(cluster) -> int:
 
 class _RollbackDialog:
     """"回档"窗口：下拉选择回退天数，点"回退"就往这个 cluster 下所有正
-    在运行的分片控制台各发一次对应的 c_rollback(n)。分片式集群
-    （Master+Caves）必须两边的控制台都发一遍，只发给其中一个分片会导致
+    在运行的世界控制台各发一次对应的 c_rollback(n)。世界式集群
+    （Master+Caves）必须两边的控制台都发一遍，只发给其中一个世界会导致
     两边世界天数不同步——这不是我们自己拍脑袋定的规则，是 Klei 官方论坛
     原话确认过的机制。
 
@@ -144,7 +144,7 @@ class _RollbackDialog:
             return
         if not dlg.ask_yes_no(self.win, t("local.rollback_title"), t("local.rollback_confirm", n=n)):
             return
-        # 明确告诉用户具体发到了哪些分片、跳过了哪些（没在运行）——回档在
+        # 明确告诉用户具体发到了哪些世界、跳过了哪些（没在运行）——回档在
         # Caves 里生效可能比 Master 慢很多（社区反馈过"Caves 回档要等很
         # 久"），只看 Caves 控制台一时没反应，容易被误以为是"没发送成
         # 功"，这里至少把"发送"这一步的结果说清楚，避免混淆。
@@ -188,7 +188,7 @@ _STATUS_COL_W = 70  # "状态"这一列，大致对应原来 ttk.Label(width=8) 
 
 
 class _ShardRow:
-    """分片启动器的一行：世界名字 + 状态徽标 + 启动/停止按钮。"""
+    """世界启动器的一行：世界名字 + 状态徽标 + 启动/停止按钮。"""
 
     def __init__(self, parent, tab, cluster, shard):
         self.tab = tab
@@ -208,7 +208,7 @@ class _ShardRow:
         self.status_var = tk.StringVar()
 
         # 启动/停止按钮不用构造时传进来的 cluster 快照，改成点击那一刻现
-        # 查 tab._get_cluster()——_refresh_shard_rows() 只有分片集合/存档
+        # 查 tab._get_cluster()——_refresh_shard_rows() 只有世界集合/存档
         # 路径变化时才会真的重建这些行，路径没变的话行对象会一直留着，
         # 闭包里存的 cluster 就还是当初构造时那一个对象引用。如果用户在
         # 这之后（没触发重建）改了令牌之类的信息——"服务器配置"页那边改
@@ -245,8 +245,8 @@ class _ShardRow:
         self._status_fg = _status_color(status)
         self._redraw_text()
         running = status in _RUNNING_LIKE
-        # 别的存档还有分片在跑的话，这个分片自己的"启动"也要锁住——"停止"
-        # 不受影响，当前分片自己已经在跑的话本来就要能停。WeGame 分片则
+        # 别的存档还有世界在跑的话，这个世界自己的"启动"也要锁住——"停止"
+        # 不受影响，当前世界自己已经在跑的话本来就要能停。WeGame 世界则
         # 是彻底不支持从这里启动（见 _do_start_shard 的说明），永远锁住。
         is_wegame = self.cluster.platform == Platform.WEGAME
         locked = (not running) and (is_wegame or self.tab._other_cluster_running(self.cluster))
@@ -341,7 +341,9 @@ class _ConsolePane:
 
         # 常用指令快捷按钮——省得每次都要记 c_announce()/c_listallplayers()
         # 确切的 Lua 语法，只挑最基础、没有破坏性的几个（保存/回档已经有
-        # 专门的入口，重置世界这类高危操作应用户要求暂不加）。
+        # 专门的入口）。"重置世界"是例外——真正高危（调用官方
+        # c_regenerateworld()，删掉当前世界数据重新生成，不可撤销），应
+        # 用户明确要求才加，点击前必须弹窗二次确认（见 _reset_world()）。
         quick_row = ttk.Frame(self.frame)
         quick_row.pack(side=tk.BOTTOM, fill=tk.X, padx=2)
         self.announce_btn = ttk.Button(quick_row, text=t("local.console_announce_btn"), command=self._announce)
@@ -356,6 +358,17 @@ class _ConsolePane:
                                    else "")
         Tooltip(self.announce_btn, not_ready_hint)
         Tooltip(self.list_players_btn, not_ready_hint)
+
+        # c_regenerateworld() 官方就要求在主世界(Master)上调用才有效
+        # （会连带重新生成洞穴等其它世界）——真机验证过在从世界上执行没
+        # 有效果，所以从世界的控制台干脆不画这个按钮，不留一个"点了但
+        # 没用"的陷阱，而不是画出来再禁用+解释。
+        self.reset_world_btn = None
+        if getattr(proc, "is_master", True):
+            self.reset_world_btn = ttk.Button(quick_row, text=t("local.console_reset_world_btn"),
+                                               command=self._reset_world)
+            self.reset_world_btn.pack(side=tk.LEFT, padx=(4, 0))
+            Tooltip(self.reset_world_btn, lambda: not_ready_hint() or t("local.console_reset_world_hover"))
         # "关闭"跟其它几个不一样，不受 can_send 控制（见 pump()）——世界
         # 已经停了的标签页也要能关掉，不然切换存档、反复开关世界之后这些
         # 标签页只会越攒越多。点击行为交给调用方（LocalServiceTab），因
@@ -399,6 +412,20 @@ class _ConsolePane:
     def _list_players(self):
         self.proc.send_command("c_listallplayers()")
 
+    def _reset_world(self):
+        """调用官方命令 c_regenerateworld() 重置世界——真正会删除当前世
+        界数据、不可撤销的操作，跟"公告"/"玩家列表"这两个纯查询性质的
+        快捷按钮完全不是一个风险级别，点击后必须先弹窗二次确认，用户
+        点"否"或直接关掉弹窗都不会发送任何命令。这段风险声明比
+        ask_yes_no() 默认给短提示留的宽度（320px）长得多，跟 LuaJIT 安
+        装确认框（同一个文件里 _on_luajit_install()）同样的坑同样的
+        解法：用默认宽度会挤成很多行、窗口又高又窄，加宽减少行数。"""
+        if not dlg.ask_yes_no(self.frame, t("local.console_reset_world_confirm_title"),
+                               t("local.console_reset_world_confirm_msg"),
+                               wraplength=520, min_width=560):
+            return
+        self.proc.send_command("c_regenerateworld()")
+
     def rebind(self, proc):
         """同一个世界停止后重新启动时复用这个标签页/控制台，而不是每次都
         开一个新的——清空旧日志，指向这次新起的进程。"""
@@ -432,6 +459,8 @@ class _ConsolePane:
         self.send_btn.configure(state=tk.NORMAL if can_send else tk.DISABLED)
         self.announce_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
         self.list_players_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
+        if self.reset_world_btn is not None:
+            self.reset_world_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
 
 
 class LocalServiceTab:
@@ -505,7 +534,7 @@ class LocalServiceTab:
 
         # 选中本地存档时显示的醒目提示——风格和"Mod管理"/"世界设置"的
         # 本地存档提示条保持一致（黄底加粗），跨整个页签宽度，而不是像
-        # 之前那样塞在左侧分片列表那个窄栏里、字又小又不显眼。默认不 pack。
+        # 之前那样塞在左侧世界列表那个窄栏里、字又小又不显眼。默认不 pack。
         #
         # **坑**：这条提示（以及下面的 _wegame_banner）显示/隐藏时用
         # pack(side=tk.BOTTOM)，不能用 before=self._body——后者会把提示
@@ -520,7 +549,7 @@ class LocalServiceTab:
                                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
                                        anchor=tk.W, padx=10, pady=6)
 
-        # 切到另一个存档时，如果之前那个存档还有分片没停，"启动"/"全部
+        # 切到另一个存档时，如果之前那个存档还有世界没停，"启动"/"全部
         # 启动"要锁住——两个不同存档的服务器同时跑，端口/资源很容易撞在
         # 一起，这个应用没打算支持"同时管理多个正在运行的存档"这种用法。
         # 跟 _local_banner 一样默认不 pack，_update_start_lock_state() 按
@@ -544,17 +573,17 @@ class LocalServiceTab:
         self._start_all_btn.pack(side=tk.LEFT, padx=(0, 5))
         self._stop_all_btn = ttk.Button(btn_row, text=t("local.stop_all_btn"), command=self._stop_all)
         self._stop_all_btn.pack(side=tk.LEFT)
-        # "回档"是整个 cluster 级别的操作（分片式集群要同时对 Master+Caves
-        # 发指令），不挂在某一个分片自己的行上——见 _RollbackDialog 的说明。
+        # "回档"是整个 cluster 级别的操作（世界式集群要同时对 Master+Caves
+        # 发指令），不挂在某一个世界自己的行上——见 _RollbackDialog 的说明。
         self._rollback_btn = ttk.Button(btn_row, text=t("local.rollback_btn"), command=self._open_rollback_dialog)
         self._rollback_btn.pack(side=tk.LEFT, padx=(5, 0))
 
-        # WeGame 版分片不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
+        # WeGame 版世界不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
         # 客户端才能签发的一次性会话令牌，DSTCamp 拼不出来）——选中一个
         # WeGame 存档时这一组（提示+"检测服务器状态"+检测结果）替代原来
-        # 分片列表下面的空白，其余展示（分片列表/状态）照常，只是启动类
-        # 按钮全部禁用。应用户要求放在分片列表下方（"Caves 未启动"下
-        # 面），不是页签最底部——之前整页宽度跨栏的位置离分片列表太远。
+        # 世界列表下面的空白，其余展示（世界列表/状态）照常，只是启动类
+        # 按钮全部禁用。应用户要求放在世界列表下方（"Caves 未启动"下
+        # 面），不是页签最底部——之前整页宽度跨栏的位置离世界列表太远。
         #
         # 三个都用 side=tk.BOTTOM 从下往上占：先注册的在最下面，后注册
         # 的在它上面（跟 mod_sync_log_dialog.py 按钮栏踩过的坑同一个道
@@ -600,7 +629,7 @@ class LocalServiceTab:
         self.on_cluster_changed(self.app.get_selected_cluster())
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 
-    # ── Cluster/分片选择 ────────────────────────────────────────────
+    # ── Cluster/世界选择 ────────────────────────────────────────────
 
     def _get_cluster(self):
         return self.app.get_selected_cluster()
@@ -615,7 +644,7 @@ class LocalServiceTab:
         state = tk.NORMAL if (is_server and not is_wegame) else tk.DISABLED
         self._start_all_btn.configure(state=state)
         # "专用服务器工具:"这一行找的是 Steam 版专用服务器安装目录，跟
-        # WeGame 完全无关（WeGame 分片本来就不走这里启动，见
+        # WeGame 完全无关（WeGame 世界本来就不走这里启动，见
         # _do_start_shard 的说明）——选中 WeGame 存档时"更换路径"/"重新
         # 检测"两个按钮也置灰，不给用户一种"这里能管 WeGame 安装目录"的
         # 错觉。
@@ -658,7 +687,7 @@ class LocalServiceTab:
     def _sync_console_tabs_visibility(self, cluster):
         """全局存档选择器切到别的存档（或者切到本地存档）时，把不属于
         当前选中存档的控制台标签页隐藏起来——不然还能在这个页面上对另一
-        个存档发"公告"/"玩家列表"/"关闭窗口"，容易搞混。分片进程/后台读
+        个存档发"公告"/"玩家列表"/"关闭窗口"，容易搞混。世界进程/后台读
         取线程照常跑，只是标签页暂时不可见/点不到；用 Notebook.hide()
         而不是 forget()，切回来的时候日志历史还在，不用重新创建。"""
         current_path = str(cluster.path) if cluster else None
@@ -669,10 +698,10 @@ class LocalServiceTab:
                 self._console_nb.hide(pane.frame)
 
     def _other_cluster_running(self, cluster) -> bool:
-        """除了 cluster 自己之外，是不是还有别的存档也有分片在跑——两个
+        """除了 cluster 自己之外，是不是还有别的存档也有世界在跑——两个
         不同存档的服务器同时跑，端口/资源很容易撞在一起，这个应用没打算
         支持"同时管理多个正在运行的存档"这种用法，"启动"/"全部启动"要
-        锁住，"停止"不受影响（当前存档自己已经在跑的分片还是要能停）。"""
+        锁住，"停止"不受影响（当前存档自己已经在跑的世界还是要能停）。"""
         if not cluster:
             return False
         return any(p.cluster_path != cluster.path for p in self.manager.running())
@@ -686,7 +715,7 @@ class LocalServiceTab:
             self._other_running_banner.pack_forget()
             return
         if cluster.platform == Platform.WEGAME:
-            # WeGame 分片的"启动"按钮一直是禁用的（on_cluster_changed()
+            # WeGame 世界的"启动"按钮一直是禁用的（on_cluster_changed()
             # 已经设过），这里不用管"别的存档在跑"这套锁定逻辑，直接跳过，
             # 否则每 150ms 轮询一次会把这里的 NORMAL 重新写回去，盖掉
             # on_cluster_changed() 设的 DISABLED。
@@ -704,8 +733,8 @@ class LocalServiceTab:
         self._start_all_btn.configure(state=tk.DISABLED if other else tk.NORMAL)
 
     def _update_stop_all_btn_state(self, cluster):
-        """所有分片都是"停止"状态时"全部停止"没有意义，置灰——只有这个
-        存档自己至少有一个分片在跑（含正在启动/正在停止这些过渡态）才
+        """所有世界都是"停止"状态时"全部停止"没有意义，置灰——只有这个
+        存档自己至少有一个世界在跑（含正在启动/正在停止这些过渡态）才
         点得动，跟 _other_cluster_running() 判断"是不是别的存档在跑"是
         两回事，这里只看当前选中的这个存档自己。"""
         if not cluster or cluster.source != SaveSource.SERVER:
@@ -790,7 +819,7 @@ class LocalServiceTab:
                        fill=theme.TEXT_MUTED, font=font, tags="luajit_text")
 
     def _resize_wegame_banner(self) -> None:
-        """WeGame 提示条现在挪到分片列表下面、跟 left 这个窄栏同宽（应
+        """WeGame 提示条现在挪到世界列表下面、跟 left 这个窄栏同宽（应
         用户要求，不再是跨整个页签宽度的通栏），wraplength 也要跟着
         left 面板的实际宽度走，不是 self.frame 整个页签的宽度——拖动
         PanedWindow 分隔条改变左右分栏比例时会重新触发 <Configure>。减
@@ -811,11 +840,11 @@ class LocalServiceTab:
         self._set_wegame_detect_text(t("local.wegame_detect_placeholder"))
 
     def _on_wegame_detect(self) -> None:
-        """WeGame 分片是玩家自己在 WeGame 客户端启动的，ServerManager 追
+        """WeGame 世界是玩家自己在 WeGame 客户端启动的，ServerManager 追
         踪不到真实运行状态（见 detect_external_shard_processes() 的说
         明）——按配置的 server_port 反查系统里真的绑定了这个端口的
         dontstarve_dedicated_server*.exe 进程，而不是猜"进程存在就等于
-        这个分片在跑"。零参数直接同步跑：tasklist/netstat 都是本机瞬时
+        这个世界在跑"。零参数直接同步跑：tasklist/netstat 都是本机瞬时
         查询，不涉及网络请求，没必要开后台线程。"""
         cluster = self._get_cluster()
         if not cluster or cluster.platform != Platform.WEGAME:
@@ -870,9 +899,9 @@ class LocalServiceTab:
     def _any_running_for_bin64(self, bin64_dir: Path) -> bool:
         """bin64 是整个安装共享的，同一个 install_dir 下可能有多个
         cluster——锁的粒度是"这个 bin64 所属的 install_dir 下有没有任何
-        分片在跑"，不是"当前选中的 cluster 在不在跑"（会漏锁同一安装目
+        世界在跑"，不是"当前选中的 cluster 在不在跑"（会漏锁同一安装目
         录下另一个 cluster 在跑的情况），也不是全局 any_running()（会误
-        锁其它安装目录下的分片）。ServerProcess.install_dir 是 start() 时
+        锁其它安装目录下的世界）。ServerProcess.install_dir 是 start() 时
         存的安装根目录，bin64_dir.parent 换算回去正好对上。"""
         install_dir = bin64_dir.parent
         return any(p.install_dir == install_dir for p in self.manager.running())
@@ -1035,18 +1064,18 @@ class LocalServiceTab:
         self._do_start_shard(cluster, shard)
 
     def _do_start_shard(self, cluster, shard):
-        # 真机反馈过的 bug：单独点某个分片的"启动"之后，再点"全部启动"，
-        # 那个已经在跑的分片会被再启动一次——_start_all() 无条件对每个
-        # 分片都调一次这个方法，不看它是不是已经在跑；ServerManager.
+        # 真机反馈过的 bug：单独点某个世界的"启动"之后，再点"全部启动"，
+        # 那个已经在跑的世界会被再启动一次——_start_all() 无条件对每个
+        # 世界都调一次这个方法，不看它是不是已经在跑；ServerManager.
         # start() 自己也没有这道防线，会直接再开一个新的子进程覆盖掉
         # self._procs 里对旧进程的引用（旧进程变成没人管的孤儿进程，还
-        # 占着存档文件/端口，界面上却再也停不掉它）。单个分片自己的
+        # 占着存档文件/端口，界面上却再也停不掉它）。单个世界自己的
         # "启动"按钮已经靠 _ShardRow.update() 在运行时置灰挡住了双击，
         # 但"全部启动"这条路径绕过了那层 UI 限制，必须在这里再挡一道。
         existing = self.manager.get(cluster.path, shard.name)
         if existing and existing.status in _RUNNING_LIKE:
             return
-        # WeGame 版分片不走这里——Rail SDK 要求一个只有 WeGame 客户端才能
+        # WeGame 版世界不走这里——Rail SDK 要求一个只有 WeGame 客户端才能
         # 签发的一次性会话令牌(--rail_channel_id)，DSTCamp 直接拼命令行
         # 启动子进程的方式在这个平台上做不到，只能引导用户去 WeGame 客户
         # 端自己点启动（按钮本身已经在 UI 上禁用，这里是双重保险）。
@@ -1147,7 +1176,7 @@ class LocalServiceTab:
         之后整个摘掉这个标签页，而不只是停掉服务器却留着标签页不管。不
         这样做的话，切换存档、反复开关世界会让标签页只增不减（旧
         cluster 的标签页永远留在 Notebook 里，见 _do_start_shard 的"复
-        用"逻辑——只有同一个 cluster+分片重新启动才会复用，换了存档就
+        用"逻辑——只有同一个 cluster+世界重新启动才会复用，换了存档就
         是全新的 key，永远对不上旧标签页）。
 
         世界还在运行时点这个按钮会先弹一次确认（关窗口=停服务器，比单
@@ -1163,7 +1192,7 @@ class LocalServiceTab:
             self._remove_console_pane(key)
 
     def _on_pane_close_stopped(self, key, cluster):
-        # 复用"停止后"既有逻辑（刷新分片行状态 + 该 cluster 名下分片全停
+        # 复用"停止后"既有逻辑（刷新世界行状态 + 该 cluster 名下世界全停
         # 才触发一次自动备份），不重新写一遍。
         self._on_stop_done(cluster)
         self._remove_console_pane(key)
@@ -1176,12 +1205,12 @@ class LocalServiceTab:
         pane.frame.destroy()
 
     def _stop_and_then(self, cluster, shard, on_done):
-        """停止一个分片、停完之后转回 Tk 主线程执行 on_done——stop_shard()/
+        """停止一个世界、停完之后转回 Tk 主线程执行 on_done——stop_shard()/
         _close_console_pane() 都要这段样板，只是停完之后要做的事不同。DST
-        进程停下之后顺带停掉这个分片的 frpc（如果配置过樱花映射的话）——
+        进程停下之后顺带停掉这个世界的 frpc（如果配置过樱花映射的话）——
         隧道本身不删，只是本地客户端进程跟着不需要再转发了；stop_frpc_
         for_shard() 内部自己另起线程，这里统一用它的 on_done 转回主线程，
-        不管这个分片有没有配置过映射都只转一次。"""
+        不管这个世界有没有配置过映射都只转一次。"""
         def _dst_stopped(p):
             self.app.sakura_tab.stop_frpc_for_shard(
                 cluster, shard, on_done=lambda: self.frame.after(0, on_done))
@@ -1192,9 +1221,9 @@ class LocalServiceTab:
 
     def _on_stop_done(self, cluster):
         self._refresh_shard_rows(self._get_cluster())
-        # 一个 cluster 下的分片共享同一份世界进度（Master/Caves 通过传送门
-        # 联动），只有这个 cluster 名下所有分片都真正停下来之后备份才是一
-        # 个一致的快照——不是每停一个分片就各自备份一次。
+        # 一个 cluster 下的世界共享同一份世界进度（Master/Caves 通过传送门
+        # 联动），只有这个 cluster 名下所有世界都真正停下来之后备份才是一
+        # 个一致的快照——不是每停一个世界就各自备份一次。
         running = self.manager.running()
         if get_backup_auto_enabled() and not any(str(p.cluster_path) == str(cluster.path) for p in running):
             try:
@@ -1210,18 +1239,18 @@ class LocalServiceTab:
         if not c.shards:
             dlg.show_warning(self.app.root, t("local.install_title"), t("local.no_shards"))
             return
-        # 令牌检查只在这里做一次，不是对每个分片各调一次 start_shard()
-        # ——同一个存档下所有分片共用同一个 cluster_token.txt，"全部启
-        # 动"如果每个分片都各自弹一次确认框，2~3 个分片就要连点 2~3 次
+        # 令牌检查只在这里做一次，不是对每个世界各调一次 start_shard()
+        # ——同一个存档下所有世界共用同一个 cluster_token.txt，"全部启
+        # 动"如果每个世界都各自弹一次确认框，2~3 个世界就要连点 2~3 次
         # 一模一样的确认，体验很差。
         if not self._confirm_token_ok(c):
             return
         for s in _ordered_shards(c):
             self._do_start_shard(c, s)
-        # _do_start_shard() 每次都会把控制台标签页切到刚启动的那个分片，
-        # 循环下来会停在最后一个分片上；玩家最关心的是主世界有没有起来，
-        # 公告一般也发到主世界，"全部启动"结束后统一切回主分片，不管启
-        # 动了几个分片、顺序是什么。
+        # _do_start_shard() 每次都会把控制台标签页切到刚启动的那个世界，
+        # 循环下来会停在最后一个世界上；玩家最关心的是主世界有没有起来，
+        # 公告一般也发到主世界，"全部启动"结束后统一切回主世界，不管启
+        # 动了几个世界、顺序是什么。
         self._select_master_console_tab(c)
 
     def _select_master_console_tab(self, cluster):
@@ -1255,11 +1284,11 @@ class LocalServiceTab:
 
     def _maybe_periodic_backup(self):
         """"设置备份策略"里配的自动备份周期——只要某个 cluster 名下还有
-        分片在跑，每隔这么多分钟就给它整体备份一次，跟当前 UI 上选中哪
+        世界在跑，每隔这么多分钟就给它整体备份一次，跟当前 UI 上选中哪
         个存档无关（用户可能切到别的存档在看，后台那个仍然按周期备份）。
         不是"每次轮询都检查一遍间隔"里带着误差累积的计时——每个 cluster
         第一次被发现在运行时先记一次时间戳，真正过了配置的分钟数才备份
-        并重新计时；分片全停了就把这个 cluster 的计时记录清掉，避免下次
+        并重新计时；世界全停了就把这个 cluster 的计时记录清掉，避免下次
         重新开始跑的时候，被一个很久以前的旧时间戳骗到立刻触发一次备份。
 
         "设置备份策略"里的"启用自动备份"开关关掉时整个方法直接返回——

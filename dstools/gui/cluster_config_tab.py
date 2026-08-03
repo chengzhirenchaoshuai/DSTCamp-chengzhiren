@@ -439,7 +439,7 @@ class ClusterConfigTab:
     # 之前默认的 ttk 字体太小、看不清；这几个是设置项统一放大后用的字体。
     _ROW_LABEL_FONT = ("", 11)
     _ROW_VALUE_FONT = ("", 11)
-    # 只有从分片(is_master=false)才需要的字段——见 _backfill_slave_shard_fields
+    # 只有从世界(is_master=false)才需要的字段——见 _backfill_slave_shard_fields
     # 和 _on_is_master_toggle：切换开关时这四项现场增删，不需要先保存。
     _SHARD_EXTRA_FIELDS = [("SHARD", "name"), ("SHARD", "id"),
                            ("STEAM", "master_server_port"), ("STEAM", "authentication_port")]
@@ -618,13 +618,13 @@ class ClusterConfigTab:
         frame = self._section_frames["Shard Config"]
         row = 0
         if c.shards:
-            # "分片:"标签 + 下拉框套一个子 Frame，pack 在里面再整体 grid
+            # "世界:"标签 + 下拉框套一个子 Frame，pack 在里面再整体 grid
             # 进 row=0（columnspan=2，sticky=W）——不能直接把两者分别
             # grid 到 column=0/column=1：这个 frame 的两列都配了
             # weight=1（"Cluster"标签页 GAMEPLAY/NETWORK 那两个并排大
             # 列要用到），column=0 的标签配 sticky=E 只是让文字贴着"column
             # 0 这一列自己的右边缘"，但 column 0 本身会被拉伸到大约一半
-            # 宽度，"分片:"文字实际落点在整行的正中央附近，下拉框跟着也
+            # 宽度，"世界:"文字实际落点在整行的正中央附近，下拉框跟着也
             # 紧挨在中间——两列等宽分配的富余空间才是真正原因，不是下拉
             # 框内部文字对不齐（真机截图"3.png"确认过）。子 Frame 整体
             # 当一个单元格 sticky=W，就只贴这个 frame 真正的左边缘，不
@@ -684,21 +684,21 @@ class ClusterConfigTab:
         for k in keys_to_remove: del self._entries[k]
         ttk.Label(frame, text=t("cluster.editing", shard=target_shard.name), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold")).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
 
-        # 从分片(is_master=false)的 server.ini 经常缺 name/id/
+        # 从世界(is_master=false)的 server.ini 经常缺 name/id/
         # master_server_port/authentication_port 这四项——Klei 官方
-        # Master+Caves 示例（论坛/wiki 的分片配置说明）里每个分片都必须有
-        # 这四项且互不冲突，缺了的话服务器要么起不来要么和别的分片抢端口。
-        # 只在服务器存档且确认是从分片时才补，本地存档只读、主分片不需要。
+        # Master+Caves 示例（论坛/wiki 的世界配置说明）里每个世界都必须有
+        # 这四项且互不冲突，缺了的话服务器要么起不来要么和别的世界抢端口。
+        # 只在服务器存档且确认是从世界时才补，本地存档只读、主世界不需要。
         if is_server and not shard_config.shard.get("is_master", True):
             self._backfill_slave_shard_fields(c, target_shard, shard_config)
 
         self._render_shard_fields()
 
     def _render_shard_fields(self):
-        """按 self._shard_config 当前数据画所有分片字段行（标题行之外的
-        可变区域）。切换分片、以及用户实时切换"是否为主分片"开关时都会
+        """按 self._shard_config 当前数据画所有世界字段行（标题行之外的
+        可变区域）。切换世界、以及用户实时切换"是否为主世界"开关时都会
         调用这个方法——is_master 的 ToggleSwitch 变化会触发
-        _on_is_master_toggle，在重画之前现场增删那四个从分片专属字段。"""
+        _on_is_master_toggle，在重画之前现场增删那四个从世界专属字段。"""
         frame = self._shard_config_frame
         shard_config = self._shard_config
         is_server = self._shard_config_is_server
@@ -720,7 +720,7 @@ class ClusterConfigTab:
                     # 里），就不能再手改——改了会跟隧道的 local_port 对不
                     # 上。零网络请求的本地缓存文件检查，不动 ALWAYS_
                     # READONLY_FIELDS 那张全局表（那张表是"所有存档所有分
-                    # 片永远只读"，这里是"这一个分片配置过映射才只读"，两
+                    # 片永远只读"，这里是"这一个世界配置过映射才只读"，两
                     # 件事）。
                     readonly = not is_server
                     port_tooltip = None
@@ -738,7 +738,7 @@ class ClusterConfigTab:
 
     def _snapshot_shard_entries_into(self, shard_config):
         """把 self._entries 里所有 SHARD_* 字段当前（可能还没保存）的值
-        写回 shard_config 对应的字典，避免重画整个分片区域时丢失用户正在
+        写回 shard_config 对应的字典，避免重画整个世界区域时丢失用户正在
         编辑但还没点"保存"的其它字段。"""
         for (section, key), (var, readonly) in list(self._entries.items()):
             if not section.startswith("SHARD_") or readonly:
@@ -752,10 +752,10 @@ class ClusterConfigTab:
                 pass
 
     def _on_is_master_toggle(self):
-        """"是否为主分片"开关被用户实时切换（还没点保存）——立即在编辑器
-        里增加/去掉从分片专属的 name/id/master_server_port/
+        """"是否为主世界"开关被用户实时切换（还没点保存）——立即在编辑器
+        里增加/去掉从世界专属的 name/id/master_server_port/
         authentication_port 四项，填好之后一起点"保存"才会写入文件；切
-        回主分片则把这四项现场去掉，不需要先保存再重新加载才能看到。"""
+        回主世界则把这四项现场去掉，不需要先保存再重新加载才能看到。"""
         if not hasattr(self, "_shard_config") or self._shard_config is None:
             return
         shard_config = self._shard_config
@@ -771,7 +771,7 @@ class ClusterConfigTab:
 
     def _backfill_slave_shard_fields(self, cluster, shard, shard_config):
         """给缺失的 name/id/master_server_port/authentication_port 生成默认值
-        （只填缺的，已有的不动），默认值保证和集群里其它分片已有的值不冲突。
+        （只填缺的，已有的不动），默认值保证和集群里其它世界已有的值不冲突。
         直接改 shard_config 的字典，让后面的渲染循环把它们当成正常字段画出来，
         "保存"时也会跟着一起写入 server.ini，不需要另外改保存逻辑。"""
         siblings = [load_shard_config(s.path) for s in cluster.shards if s.path != shard.path]
@@ -930,24 +930,24 @@ class ClusterConfigTab:
                 set_cluster_option(config, section, key, var.get())
         save_cluster_config(config, c.path)
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=c.name))
-        # _load_config() 会连"分片配置"一起重建，其中分片下拉框固定默认
+        # _load_config() 会连"世界配置"一起重建，其中世界下拉框固定默认
         # 选中 Master——不记住并恢复的话，保存"服务器配置"时如果用户当时
-        # 正在看 Caves 分片，会被莫名其妙地切回 Master。
+        # 正在看 Caves 世界，会被莫名其妙地切回 Master。
         prev_shard = self._shard_sel_var.get() if hasattr(self, "_shard_sel_var") else None
         self._load_config()
         if prev_shard and hasattr(self, "_shard_sel_var"):
             self._shard_sel_var.set(prev_shard)
             self._load_shard_config()
 
-    # 每个分片必须各自独立、不能撞车的端口字段——见 Klei 官方 Master+Caves
-    # server.ini 示例（论坛/wiki 分片配置说明），撞了服务器要么起不来要么
+    # 每个世界必须各自独立、不能撞车的端口字段——见 Klei 官方 Master+Caves
+    # server.ini 示例（论坛/wiki 世界配置说明），撞了服务器要么起不来要么
     # 互相抢占端口。
     _SHARD_PORT_FIELDS = [("NETWORK", "server_port"), ("STEAM", "master_server_port"),
                           ("STEAM", "authentication_port")]
 
     def _find_port_conflict(self, cluster, shard, shard_config) -> str | None:
         """检查 shard_config 里刚编辑好、还没写入文件的端口是否和集群内其它
-        分片已经保存的值撞车，撞了就返回一句说明文字，没撞返回 None。"""
+        世界已经保存的值撞车，撞了就返回一句说明文字，没撞返回 None。"""
         for section, key in self._SHARD_PORT_FIELDS:
             value = getattr(shard_config, section.lower()).get(key)
             if value in (None, ""):
@@ -962,7 +962,7 @@ class ClusterConfigTab:
         return None
 
     def _save_shard_ini(self):
-        """"保存" button on the "分片配置(server.ini)" tab -- a different
+        """"保存" button on the "世界配置(server.ini)" tab -- a different
         file (server.ini) for whichever shard is selected there, entirely
         independent of cluster.ini."""
         c = self._get_cluster()
@@ -982,8 +982,8 @@ class ClusterConfigTab:
 
         save_shard_config(shard_config, target.path)
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=f"{c.name}/{target.name}"))
-        # 只重新加载这个分片自己的字段，不整页 _load_config()——后者会把
-        # 分片下拉框重置回默认的 Master，保存完不该跳走用户正在看的分片。
+        # 只重新加载这个世界自己的字段，不整页 _load_config()——后者会把
+        # 世界下拉框重置回默认的 Master，保存完不该跳走用户正在看的世界。
         self._load_shard_config()
 
     def refresh_language(self):

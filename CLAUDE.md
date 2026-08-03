@@ -88,7 +88,7 @@ WeGame 的 `rail_apps` 安装根目录没有可靠的注册表项能查（不像
 **纯说明性文字一律不用 `ttk.Label`/`tk.Label`**（绘制区域永远不透明，会挡背景图），改用 `create_text()` 或 `gui/toolbar_widgets.py` 的 `make_toolbar_label()`/`make_filter_chips()`。容器接入 `BgFrame` 后如果子控件换成直接画的 `create_text`，记得 `pack_propagate(False)`，否则容器会被压缩到只剩 1px。
 
 **几个 Tk pack/Configure 布局坑（真机验证过，写小脚本确认过行为）**：
-1. `pack(side=tk.BOTTOM)` 不加 `fill` 时默认水平居中，且不用在乎跟同一父容器里 `fill=tk.BOTH, expand=True` 的兄弟控件谁先 pack——Tk 的 pack 是整体一起算 cavity，不是按注册顺序"先到先得"。"世界设置"的"保存世界规则"、"Mod管理"的"保存修改"/"应用到所有分片"都用这个位置（页签底部居中）。
+1. `pack(side=tk.BOTTOM)` 不加 `fill` 时默认水平居中，且不用在乎跟同一父容器里 `fill=tk.BOTH, expand=True` 的兄弟控件谁先 pack——Tk 的 pack 是整体一起算 cavity，不是按注册顺序"先到先得"。"世界设置"的"保存世界规则"、"Mod管理"的"保存修改"/"应用到所有世界"都用这个位置（页签底部居中）。
 2. "选中某种存档时才出现"的提示条（如 `local_service_tab.py` 的 `_local_banner`/`_wegame_banner`），显示/隐藏必须用 `pack(side=tk.BOTTOM, ...)`，**不能**用 `pack(before=self._body, ...)`——后者会把提示条插到 `self._body`（含左右两栏 `PanedWindow`）上面，导致它整体上下挪位置，连带内部 `BgFrame` 裁的那块共享背景图跟着"错位"（挪位置后没有正确重新裁到新位置）。`side=tk.BOTTOM` 只在底部单独留一块，`self._body` 内容不随之移动，从根上避免这个问题。
 3. Canvas 上用 `create_text()` 画的说明文字**不会**跟着兄弟控件的 pack 顺序自动挪位置，依赖动态坐标（如 `winfo_x()+winfo_width()`）算文字位置时要留意：父容器的 `<Configure>` 可能在依赖的控件还没真正布局完成（`winfo_width()` 还是 1）时就先触发过一次，之后如果父容器尺寸不再变化就不会再触发，导致文字永久画不出来。修法：目标控件 pack 完后立即 `update_idletasks()` 强制布局并主动画一次，同时给目标控件自己也绑一次 `<Configure>` 兜底，不能只依赖父级 Canvas 的 `<Configure>`。
 
@@ -147,7 +147,7 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 ### "存档信息"页签 (`gui/save_browser_tab.py`)
 
-单页展示：存档概览 → 分片选择器 → 基本信息 → 每个玩家角色状态。不自己维护"存档:"下拉框，跟其它页签一样接顶部全局存档选择栏。
+单页展示：存档概览 → 世界选择器 → 基本信息 → 每个玩家角色状态。不自己维护"存档:"下拉框，跟其它页签一样接顶部全局存档选择栏。
 
 **几个区块的左边缘对齐用同一个模块级常量 `_PAGE_PADX`（15）**，改的时候要保持一致；`_build_shard_row()` 的 `sf` 是唯一例外（`padx=_PAGE_PADX+10`）。量文字/卡片实际对齐位置用 `canvas.bbox(tag)+winfo_rootx()`（canvas 文字）或 `widget.winfo_rootx()`（普通控件），不要凭感觉猜 padx 数字。
 
@@ -155,19 +155,19 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 **两个 Tk-on-Windows 渲染时序坑（已修，别再犯）**：(1) 补渲染的 `render_now()` 扫一遍必须放在"确定不会再变"的检查点调用，不能放在挂了 `StringVar.trace_add` 的重画函数内部——一次逻辑更新会连续触发好几次，密集调用之间跟 Tk 自己的几何管理器抢时序，会画出压扁的黑线/错位色块。(2) 同一个几何变化后，要连续调用两次 `update()`（不是一次）才能把重绘真正冲刷到屏幕。(3) 给多个 `StringVar` 设置"占位态"文字时顺序有讲究：必须先清空"次要"字段、最后才设最主要的那个（比如先清 `summary`/`slots`，最后才把 `session_id` 设成"加载中…"），反过来会画出新旧混杂的过渡态。
 
-`save_reader.list_session_players()`：玩家存档槽前后包了二进制帧头/尾，**必须**从 `return` 正向扫描花括号深度找表的真实结尾，不能用 `raw.rfind(b"}")`（真实结尾后常跟着垃圾字节）。**"最新槽位"不一定是最新数据**：跨分片传送/进程被异常打断保存时，编号最新的槽位可能是个 0 字节占位文件，挑槽位时优先选最新的**非空**文件。`character_icons.resolve_character()` 优先级：官方角色表 → 分片当前已启用模组的 `STRINGS.CHARACTER_NAMES` 声明 → 原样显示英文 prefab（不猜测）。**`platform`/`wegame_client_mods_dir` 必须透传给内部的 `find_mod_folder()`**（0.6.0 已修）——不传就找不到 WeGame 存档里玩家用的自定义角色模组，只能回退显示英文 prefab；调用方 `save_browser_tab.py._build_player_row()` 已经带上当前存档的平台信息。图集 XML 解析共用 `core/atlas_utils.py`。
+`save_reader.list_session_players()`：玩家存档槽前后包了二进制帧头/尾，**必须**从 `return` 正向扫描花括号深度找表的真实结尾，不能用 `raw.rfind(b"}")`（真实结尾后常跟着垃圾字节）。**"最新槽位"不一定是最新数据**：跨世界传送/进程被异常打断保存时，编号最新的槽位可能是个 0 字节占位文件，挑槽位时优先选最新的**非空**文件。`character_icons.resolve_character()` 优先级：官方角色表 → 世界当前已启用模组的 `STRINGS.CHARACTER_NAMES` 声明 → 原样显示英文 prefab（不猜测）。**`platform`/`wegame_client_mods_dir` 必须透传给内部的 `find_mod_folder()`**（0.6.0 已修）——不传就找不到 WeGame 存档里玩家用的自定义角色模组，只能回退显示英文 prefab；调用方 `save_browser_tab.py._build_player_row()` 已经带上当前存档的平台信息。图集 XML 解析共用 `core/atlas_utils.py`。
 
 角色名/头像都查不到时统一用 `icons/ui/character_icon_default.png` 兜底，不走运行时缓存。头像列固定 `icon_size × icon_size` 容器再居中贴图（`Image.thumbnail()` 不保证正方形）；固定宽度的文字容器同样要显式给 `height`，只给 `width` 配 `pack_propagate(False)` 会把内容压扁到看不见。
 
 ### 存档备份/恢复/回档 (`core/backup_manager.py`)
 
-**这里的 zip 备份和"回档"是两套完全独立的机制**：回档（`local_service_tab.py._RollbackDialog`）靠游戏自己维护的历史存档快照（`cluster.ini` 的 `max_snapshots`），通过给运行中的分片控制台发 `c_rollback(n)` 指令触发；这里的 zip 备份是 dstools 自己在存档目录里打包的独立文件，两者互不依赖。
+**这里的 zip 备份和"回档"是两套完全独立的机制**：回档（`local_service_tab.py._RollbackDialog`）靠游戏自己维护的历史存档快照（`cluster.ini` 的 `max_snapshots`），通过给运行中的世界控制台发 `c_rollback(n)` 指令触发；这里的 zip 备份是 dstools 自己在存档目录里打包的独立文件，两者互不依赖。
 
-备份内容 = 每个分片的 `save/`（世界数据）+ `modoverrides.lua`/`leveldataoverride.lua`/`server.ini`，加上 cluster 级别的 `cluster.ini`/`cluster_token.txt`/`adminlist.txt`/`blocklist.txt`；故意跳过游戏自己维护的 `backup/` 目录和日志文件。
+备份内容 = 每个世界的 `save/`（世界数据）+ `modoverrides.lua`/`leveldataoverride.lua`/`server.ini`，加上 cluster 级别的 `cluster.ini`/`cluster_token.txt`/`adminlist.txt`/`blocklist.txt`；故意跳过游戏自己维护的 `backup/` 目录和日志文件。
 
 **备份目录是跟存档同级的统一位置，不在存档目录自己内部**：`backup_manager.backup_dir(cluster_path)` 返回 `<cluster_path 的上一级>/dstcamp_backups/<cluster_path.name>/`（如 `<Klei根>/dstcamp_backups/Cluster_3/`）——换电脑/打包分享存档目录时不会把 DSTCamp 自己的备份也一起带上。保留份数由 `app_settings.get_backup_retention()` 控制（默认 10，范围 5~99），对自动/手动备份一视同仁。
 
-`restore_backup()` **必须先删掉会被覆盖的每一项再解压，不能只是在旧文件上覆盖解压**——否则备份之后又产生的新存档槽文件会跟备份里的旧槽位混在一起。调用方自己负责确认对应分片都已停止，恢复前还会自动给"当前状态"打一份保险备份。
+`restore_backup()` **必须先删掉会被覆盖的每一项再解压，不能只是在旧文件上覆盖解压**——否则备份之后又产生的新存档槽文件会跟备份里的旧槽位混在一起。调用方自己负责确认对应世界都已停止，恢复前还会自动给"当前状态"打一份保险备份。
 
 `create_backup()` 同一秒内被连续调用两次会在文件名后加 `_2`/`_3`… 后缀避免互相覆盖——这个去重机制假设"同一秒内不会连续调用超过保留份数次"，写测试验证保留份数裁剪时要避开（改用手工构造不同时间戳文件名的方式，见 `tests/test_e2e.py` Test 27）。
 
@@ -187,31 +187,31 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 通过 SakuraFrp（樱花内网穿透 / natfrp.com）的开放 API 把本地专用服务器映射到公网，配合饥荒自带的 `c_connect("ip", port)` 直连功能实现好友联机，不需要路由器端口转发。跟"回档"/zip 备份是三套完全独立的机制。
 
-`core/sakura_frp.py` 是纯 `urllib.request` 实现的 REST 客户端（base URL `https://api.natfrp.com/v4`，Bearer Token）。**必须带自定义 `User-Agent`**——樱花的 Cloudflare WAF 会把默认的 `Python-urllib/x.y` 当脚本流量拦掉（`error code: 1010`）。**不在本地存隧道 ID 映射表**——樱花账号里的隧道是权威数据源，靠命名约定现查 `list_tunnels()` 匹配。**隧道名不是可读拼接**——樱花隧道名规则是 3-20 字符、只能字母数字和下划线（连字符都不允许），用 `sanitize_tunnel_name()` 对 `(存档目录名, 分片名)` 取短哈希 `dc_<12位hex>`，人类可读标识放进 `create_tunnel()` 的 `note` 字段。只有 Token（`app_settings.get_sakura_token()`）和上次选中节点 ID 是真正持久化的数据。
+`core/sakura_frp.py` 是纯 `urllib.request` 实现的 REST 客户端（base URL `https://api.natfrp.com/v4`，Bearer Token）。**必须带自定义 `User-Agent`**——樱花的 Cloudflare WAF 会把默认的 `Python-urllib/x.y` 当脚本流量拦掉（`error code: 1010`）。**不在本地存隧道 ID 映射表**——樱花账号里的隧道是权威数据源，靠命名约定现查 `list_tunnels()` 匹配。**隧道名不是可读拼接**——樱花隧道名规则是 3-20 字符、只能字母数字和下划线（连字符都不允许），用 `sanitize_tunnel_name()` 对 `(存档目录名, 世界名)` 取短哈希 `dc_<12位hex>`，人类可读标识放进 `create_tunnel()` 的 `note` 字段。只有 Token（`app_settings.get_sakura_token()`）和上次选中节点 ID 是真正持久化的数据。
 
 **节点能不能用、隧道数上限、流量配额，都以 `GET /user/info`（`get_user_info()`）返回的真实账号数据为准，不用写死的猜测**：`tunnels` 是账号真正的隧道数上限；`group.level` 跟每个节点的 `vip` 字段比对，判断能不能用该节点（选了用不了的报 `"当前用户 [xxx] 无权使用该节点..."`）；`traffic` 是 `[今日已用, 总剩余]` 字节数。节点数量常有几十上百个，`gui/sakura_tab.py._NodeSelectDialog` 做成多列网格弹窗，VIP 不够的节点置灰但仍显示。
 
-**饥荒的直连（`c_connect`）只能连主世界，副世界（Caves）连不了**（Klei 官方论坛确认，下洞是引擎内部自动跳转，不是玩家自己连另一个地址）。`_render_shard_rows()` 只有主分片（`server.ini` 的 `[SHARD] is_master`）的"复制直连代码"按钮可点，副分片按钮永远置灰（不隐藏，有 Tooltip 说明）——但副分片自己的隧道/端口回写照样要做，因为跨分片传送仍要靠隧道把 Caves 的 `server_port` 暴露到公网。
+**饥荒的直连（`c_connect`）只能连主世界，副世界（Caves）连不了**（Klei 官方论坛确认，下洞是引擎内部自动跳转，不是玩家自己连另一个地址）。`_render_shard_rows()` 只有主世界（`server.ini` 的 `[SHARD] is_master`）的"复制直连代码"按钮可点，副世界按钮永远置灰（不隐藏，有 Tooltip 说明）——但副世界自己的隧道/端口回写照样要做，因为跨世界传送仍要靠隧道把 Caves 的 `server_port` 暴露到公网。
 
-**核心硬约束（决定"开启樱花映射"整个流程的形状）**：樱花分配的远程端口来自跨用户共享的端口池，没法指定"要哪个具体端口"；但 Master/Caves 之间的跨分片传送要求"另一个分片端口"能通过外网访问到，这个值就是那个分片自己 `server.ini` 的 `server_port`。所以 `sakura_tab.py._enable_mapping()` 的顺序是：①对存档里每一个分片创建/复用隧道 → ②读回樱花实际分配的远程端口 `R` → ③`edit_tunnel()` 把隧道自己的 `local_port` 也改成 `R`（隧道变成 `R<->R` 直通）→ ④把 `R` 写回这个分片的 `server_port` → ⑤分片真在运行才提示去"本地服务器"页签重启生效。这五步必须对一个存档的所有分片一起做，分片数超过账号真实隧道上限的存档直接拦截提示。
+**核心硬约束（决定"开启樱花映射"整个流程的形状）**：樱花分配的远程端口来自跨用户共享的端口池，没法指定"要哪个具体端口"；但 Master/Caves 之间的跨世界传送要求"另一个世界端口"能通过外网访问到，这个值就是那个世界自己 `server.ini` 的 `server_port`。所以 `sakura_tab.py._enable_mapping()` 的顺序是：①对存档里每一个世界创建/复用隧道 → ②读回樱花实际分配的远程端口 `R` → ③`edit_tunnel()` 把隧道自己的 `local_port` 也改成 `R`（隧道变成 `R<->R` 直通）→ ④把 `R` 写回这个世界的 `server_port` → ⑤世界真在运行才提示去"本地服务器"页签重启生效。这五步必须对一个存档的所有世界一起做，世界数超过账号真实隧道上限的存档直接拦截提示。
 
-`core/frpc_process.py`（`FrpcStatus`/`FrpcProcess`/`FrpcManager`）结构照抄 `dedicated_server.py` 的三件套，唯一区别是 frpc 没有优雅关闭指令，`stop_blocking()` 直接 `terminate()`→`kill()`。**frpc 本地进程的启停跟着 DST 分片本身走**（`_do_start_shard()`/`_stop_and_then()` 调用 `sakura_tab.maybe_start_frpc()`/`stop_frpc_for_shard()`），但**停止服务器不会删除远程隧道**——隧道要不要删只由页签里显式点"关闭映射"决定。
+`core/frpc_process.py`（`FrpcStatus`/`FrpcProcess`/`FrpcManager`）结构照抄 `dedicated_server.py` 的三件套，唯一区别是 frpc 没有优雅关闭指令，`stop_blocking()` 直接 `terminate()`→`kill()`。**frpc 本地进程的启停跟着 DST 世界本身走**（`_do_start_shard()`/`_stop_and_then()` 调用 `sakura_tab.maybe_start_frpc()`/`stop_frpc_for_shard()`），但**停止服务器不会删除远程隧道**——隧道要不要删只由页签里显式点"关闭映射"决定。
 
-frpc 启动方式是官方 `-f <Token>:<隧道ID>`（不是传统 frp 的 `-c <配置文件>`），DSTCamp 不需要本地维护 frpc 配置文件。"这个分片有没有配置过映射"判断必须零网络请求，靠 `cache_dir("frpc_config")/f"{cluster目录名}__{shard名}.txt"`（内容是隧道 ID）这个可重建的缓存指针，不是权威数据源。`cluster_config_tab.py` 用同一个检查（`sakura_tab.has_active_mapping()`）决定要不要把 `server_port` 输入框临时设只读——**没有改动 `ALWAYS_READONLY_FIELDS` 这张全局表**，改错了会波及所有没用这个功能的用户。
+frpc 启动方式是官方 `-f <Token>:<隧道ID>`（不是传统 frp 的 `-c <配置文件>`），DSTCamp 不需要本地维护 frpc 配置文件。"这个世界有没有配置过映射"判断必须零网络请求，靠 `cache_dir("frpc_config")/f"{cluster目录名}__{shard名}.txt"`（内容是隧道 ID）这个可重建的缓存指针，不是权威数据源。`cluster_config_tab.py` 用同一个检查（`sakura_tab.has_active_mapping()`）决定要不要把 `server_port` 输入框临时设只读——**没有改动 `ALWAYS_READONLY_FIELDS` 这张全局表**，改错了会波及所有没用这个功能的用户。
 
 **`tools/frpc/frpc.exe` 必须是樱花后台"软件下载"页单独提供的独立版，不能从 SakuraFrp Launcher 安装目录复制**——Launcher 那份锁死，不管传什么参数都只打印"not intended to be run directly"退出。独立版跟 `tools/ktools/ktech.exe` 同一套模式：gitignore 掉，开发者手动放一份，`build_exe.py` 的 `tools/` 整体打包逻辑自动带上。
 
-这个页签所有容器一律用 `BgFrame`，不能用 `ttk.Frame`（不透明会挡背景图）；说明性文字也不用 `ttk.Label`，用 `SakuraTab._label()`（`BgFrame`+`create_text`，带自定义颜色参数）。状态/错误提示行没有错误时干脆不放任何控件，避免"空文字但还有一条不透明背景"的视觉空白条。分片状态区用 `grid()` 而不是各行各自 `pack()`，让"已映射"/"未映射"两种长度不同的行内容仍共享同一套列宽，按钮天然对齐。
+这个页签所有容器一律用 `BgFrame`，不能用 `ttk.Frame`（不透明会挡背景图）；说明性文字也不用 `ttk.Label`，用 `SakuraTab._label()`（`BgFrame`+`create_text`，带自定义颜色参数）。状态/错误提示行没有错误时干脆不放任何控件，避免"空文字但还有一条不透明背景"的视觉空白条。世界状态区用 `grid()` 而不是各行各自 `pack()`，让"已映射"/"未映射"两种长度不同的行内容仍共享同一套列宽，按钮天然对齐。
 
 ### 本地服务器启动前的令牌检查 (`gui/local_service_tab.py`)
 
-点"启动"/"全部启动"时，如果 `cluster_token.txt` 缺失或格式不像真令牌，弹一个"是否仍要继续"确认框。**唯一例外是"离线模式"**（`offline_cluster`），直接放行。`_confirm_token_ok(cluster)` 只在"启动"入口调一次，不是对每个分片各调一次——同一存档下所有分片共用同一个令牌文件。
+点"启动"/"全部启动"时，如果 `cluster_token.txt` 缺失或格式不像真令牌，弹一个"是否仍要继续"确认框。**唯一例外是"离线模式"**（`offline_cluster`），直接放行。`_confirm_token_ok(cluster)` 只在"启动"入口调一次，不是对每个世界各调一次——同一存档下所有世界共用同一个令牌文件。
 
-**`_ShardRow` 的启动/停止按钮不能缓存构造时传入的 `cluster` 对象**，必须点击那一刻现查 `tab._get_cluster()`：`_refresh_shard_rows()` 只有分片集合/存档路径变化时才重建这些行，如果之后刷新过（`discover_environment()` 造出全新对象）但分片集合没变，闭包里的 `cluster` 就是刷新前的旧对象，字段可能过时。
+**`_ShardRow` 的启动/停止按钮不能缓存构造时传入的 `cluster` 对象**，必须点击那一刻现查 `tab._get_cluster()`：`_refresh_shard_rows()` 只有世界集合/存档路径变化时才重建这些行，如果之后刷新过（`discover_environment()` 造出全新对象）但世界集合没变，闭包里的 `cluster` 就是刷新前的旧对象，字段可能过时。
 
-`stop_shard()`/关闭控制台标签页共用 `_stop_and_then(cluster, shard, on_done)`（封装"停止分片+转回 Tk 主线程执行回调"）。控制台标签页"关闭窗口"按钮：世界还在运行时先弹确认框，已停止的直接关不弹确认。
+`stop_shard()`/关闭控制台标签页共用 `_stop_and_then(cluster, shard, on_done)`（封装"停止世界+转回 Tk 主线程执行回调"）。控制台标签页"关闭窗口"按钮：世界还在运行时先弹确认框，已停止的直接关不弹确认。
 
-**跨存档启动锁**：`ServerManager` 是全局单例，技术上能同时管理多个不同存档的分片进程，但这个应用不支持"同时跑多个存档"（容易端口冲突）。`_other_cluster_running(cluster)` 判断除当前选中存档外还有没有别的存档在跑，有的话锁住"启动"/"全部启动"（不锁"停止"），每次 `_poll()`（150ms 一次）重新算一遍。
+**跨存档启动锁**：`ServerManager` 是全局单例，技术上能同时管理多个不同存档的世界进程，但这个应用不支持"同时跑多个存档"（容易端口冲突）。`_other_cluster_running(cluster)` 判断除当前选中存档外还有没有别的存档在跑，有的话锁住"启动"/"全部启动"（不锁"停止"），每次 `_poll()`（150ms 一次）重新算一遍。
 
 ### LuaJIT 性能补丁 (`core/luajit_injector.py`)
 
@@ -223,11 +223,11 @@ frpc 启动方式是官方 `-f <Token>:<隧道ID>`（不是传统 frp 的 `-c <�
 
 配套 Mod 的 `folder_name:find("workshop-")` 这类代码依赖游戏引擎注入的 `folder_name` 全局变量（真机对照过 `modindex.lua` 源码：`env.folder_name = modname`）——`core/lua_sandbox.py` 的沙箱环境必须提供这个变量，否则引用它的 mod 代码会在沙箱里报错，连该 mod 其它已经算好的字段（比如 `name`）都会一起丢失，见 `resolve_full_config_options(folder_name=...)`。
 
-### 分片就绪判断与控制台标签页 (`core/dedicated_server.py` / `gui/local_service_tab.py`)
+### 世界就绪判断与控制台标签页 (`core/dedicated_server.py` / `gui/local_service_tab.py`)
 
-分片进程 RUNNING 不等于世界真的加载完——`ServerProcess.world_ready` 才是"公告"/"玩家列表"/"回档"按钮启用的依据。Master 看日志里的 `reset() returning`；Secondary（旧版叫 Slave）看 `... is now ready!`。**坑**：游戏进程早期会先跑一遍只建 modindex 的预备流程，两段都会打印 `reset() returning`——必须先看到 `about to start a shard with these settings` 才能开始判断就绪，否则 Master 会在预备阶段被误判"已就绪"。
+世界进程 RUNNING 不等于世界真的加载完——`ServerProcess.world_ready` 才是"公告"/"玩家列表"/"重置世界"/"回档"按钮启用的依据。Master 看日志里的 `reset() returning`；Secondary（旧版叫 Slave）看 `... is now ready!`。**坑**：游戏进程早期会先跑一遍只建 modindex 的预备流程，两段都会打印 `reset() returning`——必须先看到"真正开始加载这个世界"的那一行才能开始判断就绪，否则 Master 会在预备阶段被误判"已就绪"。**坑（真机复现过）**：这一行的措辞跟 `cluster.ini` 的 `shard_enabled` 联动——`true`（世界互联集群）时是 `about to start a shard with these settings`，`false`（独立世界）时变成 `about to start a server with the following settings`，`_REAL_START_MARKERS` 是元组，两种都要认，只认一种会导致某一种配置下这几个按钮永远只读。
 
-"全部启动"依次启动每个分片会把控制台标签页切到最后一个分片，结束后 `_select_master_console_tab()` 统一切回主分片。切换全局存档选择器时用 `Notebook.hide()`（不是 `forget()`）隐藏不属于当前存档的控制台标签页，避免对旧存档发指令；进程和日志读取不受影响，切回来历史还在。
+"全部启动"依次启动每个世界会把控制台标签页切到最后一个世界，结束后 `_select_master_console_tab()` 统一切回主世界。切换全局存档选择器时用 `Notebook.hide()`（不是 `forget()`）隐藏不属于当前存档的控制台标签页，避免对旧存档发指令；进程和日志读取不受影响，切回来历史还在。
 
 ### Steam 安装/库文件夹发现 (`core/steam_discovery.py`)
 

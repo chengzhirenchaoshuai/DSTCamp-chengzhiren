@@ -51,7 +51,7 @@ from dstools.models import Cluster
 
 
 def get_enabled_mod_ids(cluster: Cluster) -> list[str]:
-    """并集 cluster 下每个分片 modoverrides.lua 里 enabled=True 的 mod，
+    """并集 cluster 下每个世界 modoverrides.lua 里 enabled=True 的 mod，
     去掉 "workshop-" 前缀，返回排序去重后的纯数字 ID 列表。只用于"这个
     存档有没有启用任何 mod"这个前置判断（没启用就不需要点同步），跟下面
     整个 mods/ 目录联接的动作本身无关——那是按这台机器一次性生效的，不

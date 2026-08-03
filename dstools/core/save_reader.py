@@ -236,11 +236,11 @@ def list_session_players(session: SaveSession) -> list[PlayerCharacterSave]:
                 player.parse_error = "no save slot found"
                 players.append(player)
                 continue
-            # 跨分片传送、或者进程被异常打断保存时，DST 可能把编号最新的
+            # 跨世界传送、或者进程被异常打断保存时，DST 可能把编号最新的
             # 槽位写成一个 0 字节的占位文件，真正可用的最新角色数据还在
             # 上一个槽位里——真机在本地存档上复现过这个情况（Caves/Master
-            # 分片最新槽位均为 0 字节，Master 上一个槽位仍是完整数据）。
-            # 优先选最新的非空槽位；全部都是空的（比如玩家从没在这个分片
+            # 世界最新槽位均为 0 字节，Master 上一个槽位仍是完整数据）。
+            # 优先选最新的非空槽位；全部都是空的（比如玩家从没在这个世界
             # 存过档）才退回原来最新编号的那个，交给下面的解析逻辑按原样
             # 报错，不掩盖真正没有数据的情况。
             non_empty = [f for f in slot_files if f.stat().st_size > 0]

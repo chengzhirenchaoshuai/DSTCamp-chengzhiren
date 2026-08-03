@@ -190,7 +190,7 @@ class ModConfigOption:
     # client actually does). See visible_config_options() below, which
     # ModConfigDialog uses to hide these entirely.
     client: bool = False
-    # 下面三个同样不是引擎字段，是共享库 mod "Configs Extended"（创意工坊
+    # 下面四个同样不是引擎字段，是共享库 mod "Configs Extended"（创意工坊
     # 3317960157）的约定——真机读过它的 scripts/widgets/
     # remi_newmodconfigurationscreen.lua 源码确认：这套东西最终仍然调
     # KnownModIndex:SaveConfigurationOptions() 写回同一份 modoverrides.lua
@@ -202,9 +202,13 @@ class ModConfigOption:
     #   序概念）。
     # - is_array_config：普通有序数组（EditArray() 用 `ipairs()` 遍历）。
     # - is_text_config：纯字符串，不是选项/集合/数组。
+    # - is_dictionary_config：字符串键值对表（{["草"]="6个", ...}），
+    #   EditDict() 同样用 `pairs()` 遍历，没有顺序概念——跟 is_set_config
+    #   的区别是每个 key 对应的 value 是任意字符串，不是固定的 true。
     is_set_config: bool = False
     is_array_config: bool = False
     is_text_config: bool = False
+    is_dictionary_config: bool = False
 
 
 @dataclass
@@ -1101,6 +1105,7 @@ def _parse_single_option(block: str, local_tables: dict | None = None) -> ModCon
     opt.is_set_config = bool(re.search(r'\bis_set_config\s*=\s*true\b', block))
     opt.is_array_config = bool(re.search(r'\bis_array_config\s*=\s*true\b', block))
     opt.is_text_config = bool(re.search(r'\bis_text_config\s*=\s*true\b', block))
+    opt.is_dictionary_config = bool(re.search(r'\bis_dictionary_config\s*=\s*true\b', block))
 
     opt.choices = _extract_choices(block, local_tables)
 
@@ -1439,6 +1444,7 @@ def _options_from_lua_result(result: Any) -> list[ModConfigOption] | None:
         opt.is_set_config = bool(d.get("is_set_config"))
         opt.is_array_config = bool(d.get("is_array_config"))
         opt.is_text_config = bool(d.get("is_text_config"))
+        opt.is_dictionary_config = bool(d.get("is_dictionary_config"))
         opt.choices = _choices_from_lua_value(d.get("options"))
 
         # Same two header tells as _parse_single_option (see its

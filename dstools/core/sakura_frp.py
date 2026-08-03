@@ -138,14 +138,14 @@ def sanitize_tunnel_name(cluster_folder_name: str, shard_name: str, source: str,
     短横线**（实测真实报错："隧道名不符合规范(3-20个字符,只能使用字母数
     字和下划线)"）。存档目录名是用户自己起的，长度、字符集都不可控，直
     接拼 `dstcamp-{cluster}-{shard}` 这种可读命名大概率超长/带非法字符，
-    改用短哈希：格式固定合法、确定性可复现（同一个分片每次都算出同一个
+    改用短哈希：格式固定合法、确定性可复现（同一个世界每次都算出同一个
     名字，find_dstcamp_tunnel() 才能现查匹配到）。
 
     `source`（`SaveSource.value`，"server"/"local"）和 `platform`
     （`Platform.value`，"steam"/"wegame"）必须一起参与哈希，不能只用
     `(cluster_folder_name, shard_name)`——不同来源/平台的存档目录名完全
     可能撞同一个名字（比如"复制为服务器存档"生成的那份，或者 Steam/
-    WeGame 两边都叫 Cluster_2），只按目录名+分片名算隧道名会让它们互相
+    WeGame 两边都叫 Cluster_2），只按目录名+世界名算隧道名会让它们互相
     冒充对方的映射状态（真机复现过的 bug）。目前只有 SaveSource.SERVER
     的存档会走到这里（sakura_tab.py 已经在 UI 层挡掉本地存档），但
     source 仍然作为显式参数传入而不是硬编码 "server"，让这份签名本身
@@ -156,7 +156,7 @@ def sanitize_tunnel_name(cluster_folder_name: str, shard_name: str, source: str,
 
 def find_dstcamp_tunnel(tunnels: list[dict], cluster_folder_name: str, shard_name: str,
                          source: str, platform: str) -> dict | None:
-    """按命名约定在 list_tunnels() 结果里找这个 (存档, 分片) 对应的隧道。"""
+    """按命名约定在 list_tunnels() 结果里找这个 (存档, 世界) 对应的隧道。"""
     name = sanitize_tunnel_name(cluster_folder_name, shard_name, source, platform)
     for t in tunnels:
         if t.get("name") == name:

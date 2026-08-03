@@ -38,7 +38,9 @@ _CACHE_DIR = cache_dir("mod_full_resolve")
 # 不存在处理——不需要额外写迁移/清理脚本，旧缓存文件本来就没有这个键，
 # 加了版本号之后自动全部失效，下次启动会真的重新跑一遍 sandbox。
 # **改 ModConfigOption 的字段时记得把这个数字加一。**
-_CACHE_FORMAT_VERSION = 1
+# v2：新增 is_dictionary_config 字段（支持 Configs Extended 的字符串键
+# 值对配置类型）。
+_CACHE_FORMAT_VERSION = 2
 
 
 def _cache_path(workshop_id: str) -> Path:

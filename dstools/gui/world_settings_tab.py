@@ -40,7 +40,7 @@ class WorldSettingsTab:
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_select)
-        # 分片下拉框旁边原来还有一个"刷新"按钮——应用户要求删掉了：顶部
+        # 世界下拉框旁边原来还有一个"刷新"按钮——应用户要求删掉了：顶部
         # 全局存档选择栏已经有一个"刷新"按钮，点了会走
         # DSToolsApp._refresh() -> tab.refresh() -> on_cluster_changed()
         # -> _on_shard_select() -> _load_world()，效果跟这里重复。

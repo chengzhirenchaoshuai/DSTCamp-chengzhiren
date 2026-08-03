@@ -209,7 +209,7 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None,
                        wegame_client_mods_dir: Path | None = None) -> tuple[str, Path | None]:
     """解析一个角色 prefab 的显示名 + 头像路径。
 
-    先查官方角色表；查不到（说明是模组角色）再去这个分片当前启用的模组
+    先查官方角色表；查不到（说明是模组角色）再去这个世界当前启用的模组
     里找同名声明，连带该模组自带的头像一起用；都找不到就原样显示英文
     prefab、不给头像——不去猜测未知模组的命名规则。
 

@@ -4,7 +4,7 @@
 
 跟"回档"（core/backup_manager.py 的 zip 备份）是完全独立的两回事，也跟本地
 `frpc.exe` 客户端进程管理（core/frpc_process.py）分工明确：本文件只管 UI +
-编排 API 调用；隧道创建后"把远程端口回写进 server.ini"这一步，是让跨分片
+编排 API 调用；隧道创建后"把远程端口回写进 server.ini"这一步，是让跨世界
 传送（Master<->Caves）能通过隧道正常工作的关键，见 _enable_mapping()。
 """
 
@@ -285,7 +285,7 @@ class SakuraTab:
         # 最近 7 天用了多少流量，一行小字，没有映射就不显示。
         #
         # **坑**：这一行的高度以前是"没内容收缩到 1px、有内容再撑开"——
-        # 切换瞬间的高度变化会把下面"状态提示/分片列表"这些元素一起顶
+        # 切换瞬间的高度变化会把下面"状态提示/世界列表"这些元素一起顶
         # 上去或顶下来，过渡瞬间还会露出一截 Canvas 默认背景色（用户反馈
         # 的"白色框框"）。改成固定高度（按一行文字的字体量出来，构造时
         # 定死，不再跟着有没有内容动），永远占着这个位置——没有映射时
@@ -303,7 +303,7 @@ class SakuraTab:
         self._status_frame = BgFrame(top, app, bg=theme.CARD_BG)
         self._status_frame.pack(fill=tk.X, pady=(3, 0))
 
-        # 分片状态区——每个分片一行，用 grid()（不是逐行各自 pack()）铺进
+        # 世界状态区——每个世界一行，用 grid()（不是逐行各自 pack()）铺进
         # 同一个容器，这样"已映射"和"未映射"两种内容长度不同的行，"复制
         # 直连代码"这一列在所有行里都能对齐在同一条竖线上。
         self._shards_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
@@ -313,7 +313,7 @@ class SakuraTab:
         action_row = BgFrame(self.frame, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
         self._action_btn = ttk.Button(action_row, text=t("sakura.enable_btn"), command=self._on_action_btn)
         self._action_btn.pack(side=tk.LEFT)
-        # 按钮本身是常驻控件（不像分片行那样每次刷新都销毁重建），Tooltip
+        # 按钮本身是常驻控件（不像世界行那样每次刷新都销毁重建），Tooltip
         # 只在这里绑一次、用取值函数动态取文字——跟 mod_manager_tab.py 的
         # _sync_button_hover_text() 同一个套路；如果每次 _render_shard_
         # rows() 都重新 Tooltip(self._action_btn, ...)，Tooltip 内部用
@@ -324,7 +324,7 @@ class SakuraTab:
         # 映射过就没有 frpc 可控制，显示这一行只会让人误以为随便哪个存
         # 档都能在这里单独启停 frpc。真实状态按"这个存档所有映射过的分
         # 片是不是全部都在跑"算，跟 _action_btn 的开启/关闭是同一个粒度
-        # （整个存档一起，不细分到单个分片）。
+        # （整个存档一起，不细分到单个世界）。
         self._frpc_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._frpc_status_label = self._label(self._frpc_row, self._frpc_status_text(False))
         self._frpc_status_label.pack(side=tk.LEFT)
@@ -340,7 +340,7 @@ class SakuraTab:
 
     def _frpc_pointer_path(self, cluster_path, shard_name):
         """不是完整的 frpc 配置文件——frpc 用 `-f token:隧道ID` 启动，自己
-        向樱花服务器现拉配置，这里只需要落地这个分片对应的隧道 ID，供
+        向樱花服务器现拉配置，这里只需要落地这个世界对应的隧道 ID，供
         maybe_start_frpc() 在 Tk 主线程零网络请求地读出来拼命令行。"""
         return cache_dir(_FRPC_CACHE_NAME) / f"{cluster_path.name}__{shard_name}.txt"
 
@@ -434,7 +434,7 @@ class SakuraTab:
         """直接在 _recent_traffic_frame 自己的 Canvas 上画/清除文字，不
         靠增删子控件撑开/收缩高度——高度在 __init__ 里已经按一行文字固
         定死了，没有映射时文字清空但这一行的位置照样留着，不会导致下面
-        "状态提示/分片列表"这些元素跟着挪动，也不会露出没画文字的那截
+        "状态提示/世界列表"这些元素跟着挪动，也不会露出没画文字的那截
         Canvas 默认背景色。"""
         c = self._recent_traffic_frame
         c.delete("recent_traffic_text")
@@ -469,7 +469,7 @@ class SakuraTab:
             self._render_account_info("--", "--", "--", "--", "--")
             self._render_recent_traffic("")
             # 没有 Token 这条分支直接 return，不会走到下面 _apply_loaded()
-            # ->_render_shard_rows() 那条真正换掉分片状态文字的路径——
+            # ->_render_shard_rows() 那条真正换掉世界状态文字的路径——
             # _render_shard_placeholders() 在选中存档那一刻画的"加载中"
             # 会一直留着（真机反馈过"一直显示加载中，是不是卡死了"），
             # 这里换成更准确的"待配置 API"。
@@ -579,7 +579,7 @@ class SakuraTab:
 
         self._render_shard_rows()
 
-    # ── 分片状态区渲染 ───────────────────────────────────────────────
+    # ── 世界状态区渲染 ───────────────────────────────────────────────
 
     def _clear_shards_frame(self):
         for child in self._shards_frame.winfo_children():
@@ -604,7 +604,7 @@ class SakuraTab:
         if not cluster.shards:
             self._label(self._shards_frame, text).pack(anchor=tk.W)
             return
-        # 每个分片各占一行、跟 _render_shard_rows() 用一样的行高——这样加
+        # 每个世界各占一行、跟 _render_shard_rows() 用一样的行高——这样加
         # 载完成前后行数不变，下面"关闭映射"按钮不会因为这块区域忽大忽小
         # 而跟着跳动。
         for row_idx, shard in enumerate(cluster.shards):
@@ -616,13 +616,13 @@ class SakuraTab:
     @staticmethod
     def _is_master_shard(shard) -> bool:
         """饥荒的直连(c_connect)只能连主世界——副世界(Caves)不接受客户端
-        直接连接，玩家下洞是靠游戏内部的分片跳转，不是靠另外拿一条直连
+        直接连接，玩家下洞是靠游戏内部的世界跳转，不是靠另外拿一条直连
         地址。这里用 server.ini 里 [SHARD] is_master 判断，跟
-        cluster_config_tab.py 判断主/副分片用的是同一个字段，不用猜文件
+        cluster_config_tab.py 判断主/副世界用的是同一个字段，不用猜文件
         夹名字（比如 "Master"）。"""
         return load_shard_config(shard.path).shard.get("is_master", True)
 
-    # 每个分片行占用的 grid 竖直间距——原来 pady=2 太紧，行与行之间的按钮
+    # 每个世界行占用的 grid 竖直间距——原来 pady=2 太紧，行与行之间的按钮
     # 几乎贴在一起，改成上下各留够呼吸空间。
     _SHARD_ROW_PADY = (6, 6)
 
@@ -832,7 +832,7 @@ class SakuraTab:
                             token, name=name, type="udp", node=node_id,
                             local_ip="127.0.0.1", local_port=local_port,
                             # 隧道名现在是不可读的哈希（樱花名字规则不允许
-                            # 短横线，塞不下"存档名-分片名"这种可读格式），
+                            # 短横线，塞不下"存档名-世界名"这种可读格式），
                             # note 字段没有这个字符限制，用它留一份人能看
                             # 懂的标识，方便在樱花网页后台对照。
                             note=f"DSTCamp: {cluster.path.name}/{shard.name}")
@@ -869,10 +869,10 @@ class SakuraTab:
 
     def _on_enable_done(self, progress):
         progress.finish()
-        # 只有分片真的在跑，才需要提醒"重启才能生效"——开启映射前面已经
-        # 要求全部分片先停止，正常情况下走到这里都是没跑的，不用弹一句
+        # 只有世界真的在跑，才需要提醒"重启才能生效"——开启映射前面已经
+        # 要求全部世界先停止，正常情况下走到这里都是没跑的，不用弹一句
         # "重启"这种对着没在运行的东西说的话；只有极少数情况（比如这个
-        # DSTCamp 会话没追踪到、但分片其实还在跑）才需要提醒。
+        # DSTCamp 会话没追踪到、但世界其实还在跑）才需要提醒。
         cluster = self._current_cluster
         running = self._running_shard_names(cluster) if cluster else []
         if running:
@@ -883,11 +883,11 @@ class SakuraTab:
     def _on_enable_error(self, progress, e):
         progress.append(t("sakura.api_error", detail=str(e)))
         progress.finish()
-        # 前面的分片可能已经成功建好了隧道（比如 Master 建完才轮到 Caves
+        # 前面的世界可能已经成功建好了隧道（比如 Master 建完才轮到 Caves
         # 出错）——不刷新的话页面还停在点击前的旧状态，用户会以为什么都
         # 没发生、也看不出该不该重试。重新拉一遍真实状态，且 _enable_
-        # mapping() 本身对每个分片都会先查有没有现成隧道再决定建/复用，
-        # 重新点一次"开启樱花映射"是安全的，不会把已经建好的分片重复建。
+        # mapping() 本身对每个世界都会先查有没有现成隧道再决定建/复用，
+        # 重新点一次"开启樱花映射"是安全的，不会把已经建好的世界重复建。
         self._reload_async()
 
     def _disable_mapping(self):

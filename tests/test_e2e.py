@@ -22,7 +22,7 @@ from dstools.core.ini_parser import (
     parse_server_ini,
     write_cluster_ini,
 )
-from dstools.models import ClusterConfig
+from dstools.models import ClusterConfig, ModEntry
 from dstools.core.mod_manager import (
     ModOverrides,
     load_mod_overrides,
@@ -457,7 +457,7 @@ def test_list_session_players():
         assert bad.player_id == "A7BADPLAYER0"
         print("  PASS: Corrupt player entry isolated (parse_error set, other player unaffected)")
 
-        # 真机在本地存档上复现过的情况：跨分片传送/进程被打断时，DST 会把
+        # 真机在本地存档上复现过的情况：跨世界传送/进程被打断时，DST 会把
         # 编号最新的槽位写成 0 字节占位文件，真正数据还在上一个槽位里——
         # 必须回退去读那一个，不能因为最新槽位是空文件就整条判定解析失败。
         empty_latest_dir = session_dir / "A7EMPTYLATEST"
@@ -649,6 +649,8 @@ def test_modinfo_reader():
                   options = {{description = "请启用配置扩展模组！", data = {}}}, default = {} },
                 { name = "welcome_msg", label = "Welcome Message", is_text_config = true,
                   options = {{description = "请启用配置扩展模组！", data = ""}}, default = "" },
+                { name = "starting_items", label = "Starting Items", is_dictionary_config = true,
+                  options = {{description = "请启用配置扩展模组！", data = {}}}, default = {} },
             }
             ''',
             encoding="utf-8",
@@ -659,7 +661,42 @@ def test_modinfo_reader():
         assert by_name["ban_recipe_list"].is_header is False
         assert by_name["priority_list"].is_array_config is True
         assert by_name["welcome_msg"].is_text_config is True
-        print("  PASS: Configs Extended 风格的 is_set_config/is_array_config/is_text_config 解析正确")
+        assert by_name["starting_items"].is_dictionary_config is True
+        print("  PASS: Configs Extended 风格的 is_set_config/is_array_config/is_text_config/is_dictionary_config 解析正确")
+
+        # is_dictionary_config 的真实存储形状是普通 Lua 表、键值都是字符
+        # 串（跟 is_set_config 值固定为 true 不同）——之前 ModConfigOption
+        # 完全没有这个字段，ModConfigDialog 会把它当成普通下拉框选项处
+        # 理（choices 为空、找不到默认值），导致这种配置项在开服工具里
+        # 根本无法编辑。这里验证 serialize_lua_table/parse_lua_file 这条
+        # 通用 Lua 表读写路径本来就能正确处理 dict[str,str] 值（不需要为
+        # 字典类型专门改序列化逻辑，真正缺的只是 GUI 编辑器和字段识别）。
+        overrides_path = Path(tmp) / "modoverrides.lua"
+        mod_overrides = ModOverrides(path=overrides_path)
+        mod_overrides.mods["workshop-654324"] = ModEntry(
+            workshop_id="workshop-654324", enabled=True,
+            configuration_options={"starting_items": {"草": "6个", "树枝": "6个", "燧石": "2个"}},
+        )
+        save_mod_overrides(mod_overrides)
+        reloaded = load_mod_overrides(overrides_path)
+        assert reloaded.mods["workshop-654324"].configuration_options["starting_items"] == \
+            {"草": "6个", "树枝": "6个", "燧石": "2个"}
+        print("  PASS: is_dictionary_config 的字符串键值对配置项能正确写入/读回 modoverrides.lua")
+
+        # 真机复现过的坑（数据丢失）：is_array_config 的值不管是来自
+        # modinfo.lua 的 default 还是游戏已经存进 modoverrides.lua 的存
+        # 量数据，这个项目的 Lua 解析器都会解析成 "1"/"2"/"3"... 这种字
+        # 符串数字 key 的 dict（Lua 数组和普通表是同一种数据结构，解析
+        # 器忠实保留了这一点），不是原生 Python list——ModConfigDialog.
+        # _raw_value_to_lines() 之前只认原生 list，任何真实存过的数组都
+        # 会被当成"形状不对"兜底成空列表，编辑器显示成空的，点应用还会
+        # 把这份假的空列表覆盖写回文件，真正清空原有数据。
+        from dstools.gui.mod_manager_tab import ModConfigDialog
+        parsed_array_shape = {"1": "torch", "2": "backpack", "3": "axe"}  # parse_lua_table() 对数组字面量的真实产出形状
+        assert ModConfigDialog._raw_value_to_lines("array", parsed_array_shape) == ["torch", "backpack", "axe"]
+        assert ModConfigDialog._raw_value_to_lines("array", {}) == []
+        assert ModConfigDialog._raw_value_to_lines("array", ["torch", "backpack"]) == ["torch", "backpack"]
+        print("  PASS: is_array_config 识别 Lua 解析器实际产出的\"数组形状 dict\"，不再把存量数据当成空列表")
 
 
 def test_admin_manager():
@@ -768,7 +805,7 @@ def test_cluster_copy():
         print("  PASS: suggest_new_cluster_name falls back to Cluster_N only when the "
           "preferred (source) name is already taken")
 
-        # 造一个假的本地 cluster 文件夹（cluster.ini + 一个假分片子目录），
+        # 造一个假的本地 cluster 文件夹（cluster.ini + 一个假世界子目录），
         # 复制到 klei_root 下一个新名字。
         local_cluster = Path(tmp) / "local_user" / "Cluster_1"
         (local_cluster / "Master").mkdir(parents=True)
@@ -1224,12 +1261,12 @@ def test_cluster_ini_steam_section_roundtrip():
 def test_sakura_frp_tunnel_matching():
     """find_dstcamp_tunnel()/sanitize_tunnel_name() 是纯函数。樱花的真实
     隧道名规则是 3-20 个字符、只能用字母数字和下划线（实测报错确认过，
-    连字符都不允许），所以命名约定不是直接拼"dstcamp-存档名-分片名"这种
+    连字符都不允许），所以命名约定不是直接拼"dstcamp-存档名-世界名"这种
     可读字符串（会超长/带非法字符），是短哈希——这里测的是"格式始终合
     法" + "同样的输入每次都算出同一个名字"（find_dstcamp_tunnel() 靠这个
     确定性现查匹配，不在本地存隧道 ID 缓存表），以及 source/platform 也
     必须参与哈希（真机复现过的 bug：本地存档"复制为服务器存档"后目录名
-    相同，如果只按目录名+分片名算隧道名，两边会互相冒充对方的映射状
+    相同，如果只按目录名+世界名算隧道名，两边会互相冒充对方的映射状
     态；同理 Steam/WeGame 两边如果有同名存档也会撞）。"""
     print("\n" + "=" * 60)
     print("Test 29: SakuraFrp Tunnel Name Matching")
@@ -1240,8 +1277,8 @@ def test_sakura_frp_tunnel_matching():
     print("  PASS: sanitize_tunnel_name() 输出符合樱花的命名规则")
 
     assert sanitize_tunnel_name("Cluster_1", "Master", "server", "steam") == name, "同样的输入应该每次都算出同一个名字"
-    assert sanitize_tunnel_name("Cluster_1", "Caves", "server", "steam") != name, "不同分片应该算出不同的名字"
-    print("  PASS: 同一分片确定性可复现，不同分片不会撞名")
+    assert sanitize_tunnel_name("Cluster_1", "Caves", "server", "steam") != name, "不同世界应该算出不同的名字"
+    print("  PASS: 同一世界确定性可复现，不同世界不会撞名")
 
     assert sanitize_tunnel_name("Cluster_1", "Master", "local", "steam") != name, \
         "同名存档不同来源（本地 vs 服务器）不应该撞名"
@@ -1256,18 +1293,18 @@ def test_sakura_frp_tunnel_matching():
         {"id": 3, "name": "someone_elses_tunnel", "remote": "8080"},
     ]
     found = find_dstcamp_tunnel(tunnels, "Cluster_1", "Master", "server", "steam")
-    assert found is not None and found["id"] == 1, "应该按名字匹配到对应分片的隧道"
+    assert found is not None and found["id"] == 1, "应该按名字匹配到对应世界的隧道"
     print("  PASS: find_dstcamp_tunnel() matches the right shard")
 
     assert find_dstcamp_tunnel(tunnels, "Cluster_1", "Cave2", "server", "steam") is None, \
-        "不存在的分片不应该匹配到任何隧道"
+        "不存在的世界不应该匹配到任何隧道"
     assert find_dstcamp_tunnel(tunnels, "Cluster_1", "Master", "local", "steam") is None, \
         "同名本地存档不应该匹配到服务器存档的隧道"
     print("  PASS: no false match for a shard with no tunnel, nor for a same-named save of a different source")
 
 
 def test_sakura_server_port_rewrite():
-    """"开启樱花映射"最关键的一步：把樱花分配的远程端口回写进这个分片自
+    """"开启樱花映射"最关键的一步：把樱花分配的远程端口回写进这个世界自
     己的 server.ini。这里只测这一步的读-改-写本身，不牵扯真实网络调用。"""
     print("\n" + "=" * 60)
     print("Test 30: Sakura Server Port Rewrite")
@@ -1317,8 +1354,8 @@ def test_frpc_manager_key_convention():
     key_b = mgr._key(Path("C:/saves/Cluster_1"), "Master")
     key_c = mgr._key(Path("C:/saves/Cluster_1"), "Caves")
     assert key_a == key_b, "同一个 (cluster_path, shard_name) 应该算出相同的 key"
-    assert key_a != key_c, "不同分片应该算出不同的 key"
-    assert mgr.get(Path("C:/saves/Cluster_1"), "Master") is None, "没启动过的分片应该查不到进程"
+    assert key_a != key_c, "不同世界应该算出不同的 key"
+    assert mgr.get(Path("C:/saves/Cluster_1"), "Master") is None, "没启动过的世界应该查不到进程"
     print("  PASS: FrpcManager._key() matches ServerManager's convention")
 
 

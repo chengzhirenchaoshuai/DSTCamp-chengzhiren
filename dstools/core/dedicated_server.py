@@ -171,14 +171,30 @@ class ServerStatus(Enum):
 # 坑：真机日志实测发现，游戏进程启动早期会先跑一遍"仅建 modindex"的预
 # 备流程（"ModIndex: Beginning normal load sequence..." -> 一样会打印
 # "ModIndex: Load sequence finished successfully."/"Reset() returning"），
-# 跟真正加载这个存档世界的流程长得一样，比"About to start a shard with
-# these settings:"这行早得多——如果不管三七二十一见到 "reset() returning"
-# 就认为世界加载完，Master 会在这个预备流程里被误判成"已就绪"。所以要求
-# 先看到 "about to start a shard with these settings"（真正开始加载这个
-# 存档世界的分界线，预备流程里不会出现这行）之后，才开始检查上面两组就
-# 绪标记；这一步对 Secondary 无害——它的 ready 行本来就只会在这行之后
-# 才出现。
-_REAL_START_MARKER = "about to start a shard with these settings"
+# 跟真正加载这个存档世界的流程长得一样，比下面这行真正开始加载世界的
+# 标记早得多——如果不管三七二十一见到 "reset() returning" 就认为世界加
+# 载完，Master 会在这个预备流程里被误判成"已就绪"。所以要求先看到这行
+# （真正开始加载这个存档世界的分界线，预备流程里不会出现）之后，才开始
+# 检查上面两组就绪标记；这一步对 Secondary 无害——它的 ready 行本来就
+# 只会在这行之后才出现。
+#
+# 真机复现过的坑（用户反馈"公告/玩家列表/重置世界/回档"全部一直只读，
+# 哪怕世界明明已经加载完）：这行的措辞不是固定的，跟 cluster.ini 的
+# [SHARD] shard_enabled 这个开关联动——用户亲测对比过：
+# shard_enabled=true（真正的多世界/世界互联集群）时打的是
+# "About to start a shard with these settings:"；shard_enabled=false
+# （单一、不联机的独立世界）时变成"About to start a server with the
+# following settings:"（shard→server，these→the following）。之前只认
+# 前一种措辞，用户这份 shard_enabled=false 的 aaa 存档全程匹配不上，
+# real_start_seen 永远是 False，后面"reset() returning"再怎么出现都不
+# 会被检查（同一份日志能证实 reset() returning 其实正常打印了两次——一
+# 次预备流程的假阳性，一次真的就绪，问题只出在这行前置标记）。现在两种
+# 措辞都收进来，不管 shard_enabled 开没开都认得出真正开始加载世界的
+# 分界线。
+_REAL_START_MARKERS = (
+    "about to start a shard with these settings",
+    "about to start a server with the following settings",
+)
 _MASTER_READY_MARKERS = ("reset() returning", "dst_master_ready")
 _SECONDARY_READY_MARKERS = ("is now ready!",)
 
@@ -233,7 +249,7 @@ class ServerProcess:
                 if not self.world_ready:
                     lowered = line.lower()
                     if not real_start_seen:
-                        if _REAL_START_MARKER in lowered:
+                        if any(marker in lowered for marker in _REAL_START_MARKERS):
                             real_start_seen = True
                     elif any(marker in lowered for marker in markers):
                         self.world_ready = True
@@ -374,14 +390,14 @@ class ServerManager:
             threading.Thread(target=_worker, args=(p,), daemon=True).start()
 
 
-# ── WeGame 等外部启动的分片进程探测 ──────────────────────────────────
+# ── WeGame 等外部启动的世界进程探测 ──────────────────────────────────
 # WeGame 版专用服务器不是 DSTCamp 自己拉起的子进程（Rail 会话令牌只有
 # WeGame 客户端能签发，见 gui/local_service_tab.py 顶部说明），
 # ServerManager 那套"记着自己启动的 subprocess.Popen 句柄"完全用不上。
 # 只能反过来扫系统进程——用 tasklist 按可执行文件名找 dontstarve_
 # dedicated_server*.exe 进程，netstat 查它们各自绑定的 UDP 端口，跟每
-# 个分片 server.ini 里配置的 server_port 比对：端口能对上，说明这个进
-# 程确实是这个分片、而且真的绑定成功（不是进程起来了但端口被占用/绑
+# 个世界 server.ini 里配置的 server_port 比对：端口能对上，说明这个进
+# 程确实是这个世界、而且真的绑定成功（不是进程起来了但端口被占用/绑
 # 定失败）。真机验证过这个匹配方式：两个不同的进程不可能绑定同一个
 # UDP 端口，用端口反查比试图读命令行参数可靠——命令行/可执行文件路径
 # 在没有管理员权限的前提下，`Get-CimInstance`/`wmic` 对不是当前会话
@@ -442,12 +458,12 @@ def _udp_ports_by_pid() -> dict[int, set[int]]:
 
 
 def detect_external_shard_processes(cluster) -> dict[str, dict]:
-    """按 (进程存在, 端口真的绑定成功) 探测这个存档每个分片的运行状态，
+    """按 (进程存在, 端口真的绑定成功) 探测这个存档每个世界的运行状态，
     不依赖 DSTCamp 自己有没有启动过它——给 WeGame 存档"检测服务器状态"
-    用。返回 {分片名: {"configured_port": int|None, "running": bool,
+    用。返回 {世界名: {"configured_port": int|None, "running": bool,
     "pid": int|None, "mem_mb": float|None}}；`running` 只在"存在这个端
     口绑定成功的 dontstarve 进程"时才是 True，进程列表里有 dontstarve
-    进程但端口对不上（比如是另一个存档的分片）不算这个分片在跑。"""
+    进程但端口对不上（比如是另一个存档的世界）不算这个世界在跑。"""
     pid_mem = _find_dst_process_pids()
     pid_ports = _udp_ports_by_pid()
     result: dict[str, dict] = {}

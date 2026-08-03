@@ -135,7 +135,7 @@ class ShardConfig:
 
 @dataclass
 class Shard:
-    """Cluster 下的一个分片 (Master/Caves/...)."""
+    """Cluster 下的一个世界 (Master/Caves/...)."""
 
     name: str
     path: Path

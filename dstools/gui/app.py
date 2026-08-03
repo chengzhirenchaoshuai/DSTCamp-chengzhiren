@@ -1342,7 +1342,7 @@ class DSToolsApp:
 
     def _cluster_label_with_status(self, c) -> str:
         """存档下拉文字 + 运行中标注——本地服务器页签的 ServerManager 是
-        唯一知道哪些分片真的在跑的地方，这里跨页签现查（跟
+        唯一知道哪些世界真的在跑的地方，这里跨页签现查（跟
         save_browser_tab.py 用 self.app.local_tab.manager 是同一个套
         路），不在 app.py 自己再维护一份。local_tab 在 __init__ 里比这个
         下拉框晚创建，第一次调用时可能还不存在，要用 getattr 兜底。"""
