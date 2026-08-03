@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from dstools.core.dedicated_server import get_documents_dir
+from dstools.features.local_service.dedicated_server import get_documents_dir
 from dstools.models import (
     Cluster,
     DSTEnvironment,

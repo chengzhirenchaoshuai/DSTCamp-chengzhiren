@@ -14,7 +14,7 @@ from tkinter import font as tkfont, ttk
 from PIL import Image, ImageTk
 
 from dstools.core.app_settings import get_player_note, set_player_note
-from dstools.core.backup_manager import create_backup, get_backup_summary, list_backups, restore_backup
+from dstools.features.local_service.backup_manager import create_backup, get_backup_summary, list_backups, restore_backup
 from dstools.features.save_browser.character_icons import resolve_character
 from dstools.features.cluster_config.config_manager import load_cluster_config
 from dstools.features.cluster_config.ini_field_info import get_enum_choices
@@ -25,7 +25,7 @@ from dstools.features.save_browser.reader import get_save_summary, list_save_ses
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.dialog_geometry import center_over_parent
-from dstools.gui.local_service_tab import _RUNNING_LIKE
+from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.gui.menu_combo import MenuCombo
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.gui.toggle_switch import ToggleSwitch

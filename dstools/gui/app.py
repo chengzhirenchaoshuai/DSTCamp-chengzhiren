@@ -27,7 +27,7 @@ from dstools.gui.card_frame import CardFrame
 from dstools.features.cluster_config.tab import ClusterConfigTab
 from dstools.gui.cluster_select import cluster_label as _cluster_label
 from dstools.gui.dialog_geometry import center_over_parent
-from dstools.gui.local_service_tab import LocalServiceTab
+from dstools.features.local_service.tab import LocalServiceTab
 from dstools.gui.menu_combo import MenuCombo
 from dstools.features.mod.tab import ModManagerTab
 from dstools.gui.pill_tabs import PillTabBar

@@ -14,13 +14,13 @@ import webbrowser
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 
-from dstools.core import luajit_injector
+from dstools.features.local_service import luajit_injector
 from dstools.core.app_settings import (
     get_backup_auto_enabled, get_backup_interval_minutes, set_dedicated_server_path,
 )
-from dstools.core.backup_manager import create_backup
+from dstools.features.local_service.backup_manager import create_backup
 from dstools.features.cluster_config.config_manager import load_cluster_config, load_shard_config
-from dstools.core.dedicated_server import (
+from dstools.features.local_service.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
     detect_external_shard_processes, find_bin64_dir, find_dedicated_server_dir,
     is_valid_install_dir, resolve_conf_dir_arg,
@@ -869,7 +869,7 @@ class LocalServiceTab:
         _show_not_found_warning(self.app.root)
         return False
 
-    # ── LuaJIT 性能补丁（core/luajit_injector.py） ───────────────────
+    # ── LuaJIT 性能补丁（features/local_service/luajit_injector.py） ───────────────────
     # 只服务 Steam 版专用服务器——WeGame 完全不出现在这一节的任何分支里，
     # 见 luajit_row 构造处的说明。
 
@@ -1067,7 +1067,7 @@ class LocalServiceTab:
             dlg.show_error(self.app.root, t("local.install_title"), t("local.confdir_cross_drive_error"))
             return
 
-        # LuaJIT 隔离副本（core/luajit_injector.py）：已启用但游戏被 Steam
+        # LuaJIT 隔离副本（features/local_service/luajit_injector.py）：已启用但游戏被 Steam
         # 更新过时，副本里的 exe 已经过期，不能直接拿去用——这一步纯本地
         # 文件读取，便宜，可以每次启动前都查一遍。真的要重新生成则是整个
         # 复制一遍 bin64（真机验证过这台机器上约 4.2GB），不能在这里同步

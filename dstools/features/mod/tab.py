@@ -14,8 +14,9 @@ from typing import Any
 
 from PIL import Image
 
-from dstools.core import app_settings, luajit_injector
-from dstools.core.dedicated_server import find_bin64_dir
+from dstools.core import app_settings
+from dstools.features.local_service import luajit_injector
+from dstools.features.local_service.dedicated_server import find_bin64_dir
 from dstools.features.mod.icons import get_mod_icon_path
 from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
 from dstools.features.mod.cache import load_cached_result, save_result
@@ -459,7 +460,7 @@ class ModManagerTab:
         self._loading_key = loading_key
         self._render_list()
         platform, wegame_client_mods_dir = self._resolve_mod_folder_args(c)
-        # LuaJIT 补丁只服务 Steam 版专用服务器（core/luajit_injector.py），
+        # LuaJIT 补丁只服务 Steam 版专用服务器（features/local_service/luajit_injector.py），
         # 这里现查一次 bin64 目录是不是真的处于"生效中"——纯 Path.exists()
         # 检查，够便宜，放主线程算完再传给后台线程，跟 platform/
         # wegame_client_mods_dir 是同一个"主线程先收集上下文，worker 只读

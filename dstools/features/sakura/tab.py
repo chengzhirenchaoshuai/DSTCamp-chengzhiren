@@ -26,7 +26,7 @@ from dstools.core.token_manager import is_valid_token, mask_token
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.dialog_geometry import center_over_parent
-from dstools.gui.local_service_tab import _RUNNING_LIKE
+from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.gui.tooltip import Tooltip
 from dstools.i18n import t

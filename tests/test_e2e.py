@@ -51,7 +51,7 @@ from dstools.core.app_settings import (
     get_backup_auto_enabled, set_backup_auto_enabled,
     set_backup_retention,
 )
-from dstools.core.backup_manager import backup_dir, create_backup, restore_backup, list_backups
+from dstools.features.local_service.backup_manager import backup_dir, create_backup, restore_backup, list_backups
 from dstools.models import SaveSession, SaveSource
 from dstools.features.mod.parser import parse_modinfo, visible_config_options
 from dstools.features.cluster_config.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
@@ -64,8 +64,8 @@ from dstools.core.app_settings import get_luajit_enabled, set_luajit_enabled
 from dstools.features.save_browser.cluster_copy import (
     validate_cluster_folder_name, suggest_new_cluster_name, copy_local_cluster_to_server,
 )
-from dstools.core.dedicated_server import find_bin64_dir
-from dstools.core.luajit_injector import (
+from dstools.features.local_service.dedicated_server import find_bin64_dir
+from dstools.features.local_service.luajit_injector import (
     WORKSHOP_ID, InjectorState, LuajitMarker, apply_uninstall,
     cleanup_legacy_local_mod_entry, detect_state, get_luajit_dir,
     is_workshop_subscribed, needs_regeneration, plan_install, read_marker, regenerate,
@@ -1371,7 +1371,7 @@ def _fake_workshop_dir(root: Path, subscribed_ids: list[str], with_injector_file
     needs_regeneration() 的测试用——不再需要伪造 appworkshop_322330.acf，
     因为 current_injector_version() 现在直接读 modinfo.lua 自己的
     version 字段。"""
-    import dstools.core.luajit_injector as lj
+    import dstools.features.local_service.luajit_injector as lj
 
     workshop_dir = root / "steamapps" / "workshop" / "content" / "322330"
     for wid in subscribed_ids:
