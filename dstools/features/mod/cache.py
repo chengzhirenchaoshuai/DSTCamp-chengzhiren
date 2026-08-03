@@ -20,7 +20,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from dstools.core.modinfo_reader import ModConfigOption
+from dstools.features.mod.parser import ModConfigOption
 from dstools.core.resource_paths import cache_dir
 
 _CACHE_DIR = cache_dir("mod_full_resolve")

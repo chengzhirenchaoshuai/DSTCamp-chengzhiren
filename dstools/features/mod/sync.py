@@ -45,7 +45,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dstools.core.mod_manager import load_mod_overrides
+from dstools.features.mod.manager import load_mod_overrides
 from dstools.i18n import t
 from dstools.models import Cluster
 

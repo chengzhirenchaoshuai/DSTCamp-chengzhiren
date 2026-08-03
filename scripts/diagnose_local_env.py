@@ -19,7 +19,7 @@ from dstools.core.save_reader import (
 )
 from dstools.core.character_names import get_character_display_name, CHARACTER_NAMES
 from dstools.core.character_icons import resolve_character
-from dstools.core.mod_manager import load_mod_overrides, list_mods
+from dstools.features.mod.manager import load_mod_overrides, list_mods
 from dstools.core.config_manager import load_cluster_config
 
 # Find DST data

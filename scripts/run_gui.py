@@ -25,7 +25,7 @@ if __name__ == "__main__":
         # sandbox is deliberately narrow) exits quietly with code 1
         # instead of surfacing PyInstaller's "Unhandled exception in
         # script" crash dialog in front of the user.
-        from dstools.core._lua_sandbox_worker import run_worker_main
+        from dstools.features.mod._sandbox_worker import run_worker_main
         run_worker_main()
         sys.exit(0)
 

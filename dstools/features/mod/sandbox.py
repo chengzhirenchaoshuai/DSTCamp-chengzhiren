@@ -42,7 +42,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_WORKER = Path(__file__).parent / "_lua_sandbox_worker.py"
+_WORKER = Path(__file__).parent / "_sandbox_worker.py"
 
 DEFAULT_TIMEOUT = 1.5
 
@@ -185,7 +185,7 @@ def _worker_command() -> list:
     """Command to launch the sandbox worker as a subprocess.
 
     In a normal (non-frozen) run, this is just `python
-    _lua_sandbox_worker.py`. In the PyInstaller --onefile build,
+    _sandbox_worker.py`. In the PyInstaller --onefile build,
     sys.executable *is* DSTCamp.exe -- there's no separate interpreter to
     point at a loose .py file, so instead the same exe is re-launched
     with a special flag that run_gui.py checks for at startup and

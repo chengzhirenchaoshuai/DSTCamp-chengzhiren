@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any
 
-from dstools.core.backup_utils import backup_file as _backup_file
+from dstools.features.mod.backup_utils import backup_file as _backup_file
 from dstools.core.lua_parser import parse_lua_file, serialize_lua_table
 from dstools.models import ModEntry, ModOverrides
 

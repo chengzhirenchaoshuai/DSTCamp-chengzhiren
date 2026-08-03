@@ -23,7 +23,7 @@ from dstools.core.ini_parser import (
     write_cluster_ini,
 )
 from dstools.models import ClusterConfig, ModEntry
-from dstools.core.mod_manager import (
+from dstools.features.mod.manager import (
     ModOverrides,
     load_mod_overrides,
     save_mod_overrides,
@@ -53,10 +53,10 @@ from dstools.core.app_settings import (
 )
 from dstools.core.backup_manager import backup_dir, create_backup, restore_backup, list_backups
 from dstools.models import SaveSession, SaveSource
-from dstools.core.modinfo_reader import parse_modinfo, visible_config_options
+from dstools.features.mod.parser import parse_modinfo, visible_config_options
 from dstools.core.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
 from dstools.core.token_manager import read_token, write_token, mask_token, is_valid_token
-from dstools.core.backup_utils import backup_file, _prune_old_backups
+from dstools.features.mod.backup_utils import backup_file, _prune_old_backups
 from dstools.core.sakura_frp import find_dstcamp_tunnel, sanitize_tunnel_name
 from dstools.core.frpc_process import FrpcManager
 from dstools.core.app_settings import get_sakura_token, set_sakura_token
@@ -682,7 +682,7 @@ def test_modinfo_reader():
         # _raw_value_to_lines() 之前只认原生 list，任何真实存过的数组都
         # 会被当成"形状不对"兜底成空列表，编辑器显示成空的，点应用还会
         # 把这份假的空列表覆盖写回文件，真正清空原有数据。
-        from dstools.gui.mod_manager_tab import ModConfigDialog
+        from dstools.features.mod.tab import ModConfigDialog
         parsed_array_shape = {"1": "torch", "2": "backpack", "3": "axe"}  # parse_lua_table() 对数组字面量的真实产出形状
         assert ModConfigDialog._raw_value_to_lines("array", parsed_array_shape) == ["torch", "backpack", "axe"]
         assert ModConfigDialog._raw_value_to_lines("array", {}) == []
@@ -882,7 +882,7 @@ def test_mod_sync_junction():
     print("\n" + "=" * 60)
     print("Test 21: Mod Sync Junction")
 
-    from dstools.core.mod_sync import _ensure_junction
+    from dstools.features.mod.sync import _ensure_junction
 
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "client_mods" / "workshop-123"
@@ -1041,8 +1041,8 @@ def test_mod_resolve_cache():
     # import 才能让它落在隔离的临时目录里，不写真实的
     # %APPDATA%/DSTCamp/cache/。
     with _isolated_settings_dir():
-        from dstools.core.mod_resolve_cache import load_cached_result, save_result
-        from dstools.core.modinfo_reader import ModConfigOption
+        from dstools.features.mod.cache import load_cached_result, save_result
+        from dstools.features.mod.parser import ModConfigOption
 
         workshop_id = "test-workshop-resolve-cache"
         with tempfile.TemporaryDirectory() as tmp:
@@ -1078,7 +1078,7 @@ def test_mod_resolve_cache():
             # 是老样子"）。这里手工写一份没有版本号的旧格式缓存，mtime
             # 故意设置得比 modinfo.lua 更新，确保测的是版本号判断本身，
             # 不是又测了一遍上面的 mtime 判断。
-            from dstools.core.mod_resolve_cache import _cache_path
+            from dstools.features.mod.cache import _cache_path
             stale_path = _cache_path(workshop_id)
             stale_path.write_text(
                 json.dumps({"name": "旧格式测试Mod",

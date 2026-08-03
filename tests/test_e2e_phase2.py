@@ -123,7 +123,7 @@ def test_gui_imports():
     # 正常导入。
     from dstools.gui.app import DSToolsApp
     from dstools.gui.save_browser_tab import SaveBrowserTab
-    from dstools.gui.mod_manager_tab import ModManagerTab
+    from dstools.features.mod.tab import ModManagerTab
     from dstools.gui.cluster_config_tab import ClusterConfigTab
     assert DSToolsApp and ModManagerTab and ClusterConfigTab
     from dstools.gui.theme import SERVER_COLOR

@@ -90,8 +90,8 @@ def build():
         f"--add-data={tools_src}{sep}tools",
         # lupa ships several compiled Lua-version backends as separate
         # .pyd submodules (lua51/52/53/.../luajit); only lua51 is ever
-        # actually imported (dstools/core/_lua_sandbox_worker.py, to
-        # match DST's own Lua 5.1 engine -- see lua_sandbox.py), but
+        # actually imported (dstools/features/mod/_sandbox_worker.py, to
+        # match DST's own Lua 5.1 engine -- see features/mod/sandbox.py), but
         # PyInstaller's static analysis doesn't always follow a compiled
         # extension package's internal submodule layout, so it's named
         # explicitly rather than relying on being auto-discovered.

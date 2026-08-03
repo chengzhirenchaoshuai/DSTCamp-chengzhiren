@@ -222,8 +222,8 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None,
         return get_character_display_name(prefab), get_official_avatar_path(prefab)
 
     if mod_overrides_path and mod_overrides_path.exists():
-        from dstools.core.mod_manager import list_mods, load_mod_overrides
-        from dstools.core.modinfo_reader import find_mod_folder
+        from dstools.features.mod.manager import list_mods, load_mod_overrides
+        from dstools.features.mod.parser import find_mod_folder
         overrides = load_mod_overrides(mod_overrides_path)
         for entry in list_mods(overrides):
             if not entry.enabled:

@@ -16,15 +16,15 @@ from PIL import Image
 
 from dstools.core import app_settings, luajit_injector
 from dstools.core.dedicated_server import find_bin64_dir
-from dstools.core.mod_icons import get_mod_icon_path
-from dstools.core.mod_manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
-from dstools.core.mod_resolve_cache import load_cached_result, save_result
-from dstools.core.modinfo_reader import (
+from dstools.features.mod.icons import get_mod_icon_path
+from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
+from dstools.features.mod.cache import load_cached_result, save_result
+from dstools.features.mod.parser import (
     find_game_mods_dir, find_mod_folder, find_wegame_client_dir, find_wegame_server_dir,
     list_installed_mod_ids, parse_modinfo, resolve_config_value, resolve_full_modinfo,
     resolve_wegame_client_mods_dir, visible_config_options,
 )
-from dstools.core.mod_sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync
+from dstools.features.mod.sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync
 from dstools.gui import fonts, theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
 from dstools.gui.dialog_geometry import center_over_parent
@@ -191,7 +191,7 @@ class ModManagerTab:
                                                  on_click=self._pick_wegame_root_and_reload)
 
         from dstools.gui.image_scroll import ImageScrollPanel
-        from dstools.gui.mod_render import REF_WIDTH
+        from dstools.features.mod.render import REF_WIDTH
         self.list_panel = ImageScrollPanel(self.frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
         self.list_panel.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.list_panel.on_settle = lambda w, h: self._render_list(ref_width=w)
@@ -660,7 +660,7 @@ class ModManagerTab:
         return rows
 
     def _render_list(self, ref_width=None):
-        from dstools.gui.mod_render import REF_WIDTH, render_mod_list
+        from dstools.features.mod.render import REF_WIDTH, render_mod_list
         if ref_width is None:
             ref_width = self.list_panel.current_width(REF_WIDTH)
         if getattr(self, "_loading", False):
@@ -712,7 +712,7 @@ class ModManagerTab:
     def _render_placeholder(self, text, ref_width=None):
         from PIL import Image as _Image, ImageDraw as _ImageDraw
         from dstools.gui.fonts import get_font
-        from dstools.gui.mod_render import REF_WIDTH
+        from dstools.features.mod.render import REF_WIDTH
         w = ref_width or self.list_panel.current_width(REF_WIDTH)
         img = _Image.new("RGB", (w, 60), theme.CARD_BG)
         if text:
@@ -1589,7 +1589,7 @@ class ModConfigDialog:
         if not mod_info.dynamic_preamble:
             return
         import time
-        from dstools.core.lua_sandbox import resolve_dynamic_option
+        from dstools.features.mod.sandbox import resolve_dynamic_option
         deadline = time.monotonic() + budget
         for opt in mod_info.config_options:
             if not opt.is_dynamic:

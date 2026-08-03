@@ -50,8 +50,8 @@ from enum import Enum
 from pathlib import Path
 
 from dstools.core.app_settings import get_luajit_enabled, set_luajit_enabled
-from dstools.core.mod_manager import enable_mod, load_mod_overrides, save_mod_overrides
-from dstools.core.modinfo_reader import find_workshop_dir, parse_modinfo
+from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides
+from dstools.features.mod.parser import find_workshop_dir, parse_modinfo
 from dstools.core.steam_discovery import read_game_version_file
 from dstools.i18n import t
 

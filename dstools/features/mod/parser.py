@@ -1500,7 +1500,7 @@ def resolve_full_modinfo(mod_folder: Path, timeout: float | None = None) -> dict
         return None
     text = _strip_lua_comments(text)
 
-    from dstools.core.lua_sandbox import FULL_FILE_TIMEOUT, resolve_full_config_options
+    from dstools.features.mod.sandbox import FULL_FILE_TIMEOUT, resolve_full_config_options
     folder_name = _workshop_id_from_folder(mod_folder)
     result = resolve_full_config_options(text, timeout=timeout or FULL_FILE_TIMEOUT, folder_name=folder_name)
     if not isinstance(result, dict):

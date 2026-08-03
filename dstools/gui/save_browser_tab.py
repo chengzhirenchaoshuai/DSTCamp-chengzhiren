@@ -18,8 +18,8 @@ from dstools.core.backup_manager import create_backup, get_backup_summary, list_
 from dstools.core.character_icons import resolve_character
 from dstools.core.config_manager import load_cluster_config
 from dstools.core.ini_field_info import get_enum_choices
-from dstools.core.mod_manager import list_mods, load_mod_overrides
-from dstools.core.modinfo_reader import resolve_wegame_client_mods_dir
+from dstools.features.mod.manager import list_mods, load_mod_overrides
+from dstools.features.mod.parser import resolve_wegame_client_mods_dir
 from dstools.core.resource_paths import bundled_resource_dir
 from dstools.core.save_reader import get_save_summary, list_save_sessions, list_session_players
 from dstools.gui import theme, themed_dialog as dlg

@@ -29,7 +29,7 @@ from dstools.gui.cluster_select import cluster_label as _cluster_label
 from dstools.gui.dialog_geometry import center_over_parent
 from dstools.gui.local_service_tab import LocalServiceTab
 from dstools.gui.menu_combo import MenuCombo
-from dstools.gui.mod_manager_tab import ModManagerTab
+from dstools.features.mod.tab import ModManagerTab
 from dstools.gui.pill_tabs import PillTabBar
 from dstools.gui.sakura_tab import SakuraTab
 from dstools.gui.save_browser_tab import SaveBrowserTab

@@ -25,7 +25,7 @@ from dstools.core.dedicated_server import (
     detect_external_shard_processes, find_bin64_dir, find_dedicated_server_dir,
     is_valid_install_dir, resolve_conf_dir_arg,
 )
-from dstools.core.modinfo_reader import find_shared_ugc_directory
+from dstools.features.mod.parser import find_shared_ugc_directory
 from dstools.core.token_manager import is_valid_token, read_token
 from dstools.gui import theme, themed_dialog as dlg
 from dstools.gui.bg_frame import BgFrame
