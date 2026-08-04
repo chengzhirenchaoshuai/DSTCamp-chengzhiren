@@ -15,6 +15,7 @@ import webbrowser
 from tkinter import font as tkfont, ttk
 
 from dstools.shared import app_settings
+from dstools.features.frp_selfhost.tab import SelfHostFrpPage
 from dstools.features.sakura import api as sakura_frp
 from dstools.features.cluster_config.config_manager import (
     get_cluster_option, get_shard_option, load_cluster_config, load_shard_config,
@@ -26,6 +27,7 @@ from dstools.shared.token_manager import is_valid_token, mask_token
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
+from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.tooltip import Tooltip
@@ -207,6 +209,23 @@ class SakuraTab:
         self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
         self.frpc = FrpcManager()
 
+        # 子页签：樱花 Frp（原有全部内容）/ 自建服务器（新增，见
+        # features/frp_selfhost/）——两者都是"把本地专用服务器映射到公
+        # 网"，只是服务端来源不同，用户心智模型一致，不单开顶层页签。
+        self._sub_tabs = [
+            ("sakura", t("selfhost.tab_sakura")), ("selfhost", t("selfhost.tab_selfhost")),
+        ]
+        self._sub_tab_bar = PillTabBar(self.frame, tabs=self._sub_tabs, on_select=self._on_sub_tab_select,
+                                        app=app, bg=theme.CARD_BG)
+        self._sub_tab_bar.pack(fill=tk.X, padx=5, pady=(5, 0))
+        self._sub_content = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._sub_content.pack(fill=tk.BOTH, expand=True)
+        self._sub_pages = {}
+        self._sub_tab_key = "sakura"
+        self._sakura_page = BgFrame(self._sub_content, app, bg=theme.CARD_BG)
+        self._sub_pages["sakura"] = self._sakura_page
+        self._sakura_page.pack(fill=tk.BOTH, expand=True)
+
         # 每次刷新页签时对着真实隧道列表重新算出来的 (cluster_path,
         # shard_name) -> tunnel dict，只是内存缓存，不持久化——权威数据源
         # 永远是 list_tunnels()。
@@ -220,7 +239,7 @@ class SakuraTab:
         self._tunnel_count = 0  # 账号下全部隧道数，_apply_loaded() 加载完才有真实值
         self._tunnels_exhausted = False  # _render_shard_rows() 每次刷新时重算
 
-        top = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        top = BgFrame(self._sakura_page, app, bg=theme.CARD_BG)
         top.pack(fill=tk.X, padx=10, pady=(10, 5))
 
         # Token 行——用 BgFrame 而不是 ttk.Frame 装这些行：ttk.Frame 是不
@@ -292,11 +311,11 @@ class SakuraTab:
         # 世界状态区——每个世界一行，用 grid()（不是逐行各自 pack()）铺进
         # 同一个容器，这样"已映射"和"未映射"两种内容长度不同的行，"复制
         # 直连代码"这一列在所有行里都能对齐在同一条竖线上。
-        self._shards_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._shards_frame = BgFrame(self._sakura_page, app, bg=theme.CARD_BG)
         self._shards_frame.pack(fill=tk.X, padx=10, pady=5)
 
         # 操作按钮
-        action_row = BgFrame(self.frame, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
+        action_row = BgFrame(self._sakura_page, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
         self._action_btn = ttk.Button(action_row, text=t("sakura.enable_btn"), command=self._on_action_btn)
         self._action_btn.pack(side=tk.LEFT)
         # 按钮本身是常驻控件（不像世界行那样每次刷新都销毁重建），Tooltip
@@ -311,7 +330,7 @@ class SakuraTab:
         # 档都能在这里单独启停 frpc。真实状态按"这个存档所有映射过的分
         # 片是不是全部都在跑"算，跟 _action_btn 的开启/关闭是同一个粒度
         # （整个存档一起，不细分到单个世界）。
-        self._frpc_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._frpc_row = BgFrame(self._sakura_page, app, bg=theme.CARD_BG)
         self._frpc_status_label = self._label(self._frpc_row, self._frpc_status_text(False))
         self._frpc_status_label.pack(side=tk.LEFT)
         self._frpc_toggle_btn = ttk.Button(self._frpc_row, text=t("sakura.frpc_start_btn"),
@@ -322,7 +341,21 @@ class SakuraTab:
         self._current_cluster = None
         self._load_token_display()
 
+        self.selfhost_page = SelfHostFrpPage(self._sub_content, app)
+        self._sub_pages["selfhost"] = self.selfhost_page.frame
+
+    def _on_sub_tab_select(self, key):
+        self._sub_pages[self._sub_tab_key].pack_forget()
+        self._sub_tab_key = key
+        self._sub_pages[key].pack(fill=tk.BOTH, expand=True)
+        self._sub_content.focus_set()
+
     # ── 跨页签接口：给 local_service_tab.py 用 ──────────────────────
+    # 樱花/自建两条映射路径并存，这三个方法各自都要两边都查一遍——一个
+    # 存档/世界同一时间只会真正启用其中一种（UI 上开启一种映射不会去检
+    # 查另一种的状态），两边互不冲突，调用方（local_service/tab.py、
+    # features/cluster_config/tab.py）不需要关心具体是哪一种，统一走这
+    # 一层就行。
 
     def _frpc_pointer_path(self, cluster_path, shard_name):
         """不是完整的 frpc 配置文件——frpc 用 `-f token:隧道ID` 启动，自己
@@ -331,31 +364,27 @@ class SakuraTab:
         return cache_dir(_FRPC_CACHE_NAME) / f"{cluster_path.name}__{shard_name}.txt"
 
     def has_active_mapping(self, cluster, shard) -> bool:
-        """零网络请求——只查本地缓存文件是否存在，供 _do_start_shard()/
+        """零网络请求——只查本地缓存文件/记账是否存在，供 _do_start_shard()/
         features/cluster_config/tab.py 的只读判断在 Tk 主线程同步调用。"""
-        return self._frpc_pointer_path(cluster.path, shard.name).exists()
+        return self._frpc_pointer_path(cluster.path, shard.name).exists() \
+            or self.selfhost_page.has_active_mapping(cluster, shard)
 
     def maybe_start_frpc(self, cluster, shard) -> None:
         pointer_path = self._frpc_pointer_path(cluster.path, shard.name)
-        if not pointer_path.exists():
-            return
-        exe = _frpc_exe_path()
-        if not exe.exists():
-            return
-        if self.frpc.get(cluster.path, shard.name):
-            return
-        token = app_settings.get_sakura_token()
-        tunnel_id = pointer_path.read_text(encoding="utf-8").strip()
-        if not token or not tunnel_id:
-            return
-        self.frpc.start(cluster.path, shard.name, exe, token, int(tunnel_id))
+        if pointer_path.exists():
+            exe = _frpc_exe_path()
+            if exe.exists() and not self.frpc.get(cluster.path, shard.name):
+                token = app_settings.get_sakura_token()
+                tunnel_id = pointer_path.read_text(encoding="utf-8").strip()
+                if token and tunnel_id:
+                    self.frpc.start(cluster.path, shard.name, exe, token, int(tunnel_id))
+        self.selfhost_page.maybe_start_frpc(cluster, shard)
 
     def stop_frpc_for_shard(self, cluster, shard, on_done=None) -> None:
-        if not self.frpc.get(cluster.path, shard.name):
-            if on_done:
-                on_done()
-            return
-        self.frpc.stop(cluster.path, shard.name, on_done=lambda p: on_done() if on_done else None)
+        if self.frpc.get(cluster.path, shard.name):
+            self.frpc.stop(cluster.path, shard.name, on_done=lambda p: on_done() if on_done else None)
+        else:
+            self.selfhost_page.stop_frpc_for_shard(cluster, shard, on_done=on_done)
 
     # ── 页签生命周期 ─────────────────────────────────────────────────
 
@@ -366,6 +395,7 @@ class SakuraTab:
         self._current_cluster = self._get_cluster()
         self._render_shard_placeholders()
         self._reload_async()
+        self.selfhost_page.on_cluster_changed(self._current_cluster)
 
     def refresh(self):
         self.on_cluster_changed()
