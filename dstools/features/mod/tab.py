@@ -5,6 +5,7 @@ Mod 列表复用 world_render.py 建立的"PIL 整图渲染 + ImageScrollPanel"�
 标+名字+开关+配置按钮，跟世界设置面板是同一个理由。
 """
 
+import functools
 import queue
 import threading
 import tkinter as tk
@@ -53,6 +54,23 @@ def _apply_full_sandbox_result(mod_info, result: dict | None) -> None:
         if key in result:
             setattr(mod_info, key, result[key])
     mod_info.full_sandbox_tried = True
+
+
+_strcmplogicalw = None
+
+
+def _windows_name_cmp(a: str, b: str) -> int:
+    """跟 Windows 资源管理器同款的"自然排序"比较——中文按拼音、字母/
+    数字按自然顺序比大小（"mod2" 排在 "mod10" 前面）、符号排在最后，
+    直接调用 Windows 自带的 StrCmpLogicalW，不用自己维护一份拼音表来
+    猜怎么排最像原生。"""
+    global _strcmplogicalw
+    if _strcmplogicalw is None:
+        import ctypes
+        _strcmplogicalw = ctypes.windll.shlwapi.StrCmpLogicalW
+        _strcmplogicalw.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        _strcmplogicalw.restype = ctypes.c_int
+    return _strcmplogicalw(a, b)
 
 
 class ModManagerTab:
@@ -636,6 +654,13 @@ class ModManagerTab:
                 "has_config": bool(info and (info.config_options or info.unsupported_schema)),
                 "has_link": numeric_id.isdigit(),
             })
+        # 已启用的排前面；同为启用/禁用内部按 Windows 资源管理器同款的
+        # 自然排序（拼音/字母/数字/符号）——两次稳定排序叠加，第一次按
+        # 名字排定顺序，第二次按启用状态分组时不会打乱组内已经排好的
+        # 名字顺序。
+        rows.sort(key=functools.cmp_to_key(
+            lambda a, b: _windows_name_cmp(a["name"] or a["workshop_id"], b["name"] or b["workshop_id"])))
+        rows.sort(key=lambda r: not r["enabled"])
         return rows
 
     def _render_list(self, ref_width=None):
