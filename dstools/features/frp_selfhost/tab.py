@@ -81,7 +81,7 @@ class _SSHDeployDialog:
     在这个对话框自己的 StringVar 里，窗口一销毁（不管是取消还是提交）
     这些变量本身也跟着没了，不会被这个类自己额外存到任何地方。"""
 
-    def __init__(self, parent_widget, default_host: str):
+    def __init__(self, parent_widget, default_host: str, default_port: int = 22, default_username: str = "root"):
         self.result: dict | None = None
         win = tk.Toplevel(parent_widget)
         self.win = win
@@ -95,8 +95,8 @@ class _SSHDeployDialog:
             row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
 
         self._host_var = tk.StringVar(value=default_host)
-        self._port_var = tk.StringVar(value="22")
-        self._user_var = tk.StringVar(value="root")
+        self._port_var = tk.StringVar(value=str(default_port))
+        self._user_var = tk.StringVar(value=default_username)
         self._auth_mode = tk.StringVar(value="password")
         self._password_var = tk.StringVar()
         self._key_path_var = tk.StringVar()
@@ -376,14 +376,26 @@ class SelfHostFrpPage:
             return
         token = self._token_var.get().strip() or deploy.generate_token()
         self._token_var.set(token)
-        script = deploy.build_install_script(port, token)
 
-        ssh_dlg = _SSHDeployDialog(self.frame, self._host_var.get().strip())
+        # 记住的是上次 SSH 连接信息（主机/端口/用户名），跟"自建服务器"
+        # 本身的 host/port（frps 监听的那个端口）是两套独立的东西，只是
+        # 大多数情况下 SSH 主机和 frps 主机是同一台机器，没记录过时用
+        # 那个当默认值方便一点。
+        saved_conn = app_settings.get_selfhost_ssh_connection()
+        if saved_conn:
+            default_host, default_port, default_user = saved_conn["host"], saved_conn["port"], saved_conn["username"]
+        else:
+            default_host, default_port, default_user = self._host_var.get().strip(), 22, "root"
+
+        ssh_dlg = _SSHDeployDialog(self.frame, default_host, default_port, default_user)
         if ssh_dlg.result is None:
             return
         conn = ssh_dlg.result
+        app_settings.set_selfhost_ssh_connection(conn["host"], conn["port"], conn["username"])
 
-        progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_progress_title"))
+        cancel_event = threading.Event()
+        progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_progress_title"),
+                                    on_cancel=cancel_event.set)
 
         def _on_log(line):
             self.frame.after(0, lambda: progress.append(line))
@@ -391,11 +403,13 @@ class SelfHostFrpPage:
         def _worker():
             try:
                 remote_deploy.deploy_via_ssh(
-                    conn["host"], conn["port"], conn["username"], script,
+                    conn["host"], conn["port"], conn["username"], port, token,
                     _on_log, self._confirm_host_key,
                     password=conn["password"], key_path=conn["key_path"],
-                    key_passphrase=conn["key_passphrase"])
+                    key_passphrase=conn["key_passphrase"], cancel_event=cancel_event)
                 self.frame.after(0, lambda: self._on_ssh_deploy_done(progress))
+            except remote_deploy.RemoteDeployCancelled:
+                self.frame.after(0, lambda: self._on_ssh_deploy_cancelled(progress))
             except remote_deploy.RemoteDeployError as e:
                 self.frame.after(0, lambda err=e: self._on_ssh_deploy_error(progress, err))
 
@@ -403,6 +417,10 @@ class SelfHostFrpPage:
 
     def _on_ssh_deploy_done(self, progress):
         progress.append(t("selfhost.ssh_deploy_done"))
+        progress.finish()
+
+    def _on_ssh_deploy_cancelled(self, progress):
+        progress.append(t("selfhost.ssh_deploy_cancelled"))
         progress.finish()
 
     def _on_ssh_deploy_error(self, progress, e):

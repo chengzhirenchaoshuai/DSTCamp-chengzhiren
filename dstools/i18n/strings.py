@@ -332,6 +332,7 @@ STRINGS = {
         "selfhost.host_key_confirm_title": "确认服务器密钥",
         "selfhost.host_key_confirm_msg": "首次连接到 {host}，服务器密钥指纹：\n{fingerprint}\n\n请自行核实这确实是你的服务器（比如登录云服务商控制台核对指纹），确认无误后点\"是\"信任并继续连接。",
         "selfhost.ssh_deploy_done": "远程部署完成，可以点击上方\"开启自建映射\"了",
+        "selfhost.ssh_deploy_cancelled": "已取消部署",
         "selfhost.ssh_deploy_failed": "远程部署失败: {detail}",
 
         # 存档来源标签
@@ -844,6 +845,7 @@ STRINGS = {
         "selfhost.host_key_confirm_title": "Confirm server key",
         "selfhost.host_key_confirm_msg": "Connecting to {host} for the first time. Server key fingerprint:\n{fingerprint}\n\nVerify this really is your server (e.g. check the fingerprint in your cloud provider's console) before trusting it. Click Yes to trust and continue.",
         "selfhost.ssh_deploy_done": "Remote deploy done -- you can click \"Enable self-hosted mapping\" above now",
+        "selfhost.ssh_deploy_cancelled": "Deploy cancelled",
         "selfhost.ssh_deploy_failed": "Remote deploy failed: {detail}",
 
         # 存档来源标签

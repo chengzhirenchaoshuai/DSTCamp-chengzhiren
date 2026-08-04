@@ -33,6 +33,7 @@ _KEY_LAST_PLATFORM = "last_platform"
 _KEY_LAST_CLUSTER_PATH = "last_cluster_path"
 _KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
 _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
+_KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
 
 
 def get_settings_dir() -> Path:
@@ -419,3 +420,15 @@ def get_all_selfhost_frp_ports() -> list[int]:
         except (TypeError, ValueError):
             continue
     return ports
+
+
+def get_selfhost_ssh_connection() -> dict | None:
+    """SSH 远程部署对话框记住的上次连接信息（host/port/username）——
+    绝不包含密码，密码按用户明确要求从不落盘，每次都要现输。"""
+    return load_settings().get(_KEY_SELFHOST_SSH_CONNECTION) or None
+
+
+def set_selfhost_ssh_connection(host: str, port: int, username: str) -> None:
+    data = load_settings()
+    data[_KEY_SELFHOST_SSH_CONNECTION] = {"host": host, "port": int(port), "username": username}
+    save_settings(data)

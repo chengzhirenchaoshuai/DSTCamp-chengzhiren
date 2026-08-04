@@ -17,7 +17,11 @@ class ModSyncLogDialog:
     结果），"复制为服务器存档"（SaveBrowserTab._copy_to_server）复制文
     件耗时也是同一个形状，直接复用，标题通过参数区分。"""
 
-    def __init__(self, parent_widget, title: str | None = None):
+    def __init__(self, parent_widget, title: str | None = None, on_cancel=None):
+        """`on_cancel`：给需要中途能取消的耗时操作用（目前只有
+        features/frp_selfhost 的 SSH 远程部署）——传了才会多显示一个
+        "取消"按钮，点一次就禁用自己并调用这个回调，不重复触发；不传
+        （默认）就是原来的行为，没有取消按钮，其它调用方不用改。"""
         win = tk.Toplevel(parent_widget)
         self.win = win
         # 跟 themed_dialog.py 的 _show() 一个道理：创建 Toplevel 后立刻
@@ -42,8 +46,15 @@ class ModSyncLogDialog:
         # 的顺序，同一个坑同一个解法。现在窗口尺寸改成让 Tk 按实际内容
         # 算（见下面 winfo_reqwidth/reqheight），这条 pack 顺序仍然要保
         # 留——不然 body 的 Text 一样会把按钮挤没。
-        self.close_btn = ttk.Button(win, text=t("dlg.confirm_btn"), command=win.destroy, state=tk.DISABLED)
-        self.close_btn.pack(side=tk.BOTTOM, pady=10)
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, pady=10)
+        self.close_btn = ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=win.destroy, state=tk.DISABLED)
+        self.close_btn.pack(side=tk.LEFT, padx=4)
+        self._on_cancel = on_cancel
+        self.cancel_btn = None
+        if on_cancel is not None:
+            self.cancel_btn = ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._handle_cancel)
+            self.cancel_btn.pack(side=tk.LEFT, padx=4)
 
         body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10,0))
         # font 用系统默认字体（不指定字体族），不用 Consolas -- Consolas
@@ -74,6 +85,14 @@ class ModSyncLogDialog:
         win.deiconify()
         win.grab_set()
 
+    def _handle_cancel(self) -> None:
+        # 立刻禁用，防止用户手滑连点多次重复触发 on_cancel——具体"取消
+        # 中"的日志文案由调用方自己在回调里 append，这里不代它决定措辞。
+        if self.cancel_btn is not None:
+            self.cancel_btn.configure(state=tk.DISABLED)
+        if self._on_cancel is not None:
+            self._on_cancel()
+
     def append(self, line: str) -> None:
         if not self.win.winfo_exists():
             return
@@ -86,6 +105,8 @@ class ModSyncLogDialog:
         if not self.win.winfo_exists():
             return
         self.close_btn.configure(state=tk.NORMAL)
+        if self.cancel_btn is not None:
+            self.cancel_btn.configure(state=tk.DISABLED)
         self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
         self.win.bind("<Return>", lambda e: self.win.destroy())
         self.win.bind("<Escape>", lambda e: self.win.destroy())
