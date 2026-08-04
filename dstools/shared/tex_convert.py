@@ -1,10 +1,8 @@
-"""Convert Klei .tex textures to PNG using a bundled copy of ktech.exe.
+"""用内置的 ktech.exe 把 Klei 的 .tex 贴图转换成 PNG。
 
-DST (and every mod's modicon.tex) stores images in Klei's own .tex
-format. ktech.exe is Klei's own official command-line converter -- a
-copy ships in tools/ktools/ next to this repo (instead of relying on a
-tool installed elsewhere on the user's machine, which they may move or
-delete).
+DST（以及每个 mod 的 modicon.tex）用 Klei 自己的 .tex 格式存图片。
+ktech.exe 是 Klei 官方的命令行转换工具，tools/ktools/ 下带了一份，不依
+赖用户机器上别处装的工具（那种依赖用户可能会挪动或删掉）。
 
 **中文路径问题（已用"输出到临时目录再搬过去"绕开）**：ktech.exe（底层是
 老版 ImageMagick）处理命令行参数用的是系统 ANSI 代码页，不是
@@ -49,19 +47,17 @@ from dstools.shared.resource_paths import bundled_resource_dir
 _TOOLS_DIR = bundled_resource_dir() / "tools" / "ktools"
 _KTECH_EXE = _TOOLS_DIR / "ktech.exe"
 
-# ktech.exe is a console app -- without this, every call briefly flashes a
-# black console window on top of the GUI (visible whenever an icon/avatar
-# needs converting for the first time, e.g. right after discovering a
-# newly-copied server save).
+# ktech.exe 是控制台程序，不加这个每次调用都会在 GUI 上方一闪而过一个黑色
+# 控制台窗口（首次转换某个图标/头像时能看到，比如刚发现一个新拷贝进来的
+# 服务器存档）。
 _CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 
 def tex_to_png(tex_path: Path, out_path: Path) -> bool:
-    """Convert a single .tex file to a PNG.
+    """把单个 .tex 文件转换成 PNG。
 
-    Returns True on success, False if the tool is missing or conversion
-    failed (corrupt/missing source file etc.). Never raises -- callers
-    should treat failure as "no icon available".
+    成功返回 True；工具缺失或转换失败（源文件损坏/不存在等）返回 False，
+    从不抛异常——调用方应把失败一律当作"没有图标可用"处理。
     """
     if not _KTECH_EXE.exists() or not Path(tex_path).exists():
         return False

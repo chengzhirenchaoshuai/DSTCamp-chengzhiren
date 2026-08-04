@@ -1,7 +1,6 @@
-"""A small interactive on/off switch widget, visually matching the
-enable/disable switch drawn for mod rows in mod_render.py (green pill +
-white knob) -- used anywhere a boolean setting needs a real switch look
-instead of a plain ttk.Checkbutton.
+"""一个小的开关控件，观感上跟 mod_render.py 里给 mod 行画的启用/禁用开
+关一致（绿色药丸 + 白色圆钮）——任何需要真正"开关"外观、而不是普通
+ttk.Checkbutton 的布尔设置项都用它。
 """
 
 import tkinter as tk
@@ -12,12 +11,10 @@ _OFF_COLOR = "#bdbdbd"
 
 
 class ToggleSwitch(tk.Canvas):
-    """A rounded on/off switch bound to a tk.BooleanVar.
+    """绑定到 tk.BooleanVar 的圆角开关。
 
-    Read-only (no bg args passed through) -- draws itself in a fixed
-    size and repaints whenever the bound variable changes, whether that
-    change came from a click on the switch itself or code elsewhere
-    setting the variable.
+    只读绘制（不透传 bg 参数）——按固定尺寸画自己，绑定的变量一变化就
+    重绘，不管这个变化是点击开关本身触发的，还是别的代码直接改了变量。
     """
 
     def __init__(self, parent, variable: tk.BooleanVar, width: int = 44,
@@ -64,10 +61,9 @@ class ToggleSwitch(tk.Canvas):
 
 
 def _parent_bg(widget) -> str:
-    """Best-effort match to the parent's own background so the switch's
-    rectangular canvas doesn't show as a mismatched box -- ttk widgets
-    don't expose a plain 'background' option the classic way, so this
-    falls back to the ttk style lookup, then plain white."""
+    """尽量匹配父容器自己的背景色，避免开关这块矩形画布显得像一块不搭
+    的方框——ttk 控件不像经典控件那样直接暴露 'background' 选项，所以
+    这里退化成查 ttk 样式表，再退化成纯白。"""
     try:
         return widget.cget("background")
     except tk.TclError:

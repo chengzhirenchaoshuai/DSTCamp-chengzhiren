@@ -1,7 +1,7 @@
-"""Save file reader for DST save metadata.
+"""DST 存档元数据读取。
 
-Reads .meta files and save session directories to extract world information
-(day count, season, clock phase, etc.) without needing to parse binary saves.
+读取 .meta 文件和存档会话目录，提取世界信息（天数、季节、时段等），
+不需要解析二进制存档本身。
 """
 
 from pathlib import Path
@@ -11,16 +11,16 @@ from dstools.models import PlayerCharacterSave, SaveMetadata, SaveSession, SaveS
 
 
 def list_save_sessions(shard_path: Path) -> list[SaveSession]:
-    """List all save sessions under a shard's save directory.
+    """列出一个世界（shard）存档目录下的全部会话。
 
-    A save session is a directory under save/session/ containing
-    numbered save slot files (e.g., 0000000488) and their .meta files.
+    一个存档会话是 save/session/ 下的一个目录，里面装着编号存档槽
+    文件（如 0000000488）和各自对应的 .meta 文件。
 
     Args:
-        shard_path: Path to a shard directory (e.g., Cluster_3/Master/).
+        shard_path: 世界目录路径（如 Cluster_3/Master/）。
 
     Returns:
-        List of SaveSession objects.
+        SaveSession 对象列表。
     """
     sessions = []
     session_dir = shard_path / "save" / "session"
@@ -32,27 +32,26 @@ def list_save_sessions(shard_path: Path) -> list[SaveSession]:
         if not entry.is_dir():
             continue
 
-        # Skip non-session directories
-        # Session IDs are typically 16-character hex strings
+        # 会话 ID 通常是 16 位十六进制字符串；不是目录的条目上面已经跳过了
         session = _build_session(entry)
-        if session.slots:  # Only include sessions with actual save data
+        if session.slots:  # 只保留真正有存档数据的会话
             try:
                 session.metadata = read_session_metadata(session)
             except Exception:
-                pass  # Metadata is optional
+                pass  # 元数据是可选的，读不到不影响其余字段
             sessions.append(session)
 
     return sessions
 
 
 def _read_meta_file(meta_path: Path) -> SaveMetadata | None:
-    """Read and parse a .meta file to extract save metadata.
+    """读取并解析一个 .meta 文件，提取存档元数据。
 
     Args:
-        meta_path: Path to a .meta file.
+        meta_path: .meta 文件路径。
 
     Returns:
-        SaveMetadata or None if file doesn't exist or can't be parsed.
+        SaveMetadata，文件不存在或解析失败则返回 None。
     """
     if not meta_path.exists():
         return None
@@ -79,14 +78,14 @@ def _read_meta_file(meta_path: Path) -> SaveMetadata | None:
 
 
 def _build_session(session_path: Path) -> SaveSession:
-    """Build a SaveSession from a session directory path."""
+    """从会话目录路径构建一个 SaveSession。"""
     session = SaveSession(
         session_id=session_path.name,
         path=session_path,
         source=SaveSource.SERVER,
     )
 
-    # Find save slot files (numeric names with .meta counterparts)
+    # 找出存档槽文件（数字文件名，各自可能配一个同名 .meta 文件）
     for entry in sorted(session_path.iterdir()):
         if entry.is_file() and entry.name.isdigit():
             meta_file = session_path / f"{entry.name}.meta"
@@ -102,13 +101,13 @@ def _build_session(session_path: Path) -> SaveSession:
 
 
 def read_session_metadata(session: SaveSession) -> SaveMetadata | None:
-    """Read metadata from the newest .meta file in a session.
+    """从会话里最新的 .meta 文件读取元数据。
 
     Args:
-        session: The SaveSession to read metadata from.
+        session: 要读取的 SaveSession。
 
     Returns:
-        SaveMetadata or None if no .meta files found.
+        SaveMetadata，找不到任何 .meta 文件则返回 None。
     """
     meta_files = [s.meta_file for s in session.slots if s.meta_file and s.meta_file.exists()]
     if not meta_files:
@@ -118,13 +117,13 @@ def read_session_metadata(session: SaveSession) -> SaveMetadata | None:
 
 
 def get_save_summary(session: SaveSession) -> str:
-    """Generate a human-readable summary of a save session.
+    """生成一个存档会话的人类可读摘要。
 
     Args:
-        session: The SaveSession to summarize.
+        session: 要生成摘要的 SaveSession。
 
     Returns:
-        Human-readable string like "第417天, 夏季第12天, 白天"
+        人类可读的字符串，如 "第417天, 夏季第12天, 白天"。
     """
     parts = []
 
@@ -153,7 +152,7 @@ def get_save_summary(session: SaveSession) -> str:
     if not parts:
         parts.append("(无元数据)")
 
-    # Add slot count
+    # 附加存档槽数量
     parts.append(f"[{len(session.slots)}个存档槽]")
 
     return ", ".join(parts)

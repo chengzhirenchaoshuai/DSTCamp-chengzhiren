@@ -37,13 +37,12 @@ from dstools.models import ModEntry, Platform, SaveSource
 
 
 def _apply_full_sandbox_result(mod_info, result: dict | None) -> None:
-    """Apply resolve_full_modinfo()'s result dict onto an already
-    statically-parsed ModInfo, in place -- shared by the bulk "重载mod
-    信息" full-reload path (ModManagerTab._load_mods_worker) and
-    ModConfigDialog's own per-mod fallback (_try_full_sandbox_parse), so
-    both apply exactly the same fields the same way. A None/empty result
-    (the sandbox failed or timed out) leaves mod_info untouched --
-    whatever the static parser already produced stays authoritative.
+    """把 resolve_full_modinfo() 的结果字典原地应用到一个已经用静态方式
+    解析过的 ModInfo 上——由批量的"重载mod信息"全量重载路径
+    （ModManagerTab._load_mods_worker）和 ModConfigDialog 自己按 mod
+    逐个兜底的路径（_try_full_sandbox_parse）共用，确保两边用完全一样
+    的字段、一样的方式应用。结果为 None/空（沙箱失败或超时）时
+    mod_info 保持不变——静态解析器已经产出的结果继续作为权威结果。
     """
     if not result:
         return
@@ -57,14 +56,13 @@ def _apply_full_sandbox_result(mod_info, result: dict | None) -> None:
 
 
 class ModManagerTab:
-    """Mod list styled after the in-game "Mods" screen.
+    """样式仿照游戏内"Mods"界面的 mod 列表。
 
-    Like WorldSettingsTab, each row (icon + name/workshop-id + on/off
-    switch + config button + workshop link) is drawn as pixels onto one
-    tall PIL image via mod_render.render_mod_list() and displayed through
-    ImageScrollPanel -- ttk.Treeview can't embed a real icon plus a
-    switch plus a button per row, so this reuses the same architecture
-    world_render.py established for the world-settings panels.
+    跟 WorldSettingsTab 一样，每一行（图标 + 名字/workshop-id + 开关 +
+    配置按钮 + workshop 链接）都通过 mod_render.render_mod_list() 画成
+    像素，画到一整张高 PIL 图片上，再用 ImageScrollPanel 显示——
+    ttk.Treeview 没法在一行里同时嵌入真实图标、开关和按钮，所以这里复
+    用了 world_render.py 为世界设置面板建立的同一套架构。
     """
 
     def __init__(self, parent, app):
@@ -90,13 +88,12 @@ class ModManagerTab:
         self._loading = False
         self._loading_key = None
         self._refresh_gen = 0
-        # Every mod ever fully resolved (static parse + whole-file Lua
-        # sandbox -- see _load_mods_worker/_reload_full) persists here for
-        # the rest of the app session, keyed by workshop id, independent
-        # of which cluster/shard is currently selected: the sandboxed
-        # name/config schema a mod resolves to doesn't depend on which
-        # save you're looking at it from, so a shard switch can reuse it
-        # instead of re-running the (comparatively slow) sandbox pass.
+        # 每一个曾经被完整解析过的 mod（静态解析 + 整份文件 Lua 沙箱——
+        # 见 _load_mods_worker/_reload_full）都会一直保留在这里，直到应
+        # 用本次会话结束，按 workshop id 建索引，跟当前选中哪个
+        # cluster/shard 无关：一个 mod 沙箱解析出来的名字/配置 schema
+        # 不取决于你是从哪个存档看它的，所以切换世界可以直接复用，不用
+        # 重跑一遍（相对慢的）沙箱解析。
         self._full_resolved_cache: dict[str, "ModInfo"] = {}
         self._did_initial_full_load = False
 
@@ -136,23 +133,20 @@ class ModManagerTab:
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_select)
-        # "重载mod信息": unlike a plain refresh, this always re-runs the
-        # full whole-file Lua sandbox pass for every installed mod (name/
-        # config/icon), not just the fast static scan -- see
-        # _load_mods_worker's `full` parameter. The same full pass also
-        # runs automatically, once, the first time this tab ever loads a
-        # shard's mods (see _refresh_mods) -- accepting a longer one-time
-        # load is the tradeoff for every mod's title/config being correct
-        # from the start instead of only after individually opening each
-        # one's config dialog.
+        # "重载mod信息"：跟普通刷新不同，这个按钮总是对每个已安装 mod
+        # （名字/配置/图标）重新跑一遍整份文件的 Lua 沙箱解析，而不只是
+        # 快速的静态扫描——见 _load_mods_worker 的 `full` 参数。这个页
+        # 签第一次加载某个 shard 的 mod 列表时（见 _refresh_mods）也会
+        # 自动跑一次同样的全量解析——接受这一次性的较长加载时间，换来
+        # 每个 mod 的标题/配置从一开始就是对的，而不是只有单独打开某个
+        # mod 的配置弹窗之后才修正。
         self._md_br = ttk.Button(sf, text=t("mod.reload_full"), command=self._reload_full); self._md_br.pack(side=tk.LEFT, padx=(0,10))
         Tooltip(self._md_br, lambda: t("mod.reload_full_hover"))
-        # "本地模组" (client_only_mod = true in modinfo.lua) only affect
-        # this player's own client -- they don't need a modoverrides.lua
-        # entry to work, so unlike every other row here there's no
-        # meaningful "enabled" state for this tool to show or toggle.
-        # This button switches the whole list to browsing them instead,
-        # view-only (see ModConfigDialog's read_only mode).
+        # "本地模组"（modinfo.lua 里 client_only_mod = true）只影响玩家
+        # 自己的客户端——它们不需要 modoverrides.lua 里有一条对应记录才
+        # 能生效，所以跟这里其它行不同，本工具没有实质意义上的
+        # "enabled" 状态可以显示/切换。这个按钮改成切换整个列表去浏览
+        # 它们，纯只读查看（见 ModConfigDialog 的 read_only 模式）。
         self.show_local_var = tk.BooleanVar(value=False)
         self._md_rl = ttk.Button(sf, text=t("mod.show_local"), command=self._toggle_show_local)
         self._md_rl.pack(side=tk.LEFT, padx=2)
@@ -384,38 +378,32 @@ class ModManagerTab:
         self._render_list()
 
     def _reload_full(self):
-        """"重载mod信息" button -- always re-runs the whole-file Lua
-        sandbox pass for every installed mod (not just the fast static
-        scan a plain shard switch does), refreshing name/config/icon for
-        all of them at once instead of only after individually opening
-        each mod's config dialog."""
+        """"重载mod信息"按钮——总是对每个已安装 mod 重新跑一遍整份文件
+        的 Lua 沙箱解析（不只是普通切换世界时那种快速静态扫描），一次
+        性刷新所有 mod 的名字/配置/图标，而不是要单独打开每个 mod 的配
+        置弹窗才更新。"""
         self._refresh_mods(full=True)
 
     def _refresh_mods(self, full=None):
-        """Reload modoverrides.lua and resolve modinfo/icon for each mod.
+        """重新加载 modoverrides.lua，为每个 mod 解析 modinfo/图标。
 
-        Mirrors the in-game mods screen: every *installed* mod is listed,
-        not just the ones already present in modoverrides.lua -- that file
-        only ever records mods the player has touched (enabled, or
-        explicitly disabled after being enabled), so a freshly subscribed
-        mod the player never opened the toggle for wouldn't show up at
-        all otherwise, and "已禁用" would never count it. Parsing every
-        installed mod's modinfo.lua and converting its icon can take a
-        couple seconds across a full workshop library, so it runs on a
-        background thread (see _load_mods_worker) while the list shows a
-        lightweight "loading" placeholder -- keeps the cluster/shard
-        switch itself instant instead of freezing the GUI.
+        效果照搬游戏内的 mod 界面：列出每一个*已安装*的 mod，而不只是
+        modoverrides.lua 里已经有记录的——那份文件只会记录玩家碰过的
+        mod（启用过，或者启用后又显式禁用过），所以一个刚订阅、玩家从
+        没打开过开关的 mod 本来根本不会出现，"已禁用"筛选也永远不会把
+        它算进去。解析每个已安装 mod 的 modinfo.lua 并转换图标，在完整
+        的 workshop 库上可能要花几秒钟，所以放到后台线程跑（见
+        _load_mods_worker），列表这边先显示一个轻量的"加载中"占位——让
+        切换存档/世界这个动作本身保持即时响应，不卡住 GUI。
 
-        `full`: also run the (much slower) whole-file Lua sandbox pass
-        for every mod that isn't already in self._full_resolved_cache,
-        instead of just the fast static parser -- gets every mod's
-        title/config right from the start (a static-only parse can miss
-        a conditionally-reassigned name, e.g.) at the cost of a longer
-        one-time load. When None (a plain shard/cluster switch), this
-        runs full exactly once automatically -- the first time this tab
-        ever loads a shard's mods this session -- and stays fast after
-        that; the "重载mod信息" button (see _reload_full) always forces
-        it explicitly regardless.
+        `full`：对每个还没进 self._full_resolved_cache 的 mod 额外跑一
+        遍（慢得多的）整份文件 Lua 沙箱解析，而不只是快速的静态解析器
+        ——代价是一次性加载时间更长，换来每个 mod 的标题/配置从一开始
+        就是对的（纯静态解析可能漏掉比如一个有条件重新赋值的名字）。为
+        None 时（普通的切换世界/存档），本次会话里第一次加载某个
+        shard 的 mod 时会自动跑一次全量解析，之后就保持快速；
+        "重载mod信息"按钮（见 _reload_full）不管什么情况都会显式强制
+        跑一遍全量解析。
         """
         if full is None:
             full = not self._did_initial_full_load
@@ -426,21 +414,18 @@ class ModManagerTab:
                 if s.name == self.shard_var.get():
                     shard = s
                     break
-        # A load for this exact shard is already in flight -- this
-        # reliably happens once during app startup (this tab's own
-        # constructor kicks off the initial load via on_cluster_changed,
-        # then DSToolsApp.__init__'s own post-construction refresh()
-        # immediately asks every tab to refresh again) -- without this
-        # guard, that second call starts a faster non-full pass whose
-        # results supersede the first (full) pass's before it's even
-        # finished, leaving _full_resolved_cache only partially
-        # populated. Keyed by (cluster, shard) *name*, not object
-        # identity -- discover_environment() rebuilds fresh Cluster/Shard
-        # objects on every "刷新全部", so a plain `is` comparison between
-        # the two calls' cluster/shard objects doesn't actually hold even
-        # though it's the very same save being loaded both
-        # times. The one already running already reflects this shard, so
-        # the redundant call is simply skipped rather than racing it.
+        # 针对这个具体 shard 的加载已经在进行中——这在应用启动阶段必现
+        # 一次（这个页签自己的构造函数通过 on_cluster_changed 启动首次
+        # 加载，紧接着 DSToolsApp.__init__ 构造完之后自己的 refresh()
+        # 又立刻要求每个页签再刷新一次）——没有这道防护的话，第二次调
+        # 用会启动一次更快的非全量解析，它的结果会在第一次（全量）解析
+        # 还没跑完之前就把结果顶替掉，导致 _full_resolved_cache 只被填
+        # 了一部分。按 (cluster, shard) 的*名字*而不是对象身份建索引——
+        # discover_environment() 每次"刷新全部"都会重新构造全新的
+        # Cluster/Shard 对象，所以即便两次调用加载的其实是同一份存档，
+        # 两次调用里 cluster/shard 对象之间简单的 `is` 比较也不会成
+        # 立。已经在跑的那次调用已经覆盖了这个 shard，所以重复的调用直
+        # 接跳过，而不是去跟它抢跑。
         loading_key = (c.name if c else None, shard.name if shard else None)
         if self._loading and loading_key == getattr(self, "_loading_key", None):
             return
@@ -485,13 +470,12 @@ class ModManagerTab:
 
     def _load_mods_worker(self, gen, overrides_path, full, platform, wegame_client_mods_dir,
                            luajit_bin64_dir):
-        """Runs off the Tk main thread -- must not touch any tkinter/Tcl
-        object (that includes PhotoImage/canvas calls, but plain PIL
-        Image.open()/convert() and resolve_full_modinfo()'s own
-        subprocess calls are safe here). Results are handed back to the
-        main thread via .after() instead of writing self._mod_data etc.
-        directly, so a still-running refresh from a previous cluster/
-        shard switch can never clobber a newer one (see gen)."""
+        """跑在 Tk 主线程之外——绝不能碰任何 tkinter/Tcl 对象（包括
+        PhotoImage/canvas 相关调用，但普通的 PIL Image.open()/convert()
+        和 resolve_full_modinfo() 自己的 subprocess 调用在这里是安全
+        的）。结果通过 .after() 交回主线程，而不是直接写
+        self._mod_data 等属性，这样一次仍在跑的、来自更早的 cluster/
+        shard 切换的刷新，绝不会覆盖掉更新的一次（见 gen）。"""
         mod_data, mod_infos, icon_imgs = {}, {}, {}
         luajit_active = False
         try:
@@ -533,16 +517,14 @@ class ModManagerTab:
             for wid in ids:
                 entry = overrides.mods.get(wid)
                 if entry is None:
-                    # Installed but never touched in modoverrides.lua -- the
-                    # game treats this as disabled until enabled.
+                    # 已安装但 modoverrides.lua 里从没碰过——游戏会把它
+                    # 当成禁用，直到被启用为止。
                     entry = ModEntry(workshop_id=wid, enabled=False, configuration_options={})
                 mod_data[wid] = entry
-                # One misbehaving mod folder (unreadable modinfo.lua, a
-                # corrupt/locked icon file, a sandbox timeout, ...) must
-                # not take the whole batch down -- that mod just shows
-                # without name/icon instead of leaving every other mod
-                # (and the tab itself, stuck showing "loading")
-                # unrendered.
+                # 一个行为异常的 mod 文件夹（读不了的 modinfo.lua、损坏/
+                # 被占用的图标文件、沙箱超时等）不能拖垮整批处理——那个
+                # mod 就显示成没有名字/图标，而不是让其它所有 mod（以及
+                # 这个页签本身，一直卡在显示"加载中"）都渲染不出来。
                 try:
                     # luajit_injector.WORKSHOP_MOD_KEY 是标准 "workshop-<id>"
                     # 格式，不需要任何特判——find_mod_folder() 自己的
@@ -590,24 +572,22 @@ class ModManagerTab:
                 except Exception:
                     mod_infos.setdefault(wid, None)
         finally:
-            # However load turned out (even a hard failure above), the
-            # main thread must always hear back -- otherwise _loading
-            # stays True forever and the tab is stuck showing "loading"
-            # with no way to recover short of restarting the app.
+            # 不管加载最终跑成什么样（哪怕上面出现了硬失败），主线程都
+            # 必须收到通知——否则 _loading 会永远保持 True，页签一直卡
+            # 在显示"加载中"，除了重启应用没有别的恢复办法。
             self.frame.after(0, self._apply_loaded_mods, gen, mod_data, mod_infos, icon_imgs, luajit_active)
 
     def _apply_loaded_mods(self, gen, mod_data, mod_infos, icon_imgs, luajit_active):
         if gen != self._refresh_gen or not self.frame.winfo_exists():
-            return  # superseded by a newer refresh (or tab already closed)
+            return  # 已经被更新的一次刷新顶替（或者页签已经关闭）
         self._mod_data, self._mod_infos, self._icon_imgs = mod_data, mod_infos, icon_imgs
         self._icon_thumb_cache.clear()
         self._luajit_mod_locked = luajit_active
         self._loading = False
-        # Freshly (re)loaded from disk -- whatever was "dirty" before this
-        # point is now moot, since the displayed state IS the saved state
-        # again (covers the initial load, "重载Mod信息", a shard switch,
-        # and the reload _save_mods/_apply_all_shards themselves trigger
-        # right after writing to disk).
+        # 刚从磁盘（重新）加载完——在这之前的任何"未保存修改"标记都已经
+        # 没有意义了，因为现在显示的状态本身就又是已保存的状态（覆盖首
+        # 次加载、"重载Mod信息"、切换世界，以及 _save_mods/
+        # _apply_all_shards 写盘之后自己触发的重新加载这几种情况）。
         self._clear_dirty()
         self._render_list()
 
@@ -629,12 +609,10 @@ class ModManagerTab:
         for wid, mod in self._mod_data.items():
             info = self._mod_infos.get(wid)
             is_local = bool(info and info.client_only)
-            # The local-mods view and the normal enabled/all/disabled
-            # browsing view are mutually exclusive -- a client_only mod
-            # has no meaningful enabled state for this tool to show
-            # (see show_local_var's setup comment), so it's excluded
-            # from the normal view entirely rather than showing a
-            # possibly-meaningless toggle there.
+            # "本地模组"视图和普通的启用/全部/禁用浏览视图是互斥的——
+            # client_only 的 mod 没有本工具能显示的实质意义上的启用状
+            # 态（见 show_local_var 设置处的注释），所以直接从普通视图
+            # 里整个排除掉，而不是在那里显示一个可能没有意义的开关。
             if show_local != is_local:
                 continue
             if not show_local:
@@ -752,9 +730,9 @@ class ModManagerTab:
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
         if mod_info.client_only:
-            # client_only mods aren't tied to any save's modoverrides.lua,
-            # so there's no real "currently saved" configuration to edit --
-            # the dialog opens read-only, showing each option's own default.
+            # client_only 的 mod 不绑定任何存档的 modoverrides.lua，所
+            # 以没有真实的"当前已保存"配置可编辑——弹窗以只读方式打开，
+            # 显示每个选项自己的默认值。
             ModConfigDialog(self, workshop_id, mod, mod_info, read_only=True, read_only_reason="client_only")
         elif not is_server:
             # 本地存档：只读查看，不给改（见 on_cluster_changed 顶部的说明）。
@@ -798,22 +776,20 @@ class ModManagerTab:
             self._refresh_mods()
 
     def _write_mod_states(self, overrides):
-        """Write this tab's in-memory mod enabled/config state into an
-        already-loaded ModOverrides, in place.
+        """把这个页签内存里 mod 的启用/配置状态原地写进一个已经加载好
+        的 ModOverrides。
 
-        `self._mod_data` holds an entry for *every installed mod*, not
-        just the ones the user actually touched -- _load_mods_worker adds
-        a placeholder (enabled=False, configuration_options={}) for any
-        installed mod that isn't already in modoverrides.lua, purely so
-        the mod list screen can show it at all (matching the in-game mods
-        list). Blindly writing every one of those placeholders back out
-        here would silently add every never-touched installed mod to
-        modoverrides.lua the moment the user enables just ONE new mod --
-        so only a mod that's actually enabled, or has some
-        configuration_options set, gets a new entry; anything still at
-        its untouched default (disabled, no config) is skipped exactly
-        like before -- absence from the file already means "disabled" to
-        the game, same as an untouched mod always has.
+        `self._mod_data` 为*每个已安装 mod*都存了一条记录，不只是用户
+        实际碰过的那些——_load_mods_worker 会给每个还没出现在
+        modoverrides.lua 里的已安装 mod 补一条占位记录
+        （enabled=False, configuration_options={}），纯粹是为了让 mod
+        列表界面能显示出它（跟游戏内的 mod 列表一致）。如果在这里不加
+        区分地把每一条占位记录都写回去，会导致用户只是启用了 ONE 个新
+        mod，就把每一个从没碰过的已安装 mod 都悄悄加进
+        modoverrides.lua——所以只有真正启用了、或者设置了某些
+        configuration_options 的 mod 才会新建记录；仍然停留在未碰过默
+        认状态（禁用、没有配置）的一律照旧跳过——对游戏来说，文件里没
+        有这条记录本来就等同于"禁用"，跟一个从没碰过的 mod 效果一样。
         """
         for wid, mod in self._mod_data.items():
             if wid in overrides.mods:
@@ -822,12 +798,11 @@ class ModManagerTab:
             elif mod.enabled or mod.configuration_options:
                 config = dict(mod.configuration_options)
                 if not config:
-                    # A mod enabled for the first time without ever
-                    # opening its config dialog has no explicit choices
-                    # yet -- fill in its own declared defaults instead of
-                    # writing an empty {} (which would only be correct if
-                    # every option's default matched the mod's *actual*
-                    # runtime default exactly, which isn't guaranteed).
+                    # 第一次启用、还从没打开过配置弹窗的 mod 目前没有任
+                    # 何显式选定的值——用它自己声明的默认值填充，而不是
+                    # 写一个空的 {}（只有当每个选项的 default 都精确匹
+                    # 配这个 mod 实际运行时的默认值时，写空表才是对的，
+                    # 这个前提没法保证）。
                     info = self._mod_infos.get(wid)
                     if info:
                         config = {opt.name: opt.default for opt in info.config_options if not opt.is_header}
@@ -972,14 +947,13 @@ class ModManagerTab:
     def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())
 
     def refresh_full(self):
-        """Used by DSToolsApp._refresh() ("刷新全部") -- always forces the
-        full whole-file Lua sandbox pass, unlike plain refresh() which
-        only does that once automatically per session (see
-        _refresh_mods's docstring). Also re-applies on_cluster_changed
-        first so a newly added/removed shard is picked up -- the extra
-        fast (non-full) _refresh_mods() call that triggers is superseded
-        by the full pass right below via the existing _refresh_gen/
-        _loading_key guards, same tolerated overlap as at startup."""
+        """供 DSToolsApp._refresh()（"刷新全部"）使用——总是强制跑一遍
+        整份文件的 Lua 沙箱解析，跟普通的 refresh() 不同（后者每次会话
+        只自动跑一次，见 _refresh_mods 的 docstring）。这里也会先重新
+        走一遍 on_cluster_changed，好让新增/删除的 shard 能被捕捉
+        到——由此额外触发的那次快速（非全量）_refresh_mods() 调用，会
+        被紧接着下面这次全量解析通过既有的 _refresh_gen/_loading_key
+        防护顶替掉，跟启动时同样能容忍的重叠情况一致。"""
         self.on_cluster_changed(self.app.get_selected_cluster())
         self._refresh_mods(full=True)
 
@@ -1030,19 +1004,18 @@ def _pack_option_desc(parent, hover_text: str) -> None:
 
 
 class ModConfigDialog:
-    """Per-mod configuration editor, modeled on the in-game config screen.
+    """单个 mod 的配置编辑器，仿照游戏内配置界面设计。
 
-    Every option is a dropdown restricted to the choices modinfo.lua
-    itself declares (resolve_config_value()) -- there is deliberately no
-    free-text entry here, since a hand-typed value could be something
-    the mod's own Lua code never expects.
+    每个选项都是一个下拉框，限定在 modinfo.lua 自己声明的可选项范围内
+    （resolve_config_value()）——这里刻意没有自由文本输入框，因为手打
+    的值可能是 mod 自己的 Lua 代码完全没预料到的东西。
 
-    应用: writes the selected values into modoverrides.lua immediately
-    (matching the game, which doesn't wait for a separate "save" step).
-    重置: reverts every dropdown to the mod's own declared default
-    (opt.default), not to whatever was last saved -- also matching the
-    in-game Reset button. Neither of those is written until 应用 is
-    clicked. 返回: closes and discards anything not yet applied.
+    应用：立刻把选中的值写进 modoverrides.lua（跟游戏一致，不等一个单
+    独的"保存"步骤）。
+    重置：把每个下拉框都还原成 mod 自己声明的默认值（opt.default），
+    而不是最后一次保存的值——同样跟游戏内的重置按钮一致。这两个按钮都
+    不会在点击"应用"之前写入任何内容。返回：关闭窗口，丢弃所有还没应
+    用的改动。
     """
 
     def __init__(self, tab: ModManagerTab, workshop_id: str, mod, mod_info, read_only: bool = False,
@@ -1076,39 +1049,35 @@ class ModConfigDialog:
         # 题文字。
         title_name = fonts.strip_unrenderable(mod_info.name or workshop_id) or workshop_id
         win.title(t("mod.config_dialog_title", name=title_name))
-        # Deliberately NOT transient(): on Windows, a transient Toplevel is
-        # drawn as a "dialog" and Windows itself strips its minimize/
-        # maximize boxes regardless of resizable() -- confirmed by
-        # querying GetWindowLongW's WS_MINIMIZEBOX/WS_MAXIMIZEBOX bits.
-        # Making it a normal independent top-level restores both, at the
-        # cost of no longer being OS-grouped with the main window, which
-        # _guard_main_window() below compensates for.
+        # 刻意不用 transient()：在 Windows 上，transient 的 Toplevel 会被
+        # 画成一个"对话框"，不管 resizable() 怎么设置，Windows 自己都会
+        # 去掉它的最小化/最大化按钮——查过 GetWindowLongW 的
+        # WS_MINIMIZEBOX/WS_MAXIMIZEBOX 位确认过这一点。改成普通的独立
+        # 顶层窗口能把两个按钮都恢复回来，代价是不再跟主窗口按操作系统
+        # 分组，下面的 _guard_main_window() 对这一点做了补偿。
         win.resizable(True, True)
-        # Widened (was 820) to fit NAME_W_PX below without squeezing the
-        # combobox -- long option names (e.g. a mod's own English/Chinese
-        # combined title) were getting truncated to "..." and only readable
-        # via hover tooltip otherwise.
+        # 加宽了（原来是 820），好放下下面的 NAME_W_PX 而不挤压下拉
+        # 框——长选项名（比如 mod 自己中英文合并的标题）以前会被截断成
+        # "..."，只能靠悬浮提示才能看全。
         DIALOG_W, DIALOG_H = 980, 680
         win.minsize(DIALOG_W, DIALOG_H)
 
-        # Button bar is packed to the bottom FIRST so it always reserves
-        # its slice of the window before the scrolling area (packed next)
-        # claims the rest -- packing the expanding widget first would let
-        # it consume the whole cavity and squeeze the buttons out.
+        # 按钮栏必须先 pack 到底部，这样它总能先占好自己那一块空间，再
+        # 让接下来 pack 的滚动区域去占剩下的部分——如果先 pack 会扩张的
+        # 控件，它会把整个空间都占满，把按钮挤出去。
         btn_frame = ttk.Frame(win); btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
         if not read_only:
             ttk.Button(btn_frame, text=t("mod.apply"), command=self._apply).pack(side=tk.LEFT, padx=2)
             ttk.Button(btn_frame, text=t("mod.reset"), command=self._reset).pack(side=tk.LEFT, padx=2)
         ttk.Button(btn_frame, text=t("mod.back"), command=self._close).pack(side=tk.RIGHT, padx=2)
 
-        # A mod-level banner (not per-row) -- either this is a client_only
-        # ("本地") mod, which has no modoverrides.lua entry to edit at all
-        # (see ModManagerTab.show_local_var), or the currently selected save
-        # is a LOCAL one (see ModManagerTab.on_cluster_changed's docstring
-        # for why editing a local save's modoverrides.lua isn't reliable),
-        # or one of the two "can't fully support this mod's config" cases --
-        # packed above the canvas so it's always visible, not scrolled away
-        # with the rows.
+        # 一个针对整个 mod 的横幅（不是逐行的）——要么这是个 client_only
+        # （"本地"）mod，压根没有 modoverrides.lua 记录可编辑（见
+        # ModManagerTab.show_local_var），要么当前选中的存档是 LOCAL 类
+        # 型的（编辑本地存档的 modoverrides.lua 为什么不可靠，见
+        # ModManagerTab.on_cluster_changed 的 docstring），要么是"没法完
+        # 全支持这个 mod 配置"的两种情况之一——放在 canvas 上方，始终可
+        # 见，不会跟着行内容一起被滚动出去。
         remaining_dynamic = sum(1 for o in mod_info.config_options if o.is_dynamic)
         if read_only:
             banner_key = "mod.read_only_local" if read_only_reason == "client_only" else "mod.read_only_local_save"
@@ -1126,19 +1095,16 @@ class ModConfigDialog:
 
         canvas = tk.Canvas(win, highlightthickness=0)
         self.canvas = canvas
-        # `command=canvas.yview` directly would call Tk's native scroll on
-        # every single scrollbar-drag event -- fine for the pure-canvas-
-        # image panels (world/mod list), but this canvas embeds a real ttk
-        # widget per option row (name label + combobox + tooltip binding),
-        # sometimes 100+ of them for a mod with a big config screen. Each
-        # native widget has to be individually repositioned/repainted on
-        # every scroll step, and a fast scrollbar drag fires far more of
-        # those than Tk/the window compositor can keep up with, which is
-        # what shows up as torn/ghosted text -- a plain mouse-wheel scroll
-        # moves in fewer, larger, slower steps and doesn't hit this.
-        # Coalescing drag events the same way image_scroll.py throttles its
-        # PIL re-renders (>=1 real yview per ~16ms instead of one per raw
-        # event) gives the compositor time to actually finish each frame.
+        # 直接用 `command=canvas.yview` 会在每一次滚动条拖拽事件上都调
+        # 用 Tk 的原生滚动——对纯 canvas 图片面板（世界设置/mod 列表）
+        # 没问题，但这个 canvas 每个选项行都嵌了一个真实 ttk 控件（名字
+        # 标签+下拉框+悬浮提示绑定），配置项多的 mod 有时能有 100 多
+        # 个。每个原生控件在每一步滚动时都要单独重新定位/重绘，快速拖
+        # 拽滚动条触发的这类事件远超 Tk/窗口合成器能跟得上的速度，表现
+        # 出来就是撕裂/重影的文字——普通鼠标滚轮滚动步子更少、更大、更
+        # 慢，不会触发这个问题。像 image_scroll.py 节流它的 PIL 重渲染
+        # 那样合并拖拽事件（约每 16ms 最多真正执行一次 yview，而不是每
+        # 个原始事件都执行一次），给合成器留出时间真正画完每一帧。
         self._cfg_scroll_after_id = None
         self._cfg_scroll_pending = None
 
@@ -1156,24 +1122,22 @@ class ModConfigDialog:
         vbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=_on_vbar)
         body = ttk.Frame(canvas)
         body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        # Deliberately NOT tracking the canvas's width to reflow this frame
-        # on resize: with 100+ option rows, re-laying all of them out on
-        # every resize tick (and, it turned out, feeding into scrolling
-        # too) was the actual source of the dialog feeling laggy. Rows use
-        # a fixed wraplength instead (below), so resizing the window is
-        # now a pure canvas-viewport operation that never touches them.
+        # 刻意不跟踪 canvas 宽度、不在窗口缩放时重新排布这个 frame：配置
+        # 项超过 100 条时，每次缩放都重新排布所有行（后来发现还连带影
+        # 响滚动），才是这个弹窗感觉卡顿的真正原因。改成每一行都用固定
+        # 的 wraplength（见下面），这样缩放窗口现在是纯粹的 canvas 视口
+        # 操作，完全不会碰到这些行。
         canvas.create_window((0, 0), window=body, anchor="nw")
         canvas.configure(yscrollcommand=vbar.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10,0), pady=10)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Name column / combobox width are still fixed (single line, never
-        # grows with label length -- see NAME_W_PX truncation below) so the
-        # top line of every row stays a uniform grid like world-settings.
-        # opt.hover itself is no longer a hover-only Tooltip popup -- it's
-        # shown inline below that top line via _pack_option_desc(), with a
-        # fixed 2-line reservation so rows with/without a hover still line
-        # up close to consistently (see that function's docstring).
+        # 名字列/下拉框宽度仍然是固定的（单行，绝不随标签长度增长——见
+        # 下面的 NAME_W_PX 截断），这样每一行的顶部那条线都保持跟世界
+        # 设置一样统一的网格。opt.hover 本身不再是只在悬停时弹出的
+        # Tooltip 了——改成通过 _pack_option_desc() 内联显示在那条顶部
+        # 线下面，固定预留 2 行高度，让有/没有 hover 的行仍然大体对齐
+        # （见该函数的 docstring）。
         from dstools.shared.gui.tooltip import Tooltip
         NAME_W_PX = 520
         HEADER_W_PX = 900
@@ -1191,13 +1155,11 @@ class ModConfigDialog:
         real_options = 0
         for opt in visible_config_options(mod_info.config_options):
             if opt.is_header:
-                # A purely visual divider the mod author added to organize
-                # its own config screen -- not a real setting, so it gets
-                # no dropdown/vars/choice_map entry: either a section title
-                # (shown verbatim, whatever the author wrote -- including a
-                # hand-drawn "======"/"------" rule, now that rows are laid
-                # out left/right instead of full-width text) or a blank
-                # spacer when the author used one purely for vertical gap.
+                # mod 作者为组织自己配置界面加的纯视觉分隔符——不是真实
+                # 设置，所以不会有对应的下拉框/vars/choice_map 条目：要
+                # 么是一个分区标题（原样显示作者写的内容——包括手写的
+                # "======"/"------" 分隔线，现在行是左右布局而不是通栏
+                # 文字），要么是作者纯粹用来留竖直间距的空白占位符。
                 label_text = opt.label.strip()
                 if label_text:
                     ttk.Separator(body, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=5, pady=(12,3))
@@ -1238,16 +1200,15 @@ class ModConfigDialog:
             desc_to_data = {c["description"]: c["data"] for c in choices}
 
             if not desc_to_data:
-                # No selectable choices could be resolved. Rather than a
-                # readonly Combobox with an empty values list (which just
-                # looks broken -- nothing to pick, nothing shown), show the
-                # raw current value plus an explicit reason so it reads as
-                # "known limitation", not "bug": either the mod computes
-                # its options at Lua runtime (opt.is_dynamic -- a for-loop
-                # or a helper function this static parser can't execute),
-                # or it genuinely declared none. Not added to self.vars/
-                # choice_maps, so _reset()/_apply() skip it (nothing to
-                # write back -- editing it here isn't safe either way).
+                # 解析不出任何可选的可选项。与其显示一个 values 列表为
+                # 空的只读 Combobox（看起来就像坏了——什么都选不了，什
+                # 么都不显示），不如显示原始的当前值加一句明确的原因，
+                # 让它读起来像"已知限制"而不是"bug"：要么这个 mod 在 Lua
+                # 运行时才计算出选项（opt.is_dynamic——一个静态解析器执
+                # 行不了的 for 循环或辅助函数），要么它确实没声明任何选
+                # 项。不加进 self.vars/choice_maps，所以 _reset()/
+                # _apply() 会跳过它（没有东西可以写回——反正在这里编辑
+                # 也不安全）。
                 reason = t("mod.dynamic_option") if opt.is_dynamic else t("mod.no_choices")
                 ttk.Label(top, text=f"{current_display}  ({reason})",
                          foreground=theme.TEXT_MUTED, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "italic")).pack(side=tk.RIGHT)
@@ -1255,10 +1216,10 @@ class ModConfigDialog:
                     _pack_option_desc(row, opt.hover)
                 continue
 
-            # Keyed by description (always a hashable string), not by
-            # data -- a choice's `data` can itself be a Lua table (e.g.
-            # Multi-World Picker's world_name/population_limit options),
-            # which can't be a dict key.
+            # 按 description（总是可哈希的字符串）建索引，不是按
+            # data——一个选项的 `data` 本身可能是一张 Lua 表（比如
+            # Multi-World Picker 的 world_name/population_limit 选
+            # 项），没法当 dict 的键。
             desc_to_hover = {c["description"]: c.get("hover", "") for c in choices}
             self.choice_maps[opt.name] = desc_to_data
             var = tk.StringVar(value=current_display)
@@ -1287,11 +1248,11 @@ class ModConfigDialog:
             if opt.hover:
                 _pack_option_desc(row, opt.hover)
 
-            # Per-choice hover (item 6): a note attached to whichever value
-            # is currently selected, not the option as a whole -- shown as
-            # a tooltip on the dropdown itself so it never affects row
-            # height, and reflects the live selection since Tooltip calls
-            # this getter fresh every time the mouse hovers, not just once.
+            # 每个选项各自的悬浮提示（第 6 项）：附在当前选中的那个值上
+            # 的说明，不是附在整个配置项上——显示成下拉框本身的悬浮提
+            # 示，这样绝不会影响行高，而且会跟着实际选择实时变化，因为
+            # Tooltip 每次鼠标悬停都会重新调用这个 getter，不是只调用一
+            # 次。
             def _current_choice_hover(dth=desc_to_hover, v=var):
                 return dth.get(v.get(), "")
             Tooltip(menu_btn, _current_choice_hover)
@@ -1299,19 +1260,17 @@ class ModConfigDialog:
         if not real_options and not mod_info.unsupported_schema:
             ttk.Label(body, text=t("mod.no_config_options")).pack(padx=10, pady=10)
 
-        # Mouse wheel should always scroll the option list, wherever the
-        # pointer is -- including over a combobox, which by default
-        # consumes the wheel to cycle its own value instead. Binding our
-        # own handler on every descendant (added after "break") runs
-        # ahead of that default binding and stops it from firing.
+        # 不管鼠标指针在哪里，滚轮都应该滚动整个选项列表——包括停在下拉
+        # 框上面时，下拉框默认会消费滚轮事件改变自己的值。给每个子控件
+        # 都绑一个自己的处理函数（返回 "break"）,会抢在那个默认绑定之
+        # 前执行，阻止它触发。
         self._bind_mousewheel(win)
 
         center_over_parent(win, self.tab.frame.winfo_toplevel(), width=DIALOG_W, height=DIALOG_H)
 
-        # Lock the window's aspect ratio to how it was laid out, the same
-        # native WM_SIZING hook the main window uses -- otherwise dragging
-        # a single edge stretches only width or only height and the fixed-
-        # size rows end up surrounded by a lopsided amount of empty space.
+        # 把窗口宽高比锁定成它最初布局时的样子，用的是跟主窗口同一套原
+        # 生 WM_SIZING 钩子——否则拖拽单条边只会拉伸宽或高其中一个方
+        # 向，固定尺寸的行周围会出现明显不对称的大片空白。
         from dstools.shared.gui.win_aspect_lock import AspectLock
         self._aspect_lock = AspectLock(win, DIALOG_W, DIALOG_H)
         self._aspect_lock.install()
@@ -1515,34 +1474,27 @@ class ModConfigDialog:
             data["add_row"](v)
 
     def _try_full_sandbox_parse(self, workshop_id, mod_info):
-        """Try resolving this mod's metadata and *entire*
-        configuration_options by running its whole modinfo.lua through
-        the Lua sandbox (see modinfo_reader.resolve_full_modinfo) --
-        tried first, before the static parser's result and its own
-        narrower per-option fallback (_resolve_dynamic_options below):
-        when it works, it sidesteps every static-parsing edge case at
-        once (Lua comments, quote styles, shared-table dotted
-        references, ChooseTranslationTable, conditionally-reassigned
-        locals/fields, ...) since a real Lua 5.1 interpreter just
-        handles the actual syntax directly, instead of this project's
-        regex-based parser trying to re-derive it one shape at a time --
-        including a mod's own `name`/`description` being conditionally
-        reassigned to a Chinese variant deeper in the file, which the
-        static parser (which only ever grabs the *first* `name = "..."`
-        it finds) can't follow.
+        """尝试通过把整份 modinfo.lua 丢进 Lua 沙箱运行（见
+        modinfo_reader.resolve_full_modinfo）来解析这个 mod 的元数据和
+        *整个* configuration_options——优先于静态解析器的结果、也优先
+        于本类自己更窄范围的逐个选项兜底（下面的
+        _resolve_dynamic_options）：一旦成功，它能一次性绕开所有静态解
+        析的边界情况（Lua 注释、引号风格、共享表的点号引用、
+        ChooseTranslationTable、有条件重新赋值的局部变量/字段等），因
+        为真正的 Lua 5.1 解释器直接处理实际语法，不用本项目基于正则的
+        解析器一种形状一种形状地重新推导——包括一个 mod 自己的
+        `name`/`description` 在文件更深处被有条件地重新赋值成中文变
+        体，这是只抓第一个 `name = "..."` 的静态解析器跟不上的情况。
 
-        Most mods still reference DST-engine globals (GLOBAL, STRINGS,
-        TheNet, ...) this sandbox doesn't provide, so this simply fails
-        (fast) for those and mod_info is left exactly as the static
-        parser already produced it -- _resolve_dynamic_options then
-        still gets a chance at any individual options on its own.
+        大多数 mod 仍然会引用这个沙箱没有提供的 DST 引擎全局变量
+        （GLOBAL、STRINGS、TheNet 等），所以对这些 mod 会直接（很快
+        地）失败，mod_info 会保持静态解析器已经产出的样子——
+        _resolve_dynamic_options 之后仍然有机会自己单独解析个别选项。
 
-        Only attempted once per mod per session
-        (mod_info.full_sandbox_tried guards re-attempts on every dialog
-        reopen, since re-running a whole-file sandbox pass is
-        comparatively the most expensive of the fallbacks here). Updates
-        the mod list too (not just this dialog) since a corrected name
-        belongs there as well.
+        每个 mod 每次会话只尝试一次（mod_info.full_sandbox_tried 防止
+        每次重新打开弹窗都重试，因为重跑一遍整份文件的沙箱解析相对来
+        说是这里最贵的一种兜底手段）。同时也会更新 mod 列表（不只是这
+        个弹窗），因为修正后的名字在那边也该体现出来。
         """
         if mod_info.full_sandbox_tried:
             return
@@ -1559,33 +1511,28 @@ class ModConfigDialog:
         if not result:
             return
         _apply_full_sandbox_result(mod_info, result)
-        # So a later shard/cluster switch (or the "重载mod信息" button)
-        # doesn't redundantly re-run the sandbox for a mod this dialog
-        # already fully resolved.
+        # 这样之后切换世界/存档（或者点"重载mod信息"按钮）就不会对这
+        # 个弹窗已经完整解析过的 mod 再多余地重跑一次沙箱。
         self.tab._full_resolved_cache[workshop_id] = mod_info
         self.tab._render_list()
 
     def _resolve_dynamic_options(self, mod_info, budget=3.0):
-        """Try to resolve options the static parser marked as
-        dynamically-computed (opt.is_dynamic) by actually running the
-        mod's own preamble code through a sandboxed Lua 5.1 interpreter
-        (see lua_sandbox.py) -- covers e.g. a for-loop building a keybind
-        or numeric-range picker that a mod writes as code instead of a
-        literal table.
+        """尝试通过真正把 mod 自己的 preamble 代码丢进沙箱化 Lua 5.1
+        解释器运行（见 lua_sandbox.py），解析出静态解析器标记为动态计
+        算（opt.is_dynamic）的选项——覆盖比如一个 mod 用代码而不是字
+        面量表写的、构建按键绑定或数值范围选择器的 for 循环。
 
-        Bounded by a total wall-clock budget, not a per-option one: a
-        mod can have dozens of such options (a big all-in-one QoL mod),
-        and most failures resolve near-instantly (an undefined engine
-        global errors the moment Lua tries to use it -- it doesn't hang),
-        but this still caps worst-case dialog-opening delay rather than
-        potentially resolving one option per second for a minute.
-        Whichever don't get resolved within the budget just keep showing
-        the existing "can't edit here" fallback -- same as if this were
-        never attempted.
+        用一个总的挂钟时间预算限制，而不是按每个选项单独限制：一个
+        mod 可能有几十个这样的选项（一个大型多合一 QoL mod），大多数
+        失败都几乎瞬间就能得出结果（引用未定义的引擎全局变量在 Lua 尝
+        试使用它的那一刻就会报错——不会卡住），但这里仍然设了个上限，
+        避免最坏情况下弹窗打开延迟变成每秒解析一个选项、持续一分钟。
+        在预算内没解析出来的选项，继续显示原有的"这里不能编辑"兜底提
+        示——效果跟完全没尝试过一样。
 
-        Mutates `opt` in place on the (cached, shared) ModInfo -- so a
-        mod's dynamic options only ever get attempted once per session,
-        not on every time its dialog is reopened.
+        原地修改（缓存的、共享的）ModInfo 上的 `opt`——所以一个 mod 的
+        动态选项每次会话只会尝试一次，不会每次重新打开弹窗都再试一
+        遍。
         """
         if not mod_info.dynamic_preamble:
             return
@@ -1608,13 +1555,12 @@ class ModConfigDialog:
             self._bind_mousewheel(child)
 
     def _on_mousewheel(self, event):
-        # When every row already fits inside the canvas, Tk's own "units"
-        # scrolling still happily moves the view -- with so little
-        # scrollable range, one wheel notch's unit jump overshoots straight
-        # to the bottom instead of being clamped, which reads as the whole
-        # list suddenly leaping down for no reason. If there's nothing to
-        # scroll, do nothing -- content stays pinned to the top, same as
-        # ImageScrollPanel's own clamping on the world-settings tab.
+        # 当所有行已经能整个塞进 canvas 里时，Tk 自己的"units"滚动仍然
+        # 会欣然移动视图——可滚动范围这么小，一格滚轮的单位跳跃会直接
+        # 冲到底部而不是被限制住，表现出来就是整个列表毫无缘由地突然
+        # 往下跳。如果根本没有可滚动的内容，就什么都不做——内容保持钉
+        # 在顶部，跟世界设置页签里 ImageScrollPanel 自己的限位逻辑一
+        # 致。
         bbox = self.canvas.bbox("all")
         if not bbox or bbox[3] - bbox[1] <= self.canvas.winfo_height():
             return "break"
@@ -1622,23 +1568,19 @@ class ModConfigDialog:
         return "break"
 
     def _guard_main_window(self):
-        """Keep the main window from feeling usable while this dialog is
-        open, without transient()'s side effect of losing min/max boxes.
+        """让这个弹窗打开期间主窗口感觉不能用，同时不承受 transient()
+        丢失最小化/最大化按钮的副作用。
 
-        grab_set() already makes the main window's own buttons/widgets
-        inert, but since this dialog is no longer transient it's just an
-        independent top-level, so the OS still lets the user click the
-        main window and raise it to the foreground, covering the dialog.
-        Tk's own <FocusIn> binding on the root turned out not to fire
-        reliably for this (verified empirically), so this polls the real
-        Win32 foreground window instead and reacts -- beep + brief shake +
-        snapping focus back, like a blocked modal window in Windows -- the
-        moment the main window (specifically; other applications are left
-        alone) becomes foreground -- but only once the dialog itself has
-        been seen in the foreground at least once first (_confirmed
-        below), so opening the dialog doesn't itself read as "the main
-        window lost focus" and immediately shake/beep before the user has
-        done anything.
+        grab_set() 已经让主窗口自己的按钮/控件失效了，但由于这个弹窗
+        不再是 transient 的，它只是一个独立的顶层窗口，操作系统仍然允
+        许用户点击主窗口把它提到前台，盖住这个弹窗。经验证 Tk 自己在
+        root 上的 <FocusIn> 绑定对这种情况触发得不可靠，所以这里改成轮
+        询真实的 Win32 前台窗口并作出反应——一旦主窗口（specifically，
+        只针对主窗口，不管其它应用程序）变成前台窗口，就发出提示音+短
+        暂晃动+把焦点抢回来，像 Windows 里被挡住的模态窗口那样——但只
+        有当这个弹窗自己先被确认至少出现在前台一次之后（下面的
+        _confirmed）才会这样做，这样打开弹窗这个动作本身不会被当成
+        "主窗口失去焦点"，在用户还没做任何操作之前就立刻晃动/响铃。
         """
         self._poll_after_id = None
         self._dialog_confirmed_foreground = False
@@ -1697,7 +1639,7 @@ class ModConfigDialog:
 
 
     def _reset(self):
-        """Revert every dropdown to the mod's own default (UI only, not yet saved)."""
+        """把每个下拉框都还原成 mod 自己的默认值（只影响界面，尚未保存）。"""
         for opt in self.mod_info.config_options:
             if opt.is_header:
                 continue
@@ -1705,9 +1647,8 @@ class ModConfigDialog:
                 kind, data = self.raw_widgets[opt.name]
                 self._reset_raw_widget(opt, kind, data)
                 continue
-            # Options whose choices couldn't be resolved (opt.name not in
-            # self.vars -- see the dynamic-option fallback above) have
-            # nothing to reset.
+            # 可选项解析不出来的选项（opt.name 不在 self.vars 里——见
+            # 上面的动态选项兜底）没有东西可以重置。
             if opt.name not in self.vars:
                 continue
             desc_to_data = self.choice_maps[opt.name]
@@ -1729,12 +1670,11 @@ class ModConfigDialog:
             desc_to_data = self.choice_maps[opt.name]
             if desc in desc_to_data:
                 self.mod.configuration_options[opt.name] = desc_to_data[desc]
-        # _save_mods(silent=True) writes this mod's own config to the
-        # currently selected shard right away (matching the in-game
-        # config screen), but that doesn't mean there's nothing left to
-        # do -- "应用到所有世界" still hasn't propagated this change to
-        # any sibling shards, so mark dirty (enabling 保存修改/应用到所有
-        # 世界) rather than leaving them grayed out as if nothing happened.
+        # _save_mods(silent=True) 会立刻把这个 mod 自己的配置写进当前选
+        # 中的世界（跟游戏内配置界面一致），但这不代表没有后续工作要
+        # 做——"应用到所有世界"仍然还没把这次改动同步给其它世界，所以
+        # 要标脏（让 保存修改/应用到所有世界 可点），而不是让它们继续
+        # 灰着，像什么都没发生过一样。
         self.tab._mark_dirty()
         self.tab._save_mods(silent=True)
         self.tab._render_list()

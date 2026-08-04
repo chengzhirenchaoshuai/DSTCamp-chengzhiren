@@ -1,10 +1,9 @@
-"""A rounded-rectangle panel that the four main tabs sit on top of the app
-background.
+"""四个主页签叠放在应用背景之上的圆角矩形面板。
 
-Drawn natively with Canvas.create_polygon(..., smooth=True) rather than a
-PIL bitmap -- unlike the PIL-rendered panels (world_render.py/mod_render.py,
-which redraw hundreds of data rows), a card is just one shape redrawn on
-resize, so native Canvas smoothing is simpler and cheap enough per-frame.
+用 Canvas.create_polygon(..., smooth=True) 原生绘制，不用 PIL 位图——不
+像 PIL 渲染的面板（world_render.py/mod_render.py，要重画几百行数据），
+卡片只是一个跟着 resize 重画的形状，原生 Canvas 抗锯齿已经足够简单、每
+帧开销也够低。
 
 之前这里还有一圈阴影 + 一版"给圆角外壳也贴自定义背景图"的 PIL 遮罩合成
 （超采样抗锯齿、停顿后才重新生成的那一套），结果暴露了两个问题：换了张
@@ -37,8 +36,8 @@ from dstools.shared.gui.bg_frame import BgFrame
 
 
 class CardFrame(tk.Frame):
-    """Use like a normal Frame: `card = CardFrame(parent, app); card.pack(...)`,
-    then build real content inside `card.body`. `body` is a BgFrame（见
+    """用法跟普通 Frame 一样：`card = CardFrame(parent, app); card.pack(...)`，
+    真正的内容建在 `card.body` 里面。`body` 是一个 BgFrame（见
     gui/bg_frame.py）——本身能显示自定义背景图，但只有当放进去的子控件也
     是背景感知容器（BgFrame/ttk 控件本身留白的地方）时，这一点才看得出
     来；`app` 用来让 body 接入 DSToolsApp 统一维护的共享背景图系统。"""
@@ -71,10 +70,9 @@ class CardFrame(tk.Frame):
         self._canvas.bind("<Configure>", lambda e: self._request_redraw(), add="+")
 
     def _request_redraw(self):
-        # A live window drag-resize fires far more <Configure> events than
-        # the screen can actually repaint, and redrawing the card polygon
-        # on every single one of them (times 4, one per stacked tab card)
-        # is a real contributor to resize jank.
+        # 真实拖拽缩放窗口时触发的 <Configure> 事件远比屏幕能重绘的次数
+        # 多，每次都重画卡片多边形（乘以 4，每个页签卡片各一份）是拖拽
+        # 卡顿的一个实际来源，这里节流到约 60fps。
         if self._redraw_after_id is None:
             self._redraw_after_id = self._canvas.after(16, self._do_throttled_redraw)
 

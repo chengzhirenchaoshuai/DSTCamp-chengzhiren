@@ -1,7 +1,7 @@
-"""Pure-Python Lua table parser for DST configuration files.
+"""纯 Python 实现的 DST 配置文件 Lua 表解析器。
 
-DST uses a restricted Lua subset: only `return { ... }` data tables.
-This parser handles that subset without requiring a Lua runtime dependency.
+DST 只用一个受限的 Lua 子集：仅 `return { ... }` 这种数据表字面量。
+本解析器只处理这个子集，不依赖任何 Lua 运行时。
 """
 
 import re
@@ -11,7 +11,7 @@ from typing import Any
 
 
 class LuaParseError(Exception):
-    """Error raised when Lua parsing fails."""
+    """Lua 解析失败时抛出的异常。"""
 
     def __init__(self, message: str, line: int = 0, col: int = 0):
         loc = f" at line {line}, col {col}" if line > 0 else ""
@@ -20,7 +20,7 @@ class LuaParseError(Exception):
         self.col = col
 
 
-# ── Tokenizer ──────────────────────────────────────────────────────────
+# ── 词法分析器 ──────────────────────────────────────────────────────────
 
 class TokenType(Enum):
     RETURN = auto()
@@ -32,7 +32,7 @@ class TokenType(Enum):
     COMMA = auto()        # ,
     STRING = auto()
     NUMBER = auto()
-    IDENTIFIER = auto()   # Includes true/false keywords
+    IDENTIFIER = auto()   # 包含 true/false 关键字
     EOF = auto()
 
 
@@ -47,24 +47,24 @@ class Token:
         return f"Token({self.type.name}, {self.value!r}, {self.line}:{self.col})"
 
 
-# Regex patterns for Lua tokens
+# Lua 词法单元的正则表达式
 _LUA_STRING_RE = re.compile(r'''
-    "(?:[^"\\]|\\.)*"           # double-quoted string
-    |'(?:[^'\\]|\\.)*'          # single-quoted string
-    |\[=*\[.*?\]=*\]            # long bracket string (lazy match for nesting)
+    "(?:[^"\\]|\\.)*"           # 双引号字符串
+    |'(?:[^'\\]|\\.)*'          # 单引号字符串
+    |\[=*\[.*?\]=*\]            # 长方括号字符串（非贪婪匹配以支持嵌套）
 ''', re.DOTALL | re.VERBOSE)
 
 _LUA_NUMBER_RE = re.compile(r'''
-    -?(?:0x[0-9a-fA-F]+         # hex integer
-    |\d+\.?\d*(?:[eE][+-]?\d+)? # decimal with optional fraction/exponent
-    |\.\d+(?:[eE][+-]?\d+)?)    # leading dot decimal
+    -?(?:0x[0-9a-fA-F]+         # 十六进制整数
+    |\d+\.?\d*(?:[eE][+-]?\d+)? # 十进制数，可带小数部分/指数
+    |\.\d+(?:[eE][+-]?\d+)?)    # 以小数点开头的十进制数
 ''', re.VERBOSE)
 
 _LUA_IDENT_RE = re.compile(r'[a-zA-Z_][a-zA-Z0-9_]*')
 
 
 class LuaTokenizer:
-    """Tokenize a Lua table literal string."""
+    """对 Lua 表字面量字符串做词法分析。"""
 
     def __init__(self, text: str):
         self.text = text
@@ -77,7 +77,7 @@ class LuaTokenizer:
         while self.pos < len(self.text):
             c = self.text[self.pos]
 
-            # Whitespace
+            # 空白字符
             if c in ' \t\r\n':
                 if c == '\n':
                     self.line += 1
@@ -87,33 +87,33 @@ class LuaTokenizer:
                 self.pos += 1
                 continue
 
-            # Comments: -- to end of line, or --[[ ... ]] block
+            # 注释：-- 到行尾，或者 --[[ ... ]] 块注释
             if c == '-' and self.pos + 1 < len(self.text) and self.text[self.pos + 1] == '-':
                 self._skip_comment()
                 continue
 
-            # String
+            # 字符串
             if c in '"\'':
                 token = self._read_string()
                 tokens.append(token)
                 continue
 
-            # Long bracket string [[...]] or [=[...]=]
+            # 长方括号字符串 [[...]] 或 [=[...]=]
             if c == '[':
                 token = self._read_long_string()
                 if token:
                     tokens.append(token)
                     continue
-                # Not a long string, just a regular [
+                # 不是长字符串，只是普通的 [
                 tokens.append(Token(TokenType.LBRACKET, '[', self.line, self.col))
                 self.pos += 1
                 self.col += 1
                 continue
 
-            # Numbers. A bare leading dot (".01", no sign) is a valid Lua
-            # decimal literal too, not just "-.01" -- without this branch
-            # the "." falls through to the unknown-character skip below
-            # and gets silently dropped, turning ".01" into a bogus "01".
+            # 数字。裸的前导小数点（".01"，不带符号）本身也是合法的 Lua 十进
+            # 制字面量，不只是 "-.01" 这种带符号的形式——不加这个分支，"."
+            # 会落到下面"未知字符跳过"那段逻辑里被悄悄丢掉，把 ".01" 变成
+            # 错误的 "01"。
             if c.isdigit() or \
                (c == '.' and self.pos + 1 < len(self.text) and self.text[self.pos + 1].isdigit()) or \
                (c == '-' and self.pos + 1 < len(self.text) and
@@ -122,13 +122,13 @@ class LuaTokenizer:
                 tokens.append(token)
                 continue
 
-            # Identifiers and keywords
+            # 标识符和关键字
             if c.isalpha() or c == '_':
                 token = self._read_identifier()
                 tokens.append(token)
                 continue
 
-            # Single-character tokens
+            # 单字符词法单元
             single_map = {
                 '{': TokenType.LBRACE,
                 '}': TokenType.RBRACE,
@@ -143,7 +143,7 @@ class LuaTokenizer:
                 self.col += 1
                 continue
 
-            # Unknown character - skip with warning
+            # 未知字符，直接跳过
             self.pos += 1
             self.col += 1
 
@@ -151,15 +151,15 @@ class LuaTokenizer:
         return tokens
 
     def _skip_comment(self):
-        """Skip Lua comment (-- to end of line, or --[[ ... ]] block)."""
-        self.pos += 2  # Skip --
+        """跳过 Lua 注释（-- 到行尾，或者 --[[ ... ]] 块注释）。"""
+        self.pos += 2  # 跳过 --
         self.col += 2
 
-        # Block comment --[[ ... ]]
+        # 块注释 --[[ ... ]]
         if self.pos < len(self.text) and self.text[self.pos] == '[':
-            # Find matching ]]
+            # 找匹配的 ]]
             if self.pos + 1 < len(self.text) and self.text[self.pos + 1] == '[':
-                # --[[ style
+                # --[[ 风格
                 end_idx = self.text.find(']]', self.pos + 2)
                 if end_idx != -1:
                     skipped = self.text[self.pos:end_idx + 2]
@@ -171,7 +171,7 @@ class LuaTokenizer:
                         self.col += end_idx + 2 - self.pos
                     self.pos = end_idx + 2
                     return
-            # --[=[ ... ]=] style
+            # --[=[ ... ]=] 风格
             eq_count = 0
             while self.pos < len(self.text) and self.text[self.pos] == '=':
                 eq_count += 1
@@ -191,13 +191,13 @@ class LuaTokenizer:
                     self.pos = end_idx + len(closer)
                     return
 
-        # Line comment: skip to end of line
+        # 行注释：跳到行尾
         while self.pos < len(self.text) and self.text[self.pos] != '\n':
             self.pos += 1
             self.col += 1
 
     def _read_string(self) -> Token:
-        """Read a quoted string (single or double quotes)."""
+        """读取一个带引号的字符串（单引号或双引号）。"""
         quote = self.text[self.pos]
         start_line, start_col = self.line, self.col
         self.pos += 1
@@ -206,7 +206,7 @@ class LuaTokenizer:
         while self.pos < len(self.text):
             c = self.text[self.pos]
             if c == '\\' and self.pos + 1 < len(self.text):
-                # Escape sequence
+                # 转义序列
                 next_c = self.text[self.pos + 1]
                 escape_map = {
                     'n': '\n', 'r': '\r', 't': '\t', '\\': '\\',
@@ -216,11 +216,11 @@ class LuaTokenizer:
                 if next_c in escape_map:
                     chars.append(escape_map[next_c])
                 elif next_c == '\n':
-                    # Backslash-newline continuation
+                    # 反斜杠+换行的续行写法
                     self.line += 1
                     self.col = 0
                 elif next_c == 'x' and self.pos + 3 < len(self.text):
-                    # \xNN hex escape
+                    # \xNN 十六进制转义
                     hex_str = self.text[self.pos + 2:self.pos + 4]
                     try:
                         chars.append(chr(int(hex_str, 16)))
@@ -233,7 +233,7 @@ class LuaTokenizer:
                         self.pos += 2
                         self.col += 2
                 elif next_c.isdigit():
-                    # \d{1,3} decimal escape (simplified)
+                    # \d{1,3} 十进制转义（简化实现）
                     num_str = ''
                     for i in range(1, 4):
                         if self.pos + i < len(self.text) and self.text[self.pos + i].isdigit():
@@ -264,11 +264,11 @@ class LuaTokenizer:
         raise LuaParseError("Unterminated string", start_line, start_col)
 
     def _read_long_string(self) -> Token | None:
-        """Try to read a long bracket string [[...]] or [=[...]=]."""
+        """尝试读取一个长方括号字符串 [[...]] 或 [=[...]=]。"""
         start_pos = self.pos
         start_line, start_col = self.line, self.col
 
-        # Count equals signs
+        # 数一下有几个等号
         eq_count = 0
         pos = self.pos + 1
         while pos < len(self.text) and self.text[pos] == '=':
@@ -276,23 +276,23 @@ class LuaTokenizer:
             pos += 1
 
         if pos >= len(self.text) or self.text[pos] != '[':
-            return None  # Not a long string
+            return None  # 不是长字符串
 
-        # This is a long bracket string
+        # 这是一个长方括号字符串
         closer = ']' + '=' * eq_count + ']'
 
-        # Skip the opening bracket sequence
+        # 跳过开头的方括号序列
         self.pos = pos + 1
         self.col += pos - start_pos + 1
 
-        # Find the closing bracket
+        # 找结束的方括号
         end_idx = self.text.find(closer, self.pos)
         if end_idx == -1:
             raise LuaParseError("Unterminated long string", start_line, start_col)
 
         content = self.text[self.pos:end_idx]
 
-        # Update position (long strings are raw, no escapes)
+        # 更新位置（长字符串是原样内容，没有转义）
         newlines = content.count('\n')
         self.line += newlines
         if newlines > 0:
@@ -301,7 +301,7 @@ class LuaTokenizer:
             self.col += len(content) + len(closer)
         self.pos = end_idx + len(closer)
 
-        # Strip leading newline if present (Lua convention)
+        # 按 Lua 惯例，去掉开头的换行（如果有的话）
         if content.startswith('\n'):
             content = content[1:]
         elif content.startswith('\r\n'):
@@ -310,7 +310,7 @@ class LuaTokenizer:
         return Token(TokenType.STRING, content, start_line, start_col)
 
     def _read_number(self) -> Token:
-        """Read a numeric literal."""
+        """读取一个数字字面量。"""
         start_line, start_col = self.line, self.col
         match = _LUA_NUMBER_RE.match(self.text, self.pos)
         if not match:
@@ -318,10 +318,9 @@ class LuaTokenizer:
 
         num_str = match.group(0)
 
-        # Handle leading minus as unary operator or part of number
-        # In Lua tables, negative numbers are fine: { x=-1 }
+        # 负数在 Lua 表里是没问题的：{ x=-1 }
 
-        # Parse the value
+        # 解析出实际的值
         if num_str.startswith('0x') or num_str.startswith('0X'):
             value = int(num_str, 16)
         elif '.' in num_str or 'e' in num_str.lower():
@@ -334,7 +333,7 @@ class LuaTokenizer:
         return Token(TokenType.NUMBER, value, start_line, start_col)
 
     def _read_identifier(self) -> Token:
-        """Read an identifier or keyword (true, false, nil, return)."""
+        """读取一个标识符或关键字（true、false、nil、return）。"""
         start_line, start_col = self.line, self.col
         match = _LUA_IDENT_RE.match(self.text, self.pos)
         if not match:
@@ -344,7 +343,7 @@ class LuaTokenizer:
         self.pos += len(name)
         self.col += len(name)
 
-        # Keyword handling
+        # 关键字处理
         if name == 'return':
             return Token(TokenType.RETURN, name, start_line, start_col)
         elif name == 'true':
@@ -357,10 +356,10 @@ class LuaTokenizer:
             return Token(TokenType.IDENTIFIER, name, start_line, start_col)
 
 
-# ── Parser ─────────────────────────────────────────────────────────────
+# ── 解析器 ─────────────────────────────────────────────────────────────
 
 class LuaTableParser:
-    """Recursive-descent parser for Lua table literals."""
+    """Lua 表字面量的递归下降解析器。"""
 
     def __init__(self, text: str, filename: str = "<string>"):
         self.filename = filename
@@ -384,22 +383,22 @@ class LuaTableParser:
         return token
 
     def parse(self) -> dict:
-        """Parse a Lua `return { ... }` expression and return the table as a Python dict.
+        """解析一个 Lua `return { ... }` 表达式，把表转换成 Python dict 返回。
 
-        Also handles files that omit the `return` keyword and just start with `{`.
+        同时兼容省略 `return` 关键字、直接以 `{` 开头的文件。
         """
         token = self._peek()
 
-        # Optional 'return' keyword
+        # 可选的 'return' 关键字
         if token.type == TokenType.RETURN:
             self._advance()
 
-        # Parse the table literal
+        # 解析表字面量
         result = self._parse_table()
         return result
 
     def _parse_value(self) -> Any:
-        """Parse a single value: string, number, boolean, nil, or table."""
+        """解析单个值：字符串、数字、布尔值、nil，或者表。"""
         token = self._peek()
 
         if token.type == TokenType.STRING:
@@ -419,7 +418,7 @@ class LuaTableParser:
             return self._parse_table()
 
         if token.type == TokenType.LBRACKET:
-            # This shouldn't happen at value position, but handle gracefully
+            # 理论上不该出现在值的位置，兜底处理一下
             return self._parse_table()
 
         if token.type == TokenType.EOF:
@@ -431,22 +430,21 @@ class LuaTableParser:
         )
 
     def _parse_table(self) -> dict:
-        """Parse a table literal { ... } into a Python dict.
+        """把一个表字面量 { ... } 解析成 Python dict。
 
-        Handles both key-value pairs and array-style entries.
-        Mixed tables (both key-value and array) are stored as dict with
-        integer keys for array positions.
+        同时处理键值对和数组风格的条目：混合表（既有键值对又有数组）里，
+        数组位置的下标会作为字符串形式的整数 key 存进同一个 dict。
         """
-        token = self._advance()  # Consume {
+        token = self._advance()  # 吃掉 {
         start_line = token.line
 
         result = {}
-        array_idx = 1  # Lua arrays are 1-indexed
+        array_idx = 1  # Lua 数组从 1 开始编号
 
         while True:
             token = self._peek()
 
-            # Empty table or end of table
+            # 空表，或者表结束
             if token.type == TokenType.RBRACE:
                 self._advance()
                 return result
@@ -454,41 +452,41 @@ class LuaTableParser:
             if token.type == TokenType.EOF:
                 raise LuaParseError("Unterminated table", start_line, 0)
 
-            # Parse entry: [key] = value, key = value, or value
+            # 解析一个条目：[key] = value、key = value，或者裸值
             if token.type == TokenType.LBRACKET:
-                # ["key"] = value  or  [expression] = value
-                self._advance()  # Consume [
+                # ["key"] = value 或者 [expression] = value
+                self._advance()  # 吃掉 [
                 key = self._parse_value()
                 self._expect(TokenType.RBRACKET, "Expected ']' after table key")
                 self._expect(TokenType.EQUALS, "Expected '=' after key")
                 value = self._parse_value()
                 result[str(key)] = value
             elif token.type == TokenType.IDENTIFIER and isinstance(token.value, str):
-                # key = value (identifier-style key)
-                # Peek ahead: if next token is '=', it's a key-value pair
+                # key = value（标识符形式的 key）
+                # 往前瞧一个 token：如果下一个是 '='，说明这是键值对
                 if (self.idx + 1 < len(self.tokens) and
                         self.tokens[self.idx + 1].type == TokenType.EQUALS):
                     key = token.value
-                    self._advance()  # Consume key
-                    self._advance()  # Consume =
+                    self._advance()  # 吃掉 key
+                    self._advance()  # 吃掉 =
                     value = self._parse_value()
                     result[key] = value
                 else:
-                    # Array-style value (unkeyed)
+                    # 数组风格的值（不带 key）
                     value = self._parse_value()
                     result[str(array_idx)] = value
                     array_idx += 1
             else:
-                # Array-style value
+                # 数组风格的值
                 value = self._parse_value()
                 result[str(array_idx)] = value
                 array_idx += 1
 
-            # After each entry, expect comma or RBRACE
+            # 每个条目后面应该跟逗号或者 }
             token = self._peek()
             if token.type == TokenType.COMMA:
                 self._advance()
-                # Trailing comma is allowed - check if next is }
+                # 允许末尾多一个逗号——瞧瞧下一个是不是 }
                 if self._peek().type == TokenType.RBRACE:
                     self._advance()
                     return result
@@ -498,67 +496,66 @@ class LuaTableParser:
             elif token.type == TokenType.EOF:
                 raise LuaParseError("Unterminated table", start_line, 0)
             else:
-                # Missing comma - some DST files have this, be lenient
+                # 缺逗号——有些 DST 文件就是这么写的，宽容处理
                 pass
 
 
-# ── High-level API ─────────────────────────────────────────────────────
+# ── 对外的高层 API ─────────────────────────────────────────────────────
 
 def parse_lua_table(text: str, filename: str = "<string>") -> dict:
-    """Parse a Lua `return { ... }` table literal string into a Python dict.
+    """把一个 Lua `return { ... }` 表字面量字符串解析成 Python dict。
 
     Args:
-        text: The Lua source text.
-        filename: Optional filename for error messages.
+        text: Lua 源码文本。
+        filename: 可选，出错信息里显示的文件名。
 
     Returns:
-        Parsed table as a nested Python dict.
+        解析出的嵌套 Python dict。
 
     Raises:
-        LuaParseError: If the text cannot be parsed.
+        LuaParseError: 文本无法解析时抛出。
     """
     parser = LuaTableParser(text, filename)
     return parser.parse()
 
 
 def parse_lua_value(text: str, filename: str = "<value>") -> Any:
-    """Parse a single Lua value expression: a table, string, number,
-    boolean, or nil.
+    """解析单个 Lua 值表达式：表、字符串、数字、布尔值，或 nil。
 
-    Unlike parse_lua_table(), which expects a full `return { ... }` table,
-    this accepts any single value expression -- used for things like a mod
-    config option's `default = <value>` or a choice's `data = <value>`,
-    which can be a bare scalar (true, 5, "text") as well as a table.
+    跟要求完整 `return { ... }` 表的 parse_lua_table() 不同，这个函数接受
+    任意单个值表达式——用在诸如 mod 配置项的 `default = <value>`、选项的
+    `data = <value>` 这类场景，值既可能是裸标量（true、5、"text"），也
+    可能是一个表。
     """
     parser = LuaTableParser(text, filename)
     return parser._parse_value()
 
 
 def parse_lua_file(path: Path) -> dict:
-    """Parse a Lua file containing a `return { ... }` table.
+    """解析一个包含 `return { ... }` 表的 Lua 文件。
 
     Args:
-        path: Path to the .lua file.
+        path: .lua 文件路径。
 
     Returns:
-        Parsed table as a nested Python dict.
+        解析出的嵌套 Python dict。
     """
     text = path.read_text(encoding="utf-8")
     return parse_lua_table(text, str(path))
 
 
-# ── Lua Table Serializer ───────────────────────────────────────────────
+# ── Lua 表序列化 ───────────────────────────────────────────────────────
 
 def serialize_lua_table(data: dict, indent: int = 4, _level: int = 0) -> str:
-    """Serialize a Python dict to a well-formatted Lua table string.
+    """把 Python dict 序列化成格式良好的 Lua 表字符串。
 
     Args:
-        data: The dict to serialize.
-        indent: Number of spaces per indentation level.
-        _level: Internal recursion depth tracker.
+        data: 要序列化的 dict。
+        indent: 每级缩进的空格数。
+        _level: 内部用的递归深度计数。
 
     Returns:
-        Formatted Lua table string: "return {\\n  ...\\n}"
+        格式化后的 Lua 表字符串："return {\\n  ...\\n}"
     """
     if not data:
         return "return {}"
@@ -567,7 +564,7 @@ def serialize_lua_table(data: dict, indent: int = 4, _level: int = 0) -> str:
     base_pad = pad * _level
     inner_pad = pad * (_level + 1)
 
-    # Check if this is a pure array (all keys are sequential integers starting from "1")
+    # 判断是不是纯数组（所有 key 是不是从 "1" 开始的连续整数）
     keys = list(data.keys())
     is_array = all(
         k.isdigit() or (isinstance(k, str) and k.lstrip('-').isdigit())
@@ -580,24 +577,24 @@ def serialize_lua_table(data: dict, indent: int = 4, _level: int = 0) -> str:
     for key, value in data.items():
         if isinstance(value, dict):
             serialized_val = serialize_lua_table(value, indent, _level + 1)
-            # Strip the "return " prefix for nested tables
+            # 嵌套表要去掉 "return " 前缀
             if serialized_val.startswith("return "):
                 serialized_val = serialized_val[7:]
             lines.append(f"{inner_pad}[{_lua_key(key)}] = {serialized_val},")
         elif isinstance(value, list):
-            # Python list -> Lua array table
+            # Python list -> Lua 数组表
             items = []
             for item in value:
                 items.append(_lua_value(item))
             inner = ", ".join(items)
             lines.append(f"{inner_pad}[{_lua_key(key)}] = {{ {inner} }},")
         elif is_array:
-            # Array-style entry (no key)
+            # 数组风格条目（不带 key）
             lines.append(f"{inner_pad}{_lua_value(value)},")
         else:
             lines.append(f"{inner_pad}[{_lua_key(key)}] = {_lua_value(value)},")
 
-    # Remove trailing comma from last line
+    # 去掉最后一行末尾多余的逗号
     if lines:
         lines[-1] = lines[-1].rstrip(',')
 
@@ -611,14 +608,14 @@ def serialize_lua_table(data: dict, indent: int = 4, _level: int = 0) -> str:
 
 
 def _lua_key(key: Any) -> str:
-    """Format a key for Lua table syntax."""
+    """把 key 格式化成 Lua 表语法。"""
     if isinstance(key, str) and key.isdigit():
         return key
     return f'"{key}"'
 
 
 def _lua_value(value: Any) -> str:
-    """Format a Python value as a Lua literal."""
+    """把 Python 值格式化成 Lua 字面量。"""
     if isinstance(value, bool):
         return "true" if value else "false"
     elif isinstance(value, (int, float)):
@@ -626,7 +623,7 @@ def _lua_value(value: Any) -> str:
             return str(int(value))
         return str(value)
     elif isinstance(value, str):
-        # Escape special characters
+        # 转义特殊字符
         escaped = value.replace('\\', '\\\\').replace('"', '\\"')
         return f'"{escaped}"'
     elif value is None:

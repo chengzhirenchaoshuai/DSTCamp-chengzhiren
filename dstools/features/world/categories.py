@@ -17,7 +17,7 @@ ini_field_info.py（cluster.ini 字段说明）用的是同一套模式。英文
 
 from dstools.i18n import get_lang
 
-# ── Category definitions ────────────────────────────────────────────────
+# ── 分类定义 ─────────────────────────────────────────────────────────────
 
 SURFACE_RULES = [
     ("global", {"zh": "全局", "en": "General"}),
@@ -391,7 +391,7 @@ CAVE_GEN_DICT = {
     "tentacles": ("hostile_spawners", {"zh": "触手", "en": "Tentacles"}),
 }
 
-# ── Lookup functions ───────────────────────────────────────────────────
+# ── 查询函数 ─────────────────────────────────────────────────────────────
 
 def localized_name(names: dict) -> str:
     """从 {"zh":.., "en":..} 里取当前界面语言的版本，缺失兜底回中文。公开
@@ -406,15 +406,15 @@ _localized = localized_name
 
 
 def _get_settings(location: str, is_rule: bool):
-    """Get the appropriate settings dict."""
+    """按地点/类型取对应的设置字典。"""
     if location == "forest":
         return FOREST_RULES_DICT if is_rule else FOREST_GEN_DICT
     return CAVE_RULES_DICT if is_rule else CAVE_GEN_DICT
 
 
 def get_setting_info(key: str, location: str = "forest"):
-    """Get (category, is_rule, name) for a setting.
-    Searches rules first, then gen. Returns ("other", False, key) if unknown.
+    """取一个设置的 (category, is_rule, name)。
+    先查规则表，再查生成表；查不到就返回 ("other", False, key)。
     """
     rules_d = _get_settings(location, True)
     if key in rules_d:
@@ -428,7 +428,7 @@ def get_setting_info(key: str, location: str = "forest"):
 
 
 def get_order(key: str, location: str = "forest", is_rule: bool = True) -> int:
-    """Get display order from dict insertion position."""
+    """按字典的插入顺序取显示排序。"""
     d = _get_settings(location, is_rule)
     try:
         return list(d).index(key)
@@ -437,7 +437,7 @@ def get_order(key: str, location: str = "forest", is_rule: bool = True) -> int:
 
 
 def get_categories(location: str, setting_type: str) -> list[tuple[str, str]]:
-    """Get the category list for a given location and setting type."""
+    """取指定地点和设置类型的分类列表。"""
     if location == "forest":
         raw = SURFACE_RULES if setting_type == "rules" else SURFACE_GEN
     else:

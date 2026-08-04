@@ -1,4 +1,4 @@
-"""End-to-end verification tests for dstools."""
+"""dstools 端到端验证测试。"""
 
 import contextlib
 import json
@@ -102,7 +102,7 @@ def _isolated_settings_dir():
 
 
 def test_lua_parser_basic():
-    """Test basic Lua table parsing."""
+    """测试基础 Lua 表解析。"""
     print("=" * 60)
     print("Test 1: Lua Parser - Basic")
     result = parse_lua_table('return {a=1, b="hello", c=true, d=false}')
@@ -111,7 +111,7 @@ def test_lua_parser_basic():
 
 
 def test_lua_parser_nested():
-    """Test nested table parsing."""
+    """测试嵌套表解析。"""
     print("Test 2: Lua Parser - Nested Tables")
     result = parse_lua_table('return {a={b={c=42}}, d={1, 2, 3}}')
     assert "a" in result
@@ -121,7 +121,7 @@ def test_lua_parser_nested():
 
 
 def test_lua_parser_roundtrip():
-    """Test Lua table round-trip (parse -> serialize -> parse)."""
+    """测试 Lua 表往返：解析 -> 序列化 -> 再解析。"""
     print("Test 3: Lua Parser - Round-trip")
     original = (
         'return {\n'
@@ -148,7 +148,7 @@ def test_lua_parser_roundtrip():
 
 
 def test_lua_parser_real_data():
-    """Test parsing real DST modoverrides.lua."""
+    """测试解析真实的 DST modoverrides.lua 文件。"""
     print("Test 4: Lua Parser - Real DST Data")
     klei_root = find_klei_root()
     if not klei_root:
@@ -160,21 +160,21 @@ def test_lua_parser_real_data():
         print(f"  SKIP: {mod_path} not found")
         return
 
-    # Parse
+    # 解析
     data = parse_lua_file(mod_path)
     assert len(data) >= 30, f"Expected 30+ mods, got {len(data)}"
     print(f"  PASS: Parsed {len(data)} mods from real modoverrides.lua")
 
-    # Round-trip
+    # 往返
     serialized = serialize_lua_table(data)
     re_parsed = LuaTableParser(serialized).parse()
 
-    # Check key sets match
+    # 校验 key 集合一致
     original_keys = set(data.keys())
     re_keys = set(re_parsed.keys())
     assert original_keys == re_keys, f"Key mismatch: {original_keys - re_keys}, {re_keys - original_keys}"
 
-    # Check all mods have enabled and configuration_options
+    # 校验每个 mod 都有 enabled 和 configuration_options 字段
     for wid, entry in data.items():
         assert "enabled" in entry, f"Missing 'enabled' in {wid}"
         assert "configuration_options" in entry, f"Missing 'configuration_options' in {wid}"
@@ -184,7 +184,7 @@ def test_lua_parser_real_data():
 
 
 def test_ini_parser():
-    """Test INI config parsing."""
+    """测试 INI 配置解析。"""
     print("\n" + "=" * 60)
     print("Test 5: INI Parser")
 
@@ -193,7 +193,7 @@ def test_ini_parser():
         print("  SKIP: No DST data found")
         return
 
-    # Test cluster.ini
+    # 测试 cluster.ini
     cluster_ini = klei_root / "Cluster_3" / "cluster.ini"
     if cluster_ini.exists():
         config = parse_cluster_ini(cluster_ini)
@@ -204,7 +204,7 @@ def test_ini_parser():
         print(f"  PASS: cluster.ini parsed - mode={config.gameplay['game_mode']}, "
               f"players={config.gameplay['max_players']}")
 
-        # Test round-trip for INI
+        # 测试 INI 往返
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = Path(tmpdir) / "cluster.ini"
             write_cluster_ini(config, tmp_path)
@@ -213,7 +213,7 @@ def test_ini_parser():
             assert config.network == re_parsed.network
             print("  PASS: cluster.ini round-trip verified")
 
-    # Test server.ini
+    # 测试 server.ini
     server_ini = klei_root / "Cluster_3" / "Master" / "server.ini"
     if server_ini.exists():
         config = parse_server_ini(server_ini)
@@ -224,7 +224,7 @@ def test_ini_parser():
 
 
 def test_discovery():
-    """Test path discovery."""
+    """测试路径发现。"""
     print("\n" + "=" * 60)
     print("Test 6: Discovery")
 
@@ -258,7 +258,7 @@ def test_discovery():
 
 
 def test_save_reader():
-    """Test save session reading."""
+    """测试存档会话读取。"""
     print("\n" + "=" * 60)
     print("Test 7: Save Reader")
 
@@ -291,13 +291,13 @@ def test_save_reader():
                         print(f"    Metadata: day={session.metadata.day}, "
                               f"season={session.metadata.season}, "
                               f"phase={session.metadata.phase}")
-                break  # Only test first shard with sessions
-        break  # Only test first cluster
+                break  # 只测第一个有会话的 shard
+        break  # 只测第一个 cluster
 
 
 def test_mod_manager():
-    """Test mod management operations. Pure tempdir/synthetic data --
-    no real DST install needed, unlike the other tests around it.
+    """测试 Mod 管理操作——用临时目录+合成数据即可验证，不像前后其它测
+    试那样依赖真实 DST 安装。
 
     只测项目实际用到的 5 个函数（enable_mod/list_mods/sync_mods/
     save_mod_overrides/load_mod_overrides）——disable_mod/set_mod_
@@ -334,7 +334,7 @@ def test_mod_manager():
 
 
 def test_config_manager():
-    """Test config manager operations."""
+    """测试配置管理器操作。"""
     print("\n" + "=" * 60)
     print("Test 9: Config Manager")
 
@@ -351,7 +351,7 @@ def test_config_manager():
     assert config.network["cluster_name"] == "Test Server"
     print("  PASS: Set cluster options with type coercion")
 
-    # Test write and read round-trip
+    # 测试写入-读取往返
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir) / "cluster.ini"
         write_cluster_ini(config, tmp_path)
@@ -370,7 +370,7 @@ def test_config_manager():
 
 
 def test_list_session_players():
-    """Test per-player character save discovery/parsing under a session dir."""
+    """测试单个会话目录下按玩家角色发现/解析存档。"""
     print("\n" + "=" * 60)
     print("Test 11: Per-Player Character Save Reader")
 
@@ -439,7 +439,7 @@ def test_list_session_players():
 
 
 def test_character_names():
-    """Test character prefab -> display name lookup."""
+    """测试角色 prefab 名到显示名称的查找。"""
     print("\n" + "=" * 60)
     print("Test 12: Character Name Lookup")
 
@@ -454,10 +454,10 @@ def test_character_names():
 
 
 def test_character_icons():
-    """Test mod character-name scanning + resolve_character fallback chain
-    (character_icons.py). 头像转换本身依赖真实 Steam 安装/ktech.exe，这里
-    只覆盖不需要真机环境的部分：正则扫描模组 .lua 文件找角色名声明、以及
-    resolve_character 在"官方表命中"和"哪里都找不到"两种情况下的行为。"""
+    """测试 character_icons.py 里模组角色名扫描 + resolve_character 回退
+    链。头像转换本身依赖真实 Steam 安装/ktech.exe，这里只覆盖不需要真机
+    环境的部分：正则扫描模组 .lua 文件找角色名声明，以及 resolve_character
+    在"官方表命中"和"哪里都找不到"两种情况下的行为。"""
     print("\n" + "=" * 60)
     print("Test 13: Character Icon / Mod Name Resolution")
 
@@ -490,9 +490,8 @@ def test_character_icons():
 
 
 def test_modinfo_reader():
-    """Test modinfo.lua parsing (modinfo_reader.py) against a hand-written
-    synthetic mod -- this logic previously had zero functional test
-    coverage (only ever loaded at import time via gui/app.py)."""
+    """用手写的合成 mod 数据测试 modinfo.lua 解析逻辑（parser.py）——这段
+    逻辑此前完全没有功能测试覆盖，只在程序启动导入模块时被间接跑到。"""
     print("\n" + "=" * 60)
     print("Test 14: Modinfo Parsing")
 
@@ -661,7 +660,7 @@ def test_modinfo_reader():
 
 
 def test_admin_manager():
-    """Test adminlist.txt read/write round-trip (admin_manager.py)."""
+    """测试 adminlist.txt 读写往返（admin_manager.py）。"""
     print("\n" + "=" * 60)
     print("Test 15: Admin List Manager")
 
@@ -684,7 +683,7 @@ def test_admin_manager():
 
 
 def test_token_manager():
-    """Test cluster_token.txt read/write round-trip + masking (token_manager.py)."""
+    """测试 cluster_token.txt 读写往返及脱敏显示（token_manager.py）。"""
     print("\n" + "=" * 60)
     print("Test 16: Token Manager")
 
@@ -710,8 +709,8 @@ def test_token_manager():
 
 
 def test_backup_utils():
-    """Test the real backup-copy-and-prune path (backup_utils.py) -- prior
-    coverage only ever hit the "source file doesn't exist" early return."""
+    """测试真实的备份复制+裁剪逻辑（backup_utils.py）——之前的覆盖只测到
+    "源文件不存在"这个提前返回分支。"""
     print("\n" + "=" * 60)
     print("Test 17: Backup Utils")
 
@@ -741,8 +740,8 @@ def test_backup_utils():
 
 
 def test_cluster_copy():
-    """Test the "复制为服务器存档" logic (cluster_copy.py): name
-    validation, default-name suggestion, and the actual folder copy."""
+    """测试"复制为服务器存档"逻辑（cluster_copy.py）：名称校验、默认名建
+    议、以及实际的文件夹复制。"""
     print("\n" + "=" * 60)
     print("Test 18: Cluster Copy (local save -> server save)")
 
@@ -790,7 +789,7 @@ def test_cluster_copy():
 
 
 def test_player_notes():
-    """Test per-player note storage (app_settings.py)."""
+    """测试按玩家存储备注（app_settings.py）。"""
     print("\n" + "=" * 60)
     print("Test 19: Player Notes")
 
@@ -809,8 +808,8 @@ def test_player_notes():
 
 
 def test_app_settings_toggles():
-    """Test the minimize-on-close / cache-use-exe-dir persisted toggles
-    (app_settings.py) added for the tray + settings-dialog feature."""
+    """测试为托盘+设置弹窗功能新增的持久化开关：关闭最小化、缓存存放到
+    exe 目录（app_settings.py）。"""
     print("\n" + "=" * 60)
     print("Test 20: App Settings Toggles")
 
@@ -842,8 +841,8 @@ def test_app_settings_toggles():
 
 
 def test_mod_sync_junction():
-    """Test mod_sync.py's _ensure_junction -- V1 mod 同步现在改用目录联接
-    (junction) 而不是复制（见 mod_sync.py 顶部注释：真机验证过 -ugc_directory
+    """测试 sync.py 的 _ensure_junction —— V1 mod 同步现在改用目录联接
+    (junction) 而不是复制（见 sync.py 顶部注释：真机验证过 -ugc_directory
     能让 V2 mod 直接共享 Steam 自己的 workshop 内容，V1/手动安装的 mod
     则改成对客户端 mods/ 文件夹建联接，不再逐个存档复制一份）。这里只测
     最关键、有真实数据丢失风险的部分：联接创建/幂等/安全替换真实文件夹，
@@ -888,14 +887,12 @@ def test_mod_sync_junction():
 
 
 def test_theme_set_theme():
-    """Test theme.py's set_theme() -- the live theme-switch mechanism.
-    Pure logic (module-level color variable reassignment), no real Tk
-    window needed. Four themes exist ("gray" default + mint/twilight/
-    campfire) -- verify (a) switching actually reassigns the palette,
-    (b) an unknown name falls back to "gray" instead of raising, (c)
-    background-image support (BG_IMAGE_ENABLED) is gone from theme.py
-    entirely now that it's decoupled from theming (see custom_background.py
-    -- background image applies regardless of active theme)."""
+    """测试 theme.py 的 set_theme()——实时切换主题的机制。纯逻辑（模块级
+    颜色变量重新赋值），不需要真实 Tk 窗口。验证：(a) 切换主题（如
+    gray/mint）确实会重新赋值调色板；(b) 未知主题名回退到 "gray" 而不是
+    抛异常；(c) 背景图相关字段（BG_IMAGE_ENABLED）已经从 theme.py 彻底
+    移除——背景图现在跟主题解耦，不管当前是哪个主题都会叠加显示（见
+    custom_background.py）。"""
     print("\n" + "=" * 60)
     print("Test 22: Theme Live Switch")
 
@@ -924,9 +921,9 @@ def test_theme_set_theme():
 
 
 def test_world_categories_bilingual():
-    """Test world_categories.py's get_setting_info()/get_categories()
-    returning zh/en names based on the current i18n language -- the fix for
-    "世界设置切英文不生效"."""
+    """测试 categories.py 的 get_setting_info()/get_categories() 会根据当
+    前 i18n 语言返回中/英文名——对应修复过的 bug"世界设置切英文不生
+    效"。"""
     print("\n" + "=" * 60)
     print("Test 23: World Categories Bilingual")
 
@@ -958,9 +955,9 @@ def test_world_categories_bilingual():
 
 
 def test_custom_background():
-    """Test custom_background.py's crop-to-ratio (never stretch) + opacity
-    blend logic -- the core of "支持自定义背景图，按比例裁剪不拉伸，可调
-    不透明度贴合主题"。纯 PIL 逻辑，不需要真实 Tk 窗口。"""
+    """测试 custom_background.py 的按比例裁剪（绝不拉伸）+ 不透明度混合逻
+    辑——对应需求"支持自定义背景图，按比例裁剪不拉伸，可调不透明度贴合
+    主题"。纯 PIL 逻辑，不需要真实 Tk 窗口。"""
     print("\n" + "=" * 60)
     print("Test 24: Custom Background Image")
 
@@ -995,16 +992,16 @@ def test_custom_background():
 
 
 def test_mod_resolve_cache():
-    """Test mod_resolve_cache.py's disk-persisted cache for
-    resolve_full_modinfo() results -- added because the Lua 沙箱全量解析
-    之前只在内存里缓存一份，每次重启应用都要为没变过的 mod 重新跑一遍
-    （真机反馈过"启动要卡 3 秒"，profile 出来这是大头之一）。这里只测纯
-    数据逻辑（mtime 失效判断 + JSON 往返，含 ModConfigOption 这个
-    dataclass 的序列化/反序列化），不需要真的跑一遍 Lua 沙箱。"""
+    """测试 cache.py 里给 resolve_full_modinfo() 结果做的磁盘持久化缓存
+    ——加这层缓存是因为 Lua 沙箱全量解析之前只在内存里缓存一份，每次重
+    启应用都要为没变过的 mod 重新跑一遍（真机反馈过"启动要卡 3 秒"，
+    profile 出来这是大头之一）。这里只测纯数据逻辑（mtime 失效判断 +
+    JSON 往返，含 ModConfigOption 这个 dataclass 的序列化/反序列化），
+    不需要真的跑一遍 Lua 沙箱。"""
     print("\n" + "=" * 60)
     print("Test 25: Mod Resolve Cache")
 
-    # _isolated_settings_dir() 必须在 import mod_resolve_cache 之前进
+    # _isolated_settings_dir() 必须在 import mod.cache 之前进
     # 入——那个模块的 _CACHE_DIR 是 import 时算好的模块级常量
     # （cache_dir("mod_full_resolve")），只有在补丁生效期间第一次
     # import 才能让它落在隔离的临时目录里，不写真实的
@@ -1032,7 +1029,7 @@ def test_mod_resolve_cache():
             assert cached["config_options"][0].name == "opt1"
             print("  PASS: save/load round-trips config_options as real ModConfigOption objects")
 
-            # modinfo.lua 比缓存新——缓存失效，返回 None，跟 mod_icons.py
+            # modinfo.lua 比缓存新——缓存失效，返回 None，跟 icons.py
             # 图标缓存同一套 mtime 判断逻辑。
             future = time.time() + 100
             os.utime(modinfo_path, (future, future))
@@ -1324,7 +1321,7 @@ def _fake_workshop_dir(root: Path, subscribed_ids: list[str], with_injector_file
                        mod_version: str | None = None):
     """猴子补丁 luajit_injector.find_workshop_dir()（这里也是 "from ...
     import" 抄过去的独立引用，同 _isolated_settings_dir() 的道理，只补
-    modinfo_reader 自己那份不生效），指向
+    find_workshop_dir 原本定义所在的 parser 模块自己那份不生效），指向
     root/steamapps/workshop/content/322330/，按 subscribed_ids 建好
     <id>/modinfo.lua。root 由调用方提供（不是这个函数自己另开一个临时目
     录），这样能跟专用服务器安装目录建在同一个 fake Steam 库根目录下，
@@ -1376,7 +1373,7 @@ def _make_fake_install_dir(root: Path, build_id: str | None = None) -> Path:
 
 
 def test_luajit_injector():
-    """core/luajit_injector.py 只测离线可测的纯逻辑（游戏版本读取/隔离副
+    """luajit_injector.py 只测离线可测的纯逻辑（游戏版本读取/隔离副
     本三态检测/resolve_launch_bin64_dir/标记文件往返/需要重新生成的判
     断/重新生成/创意工坊订阅检测/plan_install 的只读判断/卸载的幂等
     性），真实网络调用和真实注入效果按项目惯例不测，属于人工验证项。"""
@@ -1597,7 +1594,7 @@ def test_steam_library_folder_casing():
 
 
 def main():
-    """Run all tests."""
+    """运行全部测试。"""
     print("\n" + "█" * 60)
     print("  DSTOOLS - End-to-End Verification Tests")
     print("█" * 60)

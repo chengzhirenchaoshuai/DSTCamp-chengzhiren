@@ -1,4 +1,4 @@
-"""Mod configuration manager for DST modoverrides.lua files."""
+"""DST modoverrides.lua 文件的 mod 配置管理器。"""
 
 from pathlib import Path
 
@@ -8,13 +8,13 @@ from dstools.models import ModEntry, ModOverrides
 
 
 def load_mod_overrides(path: Path) -> ModOverrides:
-    """Load mod overrides from a modoverrides.lua file.
+    """从 modoverrides.lua 文件加载 mod 覆盖配置。
 
     Args:
-        path: Path to the modoverrides.lua file.
+        path: modoverrides.lua 文件路径。
 
     Returns:
-        ModOverrides object.
+        ModOverrides 对象。
     """
     mod_overrides = ModOverrides(path=path)
 
@@ -24,7 +24,7 @@ def load_mod_overrides(path: Path) -> ModOverrides:
     try:
         raw = parse_lua_file(path)
     except Exception:
-        # If parsing fails, return empty overrides
+        # 解析失败就返回空的覆盖配置
         return mod_overrides
 
     for workshop_id, mod_data in raw.items():
@@ -42,12 +42,12 @@ def load_mod_overrides(path: Path) -> ModOverrides:
 
 
 def save_mod_overrides(mod_overrides: ModOverrides) -> None:
-    """Save mod overrides back to the file.
+    """把 mod 覆盖配置写回文件。
 
-    Creates a backup before overwriting.
+    覆盖前会先创建备份。
 
     Args:
-        mod_overrides: The ModOverrides to save.
+        mod_overrides: 要保存的 ModOverrides。
     """
     _backup_file(mod_overrides.path)
 
@@ -64,11 +64,11 @@ def save_mod_overrides(mod_overrides: ModOverrides) -> None:
 
 
 def enable_mod(mod_overrides: ModOverrides, workshop_id: str) -> None:
-    """Enable a mod. Adds it if not present.
+    """启用一个 mod，如果尚未存在则添加它。
 
     Args:
-        mod_overrides: The ModOverrides to modify.
-        workshop_id: Workshop mod ID (e.g., "workshop-378160973").
+        mod_overrides: 要修改的 ModOverrides。
+        workshop_id: Workshop mod ID（例如 "workshop-378160973"）。
     """
     if workshop_id in mod_overrides.mods:
         mod_overrides.mods[workshop_id].enabled = True
@@ -81,26 +81,25 @@ def enable_mod(mod_overrides: ModOverrides, workshop_id: str) -> None:
 
 
 def list_mods(mod_overrides: ModOverrides) -> list[ModEntry]:
-    """List all mods in the overrides.
+    """列出覆盖配置中的所有 mod。
 
     Args:
-        mod_overrides: The ModOverrides to list from.
+        mod_overrides: 要列出内容的 ModOverrides。
 
     Returns:
-        List of ModEntry objects.
+        ModEntry 对象列表。
     """
     return list(mod_overrides.mods.values())
 
 
 def sync_mods(source: ModOverrides, target: ModOverrides) -> None:
-    """Sync mod configuration from source to target.
+    """把 mod 配置从 source 同步到 target。
 
-    This replaces the target's mods with the source's mods,
-    keeping the target's file path.
+    这会用 source 的 mods 整体替换 target 的 mods，保留 target 自己的文件路径。
 
     Args:
-        source: Source ModOverrides to copy from.
-        target: Target ModOverrides to update (modified in place).
+        source: 作为复制来源的 ModOverrides。
+        target: 要更新的 ModOverrides（原地修改）。
     """
     target.mods.clear()
     for workshop_id, entry in source.mods.items():

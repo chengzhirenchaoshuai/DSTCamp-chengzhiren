@@ -1,4 +1,4 @@
-"""Data models for DST save tool."""
+"""DST 存档管理工具的数据模型。"""
 
 from dataclasses import dataclass, field
 from enum import Enum

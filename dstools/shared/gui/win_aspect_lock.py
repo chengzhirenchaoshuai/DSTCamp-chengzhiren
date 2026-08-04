@@ -1,14 +1,13 @@
-"""Native Windows aspect-ratio lock via WM_SIZING message interception.
+"""通过拦截 WM_SIZING 消息实现的原生 Windows 宽高比锁定。
 
-Why this instead of a Tkinter <Configure> handler:
-Calling root.geometry() from a Python <Configure> callback reacts *after*
-Windows has already resized/repainted the window, so you get a visible
-snap-back on every frame (flicker), and under fast dragging the handler
-can't keep up (lag). Real Windows apps lock aspect ratio by intercepting
-WM_SIZING directly in the window procedure -- the OS asks "is this size
-OK?" *before* it commits the resize, so the correction happens with zero
-visible flicker and no extra repaint. This module does exactly that via
-ctypes, with no external dependencies (no pywin32 needed).
+为什么不用 Tkinter 的 <Configure> 事件处理：在 Python 的 <Configure> 回
+调里调用 root.geometry() 是在 Windows 已经完成一次 resize/重绘*之后*才
+反应过来的，每一帧都会看到明显的"回弹"闪烁，而且拖得快的时候回调跟不
+上（滞后）。真正的 Windows 应用锁宽高比是直接在窗口过程里拦截
+WM_SIZING——操作系统在真正提交这次 resize *之前*会先问一句"这个尺寸行
+不行"，纠正发生在这个时间点上，不会有可见的闪烁，也不需要额外重绘。这
+个模块就是通过 ctypes 做同样的事，不需要任何额外依赖（不需要
+pywin32）。
 """
 
 import sys
@@ -58,14 +57,13 @@ if IS_WINDOWS:
 
 
 def set_process_dpi_aware() -> bool:
-    """Mark this process Per-Monitor-DPI-aware before any window is created.
+    """在创建任何窗口之前，把这个进程标记成 Per-Monitor-DPI-aware。
 
-    Without this, Windows treats the process as DPI-unaware and silently
-    bitmap-stretches the whole window to match the display's scale factor
-    (e.g. 125%/150% on most laptops today) -- every widget looks slightly
-    blurry, not just PIL-rendered panels, because it's the OS compositing
-    a scaled bitmap of the real (lower-res) window rather than Tk drawing
-    at the display's native resolution. Must be called before `tk.Tk()`.
+    不这样做的话，Windows 会把这个进程当成不感知 DPI，悄悄把整个窗口按
+    显示器的缩放比例（现在大多数笔记本是 125%/150%）整体拉伸成位图——
+    不只是 PIL 渲染的面板，所有控件看起来都会有点模糊，因为这是操作系
+    统在合成一张放大的位图（真实分辨率更低的窗口），而不是 Tk 按显示器
+    原生分辨率去画。必须在 `tk.Tk()` 之前调用。
     """
     if not IS_WINDOWS:
         return False
@@ -81,13 +79,13 @@ def set_process_dpi_aware() -> bool:
 
 
 class AspectLock:
-    """Locks a Tk Toplevel's aspect ratio using a native WM_SIZING hook.
+    """用原生 WM_SIZING 钩子锁定一个 Tk Toplevel 的宽高比。
 
-    Usage:
+    用法：
         lock = AspectLock(root, 1100, 710)
-        lock.install()   # call once, after the window has been created
+        lock.install()   # 窗口创建好之后调用一次
         ...
-        lock.uninstall() # optional, on shutdown
+        lock.uninstall() # 可选，退出时调用
     """
 
     def __init__(self, root, base_width: int, base_height: int):
@@ -97,11 +95,11 @@ class AspectLock:
         self.aspect = base_width / base_height
         self._hwnd = None
         self._old_wndproc = None
-        self._wndproc_ref = None  # must keep a reference alive (GC)
+        self._wndproc_ref = None  # 必须保留一份引用，否则会被 GC 回收
         self.installed = False
 
     def install(self) -> bool:
-        """Install the hook. Returns True on success (Windows only)."""
+        """安装这个钩子。成功返回 True（仅 Windows 有效）。"""
         if not IS_WINDOWS or self.installed:
             return False
         try:
@@ -111,17 +109,16 @@ class AspectLock:
             self._hwnd = hwnd
 
             def wndproc(hwnd_, msg, wparam, lparam):
-                # IMPORTANT: only ever mutate the raw ctypes RECT here, never
-                # call back into Tkinter/Python-level app code (not even
-                # something as small as root.after(0, ...)) from inside this
-                # hook. Tried adding a WM_EXITSIZEMOVE branch that called
-                # root.after(...) to trigger a "drag just ended" callback --
-                # reproducibly crashed the whole interpreter with a fatal
-                # "PyEval_RestoreThread: GIL not held" error (verified via a
-                # real PostMessageW(WM_EXITSIZEMOVE) round-trip, not just
-                # theorized), even with a no-op callback. Whatever mechanism
-                # is responsible, this wndproc must stay limited to pure,
-                # Tkinter-free ctypes struct math like _enforce() below.
+                # 重要：这里只能修改原始的 ctypes RECT 结构体，绝不能从
+                # 这个钩子里回调 Tkinter/Python 层的应用代码（哪怕只是
+                # root.after(0, ...) 这么小的操作）。曾经试过加一个
+                # WM_EXITSIZEMOVE 分支，调用 root.after(...) 触发一个"拖
+                # 拽刚结束"的回调——即使回调本身是空操作，也稳定复现了整
+                # 个解释器崩溃，报致命的 "PyEval_RestoreThread: GIL not
+                # held" 错误（用真实的 PostMessageW(WM_EXITSIZEMOVE) 往返
+                # 验证过，不是纯理论推测）。不管背后具体机制是什么，这个
+                # wndproc 都必须保持纯粹，只做像下面 _enforce() 这样不涉
+                # 及 Tkinter 的 ctypes 结构体运算。
                 if msg == WM_SIZING and lparam:
                     try:
                         rect = ctypes.cast(lparam, ctypes.POINTER(RECT)).contents
@@ -149,7 +146,7 @@ class AspectLock:
         vertical_drag = edge in (WMSZ_TOP, WMSZ_BOTTOM)
 
         if horizontal_drag or not vertical_drag:
-            # Width-driven: dragging a side edge or a corner -> derive height from width
+            # 宽度驱动：拖左右边或角 -> 由宽度反推高度
             if w < self.min_width:
                 w = self.min_width
                 if edge in (WMSZ_LEFT, WMSZ_TOPLEFT, WMSZ_BOTTOMLEFT):
@@ -162,7 +159,7 @@ class AspectLock:
             else:
                 rect.bottom = rect.top + new_h
         else:
-            # Vertical-only drag (top/bottom edge): derive width from height
+            # 只有上下方向的拖拽（上/下边）：由高度反推宽度
             if h < self.min_height:
                 h = self.min_height
                 if edge == WMSZ_TOP:

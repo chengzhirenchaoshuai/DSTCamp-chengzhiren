@@ -1,12 +1,10 @@
-"""Resolve and cache per-mod icon thumbnails.
+"""解析并缓存每个 mod 的图标缩略图。
 
-Each downloaded mod ships its own icon as a Klei atlas (a .tex texture
-plus a .xml listing UV rects) -- the same convention used by the game's
-own world-setting icons, see world_icons.py / the atlas-splitting work
-that produced icons/world/. This module converts + crops that once per
-mod and caches the result on disk (keyed by workshop id, invalidated by
-the source .tex's mtime), so repeated GUI refreshes don't re-invoke
-ktech.exe every time.
+每个下载下来的 mod 都自带一份 Klei atlas 格式的图标（一张 .tex 贴图 +
+一份列出 UV 矩形的 .xml）——跟游戏自己的世界设置图标是同一套约定，参见
+world_icons.py 及产出 icons/world/ 的 atlas 拆分工作。本模块对每个 mod
+只做一次转换+裁剪，结果落盘缓存（按 workshop id 建索引，源 .tex 的
+mtime 变化时失效），这样 GUI 反复刷新不会每次都重新调用 ktech.exe。
 """
 
 from pathlib import Path
@@ -30,11 +28,10 @@ def _cache_dir_for(platform: Platform) -> Path:
 
 def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path,
                        platform: Platform = Platform.STEAM) -> Path | None:
-    """Return a cached PNG path for this mod's icon, converting on first use.
+    """返回该 mod 图标的缓存 PNG 路径，首次使用时才做转换。
 
-    Returns None if the mod has no icon fields, the referenced files are
-    missing, or conversion fails for any reason -- callers should treat
-    that as "no icon available" and fall back to a placeholder.
+    若 mod 没有图标字段、引用的文件不存在、或转换因任何原因失败，都返回
+    None——调用方应把它当作"没有图标"处理，回退到占位图。
     """
     if not mod_info.icon or not mod_info.icon_atlas:
         return None
@@ -67,11 +64,10 @@ def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path,
     except Exception:
         return None
     finally:
-        # Best-effort cleanup of the intermediate full-atlas PNG -- on
-        # Windows a file this freshly written can still be transiently
-        # locked (e.g. antivirus real-time scanning), so a failure here
-        # must not propagate: worst case a stray _atlas_*.png is left in
-        # the cache dir, which is harmless and gets overwritten next time.
+        # 尽力清理中间产物（整张 atlas 的 PNG）——在 Windows 上刚写完的
+        # 文件可能被临时锁住（比如杀毒软件实时扫描），这里失败不能向上
+        # 抛：最坏情况是缓存目录里留一个多余的 _atlas_*.png，无害，下次
+        # 会被覆盖掉。
         try:
             atlas_png.unlink(missing_ok=True)
         except OSError:

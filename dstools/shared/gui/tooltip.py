@@ -1,11 +1,9 @@
-"""Lightweight hover tooltip for ttk widgets.
+"""给 ttk 控件用的轻量悬停提示气泡。
 
-Used by ModConfigDialog so a setting's descriptive text (a mod's `hover`
-field, or a specific choice's own hover) doesn't have to be shown as an
-inline label that grows/shrinks the row depending on how long the text
-is -- a floating popup on mouseover keeps every row the same fixed
-height/width instead, closer to how the game's own config screen (and
-this app's world-settings tab) looks.
+ModConfigDialog 用它显示设置项的说明文字（mod 自己的 `hover` 字段，或
+某个具体选项自己的 hover），不需要用一个内联的 label 展示、随文字长短
+撑大缩小整行——鼠标悬停时弹出一个浮动小窗，能让每一行保持固定的高度/
+宽度，观感上更接近游戏自己的配置界面（以及本应用的世界设置页签）。
 """
 
 import tkinter as tk
@@ -14,11 +12,11 @@ from dstools.shared.gui import theme
 
 
 class Tooltip:
-    """Attaches a floating tooltip to a widget.
+    """给一个控件挂一个浮动提示气泡。
 
-    `text` may be a fixed string, or a zero-arg callable returning the
-    current text -- e.g. so a combobox's tooltip can reflect whichever
-    choice happens to be selected right now without being rebound.
+    `text` 可以是固定字符串，也可以是一个不带参数的可调用对象，返回当
+    前应该显示的文字——比如让下拉框的提示能实时反映当前选中的是哪一项，
+    不需要每次选中都重新绑定一次。
     """
 
     DELAY_MS = 400

@@ -1,42 +1,36 @@
-"""Switchable color palette and global ttk.Style configuration.
+"""可切换的调色板 + 全局 ttk.Style 配置。
 
-Applied at startup (see DSToolsApp.__init__ -> apply_theme()) so the whole
-app picks up a consistent look without touching the ~20 scattered
-ttk.Button/Entry/Combobox/Treeview/Scrollbar call sites individually, and
-re-applied on demand via `set_theme()` so switching themes takes effect
-immediately, with no restart.
+启动时应用一次（见 DSToolsApp.__init__ -> apply_theme()），让整个应用有
+统一观感，不需要一个个改散落各处的约 20 处 ttk.Button/Entry/Combobox/
+Treeview/Scrollbar 调用点；`set_theme()` 支持运行时按需重新应用，切主题
+立即生效，不需要重启。
 
-The palette itself lives in a batch of **module-level constants**
-(PRIMARY, BG_SOFT, TEXT, ...) rather than a dict you look up each time --
-that keeps every call site a plain `theme.PRIMARY` instead of
-`theme.palette()["PRIMARY"]` everywhere. The one rule this imposes on every
-other gui/ file: colors must be read as `theme.PRIMARY` at the point they're
-*used* (inside a function/method body), never copied into a separate name
-at import time (`from dstools.shared.gui.theme import PRIMARY` or
-`_MY_COLOR = theme.PRIMARY` at module scope) -- a plain Python name binding
-freezes whatever value `theme.PRIMARY` held at that instant, and `set_theme()`
-reassigning `theme.py`'s own globals later has no way to reach into some
-other module's already-bound local name. This bit DSToolsApp.py once (it
-used to `from dstools.shared.gui.theme import ERROR, HEADING, ...`) and a handful
-of gui/ modules that cached derived colors as module constants
-(toggle_switch.py, mod_render.py, world_render.py, themed_dialog.py,
-local_service_tab.py) -- all fixed to read `theme.X` live instead.
+调色板本身放在一批**模块级常量**（PRIMARY、BG_SOFT、TEXT……）里，而不是
+每次都查一个 dict——这样调用方永远写 `theme.PRIMARY`，不用写
+`theme.palette()["PRIMARY"]`。这带来一条对其它所有 gui/ 文件都成立的硬
+性规则：颜色必须在*使用*的那一刻（函数/方法体内部）现查 `theme.PRIMARY`，
+绝不能在 import 时或模块作用域里缓存成另一个名字
+（`from dstools.shared.gui.theme import PRIMARY` 或模块顶层
+`_MY_COLOR = theme.PRIMARY`）——普通的 Python 名字绑定会把
+`theme.PRIMARY` 那一刻的值冻结住，之后 `set_theme()` 重新赋值 theme.py
+自己的模块级变量时，没法波及某个其它模块里已经绑定好的本地名字。
+DSToolsApp.py 曾经踩过这个坑（以前是 `from dstools.shared.gui.theme
+import ERROR, HEADING, ...`），还有几个 gui/ 模块把派生颜色缓存成模块常
+量（toggle_switch.py、mod_render.py、world_render.py、themed_dialog.py、
+local_service_tab.py）——都已经改成现查 `theme.X`。
 
-Widgets that are *rebuilt* whenever their tab refreshes (PIL panels, per-row
-ttk widgets destroy()'d and reconstructed) automatically pick up the new
-palette the next time that happens, no extra work needed. Widgets built
-*once* and never rebuilt (CardFrame, PillTabBar, the archive-picker card bar,
-each tab's "local save is read-only" banner) need an explicit
-`apply_theme()`/`retheme()` method that re-`configure()`s their frozen
-colors -- see DSToolsApp._switch_theme() for the full list of what gets
-poked after a theme switch.
+**每次页签刷新都会重建**的控件（PIL 面板、逐行 destroy() 再重建的 ttk
+控件）下次重建时自然会用上新调色板，不需要额外处理。**只构造一次、不会
+重建**的控件（CardFrame、PillTabBar、存档选择器卡片条、各页签"本地存档
+只读"提示条）需要一个显式的 `apply_theme()`/`retheme()` 方法重新
+`configure()` 一遍自己冻结住的颜色——完整列表见 DSToolsApp._switch_theme()
+切主题后要挨个通知的那一批。
 
-Adding a new theme: add one dict to `_THEMES` (every key from the
-"gray" entry is required) and append its name to `THEME_NAMES` --
-that's the only change needed; the menu and app_settings persistence are
-fully generic. Custom background images are *not* part of this palette --
-they're a separate, theme-independent feature (see custom_background.py /
-bg_frame.py) layered on top of whichever theme is active.
+加新主题：往 `_THEMES` 加一个 dict（"gray" 里的每个键都要有）+ 把主题名
+追加到 `THEME_NAMES`——只需要这一步，菜单和 app_settings 持久化都是通
+用逻辑。自定义背景图片*不属于*这套调色板——它是独立于当前激活哪套主题
+的功能（见 custom_background.py / bg_frame.py），叠加在任意一套主题
+上面。
 """
 
 import tkinter as tk
@@ -213,15 +207,14 @@ def set_theme(name: str) -> None:
     FONT_SIZE_SM = _active["FONT_SIZE_SM"]
     FONT_SIZE_XS = _active["FONT_SIZE_XS"]
 
-# Semantic (data) color -- "running" status in local_service_tab.py. Kept
-# separate from the switchable palette since it stays the same across every
-# theme regardless of which theme is active.
+# 语义化（数据）颜色——local_service_tab.py 里"运行中"状态用的颜色。跟
+# 可切换调色板分开放，因为不管当前激活哪套主题，这个颜色都保持不变。
 SERVER_COLOR = "#2e7d32"
 
 
 def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
-    """Configure global ttk widget styles. Call once, right after
-    style.theme_use("clam")."""
+    """配置全局 ttk 控件样式。只调用一次，紧跟在 style.theme_use("clam")
+    之后。"""
     root.configure(background=BG_SOFT)
 
     # 整窗透明度——Tk 在 Windows 上唯一稳定支持的真透明手段（分层窗口
@@ -309,22 +302,19 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
               background=[("selected", PRIMARY)],
               foreground=[("selected", "#FFFFFF")],
               bordercolor=[("selected", PRIMARY_DARK)],
-              # clam's default bevel makes an *unselected* tab look raised
-              # and a selected one -- once it loses that bevel -- look
-              # pressed-in by comparison. Flip it: unselected stays flat
-              # (recedes), selected gets the raised bevel (pops forward),
-              # matching "selected should stick out, not sink in".
+              # clam 默认的立体边框效果会让*未选中*页签看起来是凸起的，
+              # 选中页签一旦失去这个立体边框，相比之下反而像凹进去。反
+              # 过来设：未选中保持平面（往后退），选中的用凸起边框（往
+              # 前凸），符合"选中应该凸出来，不是凹进去"的直觉。
               relief=[("selected", "raised"), ("!selected", "flat")],
-              # A couple more px of padding on the selected tab reinforces
-              # the same "popped up" read instead of a same-height swap.
+              # 选中页签多留几像素内边距，强化"凸起"的观感，而不是简单
+              # 换个高度。
               padding=[("selected", (14, 8)), ("!selected", (14, 6))])
-    # clam's default tab layout wraps the label in a "Notebook.focus"
-    # element that draws a dashed focus rectangle -- app.py deliberately
-    # shifts keyboard focus to the notebook itself on every tab switch (see
-    # the ClusterConfigTab/_cc_notebook comment), which would otherwise
-    # paint that dashed rect around the active tab permanently. Rebuilding
-    # the layout without the focus element keeps the plain color-fill
-    # selected state instead.
+    # clam 默认的页签布局会用一个 "Notebook.focus" 元素包住标签文字，画
+    # 一个虚线焦点框——app.py 每次切页签都故意把键盘焦点转移到 notebook
+    # 本身（见 ClusterConfigTab/_cc_notebook 的注释），不这样处理的话虚
+    # 线框会一直留在当前页签上不消失。这里重建布局时去掉这个 focus 元
+    # 素，只保留纯色填充的选中态。
     style.layout("TNotebook.Tab", [
         ("Notebook.tab", {"sticky": "nswe", "children": [
             ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
@@ -351,15 +341,14 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
 
 def gradient_image(width: int, height: int, top_color: str | None = None,
                     bottom_color: str | None = None) -> ImageTk.PhotoImage:
-    """A soft vertical gradient, top_color -> bottom_color, one row of PIL
-    interpolation per pixel row. Used behind the top pill tab bar to give
-    the "simulated glass" look without any real backdrop blur.
+    """一段柔和的纵向渐变，top_color -> bottom_color，逐行用 PIL 插值。
+    画在顶部药丸页签条背后，做出"模拟玻璃"的观感，不需要真正的背景模
+    糊。
 
-    top_color/bottom_color default to None (not PRIMARY_LIGHT/BG_SOFT
-    directly) so the fallback is resolved *at call time* -- a plain default
-    argument value is bound once, when this function is defined, and would
-    freeze whatever PRIMARY_LIGHT/BG_SOFT held back then, going stale the
-    first time set_theme() reassigns them."""
+    top_color/bottom_color 默认给 None（不是直接写 PRIMARY_LIGHT/
+    BG_SOFT），这样兜底值是在*调用时*才解析的——普通的默认参数值在函数
+    定义那一刻就绑定死了，会冻结住当时 PRIMARY_LIGHT/BG_SOFT 的值，
+    set_theme() 后续重新赋值后这里就会变成过期的旧值。"""
     top_color = top_color if top_color is not None else PRIMARY_LIGHT
     bottom_color = bottom_color if bottom_color is not None else BG_SOFT
     width = max(1, int(width))

@@ -1,9 +1,8 @@
-"""World settings reader for DST leveldataoverride.lua files.
+"""DST leveldataoverride.lua 文件的世界设置读取器。
 
-Parses world generation presets and override settings. Chinese names,
-categories, ordering and icons are resolved separately by
-dstools.features.world.categories / dstools.features.world.icons — this module
-only does raw Lua I/O.
+解析世界生成预设和 override 设置。中文名、分类、排序和图标另外由
+dstools.features.world.categories / dstools.features.world.icons 负责解析——
+这个模块只做原始的 Lua I/O。
 """
 
 from dataclasses import dataclass, field
@@ -12,26 +11,26 @@ from pathlib import Path
 from dstools.shared.lua_parser import parse_lua_file
 
 
-# ── World data model ───────────────────────────────────────────────────
+# ── 世界数据模型 ────────────────────────────────────────────────────────
 
 @dataclass
 class WorldOverride:
-    """A single world gen override entry."""
+    """单条世界生成 override 条目。"""
     key: str
     value: str
-    name: str = ""        # Chinese name
-    description: str = ""  # Description
-    is_rule: bool = False  # True if world rule (editable), False if world gen (read-only)
-    icon: str = ""       # Unicode icon
-    category: str = ""     # Category key
-    cat_name: str = ""     # Category display name
+    name: str = ""        # 中文名
+    description: str = ""  # 描述
+    is_rule: bool = False  # True 表示世界规则（可编辑），False 表示世界生成（只读）
+    icon: str = ""       # Unicode 图标
+    category: str = ""     # 分类 key
+    cat_name: str = ""     # 分类显示名
 
 
 @dataclass
 class WorldPreset:
-    """Level data override (world preset) information."""
-    preset_id: str = ""     # e.g. "ENDLESS", "SURVIVAL_TOGETHER"
-    name: str = ""          # e.g. "无尽"
+    """存档等级 override（世界预设）信息。"""
+    preset_id: str = ""     # 例如 "ENDLESS"、"SURVIVAL_TOGETHER"
+    name: str = ""          # 例如 "无尽"
     description: str = ""
     location: str = ""      # "forest" / "cave"
     overrides: list[WorldOverride] = field(default_factory=list)
@@ -39,13 +38,13 @@ class WorldPreset:
 
 
 def parse_leveldata(path: Path) -> WorldPreset | None:
-    """Parse a leveldataoverride.lua file.
+    """解析一个 leveldataoverride.lua 文件。
 
-    Args:
-        path: Path to leveldataoverride.lua.
+    参数：
+        path: leveldataoverride.lua 的路径。
 
-    Returns:
-        WorldPreset or None if file doesn't exist or can't be parsed.
+    返回：
+        WorldPreset，文件不存在或解析失败时返回 None。
     """
     if not path.exists():
         return None
@@ -73,24 +72,24 @@ def parse_leveldata(path: Path) -> WorldPreset | None:
 
 
 def save_leveldata(preset: WorldPreset, path: Path) -> None:
-    """Save modified world overrides back to a leveldataoverride.lua file.
+    """把修改后的世界 override 写回 leveldataoverride.lua 文件。
 
-    Only modifies the 'overrides' values; preserves other fields.
+    只修改 'overrides' 的值，保留其它字段不变。
 
-    Args:
-        preset: The WorldPreset with potentially modified overrides.
-        path: Destination file path.
+    参数：
+        preset: 可能已修改过 overrides 的 WorldPreset。
+        path: 目标文件路径。
     """
     from dstools.shared.lua_parser import parse_lua_file
     from dstools.shared.lua_parser import serialize_lua_table
 
-    # Read original file to preserve structure
+    # 读取原文件以保留结构
     if path.exists():
         raw = parse_lua_file(path)
     else:
         raw = {}
 
-    # Update overrides with modified values
+    # 用修改后的值更新 overrides
     if "overrides" not in raw:
         raw["overrides"] = {}
 

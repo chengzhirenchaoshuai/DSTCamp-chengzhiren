@@ -1,7 +1,7 @@
 # reference/
 
-人工核对 `dstools/core/world_categories.py`、`world_value_sets.py`、
-`world_icons.py` 准确性用的游戏原始数据快照，**不是任何代码在运行时会
+人工核对 `dstools/features/world/categories.py`、`value_sets.py`、
+`icons.py` 准确性用的游戏原始数据快照，**不是任何代码在运行时会
 读取的文件**——三个模块的分类/中文名/取值表都是照着这里的数据手抄进代码
 的，改动世界设置相关的显示/排序/取值逻辑时可以拿这里的数据核对森林/洞穴
 两边是否还一致。

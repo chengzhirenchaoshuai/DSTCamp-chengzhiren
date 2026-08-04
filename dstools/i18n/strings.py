@@ -1,8 +1,8 @@
-"""String tables for Chinese and English localization."""
+"""中英文界面文案表。"""
 
 STRINGS = {
     "zh": {
-        # Window
+        # 窗口
         "app.title": "DSTCamp · 本地服务器管理",
         "app.ready": "就绪",
         "app.refresh": "刷新全部",
@@ -10,7 +10,7 @@ STRINGS = {
         "app.open_cache_dir": "打开缓存目录",
         "app.update_available": "发现新版本 v{version}，点击查看 →",
 
-        # Menu
+        # 菜单
         "menu.file": "文件",
         "menu.lang_zh": "中文",
         "menu.lang_en": "English",
@@ -26,7 +26,7 @@ STRINGS = {
         "theme.campfire": "篝火橙",
         "theme.sakura": "樱花粉",
 
-        # Settings menu
+        # 设置菜单
         "settings.title": "设置",
         "settings.language_label": "语言",
         "settings.minimize_on_close_label": "关闭时最小化到任务栏",
@@ -39,7 +39,7 @@ STRINGS = {
         "settings.custom_bg_opacity_label": "不透明度",
         "settings.custom_bg_filetypes": "图片文件",
 
-        # About (NEW)
+        # 关于
         "about.message": "DSTCamp {version}\n\nDon't Starve Together 本地服务器管理工具\n\n作者：橙之刃\n交流群：463227692",
         "about.repo_label": "项目地址：",
         "about.repo_link_text": "Github",
@@ -48,14 +48,14 @@ STRINGS = {
         "about.check_update_failed": "检查失败，请检查网络连接",
         "about.up_to_date": "已是最新版本",
 
-        # Tabs
+        # 页签
         "tab.local": "  本地服务器  ",
         "tab.saves": "  存档信息  ",
         "tab.mods": "  Mod管理  ",
         "tab.server": "  服务器配置  ",
         "tab.sakura": "  樱花映射  ",
 
-        # Save tab
+        # 存档信息页签
         "save.cluster": "服务器:",
         "save.shard": "世界:",
         "save.refresh": "刷新",
@@ -112,7 +112,7 @@ STRINGS = {
         "save.stat_temperature": "体温",
         "save.stat_age": "存活时长",
 
-        # Mod tab
+        # Mod 管理页签
         "mod.cluster": "服务器:",
         "mod.shard": "世界:",
         "mod.filter": "搜索:",
@@ -142,7 +142,7 @@ STRINGS = {
         "mod.on": "[启用]",
         "mod.off": "[禁用]",
 
-        # Server config tab
+        # 服务器配置页签
         "cluster.cluster": "服务器:",
         "cluster.save_btn": "保存",
         "cluster.shard_config": "世界设置(server.ini)",
@@ -160,13 +160,13 @@ STRINGS = {
         "cluster.server_port_sakura_locked": "该端口已被樱花映射接管，不能手动修改（改了会跟隧道对不上）。如需更改，请先去「樱花映射」页签关闭映射。",
         "cluster.range_error": "「{field}」需要在 {min}~{max} 之间，请修改后再保存。",
 
-        # Status bar
+        # 状态栏
         "status.klei": "Klei",
         "status.user": "用户",
         "status.clusters": "服务器",
         "status.local_saves": "本地存档",
 
-        # Environment tab
+        # 环境信息页签
         "env.title": "DST 环境信息",
         "env.klei_root": "Klei 根目录",
         "env.shards": "个世界",
@@ -179,7 +179,7 @@ STRINGS = {
         "env.env_info": "环境信息",
         "env.open_location": "打开位置",
 
-        # Dialogs
+        # 弹窗
         "dlg.save_ok": "保存成功",
         "dlg.save_fail": "保存失败",
         "dlg.confirm_save_msg": "确认保存 {name} 的配置?",
@@ -194,7 +194,7 @@ STRINGS = {
         "dlg.confirm_btn": "确认",
         "dlg.cancel_btn": "取消",
 
-        # World settings tab (NEW)
+        # 世界设置页签
         "tab.world": "  世界设置  ",
         "world.cluster": "服务器:",
         "world.shard": "世界:",
@@ -211,7 +211,7 @@ STRINGS = {
         "world.value": "值",
         "world.desc": "说明",
 
-        # Admin (NEW)
+        # 管理员名单
         "admin.title": "管理员列表",
         "admin.add": "添加",
         "admin.remove": "删除",
@@ -228,7 +228,7 @@ STRINGS = {
         "blocklist.title": "黑名单",
         "blocklist.empty": "(无黑名单人员)",
 
-        # Token (NEW)
+        # 令牌
         "token.title": "服务器令牌",
         "token.show": "显示",
         "token.hide": "隐藏",
@@ -241,7 +241,7 @@ STRINGS = {
         "token.prompt": "输入新的服务器令牌:",
         "token.invalid_hint": "令牌格式不正确（长度太短），请检查是否完整复制了令牌。",
 
-        # Sakura Frp mapping (NEW)
+        # 樱花映射
         "sakura.token_label": "API Token:",
         "sakura.token_prompt": "输入樱花内网穿透 API Token:",
         "sakura.token_invalid_hint": "Token 格式不正确（太短），请检查是否完整复制。",
@@ -290,11 +290,11 @@ STRINGS = {
         "sakura.token_missing": "请先设置樱花 API Token",
         "sakura.select_node_first": "请先选择一个节点",
 
-        # Save source labels
+        # 存档来源标签
         "save.server_clusters": "服务器存档",
         "save.local_clusters": "本地存档",
 
-        # Copy local save to server (NEW)
+        # 复制本地存档为服务器存档
         "save.copy_to_server": "复制为服务器存档",
         "save.copy_dialog_title": "复制为服务器存档",
         "save.copy_dialog_prompt": "将复制本地存档「{name}」到服务器，请指定目标文件夹名称：",
@@ -305,14 +305,14 @@ STRINGS = {
         "save.copy_name_exists": "该服务器目录已存在，请更换名称。",
         "save.copy_result_title": "复制存档",
 
-        # Cluster copy progress log (core/cluster_copy.py on_log narration)
+        # 复制存档进度日志（features/save_browser/cluster_copy.py 的 on_log 文案）
         "copy.dest_exists": "{dest} 已存在",
         "copy.created_dest": "已创建目标目录 {dest}",
         "copy.copying_dir": "正在复制 {name}/ ...",
         "copy.copying_file": "正在复制 {name} ...",
         "copy.done": "复制完成。",
 
-        # Config editor
+        # 配置编辑器
         "mod.add_config": "添加配置项",
         "mod.edit_value": "编辑值",
         "mod.config_key": "配置键",
@@ -320,12 +320,12 @@ STRINGS = {
         "mod.config_add_prompt": "输入新配置项名称:",
         "mod.config_edit_prompt": "编辑 {key} 的值:",
 
-        # Updated labels
+        # 更新过的标签
         "selector.archive": "存档:",
         "selector.save_type": "存档类型:",
         "selector.running_suffix": "  [运行中]",
 
-        # World settings improved
+        # 世界设置改进
         "world.rules": "世界规则",
         "world.rules_editable_tag": "(可修改)",
         "world.rules_readonly_tag": "(仅查看)",
@@ -338,14 +338,14 @@ STRINGS = {
         "world.saved": "世界规则已保存",
         "world.local_view_only_banner": "⚠ 当前选中的是本地存档，世界设置仅支持查看，不支持修改。",
 
-        # Mod info
+        # Mod 信息
         "modinfo.name": "名称",
         "modinfo.author": "作者",
         "modinfo.version": "版本",
         "modinfo.desc": "描述",
         "modinfo.no_info": "未找到 modinfo.lua，使用自由输入模式",
 
-        # Mod config dialog (NEW)
+        # Mod 配置弹窗
         "mod.apply": "应用",
         "mod.reset": "重置",
         "mod.back": "返回",
@@ -366,7 +366,7 @@ STRINGS = {
         "mod.location_picker_title": "选择 Steam 客户端 mods 文件夹",
         "mod.location_recheck_not_found": "没能重新识别到 Mod 位置，请点「更换路径」手动指定。",
 
-        # Local service tab (NEW)
+        # 本地服务器页签
         "local.select_cluster_first": "请先选择一个服务器存档",
         "local.select_server_hint": "当前选中的是本地存档，无需在这里管理服务器进程。请在上方切换到一个服务器存档。",
         "local.wegame_manual_start_hint": "该存档是 WeGame 版专用服务器：启动/停止/公告/回档暂不支持在这里操作，请通过 WeGame 客户端点击「开始游戏」启动（这是平台限制，WeGame 要求专用服务器必须经客户端启动）。存档浏览、配置编辑、Mod 管理、备份、樱花映射等其它功能不受影响。",
@@ -445,11 +445,11 @@ STRINGS = {
         "local.confirm_close_title": "有服务器正在运行",
         "local.confirm_close_msg": "有 {count} 个世界正在运行，\n是否关闭所有世界并退出软件？",
 
-        # System tray (NEW)
+        # 系统托盘
         "tray.show": "显示主窗口",
         "tray.exit": "退出",
 
-        # Mod sync (NEW)
+        # Mod 同步
         "local.sync_mods_btn": "软链接mods文件夹到服务器",
         "local.sync_running_btn": "同步中...",
         "local.sync_hover": "把专用服务器的mods文件夹删除，并创建一个软链接文件夹指向饥荒mods目录",
@@ -464,14 +464,14 @@ STRINGS = {
         "local.wegame_root_picker_title": "选择 WeGame 安装目录（rail_apps 文件夹）",
         "local.wegame_root_picker_invalid": "在选择的目录下没有找到「饥荒：联机版」和「饥荒联机版专用服务器」这两个文件夹，请确认选择的是 rail_apps 这一层。",
 
-        # Mod sync progress log (core/mod_sync.py on_log narration)
+        # Mod 同步进度日志（features/mod/sync.py 的 on_log 文案）
         "sync.no_client_mods_dir": "未找到客户端的 mods/ 文件夹，跳过。",
         "sync.mods_dir_already_linked": "服务器 mods/ 已经是指向客户端 mods/ 的目录联接，无需处理。",
         "sync.mods_dir_linked": "已将服务器 mods/ 目录整体替换为指向 {path} 的目录联接。",
         "sync.error_prefix": "[错误] {detail}",
     },
     "en": {
-        # Window
+        # 窗口
         "app.title": "DSTCamp · Local Server Manager",
         "app.ready": "Ready",
         "app.refresh": "Refresh All",
@@ -479,7 +479,7 @@ STRINGS = {
         "app.open_cache_dir": "Open Cache Folder",
         "app.update_available": "New version v{version} available, click to view →",
 
-        # Menu
+        # 菜单
         "menu.file": "File",
         "menu.lang_zh": "中文",
         "menu.lang_en": "English",
@@ -495,7 +495,7 @@ STRINGS = {
         "theme.campfire": "Campfire",
         "theme.sakura": "Sakura",
 
-        # Settings menu
+        # 设置菜单
         "settings.title": "Settings",
         "settings.language_label": "Language",
         "settings.minimize_on_close_label": "Minimize to tray on close",
@@ -508,7 +508,7 @@ STRINGS = {
         "settings.custom_bg_opacity_label": "Opacity",
         "settings.custom_bg_filetypes": "Image files",
 
-        # About (NEW)
+        # 关于
         "about.message": "DSTCamp {version}\n\nDon't Starve Together local server manager\n\nAuthor：橙之刃\nQQ group：463227692",
         "about.repo_label": "Project: ",
         "about.repo_link_text": "Github",
@@ -517,14 +517,14 @@ STRINGS = {
         "about.check_update_failed": "Check failed, please verify your network connection",
         "about.up_to_date": "You're on the latest version",
 
-        # Tabs
+        # 页签
         "tab.local": "  Local Server  ",
         "tab.saves": "  Save Info  ",
         "tab.mods": "  Mods  ",
         "tab.server": "  Server Config  ",
         "tab.sakura": "  Sakura Mapping  ",
 
-        # Save tab
+        # 存档信息页签
         "save.cluster": "Cluster:",
         "save.shard": "Shard:",
         "save.refresh": "Refresh",
@@ -581,7 +581,7 @@ STRINGS = {
         "save.stat_temperature": "Temperature",
         "save.stat_age": "Playtime",
 
-        # Mod tab
+        # Mod 管理页签
         "mod.cluster": "Cluster:",
         "mod.shard": "Shard:",
         "mod.filter": "Search:",
@@ -611,7 +611,7 @@ STRINGS = {
         "mod.on": "[ON]",
         "mod.off": "[OFF]",
 
-        # Server config tab
+        # 服务器配置页签
         "cluster.cluster": "Cluster:",
         "cluster.save_btn": "Save",
         "cluster.shard_config": "Shard Config (server.ini)",
@@ -629,13 +629,13 @@ STRINGS = {
         "cluster.server_port_sakura_locked": "This port is managed by Sakura Mapping and can't be edited manually (would break the tunnel). Disable mapping on the \"Sakura Mapping\" tab first if you need to change it.",
         "cluster.range_error": "“{field}” must be between {min} and {max}. Fix it and save again.",
 
-        # Status bar
+        # 状态栏
         "status.klei": "Klei",
         "status.user": "User",
         "status.clusters": "Clusters",
         "status.local_saves": "Local Saves",
 
-        # Environment tab
+        # 环境信息页签
         "env.title": "DST Environment",
         "env.klei_root": "Klei Root",
         "env.shards": "shards",
@@ -648,7 +648,7 @@ STRINGS = {
         "env.env_info": "Environment",
         "env.open_location": "Open Location",
 
-        # Dialogs
+        # 弹窗
         "dlg.save_ok": "Save successful",
         "dlg.save_fail": "Save failed",
         "dlg.confirm_save_msg": "Save configuration for {name}?",
@@ -663,7 +663,7 @@ STRINGS = {
         "dlg.confirm_btn": "Confirm",
         "dlg.cancel_btn": "Cancel",
 
-        # World settings tab (NEW)
+        # 世界设置页签
         "tab.world": "  World Settings  ",
         "world.cluster": "Cluster:",
         "world.shard": "Shard:",
@@ -680,7 +680,7 @@ STRINGS = {
         "world.value": "Value",
         "world.desc": "Description",
 
-        # Admin (NEW)
+        # 管理员名单
         "admin.title": "Admin List",
         "admin.add": "Add",
         "admin.remove": "Remove",
@@ -693,11 +693,11 @@ STRINGS = {
         "admin.not_found": "Admin not found",
         "admin.invalid_format": "Invalid format -- a Klei user ID should look like KU_XXXXXXXX.",
 
-        # Blocklist (NEW)
+        # 黑名单
         "blocklist.title": "Blocklist",
         "blocklist.empty": "(No blocked players)",
 
-        # Token (NEW)
+        # 令牌
         "token.title": "Server Token",
         "token.show": "Show",
         "token.hide": "Hide",
@@ -710,7 +710,7 @@ STRINGS = {
         "token.prompt": "Enter new server token:",
         "token.invalid_hint": "That doesn't look like a valid token (too short) -- check you copied the whole thing.",
 
-        # Sakura Frp mapping (NEW)
+        # 樱花映射
         "sakura.token_label": "API Token:",
         "sakura.token_prompt": "Enter your SakuraFrp API Token:",
         "sakura.token_invalid_hint": "That doesn't look like a valid token (too short) -- check you copied the whole thing.",
@@ -759,11 +759,11 @@ STRINGS = {
         "sakura.token_missing": "Set a SakuraFrp API Token first",
         "sakura.select_node_first": "Select a node first",
 
-        # Save source labels
+        # 存档来源标签
         "save.server_clusters": "Server Saves",
         "save.local_clusters": "Local Saves",
 
-        # Copy local save to server (NEW)
+        # 复制本地存档为服务器存档
         "save.copy_to_server": "Copy as Server Save",
         "save.copy_dialog_title": "Copy as Server Save",
         "save.copy_dialog_prompt": "This will copy local save \"{name}\" to the server. Please specify a destination folder name:",
@@ -774,14 +774,14 @@ STRINGS = {
         "save.copy_name_exists": "This server directory already exists, please choose another name.",
         "save.copy_result_title": "Copy Save",
 
-        # Cluster copy progress log (core/cluster_copy.py on_log narration)
+        # 复制存档进度日志（features/save_browser/cluster_copy.py 的 on_log 文案）
         "copy.dest_exists": "{dest} already exists",
         "copy.created_dest": "Created destination directory {dest}",
         "copy.copying_dir": "Copying {name}/ ...",
         "copy.copying_file": "Copying {name} ...",
         "copy.done": "Copy complete.",
 
-        # Config editor
+        # 配置编辑器
         "mod.add_config": "Add Config",
         "mod.edit_value": "Edit Value",
         "mod.config_key": "Config Key",
@@ -789,12 +789,12 @@ STRINGS = {
         "mod.config_add_prompt": "Enter new config key name:",
         "mod.config_edit_prompt": "Edit value for {key}:",
 
-        # Updated labels
+        # 更新过的标签
         "selector.archive": "Archive:",
         "selector.save_type": "Save Type:",
         "selector.running_suffix": "  [Running]",
 
-        # World settings improved
+        # 世界设置改进
         "world.rules": "World Rules",
         "world.rules_editable_tag": "(Editable)",
         "world.rules_readonly_tag": "(View Only)",
@@ -807,14 +807,14 @@ STRINGS = {
         "world.saved": "World rules saved",
         "world.local_view_only_banner": "⚠ The selected save is a local one -- World Settings is view-only here, editing isn't supported.",
 
-        # Mod info
+        # Mod 信息
         "modinfo.name": "Name",
         "modinfo.author": "Author",
         "modinfo.version": "Version",
         "modinfo.desc": "Description",
         "modinfo.no_info": "No modinfo.lua found, using free-form input",
 
-        # Mod config dialog (NEW)
+        # Mod 配置弹窗
         "mod.apply": "Apply",
         "mod.reset": "Reset",
         "mod.back": "Back",
@@ -835,7 +835,7 @@ STRINGS = {
         "mod.location_picker_title": "Select the Steam client's mods folder",
         "mod.location_recheck_not_found": "Couldn't re-detect the mod location -- click \"Change Path\" to set it manually.",
 
-        # Local service tab (NEW)
+        # 本地服务器页签
         "local.select_cluster_first": "Select a server save first",
         "local.select_server_hint": "The selected save is a local one -- there's no server process to manage here. Switch to a server save above.",
         "local.wegame_manual_start_hint": "This save is a WeGame dedicated server: start/stop/announce/rollback aren't available here -- launch it via the WeGame client's \"Start Game\" button instead (a platform requirement; WeGame dedicated servers must be launched through the client). Save browsing, config editing, mod management, backups, and Sakura tunnel mapping still work normally.",
@@ -914,11 +914,11 @@ STRINGS = {
         "local.confirm_close_title": "Servers Still Running",
         "local.confirm_close_msg": "{count} shard(s) are still running,\nclose all shards and exit?",
 
-        # System tray (NEW)
+        # 系统托盘
         "tray.show": "Show Main Window",
         "tray.exit": "Exit",
 
-        # Mod sync (NEW)
+        # Mod 同步
         "local.sync_mods_btn": "Sync Mod Files to Server",
         "local.sync_running_btn": "Syncing...",
         "local.sync_hover": "Replace the server's whole mods folder with a directory junction pointing at the client's mods folder",
@@ -933,7 +933,7 @@ STRINGS = {
         "local.wegame_root_picker_title": "Select the WeGame install directory (rail_apps folder)",
         "local.wegame_root_picker_invalid": "Couldn't find \"Don't Starve Together\" and \"Don't Starve Together Dedicated Server\" folders under the selected directory -- make sure you picked the rail_apps folder itself.",
 
-        # Mod sync progress log (core/mod_sync.py on_log narration)
+        # Mod 同步进度日志（features/mod/sync.py 的 on_log 文案）
         "sync.no_client_mods_dir": "Client mods/ folder not found, skipping.",
         "sync.mods_dir_already_linked": "The server's mods/ is already a junction pointing at the client's mods/ -- nothing to do.",
         "sync.mods_dir_linked": "Replaced the server's mods/ folder with a junction pointing at {path}.",

@@ -1,7 +1,7 @@
-"""INI configuration file parser for DST config files.
+"""DST 配置文件的 INI 解析器。
 
-Uses Python's built-in configparser with case-sensitive key preservation,
-which is required for DST's cluster.ini and server.ini files.
+用 Python 内置的 configparser，保留 key 的大小写——DST 的
+cluster.ini/server.ini 要求如此。
 """
 
 from configparser import ConfigParser
@@ -13,20 +13,19 @@ from dstools.models import ClusterConfig, ShardConfig
 
 
 class _CaseSensitiveConfigParser(ConfigParser):
-    """ConfigParser subclass that preserves key case."""
+    """保留 key 大小写的 ConfigParser 子类。"""
 
     def optionxform(self, optionstr: str) -> str:
         return optionstr
 
 
 def _write_ini_value(f, key: str, val_str: str) -> None:
-    """Write one `key = value` line, handling embedded newlines the way
-    configparser itself expects to read them back: the first line is
-    `key = <first line>`, every following line must be indented to be
-    parsed as a *continuation* of the same value (joined back with "\n")
-    rather than a separate, malformed line -- writing an embedded "\n"
-    unindented (the naive `f"{key} = {val_str}\n"`) produces a file even
-    this project's own configparser-based reader can't parse back.
+    """写一行 `key = value`，按 configparser 自己读取续行的方式处理值里
+    内嵌的换行：第一行是 `key = <第一行内容>`，后续每一行都必须缩进，
+    才会被当成同一个值的*续行*（读回来拼接成 "\n"），而不是一行独立、
+    格式错误的内容——原样不缩进地写入内嵌的 "\n"（简单粗暴的
+    `f"{key} = {val_str}\n"`）会产出一份连这个项目自己基于 configparser
+    的读取器都解析不回去的文件。
     """
     lines = val_str.split("\n")
     f.write(f"{key} = {lines[0]}\n")
@@ -35,7 +34,7 @@ def _write_ini_value(f, key: str, val_str: str) -> None:
 
 
 def _read_ini(path: Path) -> _CaseSensitiveConfigParser:
-    """Read an INI file with case-sensitive key preservation."""
+    """读取 INI 文件，保留 key 大小写。"""
     parser = _CaseSensitiveConfigParser()
     parser.optionxform = str  # type: ignore[method-assign]
     parser.read(path, encoding="utf-8")
@@ -43,33 +42,27 @@ def _read_ini(path: Path) -> _CaseSensitiveConfigParser:
 
 
 def _section_to_dict(parser: ConfigParser, section: str) -> dict[str, str]:
-    """Extract a section's key-value pairs into a dict.
-
-    Returns empty dict if section doesn't exist.
-    """
+    """把某个 section 的键值对取成 dict，section 不存在则返回空 dict。"""
     if not parser.has_section(section):
         return {}
     return dict(parser.items(section))
 
 
 def _coerce_value(value: str) -> Any:
-    """Coerce a string value to the appropriate Python type.
-
-    Tries: int -> float -> bool -> str
-    """
-    # Boolean
+    """把字符串值转换成合适的 Python 类型，依次尝试 int -> float -> bool -> str。"""
+    # 布尔值
     if value.lower() in ("true", "yes", "on"):
         return True
     if value.lower() in ("false", "no", "off"):
         return False
 
-    # Integer
+    # 整数
     try:
         return int(value)
     except ValueError:
         pass
 
-    # Float
+    # 浮点数
     try:
         return float(value)
     except ValueError:
@@ -79,8 +72,8 @@ def _coerce_value(value: str) -> Any:
 
 
 def _coerce_dict_values(d: dict[str, str], section: str = "") -> dict:
-    """Coerce all values in a dict, except fields in NO_TYPE_COERCE_FIELDS
-    (比如密码类字段，纯数字密码"0"/"123456"不能被误转成 int/bool)。"""
+    """对 dict 里的每个值做类型转换，NO_TYPE_COERCE_FIELDS 里的字段除外
+    （比如密码类字段，纯数字密码"0"/"123456"不能被误转成 int/bool）。"""
     return {k: (v if (section, k) in NO_TYPE_COERCE_FIELDS else _coerce_value(v))
             for k, v in d.items()}
 
@@ -88,13 +81,13 @@ def _coerce_dict_values(d: dict[str, str], section: str = "") -> dict:
 # ── Cluster INI ────────────────────────────────────────────────────────
 
 def parse_cluster_ini(path: Path) -> ClusterConfig:
-    """Parse a cluster.ini file into a ClusterConfig model.
+    """把 cluster.ini 解析成 ClusterConfig 模型。
 
     Args:
-        path: Path to the cluster.ini file.
+        path: cluster.ini 的路径。
 
     Returns:
-        ClusterConfig with typed values.
+        带类型的 ClusterConfig。
     """
     parser = _read_ini(path)
     return ClusterConfig(
@@ -107,11 +100,11 @@ def parse_cluster_ini(path: Path) -> ClusterConfig:
 
 
 def write_cluster_ini(config: ClusterConfig, path: Path) -> None:
-    """Write a ClusterConfig back to a cluster.ini file.
+    """把 ClusterConfig 写回 cluster.ini 文件。
 
     Args:
-        config: The ClusterConfig to write.
-        path: Destination file path.
+        config: 要写入的 ClusterConfig。
+        path: 目标文件路径。
     """
     sections = [
         ("GAMEPLAY", config.gameplay),
@@ -139,13 +132,13 @@ def write_cluster_ini(config: ClusterConfig, path: Path) -> None:
 # ── Server INI ─────────────────────────────────────────────────────────
 
 def parse_server_ini(path: Path) -> ShardConfig:
-    """Parse a server.ini file into a ShardConfig model.
+    """把 server.ini 解析成 ShardConfig 模型。
 
     Args:
-        path: Path to the server.ini file.
+        path: server.ini 的路径。
 
     Returns:
-        ShardConfig with typed values.
+        带类型的 ShardConfig。
     """
     parser = _read_ini(path)
     return ShardConfig(
@@ -157,11 +150,11 @@ def parse_server_ini(path: Path) -> ShardConfig:
 
 
 def write_server_ini(config: ShardConfig, path: Path) -> None:
-    """Write a ShardConfig back to a server.ini file.
+    """把 ShardConfig 写回 server.ini 文件。
 
     Args:
-        config: The ShardConfig to write.
-        path: Destination file path.
+        config: 要写入的 ShardConfig。
+        path: 目标文件路径。
     """
     sections = [
         ("NETWORK", config.network),

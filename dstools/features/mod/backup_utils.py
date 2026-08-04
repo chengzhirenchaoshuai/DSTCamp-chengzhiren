@@ -1,11 +1,9 @@
-"""Shared timestamped-backup helper for every "back up before overwrite"
-call site in this project (modoverrides.lua, cluster.ini, server.ini).
+"""供项目里所有"覆盖前先备份"调用点共用的带时间戳备份工具
+（modoverrides.lua、cluster.ini、server.ini 都用这个）。
 
-Backups now live in a `backup/` subfolder next to the original file
-instead of littering the save's own directory with `*.bak.<timestamp>`
-siblings, and only the newest `max_backups` copies of any given original
-file are kept -- older ones are pruned automatically so this can't grow
-without bound across repeated saves.
+备份统一放进原文件旁边的 `backup/` 子目录，不再直接在存档目录里散落
+一堆 `*.bak.<timestamp>` 文件；同一个原文件只保留最新的 `max_backups`
+份，更早的会被自动清理，避免反复保存导致备份无限膨胀。
 """
 
 from datetime import datetime
@@ -15,11 +13,10 @@ DEFAULT_MAX_BACKUPS = 5
 
 
 def backup_file(path: Path, max_backups: int = DEFAULT_MAX_BACKUPS) -> Path | None:
-    """Copy `path` into a `backup/` subfolder beside it, timestamped, then
-    prune older backups of that same filename beyond `max_backups`.
+    """把 `path` 带时间戳复制到旁边的 `backup/` 子目录，再清理该文件名下
+    超出 `max_backups` 份数的旧备份。
 
-    Returns the backup path, or None if `path` doesn't exist (nothing to
-    back up -- e.g. a config file being written for the first time).
+    若 `path` 不存在则返回 None（没有可备份的内容，例如配置文件第一次写入）。
     """
     if not path.exists():
         return None

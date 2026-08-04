@@ -994,8 +994,7 @@ class SaveBrowserTab:
 
     def refresh(self): self.on_cluster_changed(self._get_cluster())
 
-    # ── Environment overview section (folded in from the former
-    # standalone EnvironmentTab, later merged into this single page) ────
+    # ── 存档概览区块（原来是独立的 EnvironmentTab，后来合并进这个单页）────
     def _build_env_panel(self, parent):
         # "Klei 根目录"那行单独的说明文字应用户要求整个删掉了（之前已经
         # 先删了 Steam 用户 ID/客户端配置/服务器集群计数几行，这次连最

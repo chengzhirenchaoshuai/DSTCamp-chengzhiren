@@ -1,9 +1,8 @@
-"""Themed replacements for tkinter.messagebox's showinfo/showwarning/
-showerror/askyesno -- the stock messagebox is native OS chrome (a plain
-Windows dialog box) that doesn't pick up any of the app's mint-green
-styling no matter what ttk.Style says, since it isn't a Tk widget at all.
-These draw a bordered mint-green card instead (see _show()'s docstring for
-why it isn't the same rounded CardFrame used elsewhere in the app).
+"""替换 tkinter.messagebox 的 showinfo/showwarning/showerror/askyesno 的
+自绘 themed 版本——原生 messagebox 是操作系统自带的对话框（普通 Windows
+对话框），不管 ttk.Style 怎么设都不会带上应用自己的风格，因为它根本不
+是 Tk 控件。这里改成画一个带边框的卡片（为什么不直接复用项目里别处那
+个圆角 CardFrame，见 _show() 的说明）。
 """
 
 import sys
@@ -27,9 +26,9 @@ def _icon_for(kind: str) -> tuple[str, str]:
 
 if sys.platform == "win32":
     import winsound
-    # Same icon<->sound mapping Windows' own MessageBox() uses, so swapping
-    # the native messagebox for this custom one doesn't silently drop the
-    # audible cue some users rely on.
+    # 跟 Windows 自己 MessageBox() 用的图标<->提示音映射保持一致，这样
+    # 把原生 messagebox 换成这个自绘版本不会悄悄丢掉一部分用户依赖的提
+    # 示音。
     _BEEPS = {
         "info": winsound.MB_ICONASTERISK,
         "warning": winsound.MB_ICONEXCLAMATION,
@@ -48,30 +47,28 @@ else:
 
 
 def _show(parent, title, message, kind, buttons, wraplength=320, min_width=360):
-    """buttons: list of (label, value, is_default). Returns the chosen
-    value, or None if the dialog was closed without picking one.
+    """buttons: [(label, value, is_default), ...] 列表。返回被选中的
+    value，弹窗没选就关掉则返回 None。
 
-    wraplength/min_width let a caller with a longer message (e.g. the
-    dedicated-server install guide) ask for a wider card instead of
-    wrapping into a tall, narrow column -- default values match every
-    existing short 1-3 line show_info/show_warning/show_error call so
-    nothing else changes shape.
+    wraplength/min_width 给消息比较长的调用方（比如专用服务器安装引导）
+    一个要更宽卡片、而不是被挤成又高又窄一条的选项——默认值跟现有那些
+    1~3 行的 show_info/show_warning/show_error 短消息调用保持一致，不
+    影响它们的外观。
 
-    Deliberately does NOT reuse CardFrame here: CardFrame's rounded-rect
-    body is positioned with `.place(relwidth=1, ...)`, which needs its
-    *parent* to already have a real size -- fine for the main tabs (which
-    fill an already-sized window), but useless for a dialog that's supposed
-    to size itself to its own content (`.place()`'d children don't report a
-    requested size the way `.pack()`'d ones do, so the Toplevel would end
-    up sized 1x1). A plain bordered Frame sidesteps that entirely: pack
-    reports real content sizes, so the window can size to fit it.
+    这里故意不复用 CardFrame：CardFrame 的圆角矩形主体是用
+    `.place(relwidth=1, ...)` 定位的，需要它的*父容器*已经有真实尺寸——
+    主页签（本身就铺满一个已经有尺寸的窗口）用没问题，但弹窗恰恰需要按
+    自己内容反推尺寸（`.place()` 摆放的子控件不会像 `.pack()` 那样报告
+    自己需要多大空间，Toplevel 会被反推成 1x1）。改用一个普通的带边框
+    Frame 就完全绕开这个问题：pack 会报告真实内容尺寸，窗口能照着它算
+    出合适大小。
     """
     win = tk.Toplevel(parent)
     win.withdraw()
     win.title(title or "")
     win.transient(parent)
     win.resizable(False, False)
-    win.configure(background=theme.CARD_BORDER)  # shows as a 1px border around the card
+    win.configure(background=theme.CARD_BORDER)  # 露出 1px 边框包住卡片
 
     card = tk.Frame(win, background=theme.CARD_BG)
     card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)

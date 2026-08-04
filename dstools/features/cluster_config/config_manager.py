@@ -1,4 +1,4 @@
-"""Server configuration manager for DST cluster.ini and server.ini files."""
+"""DST 服务器配置读写：cluster.ini 与 server.ini。"""
 
 from pathlib import Path
 from typing import Any
@@ -13,7 +13,7 @@ from dstools.shared.ini_parser import (
 from dstools.models import ClusterConfig, ShardConfig
 
 
-# ── Cluster Config ─────────────────────────────────────────────────────
+# ── 集群配置（cluster.ini） ─────────────────────────────────────────────
 
 # 游戏本身只在值被改动过时才会把它写进 cluster.ini——很多存档里这几个
 # 字段干脆不存在，不代表没有默认行为，只是"文件里没有、GUI 上也就看不
@@ -101,13 +101,13 @@ def backfill_cluster_defaults(config: ClusterConfig) -> None:
 
 
 def load_cluster_config(path: Path) -> ClusterConfig:
-    """Load cluster configuration from a cluster.ini file.
+    """从 cluster.ini 文件读取集群配置。
 
     Args:
-        path: Path to cluster.ini (or the cluster directory).
+        path: cluster.ini 的路径（或集群目录本身）。
 
     Returns:
-        ClusterConfig object.
+        ClusterConfig 对象。
     """
     if path.is_dir():
         path = path / "cluster.ini"
@@ -117,11 +117,11 @@ def load_cluster_config(path: Path) -> ClusterConfig:
 
 
 def save_cluster_config(config: ClusterConfig, path: Path) -> None:
-    """Save cluster configuration to a cluster.ini file.
+    """把集群配置写回 cluster.ini 文件。
 
     Args:
-        config: The ClusterConfig to save.
-        path: Path to cluster.ini (or the cluster directory).
+        config: 要保存的 ClusterConfig。
+        path: cluster.ini 的路径（或集群目录本身）。
     """
     if path.is_dir():
         path = path / "cluster.ini"
@@ -130,13 +130,13 @@ def save_cluster_config(config: ClusterConfig, path: Path) -> None:
 
 def set_cluster_option(config: ClusterConfig, section: str, key: str,
                        value: Any) -> None:
-    """Set a single option in a cluster configuration.
+    """设置集群配置里的单个选项。
 
     Args:
-        config: ClusterConfig to modify.
-        section: INI section name (GAMEPLAY, NETWORK, MISC, SHARD, STEAM).
-        key: Option key.
-        value: New value (will be converted to appropriate type).
+        config: 要修改的 ClusterConfig。
+        section: INI 分区名（GAMEPLAY、NETWORK、MISC、SHARD、STEAM）。
+        key: 选项键名。
+        value: 新值（会被转换成合适的类型）。
     """
     section_map = {
         "GAMEPLAY": config.gameplay,
@@ -151,7 +151,7 @@ def set_cluster_option(config: ClusterConfig, section: str, key: str,
         raise ValueError(f"Unknown cluster.ini section: {section}. "
                          f"Valid sections: GAMEPLAY, NETWORK, MISC, SHARD, STEAM")
 
-    # Type coercion——密码这类字段即使值看起来像数字/布尔（比如密码就是
+    # 类型转换——密码这类字段即使值看起来像数字/布尔（比如密码就是
     # "0"），也必须原样存成字符串，不然真值判断会把密码"0"当成"没有密码"。
     if isinstance(value, str) and (section_lower, key) not in NO_TYPE_COERCE_FIELDS:
         if value.lower() == "true":
@@ -171,15 +171,15 @@ def set_cluster_option(config: ClusterConfig, section: str, key: str,
 
 
 def get_cluster_option(config: ClusterConfig, section: str, key: str) -> Any:
-    """Get a single option from a cluster configuration.
+    """读取集群配置里的单个选项。
 
     Args:
-        config: ClusterConfig to read from.
-        section: INI section name.
-        key: Option key.
+        config: 要读取的 ClusterConfig。
+        section: INI 分区名。
+        key: 选项键名。
 
     Returns:
-        The option value, or None if not found.
+        选项值，找不到则返回 None。
     """
     section_map = {
         "GAMEPLAY": config.gameplay,
@@ -194,16 +194,16 @@ def get_cluster_option(config: ClusterConfig, section: str, key: str) -> Any:
     return section_map[section_lower].get(key)
 
 
-# ── Shard Config ───────────────────────────────────────────────────────
+# ── 世界配置（server.ini） ───────────────────────────────────────────────
 
 def load_shard_config(path: Path) -> ShardConfig:
-    """Load shard configuration from a server.ini file.
+    """从 server.ini 文件读取世界配置。
 
     Args:
-        path: Path to server.ini (or the shard directory).
+        path: server.ini 的路径（或世界目录本身）。
 
     Returns:
-        ShardConfig object.
+        ShardConfig 对象。
     """
     if path.is_dir():
         path = path / "server.ini"
@@ -213,11 +213,11 @@ def load_shard_config(path: Path) -> ShardConfig:
 
 
 def save_shard_config(config: ShardConfig, path: Path) -> None:
-    """Save shard configuration to a server.ini file.
+    """把世界配置写回 server.ini 文件。
 
     Args:
-        config: The ShardConfig to save.
-        path: Path to server.ini (or the shard directory).
+        config: 要保存的 ShardConfig。
+        path: server.ini 的路径（或世界目录本身）。
     """
     if path.is_dir():
         path = path / "server.ini"
@@ -226,13 +226,13 @@ def save_shard_config(config: ShardConfig, path: Path) -> None:
 
 def set_shard_option(config: ShardConfig, section: str, key: str,
                      value: Any) -> None:
-    """Set a single option in a shard configuration.
+    """设置世界配置里的单个选项。
 
     Args:
-        config: ShardConfig to modify.
-        section: INI section name (NETWORK, SHARD, ACCOUNT, STEAM).
-        key: Option key.
-        value: New value.
+        config: 要修改的 ShardConfig。
+        section: INI 分区名（NETWORK、SHARD、ACCOUNT、STEAM）。
+        key: 选项键名。
+        value: 新值。
     """
     section_map = {
         "NETWORK": config.network,
@@ -246,7 +246,7 @@ def set_shard_option(config: ShardConfig, section: str, key: str,
         raise ValueError(f"Unknown server.ini section: {section}. "
                          f"Valid sections: NETWORK, SHARD, ACCOUNT, STEAM")
 
-    # Type coercion
+    # 类型转换
     if isinstance(value, str):
         if value.lower() == "true":
             value = True
@@ -262,7 +262,7 @@ def set_shard_option(config: ShardConfig, section: str, key: str,
 
 
 def get_shard_option(config: ShardConfig, section: str, key: str) -> Any:
-    """Get a single option from a shard configuration."""
+    """读取世界配置里的单个选项。"""
     section_map = {
         "NETWORK": config.network,
         "SHARD": config.shard,

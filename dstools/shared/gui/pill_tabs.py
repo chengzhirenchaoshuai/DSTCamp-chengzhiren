@@ -1,13 +1,10 @@
-"""Pill-shaped tab bar. Originally just the top-level replacement for a
-plain ttk.Notebook (the five main tabs: saves / mods / world / server /
-local), now also reused at a smaller size for the inner sub-tab rows
-(SaveBrowserTab/WorldSettingsTab/ClusterConfigTab's ttk.Notebook sub-tabs)
-so their background can show the custom wallpaper the same way the outer
-bar does -- a native ttk.Notebook tab strip is always opaque, there's no
-ttk option that makes it background-image-aware, and this project's
-established answer to "a native ttk widget can't do X we need" is to draw
-it ourselves (see menu_combo.py replacing ttk.Combobox, gui/slider.py
-replacing ttk.Scale for the same kind of reason).
+"""药丸形状的页签条。最初只是顶层五个主页签（存档/Mod/世界/服务器/本
+地）替换 ttk.Notebook 用的，现在内部子页签行（SaveBrowserTab/
+WorldSettingsTab/ClusterConfigTab 各自的 ttk.Notebook 子页签）也在用小
+一号的规格——原生 ttk.Notebook 页签条永远不透明，没有任何 ttk 选项能让
+它感知背景图，这个项目一贯的做法是"原生 ttk 控件做不到就自己画"（同类
+理由见 menu_combo.py 替换 ttk.Combobox、gui/slider.py 替换 ttk.Scale），
+这样子页签条也能像外层页签条一样透出自定义背景图。
 
 文字仍然是原生 create_text（量出来的宽度直接决定药丸宽度，relabel() 语言
 切换只是重新量一次再重画，不用管图片跟文字对不齐的问题）；选中态药丸的
@@ -39,7 +36,7 @@ _FONT_SIZE = 11
 # 的小号用法（sub_height 参数）够不到缩放手柄，_GAP 对它只是普通的视觉
 # 间距，沿用同一个值没有坏处。
 _GAP = 14
-_HPAD = 18  # horizontal padding inside a pill, around the label
+_HPAD = 18  # 药丸内部左右留白（围绕文字标签）
 
 _PILL_IMG_CACHE: dict[tuple, "ImageTk.PhotoImage"] = {}
 _PILL_SUPERSAMPLE = 4
@@ -117,10 +114,9 @@ class PillTabBar(tk.Frame):
             self._app._register_bg_surface(self)
 
     def _request_redraw(self):
-        # Coalesce the burst of <Configure> events a live window drag-resize
-        # fires (far more often than the screen can repaint) into at most
-        # one real redraw per ~16ms (roughly 60fps), instead of regenerating
-        # the gradient PhotoImage and every pill polygon on each one.
+        # 把真实拖拽缩放窗口触发的密集 <Configure> 事件（远超屏幕实际重
+        # 绘能力）合并成最多每 ~16ms（约 60fps）真正重画一次，而不是每
+        # 个事件都重新生成渐变 PhotoImage 和每个药丸的多边形。
         if self._redraw_after_id is None:
             self._redraw_after_id = self._canvas.after(16, self._do_throttled_redraw)
 
@@ -143,7 +139,7 @@ class PillTabBar(tk.Frame):
         pass
 
     def relabel(self, labels: dict) -> None:
-        """labels: {key: new_label}. Called on language switch."""
+        """labels: {key: new_label}。语言切换时调用。"""
         self._tabs = [(k, labels.get(k, lbl)) for k, lbl in self._tabs]
         self._redraw()
 

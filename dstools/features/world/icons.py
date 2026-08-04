@@ -1,6 +1,6 @@
-"""World setting icons using game PNG files.
+"""用游戏自身的 PNG 文件做世界设置图标。
 
-PNG icons are loaded from dstools/icons/world/ at runtime.
+PNG 图标运行时从 dstools/icons/world/ 加载。
 """
 
 from pathlib import Path
@@ -8,21 +8,21 @@ from typing import Optional
 
 from dstools.shared.resource_paths import bundled_resource_dir
 
-# ── Icon directory ─────────────────────────────────────────────────────
+# ── 图标目录 ─────────────────────────────────────────────────────────────
 
 _ICON_DIR = bundled_resource_dir() / "icons" / "world"
 
 
 def get_icon_path(key: str, location: str = "forest") -> Optional[Path]:
-    """Get the PNG icon path for a world setting key using the mapping table.
+    """按映射表查一个世界设置 key 对应的 PNG 图标路径。
 
-    Args:
-        key: The world setting key (e.g. "rifts_enabled").
-        location: "forest" or "cave". Searches that location's tables first
-                  so cave-specific icons win in cave context and vice versa.
+    参数：
+        key: 世界设置 key（例如 "rifts_enabled"）。
+        location: "forest" 或 "cave"。优先查该地点自己的表，洞穴场景下
+                  洞穴专属图标优先，反之亦然。
     """
-    # Prioritise the current location's tables, then fall back to the other
-    # location so shared keys still resolve when only one side defines an icon.
+    # 优先查当前地点自己的表，查不到再退回另一个地点——这样共用的 key
+    # 只要有一边定义了图标就能解析出来。
     if location == "cave":
         order = (CAVE_RULES_ICONS, CAVE_GEN_ICONS, FOREST_RULES_ICONS, FOREST_GEN_ICONS)
     else:
@@ -38,13 +38,13 @@ def get_icon_path(key: str, location: str = "forest") -> Optional[Path]:
 
 
 
-# ── PIL-based icon loading (for raster-composited panels) ─────────────
+# ── 基于 PIL 的图标加载（供栅格合成面板使用）─────────────────────────
 
 _pil_cache: dict[tuple[str, int], object] = {}
 
 
 def get_pil_icon(key: str, size: int = 48, location: str = "forest"):
-    """Get a cached PIL RGBA Image for a world setting key, resized to `size`."""
+    """获取一个世界设置 key 对应的、缓存过的 PIL RGBA 图像，缩放到 `size`。"""
     path = get_icon_path(key, location)
     if not path:
         return None
@@ -62,7 +62,7 @@ def get_pil_icon(key: str, size: int = 48, location: str = "forest"):
         return None
 
 
-# ── KEY → PNG filename mapping ────────────────────────────────────────
+# ── KEY → PNG 文件名 映射 ───────────────────────────────────────────────
 
 # 森林-世界规则
 FOREST_RULES_ICONS = {

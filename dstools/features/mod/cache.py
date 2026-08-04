@@ -1,18 +1,15 @@
-"""Disk cache for resolve_full_modinfo()'s (lua_sandbox.py) results.
+"""resolve_full_modinfo()（lua_sandbox.py）解析结果的磁盘缓存。
 
-Running a mod's whole modinfo.lua through the Lua sandbox (see
-core/modinfo_reader.py's resolve_full_modinfo()) is comparatively slow
-(subprocess spin-up + up to a few seconds' timeout per mod) -- gui/app.py's
-ModManagerTab does this once for every installed mod the first time the
-Mod 管理 tab loads a shard's mods each *session* (see
-ModManagerTab._refresh_mods's docstring), caching results only in an
-in-memory dict (`_full_resolved_cache`) that's gone the moment the process
-exits. Every fresh launch therefore re-ran the same subprocess calls for
-mods whose modinfo.lua hadn't changed at all since the last run -- this
-module adds the missing disk-persisted half of that cache, same
-mtime-invalidation pattern as core/mod_icons.py's icon cache: keyed by
-workshop id, invalidated whenever modinfo.lua's mtime moves past the
-cached copy's own mtime.
+把一个 mod 完整的 modinfo.lua 丢进 Lua 沙箱跑一遍（见
+core/modinfo_reader.py 的 resolve_full_modinfo()）相对慢（每个 mod 都要
+起一次 subprocess，超时上限是几秒级别）——gui/app.py 的 ModManagerTab
+在每个 *会话* 里第一次加载某个 shard 的 mod 列表时会对每个已安装 mod 都
+跑一遍（见 ModManagerTab._refresh_mods 的 docstring），但结果只缓存在
+内存字典 `_full_resolved_cache` 里，进程一退出就没了。于是每次重新启动
+都要为那些 modinfo.lua 压根没变过的 mod 重跑一遍完全相同的 subprocess
+调用——本模块补上缺失的磁盘持久化那一半缓存，失效判断跟 core/mod_icons.py
+的图标缓存是同一套 mtime 模式：按 workshop id 建索引，一旦 modinfo.lua
+的 mtime 比缓存副本自己的 mtime 更新，就判定缓存失效。
 """
 
 import json
@@ -48,11 +45,10 @@ def _cache_path(workshop_id: str) -> Path:
 
 
 def load_cached_result(workshop_id: str, modinfo_path: Path) -> dict[str, Any] | None:
-    """Return a previously-cached resolve_full_modinfo() result dict, or
-    None if there's no cache yet, modinfo.lua has changed since it was
-    written (same staleness check as mod_icons.py's icon cache), or the
-    cache predates the current ModConfigOption field shape (see
-    _CACHE_FORMAT_VERSION above)."""
+    """返回之前缓存过的 resolve_full_modinfo() 结果字典；如果还没有缓存、
+    modinfo.lua 在写入缓存之后又变过（跟 mod_icons.py 图标缓存同一套过期
+    判断）、或者缓存产生于 ModConfigOption 字段形状变化之前（见上面的
+    _CACHE_FORMAT_VERSION），则返回 None。"""
     cache_path = _cache_path(workshop_id)
     if not cache_path.exists() or not modinfo_path.exists():
         return None
@@ -69,18 +65,17 @@ def load_cached_result(workshop_id: str, modinfo_path: Path) -> dict[str, Any] |
         try:
             raw["config_options"] = [ModConfigOption(**o) for o in raw["config_options"]]
         except TypeError:
-            # 版本号明明对上了，字段还是装不进去——理论上不应该发生，但
-            # 防御性地照旧当成没有缓存处理，不让一个装不进当前 dataclass
-            # 形状的缓存文件把这个 mod 的解析结果搞坏。
+            # 版本号对上了但字段仍装不进去，理论上不该发生，防御性地当作
+            # 无缓存处理，避免一份装不进当前 dataclass 形状的缓存文件把
+            # 这个 mod 的解析结果搞坏。
             return None
     return raw
 
 
 def save_result(workshop_id: str, result: dict[str, Any]) -> None:
-    """Persist a resolve_full_modinfo() result to disk. Best-effort --
-    a write failure (disk full, permissions, ...) just means this mod's
-    sandbox pass gets redone next launch, not a hard error worth
-    surfacing to the user for what's purely a performance cache."""
+    """把 resolve_full_modinfo() 的结果落盘，尽力而为——写入失败（磁盘满、
+    权限问题等）顶多导致这个 mod 下次启动时重新走一遍沙箱，不算需要
+    抛给用户的硬错误，毕竟这只是个性能缓存。"""
     if not result:
         return
     try:

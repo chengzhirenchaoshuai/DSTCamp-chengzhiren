@@ -1,16 +1,16 @@
-"""Internationalization (i18n) module for dstools.
+"""dstools 的国际化 (i18n) 模块。
 
-Provides a singleton I18n manager with Chinese (default) and English support.
+提供一个单例 I18n 管理器，支持中文（默认）和英文。
 """
 
 from dstools.i18n.strings import STRINGS
 
 
 class I18n:
-    """Singleton language manager for GUI text internationalization."""
+    """GUI 文案国际化的单例语言管理器。"""
 
     _instance = None
-    _lang = "zh"  # Default to Chinese
+    _lang = "zh"  # 默认中文
 
     def __new__(cls):
         if cls._instance is None:
@@ -19,28 +19,27 @@ class I18n:
 
     @property
     def lang(self) -> str:
-        """Current language code ('zh' or 'en')."""
+        """当前语言代码（'zh' 或 'en'）。"""
         return self._lang
 
     def set_lang(self, lang: str):
-        """Set the active language.
+        """切换当前语言。
 
         Args:
-            lang: Language code ('zh' or 'en').
+            lang: 语言代码（'zh' 或 'en'）。
         """
         if lang in STRINGS:
             self._lang = lang
 
     def t(self, key: str, **kwargs) -> str:
-        """Get a translated string by key.
+        """按 key 取一条翻译后的文案。
 
         Args:
-            key: String key from the STRINGS table.
-            **kwargs: Format arguments for the string.
+            key: STRINGS 表里的字符串 key。
+            **kwargs: 用于 .format() 的格式化参数。
 
         Returns:
-            Translated and formatted string. Falls back to the key itself
-            if not found in the current language table.
+            翻译并格式化后的文本；当前语言表里找不到该 key 时，原样返回 key 本身兜底。
         """
         text = STRINGS.get(self._lang, STRINGS["zh"]).get(key, key)
         if kwargs:
@@ -51,14 +50,14 @@ class I18n:
         return text
 
 
-# Module-level singleton
+# 模块级单例
 _i18n = I18n()
 
 
 def t(key: str, **kwargs) -> str:
-    """Convenience function for getting translated strings.
+    """获取翻译文案的便捷函数。
 
-    Usage:
+    用法：
         from dstools.i18n import t
         print(t("app.title"))  # -> "DSTCamp · 本地服务器管理"
     """
@@ -66,14 +65,14 @@ def t(key: str, **kwargs) -> str:
 
 
 def set_lang(lang: str):
-    """Set the current language globally.
+    """全局切换当前语言。
 
     Args:
-        lang: 'zh' for Chinese, 'en' for English.
+        lang: 'zh' 表示中文，'en' 表示英文。
     """
     _i18n.set_lang(lang)
 
 
 def get_lang() -> str:
-    """Get the current language code."""
+    """获取当前语言代码。"""
     return _i18n.lang

@@ -1,4 +1,4 @@
-"""GUI for DST save tool. Tabs: Saves | Mods | World | Config | Env."""
+"""饥荒存档管理工具的 GUI。页签：存档信息 | Mod | 世界 | 配置 | 环境。"""
 
 import sys, threading, tkinter as tk, weakref
 from pathlib import Path
@@ -52,10 +52,9 @@ class DSToolsApp:
         self.env = discover_environment(klei_path)
         self._current_shard: Shard | None = None
 
-        # Must happen before tk.Tk() is created -- otherwise Windows treats
-        # the process as DPI-unaware and bitmap-stretches the whole window
-        # to the display's scale factor, which looks blurry everywhere
-        # (not just PIL-rendered panels).
+        # 必须在 tk.Tk() 创建之前调用——否则 Windows 会把这个进程当成
+        # "DPI 不感知"，整个窗口按显示器缩放比例做位图拉伸，画面全局发
+        # 虚（不只是 PIL 渲染的面板）。
         from dstools.shared.gui.win_aspect_lock import set_process_dpi_aware
         set_process_dpi_aware()
 
@@ -136,10 +135,10 @@ class DSToolsApp:
         self._titlebar.pack(fill=tk.X, side=tk.TOP)
         self._build_menu()
 
-        # Top-level nav is a custom pill tab bar, not a ttk.Notebook -- the
-        # three inner Notebooks (SaveBrowserTab.sub_notebook,
-        # WorldSettingsTab._sub_nb, ClusterConfigTab._cc_notebook) keep
-        # their native ttk shape and are just re-colored by apply_theme().
+        # 顶层导航是自绘的胶囊页签条，不是 ttk.Notebook——内部三个
+        # Notebook（SaveBrowserTab.sub_notebook、WorldSettingsTab._sub_nb、
+        # ClusterConfigTab._cc_notebook）仍保持原生 ttk 外观，只是被
+        # apply_theme() 重新上色。
         self._tab_keys = ["local", "mods", "world", "server", "saves", "sakura"]
         self._pill_bar = PillTabBar(
             self.root,
@@ -288,12 +287,10 @@ class DSToolsApp:
         self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
         self._populate_global_cluster_combo(preserve=True)
 
-        # SaveBrowserTab folds in what used to be a separate "环境信息"
-        # tab as a second sub-tab (存档概览/会话详情) -- both were
-        # fundamentally "show information about my saves", just sliced
-        # differently (cluster-by-cluster overview vs. one session's
-        # detail), so keeping them apart just meant clicking back and
-        # forth between two tabs for related information. 会话详情现在
+        # SaveBrowserTab 把原来独立的"环境信息"页签并成了第二个子页签
+        # （存档概览/会话详情）——两者本质上都是"展示我的存档信息"，只是
+        # 切分维度不同（按存档整体概览 vs 按单次会话详情），分开只会让用
+        # 户在两个页签之间来回点找关联信息。会话详情现在
         # 跟其它 4 个页签一样，靠顶部全局存档选择器驱动（不再自己维护一
         # 份服务器/本地各一套的下拉框），"存档信息"因此可以完全并入下面
         # 通用的 _cluster_tab_map/_stale_cluster_tabs 懒加载机制。
@@ -1277,12 +1274,11 @@ class DSToolsApp:
             if key != self._current_tab_key:
                 self._stale_cluster_tabs.add(key)
                 continue
-            # "刷新全部" (F5 / menu / the initial call at startup) should
-            # behave exactly like first launching the app -- including
-            # forcing ModManagerTab's full whole-file Lua sandbox pass
-            # again, not just the fast static rescan a plain tab.refresh()
-            # does. refresh_full() is opt-in (only ModManagerTab defines
-            # it) so every other tab keeps using its normal refresh().
+            # "刷新全部"（F5/菜单/启动时的首次调用）应该跟应用刚启动时
+            # 表现完全一致——包括强制 ModManagerTab 重新跑一遍全文件 Lua
+            # 沙箱扫描，而不只是普通 tab.refresh() 那种快速的静态重扫。
+            # refresh_full() 是可选接口（只有 ModManagerTab 定义了它），
+            # 其它页签仍然只用各自普通的 refresh()。
             refresh_full = getattr(tab, "refresh_full", None)
             if refresh_full:
                 refresh_full()

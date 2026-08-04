@@ -1,11 +1,9 @@
-"""Renders the mod list to a single PIL image, styled like the in-game
-"Mods" screen.
+"""把 mod 列表渲染成单张 PIL 图片，样式仿照游戏内"Mods"界面。
 
-Same pixel-canvas + hit-region approach as world_render.py (see
-image_scroll.py for the rationale): ttk.Treeview can't embed a real icon
-+ multi-line text + switch + button + link per row, so the whole list is
-drawn once as pixels, with clickable rectangles returned alongside for
-ImageScrollPanel to hit-test.
+跟 world_render.py 同一套像素画布+点击区域的做法（原因见 image_scroll.py）：
+ttk.Treeview 没法在一行里同时嵌入真实图标+多行文字+开关+按钮+链接，所以
+整个列表一次性画成像素图，同时返回一批可点击矩形供 ImageScrollPanel 做
+命中测试。
 """
 
 from PIL import Image, ImageDraw
@@ -15,12 +13,11 @@ from dstools.shared.gui import theme
 from dstools.shared.gui.fonts import draw_mixed_text, get_font, measure_mixed
 from dstools.i18n import t
 
-# Real in-game default mod-icon background (images/ui.tex's "portrait_bg.tex"
-# -- confirmed against the actual game script, scripts/widgets/modstab.lua:
-# `self.detailimage:SetTexture("images/ui.xml", "portrait_bg.tex")` is
-# exactly what the game itself falls back to when a mod has no modicon.tex),
-# extracted via ktech. Used instead of a plain flat placeholder rectangle
-# for mods with no icon.
+# 游戏内真实的 mod 图标默认背景（images/ui.tex 里的 "portrait_bg.tex"——
+# 对照过游戏脚本 scripts/widgets/modstab.lua 确认：
+# `self.detailimage:SetTexture("images/ui.xml", "portrait_bg.tex")` 正是
+# 游戏自己在 mod 没有 modicon.tex 时的回退取值），用 ktech 提取出来。
+# 没图标的 mod 用它而不是纯色占位矩形。
 _DEFAULT_ICON_PATH = bundled_resource_dir() / "icons" / "ui" / "mod_icon_default.png"
 _default_icon_cache: dict[int, Image.Image] = {}
 
@@ -40,8 +37,8 @@ BASE_REF_WIDTH = 1300
 REF_WIDTH = BASE_REF_WIDTH
 
 PAD_X = 14
-# Icon size matches world_render.py's ICON_SIZE (110) so mod rows read at
-# the same visual scale as the world-settings panels.
+# 图标尺寸跟 world_render.py 的 ICON_SIZE（110）对齐，让 mod 行跟世界
+# 设置面板视觉比例一致。
 ICON_SIZE = 108
 ROW_GAP = 16
 ROW_H = ICON_SIZE + ROW_GAP
@@ -59,41 +56,39 @@ _LINK_DISABLED = "#bdbdbd"
 
 def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=None,
                      ref_width=None, icon_thumb_cache=None):
-    """Render the mod list to a PIL image.
+    """把 mod 列表渲染成一张 PIL 图片。
 
     Args:
-        rows: list of dicts, each with keys:
-            workshop_id, name, enabled (bool), has_config (bool),
-            has_link (bool), and optionally is_local (bool)/locked (bool)
-            -- locked forces the switch to a grayed-out, non-clickable
-            "on" look (currently only the LuaJIT companion mod row while
-            the patch is active) instead of the normal on/off colors.
-        icon_images: dict workshop_id -> PIL.Image (RGBA) or missing/None
-        on_toggle: callable(workshop_id) for the switch column (not wired
-            up for a locked row regardless of this being set)
-        on_config: callable(workshop_id) for the config button (only
-            wired up when has_config is True)
-        on_link: callable(workshop_id) for the workshop link (only wired
-            up when has_link is True)
-        ref_width: exact pixel width to render at (defaults to
-            BASE_REF_WIDTH); all sizes scale proportionally.
-        icon_thumb_cache: optional dict[(workshop_id, icon_size) ->
-            PIL.Image], caller-owned, memoizing the per-row LANCZOS resize
-            below -- real measurement: with 100 mods all having icons,
-            re-resizing every icon on every call costs ~100ms on its own
-            (half of the ~200ms full render). Caller must clear/replace
-            this dict whenever icon_images itself changes (see
-            ModManagerTab._icon_thumb_cache) -- keyed by identity of
-            workshop_id + target size, not by the source image, so a
-            stale icon_images entry would otherwise keep serving an old
-            thumbnail forever.
+        rows: 字典列表，每个字典含以下键：
+            workshop_id、name、enabled（bool）、has_config（bool）、
+            has_link（bool），以及可选的 is_local（bool）/locked（bool）
+            ——locked 会强制开关显示成灰色、不可点击的"开"状态（目前只有
+            LuaJIT 补丁生效期间的配套 mod 行会用到），而不是正常的开/关
+            颜色。
+        icon_images: dict，workshop_id -> PIL.Image（RGBA），缺失时为 None
+        on_toggle: 开关列的回调 callable(workshop_id)（locked 的行无论
+            这个参数是否传入都不会接上）
+        on_config: 配置按钮的回调 callable(workshop_id)（只有
+            has_config 为 True 时才会接上）
+        on_link: workshop 链接的回调 callable(workshop_id)（只有
+            has_link 为 True 时才会接上）
+        ref_width: 渲染的精确像素宽度（默认 BASE_REF_WIDTH）；所有尺寸
+            按比例缩放。
+        icon_thumb_cache: 可选的 dict[(workshop_id, icon_size) ->
+            PIL.Image]，由调用方持有，用于缓存下面按行做的 LANCZOS 缩放
+            结果——实测：100 个 mod 都有图标时，每次调用都重新缩放全部
+            图标本身就要耗时约 100ms（占整次渲染约 200ms 耗时的一半）。
+            调用方必须在 icon_images 本身变化时清空/替换这个字典（见
+            ModManagerTab._icon_thumb_cache）——缓存键是 workshop_id +
+            目标尺寸的组合，不是按源图片本身，否则一个过期的
+            icon_images 条目会一直提供旧缩略图。
     """
     rw = int(ref_width) if ref_width else BASE_REF_WIDTH
     s = rw / BASE_REF_WIDTH
 
     pad_x = PAD_X * s
     row_h = ROW_H * s
-    row_gap = ROW_GAP  # fixed, not scaled -- constant vertical rhythm
+    row_gap = ROW_GAP  # 固定值，不随比例缩放——保持恒定的行间垂直节奏
     icon_size = max(20, round(ICON_SIZE * s))
     switch_w, switch_h = SWITCH_W * s, SWITCH_H * s
     cfg_w, cfg_h = CFG_W * s, CFG_H * s
@@ -120,7 +115,7 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
         cy = y + row_h / 2
         x = pad_x + 10 * s
 
-        # ── Column 1: icon ──────────────────────────────────────────
+        # ── 第 1 列：图标 ────────────────────────────────────────────
         icon = icon_images.get(wid)
         icon_y = y + (row_h - icon_size) / 2
         if icon:
@@ -140,14 +135,14 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
                                fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
         x += icon_size + 14 * s
 
-        # ── Column 5 (reserved from the right first, so column 2's
-        # text has a fixed width regardless of name length) ─────────
+        # ── 从右往左先预留第 5 列，这样第 2 列文字宽度固定，不受名字
+        # 长度影响 ───────────────────────────────────────────────────
         link_x = rw - pad_x - link_w
         cfg_x = link_x - col_gap - cfg_w
         switch_x = cfg_x - col_gap - switch_w
         name_col_w = max(30, switch_x - col_gap - x)
 
-        # ── Column 2: name (top) + workshop id (bottom) ─────────────
+        # ── 第 2 列：名字（上）+ workshop id（下）────────────────────
         # mod 名是不受信任的第三方文本，可能带 emoji（微软雅黑等 CJK 字体
         # 没有对应字形，直接画会得到 .notdef 方块）——用
         # draw_mixed_text()/measure_mixed() 而不是 draw.text()/
@@ -158,10 +153,9 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
         draw_mixed_text(draw, x, y + row_h * 0.34, name_text, name_size, theme.TEXT, anchor="lm")
         draw.text((x, y + row_h * 0.68), wid, font=id_font, fill=theme.TEXT_MUTED, anchor="lm")
 
-        # ── Column 3: on/off switch (client_only/"本地" mods have no
-        # meaningful enabled state -- see ModManagerTab.show_local_var --
-        # so this column shows a neutral badge instead, and isn't wired
-        # to on_toggle at all) ───────────────────────────────────────
+        # ── 第 3 列：开/关开关（client_only/"本地" mod 没有实质意义上的
+        # enabled 状态——见 ModManagerTab.show_local_var——这一列改画一个
+        # 中性徽章，完全不接 on_toggle）───────────────────────────────
         if row.get("is_local"):
             _draw_local_badge(draw, switch_x, cy, switch_w, switch_h, id_font)
         else:
@@ -179,14 +173,14 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
                 hit_regions.append((switch_x, y, switch_x + switch_w, y + row_h,
                                     _mk_cb(on_toggle, wid)))
 
-        # ── Column 4: config button ──────────────────────────────────
+        # ── 第 4 列：配置按钮 ────────────────────────────────────────
         has_cfg = row.get("has_config", False)
         _draw_pill(draw, cfg_x, cy - cfg_h / 2, cfg_w, cfg_h, t("mod.config_btn"), btn_font,
                   enabled=has_cfg)
         if has_cfg and on_config:
             hit_regions.append((cfg_x, y, cfg_x + cfg_w, y + row_h, _mk_cb(on_config, wid)))
 
-        # ── Column 5: workshop link ──────────────────────────────────
+        # ── 第 5 列：workshop 链接 ───────────────────────────────────
         has_link = row.get("has_link", False)
         link_color = theme.ACCENT if has_link else _LINK_DISABLED
         link_text = t("mod.workshop_link_btn") if has_link else t("mod.no_workshop_link")

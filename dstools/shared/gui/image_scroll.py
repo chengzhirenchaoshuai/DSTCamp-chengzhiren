@@ -1,18 +1,16 @@
-"""Image-based scrollable panel with buttery-smooth resize scaling.
+"""基于图片的可滚动面板，resize 缩放非常流畅。
 
-Native ttk widgets each register as a real OS window/control -- resizing
-a panel with hundreds of them means destroying and recreating hundreds
-of controls, which is slow and produces visible lag/flicker.
+原生 ttk 控件每一个都会注册成真正的操作系统窗口/控件——一个面板里有几
+百个这种控件时，resize 就要连带销毁重建几百个控件，很慢，会有明显的卡
+顿/闪烁。
 
-This panel takes the opposite approach: content is rendered *once* to a
-single tall PIL image (icons + text + buttons drawn as pixels). Resizing
-then becomes a pure raster crop+scale operation -- the same trick an
-image viewer uses -- so dragging the window resizes this panel exactly
-like dragging a picture: smooth, with zero relayout cost.
+这个面板反过来做：内容只渲染*一次*成一整张高图（图标/文字/按钮全部画
+成像素）。之后 resize 就变成纯粹的位图裁剪+缩放操作——跟图片查看器的手
+法一样——拖拽窗口缩放这个面板就跟拖拽一张图片一样：流畅，且零重新布局
+开销。
 
-Interactivity (the <</>> value buttons) is handled by keeping a list of
-clickable rectangles in the same reference coordinate space as the
-master image; clicks are mapped back into that space before hit-testing.
+交互（<</>> 取值按钮）靠维护一份跟主图同一套参照坐标系的可点击矩形列
+表；点击时先把坐标换算回这套参照坐标系再做命中测试。
 """
 
 import tkinter as tk
@@ -21,12 +19,12 @@ from PIL import Image, ImageTk
 
 
 class ImageScrollPanel:
-    """A Canvas-backed panel that displays a tall PIL image, scaled to fit
-    the canvas width, with support for vertical scrolling and click regions.
+    """底层是一个 Canvas，显示一张按 canvas 宽度缩放的高图，支持纵向滚
+    动和可点击区域。
     """
 
-    # How long (ms) to wait after the last resize event before triggering
-    # a native-resolution re-render (see `on_settle`) to eliminate blur.
+    # 最后一次 resize 事件之后要等多久（ms）才触发一次原生分辨率重渲染
+    # （见 `on_settle`），用来消除拉伸导致的模糊。
     SETTLE_DELAY_MS = 150
 
     def __init__(self, parent, ref_width: int = 1400, bg: str = "#ffffff"):
@@ -46,20 +44,20 @@ class ImageScrollPanel:
         # 一段提示文字），实际展示成什么由 owner 通过 on_hover_change 决
         # 定，这里只负责坐标换算和"变了才通知"。
         self.hover_regions: list[tuple[int, int, int, int, object]] = []
-        self.on_hover_change = None  # callable(payload | None, x_root, y_root)
+        self.on_hover_change = None  # 可调用对象：callable(payload | None, x_root, y_root)
         self._last_hover_payload = None
-        self.scroll_y = 0.0  # in reference (unscaled) pixel coords
+        self.scroll_y = 0.0  # 用参照（未缩放）像素坐标表示
 
         self._photo = None
         self._img_id = None
         self._scale = 1.0
         self._settle_after_id = None
-        self._render_after_id = None  # throttles _render() during a live drag-resize
-        self._last_settled_width = None  # dedupe: skip a redundant on_settle at an unchanged width
+        self._render_after_id = None  # 拖拽缩放期间节流 _render() 调用
+        self._last_settled_width = None  # 去重：宽度没变就跳过重复的 on_settle 调用
 
-        # Set by the owner: callable(width_px, height_px) invoked once resizing
-        # has settled, so content can be re-rendered natively at that size
-        # (crisp, since it then displays at scale == 1 with no raster resize).
+        # 由调用方设置：callable(width_px, height_px)，resize 停顿之后调
+        # 用一次，让内容按那个尺寸原生重渲染一次（scale == 1，不用位图
+        # 缩放，画面清晰）。
         self.on_settle = None
 
         self.canvas.bind("<Configure>", self._on_configure)
@@ -71,26 +69,24 @@ class ImageScrollPanel:
         self.canvas.bind("<Leave>", lambda e: self._update_hover(None, 0, 0))
 
     def current_width(self, default: int) -> int:
-        """Real on-screen canvas width if already known (>4px), else `default`.
+        """已知的真实屏幕 canvas 宽度（>4px）就返回它，否则返回 `default`。
 
-        Owners should pass this as `ref_width` for their very first render
-        instead of leaving it unset -- an unset ref_width falls back to a
-        guessed constant (e.g. mod_render.REF_WIDTH) that essentially never
-        matches the real canvas width, so that first image gets raster-
-        scaled in `_render()` and looks blurry until a real resize event
-        eventually triggers `on_settle` and corrects it.
+        调用方第一次渲染时应该把这个值传给 `ref_width`，不要留空——留空
+        会退回一个猜测常量（比如 mod_render.REF_WIDTH），基本不会跟真实
+        canvas 宽度一致，导致第一张图在 `_render()` 里被位图缩放、看起
+        来模糊，要等真的触发一次 resize 事件走到 `on_settle` 才会被纠
+        正。
         """
         w = self.canvas.winfo_width()
         return w if w > 4 else default
 
     def set_image(self, img: Image.Image, hit_regions: list, keep_scroll: bool = False,
                   hover_regions: list | None = None):
-        """Replace the master content image and its clickable regions.
+        """替换主内容图和它的可点击区域。
 
-        keep_scroll: preserve the current scroll position. If the new image
-        has a different width than the old one (e.g. a settle re-render at
-        native resolution), scroll_y is rescaled proportionally so the same
-        content stays in view instead of jumping.
+        keep_scroll：保留当前滚动位置。如果新图跟旧图宽度不一样（比如
+        停顿后按原生分辨率重渲染），scroll_y 会按比例重新换算，保证看到
+        的还是同一块内容，不会跳动。
         """
         old_width = self.ref_width
         self.master_img = img
@@ -112,13 +108,11 @@ class ImageScrollPanel:
             self._settle_after_id = self.canvas.after(self.SETTLE_DELAY_MS, self._fire_settle)
 
     def _request_render(self):
-        """Coalesce bursts of rapid events (a live drag-resize, or dragging
-        the scrollbar thumb) into at most one real `_render()` per ~16ms
-        (roughly 60fps) instead of one per raw event -- a drag can fire
-        far more often than the screen can actually repaint, and calling
-        the PIL crop+resize+PhotoImage pipeline on every single one of them
-        both janks the drag and can show torn/ghosted frames when a new
-        PhotoImage lands before Tk has finished painting the previous one.
+        """把密集触发的事件（真实拖拽缩放、拖动滚动条滑块）合并成最多每
+        ~16ms（约 60fps）真正调用一次 `_render()`，而不是每个原始事件都
+        调用一次——拖拽触发事件的频率远超屏幕实际重绘能力，每个事件都跑
+        一遍 PIL 裁剪+缩放+PhotoImage 流程既会让拖拽卡顿，还可能在新
+        PhotoImage 落地、Tk 还没画完上一张时出现撕裂/重影。
         """
         if self._render_after_id is None:
             self._render_after_id = self.canvas.after(16, self._do_throttled_render)
@@ -207,8 +201,8 @@ class ImageScrollPanel:
                 crop = pad
 
         if crop.size == (cw, ch):
-            # Already native resolution (post-settle re-render) -- no raster
-            # scaling needed, so this is both faster and pixel-perfect crisp.
+            # 已经是原生分辨率（停顿后重渲染的结果）——不需要再做位图缩
+            # 放，既更快、像素也更清晰。
             resized = crop
         else:
             resized = crop.resize((cw, ch), Image.BILINEAR)

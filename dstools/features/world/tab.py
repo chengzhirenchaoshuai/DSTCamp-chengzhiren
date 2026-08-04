@@ -20,12 +20,11 @@ _SUB_FONT_SIZE = 10
 
 
 class WorldSettingsTab:
-    """World rules/generation viewer.
+    """世界规则/生成查看器。
 
-    Content is rendered once to a PIL image (see render.py) and
-    displayed via ImageScrollPanel, so resizing the window scales this
-    tab exactly like scaling a picture -- smooth, with no per-widget
-    relayout cost. See image_scroll.py for the rationale.
+    内容一次性渲染成一张 PIL 图片（见 render.py），通过 ImageScrollPanel
+    显示，所以缩放窗口就像缩放一张图片一样平滑，没有逐控件重新布局的
+    开销。原因详见 image_scroll.py。
     """
 
     def __init__(self, parent, app):
@@ -47,7 +46,7 @@ class WorldSettingsTab:
         # 本地存档选中时显示的醒目提示——本地存档的世界设置不保证编辑
         # 生效，这里只读查看，默认不 show()。
         self._wl_local_banner = ReadonlyBanner(self.frame, text=t("world.local_view_only_banner"))
-        # Preset name/id/location + description -- BgFrame（不是
+        # 预设名/id/地点 + 描述——用 BgFrame（不是
         # tk.Frame）+ create_text（不是 tk.Label）好透出背景图；
         # create_text 原生支持 width= 自动换行，照抄原来
         # "<Configure> 时按容器宽度重算 wraplength" 的思路，只是从
@@ -198,8 +197,7 @@ class WorldSettingsTab:
                 loc = preset.location if hasattr(preset, 'location') and preset.location else "forest"
                 loc_label = t("world.location_forest") if loc == "forest" else t("world.location_cave")
                 self._wl_title_var.set(f"{preset.name} ({preset.preset_id})   {loc_label}")
-                # No longer truncated to 80 characters -- the card wraps
-                # the full description instead of clipping it.
+                # 不再截断到 80 个字符——卡片会把完整描述换行显示，而不是裁掉。
                 self._wl_desc_var.set(preset.description or "")
 
                 from dstools.features.world.categories import (
@@ -218,7 +216,7 @@ class WorldSettingsTab:
                         continue
                     (rules_by_cat if is_rule else gen_by_cat).setdefault(cat, []).append(ov)
 
-                # Fill in rule keys not in the save with defaults.
+                # 把存档里没有的规则 key 用默认值补上。
                 for wkey, (wcat, wname) in rules_dict.items():
                     if wkey in seen_keys:
                         continue
@@ -228,9 +226,8 @@ class WorldSettingsTab:
                         'key': wkey, 'name': localized_name(wname), 'value': 'default'})()
                     rules_by_cat.setdefault(wcat, []).append(filler)
 
-                # Fill in generation keys not in the save with defaults, same as
-                # rules above -- skip the noisy per-resource/creature-spawner
-                # categories, each has dozens of entries almost never touched.
+                # 把存档里没有的生成 key 用默认值补上，跟上面规则同理——跳过
+                # 资源/生物刷新点这类噪音分类，每个都有几十条基本没人会改的条目。
                 for wkey, (wcat, wname) in gen_dict.items():
                     if wkey in seen_keys:
                         continue
@@ -260,7 +257,7 @@ class WorldSettingsTab:
                 break
 
     def _render_rules(self, ref_width=None):
-        """(Re)render the rules panel image, preserving scroll position."""
+        """（重新）渲染规则面板图片，保留滚动位置。"""
         from dstools.features.world.categories import CATEGORY_COLORS
         from dstools.features.world.render import REF_WIDTH, render_world_panel
         if not self._rules_cats:
@@ -280,7 +277,7 @@ class WorldSettingsTab:
         self._rules_panel.set_image(img, hits, keep_scroll=True)
 
     def _render_gen(self, ref_width=None):
-        """(Re)render the read-only generation panel image."""
+        """（重新）渲染只读的生成面板图片。"""
         from dstools.features.world.categories import CATEGORY_COLORS
         from dstools.features.world.render import REF_WIDTH, render_world_panel
         if not self._gen_cats:
@@ -309,19 +306,17 @@ class WorldSettingsTab:
                 values = get_value_set(key)
                 try: idx = values.index(ov.value)
                 except ValueError: idx = 0
-                # Clamp instead of wrap, matching the in-game behavior: at
-                # either end of the scale, only the other arrow does anything.
+                # 钳制而不是绕回去，跟游戏内行为一致：取值到了某一端时，
+                # 只有另一侧的箭头能起作用。
                 new_idx = max(0, min(len(values) - 1, idx + delta))
                 ov.value = values[new_idx]
                 break
         if not self._dirty:
             self._dirty = True; self._wl_bs.configure(state=tk.NORMAL)
-        # Brief "pressed" highlight on the clicked button, like a game UI's
-        # click feedback -- rendered for one frame then cleared. Was 140ms,
-        # long enough for the code path to exist but too quick combined
-        # with the fairly subtle normal/pressed shading difference alone to
-        # actually register as "something happened" -- see render.py's
-        # _draw_button for the accompanying size-bump that now goes with it.
+        # 被点击的按钮短暂高亮成"按下"状态，模仿游戏 UI 的点击反馈——画一
+        # 帧就清除。原来是 140ms，代码路径够用但太短，配合本来就不明显的
+        # 正常/按下明暗差异，感觉不出"点到了"——现在配合 render.py 的
+        # _draw_button 里那个放大效果一起用，见那边的说明。
         self._flash_key = (key, delta)
         if self._flash_after_id:
             self.frame.after_cancel(self._flash_after_id)

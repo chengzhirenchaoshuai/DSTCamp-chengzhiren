@@ -1,4 +1,4 @@
-"""Auto-discovery of DST data directories, clusters, shards, and saves."""
+"""自动发现 DST 数据目录、cluster、世界（shard）和存档。"""
 
 from pathlib import Path
 
@@ -42,35 +42,35 @@ def _find_klei_root_impl(folder_name: str) -> Path | None:
 
 
 def _is_cluster_dir(path: Path) -> bool:
-    """Check if a directory is a DST cluster (contains cluster.ini)."""
+    """判断是不是一个 DST cluster 目录（含 cluster.ini）。"""
     return path.is_dir() and (path / "cluster.ini").exists()
 
 
 def _is_shard_dir(path: Path) -> bool:
-    """Check if a directory is a DST shard (contains server.ini)."""
+    """判断是不是一个 DST 世界（shard）目录（含 server.ini）。"""
     return path.is_dir() and (path / "server.ini").exists()
 
 
 def _is_user_dir(path: Path) -> bool:
-    """Check if a directory is a Steam/Rail user ID directory (all digits)."""
+    """判断是不是 Steam/Rail 的用户 ID 目录（纯数字命名）。"""
     return path.is_dir() and path.name.isdigit()
 
 
 def find_klei_root() -> Path | None:
-    """Auto-discover the Steam 版 Klei DoNotStarveTogether root directory."""
+    """自动发现 Steam 版 Klei DoNotStarveTogether 根目录。"""
     return _find_klei_root_impl(_STEAM_KLEI_FOLDER)
 
 
 def find_wegame_klei_root() -> Path | None:
-    """Auto-discover the WeGame(Rail) 版 Klei DoNotStarveTogetherRail root
-    directory——真机验证过目录名固定是这个（跟 Steam 版并列存在于同一个
-    ..\\Klei\\ 目录下），内部 Cluster/Master/Caves/cluster_token.txt 等结构
-    跟 Steam 版字节级一致。"""
+    """自动发现 WeGame(Rail) 版 Klei DoNotStarveTogetherRail 根目录——真机
+    验证过目录名固定是这个（跟 Steam 版并列存在于同一个上级 Klei 目录
+    下），内部 Cluster/Master/Caves/cluster_token.txt 等结构跟 Steam 版
+    字节级一致。"""
     return _find_klei_root_impl(_WEGAME_KLEI_FOLDER)
 
 
 def find_user_dir(klei_root: Path) -> Path | None:
-    """Find the Steam user directory under the Klei root."""
+    """在 Klei 根目录下找 Steam 用户目录。"""
     if not klei_root.exists():
         return None
     for entry in klei_root.iterdir():
@@ -80,7 +80,7 @@ def find_user_dir(klei_root: Path) -> Path | None:
 
 
 def list_clusters(klei_root: Path) -> list[Path]:
-    """List all cluster directories under a given root."""
+    """列出给定根目录下的全部 cluster 目录。"""
     clusters = []
     if not klei_root.exists():
         return clusters
@@ -91,7 +91,7 @@ def list_clusters(klei_root: Path) -> list[Path]:
 
 
 def list_shards(cluster_path: Path) -> list[Path]:
-    """List all shard directories under a cluster."""
+    """列出一个 cluster 下的全部世界（shard）目录。"""
     shards = []
     if not cluster_path.exists():
         return shards
@@ -101,14 +101,14 @@ def list_shards(cluster_path: Path) -> list[Path]:
     return shards
 
 
-# ── Environment Discovery ──────────────────────────────────────────────
+# ── 环境发现 ────────────────────────────────────────────────────────────
 
 def discover_environment(klei_root: Path | None = None,
                           wegame_klei_root: Path | None = None) -> DSTEnvironment:
-    """Discover the full DST environment, Steam 版和 WeGame 版一起扫描。
+    """发现完整的 DST 环境，Steam 版和 WeGame 版一起扫描。
 
-    - Clusters at a Klei root (e.g., Cluster_3) → SaveSource.SERVER
-    - Clusters under the user ID dir (e.g., 280257116/Cluster_1) → SaveSource.LOCAL
+    - 根目录下的 cluster（如 Cluster_3）→ SaveSource.SERVER
+    - 用户 ID 目录下的 cluster（如 280257116/Cluster_1）→ SaveSource.LOCAL
     - 两个平台的根目录是完全独立的两棵目录树，各自按上面规则扫一遍，
       结果合并进同一个 clusters 列表，用 Cluster.platform 区分。
     """
@@ -142,20 +142,18 @@ def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> 
             # 目前没有哪里用到 WeGame 版的，不额外存。
             env.wegame_user_id = user_dir.name
 
-    # Clusters at root → SERVER
+    # 根目录下的 cluster → SERVER
     for cluster_path in list_clusters(root):
         cluster = _build_cluster(cluster_path, SaveSource.SERVER, platform)
         env.clusters.append(cluster)
 
-    # Clusters under user dir → LOCAL. Not deduped against the SERVER
-    # names above: server clusters (root) and local clusters (under the
-    # user id dir) are two entirely separate directory trees, so a
-    # same-named cluster in each (e.g. both called "Cluster_1" -- easy to
-    # end up with after copying/renaming save folders) are genuinely two
-    # different clusters, not the same one seen twice. An earlier
-    # name-based "seen_names" guard here treated them as duplicates and
-    # silently dropped every local cluster whose name happened to match
-    # a server cluster's name.
+    # 用户目录下的 cluster → LOCAL。不跟上面 SERVER 的名字去重：服务器
+    # cluster（根目录下）和本地 cluster（用户 ID 目录下）是两棵完全独立
+    # 的目录树，两边各自出现一个同名 cluster（比如都叫 "Cluster_1"，复
+    # 制/改名存档文件夹后很容易撞出这种情况）是真实存在的两个不同 cluster，
+    # 不是同一个被扫到了两次。之前按名字做 seen_names 去重会把它们当
+    # 成重复项，悄悄丢掉每一个名字恰好跟某个服务器 cluster 撞了的本地
+    # cluster。
     if user_dir:
         for cluster_path in list_clusters(user_dir):
             cluster = _build_cluster(cluster_path, SaveSource.LOCAL, platform)
@@ -164,7 +162,7 @@ def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> 
 
 def _build_cluster(cluster_path: Path, source: SaveSource,
                     platform: Platform = Platform.STEAM) -> Cluster:
-    """Build a Cluster object from a cluster directory."""
+    """从一个 cluster 目录构造 Cluster 对象。"""
     cluster = Cluster(name=cluster_path.name, path=cluster_path, source=source, platform=platform)
 
     # modoverrides.lua
@@ -172,24 +170,23 @@ def _build_cluster(cluster_path: Path, source: SaveSource,
     if mod_path.exists():
         cluster.mod_overrides_path = mod_path
 
-    # adminlist.txt (typically only for SERVER clusters)
+    # adminlist.txt（通常只有 SERVER cluster 才有）
     admin_path = cluster_path / "adminlist.txt"
     if admin_path.exists():
         cluster.adminlist_path = admin_path
 
-    # blocklist.txt (黑名单, typically only for SERVER clusters) -- same
-    # one-Klei-ID-per-line format as adminlist.txt, just enforced as a
-    # ban instead of a grant.
+    # blocklist.txt（黑名单，通常只有 SERVER cluster 才有）——跟 adminlist.txt
+    # 一样是每行一个 Klei ID 的格式，只是语义是拉黑而不是授权。
     block_path = cluster_path / "blocklist.txt"
     if block_path.exists():
         cluster.blocklist_path = block_path
 
-    # cluster_token.txt (typically only for SERVER clusters)
+    # cluster_token.txt（通常只有 SERVER cluster 才有）
     token_path = cluster_path / "cluster_token.txt"
     if token_path.exists():
         cluster.token_path = token_path
 
-    # Shards
+    # 世界（shard）
     for shard_path in list_shards(cluster_path):
         shard = _build_shard(shard_path)
         cluster.shards.append(shard)
@@ -198,7 +195,7 @@ def _build_cluster(cluster_path: Path, source: SaveSource,
 
 
 def _build_shard(shard_path: Path) -> Shard:
-    """Build a Shard object from a shard directory."""
+    """从一个世界（shard）目录构造 Shard 对象。"""
     shard = Shard(name=shard_path.name, path=shard_path)
 
     mod_path = shard_path / "modoverrides.lua"

@@ -1,15 +1,14 @@
-"""Renders world-settings category panels to a single PIL image.
+"""把"世界设置"的分类面板整个渲染成一张 PIL 图片。
 
-Used by WorldSettingsTab together with ImageScrollPanel: instead of
-building hundreds of ttk widgets (slow to relayout on resize), the whole
-panel is drawn once as pixels. See image_scroll.py for why.
+配合 ImageScrollPanel 供 WorldSettingsTab 使用：不用几百个 ttk 控件
+（缩放时重新布局很慢），整个面板一次性画成像素图。原因详见
+image_scroll.py。
 
-render_world_panel() accepts a `ref_width` -- the exact pixel width the
-image should be drawn at. All layout constants below are defined at
-BASE_REF_WIDTH and scaled by `ref_width / BASE_REF_WIDTH`, so icons, fonts
-and paddings all grow/shrink together and stay crisp: ImageScrollPanel
-re-renders at the real on-screen width once a resize settles, so text and
-icons are drawn natively at that size instead of being raster-upscaled.
+render_world_panel() 接收一个 `ref_width`——图片要画成的精确像素宽度。
+下面所有布局常量都是按 BASE_REF_WIDTH 定义、再乘以 `ref_width /
+BASE_REF_WIDTH` 缩放，图标、字体、内边距因此同步放大缩小、保持清晰：
+ImageScrollPanel 会在窗口缩放稳定后按真实屏幕宽度重新渲染，文字和图标
+都是原生尺寸画出来的，不是靠位图放大插值。
 """
 
 from PIL import Image, ImageDraw
@@ -23,18 +22,18 @@ from dstools.i18n import get_lang, t
 
 BASE_REF_WIDTH = 1300
 
-# Real in-game cycle-arrow chevrons (arrow2_left/right + their _over/_down
-# hover/press states), extracted from the shipped images/ui.tex atlas via
-# ktech -- swapped in for the old plain PIL-drawn filled-triangle buttons,
-# which were tiny (7px) and had no game-matching shape/shading.
+# 游戏内真实的循环切换箭头图标（arrow2_left/right 及其 _over/_down 悬停/
+# 按下状态），用 ktech 从游戏自带的 images/ui.tex 图集里提取——换掉了原
+# 来纯 PIL 画的实心三角形按钮，那种画法只有 7px 大小，形状/明暗跟游戏本
+# 身完全对不上。
 _ARROW_DIR = bundled_resource_dir() / "icons" / "ui"
 _arrow_cache: dict[tuple[str, int], Image.Image] = {}
 
 
 def _get_arrow(name: str, height: int) -> Image.Image | None:
-    """Cached, aspect-ratio-preserving load of an icons/ui/{name}.png arrow,
-    scaled so its height matches `height` (source images aren't perfectly
-    square after trimming each atlas cell to its own opaque bounding box)."""
+    """带缓存地加载 icons/ui/{name}.png 箭头图片，按等比例缩放到高度等于
+    `height`（图集每个格子裁到自己的不透明外接框之后，原图并非严格正方
+    形）。"""
     key = (name, height)
     if key in _arrow_cache:
         return _arrow_cache[key]
@@ -49,7 +48,7 @@ def _get_arrow(name: str, height: int) -> Image.Image | None:
     return img
 
 
-REF_WIDTH = BASE_REF_WIDTH  # default/initial width before the first real measurement
+REF_WIDTH = BASE_REF_WIDTH  # 首次真实测量之前使用的默认/初始宽度
 
 PAD_X = 10
 ICON_SIZE = 110
@@ -76,18 +75,14 @@ ROW_GAP = 16
 # 定程度背景卡片开始重叠）。现在把"要吃掉的 block_pad_h"显式算进
 # col_gutter 里，剩下的 COL_GAP 才是真正留给人看、不随窗口缩放的间隙。
 COL_GAP = 16
-# Extra horizontal margin reserved between the leftmost/rightmost column's
-# own content and the category frame's outer edge. The first column's icon
-# sits flush at the column area's left edge, and its background block
-# extends block_pad_h further left than that for breathing room -- without
-# a reserved margin here, that reach poked past the category frame itself
-# instead of just past the column. Must stay >= block_pad_h (16, see the
-# per-item loop) with room to spare. (The last column's right edge no
-# longer needs a symmetric allowance for a cycle-button poking past its
-# nominal edge -- block_x2 is clamped to the column's own nominal right
-# edge now, see col_gutter/block_x2 above.)
+# 最左/最右列自己的内容跟分类外框边缘之间预留的额外水平边距。第一列的
+# 图标贴着列区域左边缘，它的背景卡片还要再往左多探出 block_pad_h 留白——
+# 不预留这段边距的话，探出去的部分会戳穿分类外框本身，而不只是戳出这一
+# 列。必须 >= block_pad_h（16，见下面逐项循环处）并留有余量。（最右列
+# 的右边缘不再需要为"循环按钮探出名义边界"对称预留空间——block_x2 现在
+# 已经钳制在列自己的名义右边缘上，见上面 col_gutter/block_x2 的说明。）
 CONTENT_MARGIN = 20
-CAT_HEADER_H = 46  # was 38 -- title text was reading small/cramped
+CAT_HEADER_H = 46  # 原来是 38——标题文字显得又小又挤
 CAT_GAP_BEFORE = 8
 CAT_GAP_AFTER = 10
 # 分类大标题条底边到第一行设置之间的空隙——原来直接写死 20 再乘 s，跟
@@ -102,13 +97,13 @@ CAT_GAP_AFTER = 10
 # cat_header_item_gap 的计算）。
 CAT_HEADER_ITEM_GAP = 16
 
-# Fixed at 3 to match the in-game "Customize World" screen's own layout.
+# 固定为 3，跟游戏内"自定义世界"界面本身的布局保持一致。
 COLS = 3
 
-# Kept for backwards compatibility; the real per-key value sets now live in
-# dstools.features.world.value_sets (each key can have its own vocabulary --
-# cycling every key through this one list would silently corrupt settings
-# like season length or world size that don't use it).
+# 保留用于向后兼容；每个 key 真正的取值集合现在都在
+# dstools.features.world.value_sets 里（每个 key 可以有自己的词表——如果
+# 所有 key 都用这一份列表循环切换，会静默改坏季节长度、世界大小这类不
+# 用这套取值的设置）。
 CYCLE_VALUES = DEFAULT_SET
 
 _VALUE_LABELS = {
@@ -169,9 +164,9 @@ _VALUE_LABELS = {
     "huge": {"zh": "巨大", "en": "Huge"},
 }
 
-# Per-key value overrides: same raw value means different things in
-# different settings (e.g. "default" = "自动" for Events but "默认" for
-# most others). These override the generic _VALUE_LABELS for their key.
+# 按 key 单独覆盖的取值：同一个原始值在不同设置里含义不同（比如
+# "default" 对活动来说是"自动"，对大多数其它设置是"默认"）。这里的条目
+# 会覆盖 _VALUE_LABELS 里对应 key 的通用文案。
 _PER_KEY_LABELS = {
     "specialevent": {"default": {"zh": "自动", "en": "Auto"}, "none": {"zh": "无", "en": "None"}},
     "ghostenabled": {"none": {"zh": "更改冒险家", "en": "New Character"},
@@ -203,14 +198,13 @@ def _localized_value(names: dict) -> str:
 
 
 def get_value_label(key: str, raw_value: str) -> str:
-    """Get the display label for a raw setting value in the current UI
-    language, with per-key overrides."""
-    # Check per-key override first
+    """按当前界面语言取一个原始设置值的显示文案，支持按 key 单独覆盖。"""
+    # 先查有没有针对这个 key 的专属覆盖
     if key in _PER_KEY_LABELS:
         override = _PER_KEY_LABELS[key].get(raw_value)
         if override is not None:
             return _localized_value(override)
-    # extrastartingitems: raw is a number of days
+    # extrastartingitems：原始值是天数
     if key == "extrastartingitems":
         try:
             n = int(raw_value)
@@ -242,22 +236,22 @@ def _value_color(raw_value: str) -> str:
 
 def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                         ref_width=None, flash=None, location="forest"):
-    """Render a category panel to a PIL image.
+    """把一个分类面板渲染成一张 PIL 图片。
 
-    Args:
-        categories: list of (cat_key, cat_name)
-        grouped: dict cat_key -> list of override objects (with .key, .name, .value)
-        cat_colors: dict cat_key -> hex color string
-        editable: whether to draw <  > value-cycle buttons
-        on_click: callable(key: str, delta: int) invoked when a button is clicked
-        ref_width: exact pixel width to render at (defaults to BASE_REF_WIDTH).
-            All sizes scale proportionally to this width.
-        flash: optional (key, delta) of a button that was just pressed, drawn
-            with a highlighted "pressed" look for a brief moment.
+    参数：
+        categories: (cat_key, cat_name) 列表
+        grouped: cat_key -> override 对象列表（含 .key、.name、.value）的字典
+        cat_colors: cat_key -> 十六进制颜色字符串的字典
+        editable: 是否画 < > 取值切换按钮
+        on_click: 按钮被点击时调用的 callable(key: str, delta: int)
+        ref_width: 渲染的精确像素宽度（默认 BASE_REF_WIDTH），所有尺寸都
+            按这个宽度等比缩放
+        flash: 可选的 (key, delta)，表示刚被点击的按钮，短暂画成高亮的
+            "按下"效果
 
-    Returns:
-        (PIL.Image, hit_regions) where hit_regions is a list of
-        (x1, y1, x2, y2, callback) tuples in the image's own pixel space.
+    返回：
+        (PIL.Image, hit_regions)，hit_regions 是图片自身像素坐标系下的
+        (x1, y1, x2, y2, callback) 元组列表
     """
     rw = int(ref_width) if ref_width else BASE_REF_WIDTH
     s = rw / BASE_REF_WIDTH
@@ -270,9 +264,9 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     cols = COLS
     content_margin = CONTENT_MARGIN * s
     #
-    # block_pad_h/v: padding between an item's own icon/content and its own
-    # background block (hoisted here, was previously computed fresh inside
-    # the per-item loop -- needed at this scope too now, see col_area_x0).
+    # block_pad_h/v：每个设置项自己的图标/内容跟它自己背景卡片之间的内边
+    # 距（提到这里算，以前是在逐项循环内部现算的——现在这一层作用域也要
+    # 用到，见下面 col_area_x0）。
     block_pad_v = 14 * s
     block_pad_h = 16 * s
     # 真正分配给"行间距"的量：ROW_GAP（不缩放，纯给人看的空隙）+
@@ -288,15 +282,12 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     # （见下面 block_x2 = cx + col_w，不再跟着内容动态外扩），gap 才会
     # 始终等于 COL_GAP，不随窗口宽度变化。
     col_gutter = COL_GAP + block_pad_h
-    # The right edge naturally ends up ~content_margin away from the
-    # category frame already (the *nominal* column edge sits further out
-    # than what content actually needs, so that's where the block's right
-    # edge lands). The left edge has no such slack: the icon sits flush at
-    # the column's nominal left edge with nothing but block_pad_h between
-    # it and the frame, so its gap was only content_margin - block_pad_h
-    # (much tighter than the right's). Adding block_pad_h into col_area_x0
-    # here pushes the whole column area right by exactly that amount,
-    # making the two gaps match.
+    # 右边缘天然就跟分类外框保持大约 content_margin 的距离（*名义*列边
+    # 界本来就比内容实际需要的更靠外，卡片右边缘正好落在这个位置）。左
+    # 边缘没有这种余量：图标贴着列的名义左边缘，跟外框之间只隔着一个
+    # block_pad_h，所以左边的缝隙原来只有 content_margin - block_pad_h
+    # （比右边窄得多）。这里把 block_pad_h 加进 col_area_x0，把整个列区
+    # 域正好往右推这么多，让两边的缝隙对得上。
     col_area_x0 = pad_x + content_margin + block_pad_h
     col_w = (rw - 2 * pad_x - 2 * content_margin - block_pad_h - (cols - 1) * col_gutter) / cols
 
@@ -308,7 +299,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     # ITEM_GAP 定义处的说明。
     cat_header_item_gap = CAT_HEADER_ITEM_GAP + block_pad_v
 
-    # First pass: compute total height
+    # 第一遍：先算出总高度
     total_h = pad_x
     visible_cats = [(k, n) for k, n in categories if grouped.get(k)]
     for cat_key, _ in visible_cats:
@@ -353,12 +344,11 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             vlbl = get_value_label(ov.key, ov.value)
             vcolor = _value_color(ov.value)
             val_x = cx + col_w - 100 * s
-            arrow_h = 26 * s  # cycle-button chevron height (was a 14px-tall drawn triangle)
-            arrow_pad = 14 * s  # breathing room around each arrow -- was a cramped 10px
-            # Fixed half-width reserved for the value text (accommodates up
-            # to ~4 Chinese characters). Buttons sit at a constant offset
-            # from val_x regardless of the current label's length, so they
-            # never shift position between different settings/values.
+            arrow_h = 26 * s  # 循环按钮箭头的高度（原来是画的 14px 高三角形）
+            arrow_pad = 14 * s  # 每个箭头周围的留白（原来只有局促的 10px）
+            # 给取值文字预留的固定半宽（够放大约 4 个汉字）。按钮相对
+            # val_x 始终是固定偏移量，不管当前文案多长都不会跟着挪动，
+            # 不同设置/取值之间按钮位置不会跳来跳去。
             VALUE_HALF_W = 48 * s
 
             if editable:
@@ -368,23 +358,20 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             else:
                 bx1 = bx2 = None
                 text_x_end = val_x - VALUE_HALF_W - 10 * s
-                # Read-only values draw left-aligned from val_x (anchor=
-                # "lm") rather than centered like the editable rows, so an
-                # unusually long/unmapped raw value (get_value_label falls
-                # back to str(raw_value) for anything not in its table)
-                # could otherwise run past the column -- and therefore past
-                # both this item's own background block and the category's
-                # outer frame. Truncate to what actually fits, same pattern
-                # already used for the name label below.
+                # 只读取值是从 val_x 左对齐画的（anchor="lm"），不像可编
+                # 辑行那样居中——一个异常长/没映射到文案的原始值
+                # （get_value_label 对表里没有的值会退回 str(raw_value)）
+                # 否则可能超出这一列，进而超出这个设置项自己的背景卡片
+                # 和分类外框。截断到实际能放下的长度，跟下面名字标签用
+                # 的是同一套写法。
                 max_val_w = max(10, (cx + col_w) - val_x - 8 * s)
                 while vlbl and draw.textlength(vlbl, font=val_font) > max_val_w:
                     vlbl = vlbl[:-1]
 
-            # Light-green rounded card behind each setting item, inset from
-            # the column bounds and from the row above/below (ROW_GAP was
-            # widened specifically to leave room for this). Drawn first so
-            # everything else sits on top of it. (block_pad_v/h computed
-            # once above, alongside col_area_x0.)
+            # 每个设置项背后的浅绿色圆角卡片，比列边界和上下行都要缩进
+            # 一点（ROW_GAP 专门加宽过就是为了给它留出空间）。先画这个，
+            # 其它内容才能叠在它上面。（block_pad_v/h 已经在上面跟
+            # col_area_x0 一起算过一次了。）
             #
             # block_x2 固定停在 cx + col_w（列的名义右边界），不再跟着按
             # 钮/文字的实际宽度动态外扩——之前是 max(cx+col_w,
@@ -409,7 +396,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             if icon:
                 img.paste(icon, (int(cx), int(cy)), icon)
 
-            # Name label: centered in the slot between the icon and the value area
+            # 名字标签：在图标和取值区域之间的空档里居中显示
             text_x_start = cx + icon_size + 8 * s
             slot_w = max(10, text_x_end - text_x_start)
 
@@ -422,9 +409,8 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                       fill=theme.TEXT, anchor="lm")
 
             if editable:
-                # Match the in-game cycle behavior: at either end of the
-                # value scale, only the other arrow is clickable -- the
-                # exhausted one fades out instead of wrapping around.
+                # 跟游戏内的循环切换行为保持一致：取值到了某一端时，只
+                # 有另一侧的箭头能点——到头的那一侧会淡出，而不是绕回去。
                 value_set = get_value_set(ov.key)
                 try:
                     vidx = value_set.index(ov.value)
@@ -447,11 +433,10 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                 draw.text((val_x, icon_cy), vlbl, font=val_font, fill=vcolor, anchor="lm")
 
         y += row_h
-        # Outline-only frame wrapping the header + all of this category's
-        # item rows into one visually grouped section (the "层次感" ask --
-        # a plain flat header bar with no boundary below it read as
-        # disconnected from its own rows). Drawn last / outline-only so it
-        # never covers the header fill or any item's own background block.
+        # 只画轮廓线的外框，把标题条 + 这个分类下所有设置项行框成一个视
+        # 觉上的整体（对应"层次感"这个需求——原来标题条下面没有边界，看
+        # 起来跟自己的设置项行是脱节的）。放在最后画、只画轮廓，不会盖
+        # 住标题条的填充色或任何设置项自己的背景卡片。
         draw.rounded_rectangle([pad_x, cat_box_top, rw - pad_x, y],
                                radius=10 * s, outline=color, width=2)
         y += cat_gap_after
@@ -464,14 +449,13 @@ def _mk_cb(on_click, key, delta):
 
 
 def _draw_button(img, draw, cx, cy, height, direction, disabled=False, pressed=False):
-    """Paste the real in-game chevron (icons/ui/arrow_{direction}[_down].png)
-    centered at (cx, cy). Falls back to a small drawn triangle if the PNG
-    asset is missing for some reason (e.g. stripped from a packaged build)."""
+    """把游戏内真实的箭头图标（icons/ui/arrow_{direction}[_down].png）贴
+    到以 (cx, cy) 为中心的位置。PNG 素材因为某些原因缺失时（比如打包时
+    被裁掉了），退回画一个小三角形。"""
     name = f"arrow_{direction}" + ("_down" if pressed else "")
-    # Pressed state pops slightly bigger (still centered at cx, cy) on top
-    # of swapping to the game's own "_down" shading -- the shading swap
-    # alone reads as barely-there at a glance, a brief size bump on click
-    # is what actually makes it register as "something happened".
+    # 按下状态除了换成游戏自己的 "_down" 明暗贴图之外，还会稍微放大一点
+    # （仍然以 cx, cy 为中心）——光换贴图明暗一眼看过去几乎看不出变化，
+    # 点击瞬间这一下放大才是真正让人感觉到"点到了"的关键。
     draw_height = height * 1.3 if pressed else height
     icon = _get_arrow(name, max(1, round(draw_height)))
     if icon is None:
@@ -479,11 +463,10 @@ def _draw_button(img, draw, cx, cy, height, direction, disabled=False, pressed=F
                        theme.CARD_BORDER if disabled else theme.TEXT_MUTED)
         return
     if disabled:
-        # Fade toward invisible rather than swap to a different texture --
-        # the real disabled-state atlas cell for this button is blank (the
-        # game just hides the arrow entirely at either end of the scale),
-        # but keeping a faint arrow visible here still shows the user where
-        # they'd click once the value moves off the boundary.
+        # 淡化到接近透明，而不是换成另一张贴图——这个按钮真实的禁用状态
+        # 图集格子本身是空白的（游戏在取值到头时直接把箭头整个隐藏），
+        # 但这里保留一点若隐若现的箭头，能让用户看出取值一旦离开边界该
+        # 往哪点。
         icon = icon.copy()
         r, g, b, a = icon.split()
         icon.putalpha(a.point(lambda v: int(v * 0.32)))

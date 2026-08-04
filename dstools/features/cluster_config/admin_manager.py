@@ -1,18 +1,16 @@
-"""Administrator list manager for DST server adminlist.txt."""
+"""DST 服务器 adminlist.txt 管理员名单的读写。"""
 
 from pathlib import Path
 
 
 def read_adminlist(path: Path) -> list[str]:
-    """Read admin IDs from an adminlist.txt file.
-
-    Each line is one Klei user ID (e.g., KU_4R9OEYX3).
+    """读取 adminlist.txt，每一行是一个 Klei 用户 ID（如 KU_4R9OEYX3）。
 
     Args:
-        path: Path to adminlist.txt.
+        path: adminlist.txt 的路径。
 
     Returns:
-        List of admin IDs (empty list if file doesn't exist).
+        管理员 ID 列表，文件不存在时返回空列表。
     """
     if not path.exists():
         return []
@@ -23,11 +21,11 @@ def read_adminlist(path: Path) -> list[str]:
 
 
 def write_adminlist(path: Path, admins: list[str]) -> None:
-    """Write admin IDs to an adminlist.txt file.
+    """把管理员 ID 列表写入 adminlist.txt。
 
     Args:
-        path: Path to adminlist.txt.
-        admins: List of Klei user IDs to write.
+        path: adminlist.txt 的路径。
+        admins: 要写入的 Klei 用户 ID 列表。
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     content = "\n".join(admins) + "\n"
@@ -35,14 +33,14 @@ def write_adminlist(path: Path, admins: list[str]) -> None:
 
 
 def add_admin(path: Path, admin_id: str) -> bool:
-    """Add an admin to the list if not already present.
+    """添加一个管理员，已存在则不重复添加。
 
     Args:
-        path: Path to adminlist.txt.
-        admin_id: Klei user ID to add (e.g., KU_xxx).
+        path: adminlist.txt 的路径。
+        admin_id: 要添加的 Klei 用户 ID（如 KU_xxx）。
 
     Returns:
-        True if added, False if already present.
+        添加成功返回 True，已存在则返回 False。
     """
     admins = read_adminlist(path)
     if admin_id in admins:
@@ -53,14 +51,14 @@ def add_admin(path: Path, admin_id: str) -> bool:
 
 
 def remove_admin(path: Path, admin_id: str) -> bool:
-    """Remove an admin from the list.
+    """移除一个管理员。
 
     Args:
-        path: Path to adminlist.txt.
-        admin_id: Klei user ID to remove.
+        path: adminlist.txt 的路径。
+        admin_id: 要移除的 Klei 用户 ID。
 
     Returns:
-        True if removed, False if not found.
+        移除成功返回 True，未找到则返回 False。
     """
     admins = read_adminlist(path)
     if admin_id not in admins:

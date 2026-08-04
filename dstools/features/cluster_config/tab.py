@@ -30,12 +30,11 @@ _SUB_TAB_H = 32
 _SUB_PILL_H = 24
 _SUB_FONT_SIZE = 10
 
-# Klei user IDs (used in adminlist.txt/blocklist.txt) look like
-# "KU_4R9OEYX3" -- "KU_" followed by a handful of mixed-case alphanumeric
-# characters (confirmed against this install's own real adminlist.txt
-# entries). This is a loose sanity check to catch an obvious typo
-# (missing "KU_" prefix, stray whitespace, wrong casing marker, ...), not
-# a strict validator against every possible real ID.
+# Klei 用户 ID（adminlist.txt/blocklist.txt 里用的那种）形如
+# "KU_4R9OEYX3"——"KU_" 前缀后面跟几位大小写混合的字母数字（跟这台机
+# 器真实的 adminlist.txt 条目核对过）。这只是个粗略的合理性检查，用
+# 来抓明显的手误（漏了 "KU_" 前缀、多余空白、大小写弄错等），不是要
+# 覆盖所有真实 ID 的严格校验规则。
 _KLEI_ID_RE = re.compile(r"^KU_[A-Za-z0-9]{6,16}$")
 
 
@@ -44,18 +43,15 @@ def _is_valid_klei_id(value: str) -> bool:
 
 
 class _TextVar:
-    """Adapter so a word-wrapped tk.Text-based row's plain `.get()`
-    matches the StringVar/_EnumVar interface _save_cluster_ini/
-    _save_shard_ini already expect -- Text has no textvariable option, so
-    this is the equivalent read-back path for it.
+    """适配器：让一个自动换行的 tk.Text 控件的 `.get()` 跟 _save_cluster_ini/
+    _save_shard_ini 已经在用的 StringVar/_EnumVar 接口保持一致——Text
+    控件本身没有 textvariable 选项，这里补一个等效的读取方式。
 
-    Always collapses to a single line: the field this backs
-    (cluster_description) doesn't actually support embedded newlines in
-    the real game -- the Text widget only *visually* wraps long text
-    across several lines (wrap=tk.WORD), it never inserts a real "\n" via
-    typing (Return is swallowed, see _make_wrapped_text_row), but a paste
-    could still bring one in, so this sanitizes on the way out rather
-    than trusting every input path to have already blocked it.
+    始终折叠成单行：这个控件背后的字段（cluster_description）在游戏
+    里本来就不支持内嵌换行——Text 的 wrap=tk.WORD 只是*视觉上*把长文
+    本折成好几行显示，敲回车不会真的插入 "\n"（回车键被拦截了，见
+    _make_wrapped_text_row），但粘贴仍有可能带进换行符，所以在这里读
+    出去之前统一清理一次，不指望每条输入路径都已经提前挡住了。
     """
 
     def __init__(self, text_widget: tk.Text):
@@ -66,11 +62,10 @@ class _TextVar:
 
 
 class _EnumVar:
-    """Adapter so ClusterConfigTab._save_config's plain `var.get()` reads
-    the raw ini value (e.g. "survival") for an enum-field row, even
-    though its Combobox displays a translated label (e.g. "生存
-    (survival)") -- keeps _save_config itself agnostic to which kind of
-    row it's reading from."""
+    """适配器：让 ClusterConfigTab._save_config 里普通的 `var.get()`
+    对枚举字段行也能读到原始 ini 值（如 "survival"），即使下拉框显示
+    的是翻译后的标签（如 "生存 (survival)")——这样 _save_config 本身
+    不需要关心自己读的是哪一种行。"""
 
     def __init__(self, display_var: tk.StringVar, display_to_raw: dict[str, str]):
         self._display_var = display_var
@@ -81,15 +76,13 @@ class _EnumVar:
 
 
 class _TokenInputDialog:
-    """Replaces simpledialog.askstring() for entering a cluster token --
-    that generic dialog was too small for a token (typically 100+
-    characters) and its OK/Cancel button order/position isn't
-    controllable. This is a purpose-built modal: a wide Entry, 确认
-    anchored bottom-right and 取消 bottom-left (matching how confirm/
-    cancel are conventionally placed), and a simple length check
-    (token_manager.is_valid_token) that blocks obviously-wrong input
-    (e.g. pasting the wrong thing, or a stray truncated fragment)
-    without closing the dialog.
+    """替代 simpledialog.askstring() 来输入集群 Token——那个通用弹窗对
+    Token（通常 100+ 字符）来说太小，"确定/取消"按钮的顺序和位置也没
+    法控制。这是个专门做的模态弹窗：一个宽 Entry，"确认"固定在右下角、
+    "取消"固定在左下角（符合常见的确认/取消摆放习惯），加一个简单的长
+    度校验（token_manager.is_valid_token）拦住明显错误的输入（比如粘
+    贴错了内容、或者粘进来一段被截断的残缺片段），校验不通过时不关闭
+    弹窗。
     """
 
     def __init__(self, parent_widget, initial: str = ""):
@@ -144,13 +137,12 @@ class _TokenInputDialog:
 
 
 class ClusterConfigTab:
-    # GAMEPLAY/NETWORK/MISC/SHARD all live in the same cluster.ini file,
-    # so they're one merged notebook tab ("Cluster") with a section-header
-    # label ahead of each group's rows -- previously four separate tabs,
-    # which meant clicking through four tabs (plus four "保存" buttons)
-    # just to edit one physical file. _NOTEBOOK_TAB_KEYS is the top-level
-    # notebook tab text; _SECTION_HEADER_KEYS is the in-page group header
-    # text for each of the four cluster.ini sections within that one tab.
+    # GAMEPLAY/NETWORK/MISC/SHARD 这四个分区其实都在同一个 cluster.ini
+    # 文件里，所以合并成一个页签（"Cluster"），每组前面加一个分区标题
+    # 行——原来是四个独立页签，编辑同一个物理文件却要点四次页签（还配
+    # 四个"保存"按钮）。_NOTEBOOK_TAB_KEYS 是顶层页签文字；
+    # _SECTION_HEADER_KEYS 是这一个页签内，cluster.ini 四个分区各自的
+    # 组内标题文字。
     _NOTEBOOK_TAB_KEYS = {
         "Cluster": "cluster.tab_cluster_ini", "Shard Config": "cluster.shard_config",
     }
@@ -210,48 +202,39 @@ class ClusterConfigTab:
         # 户什么都没点。原来 ttk.Notebook 版本靠 <<NotebookTabChanged>>
         # 事件做同一件事，PillTabBar 没有这个原生事件，改在
         # _on_sub_tab_select 里直接调用（见文件靠后的方法定义）。
-        # "Cluster" is a single merged tab holding all four cluster.ini
-        # sections (GAMEPLAY/NETWORK/MISC/SHARD), each row still keyed
-        # into self._entries/ini_field_info by its real section name --
-        # self._section_frames["GAMEPLAY"] etc. all point at the SAME
-        # shared frame, they just get a section-header label ahead of
-        # their own rows to stay visually grouped (see _load_config).
-        # "Shard Config" is the separate server.ini tab. Each of the two
-        # notebook tabs gets its own "保存" button, placed as the last row
-        # right after that tab's own config rows (inside _load_config/
-        # _load_shard_config, since it's rebuilt every reload right along
-        # with the rows) -- NOT pinned to the bottom of the whole tab,
-        # which left an awkward gap below a short section like GAMEPLAY.
+        # "Cluster" 是把 cluster.ini 全部四个分区（GAMEPLAY/NETWORK/
+        # MISC/SHARD）合并成的一个页签，每一行仍然按它真实所属的分区名
+        # 登记进 self._entries/ini_field_info——self._section_frames
+        # ["GAMEPLAY"] 等其实都指向同一个共享 frame，只是各自的行前面
+        # 加一条分区标题行，视觉上分组（见 _load_config）。"Shard
+        # Config" 是独立的 server.ini 页签。两个页签各自的"保存"按钮
+        # 放在紧跟自己配置行后面的最后一行（在 _load_config/
+        # _load_shard_config 里，因为每次重新加载都会连同这些行一起重
+        # 建）——不固定在整个页签底部，否则像 GAMEPLAY 这种内容较少的
+        # 分区下面会空出一大截难看的空白。
         self._section_frames = {}
         self._section_save_btns = {}
-        # Each of the two notebook tabs gets ONE persistent scrollable
-        # container (added to canvas here, cleared+repopulated by
-        # _clear_form()/_load_config() on every reload) -- the "Cluster"
-        # tab's own two-column sub-layout (left_frame/right_frame) is
-        # built fresh inside _load_config() itself, as children of this
-        # container, not tracked here.
+        # 两个页签各自只建一个常驻的可滚动容器（这里加到 canvas 上，每
+        # 次重新加载时由 _clear_form()/_load_config() 清空重填）——
+        # "Cluster" 页签自己的两栏子布局（left_frame/right_frame）是在
+        # _load_config() 内部现建的，作为这个容器的子控件，不在这里单
+        # 独跟踪。
         for tab_key in ("Cluster", "Shard Config"):
-            # A page wrapper holds the scrollable canvas *and* a footer row
-            # for the "保存" button below it, outside the scrolled area --
-            # previously the button was gridded as the last row inside the
-            # scrollable frame itself, so it both scrolled out of view with
-            # long content and sat inside the green card instead of hugging
-            # its bottom-right corner. The button lives here (created once)
-            # rather than inside _load_config()/_load_shard_config(), which
-            # tear down and rebuild everything in `frame` on every reload.
-            # scroll_area is NOT expand=True: it's sized to its own content
-            # height (see the frame<Configure> handler below, which grows/
-            # shrinks the canvas to match), so the footer sits right after
-            # the last config row instead of being pinned to the bottom of
-            # the whole tab with a big gap for any content shorter than the
-            # tab's available height.
-            # page/footer are plain tk.Frame with an explicit CARD_BG
-            # (white) background rather than the ttk.Frame default
-            # (BG_SOFT, pale green) -- scroll_area/canvas/frame below stay
-            # the default green, so the green is visually scoped to just
-            # the actual config rows, ending right above the save button
-            # instead of the whole tab page (footer included) reading as
-            # one undifferentiated green block.
+            # page 包一层，里面装可滚动的 canvas，另加一行 footer 放
+            # "保存"按钮，footer 在滚动区域之外——原来这个按钮是滚动
+            # frame 内部 grid 的最后一行，内容一多就跟着滚出视野，而且
+            # 贴在绿色卡片里面而不是紧贴右下角。按钮固定建在这里（只建
+            # 一次），不放进每次重新加载都会把 `frame` 整个拆掉重建的
+            # _load_config()/_load_shard_config() 里面。scroll_area 不
+            # 用 expand=True：它的高度跟着自己内容走（见下面
+            # frame<Configure> 的处理，随内容增减调整 canvas 高度），这
+            # 样 footer 才会紧跟在最后一行配置后面，而不是死死钉在页签
+            # 底部、内容不够高时留一大截空白。
+            # page/footer 用普通 tk.Frame 显式指定 CARD_BG（白色）背
+            # 景，而不是 ttk.Frame 默认的 BG_SOFT（淡绿色）——下面的
+            # scroll_area/canvas/frame 仍保持默认的绿色，这样绿色只框
+            # 住真正的配置行，正好在保存按钮上方收尾，不会让整个页签
+            # （连 footer 一起）看起来是一整块没有区分的绿色。
             page = tk.Frame(self._sub_content, background=theme.CARD_BG)
             scroll_area = ttk.Frame(page)
             scroll_area.pack(side=tk.TOP, fill=tk.X)
@@ -263,19 +246,17 @@ class ClusterConfigTab:
             self._section_save_btns[tab_key] = save_btn
 
             canvas = tk.Canvas(scroll_area, highlightthickness=0)
-            # Not packed -- wasn't visible/packed before this button-footer
-            # refactor either (canvas alone was handed straight to
-            # notebook.add(), which auto-fills the tab; there was never a
-            # visible scrollbar or wheel binding here, the 2-column layout
-            # is just kept short enough in practice not to need one).
+            # 没有 pack 出来——在这次按钮/footer 重构之前它也从没显示/
+            # pack 过（原来是 canvas 直接交给 notebook.add()，会自动填
+            # 满整个页签；这里从来就没有可见的滚动条或滚轮绑定，两栏布
+            # 局实际内容够短，用不上）。
             scrollbar = ttk.Scrollbar(scroll_area, orient=tk.VERTICAL, command=canvas.yview)
-            # expand=True here is about *horizontal* space only (the only
-            # axis `expand` affects for a lone side=LEFT child -- it
-            # already gets the full crosswise/vertical parcel regardless):
-            # still needed so the canvas (and the width-sync trick on it)
-            # stretches to the tab's full width. Height is handled
-            # separately below via canvas.configure(height=...) tracking
-            # the content's own size, instead of expand/fill vertically.
+            # 这里的 expand=True 只影响*水平*方向（对一个单独
+            # side=LEFT 的子控件来说，expand 唯一能起作用的维度——纵向
+            # /交叉方向反正总会拿到完整的空间）：需要它才能让 canvas
+            # （连同它上面的宽度同步技巧）撑满页签的整个宽度。高度另外
+            # 在下面通过 canvas.configure(height=...) 跟踪内容自身尺
+            # 寸来处理，不靠纵向的 expand/fill。
             canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
             frame = ttk.Frame(canvas)
             frame.grid_columnconfigure(0, weight=1)
@@ -290,22 +271,19 @@ class ClusterConfigTab:
                     c.configure(height=bbox[3])
 
             frame.bind("<Configure>", _on_frame_configure)
-            # Without this, the embedded frame (and everything gridded
-            # inside it, including the Entry/Combobox fields below) stays
-            # pinned at its own natural/requested width forever -- growing
-            # the window only grows the canvas's blank scrollable area to
-            # the right of the content, not the content itself.
+            # 不做下面这步的话，内嵌的 frame（以及里面 grid 的所有控
+            # 件，包括下面的 Entry/Combobox 字段）会永远钉死在自己的
+            # 自然/请求宽度上——放大窗口只会让 canvas 内容右侧的空白可
+            # 滚动区域变大，内容本身不会跟着变宽。
             #
-            # Debounced rather than applied on every raw event: setting the
-            # embedded window's width triggers a full grid relayout of
-            # every row in this tab (20-40+ Entry/Combobox/ToggleSwitch
-            # widgets), and doing that on every single WM_SIZE message
-            # during a live drag-resize is real, measurable jank -- ttk's
-            # own native geometry manager cost, not something a PIL-side
-            # throttle touches. Settling ~120ms after the last resize event
-            # (same idea as ImageScrollPanel's on_settle) means the fields
-            # still end up the right width shortly after you stop dragging,
-            # without paying that relayout cost on every intermediate frame.
+            # 用防抖而不是每次事件都处理：设置内嵌窗口的宽度会触发这
+            # 个页签里全部行（20~40 个 Entry/Combobox/ToggleSwitch 控
+            # 件）的一次完整 grid 重新布局，拖拽缩放过程中每个 WM_SIZE
+            # 消息都做一遍的话卡顿是真实可感知的——这是 ttk 自己原生
+            # 几何管理器的开销，不是 PIL 那边的节流能管到的。跟
+            # ImageScrollPanel 的 on_settle 一个思路，缩放停顿约 120ms
+            # 后才真正应用，停下拖拽后字段很快就会变成正确宽度，而不
+            # 用在每一帧中间态都承担一次重新布局的代价。
             resize_state = {"after_id": None}
 
             def _settle_width(c=canvas, wid=win_id, state=resize_state):
@@ -322,11 +300,10 @@ class ClusterConfigTab:
             self._sub_pages[sub_key] = page
             self._section_frames[tab_key] = frame
 
-        # Admin, Blocklist (黑名单) & Token tabs -- Admin and Blocklist
-        # are the exact same "one Klei ID per line" file format
-        # (adminlist.txt grants, blocklist.txt bans), so they share the
-        # same generic panel/loading/add/remove code below, parameterized
-        # by which Cluster attribute + filename to use.
+        # 管理员、黑名单、Token 三个页签——管理员和黑名单是完全相同的
+        # "每行一个 Klei ID"文件格式（adminlist.txt 授权、blocklist.txt
+        # 封禁），所以下面共用同一套通用面板/加载/增删代码，靠传入不
+        # 同的 Cluster 属性名+文件名来区分。
         self._admin_frame = ttk.Frame(self._sub_content)
         (self._admin_title_lbl, self._admin_listbox, self._admin_add_btn,
          self._admin_remove_btn, self._admin_status) = self._build_id_list_panel(self._admin_frame, "admin.title")
@@ -415,12 +392,11 @@ class ClusterConfigTab:
         self._load_config()
 
     def _clear_form(self):
-        # self._section_frames only ever holds the two persistent
-        # notebook-page containers ("Cluster", "Shard Config") -- their
-        # actual per-section sub-frames (left/right columns, the shard
-        # config frame, ...) are recreated fresh each _load_config() call
-        # as children of these, so destroying these containers' children
-        # tears the old sub-frames down along with everything in them.
+        # self._section_frames 里只放两个常驻的页签容器（"Cluster"、
+        # "Shard Config"）——它们各自实际的分区子 frame（左右两栏、
+        # shard 配置 frame 等）是每次 _load_config() 调用时作为这两个
+        # 容器的子控件现建的，所以销毁这两个容器的子控件，就等于把旧
+        # 的分区子 frame 连同里面的全部内容一起拆掉。
         for frame in self._section_frames.values():
             for w in frame.winfo_children(): w.destroy()
         self._entries.clear()
@@ -455,11 +431,9 @@ class ClusterConfigTab:
     def _make_row(self, parent, section, key, value, row, readonly=False, tooltip=None):
         from dstools.shared.gui.toggle_switch import ToggleSwitch
         from dstools.shared.gui.tooltip import Tooltip
-        # The label column (0) stays its natural width; the field column
-        # (1) gets the weight so Entry/Combobox/Text actually grow to fill
-        # whatever extra width the window/card has, instead of staying at
-        # a fixed character width with a big blank strip of background to
-        # their right once the window's enlarged past its default size.
+        # 标签列（0）保持自然宽度；字段列（1）配 weight，Entry/
+        # Combobox/Text 才会跟着窗口/卡片放大实际变宽，而不是停在固
+        # 定字符宽度上，窗口放大超过默认尺寸后右边留一大截空白背景。
         parent.grid_columnconfigure(1, weight=1)
         is_shard_section = section.startswith("SHARD_")
         ini_section = section[len("SHARD_"):] if is_shard_section else section
@@ -563,12 +537,11 @@ class ClusterConfigTab:
         # GAMEPLAY(5)+MISC(2)=7 项配一列，SHARD(5) 单独一列，三列高度
         # 11/7/5 行，比两列时最高的一列 13 行明显矮。
         outer = self._section_frames["Cluster"]
-        # weight=1 on every column + sticky including E lets each column
-        # actually claim its share of any extra width the window/card grows
-        # by, instead of staying pinned at natural size with a big blank
-        # strip of background to the right (see _make_row's own
-        # columnconfigure(1) for the same fix one level down, on the
-        # label/field split within each column).
+        # 每一列都配 weight=1，加上 sticky 包含 E，才能让每一列真正分
+        # 到窗口/卡片放大后多出来的宽度份额，而不是停在自然尺寸、右边
+        # 留一整条空白背景（同样的修法在 _make_row 自己的
+        # columnconfigure(1) 里又用了一次，那是每一列内部标签/字段两
+        # 栏的细分）。
         for col in range(3):
             outer.grid_columnconfigure(col, weight=1)
         col1 = ttk.Frame(outer); col1.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0,20))
@@ -593,17 +566,15 @@ class ClusterConfigTab:
         _fill_column(col2, [("GAMEPLAY",config.gameplay), ("MISC",config.misc)])
         _fill_column(col3, [("SHARD",config.shard), ("STEAM",config.steam)])
 
-        # The button itself now lives in the tab's footer (created once,
-        # outside the green scrollable card -- see the sub-tab page setup
-        # loop in __init__), so a reload here only needs to update whether
-        # it's clickable, not rebuild it.
+        # 按钮本身现在常驻在页签的 footer 里（只建一次，在绿色可滚动卡
+        # 片外面——见 __init__ 里子页签搭建的那个循环），这里每次重新
+        # 加载只需要更新它能不能点，不需要重建。
         self._section_save_btns["Cluster"].configure(state=tk.NORMAL if is_server else tk.DISABLED)
 
-        # Shard config with a shard selector -- SERVER and LOCAL now share
-        # the exact same UI (selector + _load_shard_config), the only
-        # difference being LOCAL renders every row read-only; previously
-        # LOCAL had its own hardcoded-to-Master, no-selector branch, so
-        # there was no way to look at a local save's Caves shard at all.
+        # 世界配置带一个世界选择器——SERVER 和 LOCAL 现在共用完全一样
+        # 的界面（选择器 + _load_shard_config），唯一区别是 LOCAL 下每
+        # 一行都只读；以前 LOCAL 是单独写死只看 Master、没有选择器的分
+        # 支，导致完全没法看本地存档的 Caves 世界配置。
         frame = self._section_frames["Shard Config"]
         row = 0
         if c.shards:
@@ -642,14 +613,13 @@ class ClusterConfigTab:
         self._load_token(c)
 
     def _load_shard_config(self, e=None):
-        """Load server.ini for the selected shard (read-only for LOCAL saves).
+        """加载当前选中世界的 server.ini（本地存档下只读展示）。
 
-        Resolved via _get_cluster(), which reads live from the global
-        cluster selector (DSToolsApp.get_selected_cluster()) -- this used
-        to read a cross-tab-shared cached attribute that every other tab
-        reassigned during its own init/selection handling, which could
-        point at a stale cluster by the time this ran; that attribute is
-        gone now, there's nothing left to go stale.
+        通过 _get_cluster() 现查全局存档选择器
+        （DSToolsApp.get_selected_cluster()）拿到——以前是读一个跨页
+        签共享的缓存属性，其它每个页签在自己的初始化/选择处理里都会
+        重新赋值这个属性，跑到这里时可能已经指向一个过时的 cluster；
+        现在这个属性已经不存在了，也就没有什么会过时的东西了。
         """
         if not hasattr(self, '_shard_config_frame'): return
         c = self._get_cluster()
@@ -788,10 +758,9 @@ class ClusterConfigTab:
                 lambda sc: sc.steam.get("authentication_port", ""), 8766)
 
     def _load_id_list_into(self, cluster, path_attr, listbox, add_btn, remove_btn):
-        """Shared by the Admin List and Blocklist (黑名单) tabs -- both
-        are plain one-Klei-ID-per-line files, differing only in which
-        Cluster attribute holds the path and what the game does with the
-        IDs in it (grant vs ban)."""
+        """管理员列表和黑名单页签共用——两者都是"每行一个 Klei ID"的
+        纯文本文件，区别只在于路径存在 Cluster 的哪个属性上，以及游戏
+        拿这些 ID 做什么（授权还是封禁）。"""
         # 空状态提示按 path_attr 区分 -- 黑名单显示"无黑名单人员"而不是
         # 管理员列表的"无管理员"，这两个列表虽然共用同一套代码，但空状态
         # 文案不该混用。
@@ -808,8 +777,8 @@ class ClusterConfigTab:
         remove_btn.configure(state=tk.NORMAL if ids else tk.DISABLED)
 
     def _add_id_entry(self, path_attr, default_filename, listbox, status, add_btn, remove_btn):
-        # Resolved live via the global selector (like _load_config) --
-        # never a stale cached Cluster object.
+        # 跟 _load_config 一样，现查全局选择器——不用可能过时的缓存
+        # Cluster 对象。
         c = self._get_cluster()
         if not c: return
         kid = simpledialog.askstring(t("admin.add"), t("admin.add_prompt"))
@@ -872,24 +841,21 @@ class ClusterConfigTab:
         if not c: return
         input_dlg = _TokenInputDialog(self.frame)
         if input_dlg.result is None: return
-        # cluster_token.txt might not exist yet (offline/local clusters
-        # usually don't have one) -- write_token() creates it, so this
-        # shouldn't require the file to already be there first.
+        # cluster_token.txt 可能还不存在（离线/本地存档通常就没有）——
+        # write_token() 会自己创建文件，不需要先确保文件已经存在。
         path = c.token_path or (c.path / "cluster_token.txt")
         write_token(path, input_dlg.result)
         c.token_path = path
         self._load_token(c)
 
     def _save_cluster_ini(self):
-        """"保存" button on GAMEPLAY/NETWORK/MISC/SHARD/STEAM -- all five
-        live in the same cluster.ini, so any one of these buttons writes
-        the whole file (there's no such thing as saving "only" one section
-        of a single ini file). Both hardcoded section tuples below must
-        include every section that has a real editable row, or that
-        section's edits get silently ignored on save (real bug: adding
-        the STEAM column without updating these two forgot exactly that,
-        so toggling a Steam group setting and saving wrote nothing back to
-        the file)."""
+        """GAMEPLAY/NETWORK/MISC/SHARD/STEAM 共用的"保存"按钮——这五个
+        分区其实都在同一个 cluster.ini 里，点任何一个按钮都是整个文件
+        一起写（单个 ini 文件不存在"只保存某一个分区"这种操作）。下面
+        两处写死的分区元组必须包含每一个真正有可编辑行的分区，漏掉哪
+        个分区，它的修改保存时就会被悄悄忽略（真实踩过的坑：加 STEAM
+        这一列时忘了同步改这两处，结果切换 Steam 群组设置点保存后什
+        么都没写进文件）。"""
         c = self._get_cluster()
         if not c: return
         # 有官方取值范围的字段（比如 tick_rate）先整体校验一遍，任何一个
@@ -951,9 +917,8 @@ class ClusterConfigTab:
         return None
 
     def _save_shard_ini(self):
-        """"保存" button on the "世界配置(server.ini)" tab -- a different
-        file (server.ini) for whichever shard is selected there, entirely
-        independent of cluster.ini."""
+        """"世界配置(server.ini)"页签的"保存"按钮——写的是选中那个世
+        界各自的 server.ini 文件，跟 cluster.ini 完全独立。"""
         c = self._get_cluster()
         if not c or not hasattr(self, "_shard_sel_var"): return
         shard_name = self._shard_sel_var.get()
@@ -976,10 +941,10 @@ class ClusterConfigTab:
         self._load_shard_config()
 
     def refresh_language(self):
-        # Each section's own "保存" button text (and the section-header
-        # labels within the merged "Cluster" tab) get refreshed for free
-        # by _load_config() at the bottom of this method (it rebuilds
-        # every row -- and both save buttons -- from scratch).
+        # 每个分区自己"保存"按钮的文字（以及合并后的"Cluster"页签里各
+        # 分区标题）不需要在这里单独处理，本方法最后调用的
+        # _load_config() 会顺带把它们一起刷新（它会把每一行、连同两个
+        # 保存按钮，整个重新建一遍）。
         self._sub_tab_bar.relabel({
             "cluster": t(self._NOTEBOOK_TAB_KEYS["Cluster"]), "shard": t(self._NOTEBOOK_TAB_KEYS["Shard Config"]),
             "admin": t("admin.title"), "block": t("blocklist.title"), "token": t("token.title"),
@@ -991,10 +956,9 @@ class ClusterConfigTab:
         self._token_show_btn.configure(text=t("token.show") if not self._token_visible else t("token.hide"))
         self._token_copy_btn.configure(text=t("token.copy")); self._token_change_btn.configure(text=t("token.change"))
         self._token_apply_btn.configure(text=t("token.apply"))
-        # Field labels/tooltips (via ini_field_info) and the local-save
-        # readonly note are all language-dependent -- re-render so they
-        # follow the switch instead of staying in whichever language was
-        # active when this cluster was last loaded.
+        # 字段标签/悬浮说明（来自 ini_field_info）以及本地存档的只读提
+        # 示都跟界面语言相关——重新渲染一遍才能跟着切换语言，不然会停
+        # 留在这个存档上次加载时所用的语言上。
         self._load_config()
 
     def retheme(self):

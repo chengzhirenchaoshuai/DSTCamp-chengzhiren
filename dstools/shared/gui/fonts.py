@@ -1,4 +1,4 @@
-"""Chinese-capable TrueType font loading for PIL-rendered panels, with caching."""
+"""给 PIL 渲染面板用的中文 TrueType 字体加载，带缓存。"""
 
 from pathlib import Path
 
@@ -30,7 +30,7 @@ _cache: dict[int, ImageFont.FreeTypeFont] = {}
 
 
 def get_font(size: int) -> ImageFont.FreeTypeFont:
-    """Get a cached Chinese-capable font at the given pixel size."""
+    """按指定像素大小取一个缓存过的中文字体。"""
     size = max(6, int(size))
     if size in _cache:
         return _cache[size]
@@ -105,10 +105,9 @@ def strip_unrenderable(text: str) -> str:
 
 
 def get_emoji_font(size: int) -> ImageFont.FreeTypeFont:
-    """Get a cached emoji-capable font at the given pixel size. Falls back
-    to get_font() (this machine's CJK font, no emoji glyphs) if Segoe UI
-    Emoji isn't installed -- still no crash, just the same tofu box as
-    before this fallback existed."""
+    """按指定像素大小取一个缓存过的、支持 emoji 的字体。如果这台机器没
+    装 Segoe UI Emoji，退回 get_font()（这台机器的 CJK 字体，没有 emoji
+    字形）——不会崩溃，只是跟加这个回退之前一样画出方块。"""
     size = max(6, int(size))
     if size in _emoji_cache:
         return _emoji_cache[size]

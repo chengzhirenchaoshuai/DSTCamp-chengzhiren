@@ -1,19 +1,15 @@
-"""Valid value sets for DST world rule overrides.
+"""DST 世界规则 override 的合法取值集合。
 
-Most world rules use the familiar 5-tier scale (never/rare/default/often/
-always), but a good number use a completely different vocabulary (season
-length, day-cycle shape, damage toggles, regrowth speed, etc.). Cycling a
-setting through the wrong value list would silently corrupt it, so each
-key's *real* value set is recorded here instead of assuming one universal
-list.
+大多数世界规则用常见的 5 档（never/rare/default/often/always），但也有
+不少用完全不同的词表（季节长度、昼夜形态、伤害开关、资源再生速度等）。
+拿错取值列表去循环切换会静默改坏设置，所以这里按每个 key *真实* 的取
+值集合分别记录，不假设有一套通用列表。
 
-Sourced directly from the game's own worldsettings_overrides.lua (the
-function that applies each difficulty tier's TUNING overrides -- its
-"tuning_vars" table keys ARE the valid values, in the exact order the
-in-game UI cycles them). Entries below marked with a comment were not in
-that automatic extraction (they live in the same file's
-`applyoverrides_post` table, which forwards the raw value instead of using
-a tuning_vars table) and were read out of the source by hand.
+直接取自游戏自己的 worldsettings_overrides.lua（应用每档难度 TUNING
+override 的那个函数——它的 "tuning_vars" 表 key 就是合法取值，顺序跟游
+戏内 UI 循环切换的顺序完全一致）。下面带注释标记的条目不在那次自动提
+取范围内（它们在同一个文件的 `applyoverrides_post` 表里，那个表直接转
+发原始值，不走 tuning_vars 表），是手工从源码里读出来的。
 
 排列顺序：不再按"取值档位类型"分组，改成和 categories.py /
 icons.py 完全一致的顺序——先按 FOREST_RULES_DICT 的 key 顺序走一遍
@@ -35,9 +31,9 @@ VALUE_SETS = {
     "spring": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason"],
     "summer": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason"],
     "day": ["onlyday", "onlydusk", "onlynight", "default", "longday", "longdusk", "longnight", "noday", "nodusk", "nonight"],
-    # spawnmode's real option set wasn't fully confirmed from source (the
-    # function only special-cases "default" -> "fixed" and forwards
-    # anything else) -- "scatter" was observed in real save data.
+    # spawnmode 真实的选项集合没有从源码完全确认过（函数只对 "default"
+    # -> "fixed" 做了特殊处理，其它值直接转发）——"scatter" 是在真实存档
+    # 数据里观察到的。
     "spawnmode": ["default", "fixed", "wandering", "scatter"],
     # 下面这三个只在游戏里表现出 2 个真实选项——"default" 是内部对
     # "always" 的别名(见 worldsettings_overrides.lua: "if difficulty ==
@@ -50,7 +46,7 @@ VALUE_SETS = {
     "krampus": ["never", "rare", "default", "often", "always"],
     # 活动|events
     "crow_carnival": ["never", "default"],
-    # TODO(未完全确认): 这些年度活动 key 是否真的在"自定义世界"界面里各自
+    # TODO(未完全确认)：这些年度活动 key 是否真的在"自定义世界"界面里各自
     # 独立可调，还是实际上都由上面的 specialevent 统一控制、这里只是展示当前
     # 生效的活动状态——还没有找到权威资料确认，需要人工在游戏里核实。
     "hallowed_nights": ["disabled", "enabled"],
@@ -229,9 +225,9 @@ UNCONFIRMED_KEYS = {
 
 
 def get_value_set(key: str) -> list[str]:
-    """Get the ordered list of valid values for a world rule key.
+    """取一个世界规则 key 的合法取值有序列表。
 
-    Falls back to the standard 5-tier scale for keys not specially listed
-    (the common case, and also the un-verified fallback for UNCONFIRMED_KEYS).
+    没有特殊登记的 key（常见情况，也是 UNCONFIRMED_KEYS 未经验证时的兜
+    底）一律退回标准的 5 档取值。
     """
     return VALUE_SETS.get(key, DEFAULT_SET)

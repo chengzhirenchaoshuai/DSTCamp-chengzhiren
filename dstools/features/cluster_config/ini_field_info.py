@@ -253,8 +253,7 @@ NO_TYPE_COERCE_FIELDS: set[tuple[str, str]] = {
 def get_field_info(section: str, key: str, is_shard: bool = False) -> tuple[str, str] | None:
     """查找某个 cluster.ini/server.ini 字段的 (显示名, 说明)，取当前界面语言的版本。
 
-    Returns None for anything not in the table above -- callers should
-    fall back to showing the raw key with no description in that case.
+    表里查不到就返回 None——调用方此时应该退回原样显示英文键名，不附加说明。
     """
     table = SHARD_FIELD_INFO if is_shard else CLUSTER_FIELD_INFO
     info = table.get((section, key))
