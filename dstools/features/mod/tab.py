@@ -60,10 +60,10 @@ _strcmplogicalw = None
 
 
 def _windows_name_cmp(a: str, b: str) -> int:
-    """跟 Windows 资源管理器同款的"自然排序"比较——中文按拼音、字母/
-    数字按自然顺序比大小（"mod2" 排在 "mod10" 前面）、符号排在最后，
-    直接调用 Windows 自带的 StrCmpLogicalW，不用自己维护一份拼音表来
-    猜怎么排最像原生。"""
+    """自然排序比较——数字按自然顺序比大小（"mod2" 排在 "mod10" 前
+    面）、中文按拼音，直接调用 Windows 自带的 StrCmpLogicalW，不用自
+    己维护一份拼音表来猜怎么排最像原生。只在 _mod_name_cmp() 桶内细分
+    时使用，桶之间的顺序由 _name_bucket() 决定，不靠这个函数本身。"""
     global _strcmplogicalw
     if _strcmplogicalw is None:
         import ctypes
@@ -71,6 +71,32 @@ def _windows_name_cmp(a: str, b: str) -> int:
         _strcmplogicalw.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
         _strcmplogicalw.restype = ctypes.c_int
     return _strcmplogicalw(a, b)
+
+
+def _name_bucket(name: str) -> int:
+    """按用户要求的优先级给名字分桶：汉字(0) -> 符号(1) -> 字母(2) ->
+    数字(3) -> 其他(4)，只看首字符。"""
+    ch = name[:1]
+    if not ch:
+        return 4
+    if "一" <= ch <= "鿿":  # CJK 统一表意文字（常用汉字）
+        return 0
+    if ch.isdigit():
+        return 3
+    if ch.isalpha():
+        return 2
+    if not ch.isalnum():
+        return 1
+    return 4
+
+
+def _mod_name_cmp(a: str, b: str) -> int:
+    """Mod 列表排序用的名字比较——先按 _name_bucket() 分组排好优先级，
+    组内再用 _windows_name_cmp() 细分（拼音/自然数字顺序）。"""
+    ca, cb = _name_bucket(a), _name_bucket(b)
+    if ca != cb:
+        return ca - cb
+    return _windows_name_cmp(a, b)
 
 
 class ModManagerTab:
@@ -598,6 +624,19 @@ class ModManagerTab:
     def _apply_loaded_mods(self, gen, mod_data, mod_infos, icon_imgs, luajit_active):
         if gen != self._refresh_gen or not self.frame.winfo_exists():
             return  # 已经被更新的一次刷新顶替（或者页签已经关闭）
+        # 排序只在这里（真正重新加载数据时）做一次，此后单纯切换某个
+        # mod 的启用开关（_on_toggle）不会重新触发排序——按用户要求，
+        # 点开关那一下不该让这一行立刻跳动，保存后这里重新跑一遍
+        # （_save_mods 非静默保存会调 _refresh_mods）才应该跳到新位置。
+        # dict 本身的插入顺序就是后面 _build_rows() 遍历的顺序，这里排
+        # 好之后不需要在每次渲染时都重新排一遍。
+        def _name_of(wid):
+            info = mod_infos.get(wid)
+            return (info.name if info else "") or wid
+        ordered_ids = sorted(mod_data.keys(), key=functools.cmp_to_key(
+            lambda a, b: _mod_name_cmp(_name_of(a), _name_of(b))))
+        ordered_ids.sort(key=lambda wid: not mod_data[wid].enabled)
+        mod_data = {wid: mod_data[wid] for wid in ordered_ids}
         self._mod_data, self._mod_infos, self._icon_imgs = mod_data, mod_infos, icon_imgs
         self._icon_thumb_cache.clear()
         self._luajit_mod_locked = luajit_active
@@ -654,13 +693,6 @@ class ModManagerTab:
                 "has_config": bool(info and (info.config_options or info.unsupported_schema)),
                 "has_link": numeric_id.isdigit(),
             })
-        # 已启用的排前面；同为启用/禁用内部按 Windows 资源管理器同款的
-        # 自然排序（拼音/字母/数字/符号）——两次稳定排序叠加，第一次按
-        # 名字排定顺序，第二次按启用状态分组时不会打乱组内已经排好的
-        # 名字顺序。
-        rows.sort(key=functools.cmp_to_key(
-            lambda a, b: _windows_name_cmp(a["name"] or a["workshop_id"], b["name"] or b["workshop_id"])))
-        rows.sort(key=lambda r: not r["enabled"])
         return rows
 
     def _render_list(self, ref_width=None):
