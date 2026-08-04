@@ -81,11 +81,10 @@ def _max_rollback_days(cluster) -> int:
 
 
 class _RollbackDialog:
-    """"回档"窗口：下拉选择回退天数，点"回退"就往这个 cluster 下所有正
-    在运行的世界控制台各发一次对应的 c_rollback(n)。世界式集群
-    （Master+Caves）必须两边的控制台都发一遍，只发给其中一个世界会导致
-    两边世界天数不同步——这不是我们自己拍脑袋定的规则，是 Klei 官方论坛
-    原话确认过的机制。
+    """"回档"窗口：下拉选择回退天数，点"回退"只往这个 cluster 的主世界
+    (Master) 控制台发一次对应的 c_rollback(n)——按用户要求只发主世界，
+    不广播给 Caves 等从世界（Klei 社区文档一般建议世界式集群两边都发一
+    遍，否则天数可能不同步，这里是用户自己验证过取舍后的明确要求）。
 
     下拉选择而不是每个天数各一个按钮——max_snapshots 现在能在"服务器
     配置"里自由调大（比如设成 30），可选天数跟着涨到几十个的话，一堆按
@@ -142,24 +141,20 @@ class _RollbackDialog:
             return
         if not dlg.ask_yes_no(self.win, t("local.rollback_title"), t("local.rollback_confirm", n=n)):
             return
-        # 明确告诉用户具体发到了哪些世界、跳过了哪些（没在运行）——回档在
-        # Caves 里生效可能比 Master 慢很多（社区反馈过"Caves 回档要等很
-        # 久"），只看 Caves 控制台一时没反应，容易被误以为是"没发送成
-        # 功"，这里至少把"发送"这一步的结果说清楚，避免混淆。
-        sent_names, skipped_names = [], []
-        for s in self.cluster.shards:
-            proc = self.tab.manager.get(self.cluster.path, s.name)
-            if proc and proc.status == ServerStatus.RUNNING and proc.send_command(f"c_rollback({n})"):
-                sent_names.append(s.name)
-            else:
-                skipped_names.append(s.name)
+        # 按用户明确要求只发给主世界，不再广播给 Caves 等从世界——虽然
+        # Klei 社区文档一般建议世界式集群两边都发一遍（否则天数可能不同
+        # 步），但这里尊重用户自己验证过的取舍。Master 目录名是游戏强制
+        # 要求的固定值，找不到则退化成第一个世界。
+        master = next((s for s in self.cluster.shards if s.name == "Master"), None)
+        target = master or (self.cluster.shards[0] if self.cluster.shards else None)
         self.win.destroy()
         root = self._parent.winfo_toplevel()
-        if sent_names:
-            msg = t("local.rollback_sent", n=n, shards="、".join(sent_names))
-            if skipped_names:
-                msg += t("local.rollback_skipped", shards="、".join(skipped_names))
-            dlg.show_info(root, t("local.rollback_title"), msg)
+        if not target:
+            dlg.show_warning(root, t("local.rollback_title"), t("local.rollback_none_running"))
+            return
+        proc = self.tab.manager.get(self.cluster.path, target.name)
+        if proc and proc.status == ServerStatus.RUNNING and proc.send_command(f"c_rollback({n})"):
+            dlg.show_info(root, t("local.rollback_title"), t("local.rollback_sent", n=n, shards=target.name))
         else:
             dlg.show_warning(root, t("local.rollback_title"), t("local.rollback_none_running"))
 
@@ -707,7 +702,14 @@ class LocalServiceTab:
             self._other_running_banner.show()
         else:
             self._other_running_banner.hide()
-        self._start_all_btn.configure(state=tk.DISABLED if other else tk.NORMAL)
+        # 这个存档自己的世界已经全部在跑（含正在启动/停止的过渡态）时，
+        # "全部启动"再点一遍没有意义——_do_start_shard() 虽然会挡住重复
+        # 启动单个世界，但按钮本身留着能点会让人以为还需要再点一次。
+        def _shard_running(s):
+            proc = self.manager.get(cluster.path, s.name)
+            return proc is not None and proc.status in _RUNNING_LIKE
+        all_running = bool(cluster.shards) and all(_shard_running(s) for s in cluster.shards)
+        self._start_all_btn.configure(state=tk.DISABLED if (other or all_running) else tk.NORMAL)
 
     def _update_stop_all_btn_state(self, cluster):
         """所有世界都是"停止"状态时"全部停止"没有意义，置灰——只有这个
