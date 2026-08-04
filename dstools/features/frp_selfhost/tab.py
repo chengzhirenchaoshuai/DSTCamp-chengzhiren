@@ -34,47 +34,6 @@ def _frpc_exe_path():
     return bundled_resource_dir() / "tools" / "frp_selfhost" / "frpc.exe"
 
 
-class _ScriptDisplayDialog:
-    """展示一段只读文本+一个"复制"按钮的通用弹窗——跟 ModSyncLogDialog
-    的"追加日志、跑完才能关"语义不同，这里内容一次性给定、随时能关，也
-    随时能复制，所以没有照搬那个类，另开一个小的。"""
-
-    def __init__(self, parent_widget, title: str, hint: str, content: str):
-        win = tk.Toplevel(parent_widget)
-        self.win = win
-        win.withdraw()
-        win.title(title)
-        win.configure(background=theme.BG_SOFT)
-
-        btn_frame = ttk.Frame(win)
-        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
-        ttk.Button(btn_frame, text=t("selfhost.copy_script_btn"),
-                   command=lambda: self._copy(content)).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=win.destroy).pack(side=tk.RIGHT)
-
-        body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 0))
-        ttk.Label(body, text=hint, wraplength=560, justify=tk.LEFT,
-                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, pady=(0, 8))
-        text_widget = tk.Text(body, wrap=tk.NONE, height=24, width=76,
-                               font=("Consolas", 10), bg=theme.CARD_BG, fg=theme.TEXT,
-                               relief=tk.FLAT, highlightthickness=1, highlightbackground=theme.CARD_BORDER)
-        text_widget.pack(fill=tk.BOTH, expand=True)
-        text_widget.insert("1.0", content)
-        text_widget.configure(state=tk.DISABLED)
-
-        win.update_idletasks()
-        root = parent_widget.winfo_toplevel()
-        center_over_parent(win, root, width=max(500, win.winfo_reqwidth()), height=win.winfo_reqheight())
-        win.transient(root)
-        win.deiconify()
-        win.grab_set()
-
-    def _copy(self, content):
-        self.win.clipboard_clear()
-        self.win.clipboard_append(content)
-        dlg.show_info(self.win, "", t("selfhost.script_copied"))
-
-
 class _SSHDeployDialog:
     """收集 SSH 连接信息（主机/端口/用户名/密码或私钥）——`self.result`
     是一个 dict（用户点"开始部署"）或 None（取消）。密码/私钥密码只存
@@ -244,11 +203,8 @@ class SelfHostFrpPage:
             side=tk.LEFT, padx=2)
 
         row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
-        ttk.Button(row3, text=t("selfhost.save_server_btn"), command=self._save_server).pack(side=tk.LEFT, padx=(0, 2))
-        ttk.Button(row3, text=t("selfhost.generate_script_btn"), command=self._show_deploy_script).pack(
-            side=tk.LEFT, padx=2)
         ttk.Button(row3, text=t("selfhost.ssh_deploy_btn"), command=self._open_ssh_deploy_dialog).pack(
-            side=tk.LEFT, padx=2)
+            side=tk.LEFT, padx=(0, 2))
 
         self._status_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._status_frame.pack(fill=tk.X, padx=10, pady=(3, 0))
@@ -327,31 +283,6 @@ class SelfHostFrpPage:
             return None
         return port if 1 <= port <= 65535 else None
 
-    def _save_server(self):
-        host = self._host_var.get().strip()
-        if not host:
-            dlg.show_warning(self.app.root, t("selfhost.save_server_btn"), t("selfhost.host_missing"))
-            return
-        port = self._validated_port(self._bind_port_var.get().strip())
-        if port is None:
-            dlg.show_warning(self.app.root, t("selfhost.save_server_btn"), t("selfhost.invalid_port"))
-            return
-        token = self._token_var.get().strip() or deploy.generate_token()
-        self._token_var.set(token)
-        app_settings.set_selfhost_frp_server(host, port, token)
-        dlg.show_info(self.app.root, t("selfhost.save_server_btn"), t("selfhost.server_saved"))
-
-    def _show_deploy_script(self):
-        port = self._validated_port(self._bind_port_var.get().strip())
-        if port is None:
-            dlg.show_warning(self.app.root, t("selfhost.generate_script_btn"), t("selfhost.invalid_port"))
-            return
-        token = self._token_var.get().strip() or deploy.generate_token()
-        self._token_var.set(token)
-        script = deploy.build_install_script(port, token)
-        _ScriptDisplayDialog(self.frame, t("selfhost.script_dialog_title"),
-                              t("selfhost.script_dialog_hint"), script)
-
     def _confirm_host_key(self, host: str, fingerprint: str) -> bool:
         """remote_deploy.deploy_via_ssh() 在后台线程里调用——这个方法本
         身会阻塞那个后台线程，直到主线程上的确认框被用户点掉，靠
@@ -370,12 +301,20 @@ class SelfHostFrpPage:
         return result[0]
 
     def _open_ssh_deploy_dialog(self):
+        host = self._host_var.get().strip()
+        if not host:
+            dlg.show_warning(self.app.root, t("selfhost.ssh_deploy_btn"), t("selfhost.host_missing"))
+            return
         port = self._validated_port(self._bind_port_var.get().strip())
         if port is None:
             dlg.show_warning(self.app.root, t("selfhost.ssh_deploy_btn"), t("selfhost.invalid_port"))
             return
         token = self._token_var.get().strip() or deploy.generate_token()
         self._token_var.set(token)
+        # 没有单独的"保存服务器信息"按钮了——点"SSH 远程部署"这个动作本
+        # 身就表示"这就是我要用的服务器"，顺手把这三项存下来，供
+        # _enable_mapping() 之后使用；不需要用户先点一次保存再点部署。
+        app_settings.set_selfhost_frp_server(host, port, token)
 
         # 记住的是上次 SSH 连接信息（主机/端口/用户名），跟"自建服务器"
         # 本身的 host/port（frps 监听的那个端口）是两套独立的东西，只是
