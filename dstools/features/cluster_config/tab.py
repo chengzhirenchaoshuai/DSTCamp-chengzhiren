@@ -648,8 +648,14 @@ class ClusterConfigTab:
         # Master+Caves 示例（论坛/wiki 的世界配置说明）里每个世界都必须有
         # 这四项且互不冲突，缺了的话服务器要么起不来要么和别的世界抢端口。
         # 只在服务器存档且确认是从世界时才补，本地存档只读、主世界不需要。
-        if is_server and not shard_config.shard.get("is_master", True):
-            self._backfill_slave_shard_fields(c, target_shard, shard_config)
+        if is_server:
+            if not shard_config.shard.get("is_master", True):
+                self._backfill_slave_shard_fields(c, target_shard, shard_config)
+            else:
+                # 曾经当过从世界、又被改回主世界的情况——文件里可能还留着
+                # 上面那四项旧值，主世界不需要，去掉避免一直显示陈旧数据。
+                for section, key in self._SHARD_EXTRA_FIELDS:
+                    getattr(shard_config, section.lower()).pop(key, None)
 
         self._render_shard_fields()
 
@@ -928,6 +934,14 @@ class ClusterConfigTab:
         for (section, key), (var, readonly) in self._entries.items():
             if section.startswith("SHARD_") and not readonly:
                 set_shard_option(shard_config, section.replace("SHARD_",""), key, var.get())
+
+        # 这里的 shard_config 是刚从磁盘重新读的，如果这个世界以前当过从
+        # 世界，disk 上残留的 name/id/master_server_port/authentication_port
+        # 不会出现在当前渲染的 self._entries 里，上面的循环也就不会碰它
+        # 们——不额外清理的话，切回主世界保存时这四项旧值会原样写回文件。
+        if shard_config.shard.get("is_master", True):
+            for section, key in self._SHARD_EXTRA_FIELDS:
+                getattr(shard_config, section.lower()).pop(key, None)
 
         conflict = self._find_port_conflict(c, target, shard_config)
         if conflict:
