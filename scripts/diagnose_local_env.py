@@ -40,7 +40,7 @@ for cluster in env.clusters:
         ini_path = cluster.path / "cluster.ini"
         if ini_path.exists():
             config = load_cluster_config(ini_path)
-            print(f"  [cluster.ini]")
+            print("  [cluster.ini]")
             print(f"    Game mode: {config.gameplay.get('game_mode', 'N/A')}")
             print(f"    Max players: {config.gameplay.get('max_players', 'N/A')}")
             print(f"    Cluster name: {config.network.get('cluster_name', 'N/A')}")

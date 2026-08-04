@@ -117,7 +117,8 @@ class _CopyToServerDialog:
         # 清文字的细边（这正是之前这个弹窗被反馈"按钮上没有文字"的真正
         # 原因：不是文字没画，是按钮本身大半截被截在窗口外面）。
         WIN_H = win.winfo_reqheight() + 20
-        center_over_parent(win, parent_widget.winfo_toplevel(), width=WIN_W, height=WIN_H)
+        root = parent_widget.winfo_toplevel()
+        center_over_parent(win, root, width=WIN_W, height=WIN_H)
 
         win.transient(root)
         win.deiconify()

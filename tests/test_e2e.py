@@ -28,12 +28,7 @@ from dstools.features.mod.manager import (
     load_mod_overrides,
     save_mod_overrides,
     enable_mod,
-    disable_mod,
-    set_mod_config,
-    get_mod_config,
     list_mods,
-    remove_mod,
-    diff_mods,
     sync_mods,
 )
 from dstools.shared.discovery import find_klei_root, discover_environment
@@ -45,7 +40,7 @@ from dstools.features.cluster_config.config_manager import (
 from dstools.features.save_browser.character_names import get_character_display_name
 from dstools.features.save_browser.character_icons import find_mod_character_name, resolve_character
 from dstools.shared.app_settings import (
-    load_settings, save_settings, get_player_note, set_player_note,
+    load_settings, get_player_note, set_player_note,
     get_minimize_on_close, set_minimize_on_close,
     get_cache_use_exe_dir, set_cache_use_exe_dir,
     get_backup_auto_enabled, set_backup_auto_enabled,
@@ -54,7 +49,7 @@ from dstools.shared.app_settings import (
 from dstools.features.local_service.backup_manager import backup_dir, create_backup, restore_backup, list_backups
 from dstools.models import SaveSession, SaveSource
 from dstools.features.mod.parser import parse_modinfo, visible_config_options
-from dstools.features.cluster_config.admin_manager import read_adminlist, add_admin, remove_admin, has_admin
+from dstools.features.cluster_config.admin_manager import read_adminlist, add_admin, remove_admin
 from dstools.shared.token_manager import read_token, write_token, mask_token, is_valid_token
 from dstools.features.mod.backup_utils import backup_file, _prune_old_backups
 from dstools.features.sakura.api import find_dstcamp_tunnel, sanitize_tunnel_name
@@ -185,7 +180,7 @@ def test_lua_parser_real_data():
         assert "configuration_options" in entry, f"Missing 'configuration_options' in {wid}"
 
     print(f"  PASS: Round-trip verified ({len(data)} mods)")
-    print(f"  PASS: All mods have required fields")
+    print("  PASS: All mods have required fields")
 
 
 def test_ini_parser():
@@ -302,61 +297,36 @@ def test_save_reader():
 
 def test_mod_manager():
     """Test mod management operations. Pure tempdir/synthetic data --
-    no real DST install needed, unlike the other tests around it."""
+    no real DST install needed, unlike the other tests around it.
+
+    只测项目实际用到的 5 个函数（enable_mod/list_mods/sync_mods/
+    save_mod_overrides/load_mod_overrides）——disable_mod/set_mod_
+    config/get_mod_config/remove_mod/get_mod/diff_mods 原本是给已删除
+    的 CLI 用的，manager.py 本身也已经删掉了这几个函数。"""
     print("\n" + "=" * 60)
     print("Test 8: Mod Manager")
 
-    # Use a temp file for safe testing
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir) / "modoverrides.lua"
-
-        # Create empty overrides
         overrides = ModOverrides(path=tmp_path)
 
-        # Test add and enable
         enable_mod(overrides, "workshop-test-1")
         assert "workshop-test-1" in overrides.mods
         assert overrides.mods["workshop-test-1"].enabled
         print("  PASS: Enable mod (adds if not present)")
 
-        # Test disable
-        disable_mod(overrides, "workshop-test-1")
-        assert not overrides.mods["workshop-test-1"].enabled
-        print("  PASS: Disable mod")
-
-        # Test config
-        set_mod_config(overrides, "workshop-test-1", "language", "ch")
-        set_mod_config(overrides, "workshop-test-1", "volume", 0.75)
-        assert get_mod_config(overrides, "workshop-test-1", "language") == "ch"
-        assert get_mod_config(overrides, "workshop-test-1", "volume") == 0.75
-        print("  PASS: Set/get mod config")
-
-        # Test save and reload
         save_mod_overrides(overrides)
         reloaded = load_mod_overrides(tmp_path)
         assert len(list_mods(reloaded)) == 1
-        assert get_mod_config(reloaded, "workshop-test-1", "language") == "ch"
         print("  PASS: Save and reload preserves data")
 
-        # Test remove
-        assert remove_mod(overrides, "workshop-test-1")
-        assert "workshop-test-1" not in overrides.mods
-        print("  PASS: Remove mod")
-
-        # Test diff
-        a = ModOverrides(path=Path("/tmp/a.lua"))
-        b = ModOverrides(path=Path("/tmp/b.lua"))
+        a = ModOverrides(path=Path(tmpdir) / "a.lua")
+        b = ModOverrides(path=Path(tmpdir) / "b.lua")
         enable_mod(a, "workshop-shared")
         enable_mod(a, "workshop-only-a")
         enable_mod(b, "workshop-shared")
         enable_mod(b, "workshop-only-b")
 
-        diff = diff_mods(a, b)
-        assert "workshop-only-a" in diff["only_in_a"]
-        assert "workshop-only-b" in diff["only_in_b"]
-        print("  PASS: Mod diff works")
-
-        # Test sync
         sync_mods(a, b)
         assert "workshop-only-a" in b.mods
         assert "workshop-only-b" not in b.mods
@@ -705,7 +675,6 @@ def test_admin_manager():
         assert add_admin(path, "KU_bbbbbbbb") is True
         assert add_admin(path, "KU_aaaaaaaa") is False, "Adding an existing admin should be a no-op"
         assert read_adminlist(path) == ["KU_aaaaaaaa", "KU_bbbbbbbb"]
-        assert has_admin(path, "KU_bbbbbbbb") is True
         print("  PASS: add_admin appends new IDs and rejects duplicates")
 
         assert remove_admin(path, "KU_aaaaaaaa") is True

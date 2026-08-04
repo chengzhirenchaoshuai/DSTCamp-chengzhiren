@@ -21,7 +21,7 @@ from dstools.features.mod.icons import get_mod_icon_path
 from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
 from dstools.features.mod.cache import load_cached_result, save_result
 from dstools.features.mod.parser import (
-    find_game_mods_dir, find_mod_folder, find_wegame_client_dir, find_wegame_server_dir,
+    ModInfo, find_game_mods_dir, find_mod_folder, find_wegame_client_dir, find_wegame_server_dir,
     list_installed_mod_ids, parse_modinfo, resolve_config_value, resolve_full_modinfo,
     resolve_wegame_client_mods_dir, visible_config_options,
 )

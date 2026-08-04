@@ -1,7 +1,6 @@
 """Mod configuration manager for DST modoverrides.lua files."""
 
 from pathlib import Path
-from typing import Any
 
 from dstools.features.mod.backup_utils import backup_file as _backup_file
 from dstools.shared.lua_parser import parse_lua_file, serialize_lua_table
@@ -81,91 +80,6 @@ def enable_mod(mod_overrides: ModOverrides, workshop_id: str) -> None:
         )
 
 
-def disable_mod(mod_overrides: ModOverrides, workshop_id: str) -> None:
-    """Disable a mod. Adds it as disabled if not present.
-
-    Args:
-        mod_overrides: The ModOverrides to modify.
-        workshop_id: Workshop mod ID.
-    """
-    if workshop_id in mod_overrides.mods:
-        mod_overrides.mods[workshop_id].enabled = False
-    else:
-        mod_overrides.mods[workshop_id] = ModEntry(
-            workshop_id=workshop_id,
-            enabled=False,
-            configuration_options={},
-        )
-
-
-def set_mod_config(mod_overrides: ModOverrides, workshop_id: str,
-                   key: str, value: Any) -> None:
-    """Set a configuration option for a mod. Adds the mod if not present.
-
-    Args:
-        mod_overrides: The ModOverrides to modify.
-        workshop_id: Workshop mod ID.
-        key: Configuration option key.
-        value: Configuration option value (will be type-coerced).
-    """
-    if workshop_id not in mod_overrides.mods:
-        mod_overrides.mods[workshop_id] = ModEntry(
-            workshop_id=workshop_id,
-            enabled=True,
-        )
-
-    # Type coercion for common value patterns
-    if isinstance(value, str):
-        # Try int
-        try:
-            value = int(value)
-        except ValueError:
-            # Try float
-            try:
-                value = float(value)
-            except ValueError:
-                # Try bool
-                if value.lower() == "true":
-                    value = True
-                elif value.lower() == "false":
-                    value = False
-
-    mod_overrides.mods[workshop_id].configuration_options[key] = value
-
-
-def get_mod_config(mod_overrides: ModOverrides, workshop_id: str, key: str) -> Any:
-    """Get a configuration option value for a mod.
-
-    Args:
-        mod_overrides: The ModOverrides to read from.
-        workshop_id: Workshop mod ID.
-        key: Configuration option key.
-
-    Returns:
-        The option value, or None if not found.
-    """
-    entry = mod_overrides.mods.get(workshop_id)
-    if entry is None:
-        return None
-    return entry.configuration_options.get(key)
-
-
-def remove_mod(mod_overrides: ModOverrides, workshop_id: str) -> bool:
-    """Remove a mod from the overrides.
-
-    Args:
-        mod_overrides: The ModOverrides to modify.
-        workshop_id: Workshop mod ID.
-
-    Returns:
-        True if the mod was removed, False if it wasn't present.
-    """
-    if workshop_id in mod_overrides.mods:
-        del mod_overrides.mods[workshop_id]
-        return True
-    return False
-
-
 def list_mods(mod_overrides: ModOverrides) -> list[ModEntry]:
     """List all mods in the overrides.
 
@@ -176,68 +90,6 @@ def list_mods(mod_overrides: ModOverrides) -> list[ModEntry]:
         List of ModEntry objects.
     """
     return list(mod_overrides.mods.values())
-
-
-def get_mod(mod_overrides: ModOverrides, workshop_id: str) -> ModEntry | None:
-    """Get a specific mod entry.
-
-    Args:
-        mod_overrides: The ModOverrides to read from.
-        workshop_id: Workshop mod ID.
-
-    Returns:
-        ModEntry or None.
-    """
-    return mod_overrides.mods.get(workshop_id)
-
-
-def diff_mods(a: ModOverrides, b: ModOverrides) -> dict:
-    """Compare two ModOverrides and return differences.
-
-    Args:
-        a: First ModOverrides.
-        b: Second ModOverrides.
-
-    Returns:
-        Dict with keys:
-        - 'only_in_a': list of workshop IDs only in a
-        - 'only_in_b': list of workshop IDs only in b
-        - 'enabled_diff': dict of workshop_id -> (enabled_in_a, enabled_in_b)
-        - 'config_diff': dict of workshop_id -> {key: (value_in_a, value_in_b)}
-    """
-    result = {
-        'only_in_a': [],
-        'only_in_b': [],
-        'enabled_diff': {},
-        'config_diff': {},
-    }
-
-    a_ids = set(a.mods.keys())
-    b_ids = set(b.mods.keys())
-
-    result['only_in_a'] = sorted(a_ids - b_ids)
-    result['only_in_b'] = sorted(b_ids - a_ids)
-
-    for wid in a_ids & b_ids:
-        a_mod = a.mods[wid]
-        b_mod = b.mods[wid]
-
-        if a_mod.enabled != b_mod.enabled:
-            result['enabled_diff'][wid] = (a_mod.enabled, b_mod.enabled)
-
-        # Compare config options
-        all_keys = set(a_mod.configuration_options.keys()) | set(b_mod.configuration_options.keys())
-        config_diffs = {}
-        for key in all_keys:
-            av = a_mod.configuration_options.get(key)
-            bv = b_mod.configuration_options.get(key)
-            if av != bv:
-                config_diffs[key] = (av, bv)
-
-        if config_diffs:
-            result['config_diff'][wid] = config_diffs
-
-    return result
 
 
 def sync_mods(source: ModOverrides, target: ModOverrides) -> None:

@@ -99,8 +99,8 @@ def build():
     ]
 
     print("Building DSTCamp.exe...")
-    print(f"  Entry: run_gui.py")
-    print(f"  Output: dist/DSTCamp.exe")
+    print("  Entry: run_gui.py")
+    print("  Output: dist/DSTCamp.exe")
     print()
 
     PyInstaller.__main__.run(args)

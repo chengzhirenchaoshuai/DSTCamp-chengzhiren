@@ -77,8 +77,3 @@ def set_lang(lang: str):
 def get_lang() -> str:
     """Get the current language code."""
     return _i18n.lang
-
-
-def get_i18n() -> I18n:
-    """Get the I18n singleton instance."""
-    return _i18n

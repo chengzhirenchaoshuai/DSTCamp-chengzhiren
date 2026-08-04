@@ -128,7 +128,7 @@ def test_gui_imports():
     assert DSToolsApp and ModManagerTab and ClusterConfigTab
     from dstools.shared.gui.theme import SERVER_COLOR
     assert SERVER_COLOR == "#2e7d32"
-    print(f"  PASS: GUI imports OK")
+    print("  PASS: GUI imports OK")
 
     # custom_titlebar.py 只在 DSToolsApp.__init__ 里延迟 import（避免非
     # Windows 平台在模块加载时就碰 ctypes.windll），这里单独补一次模块级
@@ -138,13 +138,13 @@ def test_gui_imports():
     assert hasattr(custom_titlebar, "apply_borderless_style")
     assert hasattr(custom_titlebar, "ResizeGrips")
     assert hasattr(custom_titlebar, "CustomTitleBar")
-    print(f"  PASS: custom_titlebar imports OK")
+    print("  PASS: custom_titlebar imports OK")
 
     # 每个玩家角色状态面板——import 级别检查方法存在即可，这个项目对 GUI
     # 测试一贯只做到这一层，不真的实例化 tk.Tk() 构造控件树。
     assert hasattr(SaveBrowserTab, "_build_player_row")
     assert hasattr(SaveBrowserTab, "_refresh_players")
-    print(f"  PASS: SaveBrowserTab has per-player status methods")
+    print("  PASS: SaveBrowserTab has per-player status methods")
 
 
 def main():

@@ -68,8 +68,3 @@ def remove_admin(path: Path, admin_id: str) -> bool:
     admins.remove(admin_id)
     write_adminlist(path, admins)
     return True
-
-
-def has_admin(path: Path, admin_id: str) -> bool:
-    """Check if an admin ID is in the list."""
-    return admin_id in read_adminlist(path)
