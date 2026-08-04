@@ -9,13 +9,13 @@ get_selfhost_frp_mapping 等函数），不像樱花那样能现查 list_tunnels
 
 import threading
 import tkinter as tk
-from tkinter import font as tkfont, ttk
+from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.shared import app_settings
 from dstools.features.cluster_config.config_manager import (
     get_cluster_option, load_cluster_config, load_shard_config, save_shard_config, set_shard_option,
 )
-from dstools.features.frp_selfhost import deploy
+from dstools.features.frp_selfhost import deploy, remote_deploy
 from dstools.features.frp_selfhost.client import FrpcManager, build_frpc_toml
 from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
@@ -75,6 +75,134 @@ class _ScriptDisplayDialog:
         dlg.show_info(self.win, "", t("selfhost.script_copied"))
 
 
+class _SSHDeployDialog:
+    """收集 SSH 连接信息（主机/端口/用户名/密码或私钥）——`self.result`
+    是一个 dict（用户点"开始部署"）或 None（取消）。密码/私钥密码只存
+    在这个对话框自己的 StringVar 里，窗口一销毁（不管是取消还是提交）
+    这些变量本身也跟着没了，不会被这个类自己额外存到任何地方。"""
+
+    def __init__(self, parent_widget, default_host: str):
+        self.result: dict | None = None
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("selfhost.ssh_dialog_title"))
+        win.configure(background=theme.BG_SOFT)
+
+        body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        ttk.Label(body, text=t("selfhost.ssh_dialog_hint"), wraplength=440, justify=tk.LEFT,
+                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
+
+        self._host_var = tk.StringVar(value=default_host)
+        self._port_var = tk.StringVar(value="22")
+        self._user_var = tk.StringVar(value="root")
+        self._auth_mode = tk.StringVar(value="password")
+        self._password_var = tk.StringVar()
+        self._key_path_var = tk.StringVar()
+        self._key_passphrase_var = tk.StringVar()
+
+        row = 1
+        for label_key, var, width in (
+            ("selfhost.host_label", self._host_var, 24),
+            ("selfhost.ssh_port_label", self._port_var, 8),
+            ("selfhost.ssh_username_label", self._user_var, 16),
+        ):
+            ttk.Label(body, text=t(label_key)).grid(row=row, column=0, sticky=tk.E, padx=(0, 6), pady=3)
+            ttk.Entry(body, textvariable=var, width=width).grid(row=row, column=1, sticky=tk.W, pady=3)
+            row += 1
+
+        auth_row = ttk.Frame(body); auth_row.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(6, 3))
+        ttk.Radiobutton(auth_row, text=t("selfhost.ssh_auth_password"), value="password",
+                        variable=self._auth_mode, command=self._refresh_auth_fields).pack(side=tk.LEFT)
+        ttk.Radiobutton(auth_row, text=t("selfhost.ssh_auth_key"), value="key",
+                        variable=self._auth_mode, command=self._refresh_auth_fields).pack(side=tk.LEFT, padx=(10, 0))
+        row += 1
+
+        # 密码/密钥两组输入行共用同一个起始行号——同一时间只显示其中一
+        # 组（见 _refresh_auth_fields），固定记下这个行号，不依赖
+        # grid_forget() 之后 grid_info() 还能不能查到原来的位置（实测
+        # 查不到，forget 之后 grid_info() 返回空字典）。
+        self._auth_fields_row = row
+        self._password_row = ttk.Frame(body)
+        ttk.Label(self._password_row, text=t("selfhost.ssh_password_label")).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Entry(self._password_row, textvariable=self._password_var, width=28, show="*").pack(side=tk.LEFT)
+
+        self._key_row = ttk.Frame(body)
+        ttk.Label(self._key_row, text=t("selfhost.ssh_key_path_label")).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Entry(self._key_row, textvariable=self._key_path_var, width=26).pack(side=tk.LEFT)
+        ttk.Button(self._key_row, text=t("selfhost.ssh_key_browse_btn"), command=self._browse_key).pack(
+            side=tk.LEFT, padx=(4, 0))
+        self._key_pass_row = ttk.Frame(body)
+        ttk.Label(self._key_pass_row, text=t("selfhost.ssh_key_passphrase_label")).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Entry(self._key_pass_row, textvariable=self._key_passphrase_var, width=20, show="*").pack(side=tk.LEFT)
+
+        self._refresh_auth_fields()
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=15)
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text=t("selfhost.ssh_start_btn"), command=self._confirm).pack(side=tk.RIGHT)
+
+        win.bind("<Escape>", lambda e: self._cancel())
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        win.update_idletasks()
+        root = parent_widget.winfo_toplevel()
+        center_over_parent(win, root, width=max(480, win.winfo_reqwidth()), height=win.winfo_reqheight())
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _refresh_auth_fields(self):
+        row = self._auth_fields_row
+        if self._auth_mode.get() == "password":
+            self._key_row.grid_forget()
+            self._key_pass_row.grid_forget()
+            self._password_row.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=3)
+        else:
+            self._password_row.grid_forget()
+            self._key_row.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=3)
+            self._key_pass_row.grid(row=row + 1, column=0, columnspan=2, sticky=tk.W, pady=3)
+
+    def _browse_key(self):
+        path = filedialog.askopenfilename(parent=self.win)
+        if path:
+            self._key_path_var.set(path)
+
+    def _confirm(self):
+        host = self._host_var.get().strip()
+        try:
+            port = int(self._port_var.get().strip())
+        except ValueError:
+            port = -1
+        username = self._user_var.get().strip()
+        if not host:
+            dlg.show_warning(self.win, t("selfhost.ssh_dialog_title"), t("selfhost.host_missing"))
+            return
+        if not (1 <= port <= 65535):
+            dlg.show_warning(self.win, t("selfhost.ssh_dialog_title"), t("selfhost.invalid_port"))
+            return
+        if not username:
+            dlg.show_warning(self.win, t("selfhost.ssh_dialog_title"), t("selfhost.ssh_username_missing"))
+            return
+        if self._auth_mode.get() == "key" and not self._key_path_var.get().strip():
+            dlg.show_warning(self.win, t("selfhost.ssh_dialog_title"), t("selfhost.ssh_key_path_missing"))
+            return
+        self.result = {
+            "host": host, "port": port, "username": username,
+            "password": self._password_var.get() if self._auth_mode.get() == "password" else None,
+            "key_path": self._key_path_var.get().strip() if self._auth_mode.get() == "key" else None,
+            "key_passphrase": self._key_passphrase_var.get() or None,
+        }
+        self.win.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.win.destroy()
+
+
 class SelfHostFrpPage:
     def _label(self, parent, text, *, fg=None, font=None):
         """照抄 sakura/tab.py 的同名方法——BgFrame + create_text，不用
@@ -118,6 +246,8 @@ class SelfHostFrpPage:
         row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
         ttk.Button(row3, text=t("selfhost.save_server_btn"), command=self._save_server).pack(side=tk.LEFT, padx=(0, 2))
         ttk.Button(row3, text=t("selfhost.generate_script_btn"), command=self._show_deploy_script).pack(
+            side=tk.LEFT, padx=2)
+        ttk.Button(row3, text=t("selfhost.ssh_deploy_btn"), command=self._open_ssh_deploy_dialog).pack(
             side=tk.LEFT, padx=2)
 
         self._status_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
@@ -221,6 +351,63 @@ class SelfHostFrpPage:
         script = deploy.build_install_script(port, token)
         _ScriptDisplayDialog(self.frame, t("selfhost.script_dialog_title"),
                               t("selfhost.script_dialog_hint"), script)
+
+    def _confirm_host_key(self, host: str, fingerprint: str) -> bool:
+        """remote_deploy.deploy_via_ssh() 在后台线程里调用——这个方法本
+        身会阻塞那个后台线程，直到主线程上的确认框被用户点掉，靠
+        threading.Event 做同步，不能直接在这里调 dlg.ask_yes_no()（那
+        个函数假定自己就跑在 Tk 主线程）。"""
+        result = [False]
+        event = threading.Event()
+
+        def _ask():
+            result[0] = dlg.ask_yes_no(self.app.root, t("selfhost.host_key_confirm_title"),
+                                       t("selfhost.host_key_confirm_msg", host=host, fingerprint=fingerprint))
+            event.set()
+
+        self.frame.after(0, _ask)
+        event.wait()
+        return result[0]
+
+    def _open_ssh_deploy_dialog(self):
+        port = self._validated_port(self._bind_port_var.get().strip())
+        if port is None:
+            dlg.show_warning(self.app.root, t("selfhost.ssh_deploy_btn"), t("selfhost.invalid_port"))
+            return
+        token = self._token_var.get().strip() or deploy.generate_token()
+        self._token_var.set(token)
+        script = deploy.build_install_script(port, token)
+
+        ssh_dlg = _SSHDeployDialog(self.frame, self._host_var.get().strip())
+        if ssh_dlg.result is None:
+            return
+        conn = ssh_dlg.result
+
+        progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_progress_title"))
+
+        def _on_log(line):
+            self.frame.after(0, lambda: progress.append(line))
+
+        def _worker():
+            try:
+                remote_deploy.deploy_via_ssh(
+                    conn["host"], conn["port"], conn["username"], script,
+                    _on_log, self._confirm_host_key,
+                    password=conn["password"], key_path=conn["key_path"],
+                    key_passphrase=conn["key_passphrase"])
+                self.frame.after(0, lambda: self._on_ssh_deploy_done(progress))
+            except remote_deploy.RemoteDeployError as e:
+                self.frame.after(0, lambda err=e: self._on_ssh_deploy_error(progress, err))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_ssh_deploy_done(self, progress):
+        progress.append(t("selfhost.ssh_deploy_done"))
+        progress.finish()
+
+    def _on_ssh_deploy_error(self, progress, e):
+        progress.append(t("selfhost.ssh_deploy_failed", detail=str(e)))
+        progress.finish()
 
     # ── 世界状态区渲染（结构照抄 sakura/tab.py 的 _render_shard_rows） ──
 
