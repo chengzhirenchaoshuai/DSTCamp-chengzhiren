@@ -31,6 +31,8 @@ _KEY_SAKURA_LAST_NODE = "sakura_last_node_id"
 _KEY_LUAJIT_ENABLED = "luajit_enabled"
 _KEY_LAST_PLATFORM = "last_platform"
 _KEY_LAST_CLUSTER_PATH = "last_cluster_path"
+_KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
+_KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 
 
 def get_settings_dir() -> Path:
@@ -357,3 +359,63 @@ def set_luajit_enabled(value: bool) -> None:
     data = load_settings()
     data[_KEY_LUAJIT_ENABLED] = bool(value)
     save_settings(data)
+
+
+def get_selfhost_frp_server() -> dict | None:
+    """自建 frps 服务器的连接信息（host/bind_port/token）——全局一份，
+    不分存档：这个功能对应的是"用户自己有一台云服务器"，同一台服务器
+    通常会被多个存档复用，不需要每个存档各存一份。没配置过返回 None。"""
+    return load_settings().get(_KEY_SELFHOST_FRP_SERVER) or None
+
+
+def set_selfhost_frp_server(host: str, bind_port: int, token: str) -> None:
+    data = load_settings()
+    data[_KEY_SELFHOST_FRP_SERVER] = {"host": host, "bind_port": int(bind_port), "token": token}
+    save_settings(data)
+
+
+def clear_selfhost_frp_server() -> None:
+    data = load_settings()
+    data.pop(_KEY_SELFHOST_FRP_SERVER, None)
+    save_settings(data)
+
+
+def _selfhost_mapping_key(cluster_path: Path, shard_name: str) -> str:
+    return f"{cluster_path}::{shard_name}"
+
+
+def get_selfhost_frp_mapping(cluster_path: Path, shard_name: str) -> int | None:
+    """这个世界当前分到的自建 frps 远程端口——DSTCamp 自己的服务器没有
+    像樱花那样的账号 API 能"创建隧道时现查一个没被占用的端口"，只能自
+    己在本地记账分配，见 features/frp_selfhost/deploy.py 的说明。"""
+    mappings = load_settings().get(_KEY_SELFHOST_FRP_MAPPINGS) or {}
+    raw = mappings.get(_selfhost_mapping_key(cluster_path, shard_name))
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def set_selfhost_frp_mapping(cluster_path: Path, shard_name: str, remote_port: int | None) -> None:
+    data = load_settings()
+    mappings = data.get(_KEY_SELFHOST_FRP_MAPPINGS) or {}
+    key = _selfhost_mapping_key(cluster_path, shard_name)
+    if remote_port is not None:
+        mappings[key] = int(remote_port)
+    else:
+        mappings.pop(key, None)
+    data[_KEY_SELFHOST_FRP_MAPPINGS] = mappings
+    save_settings(data)
+
+
+def get_all_selfhost_frp_ports() -> list[int]:
+    """本地记账过的所有已分配远程端口（不分存档）——分配新端口时用来避
+    免跟其它存档/世界已经占用的端口撞车。"""
+    mappings = load_settings().get(_KEY_SELFHOST_FRP_MAPPINGS) or {}
+    ports = []
+    for raw in mappings.values():
+        try:
+            ports.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return ports
