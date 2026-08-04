@@ -631,8 +631,15 @@ class ModManagerTab:
         # dict 本身的插入顺序就是后面 _build_rows() 遍历的顺序，这里排
         # 好之后不需要在每次渲染时都重新排一遍。
         def _name_of(wid):
+            # 跟 mod_render.py 实际画出来的文字用同一套清洗——有些 mod
+            # 名字前后包着游戏自定义图标字体的私用区码位（比如真机遇到
+            # 过的 "\U000f000d Cherry Forest \U000f000d"），这些码位画
+            # 面上不显示任何字符，但原始字符串里它们才是第一个字符，不
+            # 清洗的话会被误判成"符号开头"，跟屏幕上实际看到的第一个字
+            # （字母/汉字）对不上，排序位置跟显示文字就不一致了。
             info = mod_infos.get(wid)
-            return (info.name if info else "") or wid
+            raw = (info.name if info else "") or wid
+            return fonts.strip_unrenderable(raw) or raw
         ordered_ids = sorted(mod_data.keys(), key=functools.cmp_to_key(
             lambda a, b: _mod_name_cmp(_name_of(a), _name_of(b))))
         ordered_ids.sort(key=lambda wid: not mod_data[wid].enabled)
