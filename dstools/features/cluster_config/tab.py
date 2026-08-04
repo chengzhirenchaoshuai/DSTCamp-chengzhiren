@@ -405,12 +405,12 @@ class ClusterConfigTab:
     _ROW_LABEL_FONT = ("", 11)
     _ROW_VALUE_FONT = ("", 11)
     # 只有从世界(is_master=false)才需要的字段——见 _backfill_slave_shard_fields
-    # 和 _on_is_master_toggle。name/id 切换开关时现场增删，不需要先保存；
-    # master_server_port/authentication_port 不再自动生成（只有 Master
-    # 需要真正向 Steam 注册），留在这张表里只是为了切回主世界时把历史遗
-    # 留（旧版本生成的、或用户手动填的）残留值一并清掉。
-    _SHARD_EXTRA_FIELDS = [("SHARD", "name"), ("SHARD", "id"),
-                           ("STEAM", "master_server_port"), ("STEAM", "authentication_port")]
+    # 和 _on_is_master_toggle：切换开关时这两项现场增删，不需要先保存。
+    _SHARD_SLAVE_ONLY_FIELDS = [("SHARD", "name"), ("SHARD", "id")]
+    # master_server_port/authentication_port 不区分主世界/从世界，任何
+    # 世界都常驻显示这两个输入框（真机验证过留空不影响服务器正常运行），
+    # 不自动填值，见 _load_shard_config 里的 setdefault。
+    _SHARD_PORT_OPTIONAL_FIELDS = [("STEAM", "master_server_port"), ("STEAM", "authentication_port")]
     # 有可能填很长文字、但官方并不支持真正换行符的字段（服务器描述在
     # 游戏里就是单行文本）-- 用固定 3 行高度的 Text 展示，wrap=tk.WORD
     # 只是视觉上自动换行，不会往内容里插入 "\n"；真按下回车键也会被
@@ -649,17 +649,20 @@ class ClusterConfigTab:
         # 从世界(is_master=false)的 server.ini 经常缺 name/id——Klei 官方
         # Master+Caves 示例（论坛/wiki 的世界配置说明）里每个世界都必须有
         # 这两项且互不冲突，缺了的话服务器要么起不来要么和别的世界抢编号。
-        # master_server_port/authentication_port 不在这里自动补，见
-        # _backfill_slave_shard_fields 的说明。
         # 只在服务器存档且确认是从世界时才补，本地存档只读、主世界不需要。
         if is_server:
             if not shard_config.shard.get("is_master", True):
                 self._backfill_slave_shard_fields(c, target_shard, shard_config)
             else:
                 # 曾经当过从世界、又被改回主世界的情况——文件里可能还留着
-                # 上面那四项旧值，主世界不需要，去掉避免一直显示陈旧数据。
-                for section, key in self._SHARD_EXTRA_FIELDS:
+                # name/id 旧值，主世界不需要，去掉避免一直显示陈旧数据。
+                for section, key in self._SHARD_SLAVE_ONLY_FIELDS:
                     getattr(shard_config, section.lower()).pop(key, None)
+            # master_server_port/authentication_port 不分主世界/从世界，
+            # 常驻显示，文件里没有就摆一个空字符串占位，不自动填值。本地
+            # 存档只读展示实际内容，没有就不需要额外造一行空的出来。
+            for section, key in self._SHARD_PORT_OPTIONAL_FIELDS:
+                getattr(shard_config, section.lower()).setdefault(key, "")
 
         self._render_shard_fields()
 
@@ -722,10 +725,10 @@ class ClusterConfigTab:
 
     def _on_is_master_toggle(self):
         """"是否为主世界"开关被用户实时切换（还没点保存）——立即在编辑器
-        里增加/去掉从世界专属的 name/id（以及历史遗留可能存在的
-        master_server_port/authentication_port），填好之后一起点"保存"才
-        会写入文件；切回主世界则把这几项现场去掉，不需要先保存再重新加
-        载才能看到。"""
+        里增加/去掉从世界专属的 name/id，填好之后一起点"保存"才会写入文
+        件；切回主世界则把这两项现场去掉，不需要先保存再重新加载才能看
+        到。master_server_port/authentication_port 不受这个开关影响，两
+        边始终显示。"""
         if not hasattr(self, "_shard_config") or self._shard_config is None:
             return
         shard_config = self._shard_config
@@ -735,7 +738,7 @@ class ClusterConfigTab:
         if not is_master:
             self._backfill_slave_shard_fields(self._shard_config_cluster, self._shard_config_shard, shard_config)
         else:
-            for section, key in self._SHARD_EXTRA_FIELDS:
+            for section, key in self._SHARD_SLAVE_ONLY_FIELDS:
                 getattr(shard_config, section.lower()).pop(key, None)
         self._render_shard_fields()
 
@@ -937,11 +940,13 @@ class ClusterConfigTab:
                 set_shard_option(shard_config, section.replace("SHARD_",""), key, var.get())
 
         # 这里的 shard_config 是刚从磁盘重新读的，如果这个世界以前当过从
-        # 世界，disk 上残留的 name/id/master_server_port/authentication_port
-        # 不会出现在当前渲染的 self._entries 里，上面的循环也就不会碰它
-        # 们——不额外清理的话，切回主世界保存时这四项旧值会原样写回文件。
+        # 世界，disk 上残留的 name/id 不会出现在当前渲染的 self._entries
+        # 里，上面的循环也就不会碰它们——不额外清理的话，切回主世界保存
+        # 时这两项旧值会原样写回文件。master_server_port/authentication_port
+        # 不需要在这里处理：这两项始终渲染在 self._entries 里，上面的循
+        # 环已经会把当前输入框的值（哪怕是空字符串）写回 shard_config。
         if shard_config.shard.get("is_master", True):
-            for section, key in self._SHARD_EXTRA_FIELDS:
+            for section, key in self._SHARD_SLAVE_ONLY_FIELDS:
                 getattr(shard_config, section.lower()).pop(key, None)
 
         conflict = self._find_port_conflict(c, target, shard_config)
