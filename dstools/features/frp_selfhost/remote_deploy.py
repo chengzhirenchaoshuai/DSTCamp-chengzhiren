@@ -35,6 +35,12 @@ from dstools.features.frp_selfhost import deploy
 from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
 
 _KNOWN_HOSTS_PATH = cache_dir("frp_selfhost") / "known_hosts"
+# "初次鉴权"生成的密钥对——固定路径，不分服务器（这个功能目前只支持
+# 管理一台自建服务器，见 shared/app_settings.py 的 selfhost_frp_server
+# 只存一份）。私钥只在本机使用，从不上传；公钥推送到服务器的
+# ~/.ssh/authorized_keys 后，以后连接直接用这把私钥，不需要再输密码。
+SSH_KEY_PATH = cache_dir("frp_selfhost") / "ssh_key"
+SSH_PUBKEY_PATH = cache_dir("frp_selfhost") / "ssh_key.pub"
 
 # 目前打包了这两种架构的 Linux 二进制（amd64 覆盖绝大多数云服务器，
 # arm64 覆盖近年常见的 ARM 云实例，比如阿里云倚天/AWS Graviton）——
@@ -78,6 +84,120 @@ class _TOFUPolicy(paramiko.MissingHostKeyPolicy):
         client.get_host_keys().add(hostname, key.get_name(), key)
         _KNOWN_HOSTS_PATH.parent.mkdir(parents=True, exist_ok=True)
         client.get_host_keys().save(str(_KNOWN_HOSTS_PATH))
+
+
+def has_local_key() -> bool:
+    return SSH_KEY_PATH.exists() and SSH_PUBKEY_PATH.exists()
+
+
+def ensure_local_keypair() -> str:
+    """本地已经生成过就直接复用（不无谓地作废已经推上服务器的旧公
+    钥），没有才现生成一份。用 Ed25519（现代、体积小、paramiko 原生支
+    持读取）——paramiko 自己不能生成这种密钥（`Ed25519Key` 没有
+    `generate()`，只有 `RSAKey` 有），改用它本来就依赖的 `cryptography`
+    库生成之后序列化成 OpenSSH 格式，两边都验证过能正确读回来。返回
+    OpenSSH 格式的公钥那一行文本（`ssh-ed25519 AAAA... dstcamp`）。"""
+    if has_local_key():
+        return SSH_PUBKEY_PATH.read_text(encoding="utf-8").strip()
+
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    priv_pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.OpenSSH,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    pub_line = key.public_key().public_bytes(
+        encoding=serialization.Encoding.OpenSSH,
+        format=serialization.PublicFormat.OpenSSH,
+    ).decode("ascii") + " dstcamp-selfhost"
+
+    SSH_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SSH_KEY_PATH.write_bytes(priv_pem)
+    try:
+        import os
+        os.chmod(SSH_KEY_PATH, 0o600)  # Windows 上是no-op，Linux/Mac 上有意义
+    except OSError:
+        pass
+    SSH_PUBKEY_PATH.write_text(pub_line + "\n", encoding="utf-8")
+    return pub_line
+
+
+def authorize_key_on_server(
+    host: str, port: int, username: str, password: str, pubkey_line: str,
+    on_log: LogFn, confirm_host_key: ConfirmHostKeyFn, connect_timeout: float = 15.0,
+) -> None:
+    """用密码登录一次，把公钥追加进服务器的 ~/.ssh/authorized_keys——
+    重复调用是幂等的（已经追加过同一行就不会再加一遍）。这一步之后就
+    可以关掉密码连接，改用 verify_key_login() 验证私钥能不能登录。"""
+    client = paramiko.SSHClient()
+    if _KNOWN_HOSTS_PATH.exists():
+        client.load_host_keys(str(_KNOWN_HOSTS_PATH))
+    client.set_missing_host_key_policy(_TOFUPolicy(confirm_host_key))
+    try:
+        on_log(f"正在用密码连接 {host}:{port} ...")
+        client.connect(hostname=host, port=port, username=username, password=password,
+                       timeout=connect_timeout, banner_timeout=connect_timeout,
+                       auth_timeout=connect_timeout)
+    except paramiko.BadHostKeyException as e:
+        raise RemoteDeployError(
+            f"服务器 {host} 的主机密钥和上次记录的不一致，为安全起见已拒绝连接。详情: {e}") from e
+    except paramiko.AuthenticationException as e:
+        raise RemoteDeployError(f"密码认证失败: {e}") from e
+    except (paramiko.SSHException, OSError) as e:
+        raise RemoteDeployError(f"连接失败: {e}") from e
+
+    try:
+        on_log("正在推送公钥到服务器...")
+        # 用 shell 拼接而不是 sftp 直接写文件——这样能在同一条命令里做
+        # "已存在就不重复追加"的判断（用 grep -qxF 精确匹配整行），不需
+        # 要先读回 authorized_keys 内容再在本地比较，减少一次往返。
+        escaped = pubkey_line.replace("'", "'\\''")
+        cmd = (
+            "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
+            f"touch ~/.ssh/authorized_keys && "
+            f"grep -qxF '{escaped}' ~/.ssh/authorized_keys || echo '{escaped}' >> ~/.ssh/authorized_keys && "
+            "chmod 600 ~/.ssh/authorized_keys"
+        )
+        _stdin, stdout, stderr = client.exec_command(cmd, timeout=15)
+        exit_code = stdout.channel.recv_exit_status()
+        if exit_code != 0:
+            err_text = stderr.read().decode("utf-8", errors="replace").strip()
+            raise RemoteDeployError(f"推送公钥失败（退出码 {exit_code}）: {err_text}")
+        on_log("公钥已推送。")
+    except (paramiko.SSHException, OSError) as e:
+        raise RemoteDeployError(f"推送公钥失败: {e}") from e
+    finally:
+        client.close()
+
+
+def verify_key_login(
+    host: str, port: int, username: str, on_log: LogFn, connect_timeout: float = 15.0,
+) -> bool:
+    """只用本地私钥（不带密码兜底）连一次，确认公钥真的推送生效——不是
+    自己骗自己"应该成功了"，是真的拿这把钥匙敲一次门。失败直接抛
+    RemoteDeployError，不返回 False 让调用方误以为是"可以重试"的普通
+    情况。"""
+    pkey = paramiko.Ed25519Key.from_private_key_file(str(SSH_KEY_PATH))
+    client = paramiko.SSHClient()
+    if _KNOWN_HOSTS_PATH.exists():
+        client.load_host_keys(str(_KNOWN_HOSTS_PATH))
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    try:
+        on_log("正在用密钥验证登录...")
+        client.connect(hostname=host, port=port, username=username, pkey=pkey,
+                       timeout=connect_timeout, banner_timeout=connect_timeout,
+                       auth_timeout=connect_timeout)
+        on_log("验证成功，以后连接这台服务器不再需要密码。")
+        return True
+    except paramiko.AuthenticationException as e:
+        raise RemoteDeployError(f"密钥验证失败（公钥可能没有正确推送）: {e}") from e
+    except (paramiko.SSHException, OSError) as e:
+        raise RemoteDeployError(f"密钥验证连接失败: {e}") from e
+    finally:
+        client.close()
 
 
 def _bundled_frps_binary_path(arch: str) -> Path:

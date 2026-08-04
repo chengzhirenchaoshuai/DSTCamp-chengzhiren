@@ -327,6 +327,14 @@ STRINGS = {
         "selfhost.ssh_deploy_done": "远程部署完成，可以点击上方\"开启自建映射\"了",
         "selfhost.ssh_deploy_cancelled": "已取消部署",
         "selfhost.ssh_deploy_failed": "远程部署失败: {detail}",
+        "selfhost.ssh_auth_btn": "初次鉴权",
+        "selfhost.ssh_auth_dialog_title": "初次鉴权",
+        "selfhost.ssh_auth_dialog_hint": "首次用密码登录一次，本地生成一对密钥并把公钥推送到服务器，之后连接这台服务器就不用再输密码了。密码只在这次鉴权过程中使用，不会保存。",
+        "selfhost.ssh_auth_start_btn": "开始鉴权",
+        "selfhost.ssh_auth_progress_title": "正在初次鉴权",
+        "selfhost.ssh_auth_done": "鉴权完成，以后连接这台服务器不需要再输密码。",
+        "selfhost.ssh_auth_failed": "鉴权失败: {detail}",
+        "selfhost.ssh_password_missing": "请填写密码",
 
         # 存档来源标签
         "save.server_clusters": "服务器存档",
@@ -833,6 +841,14 @@ STRINGS = {
         "selfhost.ssh_deploy_done": "Remote deploy done -- you can click \"Enable self-hosted mapping\" above now",
         "selfhost.ssh_deploy_cancelled": "Deploy cancelled",
         "selfhost.ssh_deploy_failed": "Remote deploy failed: {detail}",
+        "selfhost.ssh_auth_btn": "Initial Authentication",
+        "selfhost.ssh_auth_dialog_title": "Initial Authentication",
+        "selfhost.ssh_auth_dialog_hint": "Log in with your password once -- a key pair is generated locally and the public key is pushed to the server, so future connections won't need a password. The password is only used for this setup and is never saved.",
+        "selfhost.ssh_auth_start_btn": "Start Authentication",
+        "selfhost.ssh_auth_progress_title": "Setting up authentication",
+        "selfhost.ssh_auth_done": "Authentication complete -- future connections to this server won't need a password.",
+        "selfhost.ssh_auth_failed": "Authentication failed: {detail}",
+        "selfhost.ssh_password_missing": "Enter the password",
 
         # 存档来源标签
         "save.server_clusters": "Server Saves",

@@ -56,9 +56,13 @@ class _SSHDeployDialog:
         self._host_var = tk.StringVar(value=default_host)
         self._port_var = tk.StringVar(value=str(default_port))
         self._user_var = tk.StringVar(value=default_username)
-        self._auth_mode = tk.StringVar(value="password")
+        # 做过一次"初次鉴权"之后，本地已经有一把能用的私钥——默认直接
+        # 选中密钥登录并把路径填好，用户点"开始部署"就不用再输密码；
+        # 没做过鉴权时还是照旧默认密码登录。
+        has_key = remote_deploy.has_local_key()
+        self._auth_mode = tk.StringVar(value="key" if has_key else "password")
         self._password_var = tk.StringVar()
-        self._key_path_var = tk.StringVar()
+        self._key_path_var = tk.StringVar(value=str(remote_deploy.SSH_KEY_PATH) if has_key else "")
         self._key_passphrase_var = tk.StringVar()
 
         row = 1
@@ -162,6 +166,86 @@ class _SSHDeployDialog:
         self.win.destroy()
 
 
+class _SSHAuthSetupDialog:
+    """"初次鉴权"收集的连接信息——只需要密码（这一步本身就是用密码去
+    推公钥，不需要也不应该提供"已经有密钥"这个选项，否则就没有鉴权
+    这回事了）。`self.result` 是 dict 或 None，跟 _SSHDeployDialog 同
+    一个套路。"""
+
+    def __init__(self, parent_widget, default_host: str, default_port: int = 22, default_username: str = "root"):
+        self.result: dict | None = None
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("selfhost.ssh_auth_dialog_title"))
+        win.configure(background=theme.BG_SOFT)
+
+        body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        ttk.Label(body, text=t("selfhost.ssh_auth_dialog_hint"), wraplength=440, justify=tk.LEFT,
+                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
+
+        self._host_var = tk.StringVar(value=default_host)
+        self._port_var = tk.StringVar(value=str(default_port))
+        self._user_var = tk.StringVar(value=default_username)
+        self._password_var = tk.StringVar()
+
+        row = 1
+        for label_key, var, width, show in (
+            ("selfhost.host_label", self._host_var, 24, None),
+            ("selfhost.ssh_port_label", self._port_var, 8, None),
+            ("selfhost.ssh_username_label", self._user_var, 16, None),
+            ("selfhost.ssh_password_label", self._password_var, 24, "*"),
+        ):
+            ttk.Label(body, text=t(label_key)).grid(row=row, column=0, sticky=tk.E, padx=(0, 6), pady=3)
+            ttk.Entry(body, textvariable=var, width=width, show=show or "").grid(
+                row=row, column=1, sticky=tk.W, pady=3)
+            row += 1
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=15)
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_frame, text=t("selfhost.ssh_auth_start_btn"), command=self._confirm).pack(side=tk.RIGHT)
+
+        win.bind("<Escape>", lambda e: self._cancel())
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        win.update_idletasks()
+        root = parent_widget.winfo_toplevel()
+        center_over_parent(win, root, width=max(440, win.winfo_reqwidth()), height=win.winfo_reqheight())
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _confirm(self):
+        host = self._host_var.get().strip()
+        try:
+            port = int(self._port_var.get().strip())
+        except ValueError:
+            port = -1
+        username = self._user_var.get().strip()
+        password = self._password_var.get()
+        if not host:
+            dlg.show_warning(self.win, t("selfhost.ssh_auth_dialog_title"), t("selfhost.host_missing"))
+            return
+        if not (1 <= port <= 65535):
+            dlg.show_warning(self.win, t("selfhost.ssh_auth_dialog_title"), t("selfhost.invalid_port"))
+            return
+        if not username:
+            dlg.show_warning(self.win, t("selfhost.ssh_auth_dialog_title"), t("selfhost.ssh_username_missing"))
+            return
+        if not password:
+            dlg.show_warning(self.win, t("selfhost.ssh_auth_dialog_title"), t("selfhost.ssh_password_missing"))
+            return
+        self.result = {"host": host, "port": port, "username": username, "password": password}
+        self.win.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.win.destroy()
+
+
 class SelfHostFrpPage:
     def _label(self, parent, text, *, fg=None, font=None):
         """照抄 sakura/tab.py 的同名方法——BgFrame + create_text，不用
@@ -203,8 +287,10 @@ class SelfHostFrpPage:
             side=tk.LEFT, padx=2)
 
         row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
-        ttk.Button(row3, text=t("selfhost.ssh_deploy_btn"), command=self._open_ssh_deploy_dialog).pack(
+        ttk.Button(row3, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog).pack(
             side=tk.LEFT, padx=(0, 2))
+        ttk.Button(row3, text=t("selfhost.ssh_deploy_btn"), command=self._open_ssh_deploy_dialog).pack(
+            side=tk.LEFT, padx=2)
 
         self._status_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._status_frame.pack(fill=tk.X, padx=10, pady=(3, 0))
@@ -299,6 +385,45 @@ class SelfHostFrpPage:
         self.frame.after(0, _ask)
         event.wait()
         return result[0]
+
+    def _open_ssh_auth_dialog(self):
+        saved_conn = app_settings.get_selfhost_ssh_connection()
+        if saved_conn:
+            default_host, default_port, default_user = saved_conn["host"], saved_conn["port"], saved_conn["username"]
+        else:
+            default_host, default_port, default_user = self._host_var.get().strip(), 22, "root"
+
+        auth_dlg = _SSHAuthSetupDialog(self.frame, default_host, default_port, default_user)
+        if auth_dlg.result is None:
+            return
+        conn = auth_dlg.result
+
+        progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_auth_progress_title"))
+
+        def _on_log(line):
+            self.frame.after(0, lambda: progress.append(line))
+
+        def _worker():
+            try:
+                pubkey = remote_deploy.ensure_local_keypair()
+                remote_deploy.authorize_key_on_server(
+                    conn["host"], conn["port"], conn["username"], conn["password"], pubkey,
+                    _on_log, self._confirm_host_key)
+                remote_deploy.verify_key_login(conn["host"], conn["port"], conn["username"], _on_log)
+                app_settings.set_selfhost_ssh_connection(conn["host"], conn["port"], conn["username"])
+                self.frame.after(0, lambda: self._on_ssh_auth_done(progress))
+            except remote_deploy.RemoteDeployError as e:
+                self.frame.after(0, lambda err=e: self._on_ssh_auth_error(progress, err))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_ssh_auth_done(self, progress):
+        progress.append(t("selfhost.ssh_auth_done"))
+        progress.finish()
+
+    def _on_ssh_auth_error(self, progress, e):
+        progress.append(t("selfhost.ssh_auth_failed", detail=str(e)))
+        progress.finish()
 
     def _open_ssh_deploy_dialog(self):
         host = self._host_var.get().strip()
