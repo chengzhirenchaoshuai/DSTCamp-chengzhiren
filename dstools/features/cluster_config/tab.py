@@ -405,7 +405,10 @@ class ClusterConfigTab:
     _ROW_LABEL_FONT = ("", 11)
     _ROW_VALUE_FONT = ("", 11)
     # 只有从世界(is_master=false)才需要的字段——见 _backfill_slave_shard_fields
-    # 和 _on_is_master_toggle：切换开关时这四项现场增删，不需要先保存。
+    # 和 _on_is_master_toggle。name/id 切换开关时现场增删，不需要先保存；
+    # master_server_port/authentication_port 不再自动生成（只有 Master
+    # 需要真正向 Steam 注册），留在这张表里只是为了切回主世界时把历史遗
+    # 留（旧版本生成的、或用户手动填的）残留值一并清掉。
     _SHARD_EXTRA_FIELDS = [("SHARD", "name"), ("SHARD", "id"),
                            ("STEAM", "master_server_port"), ("STEAM", "authentication_port")]
     # 有可能填很长文字、但官方并不支持真正换行符的字段（服务器描述在
@@ -643,10 +646,11 @@ class ClusterConfigTab:
         for k in keys_to_remove: del self._entries[k]
         ttk.Label(frame, text=t("cluster.editing", shard=target_shard.name), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold")).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
 
-        # 从世界(is_master=false)的 server.ini 经常缺 name/id/
-        # master_server_port/authentication_port 这四项——Klei 官方
+        # 从世界(is_master=false)的 server.ini 经常缺 name/id——Klei 官方
         # Master+Caves 示例（论坛/wiki 的世界配置说明）里每个世界都必须有
-        # 这四项且互不冲突，缺了的话服务器要么起不来要么和别的世界抢端口。
+        # 这两项且互不冲突，缺了的话服务器要么起不来要么和别的世界抢编号。
+        # master_server_port/authentication_port 不在这里自动补，见
+        # _backfill_slave_shard_fields 的说明。
         # 只在服务器存档且确认是从世界时才补，本地存档只读、主世界不需要。
         if is_server:
             if not shard_config.shard.get("is_master", True):
@@ -718,9 +722,10 @@ class ClusterConfigTab:
 
     def _on_is_master_toggle(self):
         """"是否为主世界"开关被用户实时切换（还没点保存）——立即在编辑器
-        里增加/去掉从世界专属的 name/id/master_server_port/
-        authentication_port 四项，填好之后一起点"保存"才会写入文件；切
-        回主世界则把这四项现场去掉，不需要先保存再重新加载才能看到。"""
+        里增加/去掉从世界专属的 name/id（以及历史遗留可能存在的
+        master_server_port/authentication_port），填好之后一起点"保存"才
+        会写入文件；切回主世界则把这几项现场去掉，不需要先保存再重新加
+        载才能看到。"""
         if not hasattr(self, "_shard_config") or self._shard_config is None:
             return
         shard_config = self._shard_config
@@ -735,8 +740,10 @@ class ClusterConfigTab:
         self._render_shard_fields()
 
     def _backfill_slave_shard_fields(self, cluster, shard, shard_config):
-        """给缺失的 name/id/master_server_port/authentication_port 生成默认值
-        （只填缺的，已有的不动），默认值保证和集群里其它世界已有的值不冲突。
+        """给缺失的 name/id 生成默认值（只填缺的，已有的不动），默认值保证
+        和集群里其它世界已有的值不冲突。master_server_port/authentication_port
+        不在这里自动生成——这两项只有 Master 需要真正向 Steam 注册，从世界
+        留空是正常状态，不应该由本工具替用户瞎填一个值上去。
         直接改 shard_config 的字典，让后面的渲染循环把它们当成正常字段画出来，
         "保存"时也会跟着一起写入 server.ini，不需要另外改保存逻辑。"""
         siblings = [load_shard_config(s.path) for s in cluster.shards if s.path != shard.path]
@@ -756,12 +763,6 @@ class ClusterConfigTab:
             shard_config.shard["name"] = shard.name
         if not str(shard_config.shard.get("id", "")).strip():
             shard_config.shard["id"] = _next_free(lambda sc: sc.shard.get("id", ""), 2)
-        if not str(shard_config.steam.get("master_server_port", "")).strip():
-            shard_config.steam["master_server_port"] = _next_free(
-                lambda sc: sc.steam.get("master_server_port", ""), 27016)
-        if not str(shard_config.steam.get("authentication_port", "")).strip():
-            shard_config.steam["authentication_port"] = _next_free(
-                lambda sc: sc.steam.get("authentication_port", ""), 8766)
 
     def _load_id_list_into(self, cluster, path_attr, listbox, add_btn, remove_btn):
         """管理员列表和黑名单页签共用——两者都是"每行一个 Klei ID"的
