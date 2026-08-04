@@ -169,9 +169,15 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 ### 自建 frps 服务器 (`features/frp_selfhost/deploy.py` / `client.py` / `remote_deploy.py` / `tab.py`)
 
-跟樱花映射效果一样（本地服务器映射到公网），但服务端是用户自己的云主机，DSTCamp 没有远程 API，只管生成配置和部署脚本——`deploy.py` 生成 `frps.toml` 和一份幂等的一键部署 bash 脚本（识别架构、下载对应版本 frp 官方发行包、装成 systemd 服务）。有两条路径跑这份脚本：手动复制到自己 SSH 会话里粘贴运行（`_ScriptDisplayDialog`），或者用 `remote_deploy.py`（`paramiko`）直接 SFTP 推上去 SSH 执行——后者是可选的自动化，不碰用户服务器的密码本身：密码只在这次部署过程中留在内存里、从不落盘；主机密钥是"首次连接询问、之后自动比对"（Trust On First Use，本地记一份 known_hosts，密钥变了直接拒绝，不静默接受）；`sudo -n` 非交互执行，需要 sudo 密码的账号会直接报错而不是卡死。UI 挂在"樱花映射"页签下的子页签（`sakura/tab.py` 的 `PillTabBar`），跟樱花共用同一套"世界状态/开启映射/frpc 状态"UI 结构，但没有远程隧道 API 能查状态，端口分配和映射状态全靠本地记账（`shared/app_settings.py` 的 `get_selfhost_frp_mapping` 等）。
+跟樱花映射效果一样（本地服务器映射到公网），但服务端是用户自己的云主机，DSTCamp 没有远程 API，只管生成配置和部署脚本——`deploy.py` 生成 `frps.toml` 和一份幂等的一键部署 bash 脚本，装成 systemd 服务。有两条路径跑这份脚本：手动复制到自己 SSH 会话里粘贴运行（`_ScriptDisplayDialog`），或者用 `remote_deploy.py`（`paramiko`）直接 SFTP 推上去 SSH 执行——后者是可选的自动化，不碰用户服务器的密码本身：密码只在这次部署过程中留在内存里、从不落盘（SSH 连接对话框只记住主机/端口/用户名）；主机密钥是"首次连接询问、之后自动比对"（Trust On First Use，本地记一份 known_hosts，密钥变了直接拒绝，不静默接受）；`sudo -n` 非交互执行，需要 sudo 密码的账号会直接报错而不是卡死；支持中途取消（`ModSyncLogDialog` 新增的可选取消按钮，`cancel_event` 传给 `deploy_via_ssh()`，长耗时的执行阶段用带超时的非阻塞读循环轮询）。UI 挂在"樱花映射"页签下的子页签（`sakura/tab.py` 的 `PillTabBar`），跟樱花共用同一套"世界状态/开启映射/frpc 状态"UI 结构，但没有远程隧道 API 能查状态，端口分配和映射状态全靠本地记账（`shared/app_settings.py` 的 `get_selfhost_frp_mapping` 等）。
 
-`tools/frp_selfhost/frpc.exe` 必须是 frp 官方发行版（当前 v0.70.1，Apache 2.0），**不能复用 `tools/frpc/frpc.exe`**——樱花那份是老旧的 0.51.0 私有分支（`-f token:id` 启动，还是 ini 时代的产物），协议版本跟新版 frps 对不上；部署脚本装的 frps 版本必须和这份 frpc 保持一致，改一个必须连带改另一个。**DST 的 `server_port` 走 UDP**（不是 TCP），frpc.toml 的 proxy 类型必须是 `type = "udp"`。一个存档所有已映射世界共用一个 frpc 进程/一份 frpc.toml（`-c` 模式原生支持多个 `[[proxies]]`），不是像樱花那样一世界一进程——映射的世界集合变化时要整份重写配置、重启这个进程（frp 的 `-c` 模式没有热加载 API）。
+部署脚本本身两处"不重新安装"的判断（应用户要求）：`dstcamp-frps` 这个服务已经在跑时只更新配置+重启；目标端口被*其它*服务占用时直接跳过（大概率是用户自己之前手动配置的 frps），不贸然覆盖。
+
+**真机验证过的坑（阿里云真实服务器）**：不少国内云服务器访问 GitHub 慢到几 KB/s、甚至直接被重置连接，让服务器自己 curl 下载 frp 经常失败或卡很久——`deploy.py` 的下载命令加了 `--connect-timeout`/`--max-time` 兜底（卡住时几分钟内明确失败），但更彻底的修复是 `remote_deploy.py` 的 `_maybe_upload_frps_binary()`：探测服务器架构（`uname -m`），匹配 `tools/frp_selfhost/frps_linux_amd64`/`frps_linux_arm64`（本地已经打包好的 Linux 二进制）时直接 SFTP 推送过去，脚本完全不需要再访问 GitHub；只有架构不匹配（没打包）时才退回自己下载。
+
+`tools/frp_selfhost/frpc.exe`（Windows 客户端，v0.70.1）必须是 frp 官方发行版（Apache 2.0），**不能复用 `tools/frpc/frpc.exe`**——樱花那份是老旧的 0.51.0 私有分支（`-f token:id` 启动，还是 ini 时代的产物），协议版本跟新版 frps 对不上。`frps_linux_*` 二进制目前是 v0.70.0（跟 frpc.exe 差一个补丁版本——查过 v0.70.1 更新日志确认三处修复都跟 DSTCamp 实际用到的基础 UDP 代理+token 鉴权无关，协议兼容，不强求逐位对齐）。**DST 的 `server_port` 走 UDP**（不是 TCP），frpc.toml 的 proxy 类型必须是 `type = "udp"`。一个存档所有已映射世界共用一个 frpc 进程/一份 frpc.toml（`-c` 模式原生支持多个 `[[proxies]]`），不是像樱花那样一世界一进程——映射的世界集合变化时要整份重写配置、重启这个进程（frp 的 `-c` 模式没有热加载 API）。
+
+**打包 Linux 二进制在 Windows 开发机上要小心杀毒软件**：真机遇到过 `frps_linux_amd64` 刚复制到 `tools/frp_selfhost/` 就被静默删除（stripped 的 statically-linked ELF 可执行文件容易被启发式规则误判），用 `tar -xzf ... -O > 目标路径` 直接管道写入、写完立刻 `git add` 能提高存活率，但根本上这是这台机器杀毒软件的行为，不同机器表现可能不同——如果以后又发现二进制文件消失，先怀疑这个，不要怀疑是自己手滑删的。
 
 云服务商的安全组/防火墙放行端口这一步做不到自动化（各家控制台/API 完全不同），部署脚本只能在最后打印提醒，这一步需要用户自己去控制台操作。
 
