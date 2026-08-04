@@ -169,7 +169,9 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 ### 自建 frps 服务器 (`features/frp_selfhost/deploy.py` / `client.py` / `remote_deploy.py` / `tab.py`)
 
-跟樱花映射效果一样（本地服务器映射到公网），但服务端是用户自己的云主机，DSTCamp 没有远程 API，只管生成配置和部署脚本——`deploy.py` 生成 `frps.toml` 和一份幂等的一键部署 bash 脚本，装成 systemd 服务。有两条路径跑这份脚本：手动复制到自己 SSH 会话里粘贴运行（`_ScriptDisplayDialog`），或者用 `remote_deploy.py`（`paramiko`）直接 SFTP 推上去 SSH 执行——后者是可选的自动化，不碰用户服务器的密码本身：密码只在这次部署过程中留在内存里、从不落盘（SSH 连接对话框只记住主机/端口/用户名）；主机密钥是"首次连接询问、之后自动比对"（Trust On First Use，本地记一份 known_hosts，密钥变了直接拒绝，不静默接受）；`sudo -n` 非交互执行，需要 sudo 密码的账号会直接报错而不是卡死；支持中途取消（`ModSyncLogDialog` 新增的可选取消按钮，`cancel_event` 传给 `deploy_via_ssh()`，长耗时的执行阶段用带超时的非阻塞读循环轮询）。UI 挂在"樱花映射"页签下的子页签（`sakura/tab.py` 的 `PillTabBar`），跟樱花共用同一套"世界状态/开启映射/frpc 状态"UI 结构，但没有远程隧道 API 能查状态，端口分配和映射状态全靠本地记账（`shared/app_settings.py` 的 `get_selfhost_frp_mapping` 等）。
+跟樱花映射效果一样（本地服务器映射到公网），但服务端是用户自己的云主机，DSTCamp 没有远程 API，只管生成配置和用 `remote_deploy.py`（`paramiko`）通过 SSH/SFTP 自动部署——`deploy.py` 生成 `frps.toml` 和一份幂等的一键部署 bash 脚本，装成 systemd 服务。不碰用户服务器的密码本身：密码只在当次操作过程中留在内存里、从不落盘；主机密钥是"首次连接询问、之后自动比对"（Trust On First Use，本地记一份 known_hosts，密钥变了直接拒绝，不静默接受）；`sudo -n` 非交互执行，需要 sudo 密码的账号会直接报错而不是卡死；支持中途取消（`ModSyncLogDialog` 新增的可选取消按钮，`cancel_event` 传给 `deploy_via_ssh()`，长耗时的执行阶段用带超时的非阻塞读循环轮询）。UI 挂在"内网穿透"页签下的子页签（`sakura/tab.py` 的 `PillTabBar`，子页签本身叫"自建服务器"），跟樱花共用同一套"世界状态/开启映射/frpc 状态"UI 结构，但没有远程隧道 API 能查状态，端口分配和映射状态全靠本地记账（`shared/app_settings.py` 的 `get_selfhost_frp_mapping` 等）。
+
+**"初次鉴权"**：本地用 `cryptography` 库生成一对 Ed25519 密钥（paramiko 自己不能生成，只能读取/使用；密钥固定存在 `cache_dir("frp_selfhost")/ssh_key`，这个功能目前只管理一台自建服务器，不按服务器分别存）→ 用密码登录一次，把公钥追加进服务器 `~/.ssh/authorized_keys`（`grep -qxF` 判重，幂等不会重复追加）→ 断开密码连接，改用刚生成的私钥重新连一次，真正验证公钥推送生效。做过一次之后，"SSH 远程部署"对话框会自动默认选中密钥登录、填好路径，不需要再输密码——真机验证过纯密钥登录能跑通完整部署流程。这是给后续"frpc 状态监控、远程改配置"这类功能打的地基，不需要每个功能各自再问用户要一遍密码。
 
 部署脚本本身两处"不重新安装"的判断（应用户要求）：`dstcamp-frps` 这个服务已经在跑时只更新配置+重启；目标端口被*其它*服务占用时直接跳过（大概率是用户自己之前手动配置的 frps），不贸然覆盖。
 
