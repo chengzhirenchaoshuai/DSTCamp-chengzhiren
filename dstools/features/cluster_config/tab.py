@@ -159,13 +159,17 @@ class ClusterConfigTab:
     _SECTION_FIELD_ORDER = {
         "SHARD": ["shard_enabled"],
         "NETWORK": [
-            "cluster_name", "cluster_description", "cluster_password", "cluster_intention",
+            "cluster_name", "cluster_description", "cluster_password",
             "lan_only_cluster", "offline_cluster", "cluster_language", "tick_rate",
             "autosaver_enabled", "whitelist_slots", "connection_timeout", "idle_timeout",
             "override_dns", "cluster_cloud_id",
         ],
         "STEAM": ["steam_group_only", "steam_group_admins", "steam_group_id"],
     }
+    # 用户真机确认过官方已经不再读取这两项——不再显示/编辑，加载和保存
+    # 时都主动从配置里清掉，旧存档里如果已经写了这两行，下次用这个工具
+    # 保存"服务器配置"会顺手清掉，不会一直留着误导人。
+    _REMOVED_CLUSTER_FIELDS = [("GAMEPLAY", "vote_kick_enabled"), ("NETWORK", "cluster_intention")]
 
     def __init__(self, parent, app):
         # self.frame/sf 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
@@ -524,6 +528,8 @@ class ClusterConfigTab:
         if not c: return
         is_server = (c.source == SaveSource.SERVER)
         config = load_cluster_config(c.path)
+        for section, key in self._REMOVED_CLUSTER_FIELDS:
+            getattr(config, section.lower()).pop(key, None)
         if is_server:
             # 游戏没写进文件不代表没有默认行为，只是这台机器的存档还没
             # 存过这几个字段——本地存档由客户端自己管理，不需要（也不
@@ -893,6 +899,11 @@ class ClusterConfigTab:
         for (section, key), (var, readonly) in self._entries.items():
             if not readonly and section in ("GAMEPLAY","NETWORK","MISC","SHARD","STEAM"):
                 set_cluster_option(config, section, key, var.get())
+        # 这两项不再渲染在 self._entries 里，上面的循环碰不到它们——旧
+        # 存档如果之前就写过，这里重新从磁盘读出来的 config 仍然会带
+        # 着，不主动清掉的话每次保存都会原样写回文件。
+        for section, key in self._REMOVED_CLUSTER_FIELDS:
+            getattr(config, section.lower()).pop(key, None)
         save_cluster_config(config, c.path)
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=c.name))
         # _load_config() 会连"世界配置"一起重建，其中世界下拉框固定默认

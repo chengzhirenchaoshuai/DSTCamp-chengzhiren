@@ -33,10 +33,6 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
         "zh": ("允许投票", "是否允许玩家发起投票（踢人、回档、重置世界等）。"),
         "en": ("Voting Enabled", "Whether players can start votes (kick, rollback, regenerate world, etc.)."),
     },
-    ("GAMEPLAY", "vote_kick_enabled"): {
-        "zh": ("投票踢人", "是否允许玩家发起投票，把其他玩家踢出服务器。"),
-        "en": ("Vote Kick Enabled", "Whether players can start a vote to kick another player from the server."),
-    },
     ("NETWORK", "cluster_name"): {
         "zh": ("服务器名称", "显示在服务器列表中的名称。"),
         "en": ("Cluster Name", "The name shown for this server in the server browser."),
@@ -48,12 +44,6 @@ CLUSTER_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
     ("NETWORK", "cluster_password"): {
         "zh": ("服务器密码", "玩家加入服务器需要输入的密码，留空表示无密码、公开加入。"),
         "en": ("Cluster Password", "Password required to join. Leave blank for a public server."),
-    },
-    ("NETWORK", "cluster_intention"): {
-        "zh": ("服务器风格", "服务器列表里的风格标签，可选 cooperative(合作)、competitive(竞争)、"
-               "social(社交)、madness(疯狂/无规则)，仅作展示分类用，不影响实际玩法规则。"),
-        "en": ("Cluster Intention", "Server-browser style tag: cooperative, competitive, social, or "
-               "madness. Display/filtering only -- doesn't change actual gameplay rules."),
     },
     ("NETWORK", "lan_only_cluster"): {
         "zh": ("仅限局域网", "开启后服务器只能被同一局域网内的玩家发现和连接，不会出现在公网服务器列表。"),
@@ -206,12 +196,6 @@ ENUM_FIELDS: dict[tuple[str, str], list[tuple[str, str, str]]] = {
         ("zh", "中文", "Chinese"),
         ("zht", "繁体中文", "Chinese (Traditional)"),
         ("en", "英文", "English"),
-    ],
-    ("NETWORK", "cluster_intention"): [
-        ("cooperative", "合作 (cooperative)", "Cooperative"),
-        ("competitive", "竞争 (competitive)", "Competitive"),
-        ("social", "社交 (social)", "Social"),
-        ("madness", "疯狂 (madness)", "Madness"),
     ],
 }
 
