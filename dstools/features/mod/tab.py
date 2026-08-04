@@ -18,6 +18,7 @@ from PIL import Image
 from dstools.shared import app_settings
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.dedicated_server import find_bin64_dir
+from dstools.features.mod import chs_translation
 from dstools.features.mod.icons import get_mod_icon_path
 from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
 from dstools.features.mod.cache import load_cached_result, save_result
@@ -1100,6 +1101,7 @@ class ModConfigDialog:
 
         self._try_full_sandbox_parse(workshop_id, mod_info)
         self._resolve_dynamic_options(mod_info)
+        self._apply_chs_translation(workshop_id, mod_info)
 
         win = tk.Toplevel(tab.frame)
         self.win = win
@@ -1612,6 +1614,24 @@ class ModConfigDialog:
             if choices:
                 opt.choices = choices
                 opt.is_dynamic = False
+
+    def _apply_chs_translation(self, workshop_id, mod_info):
+        """如果用户订阅了第三方汉化 Mod"Chinese++ Pro"、且它内置了这个
+        mod 的翻译文件，把 label/hover/选项描述叠加成中文——纯锦上添
+        花，没订阅或没有对应翻译文件都直接跳过，不影响任何实际写入
+        modoverrides.lua 的值。原地修改（缓存的、共享的）ModInfo 上的
+        config_options，跟 _try_full_sandbox_parse/_resolve_dynamic_options
+        同一个套路，一个 mod 每次会话只尝试一次。"""
+        if mod_info.chs_translation_tried:
+            return
+        mod_info.chs_translation_tried = True
+        platform, wegame_client_mods_dir = self.tab._resolve_mod_folder_args(self.tab._get_cluster())
+        path = chs_translation.find_translation_file(workshop_id, platform, wegame_client_mods_dir)
+        if not path:
+            return
+        translation = chs_translation.resolve_translation(path)
+        if translation:
+            chs_translation.apply_translation(mod_info.config_options, translation)
 
     def _bind_mousewheel(self, widget):
         widget.bind("<MouseWheel>", self._on_mousewheel)

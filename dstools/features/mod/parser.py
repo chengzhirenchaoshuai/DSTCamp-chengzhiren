@@ -245,6 +245,11 @@ class ModInfo:
     # mod`/`all_clients_require_mod` 只要有一个为真就要盖过
     # `client_only_mod`——见 parse_modinfo() 里的组合逻辑。
     client_only: bool = False
+    # 本次会话是否已经为这个 mod 尝试过叠加"Chinese++ Pro"（创意工坊
+    # workshop-2941527805）的配置项翻译——同 full_sandbox_tried 一样，
+    # 只是个会话内的一次性开关，不管有没有成功叠加都会设置，避免弹窗
+    # 重复打开时反复起沙箱子进程。见 features/mod/chs_translation.py。
+    chs_translation_tried: bool = False
 
 
 def visible_config_options(config_options: list[ModConfigOption]) -> list[ModConfigOption]:

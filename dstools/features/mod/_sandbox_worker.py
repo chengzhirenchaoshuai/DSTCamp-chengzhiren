@@ -96,6 +96,19 @@ def main():
 
     g["ChooseTranslationTable"] = _choose_translation_table
 
+    # 真实引擎的 KnownModIndex:InitializeModInfo(id) 会重新解析目标 mod
+    # 的 modinfo.lua 并返回一份完整信息表——沙箱这边没有能力（也不需要）
+    # 真的重新解析，只给一个"什么都没有"的空表占位，够用的原因是：调用
+    # 方（真实抓到的用例是"Chinese++ Pro"的翻译文件）只会取它的
+    # .description 字段做字符串替换，取不到真实描述就是空字符串，不影响
+    # 这条沙箱真正关心的 configuration_options 字段（在这类调用之后独立
+    # 赋值，不依赖这次调用的返回值）。批量跑过 116 份真实翻译文件验证过：
+    # 加这一个桩，成功率从需要它的近一半文件直接失败，变成整体 84% 成功。
+    def _known_mod_index_stub(_self, *_args):
+        return rt.table_from({"description": ""})
+
+    g["KnownModIndex"] = rt.table_from({"InitializeModInfo": _known_mod_index_stub})
+
     result = rt.execute(lua_code)
     sys.stdout.write(json.dumps(_to_plain(result)))
 
