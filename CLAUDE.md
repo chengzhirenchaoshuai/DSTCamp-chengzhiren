@@ -167,6 +167,14 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 `tools/frpc/frpc.exe` 必须是樱花后台"软件下载"页单独提供的独立版，不能从 Launcher 安装目录复制（Launcher 那份锁死，不管传什么参数都拒绝直接运行）。
 
+### 自建 frps 服务器 (`features/frp_selfhost/deploy.py` / `client.py` / `tab.py`)
+
+跟樱花映射效果一样（本地服务器映射到公网），但服务端是用户自己的云主机，DSTCamp 没有远程 API，只管生成配置和部署脚本，不碰用户服务器的密码/私钥——`deploy.py` 生成 `frps.toml` 和一份幂等的一键部署 bash 脚本（识别架构、下载对应版本 frp 官方发行包、装成 systemd 服务），用户自己 SSH 上去粘贴跑一次。UI 挂在"樱花映射"页签下的子页签（`sakura/tab.py` 的 `PillTabBar`），跟樱花共用同一套"世界状态/开启映射/frpc 状态"UI 结构，但没有远程隧道 API 能查状态，端口分配和映射状态全靠本地记账（`shared/app_settings.py` 的 `get_selfhost_frp_mapping` 等）。
+
+`tools/frp_selfhost/frpc.exe` 必须是 frp 官方发行版（当前 v0.70.1，Apache 2.0），**不能复用 `tools/frpc/frpc.exe`**——樱花那份是老旧的 0.51.0 私有分支（`-f token:id` 启动，还是 ini 时代的产物），协议版本跟新版 frps 对不上；部署脚本装的 frps 版本必须和这份 frpc 保持一致，改一个必须连带改另一个。**DST 的 `server_port` 走 UDP**（不是 TCP），frpc.toml 的 proxy 类型必须是 `type = "udp"`。一个存档所有已映射世界共用一个 frpc 进程/一份 frpc.toml（`-c` 模式原生支持多个 `[[proxies]]`），不是像樱花那样一世界一进程——映射的世界集合变化时要整份重写配置、重启这个进程（frp 的 `-c` 模式没有热加载 API）。
+
+云服务商的安全组/防火墙放行端口这一步做不到自动化（各家控制台/API 完全不同），部署脚本只能在最后打印提醒，这一步需要用户自己去控制台操作。
+
 ### 本地服务器启动前的令牌检查 (`features/local_service/tab.py`)
 
 点"启动"时 `cluster_token.txt` 缺失或格式不对会弹确认框，唯一例外是"离线模式"直接放行。**`_ShardRow` 的启动/停止按钮不能缓存构造时传入的 `cluster` 对象**，必须点击那一刻现查——刷新过但世界集合没变时闭包里的旧对象字段可能过时。**跨存档启动锁**：`_other_cluster_running()` 判断有没有别的存档在跑，有则锁住"启动"（不锁"停止"）。
