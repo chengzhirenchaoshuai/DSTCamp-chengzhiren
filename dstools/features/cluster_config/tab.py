@@ -111,7 +111,13 @@ class _TokenInputDialog:
         ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
 
         entry.focus_set()
-        win.bind("<Return>", lambda e: self._confirm())
+        # after_idle 而不是直接调用 self._confirm()——跟 _make_wrapped_
+        # text_row()/save_browser 的备注框同一个道理：回车同时也是输入
+        # 法用来提交组词的按键，同步执行读 self.var.get() 可能读到组词
+        # 提交完成之前的旧值，这里还会紧接着 destroy() 整个窗口，比"存
+        # 错值"更糟——组词还没提交完窗口就没了。延后一拍，让这次回车
+        # 该走的输入法提交流程先走完。
+        win.bind("<Return>", lambda e: win.after_idle(self._confirm))
         win.bind("<Escape>", lambda e: self._cancel())
         win.protocol("WM_DELETE_WINDOW", self._cancel)
 
@@ -431,7 +437,27 @@ class ClusterConfigTab:
                               wrap=tk.WORD, font=self._ROW_VALUE_FONT)
         text_widget.insert("1.0", str(value) if value is not None else "")
         text_widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
-        text_widget.bind("<Return>", lambda e: "break")
+
+        # 不能用 text_widget.bind("<Return>", lambda e: "break") 同步吞掉
+        # 回车（真机反馈过的真实 bug）：这种"事前拦截"在 Windows 上会跟
+        # 输入法的组词提交过程冲突——用拼音输入法打字，按下回车本来是
+        # 用来把正在组词的内容提交进输入框，我们的处理函数抢在它前面
+        # 拦下这次按键并返回 "break"，输入法这次组词就被打断、整个丢
+        # 掉，界面上看起来像是刷新了一次、什么都没输进去。改成事后清
+        # 理：让这次回车正常走完（输入法该提交的先提交），在
+        # <KeyRelease-Return> 里检查有没有真的被插入换行符，有就删掉，
+        # 不提前拦截按键本身。
+        def _strip_inserted_newline(_event=None):
+            # 搜索边界必须是 "end-1c" 不能是 "end"——tk.Text 内容末尾永
+            # 远带一个隐式换行符（不是我们自己插入的那个，删不掉），搜
+            # 到 "end" 会连它一起找到，删了又"复活"，变成死循环。
+            while True:
+                idx = text_widget.search("\n", "1.0", "end-1c")
+                if not idx:
+                    break
+                text_widget.delete(idx)
+
+        text_widget.bind("<KeyRelease-Return>", _strip_inserted_newline)
         Tooltip(text_widget, lambda tw=text_widget: tw.get("1.0", "end-1c"))
         return _TextVar(text_widget)
 
