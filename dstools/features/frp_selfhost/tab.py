@@ -179,8 +179,11 @@ class SelfHostFrpPage:
         self._server_status_panel = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._server_status_panel.pack(fill=tk.X, padx=10, pady=(3, 0))
 
+        # 不在这里立即 pack()——空 Canvas 在没有子控件时会向 Tk 请求一个
+        # 很大的默认高度（实测 265px，不是 0），只有真的要显示提示文字
+        # 时才由 _set_status() 按需 pack()/pack_forget()，否则平时这里
+        # 会凭空多出一大块空白，把下面的世界状态区挤到窗口外面去。
         self._status_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
-        self._status_frame.pack(fill=tk.X, padx=10, pady=(3, 0))
 
         self._shards_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._shards_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -513,8 +516,11 @@ class SelfHostFrpPage:
         for w in self._status_frame.winfo_children():
             w.destroy()
         if text:
+            self._status_frame.pack(fill=tk.X, padx=10, pady=(3, 0), before=self._shards_frame)
             self._label(self._status_frame, text, fg=theme.ERROR,
                         font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, fill=tk.X)
+        else:
+            self._status_frame.pack_forget()
 
     def _render_shard_rows(self):
         self._clear_shards_frame()
