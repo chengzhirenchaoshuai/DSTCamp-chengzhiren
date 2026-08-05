@@ -719,7 +719,7 @@ class DSToolsApp:
                                 command=lambda n=name: self._switch_theme(n))
         tm.add_separator()
         tm.add_command(label=t("theme.custom_bg_settings"), command=self._show_custom_bg_dialog)
-        self.root.bind("<F5>", lambda e: self._refresh())
+        self.root.bind("<F5>", self._on_f5_key)
 
         # "设置"原来是一个独立的 Toplevel 弹窗（_SettingsDialog，已删除），
         # 现在跟"主题"一样改成下拉菜单——"语言"是一个二级子菜单（级联，跟
@@ -1257,6 +1257,22 @@ class DSToolsApp:
         sv = sum(1 for c in clusters if c.source == SaveSource.SERVER)
         lc = sum(1 for c in clusters if c.source == SaveSource.LOCAL)
         self.status_var.set(f"{t('status.klei')}: {klei}  |  {t('status.user')}: {user_id or '?'}  |  {t('status.clusters')}: {sv}  |  {t('status.local_saves')}: {lc}")
+
+    def _on_f5_key(self, _event):
+        """真机反馈过的真实 bug：用中文输入法组词时，Windows 上 Tk 有几
+        率把组词过程中的按键误判成 F5（具体是 Tcl/Tk 在 IME 激活状态下
+        keysym 转换的已知怪癖，跟某些 Cyrillic/日文输入法下 Ctrl+字母
+        被曲解成别的 keysym 是同一类问题——不是 DSTCamp 自己哪里绑定了
+        字母键，用户已经用"临时禁用这个绑定"验证过，问题正是这里）。
+        `_refresh()` 本身是重活（重新扫描环境、重建当前页签），组词到
+        一半被这么重的操作打断，表现就是输入框被清空、界面像刷新了一
+        下。真要按 F5 刷新的场景不会同时在编辑一个文本框，加一道"当前
+        焦点是不是文本输入控件"的判断，只在明显不是正在打字时才响应，
+        不需要用户自己记得"打字时先别按 F5"。"""
+        focused = self.root.focus_get()
+        if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
+            return
+        self._refresh()
 
     def _refresh(self):
         self.env = discover_environment(self.env.klei_root, self.env.wegame_klei_root)
