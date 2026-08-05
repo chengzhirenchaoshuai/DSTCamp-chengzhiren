@@ -623,6 +623,7 @@ class SelfHostFrpPage:
             return
 
         host, bind_port = server["host"], server["bind_port"]
+        ssh_conn = app_settings.get_selfhost_ssh_connection()
         progress = ModSyncLogDialog(self.frame, title=t("selfhost.conn_check_title"))
 
         def _worker():
@@ -631,17 +632,40 @@ class SelfHostFrpPage:
                 else t("selfhost.conn_tcp_fail", port=bind_port, detail=detail or "")
             self.frame.after(0, lambda ln=line: progress.append(ln))
 
+            # UDP 世界端口优先用 tcpdump 在服务器网卡上真的核实一下——
+            # 客户端本地 send/recv 那种"尽力而为"的探测在实战里几乎总是
+            # 收不到响应（DST 协议不回应陌生包），没法区分"链路全通"和
+            # "被安全组挡住"，tcpdump 能可靠区分。任一前提不满足（没鉴
+            # 权/连不上/权限不够/没装 tcpdump）就退回客户端本地探测。
+            tcpdump_probe = connectivity.TcpdumpProbe(
+                ssh_conn["host"], ssh_conn["port"], ssh_conn["username"]) if ssh_conn else None
+
+            if tcpdump_probe and tcpdump_probe.available:
+                self.frame.after(0, lambda: progress.append(t("selfhost.conn_udp_method_tcpdump")))
+            else:
+                reason = (tcpdump_probe.unavailable_reason if tcpdump_probe else None) or "not_authenticated"
+                fallback_detail = tcpdump_probe.unavailable_detail if tcpdump_probe else None
+                key = f"selfhost.conn_udp_method_fallback_{reason}"
+                self.frame.after(0, lambda k=key, d=fallback_detail: progress.append(t(k, detail=d or "")))
+
             udp_key_by_status = {
+                "captured": "selfhost.conn_udp_captured",
+                "not_captured": "selfhost.conn_udp_not_captured",
                 "responded": "selfhost.conn_udp_responded",
                 "refused": "selfhost.conn_udp_refused",
                 "unknown": "selfhost.conn_udp_unknown",
                 "error": "selfhost.conn_udp_error",
             }
             for shard_name, remote_port in mappings:
-                status, detail = connectivity.check_udp_port(host, remote_port)
+                if tcpdump_probe and tcpdump_probe.available:
+                    status, detail = tcpdump_probe.capture_udp(host, remote_port)
+                else:
+                    status, detail = connectivity.check_udp_port(host, remote_port)
                 line = t(udp_key_by_status[status], shard=shard_name, port=remote_port, detail=detail or "")
                 self.frame.after(0, lambda ln=line: progress.append(ln))
 
+            if tcpdump_probe:
+                tcpdump_probe.close()
             self.frame.after(0, progress.finish)
 
         threading.Thread(target=_worker, daemon=True).start()
