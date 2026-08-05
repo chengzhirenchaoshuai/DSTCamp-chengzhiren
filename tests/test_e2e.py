@@ -808,36 +808,24 @@ def test_player_notes():
 
 
 def test_app_settings_toggles():
-    """测试为托盘+设置弹窗功能新增的持久化开关：关闭最小化、缓存存放到
-    exe 目录（app_settings.py）。"""
+    """测试为托盘+设置弹窗功能新增的持久化开关（app_settings.py）：关闭
+    最小化、缓存存放到 exe 目录、自动备份。三个开关的 get/set 实现模式
+    完全一致，合并成一次循环验证，不逐个重复相同的断言。"""
     print("\n" + "=" * 60)
     print("Test 20: App Settings Toggles")
 
     with _isolated_settings_dir():
-        assert get_minimize_on_close() is True, "Default should be enabled"
-        print("  PASS: minimize_on_close defaults to True when unset")
-
-        set_minimize_on_close(False)
-        assert get_minimize_on_close() is False
-        set_minimize_on_close(True)
-        assert get_minimize_on_close() is True
-        print("  PASS: minimize_on_close round-trips")
-
-        assert get_cache_use_exe_dir() is False, "Default should be disabled"
-        print("  PASS: cache_use_exe_dir defaults to False when unset")
-
-        set_cache_use_exe_dir(True)
-        assert get_cache_use_exe_dir() is True
-        set_cache_use_exe_dir(False)
-        assert get_cache_use_exe_dir() is False
-        print("  PASS: cache_use_exe_dir round-trips")
-
-        assert get_backup_auto_enabled() is True, "Default should be enabled"
-        set_backup_auto_enabled(False)
-        assert get_backup_auto_enabled() is False
-        set_backup_auto_enabled(True)
-        assert get_backup_auto_enabled() is True
-        print("  PASS: backup_auto_enabled defaults to True and round-trips")
+        for get_fn, set_fn, default in (
+            (get_minimize_on_close, set_minimize_on_close, True),
+            (get_cache_use_exe_dir, set_cache_use_exe_dir, False),
+            (get_backup_auto_enabled, set_backup_auto_enabled, True),
+        ):
+            assert get_fn() is default, f"{get_fn.__name__} 默认值应该是 {default}"
+            set_fn(not default)
+            assert get_fn() is not default
+            set_fn(default)
+            assert get_fn() is default
+        print("  PASS: minimize_on_close/cache_use_exe_dir/backup_auto_enabled 默认值+读写往返都正常")
 
 
 def test_mod_sync_junction():

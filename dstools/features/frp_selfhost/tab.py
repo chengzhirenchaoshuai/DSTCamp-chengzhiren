@@ -489,7 +489,7 @@ class SelfHostFrpPage:
         status = self._last_status
         if status is None or not status.reachable:
             return theme.TEXT_MUTED
-        return theme.SUCCESS if status.service_active else theme.ERROR
+        return theme.SERVER_COLOR if status.service_active else theme.ERROR
 
     def _permission_text(self) -> str:
         status = self._last_status
@@ -718,7 +718,7 @@ class SelfHostFrpPage:
         running = bool(cluster) and self._frpc_running(cluster)
         self._frpc_status_label.itemconfig(
             "label_text", text=self._frpc_status_text(running),
-            fill=theme.SUCCESS if running else theme.TEXT_MUTED)
+            fill=theme.SERVER_COLOR if running else theme.TEXT_MUTED)
         self._frpc_toggle_btn.configure(text=t("sakura.frpc_stop_btn") if running else t("sakura.frpc_start_btn"))
 
     def _on_frpc_toggle(self):

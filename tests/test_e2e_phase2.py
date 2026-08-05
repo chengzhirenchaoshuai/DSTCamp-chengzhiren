@@ -1,13 +1,13 @@
-"""End-to-end tests for Phase 2 features: i18n, model fields, exe/gui
-importability. 真实磁盘存档发现/SaveSource 校验已经并入 test_e2e.py 的
-Test 6/Test 7，不在这个文件里重复。"""
+"""End-to-end tests for Phase 2 features: i18n, exe/gui importability.
+真实磁盘存档发现/SaveSource 校验已经并入 test_e2e.py 的 Test 6/Test 7，
+model 字段的默认值本身不需要单独测——那是 dataclass 声明上写死的值，
+改了忘同步测试只会让测试自己先失败，不代表代码有回归。"""
 
 import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.i18n import t, set_lang, get_lang
-from dstools.models import SaveSource, SaveSession, DSTEnvironment
 
 
 def test_i18n_basic():
@@ -57,42 +57,10 @@ def test_i18n_basic():
     print("  PASS: Format strings work in both languages")
 
 
-def test_save_session_fields():
-    """Test new SaveSession fields."""
-    print("\n" + "=" * 60)
-    print("Test P2-2: SaveSession Fields")
-
-    # Test default values
-    session = SaveSession(session_id="test", path=__import__('pathlib').Path("/tmp"))
-    assert session.source == SaveSource.SERVER
-    assert session.cluster_name == ""
-    assert session.shard_name == ""
-    assert session.players == []
-
-    # Test client source
-    client_session = SaveSession(
-        session_id="test", path=__import__('pathlib').Path("/tmp"),
-        source=SaveSource.LOCAL
-    )
-    assert client_session.source == SaveSource.LOCAL
-    print("  PASS: SaveSource defaults and client source work")
-
-
-def test_dstenvironment_fields():
-    """Test new DSTEnvironment fields."""
-    print("\n" + "=" * 60)
-    print("Test P2-3: DSTEnvironment Fields")
-
-    env = DSTEnvironment()
-    assert env.clusters == []
-    # DSTEnvironment no longer has client_saves (clusters are differentiated by Cluster.source)
-    print("  PASS: Default DSTEnvironment is clean")
-
-
 def test_exe_entry_imports():
     """Test that the EXE entry point imports correctly."""
     print("\n" + "=" * 60)
-    print("Test P2-4: EXE Entry Point Imports")
+    print("Test P2-2: EXE Entry Point Imports")
 
     # run_gui.py/build_exe.py live in scripts/, not on sys.path by default
     # (only the project root is, so `import dstools` resolves) -- add it
@@ -115,7 +83,7 @@ def test_exe_entry_imports():
 def test_gui_imports():
     """Test that the new GUI module imports correctly."""
     print("\n" + "=" * 60)
-    print("Test P2-5: GUI Module Import")
+    print("Test P2-3: GUI Module Import")
 
     # 五个页签各自拆到了自己的模块（gui/save_browser_tab.py 等），主窗口
     # 本体留在 gui/app.py——各自从真正定义它们的模块导入，而不是借
@@ -151,14 +119,12 @@ def main():
     """Run all Phase 2 tests."""
     print("\n" + "O" * 60)
     print("  DSTOOLS Phase 2 - Verification Tests")
-    print("  (i18n, Model Fields, EXE/GUI Imports)")
+    print("  (i18n, EXE/GUI Imports)")
     print("O" * 60)
 
     all_passed = True
     tests = [
         test_i18n_basic,
-        test_save_session_fields,
-        test_dstenvironment_fields,
         test_exe_entry_imports,
         test_gui_imports,
     ]
