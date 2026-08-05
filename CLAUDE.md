@@ -42,8 +42,8 @@ tools/frp_selfhost/# frpc.exe + frps_linux_amd64/arm64，直接提交进仓库�
 ```bash
 pip install -e .                   # 安装
 python -m dstools.gui.app          # 启动 GUI（dev 模式首选）
-python scripts/build_exe.py        # 打包为单文件 DSTCamp.exe（需 pip install -e ".[build]"；
-                                    # 打包后必须真的跑一次 dist/DSTCamp.exe 验证，
+python scripts/build_exe.py        # 打包为单文件 DSTCamp-<版本号>.exe（需 pip install -e ".[build]"；
+                                    # 打包后必须真的跑一次 dist/ 下生成的 exe 验证，
                                     # 只看"打包成功"日志不够，modulegraph 漏掉子包时
                                     # 照样"成功"，只有真启动才暴露 ModuleNotFoundError）
 python tests/test_e2e.py           # 核心模块测试（34 项）

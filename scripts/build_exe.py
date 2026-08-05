@@ -5,7 +5,7 @@ Usage (run from the project root):
     python scripts/build_exe.py       # Build the EXE
 
 Output:
-    dist/DSTCamp.exe           # Standalone executable (no Python required)
+    dist/DSTCamp-<version>.exe   # Standalone executable (no Python required)
 """
 
 import os
@@ -40,6 +40,9 @@ def build():
     # ModuleNotFoundError crash when you actually run the exe).
     sys.path.insert(0, str(project_root))
 
+    from dstools import __version__
+    exe_name = f"DSTCamp-{__version__}"
+
     # Build arguments
     # On Windows, --add-data uses ; as separator, on Linux/Mac it uses :
     sep = ";" if sys.platform == "win32" else ":"
@@ -53,7 +56,7 @@ def build():
 
     args = [
         str(project_root / "scripts" / "run_gui.py"),  # Entry point
-        "--name=DSTCamp",                         # EXE filename
+        f"--name={exe_name}",                     # EXE filename, e.g. DSTCamp-0.9.6.exe
         "--onefile",                             # Single EXE file
         "--windowed",                            # No console window
         "--clean",                               # Clean cache
@@ -64,7 +67,7 @@ def build():
         # project root, that would scatter build artifacts wherever the
         # caller happened to `cd` from. Pin all three explicitly to the real
         # project root so `python scripts/build_exe.py` always produces the
-        # same dist/DSTCamp.exe regardless of the caller's cwd.
+        # same dist/DSTCamp-<version>.exe regardless of the caller's cwd.
         f"--distpath={project_root / 'dist'}",
         f"--workpath={project_root / 'build'}",
         f"--specpath={project_root}",
@@ -98,15 +101,15 @@ def build():
         "--hidden-import=lupa.lua51",
     ]
 
-    print("Building DSTCamp.exe...")
+    print(f"Building {exe_name}.exe...")
     print("  Entry: run_gui.py")
-    print("  Output: dist/DSTCamp.exe")
+    print(f"  Output: dist/{exe_name}.exe")
     print()
 
     PyInstaller.__main__.run(args)
 
     print()
-    print("Build complete! Find the EXE at: dist/DSTCamp.exe")
+    print(f"Build complete! Find the EXE at: dist/{exe_name}.exe")
     print("You can double-click it to launch the GUI.")
 
 

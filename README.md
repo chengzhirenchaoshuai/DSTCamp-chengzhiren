@@ -8,7 +8,7 @@
 [![Downloads](https://img.shields.io/github/downloads/chengzhirenchaoshuai/DSTCamp-chengzhiren/total)](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases)
 
 **一站式的 Don't Starve Together 本地专用服务器管理工具。**
-启动/停止服务器、存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、内网穿透联机（樱花 or 自建服务器二选一）、LuaJIT 性能补丁一键安装，覆盖开服/维护的日常操作。同时支持 **Steam 版和 WeGame 版**存档，基于 Tkinter 打造的图形界面，打包成单文件 `DSTCamp.exe`，下载即用、免安装。
+启动/停止服务器、存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、内网穿透联机（樱花 or 自建服务器二选一）、LuaJIT 性能补丁一键安装，覆盖开服/维护的日常操作。同时支持 **Steam 版和 WeGame 版**存档，基于 Tkinter 打造的图形界面，打包成单文件 `DSTCamp-<版本号>.exe`，下载即用、免安装。
 
 ---
 
@@ -32,7 +32,7 @@ pip install -e .
 
 ```bash
 python scripts/build_exe.py
-# 产物：dist/DSTCamp.exe
+# 产物：dist/DSTCamp-<版本号>.exe
 ```
 
 ## 使用
@@ -100,7 +100,7 @@ python tests/test_e2e_phase2.py   # i18n、exe/gui 模块可导入性（3 项）
 
 ## 更新日志
 
-详见 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases)，每个版本附带打包好的 `DSTCamp.exe`。
+详见 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases)，每个版本附带打包好的 `DSTCamp-<版本号>.exe`。
 
 ## 许可
 
