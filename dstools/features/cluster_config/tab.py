@@ -705,7 +705,14 @@ class ClusterConfigTab:
                     if sec == "NETWORK" and key == "server_port" and is_server:
                         if self.app.sakura_tab.has_active_mapping(self._shard_config_cluster, self._shard_config_shard):
                             readonly = True
-                            port_tooltip = t("cluster.server_port_sakura_locked")
+                            # 樱花映射和自建 frps 共用同一套只读判断（见
+                            # SakuraTab.has_active_mapping()），但提示文字要
+                            # 分清楚具体是哪一个接管的，不能一律说"樱花映射"。
+                            if self.app.sakura_tab.selfhost_page.has_active_mapping(
+                                    self._shard_config_cluster, self._shard_config_shard):
+                                port_tooltip = t("cluster.server_port_selfhost_locked")
+                            else:
+                                port_tooltip = t("cluster.server_port_sakura_locked")
                     var = self._make_row(frame, f"SHARD_{sec}", key, value, row, readonly=readonly, tooltip=port_tooltip)
                     row += 1
                     if is_server and sec == "SHARD" and key == "is_master":

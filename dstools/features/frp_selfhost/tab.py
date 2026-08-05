@@ -16,7 +16,7 @@ from dstools.shared import app_settings
 from dstools.features.cluster_config.config_manager import (
     get_cluster_option, load_cluster_config, load_shard_config, save_shard_config, set_shard_option,
 )
-from dstools.features.frp_selfhost import deploy, probe, remote_deploy
+from dstools.features.frp_selfhost import connectivity, deploy, probe, remote_deploy
 from dstools.features.frp_selfhost.client import FrpcManager, build_frpc_toml
 from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
@@ -191,6 +191,12 @@ class SelfHostFrpPage:
         action_row = BgFrame(self.frame, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
         self._action_btn = ttk.Button(action_row, text=t("selfhost.enable_btn"), command=self._on_action_btn)
         self._action_btn.pack(side=tk.LEFT)
+        self._conn_check_btn = ttk.Button(action_row, text=t("selfhost.conn_check_btn"),
+                                          command=self._check_connectivity)
+        self._conn_check_btn.pack(side=tk.LEFT, padx=(8, 0))
+        # 没开启映射之前禁用——没有映射的世界，检测连通性无从谈起。
+        Tooltip(self._conn_check_btn,
+                lambda: "" if self._any_mapped else t("selfhost.conn_check_needs_mapping_hint"))
 
         self._frpc_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._frpc_status_label = self._label(self._frpc_row, self._frpc_status_text(False))
@@ -529,16 +535,19 @@ class SelfHostFrpPage:
         if not cluster:
             self._label(self._shards_frame, t("local.select_cluster_first")).pack(anchor=tk.W)
             self._action_btn.pack_forget()
+            self._conn_check_btn.pack_forget()
             self._frpc_row.pack_forget()
             return
         if cluster.source != SaveSource.SERVER:
             self._label(self._shards_frame, t("sakura.local_save_hint")).pack(anchor=tk.W)
             self._action_btn.pack_forget()
+            self._conn_check_btn.pack_forget()
             self._frpc_row.pack_forget()
             return
         if not cluster.shards:
             self._label(self._shards_frame, t("sakura.no_shards")).pack(anchor=tk.W)
             self._action_btn.pack_forget()
+            self._conn_check_btn.pack_forget()
             self._frpc_row.pack_forget()
             return
 
@@ -573,6 +582,9 @@ class SelfHostFrpPage:
         if not server and not any_mapped:
             Tooltip(self._action_btn, t("selfhost.server_not_configured"))
 
+        self._conn_check_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self._conn_check_btn.configure(state=tk.NORMAL if any_mapped else tk.DISABLED)
+
         if any_mapped:
             self._frpc_row.pack(fill=tk.X, padx=10, pady=(0, 5))
             self._refresh_frpc_row()
@@ -592,6 +604,47 @@ class SelfHostFrpPage:
         self.frame.clipboard_clear()
         self.frame.clipboard_append(text)
         dlg.show_info(self.app.root, "", t("sakura.connect_copied"))
+
+    # ── 一键检测连通性：从这台机器（对云服务器而言就是公网外部视角）真
+    # 的连一下，跟 probe.py"登录服务器自己看"是两个互补的角度——进程在
+    # 跑不代表外网真的连得进来（最常见的坑是部署完忘了去安全组放行）。
+
+    def _check_connectivity(self):
+        cluster = self._current_cluster
+        if not cluster or not self._any_mapped:
+            return
+        server = app_settings.get_selfhost_frp_server()
+        if not server:
+            return
+        mappings = [(shard.name, app_settings.get_selfhost_frp_mapping(cluster.path, shard.name))
+                    for shard in cluster.shards]
+        mappings = [(name, port) for name, port in mappings if port is not None]
+        if not mappings:
+            return
+
+        host, bind_port = server["host"], server["bind_port"]
+        progress = ModSyncLogDialog(self.frame, title=t("selfhost.conn_check_title"))
+
+        def _worker():
+            ok, detail = connectivity.check_tcp_port(host, bind_port)
+            line = t("selfhost.conn_tcp_ok", port=bind_port) if ok \
+                else t("selfhost.conn_tcp_fail", port=bind_port, detail=detail or "")
+            self.frame.after(0, lambda ln=line: progress.append(ln))
+
+            udp_key_by_status = {
+                "responded": "selfhost.conn_udp_responded",
+                "refused": "selfhost.conn_udp_refused",
+                "unknown": "selfhost.conn_udp_unknown",
+                "error": "selfhost.conn_udp_error",
+            }
+            for shard_name, remote_port in mappings:
+                status, detail = connectivity.check_udp_port(host, remote_port)
+                line = t(udp_key_by_status[status], shard=shard_name, port=remote_port, detail=detail or "")
+                self.frame.after(0, lambda ln=line: progress.append(ln))
+
+            self.frame.after(0, progress.finish)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     # ── frpc 本地进程状态/启停 ───────────────────────────────────────
 
