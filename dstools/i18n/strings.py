@@ -292,11 +292,10 @@ STRINGS = {
 
         # 自建 frps 服务器（"樱花映射"页签下的子页签）
         "selfhost.tab_sakura": "樱花映射",
-        "selfhost.tab_selfhost": "自建服务器",
+        "selfhost.tab_selfhost": "自建frps",
         "selfhost.host_label": "服务器地址:",
         "selfhost.bind_port_label": "服务器端口:",
         "selfhost.token_label": "鉴权 Token:",
-        "selfhost.generate_token_btn": "生成新 Token",
         "selfhost.host_missing": "请填写服务器地址",
         "selfhost.invalid_port": "端口号无效，请输入 1-65535 之间的数字",
         "selfhost.server_not_configured": "请先填写服务器信息，点击「SSH 远程部署」完成服务器端配置",
@@ -806,11 +805,10 @@ STRINGS = {
 
         # 自建 frps 服务器（"樱花映射"页签下的子页签）
         "selfhost.tab_sakura": "Sakura Mapping",
-        "selfhost.tab_selfhost": "Self-Hosted",
+        "selfhost.tab_selfhost": "Self-Hosted frps",
         "selfhost.host_label": "Server address:",
         "selfhost.bind_port_label": "Server port:",
         "selfhost.token_label": "Auth token:",
-        "selfhost.generate_token_btn": "Generate new token",
         "selfhost.host_missing": "Enter the server address",
         "selfhost.invalid_port": "Invalid port -- enter a number between 1 and 65535",
         "selfhost.server_not_configured": "Fill in the server info and click \"SSH Remote Deploy\" to set up the server first",

@@ -283,8 +283,6 @@ class SelfHostFrpPage:
         self._token_var = tk.StringVar()
         ttk.Entry(row2, textvariable=self._token_var, width=36, font=("Consolas", 10)).pack(
             side=tk.LEFT, padx=(4, 6))
-        ttk.Button(row2, text=t("selfhost.generate_token_btn"), command=self._generate_token).pack(
-            side=tk.LEFT, padx=2)
 
         row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
         ttk.Button(row3, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog).pack(
@@ -358,9 +356,6 @@ class SelfHostFrpPage:
             self._token_var.set(server.get("token", ""))
         else:
             self._token_var.set(deploy.generate_token())
-
-    def _generate_token(self):
-        self._token_var.set(deploy.generate_token())
 
     def _validated_port(self, raw: str) -> int | None:
         try:
