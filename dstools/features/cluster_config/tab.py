@@ -508,11 +508,27 @@ class ClusterConfigTab:
             # 时只允许数字字符（挡住手滑打进字母/符号），真正的范围校验
             # 放到"保存"时做（见 _save_cluster_ini），这里只挡明显打错的
             # 输入，不在用户还没打完整数字时就报错。
+            #
+            # 不用 validate="key"（真机反馈过的真实 bug）：这个机制在字符
+            # *插入之前*同步拒绝，跟 Windows 输入法的组词过程不兼容——用
+            # 拼音输入法打字，只要组词里出现字母 t 就会导致整个输入框被
+            # 清空、界面看起来像是刷新了一次，是 Tk 在 Windows 上
+            # validate="key" 跟 IME 冲突的已知表现（拒绝一次按键会打断
+            # IME 正在维护的组词状态）。改成 trace_add("write", ...)——
+            # 先无条件接受输入（不会打断 IME 的组词状态机），字符已经真
+            # 的插入*之后*再检查，发现混进了非数字字符就原地过滤掉重新
+            # 赋值，用户几乎感知不到，也不会误伤中文输入法的正常使用。
             lo, hi = range_limits
             var = tk.StringVar(value=str(value) if value is not None else "")
-            vcmd = (parent.register(lambda s: s == "" or s.isdigit()), "%P")
-            entry = ttk.Entry(parent, textvariable=var, width=38, font=self._ROW_VALUE_FONT,
-                              validate="key", validatecommand=vcmd)
+
+            def _keep_digits_only(*_args):
+                current = var.get()
+                filtered = "".join(ch for ch in current if ch.isdigit())
+                if filtered != current:
+                    var.set(filtered)
+
+            var.trace_add("write", _keep_digits_only)
+            entry = ttk.Entry(parent, textvariable=var, width=38, font=self._ROW_VALUE_FONT)
             entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
             Tooltip(entry, t("cluster.range_hint", min=lo, max=hi))
         else:
