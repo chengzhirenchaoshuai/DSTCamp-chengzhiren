@@ -1,12 +1,14 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.9.5-orange)
+![Version](https://img.shields.io/badge/version-0.9.6-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
+[![Release](https://img.shields.io/github/v/release/chengzhirenchaoshuai/DSTCamp-chengzhiren)](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases)
+[![Downloads](https://img.shields.io/github/downloads/chengzhirenchaoshuai/DSTCamp-chengzhiren/total)](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases)
 
 **一站式的 Don't Starve Together 本地专用服务器管理工具。**
-启动/停止服务器、存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、樱花内网穿透联机、LuaJIT 性能补丁一键安装，覆盖开服/维护的日常操作。同时支持 **Steam 版和 WeGame 版**存档，基于 Tkinter 打造的图形界面，可以打包成单文件 `DSTCamp.exe`。
+启动/停止服务器、存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、内网穿透联机（樱花 or 自建服务器二选一）、LuaJIT 性能补丁一键安装，覆盖开服/维护的日常操作。同时支持 **Steam 版和 WeGame 版**存档，基于 Tkinter 打造的图形界面，打包成单文件 `DSTCamp.exe`，下载即用、免安装。
 
 ---
 
@@ -15,6 +17,7 @@
 - [安装](#安装)
 - [使用](#使用)
 - [功能一览](#功能一览)
+- [内网穿透怎么选](#内网穿透怎么选)
 - [项目结构](#项目结构)
 - [测试](#测试)
 - [更新日志](#更新日志)
@@ -49,7 +52,7 @@ python scripts/run_gui.py
 | 🌲 **世界设置** | 编辑世界规则与生成参数，森林/洞穴分开管理，按分类展示、带图标和取值说明。 |
 | ⚙️ **服务器配置** | 编辑游戏模式、语言、房间设置等，三列布局，数值字段按官方范围校验；管理员名单、黑名单、Token 管理。 |
 | 📦 **存档信息** | 存档详情 + 每个玩家角色状态（角色名/头像/血量/理智/饥饿/体温）；配套自动/手动备份、从备份恢复、备份策略配置。 |
-| 🌸 **樱花映射** | 内网穿透把本地服务器映射到公网，没有公网 IP 也能联机，账号配额/节点选择/近期用量一目了然。 |
+| 🌐 **内网穿透** | 没有公网 IP 也能联机，两种方式二选一：🌸 樱花映射（第三方免费服务，账号配额/节点选择/近期用量一目了然）或 🖧 自建 frps（用自己的云服务器，SSH 一键部署+免密登录、运行状态面板、一键检测公网连通性）。 |
 
 **LuaJIT 加速补丁**（Steam 版专用）：一键安装第三方开源项目 [DontStarveLuaJIT2](https://github.com/fesily/DontStarveLuaJIT2) 提供的性能补丁，注入文件和配套 Mod 都直接取自已订阅的创意工坊内容（不联网下载）。采用隔离副本方案，专用服务器真实安装目录全程不被修改；游戏或补丁更新后自动提示重新生成副本，且只重建真正变化的部分。
 
@@ -59,6 +62,17 @@ python scripts/run_gui.py
 - 自绘标题栏：拖动、缩放、最小化到任务栏、一键放大到当前屏幕最大可用尺寸
 - 系统托盘常驻；关闭窗口可选直接退出或最小化到托盘；记住上次窗口位置
 - 界面支持中/英文实时切换；启动时自动检查新版本
+
+## 内网穿透怎么选
+
+| | 🌸 樱花映射 | 🖧 自建 frps |
+|---|---|---|
+| 需要什么 | 樱花账号（免费额度即可） | 一台有公网 IP 的云服务器（阿里云/腾讯云等，最低配即可） |
+| 上手难度 | 填个 Token 就能用 | 一次 SSH 密码登录做"初次鉴权"，之后全部一键操作 |
+| 限制 | 受第三方账号的隧道数/流量配额限制 | 只受服务器自己的带宽限制，不依赖第三方服务可用性 |
+| 适合 | 想立刻联机、不想折腾服务器 | 已经有云服务器，或者想要更稳定可控的线路 |
+
+两者可以在"内网穿透"页签下随时切换，互不冲突。
 
 ## 项目结构
 
@@ -72,13 +86,14 @@ icons/            # 只读素材：世界设置图标、UI 图标、app 图标
 reference/        # 开发时人工核对用的参考资料，不是运行时依赖
 tools/ktools/     # 第三方 ktech.exe（纹理转换工具）
 tools/frpc/       # 第三方 frpc.exe（樱花内网穿透客户端）
+tools/frp_selfhost/ # 自建 frps 用的 frpc.exe + Linux 服务端二进制（amd64/arm64）
 ```
 
 ## 测试
 
 ```bash
 python tests/test_e2e.py          # 核心模块（34 项）
-python tests/test_e2e_phase2.py   # i18n、模型字段、exe/gui 模块可导入性（5 项）
+python tests/test_e2e_phase2.py   # i18n、exe/gui 模块可导入性（3 项）
 ```
 
 `scripts/diagnose_local_env.py` 不是测试，是本机真实环境的人工诊断脚本。
