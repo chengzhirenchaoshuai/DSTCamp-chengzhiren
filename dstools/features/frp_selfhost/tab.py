@@ -155,15 +155,29 @@ class SelfHostFrpPage:
         self._label(row1, t("selfhost.host_label")).pack(side=tk.LEFT)
         self._host_var = tk.StringVar()
         ttk.Entry(row1, textvariable=self._host_var, width=24).pack(side=tk.LEFT, padx=(4, 12))
-        self._label(row1, t("selfhost.bind_port_label")).pack(side=tk.LEFT)
+        bind_port_label = self._label(row1, t("selfhost.bind_port_label"))
+        bind_port_label.pack(side=tk.LEFT)
         self._bind_port_var = tk.StringVar(value=str(deploy.DEFAULT_BIND_PORT))
-        ttk.Entry(row1, textvariable=self._bind_port_var, width=8).pack(side=tk.LEFT, padx=(4, 0))
+        bind_port_entry = ttk.Entry(row1, textvariable=self._bind_port_var, width=8)
+        bind_port_entry.pack(side=tk.LEFT, padx=(4, 0))
+        Tooltip(bind_port_label, t("selfhost.bind_port_hint"))
+        Tooltip(bind_port_entry, t("selfhost.bind_port_hint"))
 
         row2 = BgFrame(top, app, bg=theme.CARD_BG); row2.pack(fill=tk.X, pady=3)
-        self._label(row2, t("selfhost.token_label")).pack(side=tk.LEFT)
+        token_label = self._label(row2, t("selfhost.token_label"))
+        token_label.pack(side=tk.LEFT)
         self._token_var = tk.StringVar()
-        ttk.Entry(row2, textvariable=self._token_var, width=36, font=("Consolas", 10)).pack(
-            side=tk.LEFT, padx=(4, 6))
+        # 只读——Token 应该始终是随机生成的，手改成好记的弱口令反而不安
+        # 全；readonly 状态下 ttk.Entry 仍然能选中/复制文字，只是不能敲
+        # 键盘改，真要换新的走旁边"重新生成Token"按钮。
+        token_entry = ttk.Entry(row2, textvariable=self._token_var, width=36,
+                                font=("Consolas", 10), state="readonly")
+        token_entry.pack(side=tk.LEFT, padx=(4, 6))
+        Tooltip(token_label, t("selfhost.token_hint"))
+        Tooltip(token_entry, t("selfhost.token_hint"))
+        regen_token_btn = ttk.Button(row2, text=t("selfhost.regen_token_btn"), command=self._regenerate_token)
+        regen_token_btn.pack(side=tk.LEFT)
+        Tooltip(regen_token_btn, t("selfhost.regen_token_hint"))
 
         row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
         self._auth_btn = ttk.Button(row3, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog)
@@ -225,7 +239,10 @@ class SelfHostFrpPage:
         exe = _frpc_exe_path()
         if not config_path.exists() or not exe.exists():
             return
-        if self.frpc.get(cluster.path):
+        # 先认领一次可能存在的孤儿进程（见 client.py 顶部说明），避免在
+        # 已经有一个孤儿 frpc.exe 真的在转发流量的情况下又启动第二个—
+        # —两个进程会抢着向 frps 注册同一批代理，大概率互相冲突失败。
+        if self.frpc.reconcile(cluster.path, exe, config_path):
             return
         self.frpc.start(cluster.path, exe, config_path)
 
@@ -264,6 +281,14 @@ class SelfHostFrpPage:
         except (TypeError, ValueError):
             return None
         return port if 1 <= port <= 65535 else None
+
+    def _regenerate_token(self):
+        # 只改这个页面上还没保存的 StringVar，跟 host/bind_port 输入框
+        # 一个道理——真正持久化+同步到服务器是点"一键部署/重新部署"那
+        # 一刻才发生的事（见 _start_deploy()），这里不用重复那份逻辑。
+        if not dlg.ask_yes_no(self.app.root, t("selfhost.regen_token_btn"), t("selfhost.regen_token_confirm_msg")):
+            return
+        self._token_var.set(deploy.generate_token())
 
     def _confirm_host_key(self, host: str, fingerprint: str) -> bool:
         """remote_deploy.deploy_via_ssh() 在后台线程里调用——这个方法本
@@ -454,7 +479,7 @@ class SelfHostFrpPage:
         status = self._last_status
         if status is None or not status.reachable:
             return theme.TEXT_MUTED
-        return theme.ACCENT if status.service_active else theme.ERROR
+        return theme.SUCCESS if status.service_active else theme.ERROR
 
     def _permission_text(self) -> str:
         status = self._last_status
@@ -673,18 +698,26 @@ class SelfHostFrpPage:
     # ── frpc 本地进程状态/启停 ───────────────────────────────────────
 
     def _frpc_running(self, cluster) -> bool:
+        # 先认领一次可能存在的孤儿进程，再判断——见 client.py 顶部说明：
+        # DSTCamp 上次没走"停止"按钮就退出的话，界面在没有这一步之前
+        # 会一直显示"未启动"，即便孤儿 frpc.exe 其实还在正常转发流量。
+        self.frpc.reconcile(cluster.path, _frpc_exe_path(), self._frpc_config_path(cluster.path))
         return self.frpc.get(cluster.path) is not None
 
     @staticmethod
     def _frpc_status_text(running: bool) -> str:
-        return t("sakura.frpc_status_running" if running else "sakura.frpc_status_stopped")
+        # 用自己专属的 selfhost.* key，不复用 sakura.frpc_status_*——那
+        # 两个 key 同时也是樱花映射原生页面在用的，改文案会连带把樱花
+        # 那边也改掉，这里只是想把"自建frps"这边的措辞说清楚是本地哪
+        # 个客户端进程。
+        return t("selfhost.frpc_status_running" if running else "selfhost.frpc_status_stopped")
 
     def _refresh_frpc_row(self):
         cluster = self._current_cluster
         running = bool(cluster) and self._frpc_running(cluster)
         self._frpc_status_label.itemconfig(
             "label_text", text=self._frpc_status_text(running),
-            fill=theme.ACCENT if running else theme.TEXT_MUTED)
+            fill=theme.SUCCESS if running else theme.TEXT_MUTED)
         self._frpc_toggle_btn.configure(text=t("sakura.frpc_stop_btn") if running else t("sakura.frpc_start_btn"))
 
     def _on_frpc_toggle(self):
