@@ -167,11 +167,17 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 `tools/frpc/frpc.exe` 必须是樱花后台"软件下载"页单独提供的独立版，不能从 Launcher 安装目录复制（Launcher 那份锁死，不管传什么参数都拒绝直接运行）。
 
-### 自建 frps 服务器 (`features/frp_selfhost/deploy.py` / `client.py` / `remote_deploy.py` / `tab.py`)
+### 自建 frps 服务器 (`features/frp_selfhost/deploy.py` / `client.py` / `remote_deploy.py` / `probe.py` / `tab.py`)
 
-跟樱花映射效果一样（本地服务器映射到公网），但服务端是用户自己的云主机，DSTCamp 没有远程 API，只管生成配置和用 `remote_deploy.py`（`paramiko`）通过 SSH/SFTP 自动部署——`deploy.py` 生成 `frps.toml` 和一份幂等的一键部署 bash 脚本，装成 systemd 服务。不碰用户服务器的密码本身：密码只在当次操作过程中留在内存里、从不落盘；主机密钥是"首次连接询问、之后自动比对"（Trust On First Use，本地记一份 known_hosts，密钥变了直接拒绝，不静默接受）；`sudo -n` 非交互执行，需要 sudo 密码的账号会直接报错而不是卡死；支持中途取消（`ModSyncLogDialog` 新增的可选取消按钮，`cancel_event` 传给 `deploy_via_ssh()`，长耗时的执行阶段用带超时的非阻塞读循环轮询）。UI 挂在"内网穿透"页签下的子页签（`sakura/tab.py` 的 `PillTabBar`，子页签本身叫"自建服务器"），跟樱花共用同一套"世界状态/开启映射/frpc 状态"UI 结构，但没有远程隧道 API 能查状态，端口分配和映射状态全靠本地记账（`shared/app_settings.py` 的 `get_selfhost_frp_mapping` 等）。
+跟樱花映射效果一样（本地服务器映射到公网），但服务端是用户自己的云主机，DSTCamp 没有远程 API，只管生成配置和用 `remote_deploy.py`（`paramiko`）通过 SSH/SFTP 自动部署——`deploy.py` 生成 `frps.toml` 和一份幂等的一键部署 bash 脚本，装成 systemd 服务。不碰用户服务器的密码本身：密码只在当次操作过程中留在内存里、从不落盘；主机密钥是"首次连接询问、之后自动比对"（Trust On First Use，本地记一份 known_hosts，密钥变了直接拒绝，不静默接受）；`sudo -n` 非交互执行，需要 sudo 密码的账号会直接报错而不是卡死；支持中途取消（`ModSyncLogDialog` 新增的可选取消按钮，`cancel_event` 传给 `deploy_via_ssh()`，长耗时的执行阶段用带超时的非阻塞读循环轮询）。UI 挂在"内网穿透"页签下的子页签（`sakura/tab.py` 的 `PillTabBar`，子页签叫"自建frps"），跟樱花共用同一套"世界状态/开启映射/frpc 状态"UI 结构，但没有远程隧道 API 能查状态，端口分配和映射状态全靠本地记账（`shared/app_settings.py` 的 `get_selfhost_frp_mapping` 等）。
 
-**"初次鉴权"**：本地用 `cryptography` 库生成一对 Ed25519 密钥（paramiko 自己不能生成，只能读取/使用；密钥固定存在 `cache_dir("frp_selfhost")/ssh_key`，这个功能目前只管理一台自建服务器，不按服务器分别存）→ 用密码登录一次，把公钥追加进服务器 `~/.ssh/authorized_keys`（`grep -qxF` 判重，幂等不会重复追加）→ 断开密码连接，改用刚生成的私钥重新连一次，真正验证公钥推送生效。做过一次之后，"SSH 远程部署"对话框会自动默认选中密钥登录、填好路径，不需要再输密码——真机验证过纯密钥登录能跑通完整部署流程。这是给后续"frpc 状态监控、远程改配置"这类功能打的地基，不需要每个功能各自再问用户要一遍密码。
+**三阶段状态机**（`tab.py` 的 `_is_authenticated()`/`_is_service_active()`）：未鉴权（只能点"初次鉴权"，"一键部署"是只读的）→ 已鉴权未部署（"一键部署"可点，免弹窗，直接用已保存的 SSH 连接信息+本地密钥执行）→ 已部署（按钮变成"重新部署"，二次确认提示会重启服务、短暂中断隧道）。**没有再弹对话框收集部署用的连接信息**——阶段 B/C 时 host/port/username 已经存在 `app_settings` 里、密钥固定在本地路径，点"一键部署"只是一个 yes/no 确认框，不是过去那版还留着"密码/密钥登录"单选的 `_SSHDeployDialog`（已删除）。
+
+**"初次鉴权"**：本地用 `cryptography` 库生成一对 Ed25519 密钥（paramiko 自己不能生成，只能读取/使用；密钥固定存在 `cache_dir("frp_selfhost")/ssh_key`，这个功能目前只管理一台自建服务器，不按服务器分别存）→ 用密码登录一次，把公钥追加进服务器 `~/.ssh/authorized_keys`（`grep -qxF` 判重，幂等不会重复追加）→ 断开密码连接，改用刚生成的私钥重新连一次，真正验证公钥推送生效。真机验证过纯密钥登录能跑通完整部署流程。这是给"frpc 状态监控、远程改配置"这类功能打的地基，不需要每个功能各自再问用户要一遍密码。
+
+**权限前置检查**（`remote_deploy.check_remote_permission()`/`classify_permission()`）：部署脚本要 `sudo -n bash` 执行，账号既不是 root 又没配免密 sudo 的话必然会在真正执行那一步才失败——`deploy_via_ssh()` 连接成功后、上传任何文件之前先跑一次 `id -u`（非 0 再跑 `sudo -n true`），"无权限"直接在最早阶段报错退出并给出修复建议，不会白等一轮二进制/脚本上传。`probe.py` 探测状态面板时复用同一套 `classify_permission()` 分类逻辑，两处判断结果保持一致。
+
+**状态面板 + 探测**（`probe.py` 的 `probe_server_status()`）：鉴权成功后才展示，一次性短连接（不常驻、不维护心跳）跑一条组合 shell 脚本拿到权限/`dstcamp-frps` 是否 active/CPU 核数/内存/`ss -tlun` 已监听端口，探测不到时界面显示"--"而不是报错弹窗。**后台每 10 分钟自动探测一次**（`SelfHostFrpPage._PROBE_INTERVAL_MS`，照抄 `local_service/tab.py` 的 `_poll()` 那种 self-rescheduling `after()` 轮询模式），另有"立即检测"按钮手动触发、探测中会禁用防止连点堆出并发线程。**端口分配防碰撞**：`_next_free_port()` 除了本地 `app_settings` 记的已分配端口，还会合并最近一次探测到的服务器真实监听端口集合，避开用户自己起的、DSTCamp 不知道的服务。
 
 部署脚本本身两处"不重新安装"的判断（应用户要求）：`dstcamp-frps` 这个服务已经在跑时只更新配置+重启；目标端口被*其它*服务占用时直接跳过（大概率是用户自己之前手动配置的 frps），不贸然覆盖。
 

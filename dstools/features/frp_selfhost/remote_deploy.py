@@ -34,7 +34,7 @@ import paramiko
 from dstools.features.frp_selfhost import deploy
 from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
 
-_KNOWN_HOSTS_PATH = cache_dir("frp_selfhost") / "known_hosts"
+KNOWN_HOSTS_PATH = cache_dir("frp_selfhost") / "known_hosts"
 # "初次鉴权"生成的密钥对——固定路径，不分服务器（这个功能目前只支持
 # 管理一台自建服务器，见 shared/app_settings.py 的 selfhost_frp_server
 # 只存一份）。私钥只在本机使用，从不上传；公钥推送到服务器的
@@ -82,8 +82,32 @@ class _TOFUPolicy(paramiko.MissingHostKeyPolicy):
         if not self._confirm(hostname, f"{key.get_name()} {fingerprint}"):
             raise paramiko.SSHException("用户未确认信任该服务器的主机密钥，已取消连接")
         client.get_host_keys().add(hostname, key.get_name(), key)
-        _KNOWN_HOSTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        client.get_host_keys().save(str(_KNOWN_HOSTS_PATH))
+        KNOWN_HOSTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        client.get_host_keys().save(str(KNOWN_HOSTS_PATH))
+
+
+def classify_permission(uid: str, sudo_ok: bool) -> str:
+    """把 `id -u` 的输出 + `sudo -n true` 的成败，归类成三种状态之一：
+    "root"（uid 0，不需要 sudo）、"sudo_nopasswd"（普通用户但配了免密
+    sudo）、"no_permission"（两者都不满足——后续部署/远程操作必然会在
+    需要 root 权限的那一步失败）。probe.py 探测服务器状态时复用同一套
+    判断逻辑，两边结果保持一致。"""
+    if uid.strip() == "0":
+        return "root"
+    return "sudo_nopasswd" if sudo_ok else "no_permission"
+
+
+def check_remote_permission(client: paramiko.SSHClient) -> str:
+    """在已经连接好的 client 上跑 `id -u`（必要时再跑 `sudo -n true`），
+    返回 classify_permission() 的三种状态之一。"""
+    _stdin, stdout, _stderr = client.exec_command("id -u", timeout=10)
+    uid = stdout.read().decode("utf-8", errors="replace").strip()
+    stdout.channel.recv_exit_status()
+    if uid == "0":
+        return "root"
+    _stdin, stdout, _stderr = client.exec_command("sudo -n true", timeout=10)
+    sudo_ok = stdout.channel.recv_exit_status() == 0
+    return classify_permission(uid, sudo_ok)
 
 
 def has_local_key() -> bool:
@@ -133,8 +157,8 @@ def authorize_key_on_server(
     重复调用是幂等的（已经追加过同一行就不会再加一遍）。这一步之后就
     可以关掉密码连接，改用 verify_key_login() 验证私钥能不能登录。"""
     client = paramiko.SSHClient()
-    if _KNOWN_HOSTS_PATH.exists():
-        client.load_host_keys(str(_KNOWN_HOSTS_PATH))
+    if KNOWN_HOSTS_PATH.exists():
+        client.load_host_keys(str(KNOWN_HOSTS_PATH))
     client.set_missing_host_key_policy(_TOFUPolicy(confirm_host_key))
     try:
         on_log(f"正在用密码连接 {host}:{port} ...")
@@ -182,8 +206,8 @@ def verify_key_login(
     情况。"""
     pkey = paramiko.Ed25519Key.from_private_key_file(str(SSH_KEY_PATH))
     client = paramiko.SSHClient()
-    if _KNOWN_HOSTS_PATH.exists():
-        client.load_host_keys(str(_KNOWN_HOSTS_PATH))
+    if KNOWN_HOSTS_PATH.exists():
+        client.load_host_keys(str(KNOWN_HOSTS_PATH))
     client.set_missing_host_key_policy(paramiko.RejectPolicy())
     try:
         on_log("正在用密钥验证登录...")
@@ -267,8 +291,8 @@ def deploy_via_ssh(
             raise RemoteDeployCancelled("用户已取消部署")
 
     client = paramiko.SSHClient()
-    if _KNOWN_HOSTS_PATH.exists():
-        client.load_host_keys(str(_KNOWN_HOSTS_PATH))
+    if KNOWN_HOSTS_PATH.exists():
+        client.load_host_keys(str(KNOWN_HOSTS_PATH))
     client.set_missing_host_key_policy(_TOFUPolicy(confirm_host_key))
 
     connect_kwargs = dict(hostname=host, port=port, username=username,
@@ -314,6 +338,15 @@ def deploy_via_ssh(
     try:
         _check_cancelled()
         on_log("连接成功。")
+
+        on_log("正在检查账号权限...")
+        permission = check_remote_permission(client)
+        if permission == "no_permission":
+            raise RemoteDeployError(
+                "当前账号既不是 root，也没有配置免密 sudo，无法执行安装脚本。"
+                "请改用 root 账号登录，或者用 visudo 给该账号加一行"
+                "「<用户名> ALL=(ALL) NOPASSWD:ALL」后重试。")
+
         try:
             remote_frps_path = _maybe_upload_frps_binary(client, on_log)
         except (paramiko.SSHException, OSError) as e:

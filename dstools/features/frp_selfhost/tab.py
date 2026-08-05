@@ -8,14 +8,15 @@ get_selfhost_frp_mapping 等函数），不像樱花那样能现查 list_tunnels
 """
 
 import threading
+import time
 import tkinter as tk
-from tkinter import filedialog, font as tkfont, ttk
+from tkinter import font as tkfont, ttk
 
 from dstools.shared import app_settings
 from dstools.features.cluster_config.config_manager import (
     get_cluster_option, load_cluster_config, load_shard_config, save_shard_config, set_shard_option,
 )
-from dstools.features.frp_selfhost import deploy, remote_deploy
+from dstools.features.frp_selfhost import deploy, probe, remote_deploy
 from dstools.features.frp_selfhost.client import FrpcManager, build_frpc_toml
 from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
@@ -34,143 +35,12 @@ def _frpc_exe_path():
     return bundled_resource_dir() / "tools" / "frp_selfhost" / "frpc.exe"
 
 
-class _SSHDeployDialog:
-    """收集 SSH 连接信息（主机/端口/用户名/密码或私钥）——`self.result`
-    是一个 dict（用户点"开始部署"）或 None（取消）。密码/私钥密码只存
-    在这个对话框自己的 StringVar 里，窗口一销毁（不管是取消还是提交）
-    这些变量本身也跟着没了，不会被这个类自己额外存到任何地方。"""
-
-    def __init__(self, parent_widget, default_host: str, default_port: int = 22, default_username: str = "root"):
-        self.result: dict | None = None
-        win = tk.Toplevel(parent_widget)
-        self.win = win
-        win.withdraw()
-        win.title(t("selfhost.ssh_dialog_title"))
-        win.configure(background=theme.BG_SOFT)
-
-        body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
-        ttk.Label(body, text=t("selfhost.ssh_dialog_hint"), wraplength=440, justify=tk.LEFT,
-                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).grid(
-            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
-
-        self._host_var = tk.StringVar(value=default_host)
-        self._port_var = tk.StringVar(value=str(default_port))
-        self._user_var = tk.StringVar(value=default_username)
-        # 做过一次"初次鉴权"之后，本地已经有一把能用的私钥——默认直接
-        # 选中密钥登录并把路径填好，用户点"开始部署"就不用再输密码；
-        # 没做过鉴权时还是照旧默认密码登录。
-        has_key = remote_deploy.has_local_key()
-        self._auth_mode = tk.StringVar(value="key" if has_key else "password")
-        self._password_var = tk.StringVar()
-        self._key_path_var = tk.StringVar(value=str(remote_deploy.SSH_KEY_PATH) if has_key else "")
-        self._key_passphrase_var = tk.StringVar()
-
-        row = 1
-        for label_key, var, width in (
-            ("selfhost.host_label", self._host_var, 24),
-            ("selfhost.ssh_port_label", self._port_var, 8),
-            ("selfhost.ssh_username_label", self._user_var, 16),
-        ):
-            ttk.Label(body, text=t(label_key)).grid(row=row, column=0, sticky=tk.E, padx=(0, 6), pady=3)
-            ttk.Entry(body, textvariable=var, width=width).grid(row=row, column=1, sticky=tk.W, pady=3)
-            row += 1
-
-        auth_row = ttk.Frame(body); auth_row.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(6, 3))
-        ttk.Radiobutton(auth_row, text=t("selfhost.ssh_auth_password"), value="password",
-                        variable=self._auth_mode, command=self._refresh_auth_fields).pack(side=tk.LEFT)
-        ttk.Radiobutton(auth_row, text=t("selfhost.ssh_auth_key"), value="key",
-                        variable=self._auth_mode, command=self._refresh_auth_fields).pack(side=tk.LEFT, padx=(10, 0))
-        row += 1
-
-        # 密码/密钥两组输入行共用同一个起始行号——同一时间只显示其中一
-        # 组（见 _refresh_auth_fields），固定记下这个行号，不依赖
-        # grid_forget() 之后 grid_info() 还能不能查到原来的位置（实测
-        # 查不到，forget 之后 grid_info() 返回空字典）。
-        self._auth_fields_row = row
-        self._password_row = ttk.Frame(body)
-        ttk.Label(self._password_row, text=t("selfhost.ssh_password_label")).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Entry(self._password_row, textvariable=self._password_var, width=28, show="*").pack(side=tk.LEFT)
-
-        self._key_row = ttk.Frame(body)
-        ttk.Label(self._key_row, text=t("selfhost.ssh_key_path_label")).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Entry(self._key_row, textvariable=self._key_path_var, width=26).pack(side=tk.LEFT)
-        ttk.Button(self._key_row, text=t("selfhost.ssh_key_browse_btn"), command=self._browse_key).pack(
-            side=tk.LEFT, padx=(4, 0))
-        self._key_pass_row = ttk.Frame(body)
-        ttk.Label(self._key_pass_row, text=t("selfhost.ssh_key_passphrase_label")).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Entry(self._key_pass_row, textvariable=self._key_passphrase_var, width=20, show="*").pack(side=tk.LEFT)
-
-        self._refresh_auth_fields()
-
-        btn_frame = ttk.Frame(win)
-        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=15, pady=15)
-        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text=t("selfhost.ssh_start_btn"), command=self._confirm).pack(side=tk.RIGHT)
-
-        win.bind("<Escape>", lambda e: self._cancel())
-        win.protocol("WM_DELETE_WINDOW", self._cancel)
-
-        win.update_idletasks()
-        root = parent_widget.winfo_toplevel()
-        center_over_parent(win, root, width=max(480, win.winfo_reqwidth()), height=win.winfo_reqheight())
-        win.transient(root)
-        win.deiconify()
-        win.grab_set()
-        win.wait_window()
-
-    def _refresh_auth_fields(self):
-        row = self._auth_fields_row
-        if self._auth_mode.get() == "password":
-            self._key_row.grid_forget()
-            self._key_pass_row.grid_forget()
-            self._password_row.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=3)
-        else:
-            self._password_row.grid_forget()
-            self._key_row.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=3)
-            self._key_pass_row.grid(row=row + 1, column=0, columnspan=2, sticky=tk.W, pady=3)
-
-    def _browse_key(self):
-        path = filedialog.askopenfilename(parent=self.win)
-        if path:
-            self._key_path_var.set(path)
-
-    def _confirm(self):
-        host = self._host_var.get().strip()
-        try:
-            port = int(self._port_var.get().strip())
-        except ValueError:
-            port = -1
-        username = self._user_var.get().strip()
-        if not host:
-            dlg.show_warning(self.win, t("selfhost.ssh_dialog_title"), t("selfhost.host_missing"))
-            return
-        if not (1 <= port <= 65535):
-            dlg.show_warning(self.win, t("selfhost.ssh_dialog_title"), t("selfhost.invalid_port"))
-            return
-        if not username:
-            dlg.show_warning(self.win, t("selfhost.ssh_dialog_title"), t("selfhost.ssh_username_missing"))
-            return
-        if self._auth_mode.get() == "key" and not self._key_path_var.get().strip():
-            dlg.show_warning(self.win, t("selfhost.ssh_dialog_title"), t("selfhost.ssh_key_path_missing"))
-            return
-        self.result = {
-            "host": host, "port": port, "username": username,
-            "password": self._password_var.get() if self._auth_mode.get() == "password" else None,
-            "key_path": self._key_path_var.get().strip() if self._auth_mode.get() == "key" else None,
-            "key_passphrase": self._key_passphrase_var.get() or None,
-        }
-        self.win.destroy()
-
-    def _cancel(self):
-        self.result = None
-        self.win.destroy()
-
-
 class _SSHAuthSetupDialog:
     """"初次鉴权"收集的连接信息——只需要密码（这一步本身就是用密码去
     推公钥，不需要也不应该提供"已经有密钥"这个选项，否则就没有鉴权
-    这回事了）。`self.result` 是 dict 或 None，跟 _SSHDeployDialog 同
-    一个套路。"""
+    这回事了）。`self.result` 是 dict（用户点"开始鉴权"）或 None（取
+    消），窗口一销毁密码变量本身也就没了，不会被这个类额外存到任何
+    地方。"""
 
     def __init__(self, parent_widget, default_host: str, default_port: int = 22, default_username: str = "root"):
         self.result: dict | None = None
@@ -260,12 +130,23 @@ class SelfHostFrpPage:
 
     _SHARD_ROW_PADY = (6, 6)
 
+    _PROBE_INTERVAL_MS = 10 * 60 * 1000  # 后台自动探测间隔：10 分钟
+
     def __init__(self, parent_widget, app):
         self.app = app
         self.frame = BgFrame(parent_widget, app, bg=theme.CARD_BG)
         self.frpc = FrpcManager()
         self._current_cluster = None
         self._any_mapped = False
+
+        # 探测相关状态：_last_status 是最近一次 probe.probe_server_status()
+        # 的结果（还没探测过是 None），_probing 防止"立即检测"连点堆出多
+        # 个并发探测线程，_probe_cycle_started 保证后台定时探测这一整条
+        # self-rescheduling 的 after() 链只会启动一次（照抄
+        # local_service/tab.py 的 _poll() 那种自我重新调度的轮询写法）。
+        self._last_status: probe.ServerStatus | None = None
+        self._probing = False
+        self._probe_cycle_started = False
 
         top = BgFrame(self.frame, app, bg=theme.CARD_BG)
         top.pack(fill=tk.X, padx=10, pady=(10, 5))
@@ -285,10 +166,18 @@ class SelfHostFrpPage:
             side=tk.LEFT, padx=(4, 6))
 
         row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
-        ttk.Button(row3, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog).pack(
-            side=tk.LEFT, padx=(0, 2))
-        ttk.Button(row3, text=t("selfhost.ssh_deploy_btn"), command=self._open_ssh_deploy_dialog).pack(
-            side=tk.LEFT, padx=2)
+        self._auth_btn = ttk.Button(row3, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog)
+        self._auth_btn.pack(side=tk.LEFT, padx=(0, 2))
+        self._deploy_btn = ttk.Button(row3, text=t("selfhost.ssh_deploy_btn"), command=self._start_deploy)
+        self._deploy_btn.pack(side=tk.LEFT, padx=2)
+        # 未完成"初次鉴权"之前这个按钮是只读的——点击本身在 _start_deploy
+        # 里也会拦一次，这里的 Tooltip 用可调用对象实时反映当前状态，不
+        # 需要在每次鉴权状态变化时手动去重新绑定文字。
+        Tooltip(self._deploy_btn,
+                lambda: "" if self._is_authenticated() else t("selfhost.deploy_needs_auth_hint"))
+
+        self._server_status_panel = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._server_status_panel.pack(fill=tk.X, padx=10, pady=(3, 0))
 
         self._status_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._status_frame.pack(fill=tk.X, padx=10, pady=(3, 0))
@@ -308,6 +197,9 @@ class SelfHostFrpPage:
         self._frpc_toggle_btn.pack(side=tk.LEFT, padx=(10, 0))
 
         self._load_server_display()
+        self._refresh_action_buttons()
+        self._render_server_status_panel()
+        self._maybe_start_probe_cycle()
 
     # ── 跨页签接口：给 sakura/tab.py 转发、local_service/tab.py 用 ──────
 
@@ -415,12 +307,32 @@ class SelfHostFrpPage:
     def _on_ssh_auth_done(self, progress):
         progress.append(t("selfhost.ssh_auth_done"))
         progress.finish()
+        self._refresh_action_buttons()
+        self._maybe_start_probe_cycle()
 
     def _on_ssh_auth_error(self, progress, e):
         progress.append(t("selfhost.ssh_auth_failed", detail=str(e)))
         progress.finish()
 
-    def _open_ssh_deploy_dialog(self):
+    # ── 一键部署（阶段 B/C 专用：只有做过初次鉴权才能点，连接信息/密钥全
+    # 部来自已保存的状态，不再弹对话框收集） ───────────────────────────
+
+    def _is_authenticated(self) -> bool:
+        return remote_deploy.has_local_key() and app_settings.get_selfhost_ssh_connection() is not None
+
+    def _is_service_active(self) -> bool:
+        return bool(self._last_status and self._last_status.reachable and self._last_status.service_active)
+
+    def _refresh_action_buttons(self):
+        authed = self._is_authenticated()
+        self._deploy_btn.configure(state=tk.NORMAL if authed else tk.DISABLED)
+        self._deploy_btn.configure(
+            text=t("selfhost.ssh_redeploy_btn") if self._is_service_active() else t("selfhost.ssh_deploy_btn"))
+
+    def _start_deploy(self):
+        if not self._is_authenticated():
+            dlg.show_warning(self.app.root, t("selfhost.ssh_deploy_btn"), t("selfhost.deploy_needs_auth_hint"))
+            return
         host = self._host_var.get().strip()
         if not host:
             dlg.show_warning(self.app.root, t("selfhost.ssh_deploy_btn"), t("selfhost.host_missing"))
@@ -431,26 +343,17 @@ class SelfHostFrpPage:
             return
         token = self._token_var.get().strip() or deploy.generate_token()
         self._token_var.set(token)
-        # 没有单独的"保存服务器信息"按钮了——点"SSH 远程部署"这个动作本
-        # 身就表示"这就是我要用的服务器"，顺手把这三项存下来，供
-        # _enable_mapping() 之后使用；不需要用户先点一次保存再点部署。
+        # 没有单独的"保存服务器信息"按钮——点"一键部署"这个动作本身就表
+        # 示"这就是我要用的服务器"，顺手把这三项存下来，供 _enable_mapping()
+        # 之后使用。
         app_settings.set_selfhost_frp_server(host, port, token)
 
-        # 记住的是上次 SSH 连接信息（主机/端口/用户名），跟"自建服务器"
-        # 本身的 host/port（frps 监听的那个端口）是两套独立的东西，只是
-        # 大多数情况下 SSH 主机和 frps 主机是同一台机器，没记录过时用
-        # 那个当默认值方便一点。
-        saved_conn = app_settings.get_selfhost_ssh_connection()
-        if saved_conn:
-            default_host, default_port, default_user = saved_conn["host"], saved_conn["port"], saved_conn["username"]
-        else:
-            default_host, default_port, default_user = self._host_var.get().strip(), 22, "root"
-
-        ssh_dlg = _SSHDeployDialog(self.frame, default_host, default_port, default_user)
-        if ssh_dlg.result is None:
+        conn = app_settings.get_selfhost_ssh_connection()
+        redeploying = self._is_service_active()
+        confirm_msg = t("selfhost.redeploy_confirm_msg") if redeploying \
+            else t("selfhost.deploy_confirm_msg", host=conn["host"])
+        if not dlg.ask_yes_no(self.app.root, t("selfhost.ssh_deploy_btn"), confirm_msg):
             return
-        conn = ssh_dlg.result
-        app_settings.set_selfhost_ssh_connection(conn["host"], conn["port"], conn["username"])
 
         cancel_event = threading.Event()
         progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_progress_title"),
@@ -464,8 +367,7 @@ class SelfHostFrpPage:
                 remote_deploy.deploy_via_ssh(
                     conn["host"], conn["port"], conn["username"], port, token,
                     _on_log, self._confirm_host_key,
-                    password=conn["password"], key_path=conn["key_path"],
-                    key_passphrase=conn["key_passphrase"], cancel_event=cancel_event)
+                    key_path=str(remote_deploy.SSH_KEY_PATH), cancel_event=cancel_event)
                 self.frame.after(0, lambda: self._on_ssh_deploy_done(progress))
             except remote_deploy.RemoteDeployCancelled:
                 self.frame.after(0, lambda: self._on_ssh_deploy_cancelled(progress))
@@ -477,6 +379,9 @@ class SelfHostFrpPage:
     def _on_ssh_deploy_done(self, progress):
         progress.append(t("selfhost.ssh_deploy_done"))
         progress.finish()
+        # 部署刚完成，立刻探测一次刷新状态面板（不影响后台定时探测的
+        # 节奏），不用等到下一个 10 分钟周期才知道服务起来了。
+        self._run_probe(reschedule=False)
 
     def _on_ssh_deploy_cancelled(self, progress):
         progress.append(t("selfhost.ssh_deploy_cancelled"))
@@ -485,6 +390,114 @@ class SelfHostFrpPage:
     def _on_ssh_deploy_error(self, progress, e):
         progress.append(t("selfhost.ssh_deploy_failed", detail=str(e)))
         progress.finish()
+
+    # ── 服务器状态面板：权限/运行状态/CPU/内存，手动+定时探测 ──────────
+
+    def _maybe_start_probe_cycle(self):
+        if self._probe_cycle_started or not self._is_authenticated():
+            return
+        self._probe_cycle_started = True
+        self._run_probe(reschedule=True)
+
+    def _schedule_next_probe(self):
+        self.frame.after(self._PROBE_INTERVAL_MS, self._periodic_probe_tick)
+
+    def _periodic_probe_tick(self):
+        if not self._is_authenticated():
+            return
+        self._run_probe(reschedule=True)
+
+    def _run_probe(self, reschedule: bool):
+        if self._probing:
+            return
+        conn = app_settings.get_selfhost_ssh_connection()
+        if not conn:
+            return
+        self._probing = True
+        self._render_server_status_panel()  # 让"立即检测"按钮马上变灰
+
+        def _worker():
+            status = probe.probe_server_status(conn["host"], conn["port"], conn["username"])
+            self.frame.after(0, lambda: self._on_probe_done(status, reschedule))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _run_probe_manual(self):
+        self._run_probe(reschedule=False)
+
+    def _on_probe_done(self, status: "probe.ServerStatus", reschedule: bool):
+        self._probing = False
+        self._last_status = status
+        self._render_server_status_panel()
+        self._refresh_action_buttons()
+        if reschedule:
+            self._schedule_next_probe()
+
+    def _service_status_text(self) -> str:
+        status = self._last_status
+        if status is None:
+            return t("selfhost.status_unknown")
+        if not status.reachable:
+            return t("selfhost.status_unreachable")
+        return t("selfhost.status_running") if status.service_active else t("selfhost.status_stopped")
+
+    def _service_status_color(self) -> str:
+        status = self._last_status
+        if status is None or not status.reachable:
+            return theme.TEXT_MUTED
+        return theme.ACCENT if status.service_active else theme.ERROR
+
+    def _permission_text(self) -> str:
+        status = self._last_status
+        if status is None or not status.reachable or not status.permission:
+            return t("selfhost.permission_unknown")
+        return {
+            "root": t("selfhost.permission_root"),
+            "sudo_nopasswd": t("selfhost.permission_sudo"),
+            "no_permission": t("selfhost.permission_denied"),
+        }[status.permission]
+
+    def _resource_text(self) -> str:
+        status = self._last_status
+        if status is None or not status.reachable:
+            return t("selfhost.resource_unknown")
+        cpu = str(status.cpu_count) if status.cpu_count is not None else "--"
+        mem = f"{status.mem_used_mb}/{status.mem_total_mb} MB" if status.mem_total_mb is not None else "--"
+        return t("selfhost.resource_display", cpu=cpu, mem=mem)
+
+    def _checked_at_text(self) -> str:
+        status = self._last_status
+        if status is None:
+            return t("selfhost.never_checked")
+        if not status.reachable:
+            return t("selfhost.last_checked", time=t("selfhost.check_failed"))
+        return t("selfhost.last_checked", time=time.strftime("%H:%M:%S", time.localtime(status.checked_at)))
+
+    def _clear_server_status_panel(self):
+        for child in self._server_status_panel.winfo_children():
+            child.destroy()
+
+    def _render_server_status_panel(self):
+        self._clear_server_status_panel()
+        if not self._is_authenticated():
+            self._server_status_panel.pack_forget()
+            return
+        self._server_status_panel.pack(fill=tk.X, padx=10, pady=(3, 0))
+
+        row_a = BgFrame(self._server_status_panel, self.app, bg=theme.CARD_BG); row_a.pack(fill=tk.X, pady=2)
+        self._label(row_a, self._service_status_text(), fg=self._service_status_color()).pack(side=tk.LEFT)
+        self._label(row_a, self._permission_text()).pack(side=tk.LEFT, padx=(14, 0))
+        probe_btn = ttk.Button(row_a, text=t("selfhost.probe_now_btn"), command=self._run_probe_manual)
+        probe_btn.configure(state=tk.DISABLED if self._probing else tk.NORMAL)
+        probe_btn.pack(side=tk.LEFT, padx=(14, 0))
+
+        row_b = BgFrame(self._server_status_panel, self.app, bg=theme.CARD_BG); row_b.pack(fill=tk.X, pady=(0, 2))
+        self._label(row_b, self._resource_text(), fg=theme.TEXT_MUTED).pack(side=tk.LEFT)
+        self._label(row_b, self._checked_at_text(), fg=theme.TEXT_MUTED).pack(side=tk.LEFT, padx=(14, 0))
+
+        if self._last_status and self._last_status.error:
+            self._label(self._server_status_panel, self._last_status.error, fg=theme.ERROR,
+                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, pady=(0, 2))
 
     # ── 世界状态区渲染（结构照抄 sakura/tab.py 的 _render_shard_rows） ──
 
@@ -616,11 +629,16 @@ class SelfHostFrpPage:
             self._enable_mapping()
 
     def _next_free_port(self, base: int) -> int:
-        """从 base 起找一个还没被（任何存档/世界）占用的端口——重新查
-        一遍 app_settings 里全部已分配端口，所以同一轮 _enable_mapping()
-        循环里前一个世界刚分配的端口，下一个世界调用这个方法时也能看
-        到、不会分到同一个号。"""
+        """从 base 起找一个还没被占用的端口——"占用"合并两个来源：
+        1) app_settings 里记的、DSTCamp 自己已经分配给别的世界的端口
+           （重新查一遍，所以同一轮 _enable_mapping() 循环里前一个世界
+           刚分配的端口，下一个世界调用这个方法时也能看到）；
+        2) 最近一次探测拿到的服务器上真实已监听端口（用户自己起的别
+           的服务，或者手动配置过的东西）——没探测过/探测失败时这部
+           分是空集合，退化成只按本地记录分配，不阻塞流程。"""
         used = set(app_settings.get_all_selfhost_frp_ports())
+        if self._last_status and self._last_status.reachable:
+            used |= self._last_status.used_ports
         port = base
         while port in used:
             port += 1
