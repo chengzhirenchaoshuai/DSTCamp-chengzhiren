@@ -262,6 +262,13 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
                      darkcolor=CARD_BORDER, borderwidth=1)
     style.map("TEntry", bordercolor=[("focus", ACCENT)])
 
+    # 只读展示用（比如自建 frps 的 Token 输入框）——没有编辑框的视觉暗
+    # 示（不带边框/跟卡片背景同色），但还是 ttk.Entry，文字依然能选中
+    # 复制，比换成纯文字 Label 更实用。
+    style.configure("Flat.TEntry", fieldbackground=CARD_BG, foreground=TEXT,
+                     bordercolor=CARD_BG, lightcolor=CARD_BG, darkcolor=CARD_BG, borderwidth=0)
+    style.map("Flat.TEntry", bordercolor=[("focus", CARD_BG)])
+
     style.configure("TCombobox", fieldbackground=CARD_BG, background=CARD_BG,
                      foreground=TEXT, bordercolor=CARD_BORDER,
                      lightcolor=CARD_BORDER, darkcolor=CARD_BORDER, arrowcolor=TEXT)

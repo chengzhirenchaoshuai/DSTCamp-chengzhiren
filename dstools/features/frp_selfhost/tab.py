@@ -169,9 +169,11 @@ class SelfHostFrpPage:
         self._token_var = tk.StringVar()
         # 只读——Token 应该始终是随机生成的，手改成好记的弱口令反而不安
         # 全；readonly 状态下 ttk.Entry 仍然能选中/复制文字，只是不能敲
-        # 键盘改，真要换新的走旁边"重新生成Token"按钮。
+        # 键盘改，真要换新的走旁边"重新生成Token"按钮。style 用
+        # "Flat.TEntry"（见 theme.py）去掉编辑框的边框/底色，看起来更
+        # 像一段展示文字，不像还能点进去改的输入框。
         token_entry = ttk.Entry(row2, textvariable=self._token_var, width=36,
-                                font=("Consolas", 10), state="readonly")
+                                font=("Consolas", 10), state="readonly", style="Flat.TEntry")
         token_entry.pack(side=tk.LEFT, padx=(4, 6))
         Tooltip(token_label, t("selfhost.token_hint"))
         Tooltip(token_entry, t("selfhost.token_hint"))
