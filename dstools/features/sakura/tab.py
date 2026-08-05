@@ -215,16 +215,24 @@ class SakuraTab:
         self._sub_tabs = [
             ("sakura", t("selfhost.tab_sakura")), ("selfhost", t("selfhost.tab_selfhost")),
         ]
+        # 记住用户上次停留在哪个子页签——不这样记的话每次重开都固定回到
+        # "樱花映射"，即使上次用的是"自建frps"（真机反馈过的真实体验问
+        # 题）。持久化的 key 不在这两个里（旧版本存的值/文件被手改）就
+        # 退回默认的 "sakura"，不当异常处理。
+        initial_sub_tab = app_settings.get_nat_sub_tab()
+        if initial_sub_tab not in {k for k, _ in self._sub_tabs}:
+            initial_sub_tab = "sakura"
         self._sub_tab_bar = PillTabBar(self.frame, tabs=self._sub_tabs, on_select=self._on_sub_tab_select,
-                                        app=app, bg=theme.CARD_BG)
+                                        app=app, bg=theme.CARD_BG, initial=initial_sub_tab)
         self._sub_tab_bar.pack(fill=tk.X, padx=5, pady=(5, 0))
         self._sub_content = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._sub_content.pack(fill=tk.BOTH, expand=True)
         self._sub_pages = {}
-        self._sub_tab_key = "sakura"
+        self._sub_tab_key = initial_sub_tab
         self._sakura_page = BgFrame(self._sub_content, app, bg=theme.CARD_BG)
         self._sub_pages["sakura"] = self._sakura_page
-        self._sakura_page.pack(fill=tk.BOTH, expand=True)
+        if initial_sub_tab == "sakura":
+            self._sakura_page.pack(fill=tk.BOTH, expand=True)
 
         # 每次刷新页签时对着真实隧道列表重新算出来的 (cluster_path,
         # shard_name) -> tunnel dict，只是内存缓存，不持久化——权威数据源
@@ -343,12 +351,15 @@ class SakuraTab:
 
         self.selfhost_page = SelfHostFrpPage(self._sub_content, app)
         self._sub_pages["selfhost"] = self.selfhost_page.frame
+        if initial_sub_tab == "selfhost":
+            self.selfhost_page.frame.pack(fill=tk.BOTH, expand=True)
 
     def _on_sub_tab_select(self, key):
         self._sub_pages[self._sub_tab_key].pack_forget()
         self._sub_tab_key = key
         self._sub_pages[key].pack(fill=tk.BOTH, expand=True)
         self._sub_content.focus_set()
+        app_settings.set_nat_sub_tab(key)
 
     # ── 跨页签接口：给 local_service_tab.py 用 ──────────────────────
     # 樱花/自建两条映射路径并存，这三个方法各自都要两边都查一遍——一个

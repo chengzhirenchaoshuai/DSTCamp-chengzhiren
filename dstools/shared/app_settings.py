@@ -30,6 +30,8 @@ _KEY_SAKURA_TOKEN = "sakura_api_token"
 _KEY_SAKURA_LAST_NODE = "sakura_last_node_id"
 _KEY_LUAJIT_ENABLED = "luajit_enabled"
 _KEY_LAST_PLATFORM = "last_platform"
+_KEY_NAT_SUB_TAB = "nat_sub_tab"
+_DEFAULT_NAT_SUB_TAB = "sakura"
 _KEY_LAST_CLUSTER_PATH = "last_cluster_path"
 _KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
 _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
@@ -145,6 +147,20 @@ def get_last_platform() -> str | None:
 def set_last_platform(name: str) -> None:
     data = load_settings()
     data[_KEY_LAST_PLATFORM] = name
+    save_settings(data)
+
+
+def get_nat_sub_tab() -> str:
+    """取"内网穿透"页签下用户上次停留的子页签（"sakura"=樱花映射 /
+    "selfhost"=自建frps），没设置过退回"sakura"。合法性交给调用方
+    （PillTabBar 的 initial 参数——传进去的 key 不在 tabs 列表里就自
+    动忽略、退回第一个）自己兜底，这里只管读写这个字符串。"""
+    return load_settings().get(_KEY_NAT_SUB_TAB, _DEFAULT_NAT_SUB_TAB)
+
+
+def set_nat_sub_tab(key: str) -> None:
+    data = load_settings()
+    data[_KEY_NAT_SUB_TAB] = key
     save_settings(data)
 
 

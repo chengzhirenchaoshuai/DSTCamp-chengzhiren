@@ -72,7 +72,7 @@ def _selected_pill_image(w: int, h: int, radius: int, color: str) -> "ImageTk.Ph
 class PillTabBar(tk.Frame):
     def __init__(self, parent, tabs, on_select, app=None, bg: str = None,
                  height: int = _HEIGHT, pill_h: int = _PILL_H, font_size: int = _FONT_SIZE,
-                 gap: int = _GAP, hpad: int = _HPAD, **kw):
+                 gap: int = _GAP, hpad: int = _HPAD, initial: str | None = None, **kw):
         """tabs: list of (key, label) in display order.
         on_select: callable(key) invoked on click of an unselected tab.
         app: DSToolsApp 实例——用来接入共享背景图系统（见 gui/bg_frame.py
@@ -81,14 +81,22 @@ class PillTabBar(tk.Frame):
         height/pill_h/font_size/gap：默认沿用顶层五页签这一套尺寸；三个
         内部子页签（存档信息/世界设置/服务器配置）改用更小号的一套（见
         各自调用点），跟原来那条细的 ttk.Notebook 页签条比例更接近，不
-        会因为直接套顶层这套尺寸显得比其它控件粗一圈。"""
+        会因为直接套顶层这套尺寸显得比其它控件粗一圈。
+        initial：构造时就选中哪个 key（比如记住用户上次停留的子页签），
+        不传或者传进来的 key 不在 tabs 里都退回第一个——这里只负责画出
+        初始选中态，调用方自己要保证初始显示的内容跟这个选中态一致
+        （不会主动调用 on_select，构造阶段不触发"切换"回调）。"""
         bg = bg or theme.BG_SOFT
         super().__init__(parent, background=bg, height=height, **kw)
         self.pack_propagate(False)
         self._app = app
         self._on_select = on_select
         self._tabs = list(tabs)
-        self._selected = self._tabs[0][0] if self._tabs else None
+        valid_keys = {k for k, _ in self._tabs}
+        if initial in valid_keys:
+            self._selected = initial
+        else:
+            self._selected = self._tabs[0][0] if self._tabs else None
         self._height = height
         self._pill_h = pill_h
         self._gap = gap
