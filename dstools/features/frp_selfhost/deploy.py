@@ -1,18 +1,10 @@
-"""生成自建 frps 服务器需要的配置文件文本和一键部署脚本——纯字符串拼
-接，不连接用户的服务器、不执行任何远程命令。用户自己把生成的脚本粘贴
-到服务器的 SSH 会话里跑一次即可，DSTCamp 这一侧不需要拿到服务器密码/
-私钥，也就没有远程执行失败/凭据泄露这类风险。
+"""生成自建 frps 的配置文本和一键部署脚本——纯字符串拼接，不碰网络
+（真正的 SSH 执行在 remote_deploy.py）。
 
-frp 服务端(frps)/客户端(frpc)只要求大版本兼容（协议随大版本变化，见
-client.py 顶部说明），不要求逐位对齐——FRP_VERSION 这里定的是"脚本自
-己从 GitHub 下载 frp 时用哪个版本"，跟本地打包的
-tools/frp_selfhost/frpc.exe（Windows 客户端，当前 v0.70.1）、
-frps_linux_amd64/arm64（Linux 服务端二进制，当前 v0.70.0）允许是相邻
-的补丁版本——查过 v0.70.1 的更新日志，三处修复分别是 HTTP/2 vhost
-兼容性、TCP 多路复用重连时的会话泄漏、SSH 隧道网关的 panic，都跟
-DSTCamp 实际用到的基础 UDP 代理+token 鉴权无关，不影响互通。改这个
-版本号只影响"脚本自己下载"这条路径，不需要连带重新打包本地的二进
-制文件。
+FRP_VERSION 只影响"脚本自己下载"这条路径的版本号；本地打包的
+frpc.exe（v0.70.1）和 frps_linux_*（v0.70.0）差一个补丁版本——查过
+v0.70.1 更新日志，三处修复都跟这里用到的基础 UDP 代理+token 鉴权无
+关，协议兼容，不需要同步升级。
 """
 
 import secrets
@@ -43,33 +35,20 @@ def build_frps_toml(bind_port: int, token: str) -> str:
 
 
 def build_install_script(bind_port: int, token: str, local_frps_path: str | None = None) -> str:
-    """生成一份一次性运行、可重复运行（幂等）的 bash 部署脚本：拿到
-    frps 二进制、写好 frps.toml、装成 systemd 服务并启动，最后打印一句
-    能不能连上的自检结果。
+    """生成幂等的一键部署 bash 脚本：装 frps 二进制、写 frps.toml、注
+    册成 systemd 服务并启动。
 
-    `local_frps_path`：如果调用方（remote_deploy.py 的 SSH 自动部署路
-    径）已经提前把 frps 二进制通过 SFTP 传到了服务器上的这个绝对路径，
-    脚本直接从这里复制，完全跳过"识别架构 + 从 GitHub 下载"这一步——
-    真机验证过，不少国内云服务器访问 GitHub 慢到几 KB/s 甚至直接被重
-    置连接，这个参数就是绕开那个问题的办法。留空（None，"生成部署脚
-    本"手动复制粘贴那条路径用的就是这个默认值——那条路径没有文件传输
-    通道，只能让服务器自己下载）时退回原来的行为：识别 CPU 架构，从
-    GitHub 下载对应版本的官方发行包。用户只需要 SSH 到自己的服务器，
-    把这份脚本贴进终端跑一次；不需要要求用户先手动装 curl/tar——绝大
-    多数云服务商的 Ubuntu/Debian/CentOS 镜像都默认带，这里不做额外兼
-    容，缺失时脚本会在下载那一步明确报错退出，而不是继续跑出一个不完
-    整的安装。
+    `local_frps_path`：remote_deploy.py 已经把 frps 二进制 SFTP 传到
+    服务器时传这个绝对路径，脚本直接复制，跳过"识别架构+从 GitHub 下
+    载"——国内云服务器访问 GitHub 经常慢到几 KB/s 甚至被重置，这样能
+    绕开；留空则退回自己下载。
 
-    **复用已有服务，不重复安装**（应用户要求）：
-    - 如果 dstcamp-frps 这个服务本身已经在跑（比如之前已经部署过一
-      次），只重写配置+重启，不重新下载 frps 二进制。
-    - 如果目标端口被*其它*服务占用（很可能是用户自己之前手动配置的
-      frps，或者别的完全无关的服务），直接跳过安装、报告情况，不贸
-      然覆盖——万一那就是用户正在用的服务，重装一遍反而会打断它。
+    幂等相关（应用户要求）：dstcamp-frps 服务已经在跑时只重写配置+重
+    启，不重装；目标端口被*其它*服务占用时跳过安装，不贸然覆盖可能
+    正在用的服务。
 
-    云服务商的安全组/防火墙放行 bind_port 这一步做不到自动化（阿里云/
-    腾讯云/AWS 各自的控制台/API 完全不同），脚本最后会用醒目的文字提
-    醒这一步需要用户自己去控制台点一下。"""
+    云服务商安全组放行端口这一步做不到自动化，脚本最后会提醒用户自
+    己去控制台开。"""
     frps_toml = build_frps_toml(bind_port, token)
     if local_frps_path:
         fetch_frps_block = f'''echo "==> 使用已经上传好的 frps 二进制（{local_frps_path}）..."
@@ -93,12 +72,8 @@ TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 PKG_NAME="frp_${FRP_VERSION}_linux_${ARCH}"
 DOWNLOAD_URL="https://github.com/fatedier/frp/releases/download/v${FRP_VERSION}/${PKG_NAME}.tar.gz"
-# --connect-timeout/--max-time：真机验证过，部分云服务器（尤其是国内
-# 云厂商）访问 GitHub 会长时间卡住而不是直接失败——不加上限的话这一步
-# 可能挂几十分钟甚至无限期不返回，调用方（SSH 远程部署那条路径）的
-# "取消"按钮虽然能中断，但用户不点手动取消的话就一直卡着，体验很差。
-# 加个明确上限，卡住时能在几分钟内失败并给出清楚的原因，而不是假装
-# 永远"正在下载"。
+# 国内云服务器访问 GitHub 常年长时间卡住而非直接失败，加超时上限让
+# 它在几分钟内明确失败，而不是无限期卡着。
 if ! curl -fL --connect-timeout 15 --max-time 180 --retry 2 -o "$TMP_DIR/frp.tar.gz" "$DOWNLOAD_URL"; then
     echo "下载失败或超时：$DOWNLOAD_URL" >&2
     echo "国内云服务器访问 GitHub 经常不稳定，可以稍后重试，或者自行配置好代理/镜像站再重新运行本脚本。" >&2

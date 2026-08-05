@@ -30,6 +30,15 @@ from dstools.models import SaveSource
 
 _FRPC_CONFIG_CACHE_NAME = "frp_selfhost_config"
 
+_UDP_CHECK_KEY_BY_STATUS = {
+    "captured": "selfhost.conn_udp_captured",
+    "not_captured": "selfhost.conn_udp_not_captured",
+    "responded": "selfhost.conn_udp_responded",
+    "refused": "selfhost.conn_udp_refused",
+    "unknown": "selfhost.conn_udp_unknown",
+    "error": "selfhost.conn_udp_error",
+}
+
 
 def _frpc_exe_path():
     return bundled_resource_dir() / "tools" / "frp_selfhost" / "frpc.exe"
@@ -139,11 +148,10 @@ class SelfHostFrpPage:
         self._current_cluster = None
         self._any_mapped = False
 
-        # 探测相关状态：_last_status 是最近一次 probe.probe_server_status()
-        # 的结果（还没探测过是 None），_probing 防止"立即检测"连点堆出多
-        # 个并发探测线程，_probe_cycle_started 保证后台定时探测这一整条
-        # self-rescheduling 的 after() 链只会启动一次（照抄
-        # local_service/tab.py 的 _poll() 那种自我重新调度的轮询写法）。
+        # _last_status：最近一次探测结果（None=还没探测）。_probing：防
+        # 止"立即检测"连点堆出并发线程。_probe_cycle_started：保证后台
+        # 定时探测的 self-rescheduling after() 链只启动一次（照抄
+        # local_service/tab.py 的 _poll() 写法）。
         self._last_status: probe.ServerStatus | None = None
         self._probing = False
         self._probe_cycle_started = False
@@ -659,11 +667,10 @@ class SelfHostFrpPage:
                 else t("selfhost.conn_tcp_fail", port=bind_port, detail=detail or "")
             self.frame.after(0, lambda ln=line: progress.append(ln))
 
-            # UDP 世界端口优先用 tcpdump 在服务器网卡上真的核实一下——
-            # 客户端本地 send/recv 那种"尽力而为"的探测在实战里几乎总是
-            # 收不到响应（DST 协议不回应陌生包），没法区分"链路全通"和
-            # "被安全组挡住"，tcpdump 能可靠区分。任一前提不满足（没鉴
-            # 权/连不上/权限不够/没装 tcpdump）就退回客户端本地探测。
+            # UDP 优先用 tcpdump 在服务器网卡上核实——客户端本地 send/
+            # recv 那种探测几乎总收不到响应（DST 不回应陌生包），分不
+            # 清"全通"和"被挡住"；条件不满足（未鉴权/连不上/无权限/没
+            # 装 tcpdump）就退回本地探测。
             tcpdump_probe = connectivity.TcpdumpProbe(
                 ssh_conn["host"], ssh_conn["port"], ssh_conn["username"]) if ssh_conn else None
 
@@ -675,20 +682,12 @@ class SelfHostFrpPage:
                 key = f"selfhost.conn_udp_method_fallback_{reason}"
                 self.frame.after(0, lambda k=key, d=fallback_detail: progress.append(t(k, detail=d or "")))
 
-            udp_key_by_status = {
-                "captured": "selfhost.conn_udp_captured",
-                "not_captured": "selfhost.conn_udp_not_captured",
-                "responded": "selfhost.conn_udp_responded",
-                "refused": "selfhost.conn_udp_refused",
-                "unknown": "selfhost.conn_udp_unknown",
-                "error": "selfhost.conn_udp_error",
-            }
             for shard_name, remote_port in mappings:
                 if tcpdump_probe and tcpdump_probe.available:
                     status, detail = tcpdump_probe.capture_udp(host, remote_port)
                 else:
                     status, detail = connectivity.check_udp_port(host, remote_port)
-                line = t(udp_key_by_status[status], shard=shard_name, port=remote_port, detail=detail or "")
+                line = t(_UDP_CHECK_KEY_BY_STATUS[status], shard=shard_name, port=remote_port, detail=detail or "")
                 self.frame.after(0, lambda ln=line: progress.append(ln))
 
             if tcpdump_probe:

@@ -111,12 +111,8 @@ class _TokenInputDialog:
         ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
 
         entry.focus_set()
-        # after_idle 而不是直接调用 self._confirm()——跟 _make_wrapped_
-        # text_row()/save_browser 的备注框同一个道理：回车同时也是输入
-        # 法用来提交组词的按键，同步执行读 self.var.get() 可能读到组词
-        # 提交完成之前的旧值，这里还会紧接着 destroy() 整个窗口，比"存
-        # 错值"更糟——组词还没提交完窗口就没了。延后一拍，让这次回车
-        # 该走的输入法提交流程先走完。
+        # after_idle 而不是直接调用——回车同时也是输入法提交组词用的
+        # 按键，同步执行会读到组词提交前的旧值就 destroy() 整个窗口。
         win.bind("<Return>", lambda e: win.after_idle(self._confirm))
         win.bind("<Escape>", lambda e: self._cancel())
         win.protocol("WM_DELETE_WINDOW", self._cancel)
@@ -438,19 +434,13 @@ class ClusterConfigTab:
         text_widget.insert("1.0", str(value) if value is not None else "")
         text_widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
 
-        # 不能用 text_widget.bind("<Return>", lambda e: "break") 同步吞掉
-        # 回车（真机反馈过的真实 bug）：这种"事前拦截"在 Windows 上会跟
-        # 输入法的组词提交过程冲突——用拼音输入法打字，按下回车本来是
-        # 用来把正在组词的内容提交进输入框，我们的处理函数抢在它前面
-        # 拦下这次按键并返回 "break"，输入法这次组词就被打断、整个丢
-        # 掉，界面上看起来像是刷新了一次、什么都没输进去。改成事后清
-        # 理：让这次回车正常走完（输入法该提交的先提交），在
-        # <KeyRelease-Return> 里检查有没有真的被插入换行符，有就删掉，
-        # 不提前拦截按键本身。
+        # 不能用 bind("<Return>", lambda e: "break") 同步吞回车（真机反
+        # 馈过的 bug）：这种事前拦截会打断输入法正在提交的组词，界面看
+        # 起来像刷新了一次、什么都没输进去。改成事后清理：让回车正常
+        # 走完，在 <KeyRelease-Return> 里删掉真的被插入的换行符。
         def _strip_inserted_newline(_event=None):
-            # 搜索边界必须是 "end-1c" 不能是 "end"——tk.Text 内容末尾永
-            # 远带一个隐式换行符（不是我们自己插入的那个，删不掉），搜
-            # 到 "end" 会连它一起找到，删了又"复活"，变成死循环。
+            # 边界必须是 "end-1c" 不能是 "end"——tk.Text 末尾永远带一个
+            # 删不掉的隐式换行符，止于 "end" 会反复搜到它，变成死循环。
             while True:
                 idx = text_widget.search("\n", "1.0", "end-1c")
                 if not idx:
@@ -535,15 +525,10 @@ class ClusterConfigTab:
             # 放到"保存"时做（见 _save_cluster_ini），这里只挡明显打错的
             # 输入，不在用户还没打完整数字时就报错。
             #
-            # 不用 validate="key"（真机反馈过的真实 bug）：这个机制在字符
-            # *插入之前*同步拒绝，跟 Windows 输入法的组词过程不兼容——用
-            # 拼音输入法打字，只要组词里出现字母 t 就会导致整个输入框被
-            # 清空、界面看起来像是刷新了一次，是 Tk 在 Windows 上
-            # validate="key" 跟 IME 冲突的已知表现（拒绝一次按键会打断
-            # IME 正在维护的组词状态）。改成 trace_add("write", ...)——
-            # 先无条件接受输入（不会打断 IME 的组词状态机），字符已经真
-            # 的插入*之后*再检查，发现混进了非数字字符就原地过滤掉重新
-            # 赋值，用户几乎感知不到，也不会误伤中文输入法的正常使用。
+            # 不用 validate="key"（真机反馈过的 bug）：这种事前拒绝跟
+            # Windows 输入法的组词过程不兼容，会把正在组词的内容打断、
+            # 清空。改成 trace_add("write", ...) 事后过滤：先接受输入，
+            # 插入后再检查，混进非数字字符就原地过滤掉重新赋值。
             lo, hi = range_limits
             var = tk.StringVar(value=str(value) if value is not None else "")
 
@@ -747,9 +732,8 @@ class ClusterConfigTab:
                     if sec == "NETWORK" and key == "server_port" and is_server:
                         if self.app.sakura_tab.has_active_mapping(self._shard_config_cluster, self._shard_config_shard):
                             readonly = True
-                            # 樱花映射和自建 frps 共用同一套只读判断（见
-                            # SakuraTab.has_active_mapping()），但提示文字要
-                            # 分清楚具体是哪一个接管的，不能一律说"樱花映射"。
+                            # 樱花映射和自建 frps 共用同一套只读判断，提
+                            # 示文字要分清楚具体是哪一个接管的。
                             if self.app.sakura_tab.selfhost_page.has_active_mapping(
                                     self._shard_config_cluster, self._shard_config_shard):
                                 port_tooltip = t("cluster.server_port_selfhost_locked")

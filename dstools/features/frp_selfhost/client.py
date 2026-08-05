@@ -1,28 +1,19 @@
-"""本地 frpc.exe（tools/frp_selfhost/frpc.exe，见该目录说明）客户端进程
-的配置生成与生命周期管理，连接用户自建的 frps 服务器。
+"""本地 frpc.exe 客户端进程的配置生成与生命周期管理，连接用户自建的
+frps 服务器。
 
-结构照抄 features/sakura/frpc.py 的 FrpcProcess/FrpcManager——同样是
-"长驻子进程，stdout 走管道由 GUI 轮询，停止要在后台线程跑"，唯一的实
-质区别：这里用标准的 `-c <配置文件>` 启动（生成一份包含这个存档所有
-已映射世界的 frpc.toml），不是樱花那种"-f token:隧道ID 现拉配置"的私
-有约定——一个存档所有已映射的世界共用同一个 frpc 进程/配置文件，跟
-SakuraFrp 那边"一个世界一个独立进程"的模型不同，因为这里没有远程 API
-能替我们管理"隧道"这个概念，配置本来就得自己攒成一份文件。
+结构照抄 features/sakura/frpc.py 的 FrpcProcess/FrpcManager，区别是
+这里用标准的 `-c <配置文件>` 启动一份包含存档内所有已映射世界的
+frpc.toml——一个存档共用一个进程，不像 SakuraFrp 那样一世界一进程
+（这边没有远程 API 管理"隧道"，配置只能自己攒成一份文件）。
 
-**孤儿进程认领**（真机复现过的真实 bug）：`self._procs` 只是这个
-DSTCamp 进程自己内存里的记账，DSTCamp 上次没有走"停止"按钮就退出（关
-闭窗口时崩溃、被强制结束、系统重启等）的话，已经 spawn 出去的 frpc.exe
-不会跟着一起死——Windows 上子进程默认不会绑定父进程生命周期，会变成
-孤儿继续独立运行，真的在正常转发流量。新一轮 DSTCamp 进程内存是空的，
-界面会显示"未启动"，但实际上外部玩家照样连得进来，跟界面显示的状态
-矛盾。`FrpcManager.reconcile()` 在真的要用到某个存档的 frpc 状态之前，
-用 `tasklist` 按可执行文件名先筛一遍候选 PID（不需要管理员权限），再
-用 PowerShell 的 `Get-CimInstance` 读每个候选 PID 的完整命令行——这里
-跟 dedicated_server.py 探测 WeGame 外部进程时特意避开命令行读取（那边
-的注释：非当前会话启动的进程读不到）不是同一种场景：frpc.exe 孤儿是
-"DSTCamp 自己上一次启动的子进程"，跟当前查询者是同一个用户账户，真机
-验证过这种情况下 `Get-CimInstance` 能正常读到完整命令行，用配置文件路
-径精确匹配比端口反查更直接可靠。
+**孤儿进程认领**（真机复现过的 bug）：DSTCamp 没走"停止"按钮就退出
+时，spawn 出去的 frpc.exe 不会跟着死，会变孤儿继续转发流量，新一轮
+DSTCamp 内存是空的，界面显示"未启动"但玩家其实连得上。
+`FrpcManager.reconcile()` 用 `tasklist` 筛 frpc.exe 候选 PID，
+PowerShell `Get-CimInstance` 读命令行按配置文件路径精确匹配认领——
+跟 dedicated_server.py 探测 WeGame 外部进程时特意不读命令行不是一回
+事：那边是别的程序启动的进程，读不到；这里是 DSTCamp 自己上次启动
+的，同一用户账户下真机验证过能正常读到。
 """
 
 import csv
@@ -99,7 +90,6 @@ class FrpcStatus(Enum):
     RUNNING = "running"
     STOPPING = "stopping"
     STOPPED = "stopped"
-    CRASHED = "crashed"
 
 
 def build_frpc_toml(server_host: str, server_port: int, token: str, proxies: list[dict]) -> str:
@@ -151,13 +141,12 @@ class FrpcProcess:
         self._out_queue: "queue.Queue[str]" = queue.Queue()
 
     def start(self) -> None:
-        creationflags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
         self.proc = subprocess.Popen(
             [str(self.frpc_exe), "-c", str(self.config_path)],
             cwd=str(self.frpc_exe.parent),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace",
-            creationflags=creationflags,
+            creationflags=_SUBPROCESS_FLAGS,
         )
         self.status = FrpcStatus.RUNNING
         threading.Thread(target=self._read_loop, daemon=True).start()
@@ -244,13 +233,9 @@ class FrpcManager:
         return self._procs.get(str(cluster_path))
 
     def reconcile(self, cluster_path: Path, frpc_exe: Path, config_path: Path) -> FrpcProcess | None:
-        """真的要用到某个存档的 frpc 状态之前调用一次——已经在跟踪的
-        （不管是自己刚启动的还是之前认领过的）直接返回，不重复扫描；
-        没在跟踪时按配置文件路径去系统进程表里找一遍，找到孤儿进程就
-        补一条记录进来，让状态显示和"停止"按钮都能反映真实情况（见模
-        块顶部说明的真实 bug：DSTCamp 没有正常走"停止"就退出的话，界
-        面会显示"未启动"，但孤儿进程其实还在正常转发流量）。找不到
-        （确实没在跑）返回 None。"""
+        """用到某个存档的 frpc 状态前调用——已跟踪的直接返回，不重复
+        扫描；没跟踪就按配置文件路径找孤儿进程认领进来（见模块顶部说
+        明）。确实没在跑则返回 None。"""
         key = str(cluster_path)
         if key in self._procs:
             return self._procs[key]

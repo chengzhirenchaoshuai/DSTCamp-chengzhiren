@@ -945,13 +945,8 @@ class SaveBrowserTab:
             set_player_note(pid, var.get().strip())
 
         def _save_note_on_return(event=None, widget=note_entry):
-            # 不能同步调用 _save_note()——真机反馈过的真实 bug：Windows
-            # 输入法组词过程中按下回车本来是用来把正在组词的内容提交进
-            # 输入框，如果这里同步执行读 var.get()，读到的可能是提交完
-            # 成*之前*的旧值/空值，界面上表现为按下回车后什么都没输进
-            # 去、看起来像刷新了一次。改成 after_idle 延后一拍，让 Tk 先
-            # 把这次回车对应的输入法组词提交处理完，我们的保存逻辑再读
-            # 真正提交后的值。
+            # after_idle 而不是直接调用——回车同时是输入法提交组词用的
+            # 按键，同步执行会读到提交前的旧值/空值（真机反馈过的 bug）。
             widget.after_idle(_save_note)
 
         note_entry.bind("<FocusOut>", _save_note)

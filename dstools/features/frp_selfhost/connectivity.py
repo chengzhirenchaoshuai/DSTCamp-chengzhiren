@@ -1,16 +1,12 @@
-"""连通性检测——从 DSTCamp 所在的这台机器（相对云服务器而言就是"公网
-上的一个外部客户端"）主动发起网络请求，检验云服务商的安全组/防火墙有
-没有正确放行端口。跟 probe.py 的角色不同：probe.py 是"登录服务器自己
-看"（进程在不在跑），这里是"从外面真的连一下"——两者结合起来才能排
-除"进程在跑但外网连不进来"这种最常见的坑（部署完忘了去安全组放行）。
+"""连通性检测——从 DSTCamp 这台机器（相对云服务器是公网外部视角）主
+动发起网络请求，检验安全组/防火墙有没有放行端口。跟 probe.py 的区别：
+probe.py 是"登录服务器自己看"（进程在不在跑），这里是"从外面真的连
+一下"——两者结合才能排除"进程在跑但外网连不进来"这种最常见的坑。
 
-frps 的控制端口（frps.toml 的 bindPort）走 TCP，可以用标准的 TCP
-connect 测试，结果是可靠的成败判断。DST 世界本身用的端口是 UDP，UDP
-没有连接语义，收不到任何响应是完全正常的情况（DST 协议不会回应一个
-它不认识的探测包），所以这里对 UDP 端口只能"尽力而为"：能收到明确的
-ICMP 端口不可达（表现为 ConnectionRefusedError）时可以确定没开放，其
-余情况一律如实报告"未收到响应"，不能当成"一定可达"，避免给用户错误
-的确定感。
+frps 控制端口走 TCP，标准 connect 测试即可，结果可靠。DST 世界端口是
+UDP，没有连接语义，收不到响应是正常情况（协议不回应陌生包），只能
+"尽力而为"：收到明确 ICMP 拒绝才能确定没开放，其余一律报告"未收到响
+应"，不当成"可达"。
 """
 
 import socket
@@ -34,16 +30,12 @@ def check_tcp_port(host: str, port: int, timeout: float = 4.0) -> tuple[bool, st
 
 def check_udp_port(host: str, port: int, timeout: float = 2.0) -> tuple[str, str | None]:
     """返回 (状态, 失败时的原因文本)。状态取值：
-    "responded" —— 收到了回包，可以确定端口可达（DST 世界一般不会主动
-        回应探测包，这种情况很少见，但出现了就是最强的证据）；
-    "refused"   —— 收到明确的 ICMP 端口不可达（Windows 上这个信号常常
-        是 ConnectionResetError/WinError 10054，不是更符合直觉的
-        ConnectionRefusedError——真机测试确认过，两种都要认），可以确
-        定没有开放；
-    "unknown"   —— 探测超时、没收到任何响应——这是最常见的结果，无法
-        据此判断端口到底开没开，只能如实报告，不能当成"可达"或"不可
-        达"里的任何一种来用；
-    "error"     —— 探测过程本身出错（比如 DNS 解析失败）。
+    "responded" —— 收到回包，端口确定可达（DST 一般不会回应，很少见）；
+    "refused"   —— 收到明确 ICMP 拒绝，确定没开放（Windows 上常表现
+        为 ConnectionResetError 而非 ConnectionRefusedError，两种都要
+        认，真机测试确认过）；
+    "unknown"   —— 超时无响应，最常见的结果，无法判断开没开；
+    "error"     —— 探测本身出错（比如 DNS 解析失败）。
     """
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -71,25 +63,17 @@ def check_udp_port(host: str, port: int, timeout: float = 2.0) -> tuple[str, str
 
 
 class TcpdumpProbe:
-    """真机验证发现 check_udp_port() 的"尽力而为"探测在实战里几乎总是
-    返回 "unknown"——DST 世界端口即使完全打通，DST 自己的协议也不会回
-    应一个格式不认识的探测包，导致"链路全通"和"链路整个被挡住"这两种
-    截然不同的情况，表现完全一样，用户没法从结果里判断到底是不是安全
-    组忘了放行。
+    """真机验证发现 check_udp_port() 的"尽力而为"探测几乎总是返回
+    "unknown"——DST 协议不回应陌生探测包，"链路全通"和"链路被挡住"表
+    现完全一样。改成登录服务器，发探测包的同时用 tcpdump 抓自己的网
+    卡：抓到了就能 100% 确认安全组没拦截，一直抓不到基本可以确定被挡
+    了。代价是每个端口多一次几秒的 SSH 往返，且要求服务器装了
+    tcpdump、账号有 root/sudo——任一条件不满足就把 `available` 置为
+    False，调用方退回 check_udp_port()。
 
-    这个类换一个思路：既然已经有 SSH 免密登录，就直接登录服务器，在
-    发探测包的同时用 tcpdump 抓服务器自己的网卡——如果网卡上真的抓到
-    了这个包，就能 100% 确定安全组/防火墙没有拦截（不管 DST 收到之后
-    理不理会）；如果一直抓不到，基本可以确定是被挡在了半路。比本地
-    send/recv 那种"猜"要可靠得多，代价是每个端口多一次几秒钟的 SSH 往
-    返，而且要求服务器上装了 tcpdump、账号有 root/sudo 权限——任一条件
-    不满足就把 `available` 置为 False，调用方应该退回 check_udp_port()
-    这种客户端本地探测。
-
-    `timeout` 命令来判断"抓到了没有"：`tcpdump -c 1` 抓到一个包就会自
-    己正常退出（exit code 0）；抓不到会被外层 `timeout` 命令杀掉（exit
-    code 124，这是 GNU coreutils timeout 的标准约定），两种退出码状态
-    清清楚楚，不需要去猜测/解析 tcpdump 输出文本的具体格式。
+    用 `timeout` 命令判断"抓到了没有"：`tcpdump -c 1` 抓到即正常退出
+    （exit 0）；抓不到被 `timeout` 杀掉（exit 124），靠退出码判断，不
+    用解析 tcpdump 输出文本。
     """
 
     def __init__(self, ssh_host: str, ssh_port: int, ssh_username: str, connect_timeout: float = 8.0):

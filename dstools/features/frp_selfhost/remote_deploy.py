@@ -1,28 +1,16 @@
-"""通过 SSH/SFTP 把 deploy.py 生成的部署脚本推送到用户自己的云服务器并
-执行——deploy.py 本身只管生成文本，不碰网络；这个模块是可选的"自动跑
-一遍"能力，用户也完全可以不用这个，自己手动复制脚本、SSH 上去粘贴运
-行（见 tab.py 的"生成部署脚本"按钮）。
+"""通过 SSH/SFTP 把 deploy.py 生成的部署脚本推送到用户自己的云服务器
+并执行。
 
-安全设计（按用户明确要求核实过的取舍）：
-- 密码从不落盘——只在这次部署过程中留在内存里，函数返回后调用方应
-  该让持有密码的局部变量/输入框内容尽快被丢弃。SSH 私钥文件路径可以
-  记住（那只是一个文件引用，密钥本身受用户自己操作系统的文件权限保
-  护，不是 DSTCamp 需要额外加密的秘密）。
-- 主机密钥用"首次连接询问、之后自动校验"（Trust On First Use，
-  跟原生 ssh 客户端一致）：本地记一份 known_hosts，第一次连接某个主机
-  时通过 confirm_host_key 回调向用户展示指纹让其确认，之后再连如果服
-  务器指纹变了（可能是中间人攻击，也可能是服务器重装），直接拒绝并
-  报错，不会静默接受新密钥。
-- 只会上传/执行 deploy.py 生成的部署脚本 + （如果架构匹配）frps 二
-  进制本体，不会执行任何其它远程命令（清理临时文件那条 rm 除外）。
+安全设计：密码从不落盘，只在部署过程中留在内存里；SSH 私钥路径可以
+记住（文件引用，受系统文件权限保护）。主机密钥用 Trust On First
+Use——本地记 known_hosts，首次连接经 confirm_host_key 回调确认，指纹
+变了（可能中间人攻击/服务器重装）直接拒绝，不静默接受。只上传/执行
+deploy.py 生成的脚本和（架构匹配时）frps 二进制，不跑其它远程命令。
 
-真机验证过（阿里云的一台真实服务器）：不少国内云服务器访问 GitHub
-慢到几 KB/s、甚至直接被重置连接，让服务器自己 curl 下载 frp 经常失
-败或者卡很久。这里改成探测到服务器是 amd64/arm64（目前打包了这两种
-架构的 Linux 二进制）时直接 SFTP 推送过去，deploy.build_install_script()
-的脚本就不需要再自己访问 GitHub 了——见 _maybe_upload_frps_binary()。
-其它架构（没有对应的本地打包二进制）时才退回原来的"脚本自己下载"
-方式。
+真机验证过：国内云服务器访问 GitHub 常慢到几 KB/s 甚至被重置，
+`_maybe_upload_frps_binary()` 探测到 amd64/arm64（已打包这两种架构）
+时直接 SFTP 推送 frps 二进制，脚本不用再访问 GitHub；其它架构退回自
+己下载。
 """
 
 import threading
@@ -115,12 +103,9 @@ def has_local_key() -> bool:
 
 
 def ensure_local_keypair() -> str:
-    """本地已经生成过就直接复用（不无谓地作废已经推上服务器的旧公
-    钥），没有才现生成一份。用 Ed25519（现代、体积小、paramiko 原生支
-    持读取）——paramiko 自己不能生成这种密钥（`Ed25519Key` 没有
-    `generate()`，只有 `RSAKey` 有），改用它本来就依赖的 `cryptography`
-    库生成之后序列化成 OpenSSH 格式，两边都验证过能正确读回来。返回
-    OpenSSH 格式的公钥那一行文本（`ssh-ed25519 AAAA... dstcamp`）。"""
+    """本地已生成过就复用，没有才现生成。用 Ed25519——paramiko 自己不
+    能生成这种密钥（只有 `RSAKey` 有 `generate()`），改用它本来就依赖
+    的 `cryptography` 库生成后序列化成 OpenSSH 格式。返回公钥文本行。"""
     if has_local_key():
         return SSH_PUBKEY_PATH.read_text(encoding="utf-8").strip()
 
@@ -271,19 +256,14 @@ def deploy_via_ssh(
     connect_timeout: float = 15.0, exec_timeout: float = 120.0,
     cancel_event: threading.Event | None = None,
 ) -> bool:
-    """连接、上传脚本、执行、清理，全部完成返回 True；任何一步失败抛
-    RemoteDeployError（消息面向用户，可以直接显示），用户中途取消抛
-    RemoteDeployCancelled。`on_log` 会收到连接进度和脚本自己的
-    stdout/stderr 逐行输出——这个函数本身是同步阻塞的，调用方要自己放
-    到后台线程跑，不要在 Tk 主线程直接调用。
+    """连接、上传脚本、执行、清理，全部完成返回 True；失败抛
+    RemoteDeployError，用户取消抛 RemoteDeployCancelled。同步阻塞，调
+    用方要放到后台线程跑。`on_log` 收到连接进度和脚本 stdout/stderr。
 
-    `cancel_event`：调用方在另一个线程 set() 这个事件来请求取消——连
-    接/上传阶段（本身有超时上限，不会无限卡住）只在开始前检查一次；
-    真正可能长时间运行的执行阶段（下载 frp、跑安装脚本）里，改成
-    "带超时的非阻塞读" 而不是一次性等到 EOF 的 `for line in stdout`，
-    每隔 _CANCEL_POLL_INTERVAL 秒检查一次这个事件，发现取消就主动关掉
-    channel（相当于给远程会话发 SIGHUP，通常能让远程脚本一起终止）再
-    抛异常。"""
+    `cancel_event`：连接/上传阶段只在开始前检查一次（本身有超时）；执
+    行阶段（跑安装脚本，可能耗时）改用带超时的非阻塞读、每隔
+    _CANCEL_POLL_INTERVAL 秒检查一次，取消时关掉 channel（相当于给远
+    程会话发 SIGHUP）再抛异常。"""
     import secrets
 
     def _check_cancelled():
@@ -327,12 +307,9 @@ def deploy_via_ssh(
     except (paramiko.SSHException, OSError) as e:
         raise RemoteDeployError(f"连接失败: {e}") from e
 
-    # 这两个提前声明成 None——不管流程走到哪一步被取消/出错，下面统一的
-    # cleanup 都要能安全地判断"这个东西到底有没有上传过"，不能等到真正
-    # 赋值那一行才存在，否则中途取消时清理逻辑会因为变量还没定义而跳过
-    # 已经传上去的文件，在服务器 /tmp 下留一个孤儿文件（真机测过：取消
-    # 正好卡在"二进制传完、脚本还没传"这个间隙，不清理的话会留下一个
-    # ~20MB 的孤儿文件）。
+    # 提前声明成 None——中途取消/出错时下面的 cleanup 要能安全判断"传
+    # 没传过"，否则会在服务器 /tmp 留一个孤儿文件（真机测过：取消正好
+    # 卡在"二进制传完、脚本还没传"这个间隙）。
     remote_frps_path = None
     remote_script_path = None
     try:
