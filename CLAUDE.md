@@ -197,7 +197,7 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 **打包 Linux 二进制在 Windows 开发机上要小心杀毒软件**：真机遇到过二进制刚复制到 `tools/frp_selfhost/` 就被静默删除，用 `tar -xzf ... -O > 目标路径` 管道写入+立刻 `git add` 能提高存活率——以后二进制文件消失先怀疑这个。云服务商安全组放行端口做不到自动化，部署脚本只能提醒用户自己去控制台操作。
 
-**真机反馈过的坑（用户机器，不止开发机）**：`frps_linux_amd64`/`frps_linux_arm64` 这两个 Linux ELF 二进制在 Windows 机器上永远不会被执行，只是原样转发给远程服务器，但 PyInstaller onefile 每次启动都会把整个 `tools/` 解压到全新的 `%TEMP%\_MEIxxxxxx\`——"exe 运行时突然写入一批按 CPU 架构分组的 Linux 可执行文件"正是很多杀毒软件对释放器（dropper）的启发式特征，加上 frp 系列常被归进"HackTool"类别，被用户的杀毒软件秒隔离过，且**每次启动都会重新触发**（不只是用到"自建 frps"功能的人）。做法：仓库里只存 gzip 压缩后的 `.gz`（`tools/frp_selfhost/frps_linux_*.gz`），`remote_deploy.py` 的 `_maybe_upload_frps_binary()` 只在真的要 SFTP 推送时才现场解压到临时文件、传完立刻删除（`tempfile.TemporaryDirectory` 自动清理），绝大多数用户的日常启动不会再往磁盘落地裸的可执行文件。
+**真机反馈过的坑（用户机器，不止开发机）**：`frps_linux_amd64`/`frps_linux_arm64` 这两个 Linux ELF 二进制在 Windows 机器上永远不会被执行，只是原样转发给远程服务器，但 PyInstaller onefile 每次启动都会把整个 `tools/` 解压到全新的 `%TEMP%\_MEIxxxxxx\`——"exe 运行时突然写入一批按 CPU 架构分组的 Linux 可执行文件"正是很多杀毒软件对释放器（dropper）的启发式特征，加上 frp 系列常被归进"HackTool"类别，被用户的杀毒软件秒隔离过，且**每次启动都会重新触发**（不只是用到"自建 frps"功能的人）。第一版做法：仓库里只存 gzip 压缩后的 `.gz`（`tools/frp_selfhost/frps_linux_*.gz`），只在真的要部署时才解压——**这一步还不够**，真机复现过：解压到本地临时文件再 `sftp.put()` 那一刻，杀毒软件按内容特征（`HackTool/Linux.Frp.a!crit` 这类签名直接匹配 frp 二进制本身，不是位置/时机这种可绕开的启发式）照样秒删。**最终做法**：`_maybe_upload_frps_binary()` 用 `sftp.putfo()` 配合 `gzip.open()` 直接把解压出的字节流现读现传，全程不在本地磁盘落地这个 ELF 文件——它只需要存在于远程 Linux 服务器上，本机压根不需要一份实体拷贝，从根上避免了本地磁盘扫描命中的可能。
 
 ### 本地服务器启动前的令牌检查 (`features/local_service/tab.py`)
 
@@ -252,4 +252,4 @@ Windows 目录联接不需要管理员权限；`os.path.isjunction()`（3.12+）
 
 **页签 `__init__` 里不能塞重活**：默认打开的页签固定"本地服务器"，其余页签靠 `_refresh()`（当前页签立即刷新，其它标记 stale）和 `_on_tab_select()`（切到 stale 页签才补刷新）懒加载——否则启动瞬间所有页签重活一起抢跑，实测能把启动时间从 0.5~0.9 秒拖到 3.86 秒。
 
-**下拉框一律用 `shared/gui/menu_combo.py` 的 `MenuCombo`，禁止用 `ttk.Combobox`**：实测选中后内容消失、只能靠真实鼠标点击修复。同理**滑块用 `shared/gui/slider.py` 的 `Slider`，禁止用 `ttk.Scale`**：实测点击滑轨会跳到随机位置。两个都是这台机器上确认损坏的 ttk 控件，改用自绘替代品。**只读展示型输入框**（比如 Token 展示）用 `style="Flat.TEntry"`（`theme.py` 里定义）去掉边框/底色，比换成纯文字 Label 更实用——文字仍然能选中复制。
+**下拉框一律用 `shared/gui/menu_combo.py` 的 `MenuCombo`，禁止用 `ttk.Combobox`**：实测选中后内容消失、只能靠真实鼠标点击修复。同理**滑块用 `shared/gui/slider.py` 的 `Slider`，禁止用 `ttk.Scale`**：实测点击滑轨会跳到随机位置。两个都是这台机器上确认损坏的 ttk 控件，改用自绘替代品。**只读展示型文字（比如 Token 展示）优先用 `BgFrame` + `create_text`，不用 `ttk.Entry`**：`ttk.Entry` 是原生控件，即使去掉边框/统一底色也会画一块不透明的纯色，挡住自定义背景图（真机反馈过"Token 后面有块白色"）；`create_text` 能真正透出背景图，代价是画布文字没法鼠标拖拽选中，改成绑定点击直接复制到剪贴板（`features/frp_selfhost/tab.py` 的 `_make_token_display()`）。

@@ -257,15 +257,18 @@ def _maybe_upload_frps_binary(client: paramiko.SSHClient, on_log: LogFn) -> str 
         return None
     on_log(f"正在上传 frps 程序本体（{arch}，避免服务器自己访问 GitHub）...")
     import secrets
-    import tempfile
     remote_path = f"/tmp/dstcamp_frps_bin_{secrets.token_hex(4)}"
-    with tempfile.TemporaryDirectory(prefix="dstcamp_frps_") as tmp_dir:
-        staged_path = Path(tmp_dir) / f"frps_linux_{arch}"
-        with gzip.open(gz_path, "rb") as src, open(staged_path, "wb") as dst:
-            dst.write(src.read())
+    # 真机反馈过：先解压到本地临时文件再 sftp.put() 那版做法，杀毒软件
+    # 依然在这个临时文件刚落盘的瞬间按内容特征查杀（HackTool/Linux.Frp.
+    # a!crit 这类签名是直接匹配 frp 二进制内容本身的，不是"位置像木马"
+    # 这种可以靠改路径/延后时机绕开的启发式）。改成 sftp.putfo() 直接把
+    # gzip 解压出来的字节流现读现传，全程不在本地磁盘落地这个 ELF 文
+    # 件——它本来也只是要传到远程 Linux 服务器，本机压根不需要一份实体
+    # 拷贝。
+    with gzip.open(gz_path, "rb") as fsrc:
         sftp = client.open_sftp()
         try:
-            sftp.put(str(staged_path), remote_path)
+            sftp.putfo(fsrc, remote_path)
             sftp.chmod(remote_path, 0o755)
         finally:
             sftp.close()
