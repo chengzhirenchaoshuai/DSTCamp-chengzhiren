@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.9.6-orange)
+![Version](https://img.shields.io/badge/version-0.9.7-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -85,8 +85,9 @@ tests/            # 自动化测试脚本
 icons/            # 只读素材：世界设置图标、UI 图标、app 图标
 reference/        # 开发时人工核对用的参考资料，不是运行时依赖
 tools/ktools/     # 第三方 ktech.exe（纹理转换工具）
-tools/frpc/       # 第三方 frpc.exe（樱花内网穿透客户端）
-tools/frp_selfhost/ # 自建 frps 用的 frpc.exe + Linux 服务端二进制（amd64/arm64）
+tools/sakura/     # 第三方 sakura-frpc.exe（樱花内网穿透客户端）
+tools/frp_selfhost/ # 自建 frps 用的 frpc.exe + Linux 服务端二进制（amd64/arm64，gzip 压缩）
+tools/vcredist/   # 微软官方 VC++ 2013 运行库安装包（内置，图标转换功能依赖）
 ```
 
 ## 测试

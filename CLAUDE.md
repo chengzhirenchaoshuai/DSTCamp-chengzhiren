@@ -28,9 +28,12 @@ tests/             # 自动化测试
 icons/             # 只读素材（app/ui/world 图标），被 shared/resource_paths.py 引用，打包带走
 reference/         # 人工核对用的参考资料，非运行时依赖
 tools/ktools/      # 第三方 ktech.exe，被 shared/tex_convert.py 调用，gitignore 掉
-tools/frpc/        # 第三方 frpc.exe（樱花独立版客户端），gitignore 掉
-tools/frp_selfhost/# frpc.exe + frps_linux_amd64/arm64，直接提交进仓库（不 gitignore——
-                   # 国内网络下载不稳定+曾被本机杀毒软件误删，见下方"自建 frps"一节）
+tools/sakura/      # 第三方 sakura-frpc.exe（樱花独立版客户端），gitignore 掉
+tools/frp_selfhost/# frpc.exe + frps_linux_amd64/arm64.gz（gzip 压缩，见下方"自建 frps"
+                   # 一节），直接提交进仓库（不 gitignore——国内网络下载不稳定+曾被
+                   # 杀毒软件误删/秒隔离）
+tools/vcredist/    # 微软官方 vcredist_x86.exe（VC++2013 运行库），直接提交进仓库
+                   # （不 gitignore，理由同上），被 shared/tex_convert.py 调用
 ```
 
 **分包原则**：只被一个功能用到的模块放进对应 `features/<名字>/`；被 2 个以上功能共用的放 `shared/`（GUI 控件放 `shared/gui/`）。功能包之间允许互相 import，不强求隔离——只是要让"改一个功能该去哪找"一眼看出来。
@@ -174,7 +177,7 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 `_enable_mapping()` 的顺序是硬约束：①创建/复用隧道 → ②读回樱花分配的远程端口 R → ③把隧道自己的 `local_port` 也改成 R → ④把 R 写回 `server_port` → ⑤提示重启生效。这五步必须对一个存档的所有世界一起做。
 
-`tools/frpc/frpc.exe` 必须是樱花后台"软件下载"页单独提供的独立版，不能从 Launcher 安装目录复制（Launcher 那份锁死，不管传什么参数都拒绝直接运行）。这份 v0.51.0 私有分支协议跟标准 frp 不通用，**不能被自建 frps 那边复用**。
+`tools/sakura/sakura-frpc.exe` 必须是樱花后台"软件下载"页单独提供的独立版，不能从 Launcher 安装目录复制（Launcher 那份锁死，不管传什么参数都拒绝直接运行）。这份 v0.51.0 私有分支协议跟标准 frp 不通用，**不能被自建 frps 那边复用**。
 
 `SakuraTab` 通过 `PillTabBar` 挂了"自建frps"子页签（`SelfHostFrpPage`），`has_active_mapping()`/`maybe_start_frpc()`/`stop_frpc_for_shard()` 都同时检查樱花原生机制和转发给 `self.selfhost_page`，调用方（`local_service/tab.py`、`cluster_config/tab.py`）不需要关心具体用的哪一种映射。
 
@@ -190,9 +193,11 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 **部署脚本幂等**（应用户要求）：`dstcamp-frps` 服务已在跑只更新配置+重启；目标端口被*其它*服务占用直接跳过不覆盖。**孤儿进程认领**（真机复现过的真实 bug）：DSTCamp 没走"停止"按钮就退出，spawn 出去的 frpc.exe 会变孤儿继续转发流量，新一轮 DSTCamp 内存是空的会显示"未启动"——`FrpcManager.reconcile()` 用 `tasklist`+`Get-CimInstance` 按配置文件路径认领。
 
-**版本/协议坑**：`tools/frp_selfhost/frpc.exe`（v0.70.1）必须是 frp 官方发行版，不能复用 `tools/frpc/frpc.exe`（樱花的私有分支协议不通用）；`frps_linux_*` 是 v0.70.0，跟 frpc 差一个补丁版本但协议兼容（查过更新日志确认无关）。**DST 的 `server_port` 走 UDP**，frpc.toml 的 proxy 类型必须是 `udp`。一个存档所有已映射世界共用一个 frpc 进程/一份 frpc.toml，映射变化要整份重写配置、重启（frp 的 `-c` 模式没有热加载 API）。国内云服务器访问 GitHub 常不稳定，`remote_deploy.py` 探测到 amd64/arm64 架构时直接 SFTP 推送本地打包的二进制，不再依赖服务器自己下载。
+**版本/协议坑**：`tools/frp_selfhost/frpc.exe`（v0.70.1）必须是 frp 官方发行版，不能复用 `tools/sakura/sakura-frpc.exe`（樱花的私有分支协议不通用）；`frps_linux_*` 是 v0.70.0，跟 frpc 差一个补丁版本但协议兼容（查过更新日志确认无关）。**DST 的 `server_port` 走 UDP**，frpc.toml 的 proxy 类型必须是 `udp`。一个存档所有已映射世界共用一个 frpc 进程/一份 frpc.toml，映射变化要整份重写配置、重启（frp 的 `-c` 模式没有热加载 API）。国内云服务器访问 GitHub 常不稳定，`remote_deploy.py` 探测到 amd64/arm64 架构时直接 SFTP 推送本地打包的二进制，不再依赖服务器自己下载。
 
 **打包 Linux 二进制在 Windows 开发机上要小心杀毒软件**：真机遇到过二进制刚复制到 `tools/frp_selfhost/` 就被静默删除，用 `tar -xzf ... -O > 目标路径` 管道写入+立刻 `git add` 能提高存活率——以后二进制文件消失先怀疑这个。云服务商安全组放行端口做不到自动化，部署脚本只能提醒用户自己去控制台操作。
+
+**真机反馈过的坑（用户机器，不止开发机）**：`frps_linux_amd64`/`frps_linux_arm64` 这两个 Linux ELF 二进制在 Windows 机器上永远不会被执行，只是原样转发给远程服务器，但 PyInstaller onefile 每次启动都会把整个 `tools/` 解压到全新的 `%TEMP%\_MEIxxxxxx\`——"exe 运行时突然写入一批按 CPU 架构分组的 Linux 可执行文件"正是很多杀毒软件对释放器（dropper）的启发式特征，加上 frp 系列常被归进"HackTool"类别，被用户的杀毒软件秒隔离过，且**每次启动都会重新触发**（不只是用到"自建 frps"功能的人）。做法：仓库里只存 gzip 压缩后的 `.gz`（`tools/frp_selfhost/frps_linux_*.gz`），`remote_deploy.py` 的 `_maybe_upload_frps_binary()` 只在真的要 SFTP 推送时才现场解压到临时文件、传完立刻删除（`tempfile.TemporaryDirectory` 自动清理），绝大多数用户的日常启动不会再往磁盘落地裸的可执行文件。
 
 ### 本地服务器启动前的令牌检查 (`features/local_service/tab.py`)
 
@@ -234,6 +239,8 @@ Windows 目录联接不需要管理员权限；`os.path.isjunction()`（3.12+）
 ### 纹理转换 (`shared/tex_convert.py`)
 
 `ktech.exe`（第三方）把 mod 图标 `.tex` 转 `.png`。**已验证的坑**：argv 走系统 ANSI 代码页，输出路径带中文会失败，输入路径没问题。做法：**永远先让 ktech.exe 写到临时目录（纯 ASCII），再 `shutil.move()` 挪到真实的、可能带中文的目标路径**。
+
+**真机反馈过的坑**：`ktech.exe` 依赖同目录一批老版本 ImageMagick DLL，这批 DLL 又依赖 `MSVCR120.dll`/`MSVCP120.dll`（Visual C++ 2013 运行库，Windows 不自带）。缺这个运行库时 `ktech.exe` 启动即崩溃，进程退出码固定是 `0xC000007B`（Python 里读到 `-1073741701`），用户看到的是系统弹的"应用程序无法正常启动"对话框。`probe_ktech_runtime()` 用这个固定退出码探测（跑一次空参数调用，全程只探测一次、缓存结果），`features/mod/tab.py` 探测到就在页签内显示提示条，点击 `launch_vcredist_installer()` 本地拉起内置安装包（`tools/vcredist/vcredist_x86.exe`，微软官方原始文件，装前用 `Get-AuthenticodeSignature` 核实过签名，从 `download.microsoft.com` 官方 CDN 直接下载，**不采用**国内第三方镜像/合集站——那类站点常需要登录/评论解锁、内容不可验证、对外发行给真实客户的软件不该引入这种供应链风险）。全程不需要联网，绕开"官方下载页在国内访问不稳定"的问题；跟 `tools/frp_selfhost/` 一样直接提交进仓库（不 gitignore），理由相同：避免依赖不稳定的外部下载 + 装机时杀毒软件误删的风险。
 
 ### i18n (`dstools/i18n/`)
 

@@ -56,7 +56,7 @@ def build():
 
     args = [
         str(project_root / "scripts" / "run_gui.py"),  # Entry point
-        f"--name={exe_name}",                     # EXE filename, e.g. DSTCamp-0.9.6.exe
+        f"--name={exe_name}",                     # EXE filename, e.g. DSTCamp-<version>.exe
         "--onefile",                             # Single EXE file
         "--windowed",                            # No console window
         "--clean",                               # Clean cache

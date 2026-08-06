@@ -15,7 +15,7 @@ from typing import Any
 
 from PIL import Image
 
-from dstools.shared import app_settings
+from dstools.shared import app_settings, tex_convert
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.dedicated_server import find_bin64_dir
 from dstools.features.mod import chs_translation
@@ -230,6 +230,13 @@ class ModManagerTab:
         self._md_wegame_banner = ReadonlyBanner(self.frame, text=t("mod.wegame_root_needed_banner"),
                                                  on_click=self._pick_wegame_root_and_reload)
 
+        # 真机反馈过：部分用户机器没装 ktech.exe 依赖的 Visual C++ 2013
+        # 运行库，图标转换全部静默失败（退化成"无图标"，界面上看不出原
+        # 因）。第一次进这个页签时探测一次（tex_convert.probe_ktech_
+        # runtime() 自己做了只测一次的缓存），确认缺运行库就提示。
+        self._md_runtime_banner = ReadonlyBanner(self.frame, text=t("mod.ktech_runtime_missing_banner"),
+                                                  on_click=self._install_vcredist)
+
         from dstools.shared.gui.image_scroll import ImageScrollPanel
         from dstools.features.mod.render import REF_WIDTH
         self.list_panel = ImageScrollPanel(self.frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
@@ -286,6 +293,10 @@ class ModManagerTab:
             self._md_wegame_banner.show()
         else:
             self._md_wegame_banner.hide()
+        if tex_convert.probe_ktech_runtime():
+            self._md_runtime_banner.show()
+        else:
+            self._md_runtime_banner.hide()
         self._update_mod_location_display()
         if not c:
             self.shard_combo["values"] = []
@@ -298,6 +309,16 @@ class ModManagerTab:
                 if s.name == "Master": self.shard_combo.current(i); break
             else: self.shard_combo.current(0)
         self._on_shard_select()
+
+    def _install_vcredist(self):
+        """点"缺运行库"提示条——本地直接拉起内置的官方安装程序（不需要
+        联网），弹出的是安装向导自己的窗口，装完提示重启软件生效。"""
+        if not tex_convert.launch_vcredist_installer():
+            dlg.show_error(self.app.root, t("mod.ktech_runtime_missing_banner"),
+                            t("mod.vcredist_installer_missing"))
+            return
+        dlg.show_info(self.app.root, t("mod.ktech_runtime_missing_banner"),
+                       t("mod.vcredist_installer_launched"))
 
     def _wegame_root_missing(self, cluster) -> bool:
         """这个存档是 WeGame 版、但 WeGame 安装目录还没配置/解析不出来——
@@ -993,6 +1014,7 @@ class ModManagerTab:
         self._md_rl.configure(text=t("mod.back_to_list") if self.show_local_var.get() else t("mod.show_local"))
         self._md_local_banner.set_text(t("mod.local_view_only_banner"))
         self._md_wegame_banner.set_text(t("mod.wegame_root_needed_banner"))
+        self._md_runtime_banner.set_text(t("mod.ktech_runtime_missing_banner"))
         self._mod_location_recheck_btn.configure(text=t("local.install_recheck_btn"))
         self._mod_location_change_btn.configure(text=t("local.install_change_btn"))
         self._redraw_mod_location_row_text()
@@ -1004,6 +1026,7 @@ class ModManagerTab:
         不会碰它们的颜色，需要显式重新上色/重画。"""
         self._md_local_banner.apply_theme()
         self._md_wegame_banner.apply_theme()
+        self._md_runtime_banner.apply_theme()
         self._redraw_mod_location_row_text()
         self._md_lbl2.redraw()
         self._md_filt.redraw()

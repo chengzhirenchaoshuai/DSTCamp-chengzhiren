@@ -11,8 +11,22 @@ deploy.py 生成的脚本和（架构匹配时）frps 二进制，不跑其它�
 `_maybe_upload_frps_binary()` 探测到 amd64/arm64（已打包这两种架构）
 时直接 SFTP 推送 frps 二进制，脚本不用再访问 GitHub；其它架构退回自
 己下载。
+
+**打包的 frps_linux_* 二进制以 gzip 压缩形态（.gz）随包分发，不是裸
+可执行文件**：这两个文件在这台 Windows 机器上永远不会被执行，只是原
+样转发给远程 Linux 服务器，没有必要在本地以可执行形态存在。真机反馈
+过：PyInstaller onefile 每次启动都会把整个 tools/ 目录解压到全新的
+`%TEMP%\\_MEIxxxxxx\\`，"Windows exe 运行时突然写入一批按 CPU 架构分组
+的 Linux ELF 可执行文件"这个动作本身就是很多杀毒软件对木马释放器
+（dropper）的启发式特征，加上 frp 系列工具经常被安全软件归进
+"HackTool" 类别，曾在真机上被秒隔离——压缩成 .gz 之后，绝大多数用户
+（根本没用到"自建 frps"这个功能的人）每次启动都不会再往临时目录写入
+裸的可执行文件，只有真的点"一键部署"时 `_maybe_upload_frps_binary()`
+才会现场解压到一个临时文件、传完立刻删除，把暴露窗口从"每次启动"缩
+小到"实际部署的这几秒钟"。
 """
 
+import gzip
 import threading
 from pathlib import Path
 from typing import Callable
@@ -209,8 +223,8 @@ def verify_key_login(
         client.close()
 
 
-def _bundled_frps_binary_path(arch: str) -> Path:
-    return bundled_resource_dir() / "tools" / "frp_selfhost" / f"frps_linux_{arch}"
+def _bundled_frps_binary_gz_path(arch: str) -> Path:
+    return bundled_resource_dir() / "tools" / "frp_selfhost" / f"frps_linux_{arch}.gz"
 
 
 def _detect_remote_arch(client: paramiko.SSHClient) -> str:
@@ -229,23 +243,32 @@ def _detect_remote_arch(client: paramiko.SSHClient) -> str:
 def _maybe_upload_frps_binary(client: paramiko.SSHClient, on_log: LogFn) -> str | None:
     """先探测服务器 CPU 架构，架构匹配某一份本地打包的二进制时才 SFTP
     推上去并返回远程路径；不匹配（架构没打包，或者探测失败）返回
-    None，调用方据此决定要不要退回"脚本自己从 GitHub 下载"那条路径。"""
+    None，调用方据此决定要不要退回"脚本自己从 GitHub 下载"那条路径。
+
+    本地打包的是 gzip 压缩过的 .gz（见本文件顶部说明），这里现场解压
+    到一个临时文件再 SFTP 推送，用完立刻删除本地临时文件——不管上传
+    成不成功都要删，避免每次部署都在本地攒下解压出来的可执行文件。"""
     arch = _detect_remote_arch(client)
     if arch not in _BUNDLED_ARCHS:
         on_log(f"服务器架构（{arch or '未知'}）没有对应的本地打包二进制，改为让服务器自己下载。")
         return None
-    local_path = _bundled_frps_binary_path(arch)
-    if not local_path.exists():
+    gz_path = _bundled_frps_binary_gz_path(arch)
+    if not gz_path.exists():
         return None
     on_log(f"正在上传 frps 程序本体（{arch}，避免服务器自己访问 GitHub）...")
     import secrets
+    import tempfile
     remote_path = f"/tmp/dstcamp_frps_bin_{secrets.token_hex(4)}"
-    sftp = client.open_sftp()
-    try:
-        sftp.put(str(local_path), remote_path)
-        sftp.chmod(remote_path, 0o755)
-    finally:
-        sftp.close()
+    with tempfile.TemporaryDirectory(prefix="dstcamp_frps_") as tmp_dir:
+        staged_path = Path(tmp_dir) / f"frps_linux_{arch}"
+        with gzip.open(gz_path, "rb") as src, open(staged_path, "wb") as dst:
+            dst.write(src.read())
+        sftp = client.open_sftp()
+        try:
+            sftp.put(str(staged_path), remote_path)
+            sftp.chmod(remote_path, 0o755)
+        finally:
+            sftp.close()
     return remote_path
 
 
