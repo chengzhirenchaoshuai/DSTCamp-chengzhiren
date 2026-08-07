@@ -480,18 +480,11 @@ class ModManagerTab:
                 if s.name == self.shard_var.get():
                     shard = s
                     break
-        # 针对这个具体 shard 的加载已经在进行中——这在应用启动阶段必现
-        # 一次（这个页签自己的构造函数通过 on_cluster_changed 启动首次
-        # 加载，紧接着 DSToolsApp.__init__ 构造完之后自己的 refresh()
-        # 又立刻要求每个页签再刷新一次）——没有这道防护的话，第二次调
-        # 用会启动一次更快的非全量解析，它的结果会在第一次（全量）解析
-        # 还没跑完之前就把结果顶替掉，导致 _full_resolved_cache 只被填
-        # 了一部分。按 (cluster, shard) 的*名字*而不是对象身份建索引——
-        # discover_environment() 每次"刷新全部"都会重新构造全新的
-        # Cluster/Shard 对象，所以即便两次调用加载的其实是同一份存档，
-        # 两次调用里 cluster/shard 对象之间简单的 `is` 比较也不会成
-        # 立。已经在跑的那次调用已经覆盖了这个 shard，所以重复的调用直
-        # 接跳过，而不是去跟它抢跑。
+        # 针对这个具体 shard 的加载已经在进行中就跳过，不跟它抢跑——不
+        # 然后一次更快的非全量解析结果会在全量解析跑完前顶替掉它，导致
+        # _full_resolved_cache 只填了一部分。按 (cluster, shard) 的*名
+        # 字*建索引，不用对象身份——discover_environment() 每次都会构
+        # 造全新对象，`is` 比较不成立。
         loading_key = (c.name if c else None, shard.name if shard else None)
         if self._loading and loading_key == getattr(self, "_loading_key", None):
             return
@@ -613,16 +606,11 @@ class ModManagerTab:
                     else:
                         mod_info = parse_modinfo(mod_folder) if mod_folder else None
                         if full and mod_info and mod_folder:
-                            # _full_resolved_cache 只在这个进程活着的时
-                            # 候有效，每次重新启动都会是空的——sandbox
-                            # 那趟解析本身很慢（子进程 + 最多几秒超时/
-                            # 个），之前每次启动都要为没变过的 mod 重跑
-                            # 一遍，见 mod_resolve_cache.py 顶部说明。这
-                            # 里先查磁盘缓存（按 modinfo.lua 的 mtime 判
-                            # 断有没有过期，跟 mod_icons.py 图标缓存同一
-                            # 套逻辑），命中就不用再起子进程；没命中才真
-                            # 的跑一遍 sandbox，并把结果写回磁盘缓存供下
-                            # 次启动用。
+                            # _full_resolved_cache 只在进程存活期间有效，
+                            # sandbox 解析很慢（子进程+几秒超时），先查磁
+                            # 盘缓存（按 modinfo.lua 的 mtime 判断过期，
+                            # 跟 mod_icons.py 图标缓存同一套逻辑），命中
+                            # 就不用再起子进程。
                             modinfo_path = mod_folder / "modinfo.lua"
                             result = load_cached_result(wid, modinfo_path)
                             if result is None:
@@ -1184,16 +1172,11 @@ class ModConfigDialog:
 
         canvas = tk.Canvas(win, highlightthickness=0)
         self.canvas = canvas
-        # 直接用 `command=canvas.yview` 会在每一次滚动条拖拽事件上都调
-        # 用 Tk 的原生滚动——对纯 canvas 图片面板（世界设置/mod 列表）
-        # 没问题，但这个 canvas 每个选项行都嵌了一个真实 ttk 控件（名字
-        # 标签+下拉框+悬浮提示绑定），配置项多的 mod 有时能有 100 多
-        # 个。每个原生控件在每一步滚动时都要单独重新定位/重绘，快速拖
-        # 拽滚动条触发的这类事件远超 Tk/窗口合成器能跟得上的速度，表现
-        # 出来就是撕裂/重影的文字——普通鼠标滚轮滚动步子更少、更大、更
-        # 慢，不会触发这个问题。像 image_scroll.py 节流它的 PIL 重渲染
-        # 那样合并拖拽事件（约每 16ms 最多真正执行一次 yview，而不是每
-        # 个原始事件都执行一次），给合成器留出时间真正画完每一帧。
+        # 直接用 command=canvas.yview 会让每次滚动条拖拽事件都触发原生
+        # 滚动——这个 canvas 每个选项行都嵌了真实 ttk 控件（配置项多的
+        # mod 能有 100 多个），快速拖拽滚动条时这类事件远超合成器跟得上
+        # 的速度，表现为文字撕裂/重影。节流成约每 16ms 最多真正执行一次
+        # yview，给合成器留出时间画完每一帧。
         self._cfg_scroll_after_id = None
         self._cfg_scroll_pending = None
 
@@ -1314,18 +1297,10 @@ class ModConfigDialog:
             var = tk.StringVar(value=current_display)
             self.vars[opt.name] = var
             # 跟顶部全局存档选择器同一个坑，同一个解法（见 DSToolsApp.
-            # __init__ 里 Menubutton 那段注释）：readonly ttk.Combobox 背后
-            # 是个真 Entry，选完/点开不选之后经常卡在"数据其实对、但拒绝
-            # 重新画字"的状态，用户在存档选择器上实测确认过、也在这里的
-            # 设置下拉框上报告过一模一样的现象，换成 Menubutton + Menu 后
-            # 没有 Entry，从根上不存在这个问题——选中即直接把 var 设成一
-            # 个已知合法的选项文字，不可能出现"文字被清空/画不出来"的
-            # 中间状态，也就不需要再靠 <<ComboboxSelected>>/<FocusOut> 这类
-            # 事件兜底了。
-            #
-            # 依然保持"就算是 read_only 弹窗也能点开浏览"（不会真的存盘，
-            # 因为 read_only 弹窗根本不建 应用/重置 按钮）——跟原来的行为
-            # 一致，不额外区分。
+            # readonly ttk.Combobox 背后是个真 Entry，经常卡在"数据对但
+            # 拒绝重新画字"的状态，换成 Menubutton+Menu 没有 Entry，从根
+            # 上不存在这个问题。read_only 弹窗依然能点开浏览（不会真的
+            # 存盘，因为它根本不建应用/重置按钮）。
             menu_btn = ttk.Menubutton(top, textvariable=var, width=COMBO_CHARS,
                                       style="ModOption.TMenubutton")
             opt_menu = tk.Menu(menu_btn, tearoff=0)

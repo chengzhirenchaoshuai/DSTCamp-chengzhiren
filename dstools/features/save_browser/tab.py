@@ -1,8 +1,6 @@
-""""存档信息"标签页：单页展示——顶部"存档信息"标题 + 世界选择器，
-下面依次是存档概览（列出全部存档，服务器+本地，含"复制为服务器存档"）、
-基本信息（当前选中世界的会话信息）、每个玩家角色状态（角色名、头像、
-血量/理智/饥饿/体温等）。原来是"存档概览"/"会话详情"两个可切换的子页
-签，应用户要求合并成一个页面，不再需要切换（见 __init__ 的说明）。
+""""存档信息"标签页：单页展示——顶部标题+世界选择器，下面依次是存档概
+览（服务器+本地存档，含"复制为服务器存档"）、基本信息（当前选中世界
+的会话信息）、每个玩家角色状态（角色名/头像/血量/理智/饥饿/体温）。
 """
 
 import queue
@@ -37,21 +35,13 @@ from dstools.models import Platform, SaveSource
 # 不用再跟它保持一致，但字号常量还留着给"每个玩家角色状态"单独用）。
 _SECTION_HEADER_FONT = ("", 11, "bold")
 
-# 页面顶部几个区块（存档概览的 2 行说明文字、"游戏模式"详情卡片、"分
-# 片:"下拉框行、"世界信息"内容块、"每个玩家角色状态"）统一用这个左右
-# 留白——应用户反馈这几处原来贴得太靠左边缘，整体往右挪了一些（从 5
-# 提到 15），几处必须用同一个值，不然又会重新出现"卡片跟下面对不齐"
-# 的问题（见上一轮"游戏模式"卡片偏移的教训）。
+# 页面顶部各区块统一用的左右留白，必须用同一个值，不然会出现"卡片跟
+# 下面对不齐"的问题。
 _PAGE_PADX = 15
 
-# 角色名/头像都查不到时的兜底头像（一个问号图标，裁自游戏官方 Tab 键头像
-# 图集里本来就有的 avatar_unknown.tex，跟 mod_render.py 的
-# _DEFAULT_ICON_PATH 是同一个思路）。这是个固定不变的静态素材，不通过
-# core/character_icons.py 那套按 workshop_id/mtime 失效的运行时缓存去
-# 现查现转——那套缓存是给"取决于用户实际装了哪些 mod"的头像准备的，这张
-# 图跟装了什么 mod 无关，每次都一样，没必要每次重新走一遍"找游戏安装目
-# 录 -> 解压 images.zip -> 跑 ktech.exe 转格式"这条重活路径，直接打包进
-# icons/ui/ 里当普通素材用。
+# 角色名/头像都查不到时的兜底头像（问号图标）。跟具体装了哪些 mod 无
+# 关，是固定不变的静态素材，直接打包进 icons/ui/，不用 character_icons.py
+# 那套按 mtime 失效的运行时转换缓存。
 _DEFAULT_AVATAR_PATH = bundled_resource_dir() / "icons" / "ui" / "character_icon_default.png"
 
 
@@ -69,12 +59,8 @@ class _CopyToServerDialog:
         self._validator = validator
         win = tk.Toplevel(parent_widget)
         self.win = win
-        # 跟 themed_dialog.py 的 _show() 一个道理：先 withdraw()，内容建
-        # 好、量完实际高度、居中定位好之后才 deiconify()——不然窗口会先
-        # 用系统默认的尺寸/位置露一下脸（未上色、未摆放好），再跳到最终
-        # 大小和位置，肉眼看起来就是一闪而过的一块（这台机器上表现为黑
-        # 色）窗口，这才是真正的"黑色窗口一闪而过"根因，不是子进程控制
-        # 台窗口。
+        # 先 withdraw()，内容建好、定位好之后才 deiconify()——避免用默认
+        # 尺寸/位置先露一下脸再跳到最终位置，看起来像一闪而过的窗口。
         win.withdraw()
         win.title(t("save.copy_dialog_title"))
         win.resizable(False, False)
@@ -386,68 +372,38 @@ class SaveBrowserTab:
         # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
         # 义背景图；"世界:"这个纯说明文字改用 make_toolbar_label
         # （create_text，不挡背景图），下拉框/按钮仍是原生 ttk 控件不变。
-        # "存档:"选择器已经搬到顶部的全局选择栏，这里不再重复一份。
-        # 应用户要求整体收紧上下间距（少留空白）——pady 从 5 缩到 3。
-        # padx 用 _PAGE_PADX+10（不是单纯的 _PAGE_PADX）——sf 自己没有像
-        # players_header_row 那样在 pf 外面再包一层 padx=10，"世界:" 文
-        # 字这里如果只用 _PAGE_PADX 会比"游戏模式"/"每个玩家角色状态"
-        # 那几处正文文字整体偏左 8~10px，真机截图量过 create_text 的
-        # bbox 绝对坐标确认过这个偏差（应用户反馈"整体宽度不一致"修的
-        # 对齐问题）。
+        # "存档:"选择器已经搬到顶部的全局选择栏，这里不再重复一份。padx
+        # 用 _PAGE_PADX+10 是为了跟"游戏模式"/"每个玩家角色状态"正文对齐
+        # （sf 自己没有像 players_header_row 那样在外面再包一层 padx=10）。
         sf = BgFrame(parent, self.app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=_PAGE_PADX + 10, pady=3)
         self._shard_label = make_toolbar_label(sf, self.app, lambda: t("save.shard"))
         self.shard_var = tk.StringVar()
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_select)
-        # 世界下拉框旁边原来还有一个"刷新"按钮——应用户要求删掉了：顶部
-        # 全局存档选择栏已经有一个"刷新"按钮，点了会走
-        # DSToolsApp._refresh() -> tab.refresh() -> on_cluster_changed()，
-        # 效果跟这里重复。
 
     def _build_session_panel(self, parent):
-        # 每个世界实测（这台机器全部 11 个世界，服务器+本地都算上）都只有
-        # 一个会话——DST 只有"生成新世界"才会开一个新的会话 ID，正常"继续
-        # 游戏"一直复用同一个，多个会话共存是很少见的边缘情况。既然是这样，
-        # 不用再把它当"可能很多项、需要滚动+可以跟下面拖动分配空间"的列表
-        # 处理，改成固定的一块头部信息，不做 PanedWindow（去掉拖动条），
-        # 直接和下面"每个玩家角色状态"衔接。真遇到一个世界有多个会话这种
-        # 罕见情况，不会静默丢掉——只显示第一个，另外用一行小字提示"还有
-        # N 个其他会话"，不会假装它们不存在。
+        # 一个世界正常情况下只有一个会话（DST 只有"生成新世界"才会开新
+        # 会话 ID），不用当"可能很多项"的列表处理——固定一块头部信息，
+        # 不用 PanedWindow。真遇到多会话的罕见情况只显示第一个，另外一
+        # 行小字提示"还有 N 个其他会话"。
         #
-        # "每个玩家角色状态"小节标题字体大小用模块级 _SECTION_HEADER_FONT
-        # （"世界信息"标题应用户要求删掉了，见 info_header_row 的说明）。
-
-        # info_frame 用 BgFrame 而不是 ttk.Frame(padding=...)——Canvas 没
-        # 有 ttk 的 padding 选项，改成手动 create_text(x=10,...) 模拟左
-        # 内边距。"世界信息"标题、标题行、分隔线、"打开位置"按钮都应用
-        # 户要求删掉了，info_frame 现在只剩 3(~4) 行正文文字。
+        # info_frame 用 BgFrame（Canvas 没有 ttk 的 padding，手动
+        # create_text(x=10,...) 模拟左内边距）。
         info_frame = self._info_frame = BgFrame(parent, self.app, bg=theme.CARD_BG)
         info_frame.pack(fill=tk.X, padx=_PAGE_PADX, pady=(0,2))
         self._session_id_var = tk.StringVar()
         self._summary_var = tk.StringVar()
         self._slots_var = tk.StringVar()
         self._extra_sessions_var = tk.StringVar()
-        # 下面几行原来是 ttk.Label（不透明背景，挡背景图）——改成直接在
-        # info_frame 自己的画布上 create_text；info_frame 没有别的
-        # pack() 子控件撑高度了，必须先 pack_propagate(False) 再由
-        # _redraw_info_text() 显式给高度（见 gui/bg_frame.py 顶部
-        # "pack_propagate 的坑"）。extra_sessions_var 为空时那一行直接
-        # 不画，等效于原来的 pack()/pack_forget()。
+        # 文字直接在 Canvas 上 create_text（不用 ttk.Label，会挡背景
+        # 图）；info_frame 没有别的 pack() 子控件撑高度了，必须
+        # pack_propagate(False) 再由 _redraw_info_text() 显式给高度。
         info_frame.pack_propagate(False)
         info_text_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
-        # "世界信息"最多同时显示 4 行（会话ID/摘要/槽位+大小/其它会话提
-        # 示），但最后一行（"其它会话"提示）绝大多数情况下是空的——真机
-        # 这台机器每个世界都只有一个会话，从没用到过第 4 行。之前按 4
-        # 行预留高度是为了让 info_frame 高度恒定、不会顶着下面"每个玩
-        # 家角色状态"挪位置（见 _resync_players_section_bg() 的说明），
-        # 但代价是"每个玩家角色状态"标题上方总空出一整行没用到的空白，
-        # 应用户反馈"空隙较大"（1.png），改成只按 3 行预留——多出的第
-        # 4 行（"其它会话"提示）真出现的极罕见情况下，_resync_players_
-        # section_bg() 仍然会在 _refresh_saves() 末尾补一次背景重渲染，
-        # 不会露出黑线/错位色块，只是那一刻会有一次很短暂的高度调整，
-        # 可以接受（比起"每次都留一整行空白"这个明确能感知到的代价，
-        # 这个极端情况下的短暂调整不算回归）。
+        # 固定按 3 行预留高度（会话ID/摘要/槽位+大小），"其它会话"提示这
+        # 第 4 行绝大多数情况为空，真出现时靠 _resync_players_section_bg()
+        # 兜底补一次背景重渲染，短暂的高度调整可以接受。
         _INFO_MAX_LINES = 3
 
         def _redraw_info_text():
@@ -463,18 +419,11 @@ class SaveBrowserTab:
                                         font=info_text_font, tags="info_text")
                 y += line_h
             info_frame.configure(height=y0 + _INFO_MAX_LINES * line_h + 4)
-            # 这里只管画字/撑固定高度，不在这里顺带补下面 pf 那一整块的背景
-            # 重渲染——_redraw_info_text() 由 4 个 StringVar 的 trace 各
-            # 自独立触发，一次"从占位符换成真实内容"要连续调用它 4 次，
-            # 如果每次都在这里现场把 info_frame/pf/players_header_row/
-            # 标题/players_outer/players_canvas 全部 render_now() 一遍，
-            # 等于短时间内对同一批表面重复渲染了 4 次，用的还是每次都在
-            # 变化中途的坐标——真机截图确认过这样反而会撞见某一次中途、
-            # 还没完全稳定的坐标，画出来是一截压扁的黑线/错位色块（比不
-            # 补更难看）。改成只在 _refresh_saves() 里"确定不会再有更多
-            # 变化了"的两个节点上，各自补一次干净的、只做一遍的重渲染
-            # （见 _resync_players_section_bg()），不在这个每个字段都会
-            # 触发一次的函数里做。
+            # 只画字/撑高度，不在这里顺带刷新下面 pf 的背景——4 个
+            # StringVar 的 trace 各自独立触发这个函数，中途坐标还没稳定
+            # 时重渲染反而会画出压扁的错位色块，统一交给
+            # _resync_players_section_bg() 在"确定不会再变"的节点上补一
+            # 次干净的重渲染。
 
         # <Configure> 期间（拖拽缩放窗口）节流到 ~16ms 一次——
         # update_idletasks() 不是免费的，直接绑在原始 <Configure> 上会在
@@ -497,36 +446,17 @@ class SaveBrowserTab:
         info_frame.bind("<Configure>", _request_info_redraw, add="+")
         self._redraw_info_text = _redraw_info_text
 
-        # "每个玩家角色状态" ——一个会话下面除了世界自己的存档槽，还有一批
-        # 按玩家分的子文件夹（见 save_reader.list_session_players）。一个
-        # 会话实测最多不过几个玩家，用不上 mod_render.py/world_render.py
-        # 那套给上百行准备的 PIL 整图渲染，跟 _build_selected_cluster_row 一样直接用
-        # 普通 ttk/tk 控件（Canvas+Scrollbar 装一行一个的 Frame）足够了——
-        # 这里的滚动条是玩家列表自己的（人数多的时候还是需要滚动），跟上面
-        # 会话信息那块"去掉拖动条"是两回事，不冲突。
-        # pf/players_outer 用 BgFrame 而不是 ttk.Frame(padding=...)——同上，
-        # 手动 padx=10 模拟原来的水平内边距；players_canvas 直接用 BgFrame
-        # 代替普通 tk.Canvas（BgFrame 本身就是 tk.Canvas 子类，
-        # create_window()/scrollregion 这套用法不受影响），空白处能透出
-        # 背景图——单条玩家状态卡片（_build_player_row）本身保持不透明的
-        # 高亮识别色不变，只是它们之间/下方的空白不再是纯色。
+        # "每个玩家角色状态"：一个会话最多不过几个玩家，用不上 PIL 整图
+        # 渲染那一套，普通 ttk/tk 控件（Canvas+Scrollbar 装一行一个的
+        # Frame）足够。pf/players_outer 用 BgFrame 透出背景图，
+        # players_canvas 也直接用 BgFrame 代替普通 tk.Canvas。
         pf = self._pf = BgFrame(parent, self.app, bg=theme.CARD_BG)
         pf.pack(fill=tk.BOTH, expand=True, padx=_PAGE_PADX, pady=(0,3))
-        # 包一层 players_header_row（跟"基本信息"的 info_header_row 同一
-        # 个思路）再 pack(padx=10,...)，而不是直接对 make_toolbar_label()
-        # 的返回值再手动调一次 .pack()——单纯是写法上更规整、跟其它调用
-        # 点一致（这个页签之前有一处对同一个 BgFrame 连续 pack() 两次的
-        # 写法，已经改掉），"每个玩家角色状态"标题背后背景图错位的真正
-        # 原因不在这里，是 info_frame 变高/变矮时会顶着 pf 一起往下/往
-        # 上挪、但挪动本身不会给 pf 重新触发 <Configure>——见上面
-        # _redraw_info_text() 里 info_frame.configure(height=...) 之后
-        # 补的那段 render_now() 说明。
         players_header_row = self._players_header_row = BgFrame(pf, self.app, bg=theme.CARD_BG)
         players_header_row.pack(fill=tk.X, padx=10, pady=(3,0))
         self._players_header_label = make_toolbar_label(players_header_row, self.app,
                                                            lambda: t("save.players_section"),
                                                            font=_SECTION_HEADER_FONT)
-        # 标题下面原来有一条 ttk.Separator 分隔线——应用户要求删掉了。
         players_outer = self._players_outer = BgFrame(pf, self.app, bg=theme.CARD_BG)
         players_outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,4))
         self._players_canvas = players_canvas = BgFrame(players_outer, self.app, bg=theme.CARD_BG)
@@ -603,24 +533,13 @@ class SaveBrowserTab:
     def _on_shard_select(self, e=None): self._refresh_saves()
 
     def _refresh_saves(self):
-        # 先把"基本信息"/"每个玩家角色状态"两块换成"加载中…"占位内容并
-        # 强制刷到屏幕上，再去做真正的磁盘 I/O
-        # （list_save_sessions()/list_session_players()）和逐个玩家的角
-        # 色名/头像解析（resolve_character()，可能触发 mod 头像格式转
-        # 换子进程，是这个页签最慢的部分）——不这样做的话 Tk 单线程会一
-        # 直卡在这些同步调用里，用户点开"会话详情"看到的是标题和内容
-        # 一起僵住不动，直到全部数据都算完才一次性冒出来；先画一次占
-        # 位文字再开始算，两个标题能立刻显示、看起来是"骨架先出来，内
-        # 容随后跟上"，而不是一段无响应的空白。
-        # 4 个 StringVar 各自绑了一份 trace，每 set() 一次都会同步触发一
-        # 次 _redraw_info_text()——先清空另外 3 个、最后才把
-        # _session_id_var 设成"加载中…"，是为了避免中间态：如果先设
-        # session_id_var，这一刻其它 3 个还留着上一次真实加载的旧内容
-        # （标题/摘要/槽位/其它会话提示），会先画出"加载中…"跟上一次的
-        # 摘要/槽位混在一起这种不consistent的过渡画面，才是真机反馈过
-        # 的"看起来乱掉了"那种效果的根源；反过来先清空、把唯一还有内容
-        # 的这个留到最后设置，中途每一次重画都只是"当前非空的那几个字
-        # 段的合法子集"，不会出现新旧内容混着画的情况。
+        # 先把两块换成"加载中…"占位内容并刷到屏幕，再做真正的磁盘 I/O
+        # 和角色名/头像解析（resolve_character()，是这个页签最慢的部
+        # 分）——不然 Tk 单线程会一直卡在同步调用里，用户看到的是画面
+        # 僵住直到全部算完才冒出来。
+        # 4 个 StringVar 各自触发一次 _redraw_info_text()，先清空另外 3
+        # 个、最后才设 _session_id_var，避免"新内容跟上一次的旧摘要/槽
+        # 位混在一起"这种中间态。
         self._summary_var.set(""); self._slots_var.set(""); self._extra_sessions_var.set("")
         self._session_id_var.set(t("save.loading"))
         self._show_players_loading_placeholder()
@@ -884,15 +803,10 @@ class SaveBrowserTab:
                     img.thumbnail((icon_size, icon_size), Image.LANCZOS)
                     photo = ImageTk.PhotoImage(img)
                 photo_refs.append(photo)  # 防止没有强引用被提前回收
-                # thumbnail() 只保证缩放后不超过 icon_size 这个上限，不保证
-                # 缩出来正好是正方形——原图宽高比不是 1:1 时（不同角色的头
-                # 像裁切范围不一样，官方角色和"未知角色"占位图的宽高比也不
-                # 一定相同），缩出来的宽度会跟着变，直接把图片 Label 摆进
-                # outer 会导致每一行头像占的宽度不一样，后面"玩家标识"/
-                # "备注"整体跟着左右跳动（真机截图确认过，沃拓克斯的宽头
-                # 像跟"未知角色"的窄头像挨在一起就能看出参差不齐）。用一
-                # 个固定 icon_size x icon_size 的容器接住图片、居中显示，
-                # 每一行头像占位的宽度就固定了，不再随图片实际宽高比变化。
+                # thumbnail() 不保证缩出来正好是正方形（不同角色头像宽高
+                # 比不一样），直接摆进 outer 会导致每行头像占的宽度不一
+                # 样、后面"玩家标识"/"备注"跟着左右跳动。用固定
+                # icon_size x icon_size 的容器居中接住图片，宽度就固定了。
                 icon_slot = tk.Frame(outer, background=bg, width=icon_size, height=icon_size)
                 icon_slot.pack(side=tk.LEFT, padx=(0,8), anchor=tk.N)
                 icon_slot.pack_propagate(False)

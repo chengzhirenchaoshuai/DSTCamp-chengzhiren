@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-0.9.7-orange)
+![Version](https://img.shields.io/badge/version-0.9.8-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -50,7 +50,7 @@ python scripts/run_gui.py
 | 🖥️ **本地服务器** | 一键启动/停止，每个世界独立控制台（发送指令 / 公告 / 玩家列表 / 重置世界），支持回档、复制为服务器存档。启动前自动校验令牌。同一时间只支持一个存档运行，避免端口冲突。 |
 | 🧩 **Mod 管理** | 查看/启用/禁用/删除已装 Mod，可视化编辑配置项（说明文字常驻显示），一键把客户端 Mod 同步到服务器。支持 "Configs Extended" 这类 Mod 的集合/数组/字典/文本输入配置项。 |
 | 🌲 **世界设置** | 编辑世界规则与生成参数，森林/洞穴分开管理，按分类展示、带图标和取值说明。 |
-| ⚙️ **服务器配置** | 编辑游戏模式、语言、房间设置等，三列布局，数值字段按官方范围校验；管理员名单、黑名单、Token 管理。 |
+| ⚙️ **服务器配置** | 编辑游戏模式、语言、房间设置等，三列布局，数值字段按官方范围校验；管理员名单、黑名单、Token 管理（支持维护一个全局 Token 池，新建服务器存档自动取用，不用每次都去官网重新申请）。 |
 | 📦 **存档信息** | 存档详情 + 每个玩家角色状态（角色名/头像/血量/理智/饥饿/体温）；配套自动/手动备份、从备份恢复、备份策略配置。 |
 | 🌐 **内网穿透** | 没有公网 IP 也能联机，两种方式二选一：🌸 樱花映射（第三方免费服务，账号配额/节点选择/近期用量一目了然）或 🖧 自建 frps（用自己的云服务器，SSH 一键部署+免密登录、运行状态面板、一键检测公网连通性）。 |
 

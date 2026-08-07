@@ -241,6 +241,12 @@ STRINGS = {
         "token.masked": "(令牌已隐藏)",
         "token.prompt": "输入新的服务器令牌:",
         "token.invalid_hint": "令牌格式不正确（长度太短），请检查是否完整复制了令牌。",
+        "token.current_title": "当前服务器令牌",
+        "token.set_global_btn": "设置全局令牌",
+        "token.global_hint": "所有存档共享这些令牌，新建服务器存档时会自动取列表第一个，不用每次都手动申请/填写。",
+        "token.global_add_title": "添加全局令牌",
+        "token.global_empty": "暂无全局令牌",
+        "token.global_duplicate": "这个令牌已经在列表里了。",
 
         # 樱花映射
         "sakura.token_label": "API Token:",
@@ -388,6 +394,7 @@ STRINGS = {
         "copy.created_dest": "已创建目标目录 {dest}",
         "copy.copying_dir": "正在复制 {name}/ ...",
         "copy.copying_file": "正在复制 {name} ...",
+        "copy.token_assigned": "已从全局令牌池分配第一个令牌。",
         "copy.done": "复制完成。",
 
         # 配置编辑器
@@ -790,6 +797,12 @@ STRINGS = {
         "token.masked": "(Token hidden)",
         "token.prompt": "Enter new server token:",
         "token.invalid_hint": "That doesn't look like a valid token (too short) -- check you copied the whole thing.",
+        "token.current_title": "Current Server Token",
+        "token.set_global_btn": "Set Global Tokens",
+        "token.global_hint": "These tokens are shared across all saves -- creating a new server save will automatically use the first one in the list, no need to apply for/enter it manually each time.",
+        "token.global_add_title": "Add Global Token",
+        "token.global_empty": "No global tokens yet",
+        "token.global_duplicate": "This token is already in the list.",
 
         # 樱花映射
         "sakura.token_label": "API Token:",
@@ -937,6 +950,7 @@ STRINGS = {
         "copy.created_dest": "Created destination directory {dest}",
         "copy.copying_dir": "Copying {name}/ ...",
         "copy.copying_file": "Copying {name} ...",
+        "copy.token_assigned": "Assigned the first token from the global pool.",
         "copy.done": "Copy complete.",
 
         # 配置编辑器

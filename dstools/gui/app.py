@@ -41,10 +41,6 @@ from dstools.models import Platform, SaveSource, Shard
 class DSToolsApp:
     # 窗口锁死的宽高比基准——启动尺寸、ResizeGrips 拖拽缩放、伪最大化计
     # 算都用这一对值，改窗口比例只需要改这里。
-    # 服务器配置页签这一轮新加了 STEAM 分区 + connection_timeout/
-    # idle_timeout/override_dns 三个字段之后，NETWORK 这一列变成最高的
-    # 一列，真机反馈过默认窗口高度下"保存"按钮被顶到看不见——按 16:9 调
-    # 大一圈，给纵向留更多余量。
     WINDOW_BASE_W = 1600
     WINDOW_BASE_H = 900
 
@@ -66,19 +62,9 @@ class DSToolsApp:
             self.root.iconbitmap(default=str(_icon_dir / "icon.ico"))
         except Exception:
             pass  # 找不到就用 Tk 自带的默认图标，不影响功能
-        # 默认窗口比原来的 1300x710 放大了一圈（约 15%，宽高比不变仍是
-        # 1300:710 那个比例）——用户反馈默认打开太小。1300 宽这个下限本身
-        # 的由来还在：更窄"Mod管理"页签那一行会把最后一个按钮(同步mod文
-        # 件到服务器)挤到只剩十几像素宽看不见文字；world_render.py 的
-        # BASE_REF_WIDTH 是按原来 1300 调的，现在窗口更宽了，世界设置面板
-        # 首次打开会多一次"停顿后按实际宽度重渲染"（既有机制，见
-        # image_scroll.py 的 SETTLE_DELAY_MS），不是 bug，只是不再是"一开
-        # 始就恰好是原始分辨率"而已。
-        # 启动位置：应用户要求不再固定贴屏幕左上角——优先用上次关闭时保
-        # 存的坐标（_compute_startup_position() 里会校验这个坐标是否还
-        # 落在当前显示器布局范围内，处理"上次开在副屏、这次副屏没接"这
-        # 类情况），没存过或者校验不通过就退回屏幕正中央（比默认贴左上
-        # 角更合理的首次启动体验）。
+        # 启动位置：优先用上次关闭时保存的坐标（校验是否还落在当前显示
+        # 器布局范围内，处理"上次开在副屏、这次副屏没接"的情况），没存
+        # 过/校验不通过就回退屏幕居中。
         x, y = self._compute_startup_position()
         self.root.geometry(f"{self.WINDOW_BASE_W}x{self.WINDOW_BASE_H}+{x}+{y}")
         self.root.minsize(900, 580)
@@ -90,45 +76,26 @@ class DSToolsApp:
         self._is_pseudo_maximized = False
         self._pre_maximize_geom: tuple[int, int, int, int] | None = None
 
-        # 自定义标题栏：弃用原生标题栏，改成自己画一条 + 手写拖拽移动/
-        # 缩放，见 gui/custom_titlebar.py 顶部说明——那边跟这次的
-        # win_aspect_lock.py 刻意分成两个文件，前者全程只做"一次性设置
-        # 窗口样式位"的 Win32 调用，不涉及消息钩子，风险级别跟后者已经
-        # 出过真实崩溃的 WNDPROC 替换完全不同。原生标题栏没了之后
-        # Windows 不会再对这个窗口发 WM_SIZING，AspectLock 从此不再对
-        # root 生效（也就不再调用），宽高比锁定改成
-        # custom_titlebar.ResizeGrips 里同一套数学重新算一遍。
+        # 自定义标题栏：弃用原生标题栏，自己画一条+手写拖拽移动/缩放
+        # （见 custom_titlebar.py）。原生标题栏没了之后 Windows 不会再发
+        # WM_SIZING，宽高比锁定改成 ResizeGrips 里的数学重新算。
         from dstools.shared.gui import custom_titlebar
         custom_titlebar.apply_borderless_style(self.root)
 
         self.style = ttk.Style(); self.style.theme_use("clam")
         theme.apply_theme(self.root, self.style)
-        # theme.apply_theme() 内部会调 root.attributes("-alpha", ...)——
-        # Windows 上 Tk 这个调用会整体重写窗口的扩展样式位，把
-        # apply_borderless_style() 刚设置好的 WS_EX_APPWINDOW 冲掉，表现
-        # 为任务栏图标/Alt+Tab 找不到这个应用（真机调试复现过，见
-        # custom_titlebar.ensure_taskbar_visible() 的说明）。每次调完
-        # theme.apply_theme() 后都要重新调一遍找补回来，_switch_theme()
-        # 里也是同样的道理。
-        #
-        # refresh_shell=True（隐藏再显示一下触发任务栏重新扫描，见该函
-        # 数文档字符串）特意放在这里、紧跟第一次 theme.apply_theme() 之
-        # 后，而不是放到 __init__ 最后——放最后虽然闪烁的是已经建好的完
-        # 整界面、观感更平滑，但意味着任务栏图标要等标题栏/菜单/六个页
-        # 签整棵控件树全部建完才会出现，真机反馈"等一会才出现"体验不如
-        # 点击就近乎同时出现；放这里闪的是刚设完样式、内容还没填充的空
-        # 窗口，代价是这一下闪烁可能更明显，换来任务栏图标基本跟点击启
-        # 动同时出现，两者取舍过后选了这一版。
+        # theme.apply_theme() 会调 root.attributes("-alpha", ...)，这在
+        # Windows 上会冲掉 apply_borderless_style() 设置的 WS_EX_APPWINDOW，
+        # 导致任务栏/Alt+Tab 找不到窗口——每次调完 theme.apply_theme() 都
+        # 要重新找补一遍（_switch_theme() 同理）。refresh_shell=True 放在
+        # 这里（而不是 __init__ 最后）是为了让任务栏图标尽早出现，代价是
+        # 这一下的窗口闪烁更明显一点。
         custom_titlebar.ensure_taskbar_visible(self.root, refresh_shell=True)
         self._init_bg_system()
-        # 铺满整个客户区、z-order 最底层的背景——root 本身不是 BgFrame，
-        # 永远只有 theme.BG_SOFT 这一种浅色纯色；顶层各控件之间用
-        # pack() padx/pady 留出的间隙（比如"存档:"栏跟页签卡片之间、卡
-        # 片跟底部状态栏之间）会漏出 root 这层浅色，在暗色自定义背景图
-        # 下变成一条条突兀的白边（真机截图确认过）。这里先创建一个铺满
-        # 整个客户区的 BgFrame——因为最先创建，之后所有 pack()/place()
-        # 的控件天然叠在它上面，任何缝隙漏出来的都是这张背景图本身，不
-        # 再是纯色。
+        # 铺满整个客户区、z-order 最底层的背景——root 本身只有纯色
+        # BG_SOFT，控件间 pack() 留白会漏出这层纯色，在深色自定义背景图
+        # 下变成突兀的白边；先建一个铺满整个客户区的 BgFrame 垫底，缝隙
+        # 露出来的就是背景图本身。
         self._root_bg = BgFrame(self.root, self)
         self._root_bg.place(relx=0, rely=0, relwidth=1, relheight=1)
         self._titlebar = custom_titlebar.CustomTitleBar(self.root, self, icon_path=_icon_dir / "icon.png")
@@ -150,11 +117,9 @@ class DSToolsApp:
 
         # 之前试过把这个改成 Canvas + 各自独立 render_background()，在真实
         # 拖拽缩放窗口时跟 win_aspect_lock.py 的原生 WM_SIZING 钩子打架，
-        # 出现过布局错位/闪烁/背景图割裂——根因是"每个背景表面各自独立做
-        # 一遍读盘/裁剪/缩放/混合这套重活，且没有防抖"。这次改用 BgFrame
-        # （gui/bg_frame.py），走 DSToolsApp 统一维护的"共享大图"，拖拽过
-        # 程中只做便宜的内存 crop，重活只在窗口停顿后做一次——这个节流
-        # 手法本身是 image_scroll.py 已经验证过的既有规范，不是新发明的。
+        # BgFrame 走 DSToolsApp 统一维护的"共享大图"，拖拽缩放期间只做
+        # 便宜的内存裁剪，真正的读盘/缩放只在窗口停顿后做一次（见
+        # bg_frame.py 顶部说明）。
         self._tab_area = BgFrame(self.root, self)
         self._tab_area.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self._tab_area.grid_rowconfigure(0, weight=1)
@@ -168,35 +133,22 @@ class DSToolsApp:
 
         self._tab_cards = {k: _make_card() for k in self._tab_keys}
 
-        # 顶部统一存档选择栏——5 个页签原来各自（或者"存档信息"是服务
-        # 器/本地两个子页签分别）维护一份完全独立的存档下拉框，选完一个
-        # 存档还要在另外几个页签里重新选一遍，容易选错/选漏，"存档信息"
-        # 那份还额外造成了背景图错位的 bug（见 _on_tab_select 的说明）。
-        # 这里统一成一个控件，全部 6 个页签的 on_cluster_changed() 由
-        # _on_global_cluster_select()/_refresh() 统一广播，全程常驻显
-        # 示，不会因为切到哪个页签而隐藏。self._cluster_bar 是最外层
-        # （描边色），真正的内容放在里面一层 CARD_BG 背景的
-        # _cluster_bar_inner 里，四周露出 1px 边框——跟 _show_about 已经
-        # 在用的"卡片"配色配方一样，让这一整条看起来是一张浮起来的卡片，
-        # 而不是几个控件干巴巴地摆在页面背景上。
-        # BgFrame 而不是 tk.Frame——这一条栏也要能显示自定义背景图。
+        # 顶部统一存档选择栏——全部 6 个页签共用一个控件，on_cluster_
+        # changed() 由 _on_global_cluster_select()/_refresh() 统一广播，
+        # 全程常驻不随页签切换隐藏。_cluster_bar 是描边色外层，
+        # _cluster_bar_inner 是 CARD_BG 内层，四周露 1px 边框，做成"浮起
+        # 来的卡片"的观感。都用 BgFrame 以便透出自定义背景图。
         self._cluster_bar = BgFrame(self.root, self, bg=theme.CARD_BORDER)
         cluster_bar_inner = self._cluster_bar_inner = BgFrame(self._cluster_bar, self, bg=theme.CARD_BG)
         cluster_bar_inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
-        # 比其它选择器都大一号，字体和内边距都放大——毕竟这是决定其它 4
-        # 个页签内容的最重要的一个控件，视觉上应该更显眼；加粗+主题强调色
-        # 让它看起来像个有分量的标签，而不是随手放的一行说明字。"存档:"
-        # 这段文字不用 tk.Label（绘制区域永远不透明实色，会挡住背景图），
-        # 直接在 cluster_bar_inner 这个 BgFrame 的 Canvas 上 create_text
-        # 画字，跟 install_row/_ShardRow 是同一个思路。
+        # "存档:"文字直接在 Canvas 上 create_text 画（不用 tk.Label，会挡
+        # 住背景图），字号比其它选择器大一号、加粗+强调色，突出这是最重
+        # 要的控件。
         self._archive_label_font = tkfont.Font(size=12, weight="bold")
         self._archive_label_w = self._archive_label_font.measure(t("selector.archive"))
-        # "存档类型:"(Steam/WeGame 筛选器)排在最左边，跟"存档:"是同一支画
-        # 法——先画这个标签，"存档:"标签的 x 坐标不能再写死 12，得等
-        # "存档类型"这个 Menubutton 真的被 pack 布局完之后，现查它的实际
-        # 右边缘在哪（winfo_x()+winfo_width()），再往右让一段空隙——两个
-        # Menubutton 之间靠 pack() 自身的左右顺序自动排列，不需要手动算,
-        # 只有画在 Canvas 上的文字坐标需要跟着现查。
+        # "存档类型:"(Steam/WeGame 筛选器) 画在最左边，"存档:"标签的 x 坐
+        # 标要等它真正 pack 布局完才能现查右边缘（两个 Menubutton 靠
+        # pack() 自动排列，只有画在 Canvas 上的文字坐标需要手动跟着算）。
         self._platform_label_w = self._archive_label_font.measure(t("selector.save_type"))
 
         def _redraw_platform_label():
@@ -225,24 +177,13 @@ class DSToolsApp:
         self._redraw_archive_label = _redraw_archive_label
         cluster_bar_inner.bind("<Configure>", lambda e: (self._redraw_platform_label(),
                                                           self._redraw_archive_label()), add="+")
-        # 这里特意不用 ttk.Combobox：readonly Combobox 背后是一个真正的
-        # Entry，实测（含用户本机反复验证）在"打开下拉/选中一项"之后，
-        # 这个 Entry 有时会卡住不肯把新文字画出来——底层选中值其实一直是
-        # 对的（点最小化瞬间能看到一次正确画面），但改内容
-        # （StringVar/combo.set）、强制走"刷新"同一份重建逻辑、甚至改一下
-        # 几何尺寸逼一次重绘，统统没用，只有真的点一下"刷新"按钮才会恢复
-        # ——这是 Entry 内部某种状态卡死，不是这个工具能从外面稳定修好的
-        # 东西。换成 Menubutton + Menu 彻底绕开这个坑：没有 Entry，当前
-        # 选中项就是普通的 tk.Label 文字（-textvariable 绑定），弹出的是
-        # 原生 Menu（Windows 自己的菜单绘制，历史上极少出这类"数据对但画
-        # 面不对"的问题），"选中了哪个存档"也不再靠反解析显示文字，而是
-        # 直接存一份 Cluster 对象引用（self._global_selected_cluster），
-        # 彻底不存在"文字被清空导致解析不到存档"这一类问题。
-        # "存档类型:"筛选器——Steam/WeGame 两棵目录树的存档混在同一个下拉
-        # 框里，只用文字标签区分（见 gui/cluster_select.py 的
-        # cluster_label()）容易选错，这里按平台先筛一遍，"存档:"那个下
-        # 拉框只列筛选后的那一部分。用 MenuCombo（同样是 Menubutton+Menu，
-        # 不是 ttk.Combobox）保持跟"存档:"一致的实现方式。默认 Steam。
+        # 不用 ttk.Combobox：readonly Combobox 背后是个真 Entry，实测选
+        # 中一项后有时会卡住不画新文字（底层值是对的，只有画面不对，点
+        # "刷新"按钮才恢复）。换成 Menubutton+Menu 彻底绕开——没有 Entry，
+        # 选中项是普通 Label 文字，"选中了哪个存档"直接存 Cluster 对象引
+        # 用，不靠反解析文字。
+        # "存档类型:"筛选器：Steam/WeGame 两棵目录树按平台先筛一遍，
+        # "存档:"下拉框只列筛选后的部分，默认 Steam。
         self._platform_var = tk.StringVar(value=get_last_platform() or "Steam")
         self._platform_menu = MenuCombo(cluster_bar_inner, textvariable=self._platform_var,
                                          width=8, style="Archive.TMenubutton")
@@ -250,23 +191,18 @@ class DSToolsApp:
         self._platform_menu.bind("<<ComboboxSelected>>", lambda e: self._on_platform_change())
         self._platform_menu.pack(side=tk.LEFT, padx=(12 + self._platform_label_w + 6, 10), ipady=3)
         self._platform_menu_btn = self._platform_menu.widget
-        # cluster_bar_inner 自己的 <Configure> 有时候在这个 Menubutton
-        # 还没真正落位（winfo_width() 还是 1）的时候就先触发过一次，之后
-        # 如果 cluster_bar_inner 自身尺寸不再变化，就再也不会重新触发，
-        # "存档:"就永久画不出来——额外在这个 Menubutton 自己身上也绑一次
-        # <Configure>，它自己布局落位的那一刻必然会触发，用 update_
-        # idletasks() 强制立刻算一次当前布局，不用等真的进入事件循环。
+        # cluster_bar_inner 自己的 <Configure> 可能在这个 Menubutton 还
+        # 没真正落位时就先触发过一次、之后不再触发，"存档:"就画不出来
+        # ——额外在 Menubutton 自己身上也绑一次 <Configure> 兜底。
         self._platform_menu_btn.bind("<Configure>", lambda e: self._redraw_archive_label(), add="+")
         cluster_bar_inner.update_idletasks()
         self._redraw_platform_label()
         self._redraw_archive_label()
 
         self._global_cluster_var = tk.StringVar()
-        # 用上次记住的存档路径占个位——_populate_global_cluster_combo()
-        # 的 preserve=True 分支只看 prev.path，不需要一个真的 Cluster 对
-        # 象，这里拿 SimpleNamespace 撑一下就够，调用完就被换成 discover_
-        # environment() 现查出来的真实 Cluster 对象（同一路径但对象本身
-        # 不是同一个引用），不会带着这份假对象到处传。
+        # 用上次记住的存档路径占个位，_populate_global_cluster_combo()
+        # 的 preserve=True 分支只看 .path，SimpleNamespace 撑一下就够，
+        # 调用完即被换成现查出来的真实 Cluster 对象。
         last_path = get_last_cluster_path()
         self._global_selected_cluster = SimpleNamespace(path=Path(last_path)) if last_path else None
         self._global_cluster_menu_btn = ttk.Menubutton(
@@ -274,26 +210,17 @@ class DSToolsApp:
             width=38, style="Archive.TMenubutton")
         self._global_cluster_menu = tk.Menu(self._global_cluster_menu_btn, tearoff=0)
         self._global_cluster_menu_btn.configure(menu=self._global_cluster_menu)
-        # postcommand：每次真的点开这个菜单才重新算一遍每个存档"是不是在
-        # 运行"，不用一个额外的轮询定时器去维护这份下拉列表——用户没点开
-        # 看之前，这个信息新不新鲜不重要。
+        # postcommand：只在真的点开菜单时才重新算每个存档"是不是在运
+        # 行"，不用额外轮询定时器维护这份下拉列表。
         self._global_cluster_menu.configure(postcommand=lambda: self._populate_global_cluster_combo(preserve=True))
-        # "存档:"文字不再是 pack() 进来的 Label，没法再靠"排在它后面"自动
-        # 空出位置——左边距改成手动算：12（文字左内边距）+ 文字实际宽度 + 6
-        # （原来 Label 自己的右内边距），跟以前视觉上对齐。
+        # "存档:"是画在 Canvas 上的文字，不是 pack() 进来的 Label，左边距
+        # 手动算：12（左内边距）+ 文字宽度 + 6（对齐用）。
         self._global_cluster_menu_btn.pack(side=tk.LEFT, padx=(12 + self._archive_label_w + 6, 10), ipady=3)
         ttk.Button(cluster_bar_inner, text=t("save.refresh"), command=self._refresh,
                    style="Big.TButton").pack(side=tk.LEFT, padx=(0, 10))
         self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
         self._populate_global_cluster_combo(preserve=True)
 
-        # SaveBrowserTab 把原来独立的"环境信息"页签并成了第二个子页签
-        # （存档概览/会话详情）——两者本质上都是"展示我的存档信息"，只是
-        # 切分维度不同（按存档整体概览 vs 按单次会话详情），分开只会让用
-        # 户在两个页签之间来回点找关联信息。会话详情现在
-        # 跟其它 4 个页签一样，靠顶部全局存档选择器驱动（不再自己维护一
-        # 份服务器/本地各一套的下拉框），"存档信息"因此可以完全并入下面
-        # 通用的 _cluster_tab_map/_stale_cluster_tabs 懒加载机制。
         self.local_tab = LocalServiceTab(self._tab_cards["local"].body, self)
         self.save_tab = SaveBrowserTab(self._tab_cards["saves"].body, self)
         self.mod_tab = ModManagerTab(self._tab_cards["mods"].body, self)
@@ -328,20 +255,12 @@ class DSToolsApp:
                 card.grid_remove()
         self._refresh_tab_labels()
 
-        # BgFrame + create_text（不是 ttk.Label）——ttk.Label 的 TLabel 样
-        # 式背景固定是 theme.BG_SOFT（浅色，见 theme.apply_theme()），在
-        # 暗色自定义背景图下会显得像贴底的一条白色横杠（真机截图确认
-        # 过）。跟本项目其它说明性文字（make_toolbar_label 等）同一个
-        # 思路，换成能显示背景图切片的画布，只是丢了 ttk 原生的
-        # relief=SUNKEN 内凹描边——这个项目里其它地方本来就没有类似的描
-        # 边效果，不算观感倒退。
+        # 状态栏用 BgFrame + create_text（不用 ttk.Label——TLabel 样式背
+        # 景固定浅色，在暗色自定义背景图下会像一条白色横杠）。
         self.status_var = tk.StringVar(value=t("app.ready"))
         self._status_font = tkfont.nametofont("TkDefaultFont")
-        # 状态栏高度还是原来那套算法（行高+6），不再额外加高——加了 14px
-        # 纯空白那版用户反馈"下面空一大块很奇怪"，视觉上确实比原来明显厚
-        # 一圈，改回去。缩放手柄贴到窗口真实底边（下面 bottom_reserve=0）
-        # 这件事改成手柄自己的尺寸够小，不靠状态栏让出空白来配合——见
-        # custom_titlebar.py 里 ResizeGrips 的 _BOTTOM_GRIP 说明。
+        # 高度=行高+6，文字垂直居中上下各留 3px，缩放手柄（bottom_grip）
+        # 就塞在这个留白里，不需要状态栏额外让出空间。
         self._status_text_h = self._status_font.metrics("linespace") + 6
         status_h = self._status_text_h
         self._status_bar = BgFrame(self.root, self, bg=theme.CARD_BG)
@@ -378,16 +297,10 @@ class DSToolsApp:
         self._status_bar.bind("<Configure>", lambda e: _redraw_status_bar(), add="+")
         _redraw_status_bar()
 
-        # 系统托盘——跟大多数常驻后台的应用习惯一致，应用一启动就常驻显
-        # 示在托盘里，一直到应用真正退出才消失（不是以前那版"只在被最小
-        # 化/关闭到托盘时才临时出现，窗口一恢复就消失"）。pystray 后端见
-        # gui/tray_icon.py 顶部说明（跟这次会话前面 win_aspect_lock.py 那
-        # 次 WM_EXITSIZEMOVE 崩溃是完全不同的架构：pystray 自己的消息循
-        # 环在独立线程里，不是挂在 Tk 的窗口过程上，但跨线程回调 Tk 这条
-        # 底线还是要守，on_restore/on_exit 都用 root.after(0, ...) 转回
-        # 主线程）。注意：标题栏"最小化"按钮不会触碰这个类——那是 Windows
-        # 自己处理的普通最小化到任务栏，跟托盘图标是否常驻是两件独立的
-        # 事，不要在 <Unmap> 上接一个"最小化=进托盘"的分支。
+        # 系统托盘：应用启动就常驻显示，直到真正退出才消失。pystray 自
+        # 己的消息循环在独立线程，跨线程回调 Tk 必须用 root.after(0, ...)
+        # 转回主线程。标题栏"最小化"按钮跟托盘图标是否常驻是两件独立的
+        # 事，不要在 <Unmap> 上接"最小化=进托盘"的分支。
         from dstools.shared.gui.tray_icon import TrayIcon
         self._tray = TrayIcon(
             icon_image_path=str(_icon_dir / "icon.png"),
@@ -399,12 +312,9 @@ class DSToolsApp:
         )
         self._tray.show()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        # 点击窗口内任意非输入控件的地方，让当前正在编辑的输入框失焦
-        # （清除输入光标）——Tk 默认只有点到"能接收焦点"的控件(Entry/
-        # Button 等)才会转移焦点，点在纯展示性的 Label/Frame/Canvas 上什
-        # 么都不会发生，输入框会一直带着光标停留在"编辑中"状态（真机反
-        # 馈过"存档信息"里的"备注"输入框有这个问题）。bind_all 绑在 root
-        # 上是全局的，对项目里所有 Entry/Text 都生效，不止"备注"这一处。
+        # 点击非输入控件的地方让当前编辑中的输入框失焦——Tk 默认点在纯
+        # 展示性的 Label/Frame/Canvas 上不会转移焦点，输入框会一直停留
+        # 在编辑状态。bind_all 全局生效，不止某一个输入框。
         self.root.bind_all("<Button-1>", self._dismiss_entry_focus, add="+")
         # 首次同步建一次共享背景大图——不这样做的话，要等 root 第一次
         # <Configure>（本来就会在窗口刚显示时触发一次）之后再等
@@ -414,45 +324,17 @@ class DSToolsApp:
         self._update_status(); self._refresh()
         self._start_update_check()
 
-        # 缩放手柄放在 __init__ 最后——它们是直接 place() 在 root 上的
-        # 普通控件，Tk 里同一父容器下后创建的控件在层叠顺序里更靠上，必
-        # 须等其它内容（菜单条/页签条/卡片/底部状态栏等，同样是 root 的
-        # 直接子控件）都建完，手柄才能稳定盖在最上层接收边缘的鼠标事件。
-        #
-        # n/nw/ne 三个手柄现在固定贴在窗口真实顶边（y=0，不受 top_reserve
-        # 影响，见 custom_titlebar.py 里 ResizeGrips 的说明）——早期版本
-        # 靠 top_reserve 把它们整体下移一整条标题栏+菜单条的高度，用户反
-        # 馈"应该跟 Windows 一样能直接在左上/右上角拖拽缩放"，改成贴真实
-        # 顶边 + 尺寸缩小成 top_grip（配合 CustomTitleBar._EDGE_MARGIN，
-        # 标题栏的最小化/关闭按钮的可点击矩形从这条留白下面才开始画，两
-        # 者贴着但不重叠，不会互相"抠"）。
-        #
-        # top_reserve 现在只管 w/e 两条竖边的下限，依然要给"标题栏+菜单
-        # 条"这么大——这两条边贴着窗口左右两侧、贯穿几乎整个高度，如果只
-        # 越过按钮那一小段，会在标题栏这一段里把关闭按钮最右侧几像素连成
-        # 一条竖直的死条（关闭按钮本来就贴着窗口右边缘）；"文件"菜单项也
-        # 贴着菜单条左上角 x=0 起画，w 边缘手柄没让开菜单条的话会啃掉它
-        # 的左边缘（用户截图 1.png 确认过的那次）。n/nw/ne 单独贴真实顶
-        # 边不代表 w/e 的下限也要跟着收紧，是分开处理的两件事。
-        #
-        # 胶囊页签条（_pill_bar）选中态药丸的起始间距 _GAP 之前因为手柄
-        # 下移到页签条被顶过（用户截图 2.png 确认过），已经在
-        # pill_tabs.py 里加大到 >=12——n/nw/ne 现在贴真实顶边、够不到页签
-        # 条了，这个间距不再是必须的，但留着也没有坏处（页签之间稍微松
-        # 一点，不影响观感），不用专门改回去。
-        #
-        # 状态栏（跟标题栏不一样）从头到尾只有纯文字、没有任何按钮，不需
-        # 要整条让开——bottom_reserve 直接给 0（手柄贴到窗口真实底边），
-        # 靠缩小南边手柄本身的尺寸（bottom_grip）来避免盖住文字。这里试过
-        # 两版都不理想：①bottom_reserve=状态栏整条高度——缩放热区整条排
-        # 除在外，鼠标要挪到状态栏上边缘以上才有缩放光标，最左下/最右下
-        # 附近完全够不到，用户反馈像状态栏"不属于"主窗口；②状态栏额外加
-        # 高一条纯空白给手柄用——又被反馈"底下空一大块很奇怪"。现在两头
-        # 都不动状态栏的布局，只把手柄缩小到能塞进文字自带的上下留白里
-        # （状态栏高度是 文字行高+6，文字垂直居中，上下各留 3px，见上面
-        # status_h 那行）。宽高比是锁死的，从任何一条边/角拖都能等效缩放
-        # 整个窗口，缩小南边手柄不影响缩放操作本身，只是南边比其它三边细
-        # 一点、需要稍微精确一点的鼠标定位。
+        # 缩放手柄放在 __init__ 最后——直接 place() 在 root 上，同一父容
+        # 器下后创建的控件层叠顺序更靠上，必须等标题栏/菜单/卡片/状态栏
+        # 都建完，手柄才能稳定盖在最上层接收边缘鼠标事件。
+        # n/nw/ne 三个手柄贴窗口真实顶边（不受 top_reserve 影响），配合
+        # 缩小的 top_grip 尺寸，跟标题栏按钮的可点击区域贴着但不重叠。
+        # top_reserve 只管 w/e 两条竖边的下限，仍然要留够"标题栏+菜单条"
+        # 高度——这两条边贯穿窗口左右两侧，留得不够会啃掉关闭按钮或菜单
+        # 项的边缘。
+        # 状态栏没有任何按钮，不需要整条让开：bottom_reserve=0，靠缩小
+        # 南边手柄（bottom_grip）塞进文字自带的上下留白里，避免盖住文
+        # 字，同时缩放热区仍然覆盖到窗口最底边。
         self.root.update_idletasks()
         top_reserve = self._titlebar.winfo_height() + self._menu_strip.winfo_height()
         custom_titlebar.ResizeGrips(self.root, self, self.WINDOW_BASE_W, self.WINDOW_BASE_H,
@@ -467,54 +349,26 @@ class DSToolsApp:
                 card.grid_remove()
         self._current_tab_key = key
 
-        # 之前这里在每次切页签后都强制 update_idletasks() +
-        # _refresh_all_bg_surfaces()，是为了修一个"顶部全局存档选择栏
-        # （_cluster_bar）切进/切出'存档信息'时单独隐藏/显示，导致
-        # _tab_area 屏幕位置跟着变、深层嵌套的 BgFrame 没收到 <Configure>
-        # 而背景图错位"的 bug。现在 _cluster_bar 全程常驻显示（见
-        # SaveBrowserTab.on_cluster_changed()），那个根因已经不存在了，
-        # 这里不再需要每次都强制刷新——card.grid()/grid_remove() 本身对
-        # 刚显示出来的这张卡片就是一次真正的几何变化（从"未托管"变成
-        # "已托管"），会正常级联触发它自己以及所有子控件的 <Configure>，
-        # 各个 BgFrame 自己就能用上当前正确的屏幕坐标，不需要外部再强制
-        # 补一次。61 个背景表面全量重刷一次实测要 200ms+，之前无条件对
-        # 每次切页签都做一遍（甚至做两遍），是真机反馈过的"切页签变卡"
-        # 的根因。
+        # card.grid()/grid_remove() 本身就是一次真正的几何变化（"未托管"
+        # 变"已托管"），会级联触发自己和所有子控件的 <Configure>，各
+        # BgFrame 自己就能用上正确的屏幕坐标，不需要在这里强制补刷。61
+        # 个背景表面全量重刷一次要 200ms+，每次切页签都做的话会很卡。
 
-        # 切过来的这个页签如果在别的页签选存档时被标脏过（见
-        # _apply_global_cluster_change），现在补一次刷新——只有这种情况
-        # 才可能是真正的重活（"存档信息"首次访问要解析所有玩家角色的头
-        # 像/名字，含未缓存的 mod 头像转换；世界设置/服务器配置/Mod管理
-        # 是 PIL 面板重绘/Lua 沙箱扫描，真机实测冷启动能到 1~2 秒的同步
-        # 阻塞）。这里不套 _begin_bg_drag_suppress()（先把背景清空成纯
-        # 色再重算）——之前套过一版，效果是重活这 1~2 秒里整个窗口背景
-        # 图变成大片纯色（"全屏白色"），真机反馈这比"背景图偶尔有一点点
-        # 没对齐"更明显、更难看。
+        # 只有被标脏过的页签（见 _apply_global_cluster_change）才需要在
+        # 这里补一次刷新——这可能是真正的重活（Lua 沙箱扫描/PIL 面板重
+        # 绘/玩家头像解析，冷启动能到 1~2 秒同步阻塞）。先手动
+        # update_idletasks()+_refresh_all_bg_surfaces()+update() 把已经
+        # grid() 出来的背景图立刻画到屏幕上，让背景先于这 1~2 秒的重活
+        # 显示出来，避免用户看到画面僵住。
         if key in self._stale_cluster_tabs:
             self._stale_cluster_tabs.discard(key)
-            # 背景图应该优先显示，不用等内容一起加载好——on_cluster_
-            # changed() 是同步阻塞 Tk 主线程的重活，不主动强制刷新一次
-            # 的话，Tk 在这整个 1~2 秒里完全没有机会把"这张卡片已经
-            # grid() 出来了"这件事真的画到屏幕上（<Configure> 触发的背
-            # 景渲染走的是 after(16, ...) 定时器，不会在主线程被同步代
-            # 码占住时自己插队执行），用户看到的是"点了之后画面僵住
-            # 一两秒，背景和内容同时冒出来"。这里先补一次
-            # update_idletasks()（把刚才 card.grid() 这次真正排布完）+
-            # _refresh_all_bg_surfaces()（背景表面用新坐标裁好）+
-            # update()（这一步是关键——不只是排布，是真的把已经画好的
-            # 内容立刻刷到屏幕上，不用等 on_cluster_changed() 返回、回
-            # 到主循环那一刻才有机会重绘），这样背景图能在内容加载完成
-            # 之前就先显示出来，重活期间背景图保持这个已经对齐好的样
-            # 子，不会再变成大片纯色或者僵住不出现。
             self.root.update_idletasks()
             self._refresh_all_bg_surfaces()
             self.root.update()
 
             self._cluster_tab_map[key].on_cluster_changed()
 
-            # 重活做完后再刷一次，保证最终状态一定是对的——多数情况下
-            # 重活期间背景本身不会变（没有发生窗口尺寸变化），上面已经
-            # 提前显示的那张就是对的，这次只是兜底。
+            # 重活做完后再刷一次兜底，保证最终状态一定是对的。
             self.root.update_idletasks()
             self._refresh_all_bg_surfaces()
 
@@ -549,27 +403,14 @@ class DSToolsApp:
             self._do_exit()
 
     def _minimize_to_tray(self):
-        # 托盘图标现在应用一启动就常驻显示（见 __init__ 里 self._tray.
-        # show() 那次调用），这里不用再单独 show() 一次——TrayIcon.show()
-        # 本身也做了"已经在跑就什么都不做"的幂等判断，就算哪天又需要在
-        # 这里补调一次也不会出问题，纯粹是现在没必要了。
         self.root.withdraw()
 
     def _restore_from_tray(self):
-        # 同理，不在这里 hide() 托盘图标——它要一直显示到应用真正退出
-        # （_quit_app()）为止，窗口从托盘恢复显示不等于要退出。
-        #
-        # 不能只调 root.deiconify()——窗口被藏起来可能是两条完全不同的
-        # 路径：勾选了"关闭时最小化到任务栏"时点关闭按钮走的是
-        # _minimize_to_tray()（Tk 自己的 root.withdraw()，deiconify() 能
-        # 正确撤销）；但标题栏的最小化按钮走的是原生
-        # ShowWindow(SW_MINIMIZE)（custom_titlebar.minimize_window()，
-        # 跟这个复选框设置完全无关，随时都能点），deiconify() 对这种情
-        # 况不起作用。真机反馈过"没勾选这个设置时点托盘图标没反应"，根因
-        # 就是这种情况——用户点的是标题栏最小化按钮，不是关闭按钮。
-        # custom_titlebar.restore_window() 两条路径都处理，见该函数说明。
-        # 局部 import，理由跟 __init__/_switch_theme() 里那两处一样：避
-        # 免非 Windows 平台在模块加载时就碰 ctypes.windll。
+        # 不能只调 root.deiconify()——窗口被藏起来可能走了两条不同的路
+        # 径：勾选"关闭时最小化到任务栏"时点关闭按钮走 _minimize_to_tray()
+        # （root.withdraw()，deiconify() 能撤销）；标题栏最小化按钮走的
+        # 是原生 ShowWindow(SW_MINIMIZE)，deiconify() 对这种情况不起作
+        # 用。custom_titlebar.restore_window() 两条路径都处理。
         from dstools.shared.gui import custom_titlebar
         custom_titlebar.restore_window(self.root)
 
@@ -642,17 +483,12 @@ class DSToolsApp:
                 vy + max(0, (vh - self.WINDOW_BASE_H) // 2))
 
     def _toggle_pseudo_maximize(self) -> None:
-        """标题栏"伪最大化"按钮的实际逻辑——不是原生"真最大化"（那样会
-        撑破锁死的 1500:820 宽高比，见 custom_titlebar.CustomTitleBar 顶
-        部说明），而是"缩放到当前显示器工作区能放下的、仍然保持
-        1500:820 比例的最大尺寸，并居中"，再点一次还原回点击前的位置/
-        大小。
-
-        这个实现完全不碰 win_aspect_lock.py 的 WM_SIZING 钩子——那边的
-        铁律是"绝对不能从替换过的窗口过程里回调 Tk/Python 代码"，而这
-        里是标题栏按钮点击触发的普通 Tk 回调，运行在 Tk 主线程上，跟钩
-        子内部是完全不相干的两条路径，不存在触发那个已知崩溃
-        （PyEval_RestoreThread: GIL not held）的风险。"""
+        """标题栏"伪最大化"按钮——不是原生真最大化（会撑破锁死的
+        WINDOW_BASE_W:WINDOW_BASE_H 宽高比），而是缩放到当前显示器工作
+        区能放下的、仍保持这个比例的最大尺寸并居中，再点一次还原回点
+        击前的位置/大小。运行在 Tk 主线程的普通回调里，不碰
+        win_aspect_lock.py 的 WM_SIZING 钩子（那边禁止从替换过的窗口过
+        程回调 Tk/Python），两者互不相干。"""
         from dstools.shared.gui import custom_titlebar
 
         if self._is_pseudo_maximized:
@@ -683,35 +519,18 @@ class DSToolsApp:
         self._is_pseudo_maximized = True
 
     def _build_menu(self):
-        """原生 tk.Menu 挂成 Windows 系统菜单条(root.config(menu=...))时，
-        Windows 自己接管绘制，Tk 这边只能改背景色/字体这几项，做不出跟
-        应用其它部分一致的"自然"观感（tk.Menu 没有圆角/阴影/强调色 hover
-        这些能力）。这里改成不挂系统菜单条，而是自己在 _pill_bar 上方画
-        一排 tk.Label 当触发条（悬停变色，跟 ToggleSwitch/PillTabBar 已经
-        在用的"改 configure(bg=...)"手法一致），点击时用 tk_popup() 弹出
-        下面这几个 tk.Menu ——下拉内容本身还是原生 Menu，没有重新发明整
-        套下拉渲染，只是把"常驻可见的那一条"换成能自己上色的控件。"""
-        # fm/lm/tm 只是普通的独立 Menu 对象，不再需要一个总的 mb 去
-        # add_cascade——用 self.root 当 master 即可。
+        """不挂原生系统菜单条（Windows 自己接管绘制，Tk 只能改背景色/字
+        体，没有圆角/hover 这些能力）——自己在 _pill_bar 上方画一排文字
+        当触发条，点击用 tk_popup() 弹出下面这几个原生 tk.Menu（下拉内
+        容本身还是原生渲染，只是常驻可见的那一条换成能自己上色的控件）。"""
         fm = tk.Menu(self.root, tearoff=0)
-        # "退出"菜单项已经删掉——右上角关闭按钮已经覆盖了这个功能，留着
-        # 是重复入口。_do_exit 方法本身还留着，_on_close（关闭按钮，设置
-        # 未勾选"关闭时最小化到任务栏"时）、托盘菜单"退出"都还在用它。
         fm.add_command(label=t("app.refresh"), command=self._refresh, accelerator="F5")
         fm.add_command(label=t("app.open_cache_dir"), command=self._open_cache_dir)
-        # "语言"已经搬进"设置"弹窗里了（跟"关闭时最小化到任务栏"那两个开
-        # 关放一起，不再单独占一个菜单位置）。
-        # 四套颜色主题统一用 add_radiobutton 互斥选择。variable/value 必须
-        # 显式指定并挂在 self 上（跟下面"语言"那组 self._settings_lang_var
-        # 同一个理由）——不指定 variable 的话 tk.Menu 会给同一个菜单自动建
-        # 一个内部变量，选中态在这次菜单没重建之前能凑合用，但每次语言切
-        # 换重建菜单（_build_menu 整个重跑）都会丢失，且不会反映真正持久
-        # 化的当前主题，只反映"这次菜单里最后点了哪个"；用 get_theme_name()
-        # 初始化就能在重建后仍然对上号。
-        # "背景图设置…"是单独一条命令，跟主题选择是平级但完全独立的两件
-        # 事——背景图是跟主题解耦的全局功能（任意主题下都能叠加显示，见
-        # theme.py 顶部注释），不是某一套主题专属，点开只弹设置窗口，不
-        # 会顺带切主题。
+        # 主题用 add_radiobutton 互斥选择，variable 必须显式挂在 self 上
+        # ——不然每次语言/主题切换重建菜单（_build_menu 整体重跑）选中
+        # 态会丢，用 get_theme_name() 初始化保证重建后仍对得上号。
+        # 背景图设置是独立命令，跟主题解耦（任意主题下都能叠加显示），
+        # 点开只弹设置窗口，不会顺带切主题。
         self._theme_menu_var = tk.StringVar(value=get_theme_name())
         tm = tk.Menu(self.root, tearoff=0)
         for name in theme.THEME_NAMES:
@@ -721,16 +540,10 @@ class DSToolsApp:
         tm.add_command(label=t("theme.custom_bg_settings"), command=self._show_custom_bg_dialog)
         self.root.bind("<F5>", self._on_f5_key)
 
-        # "设置"原来是一个独立的 Toplevel 弹窗（_SettingsDialog，已删除），
-        # 现在跟"主题"一样改成下拉菜单——"语言"是一个二级子菜单（级联，跟
-        # "主题"平级放在顶层菜单条不一样，语言选项数量少、又是"设置"里的
-        # 一项，收进子菜单更符合"设置"菜单本身的定位），里面两个
-        # add_radiobutton 两态互斥；"关闭时最小化到任务栏"/"缓存存放在程序
-        # 所在目录"这两项本质是布尔开关，改用 add_checkbutton（打勾）而不
-        # 是拟真开关控件，跟系统菜单里常见的勾选项观感一致。这几个 Var 必
-        # 须挂在 self 上而不是局部变量——tk.Menu 只在语言/主题切换时随
-        # _build_menu 整体重建，平时用户点开关时菜单对象本身不重建，勾选
-        # 状态全靠这几个 Var 存活于菜单生命周期内。
+        # "设置"菜单：语言是二级级联子菜单（两态互斥）；"关闭时最小化到
+        # 任务栏"/"缓存存放在程序所在目录"是布尔开关，用 add_checkbutton
+        # 打勾。这几个 Var 必须挂在 self 上——菜单对象平时不重建，勾选
+        # 状态全靠 Var 存活于菜单生命周期内。
         sm = tk.Menu(self.root, tearoff=0)
         lang_menu = tk.Menu(sm, tearoff=0)
         self._settings_lang_var = tk.StringVar(value=get_lang())
@@ -747,45 +560,25 @@ class DSToolsApp:
         sm.add_checkbutton(label=t("settings.cache_use_exe_dir_label"), variable=self._settings_cache_var,
                             command=self._on_cache_setting_toggle)
 
-        # 语言切换/主题都会重新调一次这个方法（刷新标签文字），旧的那条
-        # 触发条要先拆掉再重建，不然会在 root 里留一条重复的。
+        # 语言/主题切换都会重新调一次这个方法，旧的触发条要先拆掉再重
+        # 建，不然会在 root 里留一条重复的。
         old_strip = getattr(self, "_menu_strip", None)
         if old_strip is not None:
             old_strip.destroy()
-        # 用 BgFrame（gui/bg_frame.py）而不是 tk.Frame——第一版直接
-        # tk.Canvas + 自己独立 render_background() 的做法在真实拖拽缩放
-        # 窗口时跟 win_aspect_lock.py 打架过；BgFrame 走的是"共享大图 +
-        # 便宜的偏移量裁剪"这一套（见 _tab_area 那边、以及
-        # gui/bg_frame.py 顶部的详细说明），已经反复验证过安全。
-        # 这一排触发文字("文件"/"主题"/"设置"/"关于")以前是各自一个
-        # tk.Label——Label 的绘制区域永远是不透明实色，四个紧挨着的 Label
-        # 会在背后的自定义背景图上拼出一整条很显眼的色块，跟 install_row
-        # 的路径文字是同一类问题。现在改成直接在 strip 这个 BgFrame 的
-        # Canvas 上 create_text 画字，文字直接盖在背景图上层；悬停高亮换
-        # 成一个平时不可见（fill=""）的矩形，鼠标移上去才现出
-        # theme.BG_SOFT 底色——这跟 PillTabBar 选中态直接拿实色盖住背景图
-        # 是同一个做法，属于"有意为之的高亮状态"，不是背景没做好。
+        # 用 BgFrame 而不是 tk.Label——四个紧挨着的 Label 会在背景图上拼
+        # 出一整条不透明色块。这里直接在 Canvas 上 create_text 画字，悬
+        # 停高亮是一个平时不可见（fill=""）的矩形，鼠标移上去才现出
+        # theme.BG_SOFT 底色。
         strip = BgFrame(self.root, self, bg=theme.CARD_BG)
-        # pack_propagate 默认开着的话，strip 的高度会被"它唯一 pack() 进去
-        # 的子控件"（下面这条 1px 的分隔线）反过来决定，缩成 1px 高，把
-        # 已经画好的文字全部挤没——之前文字是靠 tk.Label 撑高度，现在文
-        # 字换成了 create_text（不参与 pack 布局），必须显式关掉
-        # pack_propagate 才能让下面 configure(height=strip_h) 真正生效。
-        # PillTabBar.__init__ 也用的这个手法，是同一类问题。
+        # 文字是 create_text 画的，不参与 pack 布局撑高度，必须关掉
+        # pack_propagate 才能让下面 configure(height=strip_h) 生效。
         strip.pack_propagate(False)
         border = tk.Frame(strip, background=theme.CARD_BORDER, height=1)
         border.pack(side=tk.BOTTOM, fill=tk.X)
 
-        # 第一个字体元素平时是 ""（Tk 的"系统默认字体"写法），"自定义背景
-        # 图"主题换成 theme.FONT_FAMILY 指定的纤细字体族——_build_menu()
-        # 本身在语言/主题切换时会整体重建，这里跟其它现查 theme.X 的地方
-        # 一样不用担心切主题后字体卡在旧值上。
         menu_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_SM)
         PADX, PADY = 14, 7
         strip_h = menu_font.metrics("linespace") + 2 * PADY
-        # BgFrame 底下没有其它 pack() 的子控件撑高度了（原来是靠那几个
-        # Label 的 reqheight），Canvas 自己不 pack_propagate 的话默认高度
-        # 是 200，必须显式给一个跟字体匹配的高度。
         strip.configure(height=strip_h)
 
         self._menu_strip_items: list[dict] = []
@@ -863,70 +656,71 @@ class DSToolsApp:
         for tab in self._tabs: tab.refresh_language(); tab.refresh()
 
     def _switch_theme(self, name: str) -> None:
-        """主题切换现在是立即生效的，不需要重启——跟 _switch_language()
-        走的是同一套思路（重建菜单条 + 逐 tab retheme() + 只重载当前页
-        签），额外要处理的是主题特有的三类"颜色冻结"：ttk.Style 需要重新
-        configure 一遍（theme.apply_theme() 本身是幂等的，直接复用）；
-        `CardFrame`/`PillTabBar` 这类构造一次就不再重建的长期容器需要显
-        式 apply_theme()；散布在 world_render.py/mod_render.py/
-        toggle_switch.py/themed_dialog.py/local_service_tab.py 里"模块级
-        缓存主题色"的写法已经全部改成现查 theme.X，配合各 tab 自己的
-        retheme()（只重新上色/重画静态文字，不碰数据）就能用上新颜色。"""
+        """主题切换立即生效、不需要重启：重建菜单条 + 逐 tab retheme() +
+        只重载当前页签。整个过程用 `_theme_switch_suppressed` 拦掉
+        BgFrame/PillTabBar 的真实重绘（配色/字体等状态照常生效，只是不
+        立即画出来），避免中途的 apply_theme() 调用各自触发一次重绘、
+        叠成好几波闪烁；最后统一 `_force_refresh_bg_now()` + `update()`
+        一次性呈现。跟拖拽缩放的 `_begin_bg_drag_suppress()` 不同，这里
+        不清空成纯色——切换只有几十毫秒，中间状态本来就不会画到屏幕
+        上。try/finally 保证中途异常也不会卡在"暂停重绘"状态。"""
         if name == get_theme_name(): return
-        set_theme_name(name)
-        theme.set_theme(name)
-        theme.apply_theme(self.root, self.style)
-        # custom_titlebar 在 __init__ 里是局部 import（避免非 Windows 平
-        # 台在模块加载时就碰 ctypes.windll），这里再 import 一次同理，不
-        # 依赖 __init__ 里那个局部变量（那个作用域到 __init__ 结束就没
-        # 了）。同 __init__ 里的调用点——theme.apply_theme() 会冲掉
-        # WS_EX_APPWINDOW，见 custom_titlebar.ensure_taskbar_visible()
-        # 的说明，切主题时也要重新找补一遍。
-        from dstools.shared.gui import custom_titlebar
-        custom_titlebar.ensure_taskbar_visible(self.root)
-        self._titlebar.apply_theme(bg=theme.CARD_BG)
-        self._build_menu()
-        self._tab_area.apply_theme()
-        # 6 张卡片全部叠在 _tab_area 同一个 grid(row=0, column=0) 格子里，
-        # 只有 self._current_tab_key 那张是真的 grid() 着、其余 5 张都
-        # grid_remove() 隐藏——Tk 的 grid_configure() 对一个已经
-        # grid_remove() 的控件调用会把它重新映射回可见状态（哪怕只是改
-        # padx/pady 这种跟"要不要显示"无关的选项），之前这里对全部 6 张
-        # 卡片无条件 grid_configure()，会把隐藏的另外 5 个页签全部强制显
-        # 示出来，叠在最上面的是字典/_tab_keys 顺序里排最后的"樱花映射"
-        # （"sakura"），造成"切主题后页签跳到樱花映射、但顶部页签高亮没
-        # 变"的错觉（真机反馈过——原本是排最后的"存档信息"，加了"樱花映
-        # 射"页签之后排最后的变成了它）。这里在 configure 之后对非当前
-        # 页签立刻再 grid_remove() 一次——纯 Tk 几何管理器的批处理操作，中间不会
-        # 有真实的屏幕重绘，不会闪一下；grid_remove() 之后再次 grid() 时
-        # （_on_tab_select）会带着这次刚更新过的 padx/pady，不会因为"被
-        # 跳过"而停留在旧的 CARD_MARGIN 上。
-        for key, card in self._tab_cards.items():
-            card.apply_theme()
-            card.grid_configure(padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
-            if key != self._current_tab_key:
-                card.grid_remove()
-        self._pill_bar.apply_theme()
-        self._retheme_cluster_bar()
-        self._root_bg.apply_theme()
-        self._status_bar.apply_theme(bg=theme.CARD_BG)
-        self._redraw_status_bar()
-        self._force_refresh_bg_now()
-        # retheme() 只是重新上色/重画静态说明文字，很便宜，6 个页签都立
-        # 即做；refresh() 才是重活（on_cluster_changed 整块重载：Lua 沙箱
-        # 扫描、PIL 面板重绘、几十个输入框重建），只对当前正显示的那个页
-        # 签立即做，其余标脏、真正切过去时才补——跟 _refresh()（"刷新全
-        # 部"）、_apply_global_cluster_change() 是同一套既有的懒加载规
-        # 范，不这样做的话切一次主题要把 6 个页签的重活全同步做一遍，实
-        # 测就是用户反馈的"切主题很卡"的根因。
-        for key, tab in zip(self._tab_keys, self._tabs):
-            retheme = getattr(tab, "retheme", None)
-            if retheme:
-                retheme()
-            if key == self._current_tab_key:
-                tab.refresh()
-            else:
-                self._stale_cluster_tabs.add(key)
+        self._theme_switch_suppressed = True
+        try:
+            set_theme_name(name)
+            theme.set_theme(name)
+            theme.apply_theme(self.root, self.style)
+            # custom_titlebar 在 __init__ 里是局部 import（避免非 Windows
+            # 平台在模块加载时就碰 ctypes.windll），这里再 import 一次同
+            # 理，不依赖 __init__ 里那个局部变量（那个作用域到 __init__
+            # 结束就没了）。同 __init__ 里的调用点——theme.apply_theme()
+            # 会冲掉 WS_EX_APPWINDOW，见 custom_titlebar.
+            # ensure_taskbar_visible() 的说明，切主题时也要重新找补一遍。
+            from dstools.shared.gui import custom_titlebar
+            custom_titlebar.ensure_taskbar_visible(self.root)
+            self._titlebar.apply_theme(bg=theme.CARD_BG)
+            self._build_menu()
+            self._tab_area.apply_theme()
+            # 6 张卡片叠在 _tab_area 同一个 grid 格子里，只有当前那张真的
+            # grid() 着，其余 grid_remove() 隐藏——Tk 的 grid_configure()
+            # 对已经 grid_remove() 的控件调用会把它重新映射回可见状态
+            # （哪怕只改 padx/pady），所以每次 configure 后要对非当前页
+            # 签立刻再 grid_remove() 一次，纯几何管理器批处理，不会闪。
+            for key, card in self._tab_cards.items():
+                card.apply_theme()
+                card.grid_configure(padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
+                if key != self._current_tab_key:
+                    card.grid_remove()
+            self._pill_bar.apply_theme()
+            self._retheme_cluster_bar()
+            self._root_bg.apply_theme()
+            self._status_bar.apply_theme(bg=theme.CARD_BG)
+            self._redraw_status_bar()
+            # retheme() 很便宜（重新上色/重画静态文字），6 个页签都立即
+            # 做；refresh() 才是重活（Lua 沙箱扫描/PIL 面板重绘等），只对
+            # 当前页签立即做，其余标脏、真正切过去时才补。
+            for key, tab in zip(self._tab_keys, self._tabs):
+                retheme = getattr(tab, "retheme", None)
+                if retheme:
+                    retheme()
+                if key == self._current_tab_key:
+                    tab.refresh()
+                else:
+                    self._stale_cluster_tabs.add(key)
+        finally:
+            self._theme_switch_suppressed = False
+            # 上面 _build_menu()/card.grid_configure() 这类几何变化，Tk
+            # 不保证同步跑完就已经传播到每一层子控件——先 update_
+            # idletasks() 强制排布完，不然深层嵌套的 BgFrame 会按旧坐标
+            # 裁出错位的背景图。
+            self.root.update_idletasks()
+            self._force_refresh_bg_now()
+            # 跟 _on_tab_select() 里那个"补一次 update()"是同一个理由：
+            # 不只是排布，是真的把已经画好的内容立刻刷到屏幕上，不用等
+            # 这个方法返回、回到主循环那一刻才有机会重绘——这样上面压了
+            # 一整个方法的重绘才会真正表现成"一次性切换"，而不是回到主
+            # 循环后再等下一次事件处理才补画出来。
+            self.root.update()
 
     def _retheme_cluster_bar(self) -> None:
         """顶部存档卡片栏（_cluster_bar/_cluster_bar_inner/"存档:"文字）
@@ -955,6 +749,7 @@ class DSToolsApp:
         self._shared_bg_key = None
         self._bg_settle_after_id = None
         self._bg_drag_suppressed = False  # ResizeGrips 拖拽期间为 True，见下
+        self._theme_switch_suppressed = False  # _switch_theme() 执行期间为 True，见下
         self.root.bind("<Configure>", self._on_root_configure_for_bg)
 
     def _register_bg_surface(self, surface) -> None:

@@ -36,6 +36,7 @@ _KEY_LAST_CLUSTER_PATH = "last_cluster_path"
 _KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
 _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
+_KEY_GLOBAL_TOKENS = "global_tokens"
 
 
 def get_settings_dir() -> Path:
@@ -447,4 +448,19 @@ def get_selfhost_ssh_connection() -> dict | None:
 def set_selfhost_ssh_connection(host: str, port: int, username: str) -> None:
     data = load_settings()
     data[_KEY_SELFHOST_SSH_CONNECTION] = {"host": host, "port": int(port), "username": username}
+    save_settings(data)
+
+
+def get_global_tokens() -> list[str]:
+    """全局令牌池——所有存档共享，"复制为服务器存档"新建出来的存档如果
+    还没有 cluster_token.txt，会固定取列表第一个自动填上（见
+    features/save_browser/cluster_copy.py），不用每次都去 Klei 后台重新
+    申请一个。"""
+    tokens = load_settings().get(_KEY_GLOBAL_TOKENS) or []
+    return [tok for tok in tokens if isinstance(tok, str) and tok]
+
+
+def set_global_tokens(tokens: list[str]) -> None:
+    data = load_settings()
+    data[_KEY_GLOBAL_TOKENS] = list(tokens)
     save_settings(data)

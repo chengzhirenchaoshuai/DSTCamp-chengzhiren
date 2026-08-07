@@ -12,6 +12,8 @@ import shutil
 from pathlib import Path
 
 from dstools.i18n import t
+from dstools.shared import app_settings
+from dstools.shared.token_manager import write_token
 
 _INVALID_CHARS = set('/\\:*?"<>|')
 
@@ -84,5 +86,17 @@ def copy_local_cluster_to_server(local_cluster_path: Path, klei_root: Path,
         else:
             log(t("copy.copying_file", name=entry.name))
             shutil.copy2(entry, target)
+
+    # 本地存档一般没有 cluster_token.txt（离线单机不需要）——全局令牌池
+    # 非空时固定取第一个自动填上（应用户要求，不随机选），省得每次复
+    # 制成服务器存档都要手动去 Klei 后台申请一遍。已经带了 token 的
+    # （比如从别的服务器存档复制过来）不覆盖。
+    token_path = dest / "cluster_token.txt"
+    if not token_path.exists():
+        pool = app_settings.get_global_tokens()
+        if pool:
+            write_token(token_path, pool[0])
+            log(t("copy.token_assigned"))
+
     log(t("copy.done"))
     return dest

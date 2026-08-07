@@ -200,16 +200,10 @@ class _ShardRow:
         self.frame.bind("<Configure>", lambda e: self._redraw_text(), add="+")
         self.status_var = tk.StringVar()
 
-        # 启动/停止按钮不用构造时传进来的 cluster 快照，改成点击那一刻现
-        # 查 tab._get_cluster()——_refresh_shard_rows() 只有世界集合/存档
-        # 路径变化时才会真的重建这些行，路径没变的话行对象会一直留着，
-        # 闭包里存的 cluster 就还是当初构造时那一个对象引用。如果用户在
-        # 这之后（没触发重建）改了令牌之类的信息——"服务器配置"页那边改
-        # 的是当前 self._get_cluster() 返回的对象——只要中途发生过一次
-        # "刷新"（重新 discover_environment() 会造出全新的 Cluster 对
-        # 象），这行闭包里存的就是刷新前那份旧对象，token_path 还是没刷
-        # 新之前的旧值，导致"启动"误报"令牌未设置"而"全部启动"（现查
-        # tab._get_cluster()）不会。
+        # 启动/停止按钮不用构造时传进来的 cluster 快照，改成点击那一刻
+        # 现查 tab._get_cluster()——这一行对象只在世界集合/存档路径变化
+        # 时才重建，路径没变就一直复用旧对象；构造时闭包存的 cluster 引
+        # 用会在"刷新"后变成过期对象（token_path 等字段还是旧值）。
         self.start_btn = ttk.Button(self.frame, text=t("local.start_btn"), width=8,
                                      command=lambda: tab.start_shard(tab._get_cluster(), shard))
         self.start_btn.pack(side=tk.LEFT, padx=(_NAME_COL_W + _STATUS_COL_W, 4))
@@ -473,16 +467,9 @@ class LocalServiceTab:
         # time.monotonic() 时间戳，见 _maybe_periodic_backup()。
         self._last_auto_backup_ts: dict[str, float] = {}
 
-        # "存档"选择器已经搬到顶部的全局选择栏（DSToolsApp._cluster_bar），
-        # 这里不再重复一份。
-        #
-        # 这两段说明文字（"专用服务器工具:" + 实际路径）不用 ttk.Label——
-        # ttk.Label 自己的绘制区域永远是一块不透明实色矩形（TLabel 样式的
-        # background），两个标签紧挨着会拼成一条很长、很显眼的"色块"，
-        # 跟这一行背后本来该露出来的自定义背景图格格不入。这里直接在
-        # install_row 这个 BgFrame 的 Canvas 上 create_text 画字——跟
-        # gui/pill_tabs.py 画页签文字是同一个思路，文字本身没有独立的背
-        # 景框，直接盖在背景图上面。
+        # "专用服务器工具:" + 实际路径不用 ttk.Label（绘制区域永远不透明，
+        # 会挡住背景图），直接在 install_row 这个 BgFrame 的 Canvas 上
+        # create_text 画字。
         self._install_row = install_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
         install_row.pack(fill=tk.X, padx=5, pady=(0, 5))
         self._install_path_var = tk.StringVar()
@@ -540,9 +527,9 @@ class LocalServiceTab:
         self._body = body = ttk.PanedWindow(self.frame, orient=tk.HORIZONTAL)
         body.pack(fill=tk.BOTH, expand=True, padx=5, pady=(0, 5))
 
-        left = BgFrame(body, app, bg=theme.CARD_BG)
+        self._left = left = BgFrame(body, app, bg=theme.CARD_BG)
         body.add(left, weight=1)
-        btn_row = BgFrame(left, app, bg=theme.CARD_BG)
+        self._btn_row = btn_row = BgFrame(left, app, bg=theme.CARD_BG)
         btn_row.pack(fill=tk.X, pady=(0, 5))
         self._start_all_btn = ttk.Button(btn_row, text=t("local.start_all_btn"), command=self._start_all)
         self._start_all_btn.pack(side=tk.LEFT, padx=(0, 5))
@@ -555,17 +542,10 @@ class LocalServiceTab:
 
         # WeGame 版世界不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
         # 客户端才能签发的一次性会话令牌，DSTCamp 拼不出来）——选中一个
-        # WeGame 存档时这一组（提示+"检测服务器状态"+检测结果）替代原来
-        # 世界列表下面的空白，其余展示（世界列表/状态）照常，只是启动类
-        # 按钮全部禁用。应用户要求放在世界列表下方（"Caves 未启动"下
-        # 面），不是页签最底部——之前整页宽度跨栏的位置离世界列表太远。
-        #
-        # 三个都用 side=tk.BOTTOM 从下往上占：先注册的在最下面，后注册
-        # 的在它上面（跟 mod_sync_log_dialog.py 按钮栏踩过的坑同一个道
-        # 理，这里反过来利用这个规则）——所以注册顺序是 检测结果 ->
-        # 按钮 -> 提示文字，视觉上从上到下才是 提示 -> 按钮 -> 结果；最
-        # 后再 pack self._shard_list（默认 side=TOP，fill+expand），把
-        # btn_row 和这一组之间剩下的中间空间占满，不会被这一组抢走。
+        # WeGame 存档时这一组（提示+"检测服务器状态"+检测结果）替代世界
+        # 列表下面的空白，启动类按钮全部禁用。三个都用 side=tk.BOTTOM 从
+        # 下往上占，注册顺序 检测结果->按钮->提示文字，视觉上从上到下
+        # 才是 提示->按钮->结果。
         self._wegame_detect_text = tk.Text(left, height=6, wrap=tk.WORD, state=tk.DISABLED,
                                             font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS),
                                             bg=theme.CARD_BG, fg=theme.TEXT_MUTED, relief=tk.FLAT,
@@ -587,7 +567,7 @@ class LocalServiceTab:
         # 它自己的标签条还是不透明的；每个世界的控制台页面内部（_ConsolePane）
         # 暂时维持原样不透明，留到后续再评估是否值得改（日志区本身需要
         # 大片纯色才能看清文字，透明化的收益本来就有限）。
-        right = BgFrame(body, app, bg=theme.CARD_BG)
+        self._right = right = BgFrame(body, app, bg=theme.CARD_BG)
         body.add(right, weight=3)
         self._console_nb = ttk.Notebook(right)
         self._console_nb.pack(fill=tk.BOTH, expand=True)
@@ -1320,12 +1300,25 @@ class LocalServiceTab:
         self._local_banner.set_text(t("local.select_server_hint"))
 
     def retheme(self):
-        """主题切换时调用——这个横幅在 __init__ 里建一次就不再重建，
-        refresh() 不会碰它的颜色，需要显式重新上色。install_row 直接画的
-        文字（_redraw_install_row_text）同理要跟着重新上色一次。"""
+        """主题切换时调用——这些容器/横幅都是在 __init__ 里建一次就不再
+        重建的长期控件，refresh() 不会碰它们的颜色，需要显式重新上色。
+        `_shard_rows` 里的每一行（"Master"/"Caves"这些）也是同一类：
+        `_refresh_shard_rows()` 只在世界集合/存档路径真的变化时才会重
+        建，路径没变就一直复用旧的 _ShardRow 对象（见该类 __init__ 里
+        的说明），不主动重新上色的话会一直停留在切主题前的背景/颜色
+        （真机反馈过的"Master/Caves 这几行背景错位"）。"""
         self._local_banner.apply_theme()
+        self._other_running_banner.apply_theme()
+        self._wegame_banner.apply_theme()
         self._install_row.apply_theme(bg=theme.CARD_BG)
         self._redraw_install_row_text()
+        self._luajit_row.apply_theme(bg=theme.CARD_BG)
+        self._redraw_luajit_row_text()
+        for frame in (self._left, self._btn_row, self._shard_list, self._right):
+            frame.apply_theme()
+        for row in self._shard_rows.values():
+            row.frame.apply_theme()
+            row._redraw_text()
 
     def refresh(self):
         self.on_cluster_changed(self.app.get_selected_cluster())

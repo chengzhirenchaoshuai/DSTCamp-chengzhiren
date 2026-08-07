@@ -30,26 +30,39 @@ def _pick_quoted(m: re.Match) -> str:
 
 _LUA_ESCAPES = {'n': '\n', 't': '\t', 'r': '\r', '\\': '\\', '"': '"', "'": "'"}
 
-# 一整个带引号的字符串（任一风格），供 _replace_ident_outside_strings 整
+# 一整个带引号的字符串（任一风格），供 _replace_idents_outside_strings 整
 # 段跳过字符串内容用，避免误匹配到字符串内部一个长得像标识符的子串。
 _ANY_STRING = re.compile(rf'"{_QSTR}"|\'{_QSTR_SINGLE}\'')
 
 
-def _replace_ident_outside_strings(text: str, ident: str, replacement: str) -> str:
-    """效果类似 re.sub(rf'\\b{ident}\\b(?!\\s*=(?!=))', replacement, text)，
-    但绝不会匹配到带引号字符串内部。
+def _replace_idents_outside_strings(text: str, subst_map: dict[str, str]) -> str:
+    """一次扫描把 `subst_map` 里的每个标识符都换成对应的替换值，绝不会
+    匹配到带引号字符串内部。
 
     一个普通的标识符边界正则没法区分"这是对该参数的引用"和"这个参数名恰
     好是同一个函数体里*另一个*字符串字面量内容中出现的英文单词"——不这样
     处理的话，一个名叫比如 "default" 的辅助函数参数会悄悄破坏同一函数体
     内恰好包含单词 "default" 的任何兜底字符串（一个真实 mod 的英文选项
     标签 'default' 就是这样变成了字面文本 'nil'）。
+
+    **性能坑（真机复现+cProfile 定位过）**：以前是每个标识符单独调一次
+    `re.sub()`，被一个真实 mod 暴露出问题——那个 mod 用共享辅助函数批量
+    生成了 421 个配置选项，`_inline_helper_call()` 每次调用平均要替换
+    11+ 个参数，421×11 ≈ 4857 次独立的正则扫描，仅这一个 mod 的解析就
+    吃掉 700ms+，占那次全量 Mod 列表加载耗时的大头。改成一次正则扫描命
+    中全部标识符（交替分支 `\\b(?:ident1|ident2|...)\\b`），把
+    O(调用次数 × 参数个数) 次扫描收成 O(调用次数) 次。
     """
-    pattern = re.compile(rf'{_ANY_STRING.pattern}|\b{re.escape(ident)}\b(?!\s*=(?!=))')
+    if not subst_map:
+        return text
+    idents = "|".join(re.escape(i) for i in subst_map)
+    pattern = re.compile(rf'{_ANY_STRING.pattern}|\b(?:{idents})\b(?!\s*=(?!=))')
 
     def repl(m):
         s = m.group(0)
-        return s if s and s[0] in ('"', "'") else replacement
+        if s and s[0] in ('"', "'"):
+            return s
+        return subst_map.get(s, s)
 
     return pattern.sub(repl, text)
 
@@ -161,31 +174,18 @@ class ModConfigOption:
     # 用它连同 ModInfo.dynamic_preamble，按需真正丢进一个沙箱化 Lua 解
     # 释器跑一遍，不需要重新解析整个文件。
     raw_options_expr: str = ""
-    # 这个选项自己的 `client = true`——不是引擎认的字段（确认过：游戏自
-    # 己的 scripts/screens/modconfigurationscreen.lua 完全没有引用过
-    # "client" 这个键），而是部分 mod 作者用来标记"这个选项只在玩家自己
-    # 客户端有意义"（快捷键绑定、HUD 元素屏幕位置等）、区别于服务端玩法
-    # 设置的一种约定。像这样的专用服务器管理工具只会编辑存档的
-    # modoverrides.lua——那是服务端配置——所以在这里显示/编辑一个纯客户
-    # 端选项只会造成误导（在这里改动对任何连接玩家客户端的实际表现毫无
-    # 影响）。见下面的 visible_config_options()，ModConfigDialog 用它把
-    # 这些选项整个隐藏掉。
+    # 这个选项自己的 `client = true`——不是引擎字段，是部分 mod 作者用来
+    # 标记"这个选项只在玩家自己客户端有意义"（快捷键、HUD 位置等）的约
+    # 定。专用服务器管理工具只编辑 modoverrides.lua（服务端配置），显示/
+    # 编辑纯客户端选项只会误导，见 visible_config_options() 整个隐藏掉。
     client: bool = False
-    # 下面四个同样不是引擎字段，是共享库 mod "Configs Extended"（创意工坊
-    # 3317960157）的约定——真机读过它的 scripts/widgets/
-    # remi_newmodconfigurationscreen.lua 源码确认：这套东西最终仍然调
-    # KnownModIndex:SaveConfigurationOptions() 写回同一份 modoverrides.lua
-    # （跟原生配置弹窗同一个引擎 API），只是值的形状不是"从几个固定选项
-    # 里选一个"，原生下拉框机制表达不了，ModConfigDialog 改用专门的编辑
-    # 控件（见 visible_config_options() 旁边的 _render_raw_value_editor()）：
-    # - is_set_config：真实存储是 Lua"字符串当 key"的集合写法
-    #   （{["heatrock"]=true, ...}，EditSet() 用 `pairs()` 遍历，没有顺
-    #   序概念）。
-    # - is_array_config：普通有序数组（EditArray() 用 `ipairs()` 遍历）。
-    # - is_text_config：纯字符串，不是选项/集合/数组。
-    # - is_dictionary_config：字符串键值对表（{["草"]="6个", ...}），
-    #   EditDict() 同样用 `pairs()` 遍历，没有顺序概念——跟 is_set_config
-    #   的区别是每个 key 对应的 value 是任意字符串，不是固定的 true。
+    # 下面四个也不是引擎字段，是共享库 mod "Configs Extended"（创意工坊
+    # 3317960157）的约定，最终仍然写回同一份 modoverrides.lua，只是值的
+    # 形状原生下拉框表达不了，ModConfigDialog 改用专门编辑控件：
+    # - is_set_config：字符串当 key 的集合（{["heatrock"]=true, ...}）
+    # - is_array_config：普通有序数组
+    # - is_text_config：纯字符串
+    # - is_dictionary_config：字符串键值对表（{["草"]="6个", ...}）
     is_set_config: bool = False
     is_array_config: bool = False
     is_text_config: bool = False
@@ -209,41 +209,24 @@ class ModInfo:
     # 一句 `return <raw_options_expr>`），不需要到那时再重新读取/切分源
     # 文件。
     dynamic_preamble: str = ""
-    # mod 声明了一个 `configuration_options` 块，但里面没有一条条目匹配
-    # 本解析器认识的任何形状（字面量 `{name=...}` 表，或对本地定义的辅
-    # 助函数的调用）——比如某个 mod（发现这个问题的例子是 Insight）直接
-    # 用选项自己的名字作为键（`display_timers = {label=...}`），而不是
-    # 按数组条目写成 `{name="display_timers", label=...}`。这跟
-    # is_dynamic（*认识*这个选项，但解析不出它的可选项）是不同层面、更
-    # 根本的缺口：这里是整套 schema 都没识别出来，所以即便这个 mod 明显
-    # 有设置项，config_options 也是完全空的——把这个情况展示给 GUI，让
-    # 界面能明确说明原因，而不是暗示这个 mod 压根没有配置。
+    # mod 声明了 `configuration_options` 块，但没有一条条目匹配本解析
+    # 器认识的形状（比如 Insight 直接用选项名当键 `display_timers =
+    # {label=...}`，而不是数组条目 `{name="display_timers", label=...}`）
+    # ——整套 schema 没识别出来，config_options 会是空的，界面要能说明
+    # 原因，不能暗示这个 mod 没有配置。
     unsupported_schema: bool = False
-    # 本次会话是否已经为这个 mod 尝试过 resolve_full_modinfo()——不管结
-    # 果如何都会设置，这样 ModConfigDialog 不会在同一个 mod 的弹窗被反
-    # 复打开时，每次都重新跑一遍（相对慢的、整份文件的）沙箱解析。之前
-    # 成功过的话结果不言自明（这时 config_options 已经是沙箱解析的结
-    # 果）；之前失败过就意味着不用再白费力气重试。
+    # 本次会话是否已经为这个 mod 尝试过 resolve_full_modinfo()（不管成
+    # 败都会设置），避免弹窗反复打开时重复跑一遍较慢的沙箱解析。
     full_sandbox_tried: bool = False
-    # modinfo.lua 里的 `client_only_mod = true`——这个 mod 只影响玩家自
-    # 己的客户端（通常是 UI/HUD/渲染方面的调整），不需要像影响玩法的
-    # mod 那样通过存档的 modoverrides.lua 同步。这正是游戏自己的 mod 界
-    # 面用来把一个 mod 标为"本地"的字段（凭经验确认过：用户指出的每一个
-    # 游戏内显示为"本地模组"的 mod——Combined Status、Connection
-    # Manager、群鸟绘卷系列等——都是 client_only_mod = true 且
-    # all_clients_require_mod = false，跟它们一起核对过的普通玩法 mod
-    # 则没有一个是这样）。
-    #
-    # **坑**：`client_only_mod = true` 不是唯一要看的字段——DontStarveLuaJIT2
-    # 的作者直接确认过（2026-08-01 联系沟通）：`server_only_mod` 这个字段
-    # 饥荒引擎本身根本不读（读过官方 modindex.lua 源码验证过，全文没有一
-    # 处引用），是给"开服工具"这类第三方管理软件用的约定——`modinfo.lua`
-    # 里同时写 `client_only_mod = true` + `server_only_mod = true`，是想让
-    # 这类工具仍然把它当"服务器 mod"处理（配置能在 modoverrides.lua 里正
-    # 常编辑），只是不出现在游戏内"服务器 mod 列表"里、不要求连服玩家都
-    # 装。所以判定要不要走"客户端专属、配置只读"这条分支时，`server_only_
-    # mod`/`all_clients_require_mod` 只要有一个为真就要盖过
-    # `client_only_mod`——见 parse_modinfo() 里的组合逻辑。
+    # modinfo.lua 的 `client_only_mod = true`：这个 mod 只影响客户端，
+    # 不需要通过 modoverrides.lua 同步，是游戏 mod 界面用来标"本地模组"
+    # 的字段。
+    # **坑**（DontStarveLuaJIT2 作者确认过）：`server_only_mod` 引擎本身
+    # 不读，是给第三方开服工具用的约定——`client_only_mod=true` 同时写
+    # `server_only_mod=true`，是想让这类工具仍当"服务器 mod"处理（配置
+    # 能在 modoverrides.lua 编辑），只是不进游戏内"服务器 mod 列表"。判
+    # 定要不要走"客户端专属、只读"分支时，`server_only_mod`/
+    # `all_clients_require_mod` 有一个为真就要盖过 `client_only_mod`。
     client_only: bool = False
     # 本次会话是否已经为这个 mod 尝试过叠加"Chinese++ Pro"（创意工坊
     # workshop-2941527805）的配置项翻译——同 full_sandbox_tried 一样，
@@ -914,14 +897,12 @@ def _inline_helper_call(name: str, args: list, local_functions: dict) -> str | N
     # "key = " 这种位置。它还经常跟函数体里*另一个*字符串字面量内容里
     # 出现的普通英文单词撞名（一个真实例子：参数名叫 "default"，同一函
     # 数体里恰好有个内容是 "default" 的英文兜底字符串）——
-    # _replace_ident_outside_strings 会跳过引号内的一切内容，这种情况
+    # _replace_idents_outside_strings 会跳过引号内的一切内容，这种情况
     # 也不会发生。替换分两遍进行，先换成不透明的占位符，这样第二遍替
     # 换时，一个参数的字面量文本内容永远不会被误当成另一个参数的名字
     # （比如一个恰好含有 "hover" 内容的悬浮提示字符串）。
-    result = body
     placeholders = {param: f"\x00{i}\x00" for i, param in enumerate(subst)}
-    for param, placeholder in placeholders.items():
-        result = _replace_ident_outside_strings(result, param, placeholder)
+    result = _replace_idents_outside_strings(body, placeholders)
     for param, placeholder in placeholders.items():
         result = result.replace(placeholder, subst[param])
 

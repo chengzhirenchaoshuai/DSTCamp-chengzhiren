@@ -15,6 +15,7 @@ from dstools.features.cluster_config.config_manager import (
 from dstools.features.cluster_config.ini_field_info import (
     ALWAYS_READONLY_FIELDS, get_enum_choices, get_field_info, get_range_limits,
 )
+from dstools.shared import app_settings
 from dstools.shared.token_manager import is_valid_token, mask_token, read_token, write_token
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
@@ -85,7 +86,7 @@ class _TokenInputDialog:
     弹窗。
     """
 
-    def __init__(self, parent_widget, initial: str = ""):
+    def __init__(self, parent_widget, initial: str = "", title: str | None = None):
         self.result: str | None = None
         win = tk.Toplevel(parent_widget)
         self.win = win
@@ -94,7 +95,7 @@ class _TokenInputDialog:
         # 过的窗口（跟 themed_dialog.py 的 _show()、save_browser_tab.py 的
         # _CopyToServerDialog 是同一个道理）。
         win.withdraw()
-        win.title(t("token.change"))
+        win.title(title if title is not None else t("token.change"))
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
 
@@ -138,6 +139,76 @@ class _TokenInputDialog:
         self.win.destroy()
 
 
+class _GlobalTokensDialog:
+    """管理全局令牌池（增/删），关掉即保存——不需要单独的"确定/取消"，
+    每次增删都直接写 app_settings，跟 admin/blocklist 面板的"点一下立
+    即生效"是同一个交互习惯，不用在这里维护一份额外的"未保存改动"状
+    态。列表里只显示脱敏后的值（mask_token()），管理时不需要看到明文，
+    真要核对内容用"当前服务器令牌"那边的"显示"按钮。"""
+
+    def __init__(self, parent_widget):
+        self._tokens = app_settings.get_global_tokens()
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("token.set_global_btn"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+
+        ttk.Label(win, text=t("token.global_hint"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+                  wraplength=380, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
+        self.listbox = tk.Listbox(win, height=8, width=40, font=("Consolas", 10))
+        self.listbox.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
+
+        btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=(0, 20))
+        ttk.Button(btn_row, text=t("admin.add"), command=self._add).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text=t("admin.remove"), command=self._remove).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=self._close).pack(side=tk.RIGHT)
+
+        self._refresh_listbox()
+        win.protocol("WM_DELETE_WINDOW", self._close)
+
+        root = parent_widget.winfo_toplevel()
+        center_over_parent(win, root, min_width=440)
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _refresh_listbox(self):
+        self.listbox.delete(0, tk.END)
+        if not self._tokens:
+            self.listbox.insert(tk.END, t("token.global_empty"))
+            return
+        for tok in self._tokens:
+            self.listbox.insert(tk.END, mask_token(tok))
+
+    def _add(self):
+        input_dlg = _TokenInputDialog(self.win, title=t("token.global_add_title"))
+        if input_dlg.result is None:
+            return
+        if input_dlg.result in self._tokens:
+            dlg.show_warning(self.win, t("token.set_global_btn"), t("token.global_duplicate"))
+            return
+        self._tokens.append(input_dlg.result)
+        app_settings.set_global_tokens(self._tokens)
+        self._refresh_listbox()
+
+    def _remove(self):
+        sel = self.listbox.curselection()
+        if not sel or not self._tokens:
+            return
+        idx = sel[0]
+        if idx >= len(self._tokens):
+            return
+        del self._tokens[idx]
+        app_settings.set_global_tokens(self._tokens)
+        self._refresh_listbox()
+
+    def _close(self):
+        self.win.destroy()
+
+
 class ClusterConfigTab:
     # GAMEPLAY/NETWORK/MISC/SHARD 这四个分区其实都在同一个 cluster.ini
     # 文件里，所以合并成一个页签（"Cluster"），每组前面加一个分区标题
@@ -174,20 +245,12 @@ class ClusterConfigTab:
     _REMOVED_CLUSTER_FIELDS = [("GAMEPLAY", "vote_kick_enabled"), ("NETWORK", "cluster_intention")]
 
     def __init__(self, parent, app):
-        # self.frame/sf 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
-        # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
-        # 义背景图。这个页签内部（Cluster/Shard Config 两个 tab 页各自
-        # 的 Canvas+动态表格 resize-settle 逻辑、管理员/黑名单/Token 三个
-        # 子面板的内容）本轮不动——CLAUDE.md 自己标注这是"最麻烦"的一
-        # 处，牵一发动全身；这次只把外层 ttk.Notebook 换成 PillTabBar
-        # （原生 Notebook 页签条本身不透明、没法透出背景图），5 个页面
-        # 各自的内容/滚动逻辑原样保留，只是父容器从 self._cc_notebook 换
-        # 成下面的 self._sub_content。
+        # self.frame 用 BgFrame（不是 ttk.Frame）以便透出自定义背景图。
+        # 外层用 PillTabBar 代替原生 ttk.Notebook（不透明、没法透背景
+        # 图），5 个页面各自的内容/滚动逻辑不变，父容器换成下面的
+        # self._sub_content。
         self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG); self._entries = {}
-        # "存档"选择器已经搬到顶部的全局选择栏，这里不再重复一份；原来
-        # 这里还有一个独立的"加载"按钮，应用户要求删掉了——顶部全局选
-        # 择栏切换存档/点"刷新"都会走 on_cluster_changed() ->
-        # _load_config()，跟这个按钮完全重复。
+        # "存档"选择器在顶部全局选择栏，这里不重复一份。
 
         self._sub_tabs = [
             ("cluster", t(self._NOTEBOOK_TAB_KEYS["Cluster"])), ("shard", t(self._NOTEBOOK_TAB_KEYS["Shard Config"])),
@@ -201,46 +264,22 @@ class ClusterConfigTab:
         self._sub_content.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self._sub_pages = {}  # key -> page frame，_on_sub_tab_select 用来 pack()/pack_forget()
         self._sub_tab_key = "cluster"
-        # 切换子页签时把键盘焦点转移到 self._sub_content（一个普通容器，
-        # 没有任何东西可以画选中态高亮）——不这样做的话焦点会停在上一个
-        # 页签里恰好排在最前面创建的那个控件（Entry/Combobox/Listbox）
-        # 上，切过来的新页签第一项会被误当成"已经选中"画出高亮，其实用
-        # 户什么都没点。原来 ttk.Notebook 版本靠 <<NotebookTabChanged>>
-        # 事件做同一件事，PillTabBar 没有这个原生事件，改在
-        # _on_sub_tab_select 里直接调用（见文件靠后的方法定义）。
-        # "Cluster" 是把 cluster.ini 全部四个分区（GAMEPLAY/NETWORK/
-        # MISC/SHARD）合并成的一个页签，每一行仍然按它真实所属的分区名
-        # 登记进 self._entries/ini_field_info——self._section_frames
-        # ["GAMEPLAY"] 等其实都指向同一个共享 frame，只是各自的行前面
-        # 加一条分区标题行，视觉上分组（见 _load_config）。"Shard
-        # Config" 是独立的 server.ini 页签。两个页签各自的"保存"按钮
-        # 放在紧跟自己配置行后面的最后一行（在 _load_config/
-        # _load_shard_config 里，因为每次重新加载都会连同这些行一起重
-        # 建）——不固定在整个页签底部，否则像 GAMEPLAY 这种内容较少的
-        # 分区下面会空出一大截难看的空白。
+        # 切换子页签时把键盘焦点转移到 self._sub_content——不然焦点会停
+        # 在上一个页签里排最前的控件上，新页签第一项会被误当成"已选
+        # 中"画出高亮。PillTabBar 没有 <<NotebookTabChanged>> 原生事件，
+        # 改在 _on_sub_tab_select 里直接调用。
+        # "Cluster" 把 cluster.ini 四个分区合并成一个页签，每行仍按真实
+        # 分区名登记进 self._entries；"Shard Config" 是独立的
+        # server.ini 页签。两者的"保存"按钮各自紧跟自己配置行的最后一
+        # 行（每次重新加载一起重建），不固定在页签底部，避免内容少的分
+        # 区下面空出一大截。
         self._section_frames = {}
         self._section_save_btns = {}
-        # 两个页签各自只建一个常驻的可滚动容器（这里加到 canvas 上，每
-        # 次重新加载时由 _clear_form()/_load_config() 清空重填）——
-        # "Cluster" 页签自己的两栏子布局（left_frame/right_frame）是在
-        # _load_config() 内部现建的，作为这个容器的子控件，不在这里单
-        # 独跟踪。
         for tab_key in ("Cluster", "Shard Config"):
-            # page 包一层，里面装可滚动的 canvas，另加一行 footer 放
-            # "保存"按钮，footer 在滚动区域之外——原来这个按钮是滚动
-            # frame 内部 grid 的最后一行，内容一多就跟着滚出视野，而且
-            # 贴在绿色卡片里面而不是紧贴右下角。按钮固定建在这里（只建
-            # 一次），不放进每次重新加载都会把 `frame` 整个拆掉重建的
-            # _load_config()/_load_shard_config() 里面。scroll_area 不
-            # 用 expand=True：它的高度跟着自己内容走（见下面
-            # frame<Configure> 的处理，随内容增减调整 canvas 高度），这
-            # 样 footer 才会紧跟在最后一行配置后面，而不是死死钉在页签
-            # 底部、内容不够高时留一大截空白。
-            # page/footer 用普通 tk.Frame 显式指定 CARD_BG（白色）背
-            # 景，而不是 ttk.Frame 默认的 BG_SOFT（淡绿色）——下面的
-            # scroll_area/canvas/frame 仍保持默认的绿色，这样绿色只框
-            # 住真正的配置行，正好在保存按钮上方收尾，不会让整个页签
-            # （连 footer 一起）看起来是一整块没有区分的绿色。
+            # 每个页签一个 page，装可滚动的 canvas + 一行 footer 放"保
+            # 存"按钮（footer 在滚动区域之外，不会跟着内容滚出视野）。
+            # page/footer 用 tk.Frame 显式指定 CARD_BG，scroll_area 内部
+            # 仍是默认背景，让绿色只框住真正的配置行。
             page = tk.Frame(self._sub_content, background=theme.CARD_BG)
             scroll_area = ttk.Frame(page)
             scroll_area.pack(side=tk.TOP, fill=tk.X)
@@ -277,19 +316,12 @@ class ClusterConfigTab:
                     c.configure(height=bbox[3])
 
             frame.bind("<Configure>", _on_frame_configure)
-            # 不做下面这步的话，内嵌的 frame（以及里面 grid 的所有控
-            # 件，包括下面的 Entry/Combobox 字段）会永远钉死在自己的
-            # 自然/请求宽度上——放大窗口只会让 canvas 内容右侧的空白可
-            # 滚动区域变大，内容本身不会跟着变宽。
-            #
-            # 用防抖而不是每次事件都处理：设置内嵌窗口的宽度会触发这
-            # 个页签里全部行（20~40 个 Entry/Combobox/ToggleSwitch 控
-            # 件）的一次完整 grid 重新布局，拖拽缩放过程中每个 WM_SIZE
-            # 消息都做一遍的话卡顿是真实可感知的——这是 ttk 自己原生
-            # 几何管理器的开销，不是 PIL 那边的节流能管到的。跟
-            # ImageScrollPanel 的 on_settle 一个思路，缩放停顿约 120ms
-            # 后才真正应用，停下拖拽后字段很快就会变成正确宽度，而不
-            # 用在每一帧中间态都承担一次重新布局的代价。
+            # 不做这步的话内嵌 frame 会钉死在自然宽度上，放大窗口只会
+            # 让可滚动区域变大，内容不会跟着变宽。用防抖而不是每次事件
+            # 都处理——这一步会触发全部 20~40 个字段控件的完整 grid 重
+            # 新布局，拖拽缩放时每个 WM_SIZE 消息都做一遍会明显卡顿，
+            # 跟 ImageScrollPanel 的 on_settle 一个思路，停顿约 120ms 后
+            # 才真正应用。
             resize_state = {"after_id": None}
 
             def _settle_width(c=canvas, wid=win_id, state=resize_state):
@@ -370,7 +402,9 @@ class ClusterConfigTab:
 
     def _build_token_panel(self, parent):
         p = ttk.Frame(parent); p.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        ttk.Label(p, text=t("token.title"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold")).pack(anchor=tk.W)
+        self._token_title_lbl = ttk.Label(p, text=t("token.current_title"),
+                                           font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"))
+        self._token_title_lbl.pack(anchor=tk.W)
         # 普通 tk.Text 不会跟着 theme.apply_theme() 走 ttk 皮肤，不显式给
         # bg/fg 的话就是系统默认的白底黑字，跟其它页签的薄荷绿卡片+深色
         # 文字完全不搭，看起来像是没套上主题、"坏掉"了一样。字体也不用
@@ -388,6 +422,23 @@ class ClusterConfigTab:
         self._token_change_btn = ttk.Button(bf, text=t("token.change"), command=self._change_token); self._token_change_btn.pack(side=tk.LEFT, padx=2)
         self._token_apply_btn = ttk.Button(bf, text=t("token.apply"), command=self._apply_token); self._token_apply_btn.pack(side=tk.RIGHT, padx=2)
         self._token_visible = False; self._token_raw = ""
+
+        # 全局令牌池——所有存档共享，"复制为服务器存档"新建存档时自动
+        # 取列表第一个填上（应用户要求固定取第一个，不随机选，见
+        # save_browser/cluster_copy.py），不需要每次都手动申请/填写。这
+        # 里只负责管理这个池子，跟当前存档具体用的是哪个令牌是两回事，
+        # 不需要在 on_cluster_changed()/_load_token() 里刷新。
+        global_bf = ttk.Frame(p); global_bf.pack(fill=tk.X, pady=(15, 0))
+        self._global_tokens_btn = ttk.Button(global_bf, text=t("token.set_global_btn"),
+                                              command=self._open_global_tokens_dialog)
+        self._global_tokens_btn.pack(side=tk.LEFT)
+        self._global_tokens_hint_lbl = ttk.Label(p, text=t("token.global_hint"), foreground=theme.TEXT_MUTED,
+                                                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS),
+                                                  wraplength=420, justify=tk.LEFT)
+        self._global_tokens_hint_lbl.pack(anchor=tk.W, pady=(4, 0))
+
+    def _open_global_tokens_dialog(self):
+        _GlobalTokensDialog(self.frame)
 
     def _get_cluster(self):
         return self.app.get_selected_cluster()
@@ -1017,9 +1068,12 @@ class ClusterConfigTab:
         self._admin_add_btn.configure(text=t("admin.add")); self._admin_remove_btn.configure(text=t("admin.remove"))
         self._block_title_lbl.configure(text=t("blocklist.title"))
         self._block_add_btn.configure(text=t("admin.add")); self._block_remove_btn.configure(text=t("admin.remove"))
+        self._token_title_lbl.configure(text=t("token.current_title"))
         self._token_show_btn.configure(text=t("token.show") if not self._token_visible else t("token.hide"))
         self._token_copy_btn.configure(text=t("token.copy")); self._token_change_btn.configure(text=t("token.change"))
         self._token_apply_btn.configure(text=t("token.apply"))
+        self._global_tokens_btn.configure(text=t("token.set_global_btn"))
+        self._global_tokens_hint_lbl.configure(text=t("token.global_hint"))
         # 字段标签/悬浮说明（来自 ini_field_info）以及本地存档的只读提
         # 示都跟界面语言相关——重新渲染一遍才能跟着切换语言，不然会停
         # 留在这个存档上次加载时所用的语言上。

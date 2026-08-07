@@ -128,13 +128,24 @@ class _SSHAuthSetupDialog:
 class SelfHostFrpPage:
     def _label(self, parent, text, *, fg=None, font=None):
         """照抄 sakura/tab.py 的同名方法——BgFrame + create_text，不用
-        ttk.Label（会挡住自定义背景图）。"""
+        ttk.Label（会挡住自定义背景图）。返回的 BgFrame 挂了 `redraw()`
+        方法（跟 toolbar_widgets.make_toolbar_label() 一个道理），主题切
+        换时对着长期存活、不会被刷新逻辑重建的标签调用一次，才能让文字
+        颜色跟着新主题变；`fg` 如果是调用方传入的某个 theme.X 取值，这
+        里只能重画成调用那一刻算出来的颜色，不会跟着后续主题切换自动更
+        新——这些位置目前用的都是默认色（走 theme.TEXT），不受影响。"""
         f = tkfont.nametofont("TkDefaultFont") if font is None else tkfont.Font(font=font)
         label_h = f.metrics("linespace") + 4
         label = BgFrame(parent, self.app, bg=theme.CARD_BG)
         label.configure(height=label_h, width=f.measure(text) + 4)
-        label.create_text(2, label_h / 2, text=text, anchor=tk.W,
-                           fill=fg or theme.TEXT, font=f, tags="label_text")
+
+        def _redraw():
+            label.delete("label_text")
+            label.create_text(2, label_h / 2, text=text, anchor=tk.W,
+                               fill=fg or theme.TEXT, font=f, tags="label_text")
+
+        label.redraw = _redraw
+        _redraw()
         return label
 
     def _make_token_display(self, parent):
@@ -186,14 +197,15 @@ class SelfHostFrpPage:
         self._probing = False
         self._probe_cycle_started = False
 
-        top = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._top = top = BgFrame(self.frame, app, bg=theme.CARD_BG)
         top.pack(fill=tk.X, padx=10, pady=(10, 5))
 
-        row1 = BgFrame(top, app, bg=theme.CARD_BG); row1.pack(fill=tk.X, pady=3)
-        self._label(row1, t("selfhost.host_label")).pack(side=tk.LEFT)
+        self._row1 = row1 = BgFrame(top, app, bg=theme.CARD_BG); row1.pack(fill=tk.X, pady=3)
+        self._host_label = self._label(row1, t("selfhost.host_label"))
+        self._host_label.pack(side=tk.LEFT)
         self._host_var = tk.StringVar()
         ttk.Entry(row1, textvariable=self._host_var, width=24).pack(side=tk.LEFT, padx=(4, 12))
-        bind_port_label = self._label(row1, t("selfhost.bind_port_label"))
+        bind_port_label = self._bind_port_label = self._label(row1, t("selfhost.bind_port_label"))
         bind_port_label.pack(side=tk.LEFT)
         self._bind_port_var = tk.StringVar(value=str(deploy.DEFAULT_BIND_PORT))
         bind_port_entry = ttk.Entry(row1, textvariable=self._bind_port_var, width=8)
@@ -201,13 +213,13 @@ class SelfHostFrpPage:
         Tooltip(bind_port_label, t("selfhost.bind_port_hint"))
         Tooltip(bind_port_entry, t("selfhost.bind_port_hint"))
 
-        row2 = BgFrame(top, app, bg=theme.CARD_BG); row2.pack(fill=tk.X, pady=3)
-        token_label = self._label(row2, t("selfhost.token_label"))
+        self._row2 = row2 = BgFrame(top, app, bg=theme.CARD_BG); row2.pack(fill=tk.X, pady=3)
+        token_label = self._token_label = self._label(row2, t("selfhost.token_label"))
         token_label.pack(side=tk.LEFT)
         self._token_var = tk.StringVar()
         # Token 应该始终是随机生成的，不给编辑入口——手改成好记的弱口令
         # 反而不安全，真要换新的走旁边"重新生成Token"按钮。
-        token_display = self._make_token_display(row2)
+        self._token_display = token_display = self._make_token_display(row2)
         token_display.pack(side=tk.LEFT, padx=(4, 6))
         Tooltip(token_label, t("selfhost.token_hint"))
         Tooltip(token_display, t("selfhost.token_hint"))
@@ -215,7 +227,7 @@ class SelfHostFrpPage:
         regen_token_btn.pack(side=tk.LEFT)
         Tooltip(regen_token_btn, t("selfhost.regen_token_hint"))
 
-        row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
+        self._row3 = row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
         self._auth_btn = ttk.Button(row3, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog)
         self._auth_btn.pack(side=tk.LEFT, padx=(0, 2))
         self._deploy_btn = ttk.Button(row3, text=t("selfhost.ssh_deploy_btn"), command=self._start_deploy)
@@ -238,7 +250,7 @@ class SelfHostFrpPage:
         self._shards_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._shards_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        action_row = BgFrame(self.frame, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
+        self._action_row = action_row = BgFrame(self.frame, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
         self._action_btn = ttk.Button(action_row, text=t("selfhost.enable_btn"), command=self._on_action_btn)
         self._action_btn.pack(side=tk.LEFT)
         self._conn_check_btn = ttk.Button(action_row, text=t("selfhost.conn_check_btn"),
@@ -299,6 +311,27 @@ class SelfHostFrpPage:
 
     def refresh(self):
         self.on_cluster_changed()
+
+    def retheme(self):
+        """主题切换时调用——这个页面几乎全用 BgFrame（要透出自定义背景
+        图，见各处构造时的说明），这类画布容器不会像 ttk 控件那样被
+        theme.apply_theme() 的全局样式表自动带过去，颜色/背景图裁剪结
+        果都是构造那一刻就画死的，必须显式重新来一遍，否则会一直显示
+        切主题前的旧内容（真机反馈过的 bug：背景图错位，且不会自己恢
+        复，只有碰巧触发一次 <Configure> 才会重画）。
+
+        `_shards_frame`/`_server_status_panel`/`_status_frame` 内部的具
+        体内容是每次刷新/探测时重新整个销毁重建的（`_render_shard_
+        rows()`/`_render_server_status_panel()`），下次任何一次刷新自
+        然就会用上新主题的颜色，这里只需要处理容器本身和常驻不重建的
+        标签/按钮。"""
+        for frame in (self.frame, self._top, self._row1, self._row2, self._row3,
+                      self._server_status_panel, self._status_frame,
+                      self._shards_frame, self._action_row, self._frpc_row):
+            frame.apply_theme()
+        for label in (self._host_label, self._bind_port_label, self._token_label,
+                      self._token_display, self._frpc_status_label):
+            label.redraw()
 
     # ── 服务器连接信息 ───────────────────────────────────────────────
 

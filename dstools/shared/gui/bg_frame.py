@@ -58,8 +58,9 @@ class BgFrame(tk.Canvas):
         # 拖拽缩放窗口期间（custom_titlebar.ResizeGrips 按下到松手之间）
         # 整体跳过——app 会在松手那一刻用最终尺寸调用 render_now() 统一
         # 刷新一次（见 DSToolsApp._end_bg_drag_suppress()），这里提前排
-        # 队反而会拿拖拽中途、还没稳定下来的共享大图去裁，产生错位。
-        if getattr(self._app, "_bg_drag_suppressed", False):
+        # 队反而会拿拖拽中途、还没稳定下来的共享大图去裁，产生错位。切
+        # 主题期间同理跳过，见 render_now() 的说明。
+        if getattr(self._app, "_bg_drag_suppressed", False) or getattr(self._app, "_theme_switch_suppressed", False):
             return
         if self._render_after_id is None:
             self._render_after_id = self.after(16, self._do_throttled_render)
@@ -82,7 +83,20 @@ class BgFrame(tk.Canvas):
         见：这类表面重新可见时，Tk 自己的几何管理会先触发一次真正的
         `<Configure>`（页签内容从"未托管/隐藏"变成"已托管/显示"本身就
         是一次几何变化），走 `_request_render()` 的常规节流路径用当时最
-        新的共享大图重新裁一次，不会显示过期内容。"""
+        新的共享大图重新裁一次，不会显示过期内容。
+
+        真机反馈过的坑：切主题时 DSToolsApp._switch_theme() 会挨个调用
+        很多控件自己的 apply_theme()（这些方法内部直接调 render_now()，
+        不走上面 _request_render() 的节流路径），如果不额外拦一道，每
+        个表面在这个过程里至少会被真实重绘两次（各自的 apply_theme()
+        一次，最后 _force_refresh_bg_now() 统一刷新一次），先后两次读到
+        的共享大图还可能是切主题前后两个不同版本——好几个表面各自在不
+        同的时间点重绘出不同的中间状态，看起来就是"好几波闪烁依次扫过
+        屏幕"。`_theme_switch_suppressed` 为真时这里直接跳过，把所有表
+        面的重绘都拖到 _switch_theme() 最后统一做的那一次，一次性呈现，
+        不产生中间状态。"""
+        if getattr(self._app, "_bg_drag_suppressed", False) or getattr(self._app, "_theme_switch_suppressed", False):
+            return
         if not self.winfo_ismapped():
             return
         self.delete("bg_image")

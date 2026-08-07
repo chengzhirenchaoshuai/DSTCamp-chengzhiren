@@ -124,7 +124,10 @@ class PillTabBar(tk.Frame):
     def _request_redraw(self):
         # 把真实拖拽缩放窗口触发的密集 <Configure> 事件（远超屏幕实际重
         # 绘能力）合并成最多每 ~16ms（约 60fps）真正重画一次，而不是每
-        # 个事件都重新生成渐变 PhotoImage 和每个药丸的多边形。
+        # 个事件都重新生成渐变 PhotoImage 和每个药丸的多边形。拖拽缩放/
+        # 切主题期间同理整体跳过，见 _redraw() 的说明。
+        if getattr(self._app, "_bg_drag_suppressed", False) or getattr(self._app, "_theme_switch_suppressed", False):
+            return
         if self._redraw_after_id is None:
             self._redraw_after_id = self._canvas.after(16, self._do_throttled_redraw)
 
@@ -175,6 +178,16 @@ class PillTabBar(tk.Frame):
                 return
 
     def _redraw(self):
+        # 真机反馈过的坑：apply_theme() 直接调用这个方法（不走上面
+        # _request_redraw() 的节流路径），切主题时如果不额外拦一道，会
+        # 在 DSToolsApp._switch_theme() 最后统一刷新之前先按半新半旧的
+        # 状态重画一次，多个页签条各自在不同时间点重画，看起来是好几波
+        # 闪烁——`_theme_switch_suppressed` 为真时直接跳过，重画统一拖到
+        # 最后那一次。拖拽缩放期间同理跳过（虽然目前拖拽不会主动调
+        # apply_theme()，但跟 bg_frame.py 保持同一套判断，避免以后有人
+        # 在拖拽过程中调用 apply_theme() 时又踩到同一个坑）。
+        if getattr(self._app, "_bg_drag_suppressed", False) or getattr(self._app, "_theme_switch_suppressed", False):
+            return
         c = self._canvas
         c.delete("all")
         self._regions = []

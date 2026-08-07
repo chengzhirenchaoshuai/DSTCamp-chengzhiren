@@ -200,8 +200,18 @@ class SakuraTab:
         label_h = f.metrics("linespace") + 4
         label = BgFrame(parent, self.app, bg=theme.CARD_BG)
         label.configure(height=label_h, width=f.measure(text) + 4)
-        label.create_text(2, label_h / 2, text=text, anchor=tk.W,
-                           fill=fg or theme.TEXT, font=f, tags="label_text")
+
+        def _redraw():
+            label.delete("label_text")
+            label.create_text(2, label_h / 2, text=text, anchor=tk.W,
+                               fill=fg or theme.TEXT, font=f, tags="label_text")
+
+        # 挂 redraw() 供 retheme() 用（跟 toolbar_widgets.make_toolbar_
+        # label() 一个道理）——只对长期存活、不会被刷新逻辑重建的标签有
+        # 意义；世界状态区那些每次刷新都整个销毁重建的标签不需要专门调
+        # 用这个，下次刷新自然就是新主题的颜色。
+        label.redraw = _redraw
+        _redraw()
         return label
 
     def __init__(self, parent, app):
@@ -247,15 +257,16 @@ class SakuraTab:
         self._tunnel_count = 0  # 账号下全部隧道数，_apply_loaded() 加载完才有真实值
         self._tunnels_exhausted = False  # _render_shard_rows() 每次刷新时重算
 
-        top = BgFrame(self._sakura_page, app, bg=theme.CARD_BG)
+        self._top = top = BgFrame(self._sakura_page, app, bg=theme.CARD_BG)
         top.pack(fill=tk.X, padx=10, pady=(10, 5))
 
         # Token 行——用 BgFrame 而不是 ttk.Frame 装这些行：ttk.Frame 是不
         # 透明的实色容器，一层层叠上去会把自定义背景图整个挡住（跟
         # local_service_tab.py 里"专用服务器工具:"那段文字是同一个问题），
         # BgFrame 才是这个项目里"容器要透出背景图"的标准做法。
-        row1 = BgFrame(top, app, bg=theme.CARD_BG); row1.pack(fill=tk.X, pady=3)
-        self._label(row1, t("sakura.token_label")).pack(side=tk.LEFT)
+        self._row1 = row1 = BgFrame(top, app, bg=theme.CARD_BG); row1.pack(fill=tk.X, pady=3)
+        self._token_label = self._label(row1, t("sakura.token_label"))
+        self._token_label.pack(side=tk.LEFT)
         self._token_display = tk.Text(row1, height=1, width=40, wrap=tk.NONE,
                                        font=("Consolas", 10), bg=theme.CARD_BG, fg=theme.TEXT,
                                        relief=tk.FLAT, highlightthickness=1,
@@ -268,8 +279,9 @@ class SakuraTab:
 
         # 节点行——节点数量多（几十上百个），下拉框展开会长得很难用，改
         # 成一个按钮，点击弹一个多列网格的选择窗口（_NodeSelectDialog）。
-        row2 = BgFrame(top, app, bg=theme.CARD_BG); row2.pack(fill=tk.X, pady=3)
-        self._label(row2, t("sakura.node_label")).pack(side=tk.LEFT)
+        self._row2 = row2 = BgFrame(top, app, bg=theme.CARD_BG); row2.pack(fill=tk.X, pady=3)
+        self._node_label = self._label(row2, t("sakura.node_label"))
+        self._node_label.pack(side=tk.LEFT)
         self._node_display_var = tk.StringVar(value=t("sakura.node_none_selected"))
         ttk.Button(row2, textvariable=self._node_display_var, command=self._open_node_picker).pack(
             side=tk.LEFT, padx=8)
@@ -283,13 +295,15 @@ class SakuraTab:
         # 那一行。
         self._account_frame = BgFrame(top, app, bg=theme.CARD_BG)
         self._account_frame.pack(fill=tk.X, pady=(6, 3))
+        self._account_header_labels = []
         for col, key in enumerate(("sakura.account_group", "sakura.account_speed",
                                     "sakura.account_traffic", "sakura.account_tunnels",
                                     "sakura.account_tunnels_used")):
             self._account_frame.grid_columnconfigure(col, weight=1, uniform="acct_col")
-            self._label(self._account_frame, t(key), fg=theme.TEXT_MUTED,
-                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).grid(
-                row=0, column=col, sticky=tk.W, padx=(0, 15))
+            header_lbl = self._label(self._account_frame, t(key), fg=theme.TEXT_MUTED,
+                                      font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM))
+            header_lbl.grid(row=0, column=col, sticky=tk.W, padx=(0, 15))
+            self._account_header_labels.append(header_lbl)
         self._account_value_row = 1
         self._render_account_info("--", "--", "--", "--", "--")
 
@@ -323,7 +337,8 @@ class SakuraTab:
         self._shards_frame.pack(fill=tk.X, padx=10, pady=5)
 
         # 操作按钮
-        action_row = BgFrame(self._sakura_page, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
+        self._action_row = action_row = BgFrame(self._sakura_page, app, bg=theme.CARD_BG)
+        action_row.pack(fill=tk.X, padx=10, pady=5)
         self._action_btn = ttk.Button(action_row, text=t("sakura.enable_btn"), command=self._on_action_btn)
         self._action_btn.pack(side=tk.LEFT)
         # 按钮本身是常驻控件（不像世界行那样每次刷新都销毁重建），Tooltip
@@ -410,6 +425,33 @@ class SakuraTab:
 
     def refresh(self):
         self.on_cluster_changed()
+
+    def retheme(self):
+        """主题切换时调用——**这个方法之前完全不存在**：gui/app.py 逐 tab
+        调用 `getattr(tab, "retheme", None)`，6 个顶层页签里独独"内网穿
+        透"这个没有实现，导致切主题时樱花映射/自建 frps 两个子页签下的
+        所有 BgFrame（要透出自定义背景图，画布容器不会像 ttk 控件那样
+        被全局样式表自动带过去）全部停留在切主题前的旧背景/旧颜色，真
+        机反馈过的"背景错位"就是这么来的——不会自己恢复，只有这些控件
+        碰巧收到一次真正的 `<Configure>`（比如拖拽缩放窗口）才会被动重
+        画一次，符合"有时候等几秒恢复、有时候一直不恢复"的现象。
+
+        `_shards_frame`/`_status_frame`/`_frpc_row` 内部的具体内容是每
+        次刷新时整个销毁重建的，下次刷新自然就是新主题颜色，这里只处理
+        构造时建一次、不会被刷新逻辑重建的容器和标签。"""
+        self._sub_tab_bar.apply_theme()
+        for frame in (self.frame, self._sub_content, self._sakura_page, self._top,
+                      self._row1, self._row2, self._account_frame,
+                      self._recent_traffic_frame, self._status_frame,
+                      self._shards_frame, self._action_row, self._frpc_row):
+            frame.apply_theme()
+        self._token_display.configure(bg=theme.CARD_BG, fg=theme.TEXT,
+                                       highlightbackground=theme.CARD_BORDER, highlightcolor=theme.ACCENT)
+        for label in (self._token_label, self._node_label, self._frpc_status_label,
+                      *self._account_header_labels):
+            label.redraw()
+        self._redraw_recent_traffic()
+        self.selfhost_page.retheme()
 
     # ── Token 显示/编辑 ──────────────────────────────────────────────
 

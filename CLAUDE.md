@@ -83,6 +83,10 @@ WeGame 的 `rail_apps` 安装根目录没有注册表项可查，需要用户手
 
 **5 套主题**：`gray`（默认）+ `mint`/`twilight`/`campfire`/`sakura`。加新主题只需在 `_THEMES` 加一个 dict + 追加到 `THEME_NAMES`，`set_theme()` 立即生效不需重启。**硬性规则：任何消费方必须现查 `theme.X`，不能在 import/构造时缓存成自己的一份**——一次性绑定切主题后不会跟着变；`CardFrame`/`PillTabBar` 这类长期存活的容器需要显式 `apply_theme()`。**语义色**（不随主题变化，比如"运行中"状态）用 `SERVER_COLOR` 这类独立于 `_THEMES` 的模块级常量，新增前先确认没有同色重复定义的常量。
 
+**新增顶层页签必须实现 `retheme()`**：`gui/app.py._switch_theme()` 靠 `getattr(tab, "retheme", None)` 逐个调用，没实现的页签会被静默跳过——真机反馈过"内网穿透"页签漏了这个方法，切主题后整个页签（含子页签 `frp_selfhost`）的背景图/文字颜色一直停留在切主题前的状态，只有碰巧收到一次真正的 `<Configure>` 才会被动纠正。`retheme()` 只需要处理构造时建一次、不会被刷新逻辑重建的长期容器/标签；每次都会整个销毁重建的动态列表（比如 `sakura`/`frp_selfhost` 的世界行）不用管，下次刷新自然是新颜色——但 `local_service` 的 `_ShardRow` 是例外，它刻意做成"世界集合不变就一直复用旧对象"，也需要在 `retheme()` 里显式处理。
+
+**切主题防闪烁**：`_switch_theme()` 期间会设 `DSToolsApp._theme_switch_suppressed = True`，`BgFrame.render_now()`/`PillTabBar._redraw()` 检测到这个标志位会跳过真正的重绘（配色等状态照常生效，只是不立即画出来），等所有 `retheme()`/`apply_theme()` 调用完，最后统一 `_force_refresh_bg_now()` + `update()` 一次性呈现——不这样做的话，切换过程中一长串 `apply_theme()` 调用会各自触发一次重绘，叠成好几波闪烁。跟拖拽缩放用的 `_bg_drag_suppressed` 是同一个思路，但不清空成纯色（切换只有几十毫秒，中间状态不会被画到屏幕上）。
+
 **字体**：`FONT_FAMILY` 固定 `"Microsoft YaHei UI Light"`，6 档字号 `FONT_SIZE_XL/LG/MD/BASE/SM/XS`（18/15/12/11/10/9）。`shared/gui/fonts.py` 的 PIL 栅格化字体要跟 Tk 侧保持一致，优先找 `msyhl.ttc`。
 
 ### 自定义背景图片 (`shared/custom_background.py` / `shared/gui/bg_frame.py`)
@@ -169,6 +173,8 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 
 **数字范围字段不能用 `validate="key"` 做按键级校验**（真机反馈的真实 bug）：这种"插入前同步拒绝"跟 Windows 中文输入法的组词提交过程冲突，组词里一出现被拒绝的字符就会把输入框清空、界面像刷新了一下。改成 `trace_add("write", ...)` 事后过滤：先无条件接受输入，插入后再检查，混进非法字符就原地纠正，不打断 IME。
 
+**全局令牌池**（`shared/app_settings.py` 的 `get_global_tokens()`/`set_global_tokens()`）：所有存档共享的一份 Token 列表，在"服务器令牌"子页签管理。`features/save_browser/cluster_copy.py` 的 `copy_local_cluster_to_server()`（目前唯一的"新建服务器存档"入口）复制完成后，如果新存档还没有 `cluster_token.txt`，固定取列表第一个自动填上（应用户要求不随机选），已有 token 的不覆盖。
+
 ### 内网穿透——樱花映射 (`features/sakura/api.py` / `frpc.py` / `tab.py`)
 
 通过 SakuraFrp（natfrp.com）的开放 API 把本地服务器映射到公网，配合饥荒 `c_connect()` 直连。`api.py` 是纯 `urllib.request` 的 REST 客户端。**必须带自定义 `User-Agent`**——樱花的 Cloudflare WAF 会把默认 UA 当脚本流量拦掉。**不在本地存隧道 ID 映射表**，樱花账号数据是权威源，靠命名约定现查匹配。**隧道名不能可读拼接**（3-20 字符、仅字母数字下划线），用 `sanitize_tunnel_name()` 对 `(存档目录名, 世界名)` 取短哈希。
@@ -220,6 +226,8 @@ win.geometry(f"{w}x{h}+{x}+{y}")
 `parse_modinfo()` 提取 `configuration_options`，绝大多数 mod 靠纯文本/正则覆盖。**唯一例外 `features/mod/sandbox.py`**：极少数 mod 用代码动态拼选项，退化到收窄的 Lua 5.1 沙箱（`lupa.lua51`）。约束：只在打开配置弹窗时触发；永远在子进程里跑、带硬超时；`os`/`io`/`require`/`load`/`debug` 全局置空；任何失败一律返回 `None`，从不猜测。
 
 `resolve_full_modinfo()` 耗时明显，`features/mod/cache.py` 按 workshop_id + mtime 做磁盘缓存，另有 `_CACHE_FORMAT_VERSION` 版本号——`ModConfigOption` 加字段后旧缓存会用默认值悄悄补上不报错，**改字段形状必须把版本号加一**。
+
+**性能坑（真机复现+cProfile 定位）**：Mod 用共享辅助函数批量生成配置选项时（`_inline_helper_call()`），逐个参数单独调一次正则替换会让单个 mod 的解析耗时随"调用次数 × 参数个数"线性叠加——真机遇到过一个 421 次调用、每次 11+ 参数的 mod，仅这一步就吃掉 700ms+，是那次 145 个 mod 全量加载最大的单点耗时。`_replace_idents_outside_strings()` 改成一次正则扫描（交替分支）命中所有参数，把扫描次数收成 O(调用次数)。
 
 **三类不走原生下拉框的配置项**（`ModConfigDialog`）：
 - `client = true`（约定字段，标记只影响本地客户端表现，编辑服务端 `modoverrides.lua` 无效，渲染前过滤）
