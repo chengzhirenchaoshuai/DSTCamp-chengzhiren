@@ -601,6 +601,170 @@ MONTFLUV_SETTINGS: dict[str, ModWorldSetting] = {
         icon_element="worldsettings_seanest_grow_speed.tex"),
 }
 
+# workshop-3322803908 == "云霄国度-Above the Clouds"（把《饥荒：单机版》
+# 猪镇/Porkland 的内容移植进 DST 的 mod，modinfo.lua 的 name 字段本身就
+# 是 "云霄国度-Above the Clouds" 这个固定字符串，不随语言变化）。
+#
+# 机制跟前面几个 mod 不一样，来源（真机文件路径
+# steamapps/workshop/content/322330/3322803908/）：
+#   - key/category 全部取自 modcustomizeitems.lua 的 `customize_items`
+#     表（直接调用 `AddCustomizeItem(category, group, name, itemsettings)`
+#     注册，不经过 for 循环遍历一个独立表——写法比前面几个 mod 更直接）。
+#   - 这个 mod 很多条目自己没写 `desc` 字段（比如 monsters 组的
+#     `bill_setting`/`mosquito_setting`，animals 组的 `dungbeetle_setting`
+#     等），一开始以为是数据缺失——直接读游戏本体
+#     data/databundles/scripts.zip 里的 scripts/map/customize.lua 源码确
+#     认：`options = function(item) return FunctionOrValue(item.desc or
+#     item.group.desc, location) end`，item 没写 desc 时会继承它所属的
+#     **原版** group（"monsters"/"animals"）自己的 desc——这两个原版分组
+#     在同一份 customize.lua 里写死是 `frequency_descriptions`
+#     （["never","rare","default","often","always"]），不是瞎猜出来的默
+#     认值。这个 mod 里凡是自己写了 `desc` 的条目（`roc_setting`/
+#     `pugalisk_fountain`/misc 组几个）,取值以条目自己的 desc 为准。
+#   - `enable_descriptions`（misc 组 brambles/fog/glowflycycle/poison/
+#     hayfever 用）是这个 mod 在 modcustomizeitems.lua 里现场定义的局部
+#     表，跟原版 customize.lua 的 `yesno_descriptions` 字面量完全一致
+#     （["never","default"]），同样已核对源码确认。
+#   - `temperate`/`humid`/`lush`（猪镇专属的三段式季节，替代原版
+#     春/夏/秋/冬）取值用 `season_length_descriptions`，跟岛屿冒险的季
+#     节长度设置是同一套七档取值（noseason/veryshortseason/shortseason/
+#     default/longseason/verylongseason/random）。
+#   - 中文名取自 scripts/languages/pl_chinese_s.po 里
+#     `msgctxt "STRINGS.UI.CUSTOMIZATIONSCREEN.<KEY 大写>"` 对应的
+#     msgstr（gettext 格式，跟岛屿冒险同一套约定）。
+#   - icon_element 统一取自 images/hud/customization_porkland.xml 图集
+#     （这个 mod 所有条目——不管是不是原版组下的——都在结尾统一被赋值
+#     `itemsettings.atlas = pl_atlas` 指向这一份图集，包括 temperate/
+#     humid/lush 这几个走 AddCustomizeGroup 单独建组的条目，因为
+#     customize.lua 里 `atlas = function(item) return item.atlas or
+#     item.group.atlas end` 同样有 group 兜底），40 个条目的 image 名字
+#     在图集里全部核对到，无缺失。
+#
+# **命名收录待观察项（不是排除，只是如实记录）**：`poison` 这个 key 跟
+# 岛屿冒险核心 mod（workshop-3435352667）的 `poison` 撞名，两者含义完全
+# 不同（这个 mod 是"猪镇毒气孢子"开关，岛屿冒险是"是否会中毒"开关）。
+# leveldataoverride.lua 的 overrides 表是全局扁平命名空间，两个 mod 同
+# 时启用时哪个生效以 get_mod_world_settings() 的合并顺序（后登记覆盖先
+# 登记）为准，这是如实反映游戏引擎本身命名空间不隔离的行为，不是这次改
+# 动引入的新问题。
+_PORKLAND_ID = "3322803908"
+
+# 原版 monsters/animals 组的默认 desc，以及这个 mod 自己复刻的
+# yesno_descriptions 局部表，均已读游戏本体源码核对，见上方大段注释。
+_PL_FREQUENCY = ["never", "rare", "default", "often", "always"]
+_PL_NEVER_DEFAULT = ["never", "default"]
+
+PORKLAND_SETTINGS: dict[str, ModWorldSetting] = {
+    # ── 世界设置（可编辑）──
+    "temperate": ModWorldSetting(key="temperate", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "平和季", "en": "Temperate"}, values=_IA_SEASON_LENGTH,
+        icon_element="temperate.tex"),
+    "humid": ModWorldSetting(key="humid", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "潮湿季", "en": "Humid"}, values=_IA_SEASON_LENGTH,
+        icon_element="humid.tex"),
+    "lush": ModWorldSetting(key="lush", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "繁茂季", "en": "Lush"}, values=_IA_SEASON_LENGTH,
+        icon_element="lush.tex"),
+    "bill_setting": ModWorldSetting(key="bill_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "鸭嘴豪猪", "en": "Platapines"}, values=_PL_FREQUENCY,
+        icon_element="platypine.tex"),
+    "frog_poison_setting": ModWorldSetting(key="frog_poison_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "箭毒蛙", "en": "Poison Dartfrogs"}, values=_PL_FREQUENCY,
+        icon_element="poison_dart_frogs.tex"),
+    "giantgrub_setting": ModWorldSetting(key="giantgrub_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "巨型蛆虫", "en": "Giant Grub"}, values=_PL_FREQUENCY,
+        icon_element="giant_grubs.tex"),
+    "mosquito_setting": ModWorldSetting(key="mosquito_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "蚊子", "en": "Mosquitos"}, values=_PL_FREQUENCY,
+        icon_element="mosquitos.tex"),
+    "roc_setting": ModWorldSetting(key="roc_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "友善的大鹏", "en": "BFB"}, values=_PL_NEVER_DEFAULT,
+        icon_element="roc.tex"),
+    "weevole_setting": ModWorldSetting(key="weevole_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "象鼻鼠虫", "en": "Weevole"}, values=_PL_FREQUENCY,
+        icon_element="weevole.tex"),
+    "pugalisk_fountain": ModWorldSetting(key="pugalisk_fountain", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "不老泉", "en": "Fountain of Youth"}, values=_PL_FREQUENCY,
+        icon_element="pugalisk_fountain.tex"),
+    "dungbeetle_setting": ModWorldSetting(key="dungbeetle_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "屎壳郎", "en": "Dung Beetle"}, values=_PL_FREQUENCY,
+        icon_element="dungbeetle.tex"),
+    "glowfly_setting": ModWorldSetting(key="glowfly_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "发光飞虫", "en": "Glowfly"}, values=_PL_FREQUENCY,
+        icon_element="glowflies.tex"),
+    "hanging_vine_setting": ModWorldSetting(key="hanging_vine_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "垂下的藤蔓", "en": "Hanging Vine"}, values=_PL_FREQUENCY,
+        icon_element="grabbing_vine.tex"),
+    "hippopotamoose_setting": ModWorldSetting(key="hippopotamoose_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "河鹿", "en": "Hippopotamooses"}, values=_PL_FREQUENCY,
+        icon_element="hippopotamoose.tex"),
+    "mandrakeman_setting": ModWorldSetting(key="mandrakeman_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "曼德拉长者", "en": "Elder Mandrakes"}, values=_PL_FREQUENCY,
+        icon_element="mandrake_men.tex"),
+    "piko_setting": ModWorldSetting(key="piko_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "异食松鼠", "en": "Piko"}, values=_PL_FREQUENCY,
+        icon_element="orange_pikos.tex"),
+    "thunderbird_setting": ModWorldSetting(key="thunderbird_setting", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "雷鸟", "en": "Thunderbirds"}, values=_PL_FREQUENCY,
+        icon_element="thunderbirds.tex"),
+    "brambles": ModWorldSetting(key="brambles", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "荆棘", "en": "Brambles"}, values=_PL_NEVER_DEFAULT,
+        icon_element="brambles.tex"),
+    "fog": ModWorldSetting(key="fog", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "雾", "en": "Fog"}, values=_PL_NEVER_DEFAULT,
+        icon_element="fog.tex"),
+    "glowflycycle": ModWorldSetting(key="glowflycycle", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "发光飞虫周期", "en": "Glowfly Cycle"}, values=_PL_NEVER_DEFAULT,
+        icon_element="glowfly_life_cycle.tex"),
+    "poison": ModWorldSetting(key="poison", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "毒", "en": "Poison"}, values=_PL_NEVER_DEFAULT,
+        icon_element="poison.tex"),
+    "hayfever": ModWorldSetting(key="hayfever", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "花粉症", "en": "Hayfever"}, values=_PL_NEVER_DEFAULT,
+        icon_element="hayfever.tex"),
+    "pigbandit": ModWorldSetting(key="pigbandit", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "蒙面猪人", "en": "Masked Pig"}, values=_PL_FREQUENCY,
+        icon_element="pig_bandit.tex"),
+    "vampirebat": ModWorldSetting(key="vampirebat", is_rule=True, mod_id=_PORKLAND_ID,
+        name={"zh": "吸血蝙蝠袭击", "en": "Vampire Bat Attacks"}, values=_PL_FREQUENCY,
+        icon_element="vampire_bats.tex"),
+
+    # ── 世界生成（只读）──
+    "porkland_season_start": ModWorldSetting(key="porkland_season_start", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "猪镇起始季节", "en": "Hamlet Starting Season"}, values=None,
+        icon_element="season_start.tex"),
+    "dungpile": ModWorldSetting(key="dungpile", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "粪堆", "en": "Dung Pile"}, values=None, icon_element="dungpile.tex"),
+    "hippopotamoose": ModWorldSetting(key="hippopotamoose", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "河鹿", "en": "Hippopotamooses"}, values=None, icon_element="hippopotamoose.tex"),
+    "peagawk": ModWorldSetting(key="peagawk", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "呆望雀", "en": "Peagawk"}, values=None, icon_element="peagawk.tex"),
+    "pog": ModWorldSetting(key="pog", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "哈巴狸", "en": "Pogs"}, values=None, icon_element="pogs.tex"),
+    "pangolden": ModWorldSetting(key="pangolden", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "淘金兽", "en": "Pangolden"}, values=None, icon_element="pangolden.tex"),
+    "hanging_vine_patch": ModWorldSetting(key="hanging_vine_patch", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "垂下的藤蔓", "en": "Hanging Vine"}, values=None, icon_element="hanging_vine.tex"),
+    "thunderbirdnest": ModWorldSetting(key="thunderbirdnest", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "雷鸟巢", "en": "Thundernest"}, values=None, icon_element="thunderbirds.tex"),
+    "asparagus": ModWorldSetting(key="asparagus", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "芦笋", "en": "Asparagus"}, values=None, icon_element="asparagus.tex"),
+    "grass_tall": ModWorldSetting(key="grass_tall", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "高草", "en": "Tall Grass"}, values=None, icon_element="grass_tall.tex"),
+    "grass_tall_bunches": ModWorldSetting(key="grass_tall_bunches", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "高草丛田", "en": "Tall Grass Fields"}, values=None, icon_element="grass_tall_bunches.tex"),
+    "lotus": ModWorldSetting(key="lotus", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "睡莲", "en": "lotus"}, values=None, icon_element="lotus.tex"),
+    "lost_relics": ModWorldSetting(key="lost_relics", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "失落的文物", "en": "Lost Relics"}, values=None, icon_element="lost_relics.tex"),
+    "ruined_sculptures": ModWorldSetting(key="ruined_sculptures", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "毁坏的雕塑", "en": "Ruined Sculptures"}, values=None, icon_element="lost_sculptures.tex"),
+    "jungle_border_vine": ModWorldSetting(key="jungle_border_vine", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "雨林树冠的藤蔓", "en": "Jungle Canopy Vines"}, values=None, icon_element="jungle_border_vine.tex"),
+    "deep_jungle_fern_noise": ModWorldSetting(key="deep_jungle_fern_noise", is_rule=False, mod_id=_PORKLAND_ID,
+        name={"zh": "雨林地皮上的蕨类植物", "en": "Jungle Floor Ferns"}, values=None, icon_element="deep_jungle_fern_noise.tex"),
+}
+
 
 # workshop id（不带 "workshop-" 前缀）-> 该 mod 贡献的世界设置登记表。
 MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
@@ -608,6 +772,7 @@ MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
     _IA_CORE_ID: IA_CORE_SETTINGS,
     _IA_SHIPWRECKED_ID: IA_SHIPWRECKED_SETTINGS,
     _MONTFLUV_ID: MONTFLUV_SETTINGS,
+    _PORKLAND_ID: PORKLAND_SETTINGS,
 }
 
 # workshop id -> 分类标题显示名（不是设置项自己的名字，是整个分区的标
@@ -618,6 +783,7 @@ MOD_DISPLAY_NAMES: dict[str, dict] = {
     _IA_CORE_ID: {"zh": "岛屿冒险 - 核心", "en": "Island Adventures - Core"},
     _IA_SHIPWRECKED_ID: {"zh": "岛屿冒险 - 海难", "en": "Island Adventures - Shipwrecked"},
     _MONTFLUV_ID: {"zh": "山河表里", "en": "Montfluv"},
+    _PORKLAND_ID: {"zh": "云霄国度", "en": "Above the Clouds"},
 }
 
 # workshop id -> (图标图集 .xml 相对路径, 贴图 .tex 相对路径)，都是相对
@@ -627,6 +793,7 @@ MOD_ICON_ATLAS: dict[str, tuple[str, str]] = {
     _IA_CORE_ID: ("images/hud/customization_core.xml", "images/hud/customization_core.tex"),
     _IA_SHIPWRECKED_ID: ("images/hud/customization_shipwrecked.xml", "images/hud/customization_shipwrecked.tex"),
     _MONTFLUV_ID: ("images/sh_worldgen.xml", "images/sh_worldgen.tex"),
+    _PORKLAND_ID: ("images/hud/customization_porkland.xml", "images/hud/customization_porkland.tex"),
 }
 
 

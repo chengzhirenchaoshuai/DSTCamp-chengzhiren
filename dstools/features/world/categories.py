@@ -71,6 +71,7 @@ CATEGORY_COLORS = {
     "mod_3435352667": "#3949ab",  # 岛屿冒险 - 核心(Island Adventures - Core)
     "mod_1467214795": "#00838f",  # 岛屿冒险 - 海难(Island Adventures - Shipwrecked)
     "mod_3401927745": "#827717",  # 山河表里(Montfluv)
+    "mod_3322803908": "#ad1457",  # 云霄国度(Above the Clouds / Porkland)
 }
 
 # ── 森林-世界规则 ──
