@@ -362,19 +362,126 @@ class _ConsolePane:
 
         body = ttk.Frame(self.frame)
         body.pack(fill=tk.BOTH, expand=True)
+
+        # 搜索栏：默认不显示，Ctrl+F 打开，Esc 关掉。做成 body 的第一个子
+        # 控件（先于 vsb/self.text 打包），这样 _open_search() 用
+        # before=self.text 把它插到日志上方时，改的是 body 内部布局，不
+        # 涉及 BgFrame 背景图裁切那套机制，不会跟 pack(before=...) 那条
+        # 硬性规则冲突（那条规则针对的是 BgFrame 场景）。
+        self._search_bar = ttk.Frame(body)
+        self.search_var = tk.StringVar()
+        search_entry = ttk.Entry(self._search_bar, textvariable=self.search_var,
+                                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM))
+        self._search_entry = search_entry
+        search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 4), pady=3)
+        Tooltip(search_entry, t("local.console_search_placeholder"))
+        self.search_count_var = tk.StringVar()
+        tk.Label(self._search_bar, textvariable=self.search_count_var,
+                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+                 bg=theme.BG_SOFT, fg=theme.TEXT_MUTED).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(self._search_bar, text="↑", width=3,
+                   command=lambda: self._search_step(-1)).pack(side=tk.LEFT)
+        ttk.Button(self._search_bar, text="↓", width=3,
+                   command=lambda: self._search_step(1)).pack(side=tk.LEFT)
+        ttk.Button(self._search_bar, text="×", width=3,
+                   command=self._close_search).pack(side=tk.LEFT, padx=(0, 4))
+        search_entry.bind("<Return>", lambda e: self._search_step(1))
+        search_entry.bind("<Shift-Return>", lambda e: self._search_step(-1))
+        search_entry.bind("<Escape>", lambda e: self._close_search())
+        self.search_var.trace_add("write", lambda *a: self._run_search())
+        self._search_matches: list[tuple[str, str]] = []
+        self._search_index = -1
+
         vsb = ttk.Scrollbar(body, orient=tk.VERTICAL)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
         # 用 theme.FONT_FAMILY（微软雅黑 Light）而不是 Consolas -- Consolas
         # 不含中文字形，控制台日志里中英文混排时如果用等宽字体，Windows 会
         # 给中文字符静默 fallback 到另一款字重不同的 CJK 字体，看起来"忽粗
         # 忽细"；雅黑本身自带完整中英文字形，不存在这个问题。
-        self.text = tk.Text(body, wrap=tk.NONE, state=tk.DISABLED,
+        # wrap=WORD（原来是 NONE）：日志经常出现很长的一整行，NONE 只能
+        # 靠横向滚动条看完整内容，真机反馈过看不到完整日志、只能拖大主窗
+        # 口——改自动换行后不再需要横向滚动，也不用额外加横向滚动条。
+        self.text = tk.Text(body, wrap=tk.WORD, state=tk.DISABLED,
                              font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
                              bg=theme.CARD_BG, fg=theme.TEXT, yscrollcommand=vsb.set)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.configure(command=self.text.yview)
+        self.text.tag_configure("search_hit", background=theme.SEARCH_HIGHLIGHT,
+                                 foreground=theme.SEARCH_HIGHLIGHT_FG)
+        self.text.tag_configure("search_hit_current", background=theme.SEARCH_HIGHLIGHT_CURRENT,
+                                 foreground=theme.SEARCH_HIGHLIGHT_FG)
+
+        # Ctrl+F 绑定在日志区和命令输入框上——这两个是用户实际会聚焦的控
+        # 件，不用 bind_all（会导致切到其它页签时也被这个控制台的搜索拦
+        # 截）。
+        self.text.bind("<Control-f>", self._open_search)
+        self.cmd_entry.bind("<Control-f>", self._open_search)
 
         self.pump()
+
+    def _open_search(self, event=None):
+        # 用 winfo_manager() 而不是 winfo_ismapped()：控制台标签页不是当
+        # 前选中的 Notebook 页时，即使已经 pack 过也不会被判定为
+        # "ismapped"（没有真的显示在屏幕上），会导致这里重复 pack。
+        if self._search_bar.winfo_manager() != "pack":
+            self._search_bar.pack(side=tk.TOP, fill=tk.X, before=self.text)
+        self._search_entry.focus_set()
+        self._search_entry.select_range(0, tk.END)
+        self._run_search()
+        return "break"
+
+    def _close_search(self, event=None):
+        self._search_bar.pack_forget()
+        self.text.tag_remove("search_hit", "1.0", tk.END)
+        self.text.tag_remove("search_hit_current", "1.0", tk.END)
+        self._search_matches = []
+        self._search_index = -1
+        self.text.focus_set()
+        return "break"
+
+    def _run_search(self):
+        """搜索框内容变化时重新扫描一遍全文，高亮所有命中并定位到第一个。"""
+        self.text.tag_remove("search_hit", "1.0", tk.END)
+        self.text.tag_remove("search_hit_current", "1.0", tk.END)
+        query = self.search_var.get()
+        self._search_matches = []
+        self._search_index = -1
+        if not query:
+            self.search_count_var.set("")
+            return
+        start = "1.0"
+        while True:
+            pos = self.text.search(query, start, stopindex=tk.END, nocase=True)
+            if not pos:
+                break
+            end = f"{pos}+{len(query)}c"
+            self._search_matches.append((pos, end))
+            self.text.tag_add("search_hit", pos, end)
+            start = end
+        if self._search_matches:
+            self._search_index = 0
+            self._show_current_match()
+        else:
+            self.search_count_var.set(t("local.console_search_no_match"))
+
+    def _search_step(self, direction):
+        """Enter/Shift+Enter 或上下箭头按钮：在已有命中列表里循环跳转，
+        不重新扫描全文（扫描交给 _run_search()，只在搜索词变化时做一次）。"""
+        if not self._search_matches:
+            return "break"
+        self._search_index = (self._search_index + direction) % len(self._search_matches)
+        self._show_current_match()
+        return "break"
+
+    def _show_current_match(self):
+        self.text.tag_remove("search_hit_current", "1.0", tk.END)
+        if not self._search_matches:
+            return
+        pos, end = self._search_matches[self._search_index]
+        self.text.tag_add("search_hit_current", pos, end)
+        self.text.see(pos)
+        self.search_count_var.set(t("local.console_search_count",
+                                     current=self._search_index + 1, total=len(self._search_matches)))
 
     def _send(self, event=None):
         cmd = self.cmd_var.get().strip()
@@ -413,6 +520,7 @@ class _ConsolePane:
         """同一个世界停止后重新启动时复用这个标签页/控制台，而不是每次都
         开一个新的——清空旧日志，指向这次新起的进程。"""
         self.proc = proc
+        self._close_search()  # 旧日志清空后，之前的命中位置/高亮都失效了
         self.text.configure(state=tk.NORMAL)
         self.text.delete("1.0", tk.END)
         self.text.configure(state=tk.DISABLED)

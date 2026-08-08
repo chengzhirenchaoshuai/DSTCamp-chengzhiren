@@ -211,6 +211,13 @@ def set_theme(name: str) -> None:
 # 可切换调色板分开放，因为不管当前激活哪套主题，这个颜色都保持不变。
 SERVER_COLOR = "#2e7d32"
 
+# 控制台日志搜索命中高亮——同样是语义色，不随主题变化：日志文字颜色/背
+# 景色本身已经跟主题走了（theme.CARD_BG/theme.TEXT），高亮色需要在 5 套
+# 主题下都保持醒目对比，用固定的黄色系（仿浏览器 Ctrl+F 高亮的观感）。
+SEARCH_HIGHLIGHT = "#ffd54f"          # 所有命中
+SEARCH_HIGHLIGHT_CURRENT = "#ff9800"  # 当前定位到的那一个，颜色更深区分
+SEARCH_HIGHLIGHT_FG = "#000000"       # 高亮背景下固定用黑色文字，保证可读
+
 
 def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     """配置全局 ttk 控件样式。只调用一次，紧跟在 style.theme_use("clam")
