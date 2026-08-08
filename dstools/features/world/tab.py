@@ -167,6 +167,9 @@ class WorldSettingsTab:
         self._rules_by_cat = {}; self._rules_cats = []
         self._gen_by_cat = {}; self._gen_cats = []
         self._flash_key = None
+        self._mod_settings = {}
+        self._mod_categories = []
+        self._mod_icons = {}
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
         if is_server:
@@ -178,6 +181,21 @@ class WorldSettingsTab:
             self._rules_panel.set_image(*self._empty_image())
             self._gen_panel.set_image(*self._empty_image())
             return
+        # 已启用 mod 里登记过的（features/world/mod_settings.py）贡献了
+        # 哪些"世界设置"/"世界生成"条目——按整个存档算(get_enabled_mod_ids
+        # 本来就是并集所有世界的 modoverrides.lua)，不分具体哪个世界，
+        # 跟 mod 本身"启用是针对整个存档"的语义一致。
+        from dstools.features.mod.sync import get_enabled_mod_ids
+        from dstools.features.world.mod_settings import get_mod_world_settings, get_mod_categories
+        self._mod_settings = get_mod_world_settings(get_enabled_mod_ids(c))
+        self._mod_categories = get_mod_categories(self._mod_settings)
+        # 图标解析要读 mod 自己的图集文件（真机验证过：只有第一次或者
+        # mod 更新过才会真的调 ktech.exe，其余时候直接命中磁盘缓存），
+        # 没有贡献设置的存档这里是空字典，不会碰任何文件。
+        from dstools.features.world.mod_icons import resolve_mod_setting_icons
+        from dstools.features.mod.parser import resolve_wegame_client_mods_dir
+        wegame_dir = resolve_wegame_client_mods_dir(c.platform)
+        self._mod_icons = resolve_mod_setting_icons(self._mod_settings, c.platform, wegame_dir)
         for s in c.shards:
             if s.name == self.shard_var.get():
                 self.app._current_shard = s
@@ -209,7 +227,7 @@ class WorldSettingsTab:
                 rules_by_cat, gen_by_cat = {}, {}
                 seen_keys = set()
                 for ov in preset.overrides:
-                    cat, is_rule, name = get_setting_info(ov.key, loc)
+                    cat, is_rule, name = get_setting_info(ov.key, loc, self._mod_settings)
                     ov.name = name or ov.key
                     seen_keys.add(ov.key)
                     if cat == "other":
@@ -237,17 +255,28 @@ class WorldSettingsTab:
                         'key': wkey, 'name': localized_name(wname), 'value': 'default'})()
                     gen_by_cat.setdefault(wcat, []).append(filler)
 
+                # mod 贡献的设置——存档里还没有对应 key 时（比如刚启用这
+                # 个 mod、还没重新生成过世界）一样按 default 补一行，跟原
+                # 版 key 同等对待，点了之后由 _on_rule_click() 负责把这一
+                # 行"转正"成真正会被保存的 WorldOverride。
+                for wkey, info in self._mod_settings.items():
+                    if wkey in seen_keys:
+                        continue
+                    filler = type('FillerOv', (), {
+                        'key': wkey, 'name': localized_name(info.name), 'value': info.initial_value})()
+                    (rules_by_cat if info.is_rule else gen_by_cat).setdefault(info.category, []).append(filler)
+
                 for items in rules_by_cat.values():
                     items.sort(key=lambda ov: get_order(ov.key, loc, True))
                 for items in gen_by_cat.values():
                     items.sort(key=lambda ov: get_order(ov.key, loc, False))
 
                 self._rules_by_cat = rules_by_cat
-                self._rules_cats = get_categories(loc, "rules")
+                self._rules_cats = get_categories(loc, "rules", self._mod_categories)
                 self._render_rules()
 
                 self._gen_by_cat = gen_by_cat
-                self._gen_cats = get_categories(loc, "generation")
+                self._gen_cats = get_categories(loc, "generation", self._mod_categories)
                 self._render_gen()
 
                 self._sub_tab_bar.relabel({
@@ -273,7 +302,8 @@ class WorldSettingsTab:
                                        editable=is_server,
                                        on_click=self._on_rule_click if is_server else None,
                                        ref_width=ref_width, flash=self._flash_key,
-                                       location=loc)
+                                       location=loc, mod_settings=self._mod_settings,
+                                       mod_icons=self._mod_icons)
         self._rules_panel.set_image(img, hits, keep_scroll=True)
 
     def _render_gen(self, ref_width=None):
@@ -286,7 +316,8 @@ class WorldSettingsTab:
             ref_width = self._gen_panel.current_width(REF_WIDTH)
         loc = getattr(self._wl_preset, 'location', 'forest') or 'forest'
         img, hits = render_world_panel(self._gen_cats, self._gen_by_cat, CATEGORY_COLORS,
-                                       editable=False, ref_width=ref_width, location=loc)
+                                       editable=False, ref_width=ref_width, location=loc,
+                                       mod_settings=self._mod_settings, mod_icons=self._mod_icons)
         self._gen_panel.set_image(img, hits, keep_scroll=True)
 
     def _empty_image(self):
@@ -301,16 +332,44 @@ class WorldSettingsTab:
         if not c or c.source != SaveSource.SERVER: return
         if not self._wl_preset: return
         from dstools.features.world.value_sets import get_value_set
-        for ov in self._wl_preset.overrides:
-            if ov.key == key:
-                values = get_value_set(key)
-                try: idx = values.index(ov.value)
-                except ValueError: idx = 0
-                # 钳制而不是绕回去，跟游戏内行为一致：取值到了某一端时，
-                # 只有另一侧的箭头能起作用。
-                new_idx = max(0, min(len(values) - 1, idx + delta))
-                ov.value = values[new_idx]
-                break
+        from dstools.features.world.reader import WorldOverride
+        values = get_value_set(key, self._mod_settings)
+        ov = next((o for o in self._wl_preset.overrides if o.key == key), None)
+        if ov is not None:
+            try: idx = values.index(ov.value)
+            except ValueError: idx = 0
+            # 钳制而不是绕回去，跟游戏内行为一致：取值到了某一端时，只
+            # 有另一侧的箭头能起作用。
+            new_idx = max(0, min(len(values) - 1, idx + delta))
+            ov.value = values[new_idx]
+        else:
+            # 存档里还没有这个 key——常见于刚启用的 mod（还没重新生成过
+            # 世界/没保存过这项设置），或者游戏本身就没写过这条冷门设
+            # 置。从这个 key 真正的初始值起点按点击方向钳制移动一格
+            # （不能无脑假设是"default"——真机核对过 Island Adventures
+            # 有几个 key 的合法档位里根本没有"default"这个值，见
+            # ModWorldSetting.initial_value 的说明），"转正"成一条真正
+            # 会被 _save_rules() 写盘的 WorldOverride，同时把界面上那一
+            # 行原本的占位对象（FillerOv，只用于显示，不在
+            # self._wl_preset.overrides 里，直接改它的 .value 不会被保
+            # 存）替换掉，这样这次点击立刻能看到效果，不用等下次重新加
+            # 载世界设置。
+            mod_info = self._mod_settings.get(key)
+            initial = mod_info.initial_value if mod_info else "default"
+            try: base_idx = values.index(initial)
+            except ValueError: base_idx = 0
+            new_idx = max(0, min(len(values) - 1, base_idx + delta))
+            loc = getattr(self._wl_preset, 'location', 'forest') or 'forest'
+            from dstools.features.world.categories import get_setting_info
+            _, _, name = get_setting_info(key, loc, self._mod_settings)
+            ov = WorldOverride(key=key, value=values[new_idx], name=name or key)
+            self._wl_preset.overrides.append(ov)
+            for by_cat in (self._rules_by_cat, self._gen_by_cat):
+                for cat_items in by_cat.values():
+                    for i, row in enumerate(cat_items):
+                        if row.key == key:
+                            cat_items[i] = ov
+                            break
         if not self._dirty:
             self._dirty = True; self._wl_bs.configure(state=tk.NORMAL)
         # 被点击的按钮短暂高亮成"按下"状态，模仿游戏 UI 的点击反馈——画一

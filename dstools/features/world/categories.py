@@ -63,6 +63,14 @@ CATEGORY_COLORS = {
     "bosses": "#d32f2f", "lunar": "#00bcd4",
     "resources": "#009688", "creatures_spawners": "#1565c0",
     "hostile_spawners": "#c62828",
+    # 每个贡献过世界设置的 mod 各自一个分类（标题用 mod 自己的名字，见
+    # mod_settings.py 的 get_mod_categories()），这里按 category key
+    # (f"mod_{workshop_id}") 各给一个颜色，跟原版分类明显区分开。新增一
+    # 个 mod 的支持时要在这里补一行。
+    "mod_1289779251": "#795548",  # 新版樱花林(Cherry Forest)
+    "mod_3435352667": "#3949ab",  # 岛屿冒险 - 核心(Island Adventures - Core)
+    "mod_1467214795": "#00838f",  # 岛屿冒险 - 海难(Island Adventures - Shipwrecked)
+    "mod_3401927745": "#827717",  # 山河表里(Montfluv)
 }
 
 # ── 森林-世界规则 ──
@@ -412,9 +420,12 @@ def _get_settings(location: str, is_rule: bool):
     return CAVE_RULES_DICT if is_rule else CAVE_GEN_DICT
 
 
-def get_setting_info(key: str, location: str = "forest"):
+def get_setting_info(key: str, location: str = "forest", mod_settings: dict | None = None):
     """取一个设置的 (category, is_rule, name)。
-    先查规则表，再查生成表；查不到就返回 ("other", False, key)。
+    先查原版规则表，再查原版生成表，都查不到、且 mod_settings 里有登记
+    过这个 key（features/world/mod_settings.py，调用方传当前存档已启用
+    mod 贡献的登记表）就归到 "mod" 分类；再查不到就返回
+    ("other", False, key)（未登记的 mod key，走现有的"不显示"兜底）。
     """
     rules_d = _get_settings(location, True)
     if key in rules_d:
@@ -424,6 +435,9 @@ def get_setting_info(key: str, location: str = "forest"):
     if key in gen_d:
         cat, names = gen_d[key]
         return (cat, False, _localized(names))
+    if mod_settings and key in mod_settings:
+        info = mod_settings[key]
+        return (info.category, info.is_rule, localized_name(info.name))
     return ("other", False, key)
 
 
@@ -436,10 +450,21 @@ def get_order(key: str, location: str = "forest", is_rule: bool = True) -> int:
         return 9999
 
 
-def get_categories(location: str, setting_type: str) -> list[tuple[str, str]]:
-    """取指定地点和设置类型的分类列表。"""
+def get_categories(location: str, setting_type: str, mod_categories=None) -> list[tuple[str, str]]:
+    """取指定地点和设置类型的分类列表。
+
+    mod_categories：features/world/mod_settings.py 的 get_mod_categories()
+    返回值（当前存档已启用、且贡献了世界设置的 mod，各自一条），排在最
+    前面（"全局"之前）——应用户要求，mod 加的设置更显眼，装了好几个带
+    世界设置的 mod 时，这几个分类按 get_mod_categories() 给的顺序排在
+    一起，不打散插进原版分类里。分类本身要不要显示（这个存档实际有没
+    有对应的条目）由调用方（world/render.py 的 visible_cats 过滤）决
+    定，这里只负责把"存在哪些分类、什么顺序"这件事拼完整。
+    """
     if location == "forest":
         raw = SURFACE_RULES if setting_type == "rules" else SURFACE_GEN
     else:
         raw = CAVE_RULES if setting_type == "rules" else CAVE_GEN
-    return [(key, _localized(names)) for key, names in raw]
+    cats = [(key, _localized(names)) for key, names in mod_categories] if mod_categories else []
+    cats.extend((key, _localized(names)) for key, names in raw)
+    return cats

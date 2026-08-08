@@ -54,7 +54,7 @@ _CFG_TEXT_DISABLED = "#90a4ae"
 _LINK_DISABLED = "#bdbdbd"
 
 
-def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=None,
+def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=None, on_copy_id=None,
                      ref_width=None, icon_thumb_cache=None):
     """把 mod 列表渲染成一张 PIL 图片。
 
@@ -72,6 +72,10 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
             has_config 为 True 时才会接上）
         on_link: workshop 链接的回调 callable(workshop_id)（只有
             has_link 为 True 时才会接上）
+        on_copy_id: 第 2 列 workshop id 那行文字的回调
+            callable(workshop_id)——点一下把纯数字 ID（不带 "workshop-"
+            前缀）复制到剪贴板，调用方（ModManagerTab._on_copy_id）负责
+            剥前缀和写剪贴板，这里只管注册点击区域。
         ref_width: 渲染的精确像素宽度（默认 BASE_REF_WIDTH）；所有尺寸
             按比例缩放。
         icon_thumb_cache: 可选的 dict[(workshop_id, icon_size) ->
@@ -152,6 +156,14 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
             name_text = name_text[:-1]
         draw_mixed_text(draw, x, y + row_h * 0.34, name_text, name_size, theme.TEXT, anchor="lm")
         draw.text((x, y + row_h * 0.68), wid, font=id_font, fill=theme.TEXT_MUTED, anchor="lm")
+        if on_copy_id:
+            # 点击区域用这一行下半部分的整个高度（不是紧贴文字的窄条），
+            # 好点一些，跟其它列的点击区域一样宽容；横向宽度按实际文字
+            # 量出来，不覆盖到第 3 列的开关。不注册 hover 提示——点击后
+            # 已经有"已复制: xxx"的反馈，悬停再额外提示一遍是多余的。
+            id_w = draw.textlength(wid, font=id_font)
+            hit_regions.append((x, y + row_h * 0.5, x + id_w + 10 * s, y + row_h,
+                                _mk_cb(on_copy_id, wid)))
 
         # ── 第 3 列：开/关开关（client_only/"本地" mod 没有实质意义上的
         # enabled 状态——见 ModManagerTab.show_local_var——这一列改画一个

@@ -223,7 +223,8 @@ def _value_color(raw_value: str) -> str:
 
 
 def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
-                        ref_width=None, flash=None, location="forest"):
+                        ref_width=None, flash=None, location="forest", mod_settings=None,
+                        mod_icons=None):
     """把一个分类面板渲染成一张 PIL 图片。
 
     参数：
@@ -236,6 +237,14 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             按这个宽度等比缩放
         flash: 可选的 (key, delta)，表示刚被点击的按钮，短暂画成高亮的
             "按下"效果
+        mod_settings: features/world/mod_settings.py 登记表（当前存档已
+            启用 mod 贡献的部分）——传给 get_value_set() 判断 < > 按钮该
+            不该在两端淡出，不传时按原版取值集合处理。
+        mod_icons: dict[key, PIL.Image(RGBA)]，features/world/mod_icons.py
+            的 resolve_mod_setting_icons() 算好的、mod 贡献设置项各自的
+            图标（调用方在 tab.py 里按需解析好传进来，这里不做任何 I/O，
+            只负责按 key 查表+按需缩放）。原版设置的图标仍然走
+            get_pil_icon()；一个 key 两边都查不到就退回纯色块占位。
 
     返回：
         (PIL.Image, hit_regions)，hit_regions 是图片自身像素坐标系下的
@@ -378,6 +387,11 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                                    radius=10 * s, fill=theme.PRIMARY_LIGHT)
 
             icon = get_pil_icon(ov.key, icon_size, location)
+            if icon is None and mod_icons:
+                raw_icon = mod_icons.get(ov.key)
+                if raw_icon is not None:
+                    icon = raw_icon if raw_icon.size == (icon_size, icon_size) else \
+                        raw_icon.resize((icon_size, icon_size), Image.LANCZOS)
             if icon:
                 img.paste(icon, (int(cx), int(cy)), icon)
 
@@ -396,7 +410,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             if editable:
                 # 跟游戏内的循环切换行为保持一致：取值到了某一端时，只
                 # 有另一侧的箭头能点——到头的那一侧会淡出，而不是绕回去。
-                value_set = get_value_set(ov.key)
+                value_set = get_value_set(ov.key, mod_settings)
                 try:
                     vidx = value_set.index(ov.value)
                     at_min, at_max = vidx <= 0, vidx >= len(value_set) - 1

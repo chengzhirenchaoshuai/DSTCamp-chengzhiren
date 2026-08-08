@@ -1064,6 +1064,20 @@ class DSToolsApp:
             return
         self._refresh()
 
+    def mark_world_tab_stale(self) -> None:
+        """Mod 启用状态保存之后调用——"世界设置"页签"来自 Mod"分区显示哪
+        些设置，取决于当前哪些 mod 是启用的（见
+        features/world/mod_settings.py），这个变化跟用户有没有手动切换
+        过"世界设置"页签完全无关，之前只有手动点顶部"刷新"才会重新算一
+        遍，容易让人以为"开关 mod 之后世界设置没反应"。跟 _refresh()/
+        _on_tab_select() 同一套"当前页签立即刷、其余标脏"规则：世界设置
+        正好是当前显示的页签就立即重算，否则只标脏，真正切过去时
+        _on_tab_select() 才补一次。"""
+        if self._current_tab_key == "world":
+            self.world_tab.refresh()
+        else:
+            self._stale_cluster_tabs.add("world")
+
     def _refresh(self):
         self.env = discover_environment(self.env.klei_root, self.env.wegame_klei_root)
         self._update_status()

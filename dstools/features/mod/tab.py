@@ -18,7 +18,7 @@ from PIL import Image
 from dstools.shared import app_settings, tex_convert
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.dedicated_server import find_bin64_dir
-from dstools.features.mod import chs_translation
+from dstools.features.mod import chs_translation, presets
 from dstools.features.mod.icons import get_mod_icon_path
 from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
 from dstools.features.mod.cache import load_cached_result, save_result
@@ -245,19 +245,48 @@ class ModManagerTab:
         self.list_panel.on_hover_change = self._on_mod_list_hover
         self._mod_list_tip = None
 
-        # "保存修改"/"应用到所有世界"挪到页签底部居中——跟"世界设置"页签
-        # "保存世界规则"按钮的位置一致（pack(side=tk.BOTTOM) 不加 fill，
-        # 默认就是水平居中），不用之前塞在顶部工具栏最右边、容易跟"查看
-        # 本地模组"按钮挤在一起。视觉顺序保留原来的[保存修改][应用到所
-        # 有世界]（从左到右）。
+        # "保存修改"/"应用到所有世界"居中，跟"世界设置"页签"保存世界规
+        # 则"按钮的位置一致；"配置集"这组按钮性质不同（不是针对当前编辑
+        # 会话的存盘操作），改放这一整行最右侧，避免跟中间那组主操作挤
+        # 成一排看起来像同一类功能。用 grid 分三列（左侧留白/居中主操
+        # 作/右侧配置集）而不是简单地全部 side=LEFT/RIGHT 混用——那样没
+        # 法同时做到"中间那组保持真正居中"和"右边那组贴住最右边"。
         btn_row_bottom = BgFrame(self.frame, app, bg=theme.CARD_BG)
-        btn_row_bottom.pack(side=tk.BOTTOM, pady=(0, 5))
-        self._md_bs = ttk.Button(btn_row_bottom, text=t("mod.save_btn"), command=self._save_mods)
+        btn_row_bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 5))
+        # 两侧列必须用同一个 uniform 分组，宽度才会强制相等——否则右列因
+        # 为"配置集"按钮组占了实际宽度，会比左边纯留白的列宽，中间那组
+        # 主操作的视觉中点就会被往左挤偏（真机验证过这个偏差，纯凭权重
+        # 不够，两侧内容量不一样时权重相同不代表宽度相同）。
+        btn_row_bottom.grid_columnconfigure(0, weight=1, uniform="mod_btn_edge")
+        btn_row_bottom.grid_columnconfigure(1, weight=0)
+        btn_row_bottom.grid_columnconfigure(2, weight=1, uniform="mod_btn_edge")
+
+        # 用 BgFrame 而不是 ttk.Frame 包这两组按钮——ttk.Frame 会画一块不
+        # 透明的纯色矩形，把 btn_row_bottom 底下的自定义背景图/主题色整
+        # 块挡住（真机反馈过：两个按钮中间那一小条缝隙本该透出背景图，
+        # 结果变成一块突兀的空白，两个按钮看起来像连成了一体）；BgFrame
+        # 是这个项目里"要在控件间的留白透出背景"的标准做法（跟 self.frame
+        # 本身、sf/ff 这些工具栏行是同一个理由）。
+        center_group = BgFrame(btn_row_bottom, app, bg=theme.CARD_BG)
+        center_group.grid(row=0, column=1)
+        self._md_bs = ttk.Button(center_group, text=t("mod.save_btn"), command=self._save_mods)
         self._md_bs.pack(side=tk.LEFT, padx=(0, 5))
-        self._md_ba = ttk.Button(btn_row_bottom, text=t("mod.apply_all"), command=self._apply_all_shards)
+        self._md_ba = ttk.Button(center_group, text=t("mod.apply_all"), command=self._apply_all_shards)
         self._md_ba.pack(side=tk.LEFT)
         self._md_bs.configure(state=tk.DISABLED)
         self._md_ba.configure(state=tk.DISABLED)
+
+        # "配置集"：把一批 mod 的启用/配置状态存成一份快照，之后能一键套
+        # 用到任意存档（见 features/mod/presets.py）——跟"同步mod文件到服
+        # 务器"一样只对服务器存档开放，本地存档下置灰（见 on_cluster_changed）。
+        preset_group = BgFrame(btn_row_bottom, app, bg=theme.CARD_BG)
+        preset_group.grid(row=0, column=2, sticky=tk.E, padx=(0, 10))
+        self._md_preset_save = ttk.Button(preset_group, text=t("mod.preset_save_btn"),
+                                           command=self._save_as_preset)
+        self._md_preset_save.pack(side=tk.LEFT, padx=(0, 5))
+        self._md_preset_apply = ttk.Button(preset_group, text=t("mod.preset_apply_btn"),
+                                            command=self._apply_preset_dialog)
+        self._md_preset_apply.pack(side=tk.LEFT)
 
         # 不在这里现场 on_cluster_changed()——即使重活本身在后台线程做
         # （_load_mods_worker），"要不要开始做"这个决定不应该在构造这一
@@ -285,6 +314,12 @@ class ModManagerTab:
         save_state = tk.NORMAL if (is_server and self._dirty) else tk.DISABLED
         self._md_bs.configure(state=save_state)
         self._md_ba.configure(state=save_state)
+        # 配置集的保存/应用都是整份存档级别的操作，跟本地存档"只读"的原
+        # 因（上面那段说明）一样，不看 self._dirty——不需要先有未保存的
+        # 改动才能保存/应用一份配置集。
+        preset_state = tk.NORMAL if is_server else tk.DISABLED
+        self._md_preset_save.configure(state=preset_state)
+        self._md_preset_apply.configure(state=preset_state)
         if is_server:
             self._md_local_banner.hide()
         else:
@@ -734,6 +769,7 @@ class ModManagerTab:
         img, hits, hovers = render_mod_list(rows, self._icon_imgs,
                                     on_toggle=self._on_toggle if is_server else None,
                                     on_config=self._on_config, on_link=self._on_link,
+                                    on_copy_id=self._on_copy_id,
                                     ref_width=ref_width,
                                     icon_thumb_cache=self._icon_thumb_cache)
         self.list_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
@@ -828,6 +864,32 @@ class ModManagerTab:
         else:
             webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
 
+    def _on_copy_id(self, workshop_id):
+        """点一下 mod 名字下方那行 workshop id 文字——复制纯数字 ID（不
+        带 "workshop-" 前缀，手动装的本地 mod 本来就没有这个前缀，原样
+        复制即可），跟"服务器配置"页签令牌那一排的"复制"按钮是同一个
+        clipboard_clear()/clipboard_append() 套路。这里点击量可能很频
+        繁（浏览列表时随手点），不用会打断操作的模态确认弹窗，改成鼠标
+        位置边上冒一个自动消失的小提示。"""
+        numeric_id = workshop_id.replace("workshop-", "")
+        self.frame.clipboard_clear()
+        self.frame.clipboard_append(numeric_id)
+        x_root = self.frame.winfo_pointerx()
+        y_root = self.frame.winfo_pointery()
+        self._show_copy_toast(t("mod.id_copied_toast", id=numeric_id), x_root, y_root)
+
+    def _show_copy_toast(self, text, x_root, y_root):
+        tip = tk.Toplevel(self.frame)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x_root + 12}+{y_root + 16}")
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        tk.Label(tip, text=text, justify=tk.LEFT, background="#323232", foreground="#ffffff",
+                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(ipadx=8, ipady=4)
+        tip.after(700, tip.destroy)
+
     def _save_mods(self, silent=False):
         c = self._get_cluster(); s = self.app._current_shard
         if not c or not s or not s.mod_overrides_path or c.source != SaveSource.SERVER:
@@ -836,8 +898,20 @@ class ModManagerTab:
         overrides = load_mod_overrides(s.mod_overrides_path)
         self._write_mod_states(overrides)
         save_mod_overrides(overrides)
+        # "世界设置"页签"来自 Mod"分区显示哪些设置取决于当前启用了哪些
+        # mod（见 features/world/mod_settings.py）——不管开关的是不是真
+        # 的一个带世界设置的 mod，这里都统一标脏，成本很低（只是标记，
+        # 不强制立即重算），换来的是不用用户自己想起来手动点"刷新"。
+        self.app.mark_world_tab_stale()
         if not silent:
-            dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.saved_mods", count=len(overrides.mods), shard=s.name))
+            # 弹窗数量按"已启用"计，不是 modoverrides.lua 里全部记录条数
+            # （真机反馈过：只启用了 1 个 mod、反复调它的配置，每次保存
+            # 却弹"已保存 11 个 Mod"——那 11 是文件里连带的一堆早就禁用、
+            # 跟这次操作毫无关系的历史记录，数字本身没有传达任何有用信
+            # 息，只会让人怀疑是不是哪里操作错了）。
+            enabled_count = sum(1 for m in overrides.mods.values() if m.enabled)
+            dlg.show_info(self.app.root, t("dlg.save_ok"),
+                          t("dlg.saved_mods", count=enabled_count, shard=s.name))
             # DST 默认要求各世界的 mod 状态一致，单个世界单独修改会导致
             # 主从不同步等问题，因此保存后主动询问是否同步到其他世界。
             other_shards = [sh for sh in c.shards if sh.name != s.name and sh.mod_overrides_path]
@@ -896,6 +970,7 @@ class ModManagerTab:
             if s.name == src.name or not s.mod_overrides_path: continue
             dst = load_mod_overrides(s.mod_overrides_path)
             sync_mods(src_overrides, dst); save_mod_overrides(dst); cnt += 1
+        self.app.mark_world_tab_stale()
         dlg.show_info(self.app.root, t("mod.apply_all"), t("dlg.apply_done", count=cnt))
         self._refresh_mods()
 
@@ -997,6 +1072,8 @@ class ModManagerTab:
         self._md_lbl2.redraw()
         self._md_br.configure(text=t("mod.reload_full")); self._md_bs.configure(text=t("mod.save_btn"))
         self._md_ba.configure(text=t("mod.apply_all")); self._md_sync.configure(text=t("local.sync_mods_btn"))
+        self._md_preset_save.configure(text=t("mod.preset_save_btn"))
+        self._md_preset_apply.configure(text=t("mod.preset_apply_btn"))
         self._md_filt.redraw()
         self._md_filter_chips.redraw()
         self._md_rl.configure(text=t("mod.back_to_list") if self.show_local_var.get() else t("mod.show_local"))
@@ -1032,6 +1109,398 @@ class ModManagerTab:
         防护顶替掉，跟启动时同样能容忍的重叠情况一致。"""
         self.on_cluster_changed(self.app.get_selected_cluster())
         self._refresh_mods(full=True)
+
+    def _save_as_preset(self):
+        """"保存为配置集"按钮——弹出勾选对话框，把选中的这些 mod 当前的
+        启用/配置状态打包存起来。"""
+        if self._loading:
+            dlg.show_info(self.app.root, t("mod.preset_save_btn"), t("mod.loading"))
+            return
+        if not self._mod_data:
+            dlg.show_warning(self.app.root, t("mod.preset_save_btn"), t("preset.no_mods_selected_in_tab"))
+            return
+        _SavePresetDialog(self)
+
+    def _apply_preset_dialog(self):
+        """"应用配置集"按钮——弹出已保存配置集的选择器，选中后先给一份
+        预览报告（见 presets.plan_apply_preset），确认了才真正写盘。"""
+        if self._loading:
+            dlg.show_info(self.app.root, t("mod.preset_apply_btn"), t("mod.loading"))
+            return
+        _ApplyPresetDialog(self)
+
+
+class _SavePresetDialog:
+    """"保存为配置集"弹窗——名字输入 + 勾选要打包哪些 mod（默认勾选当
+    前已启用的），确认后调用 presets.capture_preset()/save_preset()。"""
+
+    # 加宽到能放下大多数 mod 的中英文合并标题而不换行（少数超长的仍然会
+    # 自动换到第二行，见下面 Checkbutton 的 wraplength，不会再被裁掉看
+    # 不全）。
+    _DIALOG_W = 640
+    _LIST_H = 360
+
+    def __init__(self, tab: ModManagerTab):
+        self.tab = tab
+        win = tk.Toplevel(tab.frame)
+        self.win = win
+        win.withdraw()
+        win.title(t("preset.save_dialog_title"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+
+        ttk.Label(win, text=t("preset.save_name_label")).pack(anchor=tk.W, padx=20, pady=(20, 4))
+        self.name_var = tk.StringVar()
+        ttk.Entry(win, textvariable=self.name_var, width=40).pack(fill=tk.X, padx=20)
+
+        ttk.Label(win, text=t("preset.save_select_hint"), wraplength=self._DIALOG_W - 40,
+                  justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(14, 4))
+
+        list_frame = ttk.Frame(win)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        list_w = self._DIALOG_W - 40
+        # background=theme.BG_SOFT——不设的话 tk.Canvas 默认是系统灰
+        # （跟 win/body 用的主题背景色对不上，露出一块突兀的灰色）。
+        canvas = tk.Canvas(list_frame, height=self._LIST_H, width=list_w,
+                            highlightthickness=0, background=theme.BG_SOFT)
+        vbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=canvas.yview)
+        body = ttk.Frame(canvas)
+        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        # create_window 不传 width 的话，嵌入的 body 只会按自己内容算出的
+        # 实际宽度显示（这批 mod 名字大多比 list_w 短很多），canvas 比
+        # body 多出来的那一截就会露出上面那个背景色——一样会看到一条空
+        # 白/灰色竖条。显式把 width 钉死成 canvas 的宽度，body 及其内部
+        # fill=X 的每一行都会撑满整个可视宽度。
+        canvas.create_window((0, 0), window=body, anchor="nw", width=list_w)
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 按 mod 名字排序展示，跟主列表一样以名字为准，不是 dict 插入顺序
+        # （dict 插入顺序其实是"已启用优先"，这里不需要那个视觉效果）。
+        from dstools.shared.gui.tooltip import Tooltip
+        ordered_ids = sorted(tab._mod_data.keys(),
+                              key=lambda wid: (tab._mod_infos.get(wid).name if tab._mod_infos.get(wid) else "") or wid)
+        # ttk::checkbutton 没有 -wraplength 选项（那是 ttk::label 独有
+        # 的，实测直接传会抛 TclError），所以用跟 ModConfigDialog 同款的
+        # "按像素宽度截断 + 完整内容放 Tooltip"，而不是指望自动换行——先
+        # 把对话框整体加宽到能放下绝大多数名字，只有极少数超长的才会被
+        # 截断，鼠标悬停能看到完整内容。
+        name_font = tkfont.nametofont("TkDefaultFont")
+        max_text_px = self._DIALOG_W - 100
+
+        def _truncate(text: str) -> str:
+            if name_font.measure(text) <= max_text_px:
+                return text
+            while text and name_font.measure(text + "...") > max_text_px:
+                text = text[:-1]
+            return (text + "...") if text else "..."
+
+        # 不用 ttk.Checkbutton 的原生勾选框——这个项目全局 ttk 主题用的是
+        # "clam"（见 theme.py 的 apply_theme()），clam 主题下选中态画出来
+        # 是个"×"，不是大多数人直觉里的"√"（真机截图确认过）。改成自己画
+        # 一个纯文本的 Label，点击切换"☐"/"☑"两个字符（打勾贴在方框上，
+        # 不是整个字符换成裸的"√"），不依赖任何 ttk
+        # 主题引擎怎么渲染指示器——这个项目里原生控件渲染不满意时（下拉
+        # 框、开关等）一直是这个思路，不是新发明的做法。
+        self.vars: dict[str, tk.BooleanVar] = {}
+
+        def _make_row(parent, wid: str, default_checked: bool) -> None:
+            info = tab._mod_infos.get(wid)
+            name = (info.name if info else "") or wid
+            var = tk.BooleanVar(value=default_checked)
+            self.vars[wid] = var
+            full_text = f"{name}  ({wid})"
+            shown_text = _truncate(full_text)
+            row_lbl = tk.Label(parent, anchor=tk.W, justify=tk.LEFT,
+                                background=theme.BG_SOFT, foreground=theme.TEXT,
+                                font=name_font)
+
+            def _redraw(lbl=row_lbl, v=var, text=shown_text):
+                mark = "☑" if v.get() else "☐"
+                lbl.configure(text=f"{mark}  {text}")
+
+            def _toggle(_event=None, v=var, redraw=_redraw):
+                v.set(not v.get())
+                redraw()
+
+            _redraw()
+            row_lbl.bind("<Button-1>", _toggle)
+            row_lbl.pack(anchor=tk.W, pady=1, fill=tk.X)
+            if shown_text != full_text:
+                Tooltip(row_lbl, full_text)
+
+        # 已启用/未启用分两块，未启用的默认折叠——大多数场景下用户只是想
+        # 固化"我现在开着的这些 mod"的配置，混在一起显示容易让人以为每
+        # 次都要通读一遍全部 mod（包括根本不关心的、已经关掉的）才敢确
+        # 认。已启用的默认全勾选、直接展开；未启用的默认不勾、折叠在
+        # "展开未启用 Mod 列表"后面，真要连某个关掉的 mod 配置也一起存，
+        # 点开才需要处理。
+        enabled_ids = [wid for wid in ordered_ids if tab._mod_data[wid].enabled]
+        disabled_ids = [wid for wid in ordered_ids if not tab._mod_data[wid].enabled]
+
+        # 暴露成 self. 属性纯粹是方便测试/以后需要时探查折叠状态——
+        # __init__ 内部逻辑本身不依赖这两个是不是实例属性。
+        self._disabled_frame = None
+        self._toggle_shown: tk.BooleanVar | None = None
+        self._toggle_lbl = None
+
+        for wid in enabled_ids:
+            _make_row(body, wid, default_checked=True)
+
+        if disabled_ids:
+            toggle_shown = tk.BooleanVar(value=False)
+            self._toggle_shown = toggle_shown
+            toggle_lbl = tk.Label(body, anchor=tk.W, justify=tk.LEFT, cursor="hand2",
+                                   background=theme.BG_SOFT, foreground=theme.ACCENT, font=name_font)
+            self._toggle_lbl = toggle_lbl
+            disabled_frame = tk.Frame(body, background=theme.BG_SOFT)
+            self._disabled_frame = disabled_frame
+            for wid in disabled_ids:
+                _make_row(disabled_frame, wid, default_checked=False)
+
+            def _redraw_toggle():
+                arrow = "▾" if toggle_shown.get() else "▸"
+                toggle_lbl.configure(text=f"{arrow} {t('preset.expand_disabled_btn', count=len(disabled_ids))}")
+
+            def _toggle_disabled_section(_event=None):
+                toggle_shown.set(not toggle_shown.get())
+                if toggle_shown.get():
+                    disabled_frame.pack(anchor=tk.W, fill=tk.X, after=toggle_lbl)
+                else:
+                    disabled_frame.pack_forget()
+                _redraw_toggle()
+                canvas.configure(scrollregion=canvas.bbox("all"))
+
+            ttk.Separator(body, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(8, 4))
+            _redraw_toggle()
+            toggle_lbl.bind("<Button-1>", _toggle_disabled_section)
+            toggle_lbl.pack(anchor=tk.W, pady=(0, 4))
+            # disabled_frame 先不 pack——折叠状态下这些行不显示，点"展开"
+            # 才现出来，但控件本身已经建好了，_bind_wheel() 稍后照样能递
+            # 归绑到它们身上（winfo_children() 不看有没有被 pack 上）。
+
+        # 滚轮不灵敏的坑：canvas 默认没设 yscrollincrement 时，一个
+        # "unit" 只对应 1px 左右，乘上小滚动量几乎感觉不到在动。这里显式
+        # 定一个跟一行大致等高的步长，一次滚轮相当于滚 3 行。另一个更容
+        # 易漏掉的坑是只把 <MouseWheel> 绑在 canvas/body 自己身上——鼠标
+        # 悬停在具体某个 Checkbutton 上（列表里绝大部分区域）时，事件目
+        # 标是那个子控件，不会冒泡到 canvas，所以之前只有悬停在行间空隙
+        # 才有反应。这里递归绑到每一个子控件上，效果等同于
+        # ModConfigDialog._bind_mousewheel()。
+        canvas.configure(yscrollincrement=24)
+
+        def _on_wheel(e):
+            bbox = canvas.bbox("all")
+            if not bbox or bbox[3] - bbox[1] <= canvas.winfo_height():
+                return "break"
+            canvas.yview_scroll(int(-3 * (e.delta / 120)), "units")
+            return "break"
+
+        def _bind_wheel(widget):
+            widget.bind("<MouseWheel>", _on_wheel)
+            for child in widget.winfo_children():
+                _bind_wheel(child)
+        _bind_wheel(body)
+        canvas.bind("<MouseWheel>", _on_wheel)
+
+        btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=20)
+        ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
+
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+        root = tab.frame.winfo_toplevel()
+        center_over_parent(win, root, min_width=self._DIALOG_W)
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _confirm(self):
+        name = self.name_var.get().strip()
+        if not name:
+            dlg.show_warning(self.win, t("preset.save_dialog_title"), t("preset.save_name_empty"))
+            return
+        selected = {wid for wid, v in self.vars.items() if v.get()}
+        if not selected:
+            dlg.show_warning(self.win, t("preset.save_dialog_title"), t("preset.save_none_selected"))
+            return
+        if presets.find_preset(name) and not dlg.ask_yes_no(
+                self.win, t("preset.save_dialog_title"), t("preset.save_overwrite_confirm", name=name)):
+            return
+        cluster = self.tab._get_cluster()
+        platform = cluster.platform.value if cluster else ""
+        preset = presets.capture_preset(name, self.tab._mod_data, self.tab._mod_infos, selected, platform)
+        presets.save_preset(preset, overwrite=True)
+        dlg.show_info(self.win, t("preset.save_dialog_title"), t("preset.save_done", name=name, count=len(selected)))
+        self.win.destroy()
+
+    def _cancel(self):
+        self.win.destroy()
+
+
+class _ApplyPresetDialog:
+    """"应用配置集"弹窗——选一个已保存的配置集，点"应用"先弹出预览报告
+    （_ApplyReportDialog），确认后才真正写盘。"""
+
+    def __init__(self, tab: ModManagerTab):
+        self.tab = tab
+        self._presets = presets.list_presets()
+        win = tk.Toplevel(tab.frame)
+        self.win = win
+        win.withdraw()
+        win.title(t("preset.apply_dialog_title"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+
+        ttk.Label(win, text=t("preset.apply_pick_hint")).pack(anchor=tk.W, padx=20, pady=(20, 8))
+        # 跟 save_browser/tab.py._RestoreBackupDialog 的列表同款字体
+        # （theme.FONT_FAMILY/FONT_SIZE_BASE）——之前用的是等宽字体
+        # Consolas，中文配置集名字用等宽字体渲染字宽参差不齐，看着很怪。
+        # 顺手配上滚动条：配置集会越攒越多，跟备份列表一样不能只靠固定
+        # height 硬顶。
+        list_frame = ttk.Frame(win)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox = tk.Listbox(list_frame, height=8, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+                                   yscrollcommand=scrollbar.set, exportselection=False)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.configure(command=self.listbox.yview)
+
+        btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=(10, 20))
+        ttk.Button(btn_row, text=t("preset.delete_btn"), command=self._delete).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._close).pack(side=tk.RIGHT)
+        ttk.Button(btn_row, text=t("preset.apply_btn"), command=self._apply).pack(side=tk.RIGHT, padx=(0, 6))
+
+        self._refresh_listbox()
+        win.protocol("WM_DELETE_WINDOW", self._close)
+        root = tab.frame.winfo_toplevel()
+        center_over_parent(win, root, min_width=420)
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _refresh_listbox(self):
+        self.listbox.delete(0, tk.END)
+        if not self._presets:
+            self.listbox.insert(tk.END, t("preset.apply_none"))
+            return
+        for p in self._presets:
+            self.listbox.insert(tk.END, f"{p.name}  ({len(p.mods)})")
+
+    def _selected_preset(self) -> "presets.ModPreset | None":
+        sel = self.listbox.curselection()
+        if not sel or not self._presets or sel[0] >= len(self._presets):
+            return None
+        return self._presets[sel[0]]
+
+    def _apply(self):
+        preset = self._selected_preset()
+        if not preset:
+            return
+        c = self.tab._get_cluster()
+        if not c or c.source != SaveSource.SERVER:
+            dlg.show_warning(self.win, t("preset.apply_dialog_title"), t("local.select_cluster_first"))
+            return
+        plan = presets.plan_apply_preset(preset, self.tab._mod_infos)
+        report = _ApplyReportDialog(self.win, plan)
+        if not report.confirmed:
+            return
+        count = presets.apply_preset(c, plan, clear_first=report.clear_first)
+        self.tab.app.mark_world_tab_stale()
+        dlg.show_info(self.win, t("preset.apply_dialog_title"), t("preset.applied_done", count=count))
+        self.tab._refresh_mods(full=False)
+        self._close()
+
+    def _delete(self):
+        preset = self._selected_preset()
+        if not preset:
+            return
+        if not dlg.ask_yes_no(self.win, t("preset.delete_btn"), t("preset.delete_confirm", name=preset.name)):
+            return
+        presets.delete_preset(preset.name)
+        self._presets = presets.list_presets()
+        self._refresh_listbox()
+
+    def _close(self):
+        self.win.destroy()
+
+
+class _ApplyReportDialog:
+    """应用配置集前的预览确认——列出会正常写入的数量，以及分类的问题清
+    单（这台机器找不到的 mod / 已废弃的选项 / 候选值不再合法的选项），
+    见 presets.plan_apply_preset() 的说明，不对用户隐瞒任何一类。"""
+
+    def __init__(self, parent_widget, plan: "presets.ApplyPlan"):
+        self.confirmed = False
+        self.clear_first = False
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("preset.report_title", name=plan.preset.name))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+
+        body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=20, pady=(20, 0))
+        ttk.Label(body, text=t("preset.report_ok_count", count=len(plan.ok_ids))).pack(anchor=tk.W)
+
+        def _section(title_key, items, color):
+            if not items:
+                return
+            ttk.Label(body, text=t(title_key), foreground=color, wraplength=420,
+                      justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 2))
+            for text in items:
+                ttk.Label(body, text=f"· {text}", wraplength=420,
+                          justify=tk.LEFT).pack(anchor=tk.W, padx=(10, 0))
+
+        missing = [i.display_name for i in plan.issues if i.kind == "missing"]
+        stale = [f"{i.display_name}: {i.detail}" for i in plan.issues if i.kind == "stale_option"]
+        invalid = [f"{i.display_name}: {i.detail}" for i in plan.issues if i.kind == "invalid_value"]
+        _section("preset.report_issue_missing_title", missing, theme.ERROR)
+        _section("preset.report_issue_stale_title", stale, "#8d6e00")
+        _section("preset.report_issue_invalid_title", invalid, "#8d6e00")
+        if plan.needs_configs_extended:
+            ttk.Label(body, text=t("preset.report_needs_configs_extended"), foreground="#8d6e00",
+                      wraplength=420, justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
+
+        # 跟 _SavePresetDialog 同样的理由：不用 ttk.Checkbutton（clam 主题
+        # 选中态画的是"×"），自己画"☐"/"☑"。
+        self.clear_var = tk.BooleanVar(value=False)
+        clear_lbl = tk.Label(win, anchor=tk.W, background=theme.BG_SOFT, foreground=theme.TEXT)
+
+        def _redraw_clear():
+            mark = "☑" if self.clear_var.get() else "☐"
+            clear_lbl.configure(text=f"{mark}  {t('preset.clear_first_label')}")
+
+        def _toggle_clear(_event=None):
+            self.clear_var.set(not self.clear_var.get())
+            _redraw_clear()
+
+        _redraw_clear()
+        clear_lbl.bind("<Button-1>", _toggle_clear)
+        clear_lbl.pack(anchor=tk.W, padx=20, pady=(14, 0))
+
+        btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=20)
+        ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text=t("preset.report_confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
+
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+        root = parent_widget.winfo_toplevel()
+        center_over_parent(win, root, min_width=460)
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _confirm(self):
+        self.confirmed = True
+        self.clear_first = self.clear_var.get()
+        self.win.destroy()
+
+    def _cancel(self):
+        self.win.destroy()
 
 
 _OPTION_DESC_WRAP_PX = 900

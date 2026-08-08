@@ -37,6 +37,7 @@ _KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
 _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
 _KEY_GLOBAL_TOKENS = "global_tokens"
+_KEY_MOD_PRESETS = "mod_presets"
 
 
 def get_settings_dir() -> Path:
@@ -463,4 +464,18 @@ def get_global_tokens() -> list[str]:
 def set_global_tokens(tokens: list[str]) -> None:
     data = load_settings()
     data[_KEY_GLOBAL_TOKENS] = list(tokens)
+    save_settings(data)
+
+
+def get_mod_presets() -> list[dict]:
+    """取全部已保存的"mod 配置集"原始数据（features/mod/presets.py 负责
+    转换成 ModPreset 对象、校验字段形状）——这里只管原样存取一个 list，
+    不关心里面每个 dict 长什么样，跟 get_global_tokens() 是同一个分工。"""
+    raw = load_settings().get(_KEY_MOD_PRESETS) or []
+    return raw if isinstance(raw, list) else []
+
+
+def set_mod_presets(presets: list[dict]) -> None:
+    data = load_settings()
+    data[_KEY_MOD_PRESETS] = list(presets)
     save_settings(data)

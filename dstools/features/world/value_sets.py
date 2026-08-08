@@ -224,10 +224,17 @@ UNCONFIRMED_KEYS = {
 }
 
 
-def get_value_set(key: str) -> list[str]:
+def get_value_set(key: str, mod_settings: dict | None = None) -> list[str]:
     """取一个世界规则 key 的合法取值有序列表。
 
-    没有特殊登记的 key（常见情况，也是 UNCONFIRMED_KEYS 未经验证时的兜
-    底）一律退回标准的 5 档取值。
+    mod_settings（features/world/mod_settings.py 登记表，调用方传当前存
+    档已启用 mod 贡献的部分）优先——mod 登记的取值不一定是标准 5 档
+    （比如 Cherry Forest 的 cherry_bugseason 只有 default/enabled 两档），
+    不能让它退回错误的通用列表。原版 key 没有特殊登记的（常见情况，也
+    是 UNCONFIRMED_KEYS 未经验证时的兜底）一律退回标准的 5 档取值。
     """
+    if mod_settings:
+        info = mod_settings.get(key)
+        if info is not None and info.values:
+            return info.values
     return VALUE_SETS.get(key, DEFAULT_SET)
