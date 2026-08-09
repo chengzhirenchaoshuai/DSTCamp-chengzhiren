@@ -8,6 +8,7 @@ GUI 层自己用 Text 控件展示输出（见 dstools/gui/local_service_tab.py�
 import csv
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -198,6 +199,19 @@ _REAL_START_MARKERS = (
 _MASTER_READY_MARKERS = ("reset() returning", "dst_master_ready")
 _SECONDARY_READY_MARKERS = ("is now ready!",)
 
+# Mod 加载完整性检查——真机核对过多份 server_log.txt（正常/无缺失场
+# 景），服务器解析 modoverrides.lua 时会先打一行 "modoverrides.lua
+# enabling <id>"（这一行只反映"配置里启用了"，跟这个 mod 是否真的存
+# 在/加载成功无关，folder 缺失/损坏时也一样会打这行），真正找到对应文
+# 件夹并成功解析 modinfo.lua 之后才会另外打一行 "Loading mod: <id>
+# (<name>) Version:<version>"。两个集合一减，剩下的就是"配置里启用了
+# 但服务器没能真的加载"的 mod——不需要额外自己解析 modoverrides.lua
+# 文件（跟服务器实际读到的内容保证一致，不用担心读错文件路径/游戏后
+# 续版本改了 Lua 表结构），也不依赖任何"加载失败"专属错误文案的格式
+# （那种文案没有在真机日志里见到过，没法核实，不敢假设）。
+_MOD_ENABLING_RE = re.compile(r"modoverrides\.lua enabling (\S+)", re.IGNORECASE)
+_MOD_LOADING_RE = re.compile(r"loading mod:\s*(\S+)\s*\(", re.IGNORECASE)
+
 
 class ServerProcess:
     """一个 (cluster, shard) 对应的专用服务器子进程：启动、读取控制台输出、
@@ -222,6 +236,12 @@ class ServerProcess:
         self.world_ready = False
         self.proc: subprocess.Popen | None = None
         self._out_queue: "queue.Queue[str]" = queue.Queue()
+        # Mod 加载完整性检查用，见 _MOD_ENABLING_RE/_MOD_LOADING_RE 顶部
+        # 说明。missing_mods 在 world_ready 变 True 那一刻算一次定型，
+        # None 表示"世界还没就绪，还没到算的时候"。
+        self.mods_enabled: set[str] = set()
+        self.mods_loaded: set[str] = set()
+        self.missing_mods: list[str] | None = None
 
     def start(self) -> None:
         bitness = pick_bitness(self.install_dir)  # 位数判断始终用真实安装目录
@@ -248,11 +268,19 @@ class ServerProcess:
                 line = line.rstrip("\n")
                 if not self.world_ready:
                     lowered = line.lower()
+                    m = _MOD_ENABLING_RE.search(line)
+                    if m:
+                        self.mods_enabled.add(m.group(1))
+                    else:
+                        m = _MOD_LOADING_RE.search(line)
+                        if m:
+                            self.mods_loaded.add(m.group(1))
                     if not real_start_seen:
                         if any(marker in lowered for marker in _REAL_START_MARKERS):
                             real_start_seen = True
                     elif any(marker in lowered for marker in markers):
                         self.world_ready = True
+                        self.missing_mods = sorted(self.mods_enabled - self.mods_loaded)
                 self._out_queue.put(line)
         except (OSError, ValueError):
             pass
@@ -316,6 +344,17 @@ class ServerProcess:
                 return
             time.sleep(0.2)
         self.kill()
+        # 真机复现过的坑：Popen.kill() 在 Windows 上只是发起
+        # TerminateProcess()，不保证调用返回时进程已经真的退出（大存档
+        # 写盘、系统繁忙时能晚个几秒才真断气）——上面两段等待循环都是等
+        # poll_exit_code() 确认过才置 STOPPED，唯独这里 kill() 之后直接
+        # 无条件置 STOPPED，导致 GUI 显示"已停止"，但真实进程还占着这份
+        # 存档的文件句柄。用 Popen.wait() 真的等到退出（或最多再等
+        # term_timeout 这么久，避免罕见情况下无限阻塞）。
+        try:
+            self.proc.wait(timeout=term_timeout)
+        except subprocess.TimeoutExpired:
+            pass
         self.status = ServerStatus.STOPPED
 
 

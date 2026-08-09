@@ -360,6 +360,8 @@ class _ConsolePane:
         self.close_btn = ttk.Button(quick_row, text=t("local.console_close_btn"), command=self._on_close)
         self.close_btn.pack(side=tk.RIGHT)
 
+        self._mod_check_reported = False
+
         body = ttk.Frame(self.frame)
         body.pack(fill=tk.BOTH, expand=True)
 
@@ -416,6 +418,22 @@ class _ConsolePane:
         # 截）。
         self.text.bind("<Control-f>", self._open_search)
         self.cmd_entry.bind("<Control-f>", self._open_search)
+
+        # Mod 加载完整性提示——world_ready 那一刻起才有意义，见 pump()。
+        # 应用户反馈从控制台最下面（挡在快捷按钮上方，"不美观"）挪到日志
+        # 头部——跟 _search_bar 同款做法，pack(before=self.text) 插到日志
+        # 文本框正上方，跟这个 body 是同一个容器（不是 self.frame），效
+        # 果是贴在日志框顶端的一条状态条，不是浮在整个控制台标签页底部。
+        # 之前挂在 self.frame 上、side=BOTTOM 时，晚于 body(fill=BOTH,
+        # expand=True) 才追加的横幅在 Notebook+PanedWindow 这层嵌套下不
+        # 会触发 body 收缩腾地方（真机复现过，見那次改动的说明），当时靠
+        # 手动 pack_forget()+pack() 硬逼一次重新布局搞定；这次改用
+        # before=self.text 插入，跟 _search_bar 一样能正常触发收缩，不需
+        # 要再手动重新布局。缺失/正常两种状态共用同一个 Label（同一时间
+        # 只会有一种在显示），颜色配置在 pump() 里按状态切换。
+        self._mod_status_label = tk.Label(body, text="", anchor=tk.W, padx=10, pady=0,
+                                           borderwidth=0, highlightthickness=0,
+                                           font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
 
         self.pump()
 
@@ -524,6 +542,8 @@ class _ConsolePane:
         self.text.configure(state=tk.NORMAL)
         self.text.delete("1.0", tk.END)
         self.text.configure(state=tk.DISABLED)
+        self._mod_status_label.pack_forget()
+        self._mod_check_reported = False
         self.pump()
 
     def pump(self):
@@ -532,8 +552,15 @@ class _ConsolePane:
         if lines:
             at_bottom = self.text.yview()[1] >= 0.999
             self.text.configure(state=tk.NORMAL)
-            for line in lines:
-                self.text.insert(tk.END, line + "\n")
+            # 应用户反馈截图核实过：每行都跟一个"\n"插入，会在最后一行
+            # 后面多留一个真实存在的空行（Tk Text 本身固定带一个隐式换
+            # 行，"line\n"+"line\n" 会变成两个连续的"\n"，多出来的那个
+            # 空行会被渲染出来）——用最小复现脚本验证过，跟这次新加的
+            # Mod 检查横幅完全无关，是这套逐行 insert 写法本来就有的旧
+            # 毛病。改成行间插分隔符（每批次开头按需要补一个"\n"，不在
+            # 每行后面加），批次之间无缝衔接，末尾不会再多出这个空行。
+            prefix = "\n" if self.text.index("end-1c") != "1.0" else ""
+            self.text.insert(tk.END, prefix + "\n".join(lines))
             if at_bottom:
                 self.text.see(tk.END)
             self.text.configure(state=tk.DISABLED)
@@ -552,6 +579,25 @@ class _ConsolePane:
         self.list_players_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
         if self.reset_world_btn is not None:
             self.reset_world_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
+
+        # missing_mods 只在 world_ready 那一刻算一次（见 dedicated_
+        # server.py），非 None 之后才是"真的算完了"；每个进程只报一次，
+        # 不然每次 pump() 轮询都重新 pack() 一遍没意义。
+        if world_ready and not self._mod_check_reported and self.proc.missing_mods is not None:
+            self._mod_check_reported = True
+            if self.proc.missing_mods:
+                self._mod_status_label.configure(
+                    text=t("local.mods_missing_warning", count=len(self.proc.missing_mods),
+                            ids=", ".join(self.proc.missing_mods)),
+                    bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+                self._mod_status_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
+            elif self.proc.mods_enabled:
+                # 一个 mod 都没启用的存档不需要报"全部正常加载"，没什么
+                # 信息量；只有真的启用了 mod 又全部加载成功才提示。
+                self._mod_status_label.configure(
+                    text=t("local.mods_check_ok", count=len(self.proc.mods_enabled)),
+                    bg=theme.BG_SOFT, fg=theme.SERVER_COLOR)
+                self._mod_status_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
 
 
 class LocalServiceTab:

@@ -1768,6 +1768,77 @@ def test_frp_selfhost_port_conflict_detection():
     print("  PASS: 从没部署过 frps 时 frps_bind_port 为 None，不会跟任何端口误判相等")
 
 
+def test_server_mod_completeness_check():
+    """真实需求：服务器启动完毕之后，检查 modoverrides.lua 里启用的 Mod
+    是不是真的全部加载成功了（比如某个订阅的 Workshop mod 在这台机器上
+    还没下载完，服务器会直接跳过、不会报错，玩家进去发现内容对不上）。
+
+    用真机 server_log.txt 核对过（3 份不同存档的真实日志）：服务器解析
+    modoverrides.lua 时，每个启用的 mod 都会先打一行 "modoverrides.lua
+    enabling <id>"——这一行只反映"配置里启用了"，folder 缺失/损坏时也
+    照样会打；真正找到文件夹、成功解析 modinfo.lua 之后才会另外打一行
+    "Loading mod: <id> (<name>) Version:<version>"。两个集合一减，剩
+    下的就是"配置里启用了但没真的加载成功"的 mod。这里用真实日志里摘
+    出来的行构造测试数据（不是编出来的格式），覆盖"全部正常加载"和
+    "人为去掉其中一个 Loading mod 行模拟真实缺失场景"两种情况。"""
+    print("\n" + "=" * 60)
+    print("Test 38: Server Mod Completeness Check")
+
+    import queue
+    from dstools.features.local_service.dedicated_server import ServerProcess
+
+    # 摘自真实 aaaddd66/Master/server_log.txt（隐去时间戳前缀，格式跟
+    # _read_loop() 实际读到的 subprocess stdout 行一致）。
+    healthy_lines = [
+        "modoverrides.lua enabling workshop-3511498282\t",
+        "modoverrides.lua enabling workshop-2797939615\t",
+        "modoverrides.lua enabling workshop-949808360\t",
+        "Loading mod: workshop-3511498282 ( 饥饥事件计时器) Version:ju 1.3.99999\t",
+        "Loading mod: workshop-2797939615 (常用mod集合) Version:2.0.9\t",
+        "Loading mod: workshop-949808360 ( 卡尼猫) Version:2.2.8\t",
+        "About to start a server with the following settings:",
+        "Reset() returning",
+    ]
+
+    def run(lines: list[str]) -> ServerProcess:
+        sp = ServerProcess.__new__(ServerProcess)
+        sp.world_ready = False
+        sp.mods_enabled = set()
+        sp.mods_loaded = set()
+        sp.missing_mods = None
+        sp.is_master = True
+
+        class _FakeProc:
+            stdout = [line + "\n" for line in lines]
+
+        sp.proc = _FakeProc()
+        sp._out_queue = queue.Queue()
+        sp._read_loop()
+        return sp
+
+    sp_ok = run(healthy_lines)
+    assert sp_ok.world_ready is True
+    assert sp_ok.missing_mods == [], "三个 mod 都正常打了 Loading mod 行，不应该判定为缺失"
+    print("  PASS: 全部 Mod 正常加载时 missing_mods 为空")
+
+    # 人为去掉 workshop-2797939615 的 "Loading mod:" 行，模拟这个 mod
+    # 在服务器这台机器上没下载完/加载失败的真实场景，其它两个 mod 不受
+    # 影响照样正常加载。
+    broken_lines = [line for line in healthy_lines if "Loading mod: workshop-2797939615" not in line]
+    sp_broken = run(broken_lines)
+    assert sp_broken.world_ready is True
+    assert sp_broken.missing_mods == ["workshop-2797939615"], \
+        "去掉了 workshop-2797939615 的 Loading mod 行，应该被判定为缺失，且不能误伤其它正常加载的 mod"
+    print("  PASS: 人为制造的缺失场景（去掉一个 mod 的 Loading mod 行）被正确识别，且不误伤其它 mod")
+
+    # world_ready 变 True 之前，missing_mods 应该保持 None（还没到算的
+    # 时候），不能提前算出一个"暂时性但看起来正常"的空列表误导调用方。
+    sp_not_ready = run(healthy_lines[:3])  # 只喂 enabling 行，没有 ready 标记
+    assert sp_not_ready.world_ready is False
+    assert sp_not_ready.missing_mods is None, "世界还没就绪时不应该算出 missing_mods"
+    print("  PASS: 世界还没就绪时 missing_mods 保持 None，不会提前给出误导性的空结果")
+
+
 def main():
     """运行全部测试。"""
     print("\n" + "█" * 60)
@@ -1813,6 +1884,7 @@ def main():
         test_font_style_switch,
         test_frp_selfhost_port_conflict_detection,
         test_world_ocean_frequency_labels,
+        test_server_mod_completeness_check,
     ]
 
     for test in tests:
