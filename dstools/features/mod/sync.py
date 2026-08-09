@@ -156,6 +156,24 @@ def apply_mod_sync(plan: ModSyncPlan, install_dir: Path, on_log=None) -> ModSync
     return result
 
 
+def remove_mod_sync_junction(install_dir: Path) -> bool:
+    """撤销 apply_mod_sync() 建的那个目录联接——应用户要求：这是按整台
+    机器一次性生效的全局设置（不分具体哪个存档），已经联接过之后原来那
+    个"软链接mods文件夹到服务器"按钮再点一次除了打一行"已经链接过"的
+    日志什么都不会发生，容易让人搞不清当前到底是什么状态；GUI 层现在
+    会在检测到已联接时把按钮换成"删除mod软连接"，点这个才走到这里。
+
+    只删联接本身（`os.rmdir()`，真机验证过不会牵连删除它指向的客户端
+    mods/ 真实内容），不是联接（可能是真实文件夹，或者压根没有这个目
+    录）就什么都不做、返回 False——避免误删用户自己的真实 mods 文件夹。
+    """
+    target = install_dir / "mods"
+    if not os.path.isjunction(target):
+        return False
+    os.rmdir(target)
+    return True
+
+
 def _ensure_junction(target: Path, src: Path) -> None:
     """让 target 变成指向 src 的目录联接(junction)——已经是对的联接就
     什么都不做；是别的联接/真实文件夹就先原地删掉。联接只用 os.rmdir()

@@ -39,7 +39,12 @@ from tkinter import ttk
 
 from PIL import Image, ImageDraw, ImageTk
 
-from dstools.shared.app_settings import get_theme_name
+from dstools.shared.app_settings import get_font_style_choice, get_theme_name
+from dstools.shared.gui import custom_font_loader, fonts as _fonts
+from dstools.shared.gui.font_styles import (
+    FONT_FAMILY_BY_STYLE, FONT_SIZE_SCALE_BY_STYLE, FONT_STYLES, FONT_STYLE_NAMES,
+)
+from dstools.shared.resource_paths import bundled_resource_dir
 
 # ── Named palettes ───────────────────────────────────────────────────────
 # "gray"（灰色，默认）+ 四套纯色主题：mint（薄荷绿）/twilight（暮色蓝）/
@@ -61,16 +66,15 @@ from dstools.shared.app_settings import get_theme_name
 #   这套主题目前设成 1.0（不透明）——之前试过 0.92 的整窗透明效果，用户
 #   反馈要去掉，"透明"这个需求只保留下面"自定义背景图片"这一处（图片本
 #   身按不透明度跟背景色混合），不是整个窗口透视桌面。
-# - FONT_FAMILY："Microsoft YaHei UI Light"（微软雅黑 Light，字体文件
-#   msyhl.ttc，Windows 10/11 通常自带）——项目全程中英文混排，这款字体本
-#   身自带完整中文字形，不需要像纯拉丁字体（如以前用过的 "Segoe UI
-#   Light"）那样依赖 Windows 字体链接去把中文字符临时换到另一款字体上画，
-#   贯穿 ttk 全局样式、tk 原生控件、pill_tabs.py/custom_titlebar.py 这类
-#   自绘控件统一用这一个族名。fonts.py 里 PIL 光栅面板（世界设置/Mod 卡
-#   片等整块渲染成图片的地方）走的是独立的字体文件加载，不读这个常量，
-#   但候选列表里同样把 msyhl.ttc 放在最前面，观感对齐。Tk 对不存在的字体
-#   族名不会报错，只会静默回退成系统默认字体，某台机器没装这个变体也不
-#   会崩溃，只是看不出字体差异。
+# - FONT_FAMILY：默认是"Microsoft YaHei UI Light"（微软雅黑 Light，
+#   Windows 10/11 通常自带）——项目全程中英文混排，这款字体本身自带完
+#   整中文字形，不需要像纯拉丁字体（如以前用过的 "Segoe UI Light"）那
+#   样依赖 Windows 字体链接去把中文字符临时换到另一款字体上画，贯穿
+#   ttk 全局样式、tk 原生控件、pill_tabs.py/custom_titlebar.py 这类自
+#   绘控件统一用这一个族名。可以在"主题"菜单的"字体设置…"里换成打包
+#   的开源可爱风字体（见下面"字体样式"一节），不属于这批调色板常量。
+#   Tk 对不存在的字体族名不会报错，只会静默回退成系统默认字体，某台机
+#   器没装这个变体也不会崩溃，只是看不出字体差异。
 # - FONT_SIZE_XL/LG/MD/BASE/SM/XS：统一的字号阶梯，替代过去散落在
 #   gui/app.py 等文件里几十处 font=("", 具体数字) 的硬编码写法（8/9/10/
 #   11/12/15/18 混用、同一层级信息在不同页签字号还对不上）。约定：XL=大
@@ -141,7 +145,54 @@ _THEMES = {
 }
 THEME_NAMES = ["gray", "mint", "twilight", "campfire", "sakura"]  # 菜单里出现的顺序
 
+# ── 字体样式（跟颜色主题完全解耦，独立设置，同"自定义背景图片"一个思
+# 路）──最早这里是"细体/常规/粗体"三档字重切换，应用户反馈"按钮字
+# 太细"上线过，但统一调粗之后正文/标签又显得太粗——按钮的粗细问题后
+# 来改成 apply_theme() 里 TButton 样式单独固定 bold=True 解决（不需要
+# 全局字重开关），这套字重切换本身就不再需要，整个删掉，改成字体*样
+# 式*（字体族）切换。具体有哪些样式、各自的族名/文件名/字号缩放倍数
+# 全部集中在 font_styles.py 里一张表（FONT_STYLES），这里只管"拿这张
+# 表做事"，不重复维护第二份列表——新增/删除一款字体样式改那一个文件
+# 就够了，见那边顶部的说明。
+#
+# "default" 之外的每个样式对应的族名都不是系统自带字体，Tk 原生控件要
+# 用它们，必须先把对应文件私有加载进当前进程（custom_font_loader.py
+# 用 Windows GDI 的 AddFontResourceExW，不需要用户安装到系统里）——这
+# 里在模块加载时就无条件把 FONT_STYLES 里所有带文件名的样式都加载一
+# 遍（不管当前选的是哪个），这样切换样式时只需要换 FONT_FAMILY 这个字
+# 符串，不需要在切换那一刻才现场加载。加载失败（非 Windows 平台、打包
+# 漏了某个文件）也不报错，Tk 找不到对应族名时会静默 fallback 成系统默
+# 认字体。PIL 那条渲染路径不需要这一步，直接按文件路径加载（见
+# fonts.py），两条路径各自独立解析每个样式对应哪个文件。
+for _style_def in FONT_STYLES:
+    if _style_def.filename:
+        custom_font_loader.load_private_font(
+            bundled_resource_dir() / "tools" / "fonts" / _style_def.filename)
+
+_DEFAULT_FONT_STYLE_CHOICE = "default"
+
+
+def _recompute_font_sizes() -> None:
+    """按当前颜色主题的基础字号（_active["FONT_SIZE_*"]）乘以当前字体
+    样式的缩放系数，重新算出 FONT_SIZE_XL/LG/MD/BASE/SM/XS 这套全局字
+    号阶梯。颜色主题（_active）和字体样式（FONT_STYLE_CHOICE）两者任
+    一变化都要重新算一遍，所以单独抽出来，供 set_theme()/
+    set_font_style_choice() 和模块加载时的初始化共用，不要在这三个地
+    方各自重复一遍换算逻辑。"""
+    global FONT_SIZE_XL, FONT_SIZE_LG, FONT_SIZE_MD, FONT_SIZE_BASE, FONT_SIZE_SM, FONT_SIZE_XS
+    scale = FONT_SIZE_SCALE_BY_STYLE.get(FONT_STYLE_CHOICE, 1.0)
+    FONT_SIZE_XL = round(_active["FONT_SIZE_XL"] * scale)
+    FONT_SIZE_LG = round(_active["FONT_SIZE_LG"] * scale)
+    FONT_SIZE_MD = round(_active["FONT_SIZE_MD"] * scale)
+    FONT_SIZE_BASE = round(_active["FONT_SIZE_BASE"] * scale)
+    FONT_SIZE_SM = round(_active["FONT_SIZE_SM"] * scale)
+    FONT_SIZE_XS = round(_active["FONT_SIZE_XS"] * scale)
+
+
 _active = _THEMES.get(get_theme_name()) or _THEMES["gray"]
+FONT_STYLE_CHOICE = (get_font_style_choice() if get_font_style_choice() in FONT_STYLE_NAMES
+                      else _DEFAULT_FONT_STYLE_CHOICE)
+_fonts.set_font_style(FONT_STYLE_CHOICE)
 
 PRIMARY = _active["PRIMARY"]
 PRIMARY_DARK = _active["PRIMARY_DARK"]
@@ -159,15 +210,44 @@ HEADING = _active["HEADING"]
 BANNER_BG = _active["BANNER_BG"]
 BANNER_TEXT = _active["BANNER_TEXT"]
 WINDOW_ALPHA = _active["WINDOW_ALPHA"]
-FONT_FAMILY = _active["FONT_FAMILY"]
+FONT_FAMILY = FONT_FAMILY_BY_STYLE[FONT_STYLE_CHOICE]
 CARD_RADIUS = _active["CARD_RADIUS"]
 CARD_MARGIN = _active["CARD_MARGIN"]
-FONT_SIZE_XL = _active["FONT_SIZE_XL"]
-FONT_SIZE_LG = _active["FONT_SIZE_LG"]
-FONT_SIZE_MD = _active["FONT_SIZE_MD"]
-FONT_SIZE_BASE = _active["FONT_SIZE_BASE"]
-FONT_SIZE_SM = _active["FONT_SIZE_SM"]
-FONT_SIZE_XS = _active["FONT_SIZE_XS"]
+_recompute_font_sizes()
+
+
+def font_tuple(size: int, bold: bool = False, italic: bool = False) -> tuple:
+    """统一构造 Tk 字体元组——取代项目里散落的 `(theme.FONT_FAMILY, size)`
+    裸元组写法，好处是字体样式（default/cute，见上面"字体样式"一节）切
+    换时只改 FONT_FAMILY 这一处就能级联到所有调用点。
+
+    `bold=True`/`italic=True` 是"这个控件本来就该比周围强调"的显式请
+    求（比如 apply_theme() 里 TButton 统一固定的粗体），两者叠加时用
+    Tk 字体元组的复合样式字符串（"bold italic"）表达。"""
+    style_parts = []
+    if bold:
+        style_parts.append("bold")
+    if italic:
+        style_parts.append("italic")
+    if style_parts:
+        return (FONT_FAMILY, size, " ".join(style_parts))
+    return (FONT_FAMILY, size)
+
+
+def set_font_style_choice(choice: str) -> None:
+    """运行时切换字体样式——重新计算 FONT_STYLE_CHOICE/FONT_FAMILY，同
+    时同步 PIL 侧的 fonts.set_font_style()（Tk 和 PIL 两条渲染路径必须
+    用同一个样式，不然原生控件和 Mod列表/世界设置这类整块渲染成图片的
+    面板会看起来不一致），并按 FONT_SIZE_SCALE_BY_STYLE 重新算一遍全局
+    字号阶梯（见 _recompute_font_sizes()——荆南麦圆体笔画粗壮，跟微软
+    雅黑同样字号看着更拥挤，需要整体放大）。不负责持久化，跟
+    set_theme() 一样是纯"应用一次"的函数，持久化由调用方（gui/app.py）
+    自己调 app_settings.set_font_style_choice()。"""
+    global FONT_STYLE_CHOICE, FONT_FAMILY
+    FONT_STYLE_CHOICE = choice if choice in FONT_STYLE_NAMES else _DEFAULT_FONT_STYLE_CHOICE
+    FONT_FAMILY = FONT_FAMILY_BY_STYLE[FONT_STYLE_CHOICE]
+    _fonts.set_font_style(FONT_STYLE_CHOICE)
+    _recompute_font_sizes()
 
 
 def set_theme(name: str) -> None:
@@ -175,11 +255,12 @@ def set_theme(name: str) -> None:
     不负责持久化（跟 apply_theme() 一样是纯"应用一次"的函数），持久化仍由
     调用方（gui/app.py 的 _switch_theme()）自己调
     app_settings.set_theme_name()。"""
+    # 故意不碰 FONT_FAMILY/FONT_STYLE_CHOICE——字体样式是独立于颜色主题
+    # 的设置（见上面 set_font_style_choice()），切颜色主题不应该连带把
+    # 字体样式换回主题字典里那份早已不再使用的 FONT_FAMILY 旧值。
     global _active, PRIMARY, PRIMARY_DARK, PRIMARY_LIGHT, BG_SOFT, ACCENT, \
         TEXT, TEXT_MUTED, CARD_BG, CARD_BG_ALT, CARD_BORDER, SHADOW, ERROR, \
-        HEADING, BANNER_BG, BANNER_TEXT, WINDOW_ALPHA, FONT_FAMILY, CARD_RADIUS, \
-        CARD_MARGIN, FONT_SIZE_XL, FONT_SIZE_LG, FONT_SIZE_MD, \
-        FONT_SIZE_BASE, FONT_SIZE_SM, FONT_SIZE_XS
+        HEADING, BANNER_BG, BANNER_TEXT, WINDOW_ALPHA, CARD_RADIUS, CARD_MARGIN
     _active = _THEMES.get(name) or _THEMES["gray"]
     PRIMARY = _active["PRIMARY"]
     PRIMARY_DARK = _active["PRIMARY_DARK"]
@@ -196,16 +277,10 @@ def set_theme(name: str) -> None:
     HEADING = _active["HEADING"]
     BANNER_BG = _active["BANNER_BG"]
     WINDOW_ALPHA = _active["WINDOW_ALPHA"]
-    FONT_FAMILY = _active["FONT_FAMILY"]
     CARD_RADIUS = _active["CARD_RADIUS"]
     CARD_MARGIN = _active["CARD_MARGIN"]
     BANNER_TEXT = _active["BANNER_TEXT"]
-    FONT_SIZE_XL = _active["FONT_SIZE_XL"]
-    FONT_SIZE_LG = _active["FONT_SIZE_LG"]
-    FONT_SIZE_MD = _active["FONT_SIZE_MD"]
-    FONT_SIZE_BASE = _active["FONT_SIZE_BASE"]
-    FONT_SIZE_SM = _active["FONT_SIZE_SM"]
-    FONT_SIZE_XS = _active["FONT_SIZE_XS"]
+    _recompute_font_sizes()
 
 # 语义化（数据）颜色——local_service_tab.py 里"运行中"状态用的颜色。跟
 # 可切换调色板分开放，因为不管当前激活哪套主题，这个颜色都保持不变。
@@ -236,17 +311,33 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     # "." 是 ttk 样式继承链的根——不给具体 style（如 TButton/TNotebook.Tab）
     # 单独 configure 字体的话，它们全部从这里级联字体族，这样只改一处就能
     # 让 FONT_FAMILY 覆盖到项目里几乎所有 ttk 控件（按钮/下拉/页签……），
-    # 不需要挨个改三十多处 font=("", N) 调用点。size 特意从当前
-    # TkDefaultFont 现查而不是写死数字。
-    default_size = tkfont.nametofont("TkDefaultFont").actual()["size"]
-    style.configure(".", background=BG_SOFT, foreground=TEXT, font=(FONT_FAMILY, default_size))
+    # 不需要挨个改三十多处 font=("", N) 调用点，字体样式（default/cute）
+    # 切换时也只用改这一处。size 特意从当前 TkDefaultFont 现查而不是写
+    # 死数字，但这个值不属于 FONT_SIZE_XL/LG/MD/BASE/SM/XS 那套阶梯，
+    # _recompute_font_sizes() 不会碰它——必须在这里单独乘一遍
+    # FONT_SIZE_SCALE_BY_STYLE，不然全项目几乎所有 ttk.Button（"."
+    # 级联下来的）字号会完全不跟着字体样式变化（真机反馈过："切到荆
+    # 南麦圆体后界面里其它文字变大了，但点击按钮里的字一点没变"，根因
+    # 就是这里一直没跟着缩放）。
+    default_size = round(tkfont.nametofont("TkDefaultFont").actual()["size"]
+                         * FONT_SIZE_SCALE_BY_STYLE.get(FONT_STYLE_CHOICE, 1.0))
+    style.configure(".", background=BG_SOFT, foreground=TEXT, font=font_tuple(default_size))
     style.configure("TFrame", background=BG_SOFT)
     style.configure("TLabel", background=BG_SOFT, foreground=TEXT)
     style.configure("TLabelframe", background=BG_SOFT, foreground=TEXT)
     style.configure("TLabelframe.Label", background=BG_SOFT, foreground=HEADING)
 
+    # 应用户反馈：之前试过给全局字重开一档"粗体"，统一调粗之后按钮里的
+    # 字确实清楚了，但正文/标签这些非按钮的文字又显得太粗——后来去掉了
+    # 那套全局字重开关（见上面"字体样式"一节的说明），按钮文字改成单
+    # 独固定成粗体（font_tuple() 的显式 bold=True，不受字体样式切换影
+    # 响），其它地方维持默认字重。这里改的是 ttk 全局 "TButton" 样式，
+    # 项目里目前所有 ttk.Button 都没有单独指定过 style（含各个弹窗的确
+    # 认/取消按钮），所以是真正意义上的"全部按钮"一起变粗，不是分页签
+    # 单独处理。
     style.configure("TButton", background=PRIMARY, foreground="#FFFFFF",
-                     borderwidth=0, focusthickness=0, padding=(12, 6))
+                     borderwidth=0, focusthickness=0, padding=(12, 6),
+                     font=font_tuple(default_size, bold=True))
     style.map("TButton",
               background=[("disabled", PRIMARY_LIGHT), ("pressed", PRIMARY_DARK),
                           ("active", PRIMARY_DARK)],
@@ -254,9 +345,15 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
 
     # "Big.TButton" -- 目前只给顶部全局存档选择栏的"刷新"按钮用，比普通
     # TButton 字号和内边距略大一点，跟旁边的存档下拉框视觉上匹配（原来是
-    # padding(16,8)+字号12，用户反馈太大了，调小了一号）。
+    # padding(16,8)+字号12，用户反馈太大了，调小了一号）。这里原来写的
+    # 是 font=("", 11)——空字符串族名不会跟着 FONT_FAMILY 走，Tk 会拿系
+    # 统默认字体（不是微软雅黑）来画，导致这个按钮的字体跟界面其它按钮
+    # 明显不一样（真机反馈过"刷新"按钮字体看着不搭）。改成 font_tuple()
+    # 才能跟其它 ttk 控件用同一个字体族名；字号用 FONT_SIZE_MD 而不是
+    # 写死的 11——这样也能跟着 FONT_SIZE_SCALE_BY_STYLE 一起缩放，不
+    # 会变成"其它按钮都跟着字体样式放大了，就这个刷新按钮没反应"。
     style.configure("Big.TButton", background=PRIMARY, foreground="#FFFFFF",
-                     borderwidth=0, focusthickness=0, padding=(12, 6), font=("", 11))
+                     borderwidth=0, focusthickness=0, padding=(12, 6), font=font_tuple(FONT_SIZE_MD))
     style.map("Big.TButton",
               background=[("disabled", PRIMARY_LIGHT), ("pressed", PRIMARY_DARK),
                           ("active", PRIMARY_DARK)],
@@ -294,13 +391,17 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
 
     # "Archive.TMenubutton" -- 顶部全局存档选择器专用，字号/内边距比基础
     # 样式略大一点（跟旁边的"刷新"按钮视觉匹配），其余外观继承基础样式。
-    # 原来是 padding(8,4)+字号12，用户反馈太大了，调小了一号。
-    style.configure("Archive.TMenubutton", padding=(7, 3), font=("", 11))
+    # 原来是 padding(8,4)+字号12，用户反馈太大了，调小了一号。同 Big.
+    # TButton 的说明——原来的 font=("", 11) 空族名不跟随 FONT_FAMILY，
+    # 改成 font_tuple() 保持跟其它控件字体一致；字号也改用 FONT_SIZE_MD
+    # 而不是写死的 11，跟着 FONT_SIZE_SCALE_BY_STYLE 一起缩放。
+    style.configure("Archive.TMenubutton", padding=(7, 3), font=font_tuple(FONT_SIZE_MD))
 
     # "ModOption.TMenubutton" -- Mod配置弹窗每个设置项、以及服务器配置里
     # 少数几个下拉选择字段（游戏模式/服务器语言等）共用，字号跟原来这两
-    # 处 Combobox 的 font=("", 11) 保持一致。
-    style.configure("ModOption.TMenubutton", font=("", 11))
+    # 处 Combobox 保持一致，同样改用 font_tuple()+FONT_SIZE_MD 而不是写
+    # 死的空族名/数字。
+    style.configure("ModOption.TMenubutton", font=font_tuple(FONT_SIZE_MD))
 
     style.configure("TNotebook", background=BG_SOFT, borderwidth=0, tabmargins=(2, 4, 2, 0))
     style.configure("TNotebook.Tab", background=CARD_BG, foreground=TEXT_MUTED,

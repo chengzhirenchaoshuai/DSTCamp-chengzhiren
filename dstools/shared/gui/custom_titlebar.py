@@ -551,6 +551,16 @@ class CustomTitleBar(BgFrame):
         self.bind("<Button-1>", self._on_click, add="+")
         self._redraw()
 
+    def apply_theme(self, bg: str | None = None) -> None:
+        """主题/字体切换时调用——BgFrame 基类的同名方法只管背景色，
+        _title_font 是 __init__ 里建一次的 Font 对象，字体族/字号都要
+        在这里重新配一次（Font 对象不会自己跟着 theme.FONT_FAMILY/
+        FONT_SIZE_* 变化）。_min_font/_close_font 固定用 "Segoe UI" 画
+        符号字形，不跟随字体设置，见 __init__ 里的说明，不用管。"""
+        super().apply_theme(bg)
+        self._title_font.configure(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_SM)
+        self._redraw()
+
     # ── 拖拽移动（排除按钮区域） ─────────────────────────────────────
     def _hit_button(self, x, y) -> bool:
         # y < _EDGE_MARGIN 那一小条已经让给 ResizeGrips 的 n/nw/ne 手柄

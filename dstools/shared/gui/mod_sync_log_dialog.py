@@ -66,7 +66,7 @@ class ModSyncLogDialog:
         # 就是 DPI 安全的，不需要额外处理（不能反过来给窗口写死一个固
         # 定像素高度，那样量出来的"能放下多少行"只在没缩放时准）。
         self.text = tk.Text(body, wrap=tk.WORD, height=22, width=64,
-                             font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), state=tk.DISABLED,
+                             font=theme.font_tuple(theme.FONT_SIZE_SM), state=tk.DISABLED,
                              bg=theme.CARD_BG, fg=theme.TEXT, relief=tk.FLAT,
                              highlightthickness=1, highlightbackground=theme.CARD_BORDER,
                              highlightcolor=theme.ACCENT)

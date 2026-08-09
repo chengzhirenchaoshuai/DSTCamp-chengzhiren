@@ -61,7 +61,7 @@ class _SSHAuthSetupDialog:
 
         body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
         ttk.Label(body, text=t("selfhost.ssh_auth_dialog_hint"), wraplength=440, justify=tk.LEFT,
-                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).grid(
+                  font=theme.font_tuple(theme.FONT_SIZE_SM)).grid(
             row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
 
         self._host_var = tk.StringVar(value=default_host)
@@ -182,8 +182,16 @@ class SelfHostFrpPage:
 
     _PROBE_INTERVAL_MS = 10 * 60 * 1000  # 后台自动探测间隔：10 分钟
 
-    def __init__(self, parent_widget, app):
+    def __init__(self, parent_widget, app, is_other_mapping_active=None):
         self.app = app
+        # 应用户要求：樱花映射/自建 frps 不能同时对同一个世界生效（两边
+        # 都会去改 server.ini 的 server_port，同时开会互相覆盖对方的配置，
+        # 表现为端口对不上/映射时好时坏）。SakuraTab 构造这个页面时会传
+        # 入一个"查樱花那边有没有映射"的回调（不直接引用 SakuraTab 本
+        # 身，避免两个文件互相 import 造成循环依赖）——_enable_mapping()
+        # 开启前用它挡一下，为 None 时（比如单测直接构造这个类）视为"不
+        # 检查"，不影响这个类本身的可测试性。
+        self._is_other_mapping_active = is_other_mapping_active
         self.frame = BgFrame(parent_widget, app, bg=theme.CARD_BG)
         self.frpc = FrpcManager()
         self._current_cluster = None
@@ -223,9 +231,16 @@ class SelfHostFrpPage:
         token_display.pack(side=tk.LEFT, padx=(4, 6))
         Tooltip(token_label, t("selfhost.token_hint"))
         Tooltip(token_display, t("selfhost.token_hint"))
-        regen_token_btn = ttk.Button(row2, text=t("selfhost.regen_token_btn"), command=self._regenerate_token)
+        self._regen_token_btn = regen_token_btn = ttk.Button(
+            row2, text=t("selfhost.regen_token_btn"), command=self._regenerate_token)
         regen_token_btn.pack(side=tk.LEFT)
-        Tooltip(regen_token_btn, t("selfhost.regen_token_hint"))
+        # 映射开着时这个按钮会被禁用（见 _render_shard_rows() 的说
+        # 明），提示气泡文字要跟着这个状态实时变——Tooltip 支持传一个不
+        # 带参数的可调用对象现查当前该显示什么文字（见 tooltip.py 的说
+        # 明），只挂一次，不要在 _render_shard_rows() 每次刷新时重新
+        # Tooltip(...) 一遍，那样每刷新一次就会多叠一层 <Enter> 绑定。
+        Tooltip(regen_token_btn, lambda: t("selfhost.regen_token_disabled_hint") if self._any_mapped
+                else t("selfhost.regen_token_hint"))
 
         self._row3 = row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
         self._auth_btn = ttk.Button(row3, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog)
@@ -352,6 +367,11 @@ class SelfHostFrpPage:
         return port if 1 <= port <= 65535 else None
 
     def _regenerate_token(self):
+        # 按钮本身已经在映射开着时禁用（见 _render_shard_rows()），这里
+        # 再兜底判断一次——万一以后哪里手滑漏了刷新按钮状态那一步，也
+        # 不会真的把正在用的映射换掉 token 弄断。
+        if self._any_mapped:
+            return
         # 只改这个页面上还没保存的 StringVar，跟 host/bind_port 输入框
         # 一个道理——真正持久化+同步到服务器是点"一键部署/重新部署"那
         # 一刻才发生的事（见 _start_deploy()），这里不用重复那份逻辑。
@@ -467,6 +487,32 @@ class SelfHostFrpPage:
 
         def _worker():
             try:
+                # 应用户反馈：填写的绑定端口和服务器上已经在跑的别的服务冲
+                # 突时，装完才在部署脚本里发现，装成一半（真机反馈过表现
+                # 为"搭建失败"）。部署脚本本身其实已经有一层兜底（见
+                # deploy.py 的端口冲突检测——检测到端口被占用会跳过安
+                # 装、正常退出），但那是"装完才知道跳过了"，而且退出码
+                # 是 0，DSTCamp 这边看不出来其实什么都没真的装上；改成
+                # 部署前先用现成的探测机制（probe.py）主动查一次，端口
+                # 真的被*别的*服务占用时直接在这里挡住，报错信息比翻部
+                # 署日志明显得多。
+                #
+                # 这里不能只看"dstcamp-frps 服务是不是在跑"（用
+                # status.service_active）——服务在跑不代表跑的就是这次
+                # 要用的端口：改配置换成一个新端口、新端口恰好被别的服
+                # 务（比如 sshd）占用时，服务本来就还在跑（用的是旧端
+                # 口），这个粗粒度判断会误把真冲突当成"复用现有安装"放
+                # 行（真机反馈过的真实 bug）。必须比对
+                # status.frps_bind_port（探测到的 frps 自己*当前实际绑
+                # 定*的端口，见 probe.py）：占用目标端口的就是 frps 自
+                # 己现在这个端口时才不算冲突，其它情况（包括服务在跑但
+                # 用的是别的端口）都要挡住。
+                _on_log(t("selfhost.checking_port_conflict"))
+                status = probe.probe_server_status(conn["host"], conn["port"], conn["username"])
+                if status.reachable and port in status.used_ports and port != status.frps_bind_port:
+                    raise remote_deploy.RemoteDeployError(
+                        t("selfhost.bind_port_conflict_msg", port=port))
+
                 remote_deploy.deploy_via_ssh(
                     conn["host"], conn["port"], conn["username"], port, token,
                     _on_log, self._confirm_host_key,
@@ -600,7 +646,7 @@ class SelfHostFrpPage:
 
         if self._last_status and self._last_status.error:
             self._label(self._server_status_panel, self._last_status.error, fg=theme.ERROR,
-                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, pady=(0, 2))
+                        font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(anchor=tk.W, pady=(0, 2))
 
     # ── 世界状态区渲染（结构照抄 sakura/tab.py 的 _render_shard_rows） ──
 
@@ -618,7 +664,7 @@ class SelfHostFrpPage:
         if text:
             self._status_frame.pack(fill=tk.X, padx=10, pady=(3, 0), before=self._shards_frame)
             self._label(self._status_frame, text, fg=theme.ERROR,
-                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, fill=tk.X)
+                        font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(anchor=tk.W, fill=tk.X)
         else:
             self._status_frame.pack_forget()
 
@@ -678,6 +724,16 @@ class SelfHostFrpPage:
 
         self._conn_check_btn.pack(side=tk.LEFT, padx=(8, 0))
         self._conn_check_btn.configure(state=tk.NORMAL if any_mapped else tk.DISABLED)
+
+        # 应用户反馈：映射已经开着的时候点"重新生成Token"，本地这边的
+        # token 立刻就变了，但服务器上的 frps 还在用旧 token（要点"一键
+        # 部署/重新部署"才会同步新值），frpc 马上就会因为双方 token 对
+        # 不上连接失败——这个后果不像"填错端口"那样点了才发现，是"看起
+        # 来能点、点了就直接把正在用的映射弄断"，比其它按钮更容易误
+        # 点，所以映射开着时直接禁用，逼着用户先关映射再换 token。提示
+        # 气泡文字跟着这个状态动态变，用的是构造时挂好的那一个 Tooltip
+        # （见 __init__ 里的说明），这里不需要重新 Tooltip(...) 一遍。
+        self._regen_token_btn.configure(state=tk.DISABLED if any_mapped else tk.NORMAL)
 
         if any_mapped:
             self._frpc_row.pack(fill=tk.X, padx=10, pady=(0, 5))
@@ -804,17 +860,23 @@ class SelfHostFrpPage:
         else:
             self._enable_mapping()
 
-    def _next_free_port(self, base: int) -> int:
-        """从 base 起找一个还没被占用的端口——"占用"合并两个来源：
+    def _next_free_port(self, base: int, extra_used: frozenset = frozenset()) -> int:
+        """从 base 起找一个还没被占用的端口——"占用"合并三个来源：
         1) app_settings 里记的、DSTCamp 自己已经分配给别的世界的端口
            （重新查一遍，所以同一轮 _enable_mapping() 循环里前一个世界
            刚分配的端口，下一个世界调用这个方法时也能看到）；
         2) 最近一次探测拿到的服务器上真实已监听端口（用户自己起的别
            的服务，或者手动配置过的东西）——没探测过/探测失败时这部
-           分是空集合，退化成只按本地记录分配，不阻塞流程。"""
+           分是空集合，退化成只按本地记录分配，不阻塞流程；
+        3) `extra_used`——调用方（_enable_mapping()）传入的、这一轮刚做
+           完的一次新鲜探测结果。应用户反馈：只依赖 self._last_status
+           可能是很久以前甚至从没探测过的旧数据，分配到的端口在服务器
+           上其实早被占用，frps 那边绑定不上，表现为映射建好了但连不
+           上；分配前先做一次新鲜探测，用真正当下的数据兜底。"""
         used = set(app_settings.get_all_selfhost_frp_ports())
         if self._last_status and self._last_status.reachable:
             used |= self._last_status.used_ports
+        used |= extra_used
         port = base
         while port in used:
             port += 1
@@ -876,19 +938,40 @@ class SelfHostFrpPage:
             dlg.show_warning(self.app.root, t("sakura.require_stopped_title"),
                               t("sakura.require_stopped_msg", shards="、".join(running)))
             return
+        if self._is_other_mapping_active:
+            conflicting = [s.name for s in cluster.shards if self._is_other_mapping_active(cluster, s)]
+            if conflicting:
+                dlg.show_warning(self.app.root, t("selfhost.enable_btn"),
+                                  t("sakura.other_mapping_conflict_msg", shards="、".join(conflicting)))
+                return
 
         progress = ModSyncLogDialog(self.frame, title=t("selfhost.setup_progress_title"))
         shards = list(cluster.shards)
         base_port = server["bind_port"] + 1
 
         def _worker():
+            # 分配端口前先做一次新鲜探测——见 _next_free_port() 的说明，
+            # 不依赖可能很旧的 self._last_status。探测结果同时也让状态
+            # 面板跟着更新一下（走主线程 setattr，不直接从这个后台线程
+            # 改 self._last_status，跟 _run_probe()/_on_probe_done() 的
+            # 惯例保持一致）；探测失败/够不着服务器不阻塞流程，退化成
+            # 只按本地记录 + 旧探测数据分配。
+            fresh_used_ports: frozenset = frozenset()
+            conn = app_settings.get_selfhost_ssh_connection()
+            if conn:
+                self.frame.after(0, lambda: progress.append(t("selfhost.checking_port_conflict")))
+                fresh_status = probe.probe_server_status(conn["host"], conn["port"], conn["username"])
+                if fresh_status.reachable:
+                    fresh_used_ports = fresh_status.used_ports
+                    self.frame.after(0, lambda s=fresh_status: setattr(self, "_last_status", s))
+
             for shard in shards:
                 remote_port = app_settings.get_selfhost_frp_mapping(cluster.path, shard.name)
                 if remote_port is None:
                     # _next_free_port() 每次都重新查一遍 app_settings 里
                     # 全部已分配端口，所以这一轮循环里前一个世界刚写进去
                     # 的分配结果，这里也能看到，不会分到同一个端口。
-                    remote_port = self._next_free_port(base_port)
+                    remote_port = self._next_free_port(base_port, extra_used=fresh_used_ports)
                     app_settings.set_selfhost_frp_mapping(cluster.path, shard.name, remote_port)
                 shard_config = load_shard_config(shard.path)
                 set_shard_option(shard_config, "NETWORK", "server_port", remote_port)

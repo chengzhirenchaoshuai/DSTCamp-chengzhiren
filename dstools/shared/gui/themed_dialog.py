@@ -46,14 +46,17 @@ else:
         pass
 
 
-def _show(parent, title, message, kind, buttons, wraplength=320, min_width=360):
+def _show(parent, title, message, kind, buttons, wraplength=420, min_width=460):
     """buttons: [(label, value, is_default), ...] 列表。返回被选中的
     value，弹窗没选就关掉则返回 None。
 
     wraplength/min_width 给消息比较长的调用方（比如专用服务器安装引导）
-    一个要更宽卡片、而不是被挤成又高又窄一条的选项——默认值跟现有那些
-    1~3 行的 show_info/show_warning/show_error 短消息调用保持一致，不
-    影响它们的外观。
+    一个要更宽卡片、而不是被挤成又高又窄一条的选项。默认值应用户反馈
+    从 320/360 调宽到 420/460——项目里有几处确认框的文字本来就比较
+    长（比如"重新生成Token"/"删除mod软连接"这类带较长说明的二次确
+    认），原来的默认宽度会把这些文字硬挤成好几行，弹窗被拉得很高，改
+    宽一点让它们能少换几行、横向铺开，不再显得又高又窄；短消息（1~3
+    行）本来就不会撑到这个宽度，改宽之后外观不受影响。
 
     这里故意不复用 CardFrame：CardFrame 的圆角矩形主体是用
     `.place(relwidth=1, ...)` 定位的，需要它的*父容器*已经有真实尺寸——
@@ -76,9 +79,9 @@ def _show(parent, title, message, kind, buttons, wraplength=320, min_width=360):
     row = tk.Frame(card, background=theme.CARD_BG)
     row.pack(fill=tk.X, padx=20, pady=(20, 0))
     icon_char, icon_color = _icon_for(kind)
-    tk.Label(row, text=icon_char, font=(theme.FONT_FAMILY, 22, "bold"), fg=icon_color,
+    tk.Label(row, text=icon_char, font=theme.font_tuple(22, bold=True), fg=icon_color,
              bg=theme.CARD_BG).pack(side=tk.LEFT, padx=(0, 14), anchor="n")
-    tk.Label(row, text=message, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
+    tk.Label(row, text=message, font=theme.font_tuple(theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
              justify=tk.LEFT, wraplength=wraplength).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     btn_row = tk.Frame(card, background=theme.CARD_BG)
@@ -110,20 +113,22 @@ def _show(parent, title, message, kind, buttons, wraplength=320, min_width=360):
     return result["value"]
 
 
-def show_info(parent, title, message):
-    _show(parent, title, message, "info", [(t("dlg.confirm_btn"), True, True)])
+def show_info(parent, title, message, wraplength=420, min_width=460):
+    _show(parent, title, message, "info", [(t("dlg.confirm_btn"), True, True)],
+          wraplength=wraplength, min_width=min_width)
 
 
-def show_warning(parent, title, message, wraplength=320, min_width=360):
+def show_warning(parent, title, message, wraplength=420, min_width=460):
     _show(parent, title, message, "warning", [(t("dlg.confirm_btn"), True, True)],
           wraplength=wraplength, min_width=min_width)
 
 
-def show_error(parent, title, message):
-    _show(parent, title, message, "error", [(t("dlg.confirm_btn"), True, True)])
+def show_error(parent, title, message, wraplength=420, min_width=460):
+    _show(parent, title, message, "error", [(t("dlg.confirm_btn"), True, True)],
+          wraplength=wraplength, min_width=min_width)
 
 
-def ask_yes_no(parent, title, message, wraplength=320, min_width=360) -> bool:
+def ask_yes_no(parent, title, message, wraplength=420, min_width=460) -> bool:
     return bool(_show(parent, title, message, "question",
                        [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)],
                        wraplength=wraplength, min_width=min_width))

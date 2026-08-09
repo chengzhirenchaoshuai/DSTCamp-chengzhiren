@@ -87,7 +87,21 @@ class PillTabBar(tk.Frame):
         初始选中态，调用方自己要保证初始显示的内容跟这个选中态一致
         （不会主动调用 on_select，构造阶段不触发"切换"回调）。"""
         bg = bg or theme.BG_SOFT
-        super().__init__(parent, background=bg, height=height, **kw)
+        # height/pill_h/font_size 是调用方传进来的*基准*尺寸（顶层五页签
+        # 和三个内部子页签行各自传了不同的一套），字体样式（默认/荆南麦
+        # 圆体）切换时要按 FONT_SIZE_SCALE_BY_STYLE 整体放大——只放大字
+        # 号、不放大药丸高度/整条容器高度的话，变大的文字会超出药丸和容
+        # 器的固定像素范围（真机反馈过："按钮变大了，但顶部'本地服务器/
+        # Mod管理/……'这几个页签标题还是原来那么小，两边明显不搭"）。原
+        # 始基准值留一份，apply_theme() 里每次都从这份基准重新算，不能在
+        # 已经放大过的当前值上再乘一次，否则反复切换字体样式会越滚越大。
+        self._base_height = height
+        self._base_pill_h = pill_h
+        self._base_font_size = font_size
+        scale = theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)
+        self._height = round(height * scale)
+        self._pill_h = round(pill_h * scale)
+        super().__init__(parent, background=bg, height=self._height, **kw)
         self.pack_propagate(False)
         self._app = app
         self._on_select = on_select
@@ -97,8 +111,6 @@ class PillTabBar(tk.Frame):
             self._selected = initial
         else:
             self._selected = self._tabs[0][0] if self._tabs else None
-        self._height = height
-        self._pill_h = pill_h
         self._gap = gap
         self._hpad = hpad
         # 显式指定字体族 -- 不带 family 的 tkfont.Font(weight="bold") 在这台
@@ -109,7 +121,8 @@ class PillTabBar(tk.Frame):
         # 已验证安全的默认族名——同一条 apply_theme() 里也会重新读一遍，
         # 不能在这里读一次就固定住（见 theme.py 顶部"现查不缓存"的规则）。
         default_family = tkfont.nametofont("TkDefaultFont").actual()["family"]
-        self._font = tkfont.Font(family=theme.FONT_FAMILY or default_family, size=font_size, weight="bold")
+        self._font = tkfont.Font(family=theme.FONT_FAMILY or default_family,
+                                 size=round(font_size * scale), weight="bold")
         self._regions = []  # (x1, x2, key)
 
         self._canvas = tk.Canvas(self, highlightthickness=0, bd=0, background=bg)
@@ -160,12 +173,22 @@ class PillTabBar(tk.Frame):
         theme.PRIMARY/theme.TEXT_MUTED，但容器本身的背景色不会自动跟着
         变，需要显式重新 configure 一次。self._font 同理是构造时创建的
         tk.font.Font 对象，字体族也要在这里跟着重新配一次（Font 对象是
-        可变的，.configure() 之后所有引用它的地方自动生效，不需要重建）。"""
+        可变的，.configure() 之后所有引用它的地方自动生效，不需要重建）。
+
+        字号/药丸高度/整条容器高度这三个要一起从 __init__ 时存的基准值
+        （self._base_*）重新按当前字体样式的缩放倍数算一遍——只改字体
+        族不改尺寸的话，切成荆南麦圆体后其它地方（按钮）都变大了，这几
+        个页签标题却停在原来的小尺寸，两边明显不搭（真机反馈过）。"""
         bg = theme.BG_SOFT
         self.configure(background=bg)
         self._canvas.configure(background=bg)
         default_family = tkfont.nametofont("TkDefaultFont").actual()["family"]
-        self._font.configure(family=theme.FONT_FAMILY or default_family)
+        scale = theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)
+        self._height = round(self._base_height * scale)
+        self._pill_h = round(self._base_pill_h * scale)
+        self.configure(height=self._height)
+        self._font.configure(family=theme.FONT_FAMILY or default_family,
+                              size=round(self._base_font_size * scale))
         self._redraw()
 
     def _on_click(self, event):

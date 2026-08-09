@@ -56,7 +56,7 @@ class BackgroundImageDialog:
         self._status_var = tk.StringVar(value=path.name if path else t("settings.custom_bg_none"))
         row_path = tk.Frame(card, background=theme.CARD_BG)
         row_path.pack(fill=tk.X, padx=24, pady=(24, 12))
-        tk.Label(row_path, textvariable=self._status_var, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+        tk.Label(row_path, textvariable=self._status_var, font=theme.font_tuple(theme.FONT_SIZE_BASE),
                  fg=theme.TEXT_MUTED, bg=theme.CARD_BG).pack(side=tk.LEFT)
 
         btn_row1 = tk.Frame(card, background=theme.CARD_BG)
@@ -66,7 +66,7 @@ class BackgroundImageDialog:
 
         row_opacity = tk.Frame(card, background=theme.CARD_BG)
         row_opacity.pack(fill=tk.X, padx=24, pady=(0, 24))
-        tk.Label(row_opacity, text=t("settings.custom_bg_opacity_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+        tk.Label(row_opacity, text=t("settings.custom_bg_opacity_label"), font=theme.font_tuple(theme.FONT_SIZE_BASE),
                  fg=theme.TEXT, bg=theme.CARD_BG).pack(side=tk.LEFT)
         self._opacity_var = tk.DoubleVar(value=get_custom_bg_opacity())
         self._opacity_apply_after_id = None

@@ -55,8 +55,13 @@ class WorldSettingsTab:
         self._wl_info_frame.pack(fill=tk.X, padx=5, pady=(0,6))
         self._wl_title_var = tk.StringVar()
         self._wl_desc_var = tk.StringVar()
-        self._wl_title_font = tkfont.Font(size=11, weight="bold")
-        self._wl_desc_font = tkfont.Font(size=9)
+        # 之前这两个字体一直没指定 family，跟全项目 theme.FONT_FAMILY 走
+        # 的是两条路（用的是 Tk 系统默认字体）——补上统一字体族；字号改
+        # 用 theme.FONT_SIZE_BASE/FONT_SIZE_XS（数值上跟原来的 11/9 一
+        # 致）而不是字面量，这样才能跟着 FONT_SIZE_SCALE_BY_STYLE 一起
+        # 缩放（title 保持强制加粗）。
+        self._wl_title_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_BASE, weight="bold")
+        self._wl_desc_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
 
         def _redraw_wl_info():
             c = self._wl_info_frame
@@ -406,9 +411,15 @@ class WorldSettingsTab:
     def retheme(self):
         """主题切换时调用——这个横幅、以及 make_toolbar_label() 画的说明
         文字都是 __init__ 里建一次就不再重建，refresh() 不会碰它们的颜
-        色，需要显式重新上色/重画。_sub_tab_bar 同理。"""
+        色，需要显式重新上色/重画。_sub_tab_bar 同理。_wl_title_font/
+        _wl_desc_font 是 __init__ 里建一次的 Font 对象，字体族/字号都要
+        在这里重新配一次（Font 对象不会自己跟着 theme.FONT_FAMILY/
+        FONT_SIZE_* 变化，字号如果不重配，字体样式放大之后这两行文字
+        会停在旧尺寸）。"""
         self._wl_local_banner.apply_theme()
         self._wl_lbl2.redraw()
+        self._wl_title_font.configure(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_BASE)
+        self._wl_desc_font.configure(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
         self._redraw_wl_info()
         self._sub_tab_bar.apply_theme()
 

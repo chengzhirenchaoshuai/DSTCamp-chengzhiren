@@ -34,7 +34,7 @@ class ReadonlyBanner:
     def __init__(self, parent, text: str = "", on_click=None, justify=tk.LEFT):
         kwargs = {"cursor": "hand2"} if on_click is not None else {}
         self.label = tk.Label(parent, text=text, bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
-                               font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"),
+                               font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
                                anchor=tk.W, padx=10, pady=6, justify=justify, **kwargs)
         if on_click is not None:
             self.label.bind("<Button-1>", lambda e: on_click())
@@ -62,7 +62,7 @@ class ReadonlyBanner:
         self.label.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
 
 
-def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None,
+def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None, bold=False,
                         side=tk.LEFT, anchor=tk.W) -> BgFrame:
     """在工具栏行(BgFrame)里插入一小块只画一行说明文字的子画布，跟其它
     ttk 控件一起 pack()——ttk.Label/tk.Label 绘制区域永远不透明，会挡住
@@ -73,20 +73,56 @@ def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None,
     行多高"这件事）。
 
     text_getter: callable() -> str，现查当前文字（跟随语言切换）。font
-    默认 TkDefaultFont，传"("", 11, "bold")"这类可以做成小节标题。返回的
-    BgFrame 挂了一个 `redraw()` 方法，语言切换时调用一次即可刷新文字。
-    """
-    font = tkfont.nametofont("TkDefaultFont") if font is None else tkfont.Font(font=font)
-    label_h = font.metrics("linespace") + 4
+    默认跟随 theme.FONT_FAMILY（字号沿用 TkDefaultFont 的原有大小，不
+    跟着变——这里只补字体族的一致性，不改动尺寸这个更容易引起连带视
+    觉变化的维度），传"("", 11, "bold")"这类固定字体元组会被当成显式覆
+    盖，完全用调用方给的字体，不再跟随字体设置（族名/字号/字重都固定
+    住，包括字体样式切换也不会波及）——只有真的需要"这个标签永远长这
+    个样子，不受字体设置影响"时才应该这样传。绝大多数"小节标题"场景
+    （字号跟正文一样、只是加粗突出）应该用 bold=True 而不是传 font 元
+    组：bold=True 仍然走跟随 theme.FONT_FAMILY/字体样式缩放的默认分
+    支，只是叠加粗体，这样字体样式切换时这些标题也能正常跟着变（真机
+    反馈过："服务器配置"页签的字段标签用的是这种写死字体元组的旧写
+    法，切到荆南麦圆体后完全没反应，就是没走这条默认分支）。
+    返回的 BgFrame 挂了一个 `redraw()` 方法，语言切换/字体设置切换时调
+    用一次即可刷新文字和字体。
+
+    **坑**：之前 font=None 这个默认分支直接用 tkfont.nametofont(
+    "TkDefaultFont")——那是 Tk 自己的系统默认字体，从来没有跟随过
+    theme.FONT_FAMILY，跟全项目其它地方用的字体族不是同一个（这个项目
+    几乎所有工具栏"小节标题"文字都是通过这个函数画的，且全部调用点都
+    没传 font 参数，等于说这一类文字一直在用系统默认字体，是没被注意
+    到的不一致，不是这次改动才引入的）。这次一并统一。"""
+    explicit_font = font is not None
+    if explicit_font:
+        font_obj = tkfont.Font(font=font)
+    else:
+        base_size = tkfont.nametofont("TkDefaultFont").actual()["size"]
+        font_obj = tkfont.Font(family=theme.FONT_FAMILY, size=base_size,
+                               weight="bold" if bold else "normal")
+    label_h = font_obj.metrics("linespace") + 4
     label = BgFrame(row, app, bg=theme.CARD_BG)
     label.configure(height=label_h)
 
     def _redraw():
+        nonlocal label_h
+        # 没有显式指定字体的默认分支，每次重画都跟着当前 theme.FONT_
+        # FAMILY 重新配一次——这样调用方在自己的 retheme() 里调一次
+        # label.redraw() 就能同时刷新文字和字体，不用额外记得单独处理
+        # 字体这一步。字号也要按 FONT_SIZE_SCALE_BY_STYLE 从 base_size
+        # 重新算一遍（不能在已经放大过的当前字号上再乘一次，否则反复
+        # 切换字体样式会越滚越大），容器高度 label_h 跟着重算，不然放
+        # 大后的文字会被裁在这个高度写死的小画布里。
+        if not explicit_font:
+            scale = theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)
+            font_obj.configure(family=theme.FONT_FAMILY, size=round(base_size * scale))
+            label_h = font_obj.metrics("linespace") + 4
+            label.configure(height=label_h)
         label.delete("label_text")
         text = text_getter()
-        label.configure(width=font.measure(text) + 6)
+        label.configure(width=font_obj.measure(text) + 6)
         label.create_text(2, label_h / 2, text=text, anchor=tk.W,
-                           fill=theme.TEXT, font=font, tags="label_text")
+                           fill=theme.TEXT, font=font_obj, tags="label_text")
 
     label.redraw = _redraw
     label.pack(side=side, anchor=anchor, padx=(0, 5))
@@ -105,10 +141,20 @@ def make_filter_chips(row: BgFrame, app: "DSToolsApp", options, variable: tk.Str
     options: [(value, text_getter), ...]（text_getter: callable() -> str，
     现查当前文字，跟随语言切换）。variable: 保存当前选中值的 StringVar。
     command: 选中值真的发生变化后调用（不传参数，调用方自己从 variable
-    现查）。返回的 BgFrame 挂了 `redraw()` 方法，语言切换/选中态变化后
-    调用一次即可刷新。
-    """
-    base_font = tkfont.nametofont("TkDefaultFont") if font is None else tkfont.Font(font=font)
+    现查）。返回的 BgFrame 挂了 `redraw()` 方法，语言切换/选中态变化/
+    字体设置切换后调用一次即可刷新。
+
+    font 为 None（绝大多数调用点）时，字体族跟随 theme.FONT_FAMILY（字
+    号仍沿用 TkDefaultFont 的原有大小）——同 make_toolbar_label() 的说
+    明，之前这里也是直接用系统默认字体，从来没跟随过项目自己的字体设
+    置。选中项固定加粗（bold_font 永远是 "bold"，用来跟未选中项拉开
+    视觉差异）。"""
+    explicit_font = font is not None
+    if explicit_font:
+        base_font = tkfont.Font(font=font)
+    else:
+        base_size = tkfont.nametofont("TkDefaultFont").actual()["size"]
+        base_font = tkfont.Font(family=theme.FONT_FAMILY, size=base_size)
     bold_font = tkfont.Font(family=base_font.actual("family"), size=base_font.actual("size"),
                              weight="bold")
     gap = 16
@@ -118,6 +164,18 @@ def make_filter_chips(row: BgFrame, app: "DSToolsApp", options, variable: tk.Str
     regions: list[tuple[int, int, str]] = []
 
     def _redraw():
+        nonlocal chip_h
+        # 字号也要按 FONT_SIZE_SCALE_BY_STYLE 从 base_size 重新算一遍
+        # （不能在已经放大过的当前字号上再乘一次），chip_h 跟着重算并
+        # 重新 configure 容器高度，不然放大后的文字会被裁在原来的小高
+        # 度里。
+        if not explicit_font:
+            scale = theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)
+            new_size = round(base_size * scale)
+            base_font.configure(family=theme.FONT_FAMILY, size=new_size)
+            bold_font.configure(family=theme.FONT_FAMILY, size=new_size)
+            chip_h = base_font.metrics("linespace") + 4
+            chip.configure(height=chip_h)
         chip.delete("chip_text")
         regions.clear()
         x = 0

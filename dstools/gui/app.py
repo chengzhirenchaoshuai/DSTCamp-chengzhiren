@@ -10,6 +10,7 @@ from PIL import ImageTk
 from dstools import __version__
 from dstools.shared.app_settings import (
     get_theme_name, set_theme_name,
+    set_font_style_choice,
     get_minimize_on_close, set_minimize_on_close,
     get_cache_use_exe_dir, set_cache_use_exe_dir,
     get_custom_bg_opacity,
@@ -19,6 +20,7 @@ from dstools.shared.app_settings import (
 )
 from dstools.shared.custom_background import get_custom_bg_path, render_background
 from dstools.shared.discovery import discover_environment
+from dstools.shared.tex_convert import launch_vcredist_installer
 from dstools.shared.update_check import check_latest_version, is_newer_version
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.background_dialog import BackgroundImageDialog
@@ -144,7 +146,16 @@ class DSToolsApp:
         # "存档:"文字直接在 Canvas 上 create_text 画（不用 tk.Label，会挡
         # 住背景图），字号比其它选择器大一号、加粗+强调色，突出这是最重
         # 要的控件。
-        self._archive_label_font = tkfont.Font(size=12, weight="bold")
+        # 之前没指定 family，走的是 Tk 系统默认字体，跟全项目
+        # theme.FONT_FAMILY 不是同一款——补上统一字体族，字重强制加粗
+        # （突出这是最重要的控件）。字号是字面量 12，不属于 theme.
+        # FONT_SIZE_* 那套阶梯，要单独乘一遍 FONT_SIZE_SCALE_BY_STYLE，
+        # 不然切到荆南麦圆体后这里不会跟着放大（_retheme_cluster_bar()
+        # 同理要重新算一遍，不能只改字体族）。
+        self._archive_label_font = tkfont.Font(
+            family=theme.FONT_FAMILY,
+            size=round(12 * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)),
+            weight="bold")
         self._archive_label_w = self._archive_label_font.measure(t("selector.archive"))
         # "存档类型:"(Steam/WeGame 筛选器) 画在最左边，"存档:"标签的 x 坐
         # 标要等它真正 pack 布局完才能现查右边缘（两个 Menubutton 靠
@@ -258,7 +269,17 @@ class DSToolsApp:
         # 状态栏用 BgFrame + create_text（不用 ttk.Label——TLabel 样式背
         # 景固定浅色，在暗色自定义背景图下会像一条白色横杠）。
         self.status_var = tk.StringVar(value=t("app.ready"))
-        self._status_font = tkfont.nametofont("TkDefaultFont")
+        # 之前直接引用 Tk 自己的系统默认字体("TkDefaultFont" 这个命名字体
+        # 对象)，从来没跟随过 theme.FONT_FAMILY——建一份独立的 Font 对象，
+        # 字号沿用系统默认大小（存一份基准值，_redraw_status_bar() 每次
+        # 都要按当前字体样式的缩放倍数从这份基准重新算，不能在已经放大
+        # 过的当前字号上再乘一次，否则反复切换字体样式会越滚越大），字
+        # 体族跟主题走，_redraw_status_bar() 每次重画都会重新同步一次。
+        self._status_font_base_size = tkfont.nametofont("TkDefaultFont").actual()["size"]
+        self._status_font = tkfont.Font(
+            family=theme.FONT_FAMILY,
+            size=round(self._status_font_base_size
+                       * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)))
         # 高度=行高+6，文字垂直居中上下各留 3px，缩放手柄（bottom_grip）
         # 就塞在这个留白里，不需要状态栏额外让出空间。
         self._status_text_h = self._status_font.metrics("linespace") + 6
@@ -275,6 +296,12 @@ class DSToolsApp:
         self._update_notice: tuple[str, str] | None = None
 
         def _redraw_status_bar():
+            self._status_font.configure(
+                family=theme.FONT_FAMILY,
+                size=round(self._status_font_base_size
+                           * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)))
+            self._status_text_h = self._status_font.metrics("linespace") + 6
+            self._status_bar.configure(height=self._status_text_h)
             self._status_bar.delete("status_text", "update_notice")
             self._status_bar.create_text(6, self._status_text_h / 2, text=self.status_var.get(), anchor=tk.W,
                                           fill=theme.TEXT, font=self._status_font, tags="status_text")
@@ -525,6 +552,23 @@ class DSToolsApp:
         容本身还是原生渲染，只是常驻可见的那一条换成能自己上色的控件）。"""
         fm = tk.Menu(self.root, tearoff=0)
         fm.add_command(label=t("app.refresh"), command=self._refresh, accelerator="F5")
+        # 手动入口——正常情况下 Mod 管理页签会自动探测缺运行库并弹横幅，
+        # 这里是留给"探测漏检"场景的兜底（真机已经复现过一次退出码判断
+        # 漏掉一种真实情况，见 tex_convert.py 的说明）：哪怕以后还有别的
+        # 没覆盖到的报错场景，用户也能不看提示、自己主动点这里装。放在
+        # "刷新全部"正下方，跟它一样是"随时能点、不依赖当前选没选存档"
+        # 的全局性操作。
+        fm.add_command(label=t("app.install_vcredist"), command=self._install_vcredist)
+        # 原生 tk.Menu 的条目本身不是独立控件，不能直接挂 shared/gui/
+        # tooltip.py 那套"给控件绑 <Enter>/<Leave>"的 Tooltip——菜单标签
+        # 想短（"安装运行库"），但用途需要额外说明（"Mod 图标加载所
+        # 需"），改用 Tk 菜单自带的 <<MenuSelect>> 虚拟事件：鼠标/键盘移
+        # 到某一项时这个菜单级别的事件会触发，用 menu.index("active") 判
+        # 断当前悬停的是不是这一项，是的话在它右侧弹一个小气泡，样式照抄
+        # Tooltip 类的悬浮提示气泡保持视觉一致。
+        self._install_vcredist_menu_idx = fm.index("end")
+        fm.bind("<<MenuSelect>>", lambda e: self._on_file_menu_select(fm))
+        fm.bind("<Unmap>", lambda e: self._hide_menu_hint())
         fm.add_command(label=t("app.open_cache_dir"), command=self._open_cache_dir)
         # 主题用 add_radiobutton 互斥选择，variable 必须显式挂在 self 上
         # ——不然每次语言/主题切换重建菜单（_build_menu 整体重跑）选中
@@ -538,6 +582,10 @@ class DSToolsApp:
                                 command=lambda n=name: self._switch_theme(n))
         tm.add_separator()
         tm.add_command(label=t("theme.custom_bg_settings"), command=self._show_custom_bg_dialog)
+        # 字体设置也是独立命令，跟颜色主题/背景图一样解耦——见
+        # _switch_font_style() 顶部说明，字体样式是跟颜色主题平级的独
+        # 立设置，不绑定在某一套颜色主题下面。
+        tm.add_command(label=t("theme.font_settings"), command=self._show_font_settings_dialog)
         self.root.bind("<F5>", self._on_f5_key)
 
         # "设置"菜单：语言是二级级联子菜单（两态互斥）；"关闭时最小化到
@@ -633,6 +681,11 @@ class DSToolsApp:
         self._menu_strip = strip
 
     def _popup_menu_at(self, menu, x, y):
+        # _show_menu_hint() 要用这个坐标——原生 tk.Menu 弹出后自己的
+        # winfo_rootx()/winfo_width() 不可靠（见那边的说明），这里记一
+        # 份"调用方指定弹在哪"的真实坐标，比事后问菜单自己"你在哪"更
+        # 可信。
+        self._menu_popup_xy = (x, y)
         try:
             menu.tk_popup(x, y)
         finally:
@@ -656,79 +709,117 @@ class DSToolsApp:
         for tab in self._tabs: tab.refresh_language(); tab.refresh()
 
     def _switch_theme(self, name: str) -> None:
-        """主题切换立即生效、不需要重启：重建菜单条 + 逐 tab retheme() +
-        只重载当前页签。整个过程用 `_theme_switch_suppressed` 拦掉
-        BgFrame/PillTabBar 的真实重绘（配色/字体等状态照常生效，只是不
-        立即画出来），避免中途的 apply_theme() 调用各自触发一次重绘、
-        叠成好几波闪烁；最后统一 `_force_refresh_bg_now()` + `update()`
-        一次性呈现。跟拖拽缩放的 `_begin_bg_drag_suppress()` 不同，这里
-        不清空成纯色——切换只有几十毫秒，中间状态本来就不会画到屏幕
-        上。try/finally 保证中途异常也不会卡在"暂停重绘"状态。"""
+        """颜色主题切换立即生效、不需要重启——具体的"重新套用样式+逐 tab
+        retheme()+只重载当前页签"骨架跟字体字重切换（_switch_font_
+        weight()）完全共用，见 _apply_visual_refresh()/_finish_visual_
+        refresh() 的说明。"""
         if name == get_theme_name(): return
         self._theme_switch_suppressed = True
         try:
             set_theme_name(name)
             theme.set_theme(name)
-            theme.apply_theme(self.root, self.style)
-            # custom_titlebar 在 __init__ 里是局部 import（避免非 Windows
-            # 平台在模块加载时就碰 ctypes.windll），这里再 import 一次同
-            # 理，不依赖 __init__ 里那个局部变量（那个作用域到 __init__
-            # 结束就没了）。同 __init__ 里的调用点——theme.apply_theme()
-            # 会冲掉 WS_EX_APPWINDOW，见 custom_titlebar.
-            # ensure_taskbar_visible() 的说明，切主题时也要重新找补一遍。
-            from dstools.shared.gui import custom_titlebar
-            custom_titlebar.ensure_taskbar_visible(self.root)
-            self._titlebar.apply_theme(bg=theme.CARD_BG)
-            self._build_menu()
-            self._tab_area.apply_theme()
-            # 6 张卡片叠在 _tab_area 同一个 grid 格子里，只有当前那张真的
-            # grid() 着，其余 grid_remove() 隐藏——Tk 的 grid_configure()
-            # 对已经 grid_remove() 的控件调用会把它重新映射回可见状态
-            # （哪怕只改 padx/pady），所以每次 configure 后要对非当前页
-            # 签立刻再 grid_remove() 一次，纯几何管理器批处理，不会闪。
-            for key, card in self._tab_cards.items():
-                card.apply_theme()
-                card.grid_configure(padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
-                if key != self._current_tab_key:
-                    card.grid_remove()
-            self._pill_bar.apply_theme()
-            self._retheme_cluster_bar()
-            self._root_bg.apply_theme()
-            self._status_bar.apply_theme(bg=theme.CARD_BG)
-            self._redraw_status_bar()
-            # retheme() 很便宜（重新上色/重画静态文字），6 个页签都立即
-            # 做；refresh() 才是重活（Lua 沙箱扫描/PIL 面板重绘等），只对
-            # 当前页签立即做，其余标脏、真正切过去时才补。
-            for key, tab in zip(self._tab_keys, self._tabs):
-                retheme = getattr(tab, "retheme", None)
-                if retheme:
-                    retheme()
-                if key == self._current_tab_key:
-                    tab.refresh()
-                else:
-                    self._stale_cluster_tabs.add(key)
+            self._apply_visual_refresh()
         finally:
-            self._theme_switch_suppressed = False
-            # 上面 _build_menu()/card.grid_configure() 这类几何变化，Tk
-            # 不保证同步跑完就已经传播到每一层子控件——先 update_
-            # idletasks() 强制排布完，不然深层嵌套的 BgFrame 会按旧坐标
-            # 裁出错位的背景图。
-            self.root.update_idletasks()
-            self._force_refresh_bg_now()
-            # 跟 _on_tab_select() 里那个"补一次 update()"是同一个理由：
-            # 不只是排布，是真的把已经画好的内容立刻刷到屏幕上，不用等
-            # 这个方法返回、回到主循环那一刻才有机会重绘——这样上面压了
-            # 一整个方法的重绘才会真正表现成"一次性切换"，而不是回到主
-            # 循环后再等下一次事件处理才补画出来。
-            self.root.update()
+            self._finish_visual_refresh()
+
+    def _switch_font_style(self, choice: str) -> None:
+        """字体样式（默认/可爱风）切换——字体样式是独立于颜色主题的设置
+        （跟自定义背景图片同一个思路，见 theme.py 顶部说明），不会跟着
+        切主题变化，需要单独一个入口。除了"改哪个模块级状态"这一步
+        （set_font_style_choice() 而不是 set_theme()），其余整套"重新
+        套用样式+逐 tab retheme()+只重载当前页签+防闪烁"流程跟
+        _switch_theme() 完全一样，见 _apply_visual_refresh()/
+        _finish_visual_refresh()。"""
+        if choice == theme.FONT_STYLE_CHOICE: return
+        self._theme_switch_suppressed = True
+        try:
+            set_font_style_choice(choice)
+            theme.set_font_style_choice(choice)
+            self._apply_visual_refresh()
+        finally:
+            self._finish_visual_refresh()
+
+    def _apply_visual_refresh(self) -> None:
+        """颜色主题/字体样式切换共用的"重新套用一遍全局样式"步骤——调用
+        前调用方要先改好 theme.py 的模块级状态（set_theme()/
+        set_font_style_choice()），这里只管把新状态应用到已经建好的每
+        一个持久化控件上，不关心改的是颜色还是字体。"""
+        theme.apply_theme(self.root, self.style)
+        # custom_titlebar 在 __init__ 里是局部 import（避免非 Windows 平
+        # 台在模块加载时就碰 ctypes.windll），这里再 import 一次同理，不
+        # 依赖 __init__ 里那个局部变量（那个作用域到 __init__ 结束就没
+        # 了）。同 __init__ 里的调用点——theme.apply_theme() 会冲掉 WS_
+        # EX_APPWINDOW，见 custom_titlebar.ensure_taskbar_visible() 的说
+        # 明，这里切换后也要重新找补一遍。
+        from dstools.shared.gui import custom_titlebar
+        custom_titlebar.ensure_taskbar_visible(self.root)
+        self._titlebar.apply_theme(bg=theme.CARD_BG)
+        self._build_menu()
+        self._tab_area.apply_theme()
+        # 6 张卡片叠在 _tab_area 同一个 grid 格子里，只有当前那张真的
+        # grid() 着，其余 grid_remove() 隐藏——Tk 的 grid_configure() 对
+        # 已经 grid_remove() 的控件调用会把它重新映射回可见状态（哪怕只
+        # 改 padx/pady），所以每次 configure 后要对非当前页签立刻再
+        # grid_remove() 一次，纯几何管理器批处理，不会闪。
+        for key, card in self._tab_cards.items():
+            card.apply_theme()
+            card.grid_configure(padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
+            if key != self._current_tab_key:
+                card.grid_remove()
+        self._pill_bar.apply_theme()
+        self._retheme_cluster_bar()
+        self._root_bg.apply_theme()
+        self._status_bar.apply_theme(bg=theme.CARD_BG)
+        self._redraw_status_bar()
+        # retheme() 很便宜（重新上色/重画静态文字，也含字体族/字重），6
+        # 个页签都立即做；refresh() 才是重活（Lua 沙箱扫描/PIL 面板重绘
+        # 等），只对当前页签立即做，其余标脏、真正切过去时才补。
+        for key, tab in zip(self._tab_keys, self._tabs):
+            retheme = getattr(tab, "retheme", None)
+            if retheme:
+                retheme()
+            if key == self._current_tab_key:
+                tab.refresh()
+            else:
+                self._stale_cluster_tabs.add(key)
+
+    def _finish_visual_refresh(self) -> None:
+        """颜色主题/字体字重切换共用的收尾——整个切换过程用
+        `_theme_switch_suppressed` 拦掉 BgFrame/PillTabBar 的真实重绘
+        （配色/字体等状态照常生效，只是不立即画出来），避免中途的
+        apply_theme() 调用各自触发一次重绘、叠成好几波闪烁；这里统一
+        `_force_refresh_bg_now()` + `update()` 一次性呈现。跟拖拽缩放的
+        `_begin_bg_drag_suppress()` 不同，这里不清空成纯色——切换只有
+        几十毫秒，中间状态本来就不会画到屏幕上。调用方须在 try/finally
+        里调这个方法，保证中途异常也不会卡在"暂停重绘"状态。"""
+        self._theme_switch_suppressed = False
+        # 上面 _build_menu()/card.grid_configure() 这类几何变化，Tk 不保
+        # 证同步跑完就已经传播到每一层子控件——先 update_idletasks() 强
+        # 制排布完，不然深层嵌套的 BgFrame 会按旧坐标裁出错位的背景图。
+        self.root.update_idletasks()
+        self._force_refresh_bg_now()
+        # 跟 _on_tab_select() 里那个"补一次 update()"是同一个理由：不只
+        # 是排布，是真的把已经画好的内容立刻刷到屏幕上，不用等这个方法
+        # 返回、回到主循环那一刻才有机会重绘——这样上面压了一整个方法的
+        # 重绘才会真正表现成"一次性切换"，而不是回到主循环后再等下一次
+        # 事件处理才补画出来。
+        self.root.update()
 
     def _retheme_cluster_bar(self) -> None:
         """顶部存档卡片栏（_cluster_bar/_cluster_bar_inner/"存档:"文字）
         都是 __init__ 里建一次就不再重建的静态部件，主题切换时需要显式
         重新上色；Menubutton/Button 本身是 ttk 控件，已经被上面的
-        theme.apply_theme() 覆盖，不用管。"""
+        theme.apply_theme() 覆盖，不用管。_archive_label_font 是 __init__
+        里建一次的 Font 对象，字体族也要在这里重新配一次（家族固定跟随
+        theme.FONT_FAMILY，字重维持强制加粗；字号原本是字面量 12，不属
+        于 theme.FONT_SIZE_* 阶梯，这里要单独乘一遍
+        FONT_SIZE_SCALE_BY_STYLE 才会跟着字体样式一起放大，只改字体族
+        不改字号的话切到荆南麦圆体后这两行文字还是原来的小尺寸）。"""
         self._cluster_bar.apply_theme(bg=theme.CARD_BORDER)
         self._cluster_bar_inner.apply_theme(bg=theme.CARD_BG)
+        self._archive_label_font.configure(
+            family=theme.FONT_FAMILY,
+            size=round(12 * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)))
         self._redraw_platform_label()
         self._redraw_archive_label()
 
@@ -903,11 +994,11 @@ class DSToolsApp:
         card = tk.Frame(win, background=theme.CARD_BG)
         card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
-        tk.Label(card, text=header_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_XL, "bold"), fg=theme.PRIMARY,
+        tk.Label(card, text=header_text, font=theme.font_tuple(theme.FONT_SIZE_XL, bold=True), fg=theme.PRIMARY,
                 bg=theme.CARD_BG).pack(anchor=tk.W, padx=24, pady=(24, 4))
         ttk.Separator(card, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=24, pady=(0, 14))
         if desc_text:
-            tk.Label(card, text=desc_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
+            tk.Label(card, text=desc_text, font=theme.font_tuple(theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
                     justify=tk.LEFT, anchor=tk.W).pack(fill=tk.X, padx=24)
 
         # 项目地址——"项目地址："是纯说明文字，只有"Github"这几个字是超
@@ -917,9 +1008,9 @@ class DSToolsApp:
         repo_url = "https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren"
         repo_row = tk.Frame(card, background=theme.CARD_BG)
         repo_row.pack(fill=tk.X, padx=24, pady=(10, 0))
-        tk.Label(repo_row, text=t("about.repo_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+        tk.Label(repo_row, text=t("about.repo_label"), font=theme.font_tuple(theme.FONT_SIZE_SM),
                 fg=theme.TEXT, bg=theme.CARD_BG).pack(side=tk.LEFT)
-        repo_link = tk.Label(repo_row, text=t("about.repo_link_text"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+        repo_link = tk.Label(repo_row, text=t("about.repo_link_text"), font=theme.font_tuple(theme.FONT_SIZE_SM),
                              fg=theme.PRIMARY, bg=theme.CARD_BG, cursor="hand2")
         repo_link.pack(side=tk.LEFT)
 
@@ -930,7 +1021,7 @@ class DSToolsApp:
         repo_link.bind("<Button-1>", _open_repo_url)
 
         if contact_text:
-            tk.Label(card, text=contact_text, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
+            tk.Label(card, text=contact_text, font=theme.font_tuple(theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
                     justify=tk.LEFT, anchor=tk.W).pack(fill=tk.X, padx=24, pady=(10, 0))
 
         # "检查更新"结果展示行——初始为空，点了按钮才有内容。found_url 用
@@ -938,7 +1029,7 @@ class DSToolsApp:
         # 时才非 None，点这行文字直接跳转（跟状态栏那条提示同样的交互）。
         found = {"url": None}
         update_var = tk.StringVar(value="")
-        update_label = tk.Label(card, textvariable=update_var, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+        update_label = tk.Label(card, textvariable=update_var, font=theme.font_tuple(theme.FONT_SIZE_SM),
                                 fg=theme.TEXT_MUTED, bg=theme.CARD_BG, justify=tk.LEFT, anchor=tk.W)
         update_label.pack(fill=tk.X, padx=24, pady=(10, 0))
 
@@ -1007,6 +1098,12 @@ class DSToolsApp:
         点开只弹设置窗口，不切主题，选完之后不管当前是哪套颜色主题都会
         叠加显示。"""
         BackgroundImageDialog(self.root, self)
+
+    def _show_font_settings_dialog(self) -> None:
+        """"主题"菜单里的"字体设置…"——字体样式（默认/可爱风）是跟颜色
+        主题解耦的全局功能，点开只弹设置窗口，不切颜色主题。"""
+        from dstools.shared.gui.font_settings_dialog import FontSettingsDialog
+        FontSettingsDialog(self.root, self)
 
     def _refresh_tab_labels(self):
         self._pill_bar.relabel({k: t(f"tab.{k}") for k in self._tab_keys})
@@ -1122,6 +1219,74 @@ class DSToolsApp:
         d = cache_root_dir()
         d.mkdir(parents=True, exist_ok=True)
         os.startfile(str(d))
+
+    def _install_vcredist(self) -> None:
+        """"文件"菜单"安装运行库"——跟 Mod 管理页签"缺少运行库"横幅点击
+        后走的是同一个 launch_vcredist_installer()，但这个入口不依赖任何
+        自动探测：探测逻辑本身可能有覆盖不到的场景（真机已经复现过一次
+        判断遗漏，见 shared/tex_convert.py 顶部说明），用户在没看到横幅、
+        但怀疑是这个原因导致图标/其它功能异常时，也能自己主动装一遍，
+        不用等我们把每一种报错都枚举全。"""
+        if not launch_vcredist_installer():
+            dlg.show_error(self.root, t("app.install_vcredist"), t("mod.vcredist_installer_missing"))
+            return
+        dlg.show_info(self.root, t("app.install_vcredist"), t("mod.vcredist_installer_launched"))
+
+    def _on_file_menu_select(self, menu) -> None:
+        """"文件"菜单的 <<MenuSelect>>——鼠标/键盘移到任意一项都会触发，
+        只在当前悬停的正好是"安装运行库"这一项时才弹提示气泡，移开或者
+        悬停到别的项上要马上收起来。"""
+        try:
+            active = menu.index("active")
+        except Exception:
+            active = None
+        if active == self._install_vcredist_menu_idx:
+            self._show_menu_hint(menu, active, t("app.install_vcredist_hint"))
+        else:
+            self._hide_menu_hint()
+
+    def _show_menu_hint(self, menu, index: int, text: str) -> None:
+        """在原生 tk.Menu 的某一项右侧弹一个悬浮提示气泡——菜单条目本身
+        不是独立控件，没法用 shared/gui/tooltip.py 那套挂 <Enter>/<Leave>
+        的做法，样式照抄那边的悬浮气泡（浅黄底+黑边），保持视觉一致。
+
+        **坑**：原生 tk.Menu 在 Windows 上弹出后是系统自己画的弹出窗
+        口，不是常规意义上被 Tk 完整接管几何信息的窗口——`menu.
+        winfo_rootx()`/`winfo_width()` 读出来的不是它弹出后的真实屏幕
+        位置（真机反馈过两次：先是气泡跑到屏幕左上角，加了一次
+        update_idletasks() 强刷之后又变成跑到右上角——说明这两个
+        winfo_* 从头到尾就没有正确反映过这个原生弹窗的真实屏幕坐标，
+        不是"没刷新"，是这条路子本身不可靠，不该再用它算坐标）。改成
+        用 `_popup_menu_at()` 弹出这个菜单时*调用方自己指定*的那个
+        (x, y)（`tk_popup(x, y)` 的参数——这是唯一确定"这个菜单真的画
+        在哪"的数据来源，不用再反过来问菜单"你在哪"），横向偏移量用
+        `winfo_reqwidth()`（Tk 按菜单内容算出来的自身尺寸，不是"这个
+        窗口在屏幕上的位置"，不受同一个不可靠问题影响）。"""
+        self._hide_menu_hint()
+        try:
+            y_off = menu.yposition(index)
+        except Exception:
+            return
+        popup_x, popup_y = getattr(self, "_menu_popup_xy", (0, 0))
+        x = popup_x + menu.winfo_reqwidth() + 4
+        y = popup_y + y_off
+        tip = tk.Toplevel(menu)
+        self._menu_hint_tip = tip
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        tk.Label(tip, text=text, justify=tk.LEFT, background="#ffffe0",
+                 relief=tk.SOLID, borderwidth=1,
+                 font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=4, ipady=2)
+
+    def _hide_menu_hint(self) -> None:
+        tip = getattr(self, "_menu_hint_tip", None)
+        if tip is not None:
+            tip.destroy()
+            self._menu_hint_tip = None
 
     def _get_platform_filter(self) -> Platform:
         return Platform.WEGAME if self._platform_var.get() == "WeGame" else Platform.STEAM

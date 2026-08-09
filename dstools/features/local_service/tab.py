@@ -103,12 +103,12 @@ class _RollbackDialog:
         win.configure(background=theme.BG_SOFT)
         WIN_W = 380
 
-        ttk.Label(win, text=t("local.rollback_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD),
+        ttk.Label(win, text=t("local.rollback_prompt"), font=theme.font_tuple(theme.FONT_SIZE_MD),
                   wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 10))
 
         row = ttk.Frame(win)
         row.pack(fill=tk.X, padx=20, pady=(0, 10))
-        ttk.Label(row, text=t("local.rollback_days_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
+        ttk.Label(row, text=t("local.rollback_days_label"), font=theme.font_tuple(theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
         self._days_var = tk.StringVar()
         combo = MenuCombo(row, textvariable=self._days_var, width=10)
         combo["values"] = [str(i) for i in range(1, max_days + 1)]
@@ -260,10 +260,10 @@ class _AnnounceDialog:
         win.configure(background=theme.BG_SOFT)
         WIN_W = 480
 
-        ttk.Label(win, text=t("local.console_announce_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+        ttk.Label(win, text=t("local.console_announce_prompt"), font=theme.font_tuple(theme.FONT_SIZE_BASE),
                   wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
         self.var = tk.StringVar()
-        entry = ttk.Entry(win, textvariable=self.var, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE))
+        entry = ttk.Entry(win, textvariable=self.var, font=theme.font_tuple(theme.FONT_SIZE_BASE))
         entry.pack(fill=tk.X, padx=20, pady=(0, 20))
 
         btn_frame = ttk.Frame(win)
@@ -371,13 +371,13 @@ class _ConsolePane:
         self._search_bar = ttk.Frame(body)
         self.search_var = tk.StringVar()
         search_entry = ttk.Entry(self._search_bar, textvariable=self.search_var,
-                                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM))
+                                  font=theme.font_tuple(theme.FONT_SIZE_SM))
         self._search_entry = search_entry
         search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 4), pady=3)
         Tooltip(search_entry, t("local.console_search_placeholder"))
         self.search_count_var = tk.StringVar()
         tk.Label(self._search_bar, textvariable=self.search_count_var,
-                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+                 font=theme.font_tuple(theme.FONT_SIZE_SM),
                  bg=theme.BG_SOFT, fg=theme.TEXT_MUTED).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Button(self._search_bar, text="↑", width=3,
                    command=lambda: self._search_step(-1)).pack(side=tk.LEFT)
@@ -402,7 +402,7 @@ class _ConsolePane:
         # 靠横向滚动条看完整内容，真机反馈过看不到完整日志、只能拖大主窗
         # 口——改自动换行后不再需要横向滚动，也不用额外加横向滚动条。
         self.text = tk.Text(body, wrap=tk.WORD, state=tk.DISABLED,
-                             font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+                             font=theme.font_tuple(theme.FONT_SIZE_SM),
                              bg=theme.CARD_BG, fg=theme.TEXT, yscrollcommand=vsb.set)
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.configure(command=self.text.yview)
@@ -655,7 +655,7 @@ class LocalServiceTab:
         # 下往上占，注册顺序 检测结果->按钮->提示文字，视觉上从上到下
         # 才是 提示->按钮->结果。
         self._wegame_detect_text = tk.Text(left, height=6, wrap=tk.WORD, state=tk.DISABLED,
-                                            font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS),
+                                            font=theme.font_tuple(theme.FONT_SIZE_XS),
                                             bg=theme.CARD_BG, fg=theme.TEXT_MUTED, relief=tk.FLAT,
                                             highlightthickness=1, highlightbackground=theme.CARD_BORDER)
         self._wegame_detect_text.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))

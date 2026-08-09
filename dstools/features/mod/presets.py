@@ -222,7 +222,14 @@ def plan_apply_preset(preset: ModPreset, mod_infos: dict) -> ApplyPlan:
                 continue
             # 只对有固定候选列表、且不是"解析不出具体选项"的动态选项做值
             # 合法性核对——这两类之外的值没法判断"合法范围"是什么，不猜测。
-            if opt.choices and not opt.is_dynamic:
+            # 真机复现过的误报：mod 自己声明的 default 不一定出现在
+            # options 枚举表里（比如"西瓜刀"workshop-1553396970 的
+            # baojilv/aoerange 两项，default=0，但 options 列表是
+            # 1%~100%/1~15，压根没有 0 这一档）——这种"default 是脱离选
+            # 项列表之外的一个哨兵值，表示用户从没碰过这项设置"，在很多
+            # mod 里是合法写法，不是 mod 更新导致的候选值变化，值等于
+            # opt.default 时不算异常。
+            if opt.choices and not opt.is_dynamic and value != opt.default:
                 if not any(c.get("data") == value for c in opt.choices):
                     plan.issues.append(ApplyIssue(wid, display_name, "invalid_value",
                                                    t("preset.issue_invalid_value", option=key)))

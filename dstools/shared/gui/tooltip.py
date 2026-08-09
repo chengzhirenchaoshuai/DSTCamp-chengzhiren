@@ -63,7 +63,7 @@ class Tooltip:
             pass
         tk.Label(tip, text=text, justify=tk.LEFT, background="#ffffe0",
                 relief=tk.SOLID, borderwidth=1, wraplength=self.wraplength,
-                font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(ipadx=4, ipady=2)
+                font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=4, ipady=2)
 
     def _hide(self, event=None):
         if self._tip is not None:

@@ -1,32 +1,72 @@
-"""给 PIL 渲染面板用的中文 TrueType 字体加载，带缓存。"""
+"""给 PIL 渲染面板用的中文 TrueType 字体加载，带缓存。
+
+**字体样式可以运行时切换**（配合 gui/theme.py 的 FONT_STYLE_CHOICE，供
+"字体设置"弹窗用）——每个样式对应哪个字体文件，统一在 font_styles.py
+的 FONT_STYLES 表里维护（新增/删除样式改那一个文件就够了，见那边顶部
+说明）。PIL 是按文件路径直接加载字形，不像 Tk 那样能按族名走系统字体
+注册，两条渲染路径各自独立解析每个样式的候选文件放在哪——PIL 直接读
+打包的文件路径（这里），Tk 那边靠 custom_font_loader.py 把同一批文件
+私有加载进当前进程才能按族名找到（见 theme.py）。"""
 
 from pathlib import Path
 
 from PIL import ImageFont
 
-# 首选跟 gui/theme.py 的 FONT_FAMILY（"Microsoft YaHei UI Light"）同一个
-# 字重的字体文件——PIL 是按文件路径直接加载字形，不像 Tk 那样能按族名走
-# Windows 字体链接，没法直接写"Microsoft YaHei UI Light"这个名字，只能给
-# 一条它对应的实际文件路径（msyhl.ttc）。保留后面几个候选当兜底：某台机
-# 器没有 msyhl.ttc（比如更旧的 Windows 10 版本）就退回常规粗细的雅黑，
-# 依次再退到黑体/宋体/等线，都没有才会落到 PIL 内置的位图字体（丑但不
-# 崩，见 get_font() 最下面的 except 分支）。
-_CANDIDATES = [
-    "C:/Windows/Fonts/msyhl.ttc",    # Microsoft YaHei Light（跟主题字体一致）
-    "C:/Windows/Fonts/msyh.ttc",     # Microsoft YaHei
-    "C:/Windows/Fonts/msyhbd.ttc",
-    "C:/Windows/Fonts/simhei.ttf",   # SimHei
-    "C:/Windows/Fonts/simsun.ttc",   # SimSun
-    "C:/Windows/Fonts/Deng.ttf",     # DengXian
+from dstools.shared.gui.font_styles import FONT_STYLES
+from dstools.shared.resource_paths import bundled_resource_dir
+
+_DEFAULT_STYLE = "default"
+
+_DEFAULT_CANDIDATES = [
+    "C:/Windows/Fonts/msyh.ttc",      # Microsoft YaHei
+    "C:/Windows/Fonts/simhei.ttf",
+    "C:/Windows/Fonts/simsun.ttc",
+    "C:/Windows/Fonts/Deng.ttf",
 ]
 
-_font_path = None
-for _c in _CANDIDATES:
-    if Path(_c).exists():
-        _font_path = _c
-        break
+# 键必须跟 gui/theme.py 的 FONT_STYLE_CHOICE 取值完全对应（两边都从
+# font_styles.FONT_STYLES 派生，天然对得上）——theme.set_font_style_
+# choice() 切换时会原样把这个字符串传给 set_font_style()。"default"
+# （filename 是 None）沿用雅黑兜底链（不再区分细体/常规/粗体——PIL 这
+# 条渲染路径本来就没有单独的粗体需求，之前的字重开关删掉之后这里只需
+# 要一份候选列表）；其它样式优先用打包的对应字体，找不到（比如打包遗
+# 漏、文件被误删）才退回同一份雅黑兜底链，不会整个崩掉。
+_CANDIDATES_BY_STYLE: dict[str, list[str]] = {
+    d.key: ([str(bundled_resource_dir() / "tools" / "fonts" / d.filename), *_DEFAULT_CANDIDATES]
+            if d.filename else _DEFAULT_CANDIDATES)
+    for d in FONT_STYLES
+}
+
+
+def _resolve_font_path(style: str) -> str | None:
+    for candidate in _CANDIDATES_BY_STYLE.get(style, _CANDIDATES_BY_STYLE[_DEFAULT_STYLE]):
+        if Path(candidate).exists():
+            return candidate
+    return None
+
+
+_font_style = _DEFAULT_STYLE
+_font_path = _resolve_font_path(_font_style)
 
 _cache: dict[int, ImageFont.FreeTypeFont] = {}
+
+
+def get_font_style() -> str:
+    return _font_style
+
+
+def set_font_style(style: str) -> None:
+    """运行时切换 PIL 侧的字体样式——不需要重启进程。只负责应用，不负
+    责持久化（跟 theme.set_theme()/set_font_style_choice() 同一个思
+    路），调用方自己存 app_settings。样式真的变化时才清缓存——不然每
+    次 5 套颜色主题的 retheme() 循环里被无意义地重复调用，会把已经缓存
+    好的 ImageFont 对象全部扔掉重建，白白多花时间。"""
+    global _font_style, _font_path, _cache
+    if style == _font_style:
+        return
+    _font_style = style if style in _CANDIDATES_BY_STYLE else _DEFAULT_STYLE
+    _font_path = _resolve_font_path(_font_style)
+    _cache = {}
 
 
 def get_font(size: int) -> ImageFont.FreeTypeFont:

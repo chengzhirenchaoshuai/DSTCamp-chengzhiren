@@ -99,12 +99,12 @@ class _TokenInputDialog:
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
 
-        ttk.Label(win, text=t("token.prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD)).pack(anchor=tk.W, padx=20, pady=(20, 8))
+        ttk.Label(win, text=t("token.prompt"), font=theme.font_tuple(theme.FONT_SIZE_MD)).pack(anchor=tk.W, padx=20, pady=(20, 8))
         self.var = tk.StringVar(value=initial)
         entry = ttk.Entry(win, textvariable=self.var, font=("Consolas", 12))
         entry.pack(fill=tk.X, padx=20, pady=(0, 6))
         self.err_var = tk.StringVar()
-        ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20)
+        ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR, font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20)
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
@@ -155,7 +155,7 @@ class _GlobalTokensDialog:
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
 
-        ttk.Label(win, text=t("token.global_hint"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+        ttk.Label(win, text=t("token.global_hint"), font=theme.font_tuple(theme.FONT_SIZE_SM),
                   wraplength=380, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
         self.listbox = tk.Listbox(win, height=8, width=40, font=("Consolas", 10))
         self.listbox.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
@@ -391,7 +391,7 @@ class ClusterConfigTab:
 
     def _build_id_list_panel(self, parent, title_key):
         lf = ttk.Frame(parent); lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        title_lbl = ttk.Label(lf, text=t(title_key), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE, "bold")); title_lbl.pack(anchor=tk.W)
+        title_lbl = ttk.Label(lf, text=t(title_key), font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True)); title_lbl.pack(anchor=tk.W)
         listbox = tk.Listbox(lf, height=10, font=self._ROW_VALUE_FONT)
         listbox.pack(fill=tk.BOTH, expand=True, pady=5)
         bf = ttk.Frame(lf); bf.pack(fill=tk.X)
@@ -403,7 +403,7 @@ class ClusterConfigTab:
     def _build_token_panel(self, parent):
         p = ttk.Frame(parent); p.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         self._token_title_lbl = ttk.Label(p, text=t("token.current_title"),
-                                           font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold"))
+                                           font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
         self._token_title_lbl.pack(anchor=tk.W)
         # 普通 tk.Text 不会跟着 theme.apply_theme() 走 ttk 皮肤，不显式给
         # bg/fg 的话就是系统默认的白底黑字，跟其它页签的薄荷绿卡片+深色
@@ -433,12 +433,18 @@ class ClusterConfigTab:
                                               command=self._open_global_tokens_dialog)
         self._global_tokens_btn.pack(side=tk.LEFT)
         self._global_tokens_hint_lbl = ttk.Label(p, text=t("token.global_hint"), foreground=theme.TEXT_MUTED,
-                                                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS),
+                                                  font=theme.font_tuple(theme.FONT_SIZE_XS),
                                                   wraplength=420, justify=tk.LEFT)
         self._global_tokens_hint_lbl.pack(anchor=tk.W, pady=(4, 0))
 
     def _open_global_tokens_dialog(self):
         _GlobalTokensDialog(self.frame)
+        # 关掉弹窗后，如果当前正显示着的服务器存档还缺令牌，_load_token()
+        # 会顺手从刚设置好的全局令牌池自动补上（见 _load_token() 的说
+        # 明）——不用等用户重新切一次存档下拉框才生效。
+        c = self._get_cluster()
+        if c:
+            self._load_token(c)
 
     def _get_cluster(self):
         return self.app.get_selected_cluster()
@@ -458,9 +464,24 @@ class ClusterConfigTab:
             for w in frame.winfo_children(): w.destroy()
         self._entries.clear()
 
-    # 之前默认的 ttk 字体太小、看不清；这几个是设置项统一放大后用的字体。
-    _ROW_LABEL_FONT = ("", 11)
-    _ROW_VALUE_FONT = ("", 11)
+    # 之前默认的 ttk 字体太小、看不清；这几个是设置项统一放大后用的字
+    # 体。原来是 _ROW_LABEL_FONT = ("", 11) 这种写死的类属性——空字符
+    # 串族名不会跟着 theme.FONT_FAMILY 走（Tk 会拿系统默认字体来画），
+    # 而且是类定义时算一次就冻住，之后 theme.set_font_style_choice()
+    # 切换字体样式也不会波及已经算好的这个值，导致"服务器配置"页签里
+    # "服务器名称/服务器描述"这些标签切到荆南麦圆体后完全没反应（真机
+    # 反馈过）。改成 @property，每次读 self._ROW_LABEL_FONT/
+    # _ROW_VALUE_FONT 都现查一遍 theme.FONT_FAMILY，不用改下面几处调用
+    # 点的写法。字号改用 FONT_SIZE_SM（原来是字面量 11，相当于
+    # FONT_SIZE_BASE）——之前系统默认字体在这个字号下显得偏小，换成
+    # 微软雅黑之后同样数字反而显得偏大，应用户反馈调小一档。
+    @property
+    def _ROW_LABEL_FONT(self):
+        return theme.font_tuple(theme.FONT_SIZE_SM)
+
+    @property
+    def _ROW_VALUE_FONT(self):
+        return theme.font_tuple(theme.FONT_SIZE_SM)
     # 只有从世界(is_master=false)才需要的字段——见 _backfill_slave_shard_fields
     # 和 _on_is_master_toggle：切换开关时这两项现场增删，不需要先保存。
     _SHARD_SLAVE_ONLY_FIELDS = [("SHARD", "name"), ("SHARD", "id")]
@@ -483,7 +504,7 @@ class ClusterConfigTab:
         text_widget = tk.Text(parent, width=38, height=self._WRAPPED_TEXT_LINES,
                               wrap=tk.WORD, font=self._ROW_VALUE_FONT)
         text_widget.insert("1.0", str(value) if value is not None else "")
-        text_widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
+        text_widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=2)
 
         # 不能用 bind("<Return>", lambda e: "break") 同步吞回车（真机反
         # 馈过的 bug）：这种事前拦截会打断输入法正在提交的组词，界面看
@@ -522,7 +543,7 @@ class ClusterConfigTab:
         # 很多，右对齐配上这么宽的固定列会在文字左边留出一大截空白。去
         # 掉固定宽度后，列宽由 grid 按这一列实际最长的标签自动收紧。
         lbl = ttk.Label(parent, text=f"{label_text}:", anchor=tk.E, font=self._ROW_LABEL_FONT)
-        lbl.grid(row=row, column=0, sticky=tk.E, padx=(5,8), pady=3)
+        lbl.grid(row=row, column=0, sticky=tk.E, padx=(5,8), pady=2)
         if desc:
             Tooltip(lbl, desc)
 
@@ -545,7 +566,7 @@ class ClusterConfigTab:
                 text = str(value) if value is not None else ""
             value_lbl = ttk.Label(parent, text=text, anchor=tk.W, foreground=theme.TEXT_MUTED, justify=tk.LEFT,
                      wraplength=260, font=self._ROW_VALUE_FONT)
-            value_lbl.grid(row=row, column=1, sticky=tk.W, pady=3)
+            value_lbl.grid(row=row, column=1, sticky=tk.W, pady=2)
             if tooltip:
                 Tooltip(value_lbl, tooltip)
             var = tk.BooleanVar(value=bool(value)) if is_bool else tk.StringVar(value=str(value) if value is not None else "")
@@ -554,7 +575,7 @@ class ClusterConfigTab:
             # 不是自由文本框或普通 Checkbutton -- 既统一了观感，也没法
             # 手滑打错成 "ture"/"1" 之类游戏认不出的值。
             var = tk.BooleanVar(value=bool(value))
-            ToggleSwitch(parent, variable=var).grid(row=row, column=1, sticky=tk.W, pady=3)
+            ToggleSwitch(parent, variable=var).grid(row=row, column=1, sticky=tk.W, pady=2)
         elif enum_choices:
             # 只有几个固定取值的字段（如 game_mode/cluster_language）改成
             # 下拉选择，下拉框里显示翻译后的名称，但 _EnumVar 保证
@@ -566,7 +587,7 @@ class ClusterConfigTab:
             enum_combo = MenuCombo(parent, textvariable=display_var, width=35,
                                    style="ModOption.TMenubutton")
             enum_combo["values"] = [disp for _, disp in enum_choices]
-            enum_combo.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
+            enum_combo.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=2)
             var = _EnumVar(display_var, display_to_raw)
         elif (ini_section, key) in self._WRAPPED_TEXT_FIELDS:
             var = self._make_wrapped_text_row(parent, row, value)
@@ -591,12 +612,12 @@ class ClusterConfigTab:
 
             var.trace_add("write", _keep_digits_only)
             entry = ttk.Entry(parent, textvariable=var, width=38, font=self._ROW_VALUE_FONT)
-            entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
+            entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=2)
             Tooltip(entry, t("cluster.range_hint", min=lo, max=hi))
         else:
             var = tk.StringVar(value=str(value) if value is not None else "")
             ttk.Entry(parent, textvariable=var, width=38,
-                     font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=3)
+                     font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=2)
         self._entries[(section, key)] = (var, readonly)
         return var
 
@@ -640,7 +661,7 @@ class ClusterConfigTab:
             for sec_name, sec_data in sections:
                 if not sec_data:
                     continue
-                ttk.Label(col_frame, text=t(self._SECTION_HEADER_KEYS[sec_name]), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"),
+                ttk.Label(col_frame, text=t(self._SECTION_HEADER_KEYS[sec_name]), font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
                          foreground=theme.HEADING).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(10,3))
                 row += 1
                 order = self._SECTION_FIELD_ORDER.get(sec_name, [])
@@ -678,7 +699,7 @@ class ClusterConfigTab:
             # 再受两列各自富余宽度的影响。
             selector_row = ttk.Frame(frame)
             selector_row.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
-            ttk.Label(selector_row, text=t("save.shard"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(side=tk.LEFT, padx=(5,5))
+            ttk.Label(selector_row, text=t("save.shard"), font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(side=tk.LEFT, padx=(5,5))
             self._shard_sel_var = tk.StringVar()
             shard_sel = MenuCombo(selector_row, textvariable=self._shard_sel_var, width=15)
             shard_sel["values"] = [s.name for s in c.shards]
@@ -728,7 +749,7 @@ class ClusterConfigTab:
         for w in frame.winfo_children(): w.destroy()
         keys_to_remove = [k for k in self._entries if k[0].startswith("SHARD_")]
         for k in keys_to_remove: del self._entries[k]
-        ttk.Label(frame, text=t("cluster.editing", shard=target_shard.name), font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "bold")).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        ttk.Label(frame, text=t("cluster.editing", shard=target_shard.name), font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True)).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
 
         # 从世界(is_master=false)的 server.ini 经常缺 name/id——Klei 官方
         # Master+Caves 示例（论坛/wiki 的世界配置说明）里每个世界都必须有
@@ -769,7 +790,7 @@ class ClusterConfigTab:
         for sec in ["NETWORK","SHARD","ACCOUNT","STEAM"]:
             data = getattr(shard_config, sec.lower(), {})
             if data:
-                ttk.Label(frame, text=f"[{sec}]", font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS, "bold")).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5,0))
+                ttk.Label(frame, text=f"[{sec}]", font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True)).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5,0))
                 row += 1
                 for key, value in data.items():
                     # server_port 一旦被"樱花映射"接管（远程端口回写进这
@@ -912,10 +933,26 @@ class ClusterConfigTab:
     def _load_token(self, cluster):
         self._token_visible = False
         self._token_display.configure(state=tk.NORMAL); self._token_display.delete("1.0", tk.END)
-        if cluster.token_path:
-            self._token_raw = read_token(cluster.token_path)
-            self._token_display.insert("1.0", mask_token(self._token_raw) if self._token_raw else t("token.empty"))
-        else: self._token_raw = ""; self._token_display.insert("1.0", t("token.empty"))
+        self._token_raw = read_token(cluster.token_path) if cluster.token_path else ""
+        # 应用户反馈：全局令牌池设置好之后，"已经存在、但缺令牌"的服务
+        # 器存档（不是这次用"复制为服务器存档"新建出来的——比如更早创
+        # 建、或者创建那会儿全局令牌池还是空的）完全没受益，还是显示
+        # "未设置"，启动服务器照样报错，得自己手动去 Klei 后台申请再粘
+        # 贴进来，全局令牌池等于形同虚设。cluster_copy.py 那边的自动填
+        # 充只在"复制"那一刻生效，管不到已经存在的存档。这里补上同一
+        # 套判断，只要是服务器存档（is_valid_token() 判断标准跟
+        # cluster_copy.py 完全一致，不区分"完全没有文件"还是"文件存在
+        # 但内容无效"）、全局令牌池不为空，打开这个存档的"服务器令牌"
+        # 页签时就顺手自动补上——本地存档（cluster.source 不是 SERVER）
+        # 本来就不需要 token，不能乱填。
+        if not is_valid_token(self._token_raw) and cluster.source == SaveSource.SERVER:
+            pool = app_settings.get_global_tokens()
+            if pool:
+                token_path = cluster.token_path or (cluster.path / "cluster_token.txt")
+                write_token(token_path, pool[0])
+                cluster.token_path = token_path
+                self._token_raw = pool[0]
+        self._token_display.insert("1.0", mask_token(self._token_raw) if self._token_raw else t("token.empty"))
         self._token_display.configure(state=tk.DISABLED)
         self._token_show_btn.configure(text=t("token.show"))
 
@@ -1081,9 +1118,26 @@ class ClusterConfigTab:
 
     def retheme(self):
         """主题切换时调用——_sub_tab_bar（PillTabBar）是构造一次就不再
-        重建的长期容器，跟顶层主页签条同理需要显式重新上色。这个页签
-        内部的输入框/按钮都是原生 ttk 控件，theme.apply_theme() 的全局
-        样式表已经覆盖，不需要在这里额外处理。"""
+        重建的长期容器，跟顶层主页签条同理需要显式重新上色。
+
+        "房间设置/世界设置"这两页的字段行是每次 on_cluster_changed()
+        重新渲染时现建的（见 _make_row()，用 self._ROW_LABEL_FONT/
+        _ROW_VALUE_FONT 这两个 @property，天然现查 theme.FONT_FAMILY，
+        不用在这里额外处理）；但"管理员列表/黑名单/服务器令牌"这三页
+        的标题、列表框、状态提示是 __init__ 里建一次就不再重建的持久
+        控件，构造时用的是那一刻算出来的字体元组字面量——ttk 控件传了
+        显式 font= 之后就不再跟着全局样式表级联，theme.apply_theme()
+        覆盖不到这些地方，必须在这里显式重新 configure 一次字体（真机
+        反馈过：切到荆南麦圆体后这三个页签的标题文字纹丝不动）。"""
         self._sub_tab_bar.apply_theme()
+        self._admin_title_lbl.configure(font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True))
+        self._admin_listbox.configure(font=self._ROW_VALUE_FONT)
+        self._admin_status.configure(font=self._ROW_VALUE_FONT)
+        self._block_title_lbl.configure(font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True))
+        self._block_listbox.configure(font=self._ROW_VALUE_FONT)
+        self._block_status.configure(font=self._ROW_VALUE_FONT)
+        self._token_title_lbl.configure(font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
+        self._token_display.configure(font=self._ROW_VALUE_FONT)
+        self._global_tokens_hint_lbl.configure(font=theme.font_tuple(theme.FONT_SIZE_XS))
 
     def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())

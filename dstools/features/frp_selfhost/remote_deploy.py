@@ -240,14 +240,33 @@ def _detect_remote_arch(client: paramiko.SSHClient) -> str:
     return {"x86_64": "amd64", "aarch64": "arm64", "armv7l": "arm"}.get(machine, "")
 
 
+# 固定的远程缓存路径（按架构+frp 版本区分），不是每次部署都用的临时
+# 随机路径——应用户反馈：每次重新部署都要重新上传一遍 frps 二进制，
+# 国内到云服务器的上行带宽有限时这一步很慢，其实同一个架构/版本传一
+# 次就够了。带上 FRP_VERSION 是为了防止以后升级打包的 frp 版本后，服
+# 务器上缓存的还是旧版本——版本号变了，路径也跟着变，旧缓存自然失效
+# 不会被误用（会变成服务器上一个几 MB 的孤儿文件，无害，不值得为此
+# 特意去清理）。
+def _cached_frps_binary_path(arch: str) -> str:
+    return f"/opt/dstcamp-frp/.frps_bin_cache_v{deploy.FRP_VERSION}_{arch}"
+
+
 def _maybe_upload_frps_binary(client: paramiko.SSHClient, on_log: LogFn) -> str | None:
     """先探测服务器 CPU 架构，架构匹配某一份本地打包的二进制时才 SFTP
     推上去并返回远程路径；不匹配（架构没打包，或者探测失败）返回
     None，调用方据此决定要不要退回"脚本自己从 GitHub 下载"那条路径。
 
+    应用户反馈：上传到固定的缓存路径（_cached_frps_binary_path()），
+    不是每次部署都用的临时随机路径——上传前先用 `test -f` 探测一下这
+    份缓存是不是已经在服务器上了，在的话直接复用、跳过整个上传步骤。
+    deploy_via_ssh() 的收尾清理不会删这个固定缓存路径（只删部署脚本本
+    身），下次部署才能真的用上。
+
     本地打包的是 gzip 压缩过的 .gz（见本文件顶部说明），这里现场解压
-    到一个临时文件再 SFTP 推送，用完立刻删除本地临时文件——不管上传
-    成不成功都要删，避免每次部署都在本地攒下解压出来的可执行文件。"""
+    读流直传（sftp.putfo()），不在本地磁盘落地解压出来的 ELF 文件。为
+    了不让"上传到一半就断线"留下一个半成品文件被下次误判成"缓存已存
+    在"，先传到一个临时名字，成功后再用 posix_rename() 原子改名成正式
+    缓存路径。"""
     arch = _detect_remote_arch(client)
     if arch not in _BUNDLED_ARCHS:
         on_log(f"服务器架构（{arch or '未知'}）没有对应的本地打包二进制，改为让服务器自己下载。")
@@ -255,9 +274,20 @@ def _maybe_upload_frps_binary(client: paramiko.SSHClient, on_log: LogFn) -> str 
     gz_path = _bundled_frps_binary_gz_path(arch)
     if not gz_path.exists():
         return None
+
+    remote_path = _cached_frps_binary_path(arch)
+    _stdin, stdout, _stderr = client.exec_command("mkdir -p /opt/dstcamp-frp", timeout=10)
+    stdout.channel.recv_exit_status()
+    _stdin, stdout, _stderr = client.exec_command(f"test -f '{remote_path}' && echo EXISTS", timeout=10)
+    already_cached = stdout.read().decode("utf-8", errors="replace").strip() == "EXISTS"
+    stdout.channel.recv_exit_status()
+    if already_cached:
+        on_log(f"检测到服务器上已经缓存过 frps 程序本体（{arch}），跳过上传。")
+        return remote_path
+
     on_log(f"正在上传 frps 程序本体（{arch}，避免服务器自己访问 GitHub）...")
     import secrets
-    remote_path = f"/tmp/dstcamp_frps_bin_{secrets.token_hex(4)}"
+    tmp_path = f"/opt/dstcamp-frp/.frps_bin_upload_{secrets.token_hex(4)}"
     # 真机反馈过：先解压到本地临时文件再 sftp.put() 那版做法，杀毒软件
     # 依然在这个临时文件刚落盘的瞬间按内容特征查杀（HackTool/Linux.Frp.
     # a!crit 这类签名是直接匹配 frp 二进制内容本身的，不是"位置像木马"
@@ -268,8 +298,9 @@ def _maybe_upload_frps_binary(client: paramiko.SSHClient, on_log: LogFn) -> str 
     with gzip.open(gz_path, "rb") as fsrc:
         sftp = client.open_sftp()
         try:
-            sftp.putfo(fsrc, remote_path)
-            sftp.chmod(remote_path, 0o755)
+            sftp.putfo(fsrc, tmp_path)
+            sftp.chmod(tmp_path, 0o755)
+            sftp.posix_rename(tmp_path, remote_path)
         finally:
             sftp.close()
     return remote_path
@@ -405,6 +436,18 @@ def deploy_via_ssh(
         if err_text.strip():
             on_log(err_text.strip())
 
+        # 退出码 3 是部署脚本自己约定的"目标端口被别的服务占用，主动跳
+        # 过安装/更新"（见 deploy.py 的端口冲突检测），不是 0（真的部署
+        # 成功）也不是笼统的非 0 失败——必须单独判断，不然会跟下面的
+        # "exit_code != 0 -> 部署失败"或者最后的"部署完成"混在一起，两
+        # 种都会让用户看错真实结果（真机反馈过：客户端探测那一层因为各
+        # 种原因没提前拦下来时，这里如果还是笼统地报"部署完成"，会让用
+        # 户误以为服务已经在新端口上可用了，实际上什么都没改）。
+        if exit_code == 3:
+            raise RemoteDeployError(
+                f"部署脚本检测到目标端口 {bind_port} 已经被服务器上其它服务占用（不是 "
+                f"dstcamp-frps 自己），已跳过安装/更新。请换一个端口，或者先在服务器上"
+                f"停掉占用这个端口的服务，再重新部署。")
         if exit_code != 0:
             raise RemoteDeployError(f"部署脚本执行失败（退出码 {exit_code}），请查看上面的日志定位原因")
         on_log("部署完成。")
@@ -412,10 +455,13 @@ def deploy_via_ssh(
     except (paramiko.SSHException, OSError) as e:
         raise RemoteDeployError(f"执行脚本失败: {e}") from e
     finally:
-        cleanup_paths = [p for p in (remote_script_path, remote_frps_path) if p]
-        if cleanup_paths:
+        # remote_frps_path 现在是 _cached_frps_binary_path() 那个固定缓
+        # 存路径（不再是每次都不同的随机临时路径），故意不清理——留着
+        # 才能让下次部署跳过重新上传，这正是这次改动要达到的效果。只清
+        # 理部署脚本本身，那个才是真正一次性的临时文件。
+        if remote_script_path:
             try:
-                client.exec_command(f"rm -f {' '.join(cleanup_paths)}")
+                client.exec_command(f"rm -f {remote_script_path}")
             except (paramiko.SSHException, OSError):
                 pass
         client.close()

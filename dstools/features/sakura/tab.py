@@ -71,14 +71,14 @@ class _SakuraTokenInputDialog:
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
 
-        ttk.Label(win, text=t("sakura.token_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD)).pack(
+        ttk.Label(win, text=t("sakura.token_prompt"), font=theme.font_tuple(theme.FONT_SIZE_MD)).pack(
             anchor=tk.W, padx=20, pady=(20, 8))
         self.var = tk.StringVar(value=initial)
         entry = ttk.Entry(win, textvariable=self.var, font=("Consolas", 12))
         entry.pack(fill=tk.X, padx=20, pady=(0, 6))
         self.err_var = tk.StringVar()
         ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR,
-                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20)
+                  font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20)
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
@@ -256,6 +256,10 @@ class SakuraTab:
         self._max_tunnels = _FALLBACK_MAX_TUNNELS
         self._tunnel_count = 0  # 账号下全部隧道数，_apply_loaded() 加载完才有真实值
         self._tunnels_exhausted = False  # _render_shard_rows() 每次刷新时重算
+        # 隧道用满时，能反查到是本机哪些已知存档占用的（按命名约定匹配，
+        # 见 _reload_async() 的说明）——查不到归属（账号里手动建的隧道、
+        # 或者别的设备用同一账号建的）就不出现在这里，不猜测。
+        self._tunnel_occupants: list[str] = []
 
         self._top = top = BgFrame(self._sakura_page, app, bg=theme.CARD_BG)
         top.pack(fill=tk.X, padx=10, pady=(10, 5))
@@ -301,7 +305,7 @@ class SakuraTab:
                                     "sakura.account_tunnels_used")):
             self._account_frame.grid_columnconfigure(col, weight=1, uniform="acct_col")
             header_lbl = self._label(self._account_frame, t(key), fg=theme.TEXT_MUTED,
-                                      font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM))
+                                      font=theme.font_tuple(theme.FONT_SIZE_SM))
             header_lbl.grid(row=0, column=col, sticky=tk.W, padx=(0, 15))
             self._account_header_labels.append(header_lbl)
         self._account_value_row = 1
@@ -346,7 +350,10 @@ class SakuraTab:
         # _sync_button_hover_text() 同一个套路；如果每次 _render_shard_
         # rows() 都重新 Tooltip(self._action_btn, ...)，Tooltip 内部用
         # add="+" 追加绑定，同一个按钮身上会越叠越多个悬浮提示。
-        Tooltip(self._action_btn, self._action_btn_hover_text)
+        # wraplength 加宽到 480（默认 320）——"隧道数已用满"那段提示文字
+        # 本来就长，加上后面新补的"占用隧道的存档"清单后默认宽度换行太
+        # 密，读起来很挤。
+        Tooltip(self._action_btn, self._action_btn_hover_text, wraplength=480)
 
         # frpc 状态行——只在这个存档确实映射过（_any_mapped）才显示，没
         # 映射过就没有 frpc 可控制，显示这一行只会让人误以为随便哪个存
@@ -364,7 +371,8 @@ class SakuraTab:
         self._current_cluster = None
         self._load_token_display()
 
-        self.selfhost_page = SelfHostFrpPage(self._sub_content, app)
+        self.selfhost_page = SelfHostFrpPage(self._sub_content, app,
+                                              is_other_mapping_active=self._has_sakura_pointer)
         self._sub_pages["selfhost"] = self.selfhost_page.frame
         if initial_sub_tab == "selfhost":
             self.selfhost_page.frame.pack(fill=tk.BOTH, expand=True)
@@ -377,17 +385,27 @@ class SakuraTab:
         app_settings.set_nat_sub_tab(key)
 
     # ── 跨页签接口：给 local_service_tab.py 用 ──────────────────────
-    # 樱花/自建两条映射路径并存，这三个方法各自都要两边都查一遍——一个
-    # 存档/世界同一时间只会真正启用其中一种（UI 上开启一种映射不会去检
-    # 查另一种的状态），两边互不冲突，调用方（local_service/tab.py、
-    # features/cluster_config/tab.py）不需要关心具体是哪一种，统一走这
-    # 一层就行。
+    # 樱花/自建两条映射路径并存，这三个方法各自都要两边都查一遍——
+    # _enable_mapping()（这个文件的和 frp_selfhost/tab.py 的）现在都会
+    # 在开启前互相检查一遍对方（见 _has_sakura_pointer() 的说明），保证
+    # 同一时间只有其中一种真正生效；这三个方法本身仍然两边都查，是给
+    # 调用方（local_service/tab.py、features/cluster_config/tab.py）用
+    # 的"不管哪种方式，只关心到底有没有映射"的统一入口，不需要关心具体
+    # 是哪一种。
 
     def _frpc_pointer_path(self, cluster_path, shard_name):
         """不是完整的 frpc 配置文件——frpc 用 `-f token:隧道ID` 启动，自己
         向樱花服务器现拉配置，这里只需要落地这个世界对应的隧道 ID，供
         maybe_start_frpc() 在 Tk 主线程零网络请求地读出来拼命令行。"""
         return cache_dir(_FRPC_CACHE_NAME) / f"{cluster_path.name}__{shard_name}.txt"
+
+    def _has_sakura_pointer(self, cluster, shard) -> bool:
+        """只查樱花自己这一半（不包括自建 frps）——传给
+        SelfHostFrpPage(is_other_mapping_active=...) 用，让自建 frps 开
+        启映射前能反过来检查樱花这边是不是已经在用。不直接把
+        has_active_mapping() 传过去，是因为那个方法两边都查，用来检查
+        "对方"会把自建 frps 自己已经开着的状态也算进去，误判成冲突。"""
+        return self._frpc_pointer_path(cluster.path, shard.name).exists()
 
     def has_active_mapping(self, cluster, shard) -> bool:
         """零网络请求——只查本地缓存文件/记账是否存在，供 _do_start_shard()/
@@ -445,7 +463,7 @@ class SakuraTab:
                       self._recent_traffic_frame, self._status_frame,
                       self._shards_frame, self._action_row, self._frpc_row):
             frame.apply_theme()
-        self._token_display.configure(bg=theme.CARD_BG, fg=theme.TEXT,
+        self._token_display.configure(bg=theme.CARD_BG, fg=theme.TEXT, font=self._token_display_font(),
                                        highlightbackground=theme.CARD_BORDER, highlightcolor=theme.ACCENT)
         for label in (self._token_label, self._node_label, self._frpc_status_label,
                       *self._account_header_labels):
@@ -455,9 +473,19 @@ class SakuraTab:
 
     # ── Token 显示/编辑 ──────────────────────────────────────────────
 
+    def _token_display_font(self) -> tuple:
+        """已设置 token 时这个框里显示的是脱敏后的原始令牌内容（纯英文
+        字母数字），维持 Consolas 等宽字体——跟 frp_selfhost/tab.py 里
+        "Consolas 标记原始可复制数据"是同一个约定；没设置时框里显示的
+        其实是中文提示文案 "(未设置)"，不是原始数据，Consolas 没有对应
+        的中文字形，会被 Windows 自动换成某个不搭调的后备字体，看起来
+        跟界面其它中文文字明显不一致（真机反馈过"字体看起来怪怪的"）
+        ——这种情况改用跟随主题的正常字体。"""
+        return ("Consolas", 10) if self._token_raw else theme.font_tuple(theme.FONT_SIZE_SM)
+
     def _load_token_display(self):
         self._token_raw = app_settings.get_sakura_token() or ""
-        self._token_display.configure(state=tk.NORMAL)
+        self._token_display.configure(state=tk.NORMAL, font=self._token_display_font())
         self._token_display.delete("1.0", tk.END)
         self._token_display.insert("1.0", mask_token(self._token_raw) if self._token_raw else t("token.empty"))
         self._token_display.configure(state=tk.DISABLED)
@@ -489,7 +517,7 @@ class SakuraTab:
             w.destroy()
         for col, value in enumerate((group_name, speed, traffic_available, tunnels_limit, tunnels_used)):
             self._label(self._account_frame, value,
-                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold")).grid(
+                        font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True)).grid(
                 row=self._account_value_row, column=col, sticky=tk.W, padx=(0, 15), pady=(0, 4))
 
     def _render_recent_traffic(self, text):
@@ -511,7 +539,7 @@ class SakuraTab:
         if h < 4 or not self._recent_traffic_text:
             return
         c.create_text(2, h / 2, text=self._recent_traffic_text, anchor=tk.W,
-                       fill=theme.TEXT_MUTED, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM),
+                       fill=theme.TEXT_MUTED, font=theme.font_tuple(theme.FONT_SIZE_SM),
                        tags="recent_traffic_text")
 
     def _set_status(self, text):
@@ -524,7 +552,7 @@ class SakuraTab:
             w.destroy()
         if text:
             self._label(self._status_frame, text, fg=theme.ERROR,
-                        font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, fill=tk.X)
+                        font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(anchor=tk.W, fill=tk.X)
         else:
             self._status_frame.configure(height=1)
 
@@ -584,7 +612,23 @@ class SakuraTab:
                             ts /= 1000
                         if ts >= cutoff:
                             recent_bytes += val
-                self.frame.after(0, lambda: self._apply_loaded(user_info, nodes, by_key, recent_bytes, len(tunnels)))
+                # 隧道用满时反查是本机哪些已知存档占用的——按跟上面同一
+                # 套命名约定匹配，但这次遍历的是全部本机已知的服务器存档
+                # （不只是当前选中这个），才能告诉用户"具体是哪个存档"。
+                # 本地存档不参与（同上，映射机制本来就只认服务器存档）；
+                # 查不到归属的隧道（账号里手动建的、或者别的设备用同一账
+                # 号建的）不出现在这份名单里，不猜测。
+                occupants = []
+                for c in self.app.env.clusters:
+                    if c.source != SaveSource.SERVER:
+                        continue
+                    for shard in c.shards:
+                        occupant_tunnel = sakura_frp.find_dstcamp_tunnel(
+                            tunnels, c.path.name, shard.name, c.source.value, c.platform.value)
+                        if occupant_tunnel:
+                            occupants.append(f"{c.name}（{shard.name}）")
+                self.frame.after(0, lambda: self._apply_loaded(user_info, nodes, by_key, recent_bytes,
+                                                                 len(tunnels), occupants))
             except sakura_frp.SakuraApiError as e:
                 # `except ... as e` 在 except 块结束时会自动 del 掉这个名
                 # 字——lambda 要等 .after(0, ...) 真正调度执行时才引用它，
@@ -598,13 +642,14 @@ class SakuraTab:
         self._render_recent_traffic("")
         self._set_status(t("sakura.api_error", detail=str(e)))
 
-    def _apply_loaded(self, user_info, nodes, by_key, recent_bytes, tunnel_count):
+    def _apply_loaded(self, user_info, nodes, by_key, recent_bytes, tunnel_count, occupants=()):
         self._nodes = nodes
         self._tunnels_by_key = by_key
         # 账号下全部隧道数（不只是 DSTCamp 建的那几条，樱花账号里手动建
         # 的隧道也占同一个配额）——跟 _max_tunnels 一起决定"已用是否达到
         # 上限"，见 _render_shard_rows() 对 _action_btn 的置灰判断。
         self._tunnel_count = tunnel_count
+        self._tunnel_occupants = list(occupants)
         self._render_recent_traffic(
             t("sakura.recent_traffic", size=_format_bytes_adaptive(recent_bytes)) if by_key else "")
 
@@ -778,7 +823,11 @@ class SakuraTab:
 
     def _action_btn_hover_text(self) -> str:
         if self._tunnels_exhausted:
-            return t("sakura.tunnels_exhausted_hint", max=self._max_tunnels)
+            hint = t("sakura.tunnels_exhausted_hint", max=self._max_tunnels)
+            if self._tunnel_occupants:
+                hint += "\n" + t("sakura.tunnels_exhausted_occupants",
+                                  names="、".join(self._tunnel_occupants))
+            return hint
         return ""
 
     def _copy_connect_string(self, tunnel: dict):
@@ -876,6 +925,13 @@ class SakuraTab:
             dlg.show_warning(self.app.root, t("sakura.require_stopped_title"),
                               t("sakura.require_stopped_msg", shards="、".join(running)))
             return
+        # 应用户要求：不能跟自建 frps 同时对同一个世界生效（两边都会去
+        # 改 server.ini 的 server_port，同时开会互相覆盖对方的配置）。
+        conflicting = [s.name for s in cluster.shards if self.selfhost_page.has_active_mapping(cluster, s)]
+        if conflicting:
+            dlg.show_warning(self.app.root, t("sakura.enable_btn"),
+                              t("sakura.other_mapping_conflict_msg", shards="、".join(conflicting)))
+            return
 
         progress = ModSyncLogDialog(self.frame, title=t("sakura.setup_progress_title"))
         shards = list(cluster.shards)
@@ -938,11 +994,21 @@ class SakuraTab:
 
     def _on_enable_done(self, progress):
         progress.finish()
+        cluster = self._current_cluster
+        # 跟"自建 frps"保持一致（frp_selfhost/tab.py._enable_mapping()
+        # 收尾时会调 _restart_frpc() 立即拉起本地客户端）——原来这里只落
+        # 地了隧道 ID 指针文件，真正启动本地 frpc.exe 完全依赖世界启动
+        # 那条路径（local_service/tab.py._do_start_shard()）触发，导致
+        # 刚点完"开启樱花映射"、世界还没启动时，frpc 状态一直显示"未启
+        # 动"，容易让人以为没配置成功。这里改成配置一落地就直接拉起，
+        # 世界还没启动也能看到 frpc 已经连上樱花服务器。
+        if cluster:
+            for shard in cluster.shards:
+                self.maybe_start_frpc(cluster, shard)
         # 只有世界真的在跑，才需要提醒"重启才能生效"——开启映射前面已经
         # 要求全部世界先停止，正常情况下走到这里都是没跑的，不用弹一句
         # "重启"这种对着没在运行的东西说的话；只有极少数情况（比如这个
         # DSTCamp 会话没追踪到、但世界其实还在跑）才需要提醒。
-        cluster = self._current_cluster
         running = self._running_shard_names(cluster) if cluster else []
         if running:
             dlg.show_info(self.app.root, t("sakura.setup_done_title"),

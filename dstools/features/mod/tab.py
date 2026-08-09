@@ -27,7 +27,7 @@ from dstools.features.mod.parser import (
     list_installed_mod_ids, parse_modinfo, resolve_config_value, resolve_full_modinfo,
     resolve_wegame_client_mods_dir, visible_config_options,
 )
-from dstools.features.mod.sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync
+from dstools.features.mod.sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync, remove_mod_sync_junction
 from dstools.shared.gui import fonts, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
@@ -168,7 +168,10 @@ class ModManagerTab:
         # 选中的某一个世界，放在世界选择器左边能提示"这不是只同步当前世界"。
         # 不受 self._dirty 门控，同步的是已经写进 modoverrides.lua 的状态，
         # 跟这次编辑有没有存盘无关；本地存档不需要这个功能，选中本地存档
-        # 时置灰（见 on_cluster_changed）。
+        # 时置灰（见 on_cluster_changed）。文字/图标状态由
+        # refresh_sync_button_state() 探测实际联接状态后维护，初始值只是
+        # 占位，构造完成后第一次刷新之前不代表任何真实状态。
+        self._sync_already_linked = False
         self._md_sync = ttk.Button(sf, text=t("local.sync_mods_btn"), command=self._sync_mods_to_server)
         self._md_sync.pack(side=tk.LEFT, padx=(0,10))
         from dstools.shared.gui.tooltip import Tooltip
@@ -450,18 +453,56 @@ class ModManagerTab:
             return False
         return any(p.cluster_path == cluster.path for p in self.app.local_tab.manager.running())
 
+    def _passive_sync_dirs(self, cluster):
+        """跟 _sync_mods_to_server()/_resolve_wegame_sync_dirs() 算的是同
+        一对目录，但纯只读、绝不弹窗/绝不引导用户手动选目录——这里只是
+        被动地看一眼"现在能不能确定联接目标"，用来决定按钮显示成"软链
+        接"还是"删除软链接"，不能有任何副作用（这个方法在页签刷新/切换
+        存档时就会跑，不是用户主动点了同步按钮才跑）。WeGame 版没设置
+        过 rail_apps 根目录、或者 Steam 版还没探测到安装目录时，直接返回
+        (None, None)——按钮退回默认的"软链接"文案，不强迫用户在这个时
+        机做任何选择。"""
+        if not cluster or cluster.source != SaveSource.SERVER:
+            return None, None
+        if cluster.platform == Platform.WEGAME:
+            root = app_settings.get_wegame_root_path()
+            if not root:
+                return None, None
+            server_dir = find_wegame_server_dir(root)
+            client_dir = find_wegame_client_dir(root)
+            if server_dir is None or client_dir is None:
+                return None, None
+            return server_dir, client_dir / "mods"
+        local_tab = self.app.local_tab
+        if local_tab._install_dir is None:
+            return None, None
+        return local_tab._install_dir, find_game_mods_dir()
+
     def refresh_sync_button_state(self):
-        """"同步mod文件到服务器"按钮的可用状态——本来就只对服务器存档
-        开放；这里再叠加一条：这个存档正被本工具自己启动的本地服务器占用
-        时也要禁用，因为直接覆盖正在运行的服务器文件可能因为占用而失败。
-        单独抽成方法而不是塞在 on_cluster_changed 里，是因为"服务器是否在
-        跑"这件事会在不切换存档的情况下变化（用户在"本地服务器"页签启动/
-        停止），所以除了存档切换时，切到"Mod管理"页签时也要重新判一次
-        （见 DSToolsApp._on_tab_select），不能只在选存档的时候判一次。"""
+        """"软链接mods文件夹到服务器"按钮的可用状态和文字——本来就只对
+        服务器存档开放；这里再叠加一条：这个存档正被本工具自己启动的本
+        地服务器占用时也要禁用，因为直接覆盖正在运行的服务器文件可能因
+        为占用而失败。单独抽成方法而不是塞在 on_cluster_changed 里，是
+        因为"服务器是否在跑"这件事会在不切换存档的情况下变化（用户在
+        "本地服务器"页签启动/停止），所以除了存档切换时，切到"Mod管理"
+        页签时也要重新判一次（见 DSToolsApp._on_tab_select），不能只在
+        选存档的时候判一次。
+
+        应用户要求：这个联接是按整台机器一次性生效的全局设置（不分具体
+        哪个存档），已经联接过之后原来的按钮文字再点一次除了打一行日志
+        什么都不会发生，容易让人搞不清当前状态——现在会实际探测一下当
+        前是不是已经联接好了，是的话把按钮换成"删除mod软连接"，点它会
+        走撤销流程（见 _sync_mods_to_server()）。"""
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
         running = self._server_running_for(c)
         self._md_sync.configure(state=tk.NORMAL if (is_server and not running) else tk.DISABLED)
+
+        install_dir, client_mods_dir = self._passive_sync_dirs(c)
+        self._sync_already_linked = bool(
+            install_dir and plan_mod_sync(install_dir, client_mods_dir).already_linked)
+        self._md_sync.configure(
+            text=t("local.remove_junction_btn") if self._sync_already_linked else t("local.sync_mods_btn"))
 
     def _sync_button_hover_text(self) -> str:
         c = self._get_cluster()
@@ -469,6 +510,8 @@ class ModManagerTab:
             return ""
         if self._server_running_for(c):
             return t("local.sync_running_hover")
+        if getattr(self, "_sync_already_linked", False):
+            return t("local.remove_junction_hover")
         return t("local.sync_hover")
 
     def _on_shard_select(self, event=None): self._refresh_mods()
@@ -796,7 +839,7 @@ class ModManagerTab:
             pass
         tk.Label(tip, text=payload, justify=tk.LEFT, background="#ffffe0",
                 relief=tk.SOLID, borderwidth=1, wraplength=280,
-                font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(ipadx=4, ipady=2)
+                font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=4, ipady=2)
 
     def _render_placeholder(self, text, ref_width=None):
         from PIL import Image as _Image, ImageDraw as _ImageDraw
@@ -887,7 +930,7 @@ class ModManagerTab:
         except Exception:
             pass
         tk.Label(tip, text=text, justify=tk.LEFT, background="#323232", foreground="#ffffff",
-                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(ipadx=8, ipady=4)
+                 font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=8, ipady=4)
         tip.after(700, tip.destroy)
 
     def _save_mods(self, silent=False):
@@ -1002,15 +1045,37 @@ class ModManagerTab:
         app_settings.set_wegame_root_path(root)
         return server_dir, client_dir / "mods"
 
+    def _remove_mod_sync_junction(self, cluster):
+        """"删除mod软连接"——撤销 apply_mod_sync() 建的目录联接。这是按
+        整台机器一次性生效的全局设置，跟具体哪个存档无关，用
+        _passive_sync_dirs() 拿 install_dir（跟检测按钮该显示哪个文字用
+        的是同一份只读逻辑），不会弹 WeGame 根目录选择框——能走到这个分
+        支说明前面 refresh_sync_button_state() 已经探测到联接确实存在，
+        install_dir 理应已经能不弹窗地解析出来。"""
+        if not dlg.ask_yes_no(self.app.root, t("local.remove_junction_btn"), t("local.remove_junction_confirm_msg")):
+            return
+        install_dir, _client_mods_dir = self._passive_sync_dirs(cluster)
+        if install_dir is None:
+            return
+        remove_mod_sync_junction(install_dir)
+        dlg.show_info(self.app.root, t("local.remove_junction_btn"), t("local.remove_junction_done"))
+        self.refresh_sync_button_state()
+
     def _sync_mods_to_server(self):
         """把服务器 mods/ 目录整体替换成指向客户端 mods/ 文件夹的目录联
         接（见 dstools/core/mod_sync.py）——这是按这台机器一次性生效的，
         不是针对某个具体存档，但入口还是放在这个按钮下，方便和"这个存档
         有没有启用 mod"的前置判断放在一起。不受 self._dirty 门控——跟这
-        次编辑会话有没有点过"保存"无关，随时可以点。"""
+        次编辑会话有没有点过"保存"无关，随时可以点。
+
+        已经联接过时，这个按钮显示成"删除mod软连接"（见
+        refresh_sync_button_state()），点击走撤销流程而不是重新建联接。"""
         c = self._get_cluster()
         if not c or c.source != SaveSource.SERVER:
             dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.select_cluster_first"))
+            return
+        if self._sync_already_linked:
+            self._remove_mod_sync_junction(c)
             return
         if not get_enabled_mod_ids(c):
             dlg.show_info(self.app.root, t("local.sync_mods_btn"), t("local.sync_no_mods"))
@@ -1061,7 +1126,8 @@ class ModManagerTab:
                 log_dialog.append(line)
             if done:
                 log_dialog.finish()
-                self._md_sync.configure(state=tk.NORMAL, text=t("local.sync_mods_btn"))
+                self._md_sync.configure(state=tk.NORMAL)
+                self.refresh_sync_button_state()
                 return
             self.frame.after(100, _poll_log)
 
@@ -1071,7 +1137,9 @@ class ModManagerTab:
     def refresh_language(self):
         self._md_lbl2.redraw()
         self._md_br.configure(text=t("mod.reload_full")); self._md_bs.configure(text=t("mod.save_btn"))
-        self._md_ba.configure(text=t("mod.apply_all")); self._md_sync.configure(text=t("local.sync_mods_btn"))
+        self._md_ba.configure(text=t("mod.apply_all"))
+        self._md_sync.configure(
+            text=t("local.remove_junction_btn") if self._sync_already_linked else t("local.sync_mods_btn"))
         self._md_preset_save.configure(text=t("mod.preset_save_btn"))
         self._md_preset_apply.configure(text=t("mod.preset_apply_btn"))
         self._md_filt.redraw()
@@ -1363,13 +1431,21 @@ class _ApplyPresetDialog:
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.listbox = tk.Listbox(list_frame, height=8, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+        self.listbox = tk.Listbox(list_frame, height=8, font=theme.font_tuple(theme.FONT_SIZE_BASE),
                                    yscrollcommand=scrollbar.set, exportselection=False)
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.configure(command=self.listbox.yview)
 
         btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=(10, 20))
-        ttk.Button(btn_row, text=t("preset.delete_btn"), command=self._delete).pack(side=tk.LEFT)
+        # "删除"(左) 跟"应用"/"取消"(右) 中间原来没有留白——pack() 的
+        # side=LEFT/side=RIGHT 只各自从窗口两边往中间排，中间空隙纯粹
+        # 靠窗口比按钮总宽度富余出来的那部分撑开，没有显式保留。默认
+        # 字体下按钮窄，靠 center_over_parent() 的 min_width=420 兜底还
+        # 有点空当；换成"荆南麦圆体"后三个按钮总宽度超过 420，窗口按
+        # 实际内容收紧，富余空间归零，"删除"和"应用"就贴在一起了（真机
+        # 反馈过）。给"删除"补一个右侧 padx，不管窗口宽不宽裕都留出这一
+        # 块间距。
+        ttk.Button(btn_row, text=t("preset.delete_btn"), command=self._delete).pack(side=tk.LEFT, padx=(0, 16))
         ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._close).pack(side=tk.RIGHT)
         ttk.Button(btn_row, text=t("preset.apply_btn"), command=self._apply).pack(side=tk.RIGHT, padx=(0, 6))
 
@@ -1629,15 +1705,15 @@ class ModConfigDialog:
             banner_key = "mod.read_only_local" if read_only_reason == "client_only" else "mod.read_only_local_save"
             ttk.Label(win, text=t(banner_key), foreground="#607d8b",
                      wraplength=DIALOG_W - 40, justify=tk.LEFT,
-                     font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS, "bold")).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
+                     font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True)).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
         if mod_info.unsupported_schema:
             ttk.Label(win, text=t("mod.unsupported_schema"), foreground=theme.ERROR,
                      wraplength=DIALOG_W - 40, justify=tk.LEFT,
-                     font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS, "bold")).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
+                     font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True)).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
         elif remaining_dynamic:
             ttk.Label(win, text=t("mod.dynamic_banner", count=remaining_dynamic),
                      foreground="#8d6e00", wraplength=DIALOG_W - 40, justify=tk.LEFT,
-                     font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS)).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
+                     font=theme.font_tuple(theme.FONT_SIZE_XS)).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
 
         canvas = tk.Canvas(win, highlightthickness=0)
         self.canvas = canvas
@@ -1705,7 +1781,7 @@ class ModConfigDialog:
                 if label_text:
                     ttk.Separator(body, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=5, pady=(12,3))
                     title = _truncate(label_text, hdr_font, HEADER_W_PX)
-                    ttk.Label(body, text=title, font=(theme.FONT_FAMILY, theme.FONT_SIZE_LG, "bold"),
+                    ttk.Label(body, text=title, font=theme.font_tuple(theme.FONT_SIZE_LG, bold=True),
                              foreground=theme.HEADING, anchor=tk.CENTER,
                              justify=tk.CENTER).pack(fill=tk.X, padx=5, pady=(0,5))
                 else:
@@ -1731,7 +1807,7 @@ class ModConfigDialog:
 
             label_full = opt.label or opt.name
             label_shown = _truncate(label_full, name_font, NAME_W_PX)
-            name_lbl = ttk.Label(top, text=label_shown, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"), anchor=tk.W)
+            name_lbl = ttk.Label(top, text=label_shown, font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True), anchor=tk.W)
             name_lbl.pack(side=tk.LEFT)
             if label_shown != label_full:
                 Tooltip(name_lbl, label_full)
@@ -1752,7 +1828,7 @@ class ModConfigDialog:
                 # 也不安全）。
                 reason = t("mod.dynamic_option") if opt.is_dynamic else t("mod.no_choices")
                 ttk.Label(top, text=f"{current_display}  ({reason})",
-                         foreground=theme.TEXT_MUTED, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM, "italic")).pack(side=tk.RIGHT)
+                         foreground=theme.TEXT_MUTED, font=theme.font_tuple(theme.FONT_SIZE_SM, italic=True)).pack(side=tk.RIGHT)
                 if opt.hover:
                     _pack_option_desc(row, opt.hover)
                 continue
@@ -1828,7 +1904,7 @@ class ModConfigDialog:
         header = ttk.Frame(row)
         header.pack(fill=tk.X)
         label_full = opt.label or opt.name
-        ttk.Label(header, text=label_full, font=(theme.FONT_FAMILY, theme.FONT_SIZE_MD, "bold"),
+        ttk.Label(header, text=label_full, font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
                   anchor=tk.W).pack(side=tk.LEFT)
         if opt.hover:
             _pack_option_desc(row, opt.hover)

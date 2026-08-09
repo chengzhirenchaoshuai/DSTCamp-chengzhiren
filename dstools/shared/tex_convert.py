@@ -36,10 +36,13 @@ from"这一行日志虽然在控制台里显示成乱码，但底层字节在这
 境上遇到输入路径也失败的反馈，再照这个思路加一份"先拷进临时目录"）。
 """
 
+import ctypes
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 from dstools.shared.resource_paths import bundled_resource_dir
@@ -59,11 +62,22 @@ _CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 # ktech.exe 依赖同目录下一批老版本 ImageMagick 的 DLL（CORE_RL_*/IM_MOD_
 # RL_*），这批 DLL 又依赖 MSVCR120.dll/MSVCP120.dll（Visual C++ 2013 运
-# 行库，Windows 不自带，真机上碰到过用户机器没装，表现是 ktech.exe 弹
-# "0xc000007b 应用程序无法正常启动"）。这个退出码是操作系统层面固定
-# 的信号（STATUS_INVALID_IMAGE_FORMAT），Python 里读到的是它的有符号
-# 32 位表示。
-_MISSING_RUNTIME_EXIT_CODE = -1073741701  # 0xC000007B
+# 行库，Windows 不自带）。缺这个运行库时 Windows 加载器崩溃报的退出码
+# **不是固定唯一的一个**——真机对照测试过（同一台机器装/卸同一份
+# vcredist_x86.exe 反复验证）：
+#   0xC000007B  STATUS_INVALID_IMAGE_FORMAT （最早发现、写进代码的那版）
+#   0xC0000135  STATUS_DLL_NOT_FOUND        （后来另一台机器复现出的第二种）
+# 两个都是同一个根因（缺这份 VC++ 2013 运行库）在不同 Windows 版本/具体
+# 缺失情况下的不同表现，缺一个都会导致这里判断漏检——之前只认第一个，
+# 真实反馈过"图标全部解析不出来，但 Mod 管理页签完全没有提示"，根因就
+# 是这里漏掉了第二种退出码，探测函数悄悄判定"运行库正常"。
+#
+# **坑**：这两个 STATUS_* 码 Python 读出来的正负号不固定——同一台机器上
+# 用 cmd.exe 的 %errorlevel% 看到的是有符号表示（比如 -1073741515），但
+# 这个项目实测 `subprocess.run().returncode` 对同一次崩溃返回的是**无符
+# 号**表示（3221225781）。没法假设固定是哪一种，下面统一按位与
+# 0xFFFFFFFF 转换成无符号 32 位再比较，两种符号习惯都能命中。
+_MISSING_RUNTIME_STATUS_CODES = (0xC000007B, 0xC0000135)
 
 _runtime_probed = False
 _runtime_missing = False
@@ -71,8 +85,9 @@ _runtime_missing = False
 
 def probe_ktech_runtime() -> bool:
     """探测 ktech.exe 能不能正常启动（缺 VC++ 2013 运行库时会在加载阶段
-    直接崩溃，退出码固定是 `_MISSING_RUNTIME_EXIT_CODE`）。真正探测一次
-    的开销跑一次子进程，整个程序生命周期内只探测一次，结果缓存复用。
+    直接崩溃，退出码换算成无符号 32 位后是 `_MISSING_RUNTIME_STATUS_CODES`
+    里已知的某一个）。真正探测一次的开销跑一次子进程，整个程序生命周期
+    内只探测一次，结果缓存复用。
 
     返回 True 表示确认缺运行库，调用方（GUI 层）据此提示用户安装；
     返回 False 涵盖"运行库正常"和"没法判断"（ktech.exe 缺失等）两种
@@ -94,8 +109,110 @@ def probe_ktech_runtime() -> bool:
         )
     except Exception:
         return False
-    _runtime_missing = result.returncode == _MISSING_RUNTIME_EXIT_CODE
+    _runtime_missing = (result.returncode & 0xFFFFFFFF) in _MISSING_RUNTIME_STATUS_CODES
     return _runtime_missing
+
+
+# 真机踩过的坑：不显式声明 argtypes/restype 时 ctypes 默认按 32 位 int
+# 解读窗口句柄参数，64 位系统上句柄数值超出 32 位范围会直接抛
+# `OverflowError: int too long to convert`（这几个函数是 launch_vcredist_
+# installer() 新增的，之前项目里只有 custom_titlebar.py 碰过窗口 API，
+# 那边已经踩过这个坑、按 wintypes.HWND 声明了，这里之前漏掉了同样的声
+# 明）。跟 custom_titlebar.py 一样统一在模块加载时声明一遍。
+if sys.platform == "win32":
+    from ctypes import wintypes as _wintypes
+    _user32 = ctypes.windll.user32
+    _user32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(ctypes.c_bool, _wintypes.HWND, _wintypes.LPARAM),
+                                     _wintypes.LPARAM]
+    _user32.EnumWindows.restype = _wintypes.BOOL
+    _user32.IsWindowVisible.argtypes = [_wintypes.HWND]
+    _user32.IsWindowVisible.restype = _wintypes.BOOL
+    _user32.GetWindowTextLengthW.argtypes = [_wintypes.HWND]
+    _user32.GetWindowTextLengthW.restype = ctypes.c_int
+    _user32.ShowWindow.argtypes = [_wintypes.HWND, ctypes.c_int]
+    _user32.ShowWindow.restype = _wintypes.BOOL
+    _user32.SetForegroundWindow.argtypes = [_wintypes.HWND]
+    _user32.SetForegroundWindow.restype = _wintypes.BOOL
+    _user32.GetForegroundWindow.restype = _wintypes.HWND
+    _user32.GetWindowThreadProcessId.argtypes = [_wintypes.HWND, ctypes.POINTER(_wintypes.DWORD)]
+    _user32.GetWindowThreadProcessId.restype = _wintypes.DWORD
+    _user32.AttachThreadInput.argtypes = [_wintypes.DWORD, _wintypes.DWORD, _wintypes.BOOL]
+    _user32.AttachThreadInput.restype = _wintypes.BOOL
+    _kernel32 = ctypes.windll.kernel32
+    _kernel32.GetCurrentThreadId.restype = _wintypes.DWORD
+
+
+def _enum_visible_windows() -> set:
+    """快照当前所有可见顶层窗口的句柄，供 launch_vcredist_installer() 后
+    台线程"前后对比找新窗口"用。非 Windows 平台直接返回空集合。"""
+    if sys.platform != "win32":
+        return set()
+    hwnds = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, _wintypes.HWND, _wintypes.LPARAM)
+    def _callback(hwnd, _lparam):
+        if _user32.IsWindowVisible(hwnd):
+            hwnds.append(hwnd)
+        return True
+
+    _user32.EnumWindows(_callback, 0)
+    return set(hwnds)
+
+
+def _bring_new_window_to_front(before: set, timeout: float = 60.0) -> None:
+    """在后台线程里轮询，把安装向导真正弹出的那个新窗口抢到前台——真机
+    反馈过 vcredist_x86.exe 拉起后默认停在主窗口后面，用户看不到、以为
+    "点了没反应"。
+
+    vcredist_x86.exe 装系统级运行库需要管理员权限，非提权状态下启动会
+    先弹 UAC 确认框——那个框显示在"安全桌面"上，跟普通桌面是隔离的两个
+    会话，Win32 的 EnumWindows/SetForegroundWindow 天然够不着，也不需要
+    我们处理（系统自己会保证 UAC 框显示在最前面，这是操作系统的安全设
+    计，不是我们能绕过也不应该绕过的东西）。这里的轮询只在用户点完 UAC
+    之后、安装向导真正的窗口出现在普通桌面时才会命中，所以超时给得比较
+    宽松（默认 60 秒，够用户看到 UAC 框并做出选择）。
+
+    用"启动前后可见窗口快照做差集"而不是跟踪某一个固定 PID——
+    vcredist_x86.exe 是自解压引导程序，真正弹出向导界面的可能是它专门
+    释放出来运行的另一个子进程，PID 会变，靠前后窗口快照的差集更稳。
+    """
+    SW_RESTORE = 9
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.3)
+        for hwnd in _enum_visible_windows() - before:
+            if _user32.GetWindowTextLengthW(hwnd) == 0:
+                continue  # 没有标题的多半是系统/托盘辅助窗口，不是安装向导本体
+            try:
+                _user32.ShowWindow(hwnd, SW_RESTORE)
+                _force_foreground(hwnd)
+            except Exception:
+                pass
+            return
+
+
+def _force_foreground(hwnd) -> None:
+    """真机验证过光调 SetForegroundWindow 经常不生效——Windows 从
+    2000/XP 起就有一条反"抢焦点"限制：不是当前前台线程、也没有关联到当
+    前前台线程的进程，调 SetForegroundWindow 很多时候会被系统悄悄忽略
+    （只让对应任务栏图标闪一下，不会真的把窗口提到最前面），这是操作系
+    统刻意的安全设计，不是我们能力所不及。
+
+    标准绕过手法：用 AttachThreadInput 把当前线程的输入状态临时"挂"到
+    当前真正持有前台焦点的那个线程上，借用它拥有的"可以改前台窗口"权
+    限，改完立刻脱钩——这是装机向导/远程协助类工具通用的做法，不是取巧
+    的黑魔法，装完之后系统状态跟没挂过一样，不会有任何残留影响。"""
+    fg_hwnd = _user32.GetForegroundWindow()
+    fg_thread = _user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
+    cur_thread = _kernel32.GetCurrentThreadId()
+    attached = False
+    if fg_thread and fg_thread != cur_thread:
+        attached = bool(_user32.AttachThreadInput(cur_thread, fg_thread, True))
+    try:
+        _user32.SetForegroundWindow(hwnd)
+    finally:
+        if attached:
+            _user32.AttachThreadInput(cur_thread, fg_thread, False)
 
 
 def launch_vcredist_installer() -> bool:
@@ -105,13 +222,21 @@ def launch_vcredist_installer() -> bool:
     exe 这种控制台程序隐藏黑框用的，装到这个安装向导上没有意义）。装完
     需要重启 DSTCamp 才会生效（下次进页签重新探测）。
 
+    拉起之后另起一个后台线程把向导窗口抢到前台（见
+    _bring_new_window_to_front()）——真机反馈过默认停在 DSTCamp 主窗口
+    后面，用户看不到，以为点了没反应。这个线程是 daemon，不影响主程序
+    退出，找不到新窗口也就是安静地过期，不影响安装本身。
+
     返回是否成功拉起了安装进程；找不到安装包（理论上不该发生，除非打
     包缺失）才返回 False，调用方据此提示用户去官网自己下载。
     """
     if not _VCREDIST_EXE.exists():
         return False
     try:
+        before = _enum_visible_windows()
         subprocess.Popen([str(_VCREDIST_EXE)])
+        if sys.platform == "win32":
+            threading.Thread(target=_bring_new_window_to_front, args=(before,), daemon=True).start()
     except Exception:
         return False
     return True

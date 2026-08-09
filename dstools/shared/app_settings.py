@@ -14,6 +14,8 @@ _KEY_WEGAME_ROOT_PATH = "wegame_root_path"
 _KEY_STEAM_MODS_PATH = "steam_mods_path"
 _KEY_THEME_NAME = "theme_name"
 _DEFAULT_THEME_NAME = "gray"
+_KEY_FONT_STYLE_CHOICE = "font_style_choice"
+_DEFAULT_FONT_STYLE_CHOICE = "default"
 _KEY_PLAYER_NOTES = "player_notes"
 _KEY_MINIMIZE_ON_CLOSE = "minimize_on_close"
 _KEY_CACHE_USE_EXE_DIR = "cache_use_exe_dir"
@@ -135,6 +137,27 @@ def set_theme_name(name: str) -> None:
     """记住用户选定的界面主题名——下次启动时 gui/theme.py 据此初始化调色板。"""
     data = load_settings()
     data[_KEY_THEME_NAME] = name
+    save_settings(data)
+
+
+def get_font_style_choice() -> str:
+    """取用户上次选定的字体样式（"default"/"cute"），没设置过/值不认得
+    都退回默认（"default"，系统自带的微软雅黑）——字体样式是独立于颜
+    色主题的设置（跟自定义背景图片同一个思路，见 gui/theme.py 顶部说
+    明），不需要重启就能生效，校验交给 theme.py 自己的 dict.get(choice,
+    默认样式) 兜底，这个函数只管读写这个字符串。这个设置项以前是"字
+    重"（细体/常规/粗体），后来发现按钮变粗这个需求不需要全局字重开关
+    就能解决（见 theme.py 的 TButton 样式），字重那套整个删掉重做成了
+    现在的"字体样式"，键名也跟着换了（旧的 font_weight_choice 不再读
+    取，留在老用户 settings.json 里的旧值就是个不影响任何东西的孤儿字
+    段，不需要迁移）。"""
+    return load_settings().get(_KEY_FONT_STYLE_CHOICE, _DEFAULT_FONT_STYLE_CHOICE)
+
+
+def set_font_style_choice(choice: str) -> None:
+    """记住用户选定的字体样式——下次启动时 gui/theme.py 据此初始化。"""
+    data = load_settings()
+    data[_KEY_FONT_STYLE_CHOICE] = choice
     save_settings(data)
 
 

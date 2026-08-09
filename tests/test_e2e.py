@@ -45,6 +45,7 @@ from dstools.shared.app_settings import (
     get_cache_use_exe_dir, set_cache_use_exe_dir,
     get_backup_auto_enabled, set_backup_auto_enabled,
     set_backup_retention,
+    get_global_tokens, set_global_tokens,
 )
 from dstools.features.local_service.backup_manager import backup_dir, create_backup, restore_backup, list_backups
 from dstools.models import SaveSession, SaveSource
@@ -745,14 +746,21 @@ def test_cluster_copy():
     print("\n" + "=" * 60)
     print("Test 18: Cluster Copy (local save -> server save)")
 
+    # 应用户要求收紧成白名单（英文字母/数字/下划线，参照 Linux 主机名
+    # 那种严格程度）——中文/空格/连字符/文件系统特殊符号统统拒绝，
+    # "."/".."这两个曾经单独判的保留名现在也落在同一条 invalid_chars 里
+    # （纯句点不可能匹配这个白名单，不需要再单独判一次）。
     assert validate_cluster_folder_name("MyServer") is None
     assert validate_cluster_folder_name("Cluster_5") is None
     assert validate_cluster_folder_name("") == "empty"
     assert validate_cluster_folder_name("   ") == "empty"
     assert validate_cluster_folder_name("bad/name") == "invalid_chars"
-    assert validate_cluster_folder_name("..") == "reserved"
-    print("  PASS: validate_cluster_folder_name accepts arbitrary legal names, "
-          "rejects empty/illegal-char/reserved names (no Cluster_<N> format required)")
+    assert validate_cluster_folder_name("..") == "invalid_chars"
+    assert validate_cluster_folder_name("我的存档") == "invalid_chars"
+    assert validate_cluster_folder_name("my server") == "invalid_chars"
+    assert validate_cluster_folder_name("my-server") == "invalid_chars"
+    print("  PASS: validate_cluster_folder_name only accepts English letters/digits/underscore, "
+          "rejects Chinese/spaces/hyphens/other punctuation (no Cluster_<N> format required)")
 
     with tempfile.TemporaryDirectory() as tmp:
         klei_root = Path(tmp) / "klei_root"
@@ -786,6 +794,26 @@ def test_cluster_copy():
             assert False, "Copying onto an already-existing destination must raise"
         except FileExistsError:
             print("  PASS: copying onto an existing destination raises instead of overwriting")
+
+        # 真机反馈过的真实 bug：源本地存档偶尔会带一个已经存在、但内容
+        # 是空的 cluster_token.txt（比如以前手动建过又清空过）——旧逻辑
+        # 只判断"目标文件存不存在"，复制过去后 exists() 为真，就误判成
+        # "已经有 token 了"跳过自动填充，全局令牌池明明有值，新存档却
+        # 还是空 token，启动时报"没有设置令牌"。改成按 is_valid_token()
+        # 判断"内容像不像一个真令牌"，这里验证空文件也能被正确识别为
+        # "无效"，从全局令牌池里正常补上。
+        original_pool = get_global_tokens()
+        try:
+            fake_token = "x" * 30
+            set_global_tokens([fake_token])
+            (local_cluster / "cluster_token.txt").write_text("", encoding="utf-8")
+            dest3 = copy_local_cluster_to_server(local_cluster, klei_root, "Cluster_3")
+            assert read_token(dest3 / "cluster_token.txt") == fake_token, \
+                "源存档带的是空 cluster_token.txt，应该被判定为无效并从全局令牌池自动补上"
+            print("  PASS: copy_local_cluster_to_server treats an existing-but-empty "
+                  "cluster_token.txt as invalid and still auto-fills from the global token pool")
+        finally:
+            set_global_tokens(original_pool)
 
 
 def test_player_notes():
@@ -940,6 +968,34 @@ def test_world_categories_bilingual():
         print("  PASS: unknown key falls back to (\"other\", False, key)")
     finally:
         set_lang(original_lang)
+
+
+def test_world_ocean_frequency_labels():
+    """真机反馈过的真实 bug："世界设置→世界生成(仅查看)→敌对生物以及
+    刷新点"里"海草"(ocean_waterplant)这一项的取值直接显示成了原始字
+    符串 "ocean_default"，没翻译成中文。查过游戏自己的
+    scripts/map/customize.lua 源码确认：ocean_waterplant/ocean_seastack
+    这两个字段用的是"ocean_"+普通频率词的取值集合（never/rare/
+    uncommon/default/often/mostly/always/insane 各自加上 "ocean_" 前
+    缀），显示文案跟不带前缀的版本完全一样（源码里是
+    `{text = data.text, data = "ocean_"..data.data}`，文案字段原样复
+    用）。之前 render.py 的 _VALUE_LABELS 只补了 "ocean_uncommon" 一
+    个，漏了其它 7 档，包括这次实际触发问题的 "ocean_default"。"""
+    print("\n" + "=" * 60)
+    print("Test 37: World Ocean Frequency Value Labels")
+
+    from dstools.features.world.render import get_value_label
+
+    expected = {
+        "ocean_never": "无", "ocean_rare": "很少", "ocean_uncommon": "较少",
+        "ocean_default": "默认", "ocean_often": "经常", "ocean_mostly": "较多",
+        "ocean_always": "总是", "ocean_insane": "极多",
+    }
+    for raw_value, zh_label in expected.items():
+        got = get_value_label("ocean_waterplant", raw_value)
+        assert got == zh_label, f"{raw_value} 应该翻译成 {zh_label!r}，实际是 {got!r}"
+        assert got != raw_value, f"{raw_value} 不应该原样透出未翻译的原始字符串"
+    print("  PASS: get_value_label() 正确翻译全部 8 档 ocean_ 前缀频率取值，不再原样透出原始字符串")
 
 
 def test_custom_background():
@@ -1581,6 +1637,137 @@ def test_steam_library_folder_casing():
         print("  PASS: parse_library_folders() 优先采用 vdf 里的正确大小写，不被注册表的错误大小写覆盖")
 
 
+def test_font_style_switch():
+    """测试字体样式一键切换功能的核心逻辑（纯逻辑，不需要真实 Tk 窗口）。
+    这个功能原来是"细体/常规/粗体"三档字重切换，应用户反馈"按钮变粗
+    之后正文又显得太粗"，字重开关整个删掉重做成了字体*样式*切换（默
+    认微软雅黑 / 打包的开源可爱风字体"荆南麦圆体"），按钮的粗细改用
+    apply_theme() 里 TButton 样式单独固定 bold=True 解决，不再依赖全局
+    开关。这里验证：(a) shared/gui/fonts.py 的 set_font_style() 正确切
+    换 PIL 渲染用的字体文件路径，且切换后清空缓存；(b) theme.py 的
+    set_font_style_choice() 正确联动 FONT_FAMILY，并且同步更新了
+    fonts.py 那一侧（Tk 和 PIL 两条渲染路径不能各用各的字体）；(c) 字
+    体样式是跟颜色主题解耦的独立设置——切换颜色主题（set_theme()）不
+    会改动已经选好的样式；(d) font_tuple() 的显式 bold=True 覆盖依然
+    生效（不依赖任何全局字重状态）；(e) app_settings.py 的持久化读写
+    能正确往返；(f) 打包进 tools/fonts/ 的可爱风字体文件确实存在（防
+    止以后重构不小心把这个资源文件弄丢，PIL 侧会静默 fallback 到雅
+    黑，不会报错提醒，容易被忽略）。"""
+    print("\n" + "=" * 60)
+    print("Test 35: Font Style Switch")
+
+    from pathlib import Path
+
+    from dstools.shared.gui import fonts, theme
+    from dstools.shared import app_settings
+
+    cute_font_path = Path(__file__).resolve().parent.parent / "tools" / "fonts" / "KNMaiyuan-Regular.ttf"
+    assert cute_font_path.exists(), f"可爱风字体文件缺失: {cute_font_path}"
+    print("  PASS: tools/fonts/KNMaiyuan-Regular.ttf 确实打包在仓库里")
+
+    original_choice = theme.FONT_STYLE_CHOICE
+    try:
+        fonts.set_font_style("cute")
+        assert fonts.get_font_style() == "cute"
+        assert fonts.get_font(20) is not None, "切换样式后 PIL 侧仍应能正常取到字体对象"
+        print("  PASS: fonts.set_font_style() 切换 PIL 渲染用的字体文件并清空缓存")
+
+        theme.set_font_style_choice("cute")
+        assert theme.FONT_STYLE_CHOICE == "cute"
+        assert theme.FONT_FAMILY == "KN Maiyuan"
+        assert fonts.get_font_style() == "cute", "theme.set_font_style_choice() 必须同步联动 fonts.py 那一侧"
+        print("  PASS: theme.set_font_style_choice() 联动 Tk 侧(FONT_FAMILY)与 PIL 侧(fonts.py)")
+
+        theme.set_font_style_choice("default")
+        assert theme.FONT_FAMILY == "Microsoft YaHei UI Light"
+        assert theme.font_tuple(12) == ("Microsoft YaHei UI Light", 12), \
+            "没有显式 bold 参数时不应该额外带 bold 样式串"
+        assert theme.font_tuple(12, bold=True) == ("Microsoft YaHei UI Light", 12, "bold"), \
+            "显式 bold=True 是控件自身的强调，必须始终生效"
+        print("  PASS: font_tuple() 正确反映当前字体样式，且 bold=True 显式覆盖始终生效")
+
+        theme.set_font_style_choice("cute")
+        theme.set_theme("mint")
+        assert theme.FONT_STYLE_CHOICE == "cute", "字体样式是独立于颜色主题的设置，切主题不应该改动它"
+        theme.set_theme("gray")
+        assert theme.FONT_STYLE_CHOICE == "cute"
+        print("  PASS: 切换颜色主题(set_theme())不会连带改动已选好的字体样式")
+
+        # 应用户反馈：切到荆南麦圆体之后，整个应用（菜单/标签/按钮……）
+        # 字号完全没变，只有字体设置弹窗自己放大过的预览行看得出效果——
+        # 之前 set_font_style_choice() 只换了 FONT_FAMILY，没有跟着调整
+        # FONT_SIZE_XL/LG/MD/BASE/SM/XS 这套全局字号阶梯，荆南麦圆体笔
+        # 画粗壮，跟微软雅黑用一样的字号看着明显更拥挤。这里验证切到
+        # cute 后字号阶梯按 FONT_SIZE_SCALE_BY_STYLE 整体放大了，且切
+        # 换颜色主题不会打乱这个放大倍数。
+        theme.set_font_style_choice("default")
+        default_base = theme.FONT_SIZE_BASE
+        theme.set_font_style_choice("cute")
+        cute_scale = theme.FONT_SIZE_SCALE_BY_STYLE["cute"]
+        assert theme.FONT_SIZE_BASE == round(default_base * cute_scale), \
+            "字体样式切到 cute 后，全局字号阶梯必须按 FONT_SIZE_SCALE_BY_STYLE 整体放大"
+        assert theme.FONT_SIZE_BASE > default_base, "cute 的缩放系数应该让字号变大，不是不变或变小"
+        theme.set_theme("mint")
+        assert theme.FONT_SIZE_BASE == round(default_base * cute_scale), \
+            "切换颜色主题不应该打乱已经生效的字体样式缩放倍数"
+        theme.set_theme("gray")
+        print("  PASS: 字体样式切换会按比例放大全局字号阶梯，且不受颜色主题切换影响")
+
+        app_settings.set_font_style_choice("cute")
+        assert app_settings.get_font_style_choice() == "cute"
+        app_settings.set_font_style_choice("default")
+        assert app_settings.get_font_style_choice() == "default"
+        print("  PASS: app_settings.py 的字体样式持久化读写往返正确")
+    finally:
+        theme.set_font_style_choice(original_choice)
+        app_settings.set_font_style_choice(original_choice)
+
+
+def test_frp_selfhost_port_conflict_detection():
+    """真机反馈过的真实 bug：自建 frps 已经部署过一次（服务在跑，绑定
+    在端口 A），用户把绑定端口改成端口 B、B 又恰好被服务器上别的服务
+    （比如 sshd）占用时，之前"只要 dstcamp-frps 服务在跑就跳过端口冲
+    突检查"的判断会把这个真冲突放过去，装完/重启失败才暴露问题。
+
+    测试 probe.py 的 _parse_probe_output() 正确解析新增的 FRPSPORT 字
+    段（dstcamp-frps 当前实际绑定的端口，不是笼统的"服务在不在跑"），
+    并验证 tab.py._start_deploy() 里改用的判断条件
+    `port in used_ports and port != frps_bind_port`：目标端口是 frps
+    自己当前绑定的那个端口时不算冲突（复用现有安装的正常场景），改成
+    别的、被第三方服务占用的端口时才应该判定为冲突。"""
+    print("\n" + "=" * 60)
+    print("Test 36: Frp Selfhost Port Conflict Detection")
+
+    from dstools.features.frp_selfhost.probe import _parse_probe_output
+
+    output = (
+        "UID:1000\nSUDO:ok\nSERVICE:active\nCPU:2\nMEM:1024,512\n"
+        "PORTS:22,2323,7000,6010\nFRPSPORT:7000\n"
+    )
+    status = _parse_probe_output(output)
+    assert status.used_ports == frozenset({22, 2323, 7000, 6010})
+    assert status.frps_bind_port == 7000
+    assert status.service_active is True
+    print("  PASS: _parse_probe_output() 正确解析 FRPSPORT 字段(frps 当前实际绑定的端口)")
+
+    def is_conflict(target_port: int) -> bool:
+        return status.reachable and target_port in status.used_ports and target_port != status.frps_bind_port
+
+    assert is_conflict(2323) is True, "2323 被 sshd 占用、不是 frps 自己绑定的端口，必须判定为冲突"
+    assert is_conflict(7000) is False, "7000 就是 frps 自己当前绑定的端口，复用现有安装场景不能误判为冲突"
+    assert is_conflict(9999) is False, "9999 完全没被占用，不该判定为冲突"
+    print("  PASS: 冲突判断改用 frps_bind_port 比对后，服务在跑但改用新端口的真冲突不再被放过")
+
+    # 服务从没装过时 FRPSPORT 字段为空，frps_bind_port 应该是 None，
+    # 不能被误判等于任何整数端口。
+    output_never_deployed = "UID:1000\nSUDO:ok\nSERVICE:inactive\nCPU:2\nMEM:1024,512\nPORTS:22\nFRPSPORT:\n"
+    status2 = _parse_probe_output(output_never_deployed)
+    assert status2.frps_bind_port is None
+    assert (status2.reachable and 22 in status2.used_ports and 22 != status2.frps_bind_port) is True, \
+        "从没部署过 frps 时，端口被其它服务占用也应该判定为冲突"
+    print("  PASS: 从没部署过 frps 时 frps_bind_port 为 None，不会跟任何端口误判相等")
+
+
 def main():
     """运行全部测试。"""
     print("\n" + "█" * 60)
@@ -1623,6 +1810,9 @@ def main():
         test_frpc_manager_key_convention,
         test_luajit_injector,
         test_steam_library_folder_casing,
+        test_font_style_switch,
+        test_frp_selfhost_port_conflict_detection,
+        test_world_ocean_frequency_labels,
     ]
 
     for test in tests:

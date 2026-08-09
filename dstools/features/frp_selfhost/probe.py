@@ -34,10 +34,22 @@ fi
 echo "CPU:$(nproc 2>/dev/null)"
 free -m 2>/dev/null | awk '/^Mem:/{print "MEM:"$2","$3}'
 if command -v ss >/dev/null 2>&1; then
-    echo "PORTS:$(ss -Htlun 2>/dev/null | awk '{print $5}' | awk -F: '{print $NF}' | sort -un | tr '\\n' ',')"
+    # 按固定列号取"本地地址:端口"这一列并不可靠——不同发行版/iproute2
+    # 版本 ss 的输出到底有没有 Netid 这一列并不统一，列号一旦偏了会整
+    # 段取到"对端地址:端口"（LISTEN/UNCONN 状态下永远是通配符，取到的
+    # 端口全是非数字，被 Python 侧 isdigit() 过滤掉，等于白测）。改成
+    # 不认列号，只认"以冒号+纯数字结尾"这个特征——那一列不管排第几都
+    # 只可能是本地地址:端口（对端在这两种状态下固定是 ":*"，不会匹配）。
+    echo "PORTS:$(ss -Htlun 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i ~ /:[0-9]+$/) print $i}' | awk -F: '{print $NF}' | sort -un | tr '\\n' ',')"
 else
     echo "PORTS:"
 fi
+# dstcamp-frps 当前实际绑定的端口（不是"服务在不在跑"这种布尔值）——
+# 给客户端判断"目标端口被占用了，但占用者就是 frps 自己"用，不能靠
+# service_active 这个粗粒度状态（服务在跑不代表跑的就是这次要用的端
+# 口，见 gui 端 _start_deploy() 的说明）。装都没装过时这个文件不存
+# 在，grep 找不到东西，字段留空，调用方按"没有正在用的端口"处理。
+echo "FRPSPORT:$(grep -oP '^bindPort\\s*=\\s*\\K[0-9]+' /opt/dstcamp-frp/frps.toml 2>/dev/null)"
 """.strip()
 
 
@@ -51,6 +63,7 @@ class ServerStatus:
     mem_total_mb: int | None = None
     mem_used_mb: int | None = None
     used_ports: frozenset = field(default_factory=frozenset)
+    frps_bind_port: int | None = None  # dstcamp-frps 当前实际绑定的端口，供冲突判断用
     checked_at: float = 0.0
 
 
@@ -73,6 +86,8 @@ def _parse_probe_output(output: str) -> ServerStatus:
         mem_total_mb, mem_used_mb = int(total_s), int(used_s)
 
     used_ports = frozenset(int(p) for p in fields.get("PORTS", "").split(",") if p.isdigit())
+    frps_port_s = fields.get("FRPSPORT", "").strip()
+    frps_bind_port = int(frps_port_s) if frps_port_s.isdigit() else None
 
     return ServerStatus(
         reachable=True,
@@ -82,6 +97,7 @@ def _parse_probe_output(output: str) -> ServerStatus:
         mem_total_mb=mem_total_mb,
         mem_used_mb=mem_used_mb,
         used_ports=used_ports,
+        frps_bind_port=frps_bind_port,
         checked_at=time.time(),
     )
 

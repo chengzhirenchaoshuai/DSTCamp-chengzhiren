@@ -136,9 +136,25 @@ _VALUE_LABELS = {
     "enabled": {"zh": "总是", "en": "Enabled"},
     "auto": {"zh": "自动", "en": "Auto"},
     "uncommon": {"zh": "较少", "en": "Uncommon"},
-    "ocean_uncommon": {"zh": "较少", "en": "Uncommon"},
     "mostly": {"zh": "较多", "en": "Mostly"},
     "insane": {"zh": "极多", "en": "Insane"},
+    # ocean_waterplant（海草）/ocean_seastack 这两个"世界生成(仅查看)"
+    # 字段用的是独立的一套频率取值，不是"never"/"rare"/"default"这些普
+    # 通值——真机核对过游戏自己的 scripts/map/customize.lua：
+    # `ocean_worldgen_frequency_descriptions[i] = {text = data.text, data
+    # = "ocean_"..data.data}`，是拿 worldgen_frequency_descriptions 原样
+    # 复制一份文案、只在取值前面加"ocean_"前缀，显示文字和不带前缀的版
+    # 本完全一样，不是另一套语义。之前只补了 "ocean_uncommon" 一个，其
+    # 它几档漏了（真机反馈过："海草"这一项的值直接显示成了原始字符串
+    # "ocean_default"，没翻译成中文）。
+    "ocean_never": {"zh": "无", "en": "Never"},
+    "ocean_rare": {"zh": "很少", "en": "Rare"},
+    "ocean_uncommon": {"zh": "较少", "en": "Uncommon"},
+    "ocean_default": {"zh": "默认", "en": "Default"},
+    "ocean_often": {"zh": "经常", "en": "Often"},
+    "ocean_mostly": {"zh": "较多", "en": "Mostly"},
+    "ocean_always": {"zh": "总是", "en": "Always"},
+    "ocean_insane": {"zh": "极多", "en": "Insane"},
     "least": {"zh": "最少", "en": "Least"},
     "most": {"zh": "最多", "en": "Most"},
     "classic": {"zh": "经典", "en": "Classic"},

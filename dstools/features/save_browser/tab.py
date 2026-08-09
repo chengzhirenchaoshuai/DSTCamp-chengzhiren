@@ -31,9 +31,6 @@ from dstools.shared.gui.toolbar_widgets import make_toolbar_label
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
-# "每个玩家角色状态"小节标题的字号（"世界信息"标题应用户要求删掉了，
-# 不用再跟它保持一致，但字号常量还留着给"每个玩家角色状态"单独用）。
-_SECTION_HEADER_FONT = ("", 11, "bold")
 
 # 页面顶部各区块统一用的左右留白，必须用同一个值，不然会出现"卡片跟
 # 下面对不齐"的问题。
@@ -74,14 +71,21 @@ class _CopyToServerDialog:
         # 性质的错误文字 10——之前字段标签那行漏配字号，跟其它几行不一
         # 致，混在一起看着比较乱。
         ttk.Label(win, text=t("save.copy_dialog_prompt", name=source_name),
-                  font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE), wraplength=WIN_W - 40, justify=tk.LEFT).pack(
+                  font=theme.font_tuple(theme.FONT_SIZE_BASE), wraplength=WIN_W - 40, justify=tk.LEFT).pack(
             anchor=tk.W, padx=20, pady=(20, 8))
-        ttk.Label(win, text=t("save.copy_name_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(anchor=tk.W, padx=20)
+        ttk.Label(win, text=t("save.copy_name_label"), font=theme.font_tuple(theme.FONT_SIZE_BASE)).pack(anchor=tk.W, padx=20)
         self.var = tk.StringVar(value=suggested_name)
-        entry = ttk.Entry(win, textvariable=self.var, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE))
-        entry.pack(fill=tk.X, padx=20, pady=(2, 6))
+        entry = ttk.Entry(win, textvariable=self.var, font=theme.font_tuple(theme.FONT_SIZE_BASE))
+        entry.pack(fill=tk.X, padx=20, pady=(2, 2))
+        # 常驻的小字提示（不是校验失败才出现的错误文字）——应用户要求把
+        # 文件夹名字符集收紧成白名单（英文字母/数字/下划线，参照 Linux
+        # 主机名那种严格程度）之后，提前把规则亮出来，不用等用户输入错
+        # 了才看到报错。用 TEXT_MUTED 而不是 ERROR 的颜色，跟下面真正的
+        # 校验错误提示区分开——一个是"提前说明规则"，一个是"这次真的错了"。
+        ttk.Label(win, text=t("save.copy_name_hint"), foreground=theme.TEXT_MUTED,
+                  font=theme.font_tuple(theme.FONT_SIZE_XS)).pack(anchor=tk.W, padx=20, pady=(0, 4))
         self.err_var = tk.StringVar()
-        ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20)
+        ttk.Label(win, textvariable=self.err_var, foreground=theme.ERROR, font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20)
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
@@ -160,14 +164,14 @@ class _RestoreBackupDialog:
         win.configure(background=theme.BG_SOFT)
         WIN_W = 560
 
-        ttk.Label(win, text=t("save.restore_prompt"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+        ttk.Label(win, text=t("save.restore_prompt"), font=theme.font_tuple(theme.FONT_SIZE_BASE),
                   wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
 
         list_frame = ttk.Frame(win)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        listbox = tk.Listbox(list_frame, height=12, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE),
+        listbox = tk.Listbox(list_frame, height=12, font=theme.font_tuple(theme.FONT_SIZE_BASE),
                              yscrollcommand=scrollbar.set, exportselection=False)
         listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.configure(command=listbox.yview)
@@ -178,7 +182,7 @@ class _RestoreBackupDialog:
 
         self._detail_var = tk.StringVar()
         ttk.Label(win, textvariable=self._detail_var, foreground=theme.TEXT_MUTED, justify=tk.LEFT,
-                 wraplength=WIN_W - 40, font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20, pady=(0, 8))
+                 wraplength=WIN_W - 40, font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20, pady=(0, 8))
 
         listbox.bind("<<ListboxSelect>>", self._on_select)
         listbox.selection_set(0)
@@ -257,7 +261,7 @@ class _BackupPolicyDialog:
 
         row0 = ttk.Frame(win)
         row0.pack(fill=tk.X, padx=20, pady=(20, 4))
-        ttk.Label(row0, text=t("save.backup_auto_enabled_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
+        ttk.Label(row0, text=t("save.backup_auto_enabled_label"), font=theme.font_tuple(theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
         self._auto_enabled_var = tk.BooleanVar(value=get_backup_auto_enabled())
 
         def _on_auto_toggle():
@@ -267,32 +271,32 @@ class _BackupPolicyDialog:
 
         ToggleSwitch(row0, variable=self._auto_enabled_var, command=_on_auto_toggle).pack(side=tk.RIGHT)
         ttk.Label(win, text=t("save.backup_auto_enabled_hint"), foreground=theme.TEXT_MUTED,
-                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
+                 font=theme.font_tuple(theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
 
         row1 = ttk.Frame(win)
         row1.pack(fill=tk.X, padx=20, pady=(14, 4))
-        ttk.Label(row1, text=t("save.backup_retention_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
+        ttk.Label(row1, text=t("save.backup_retention_label"), font=theme.font_tuple(theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
         self._retention_var = tk.StringVar(value=str(get_backup_retention()))
         ttk.Entry(row1, textvariable=self._retention_var, width=8, validate="key", validatecommand=vcmd,
-                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.RIGHT)
+                 font=theme.font_tuple(theme.FONT_SIZE_BASE)).pack(side=tk.RIGHT)
         ttk.Label(win, text=t("save.backup_retention_hint"), foreground=theme.TEXT_MUTED,
-                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
+                 font=theme.font_tuple(theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
 
         row2 = ttk.Frame(win)
         row2.pack(fill=tk.X, padx=20, pady=(14, 4))
-        ttk.Label(row2, text=t("save.backup_interval_label"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
+        ttk.Label(row2, text=t("save.backup_interval_label"), font=theme.font_tuple(theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
         self._interval_var = tk.StringVar(value=str(get_backup_interval_minutes()))
         interval_entry = ttk.Entry(row2, textvariable=self._interval_var, width=8, validate="key", validatecommand=vcmd,
-                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE))
+                 font=theme.font_tuple(theme.FONT_SIZE_BASE))
         interval_entry.pack(side=tk.RIGHT)
         if not self._auto_enabled_var.get():
             interval_entry.configure(state=tk.DISABLED)
         ttk.Label(win, text=t("save.backup_interval_hint"), foreground=theme.TEXT_MUTED,
-                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
+                 font=theme.font_tuple(theme.FONT_SIZE_SM), wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20)
 
         self._err_var = tk.StringVar()
         ttk.Label(win, textvariable=self._err_var, foreground=theme.ERROR,
-                 font=(theme.FONT_FAMILY, theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20, pady=(8, 0))
+                 font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(anchor=tk.W, padx=20, pady=(8, 0))
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
@@ -456,7 +460,7 @@ class SaveBrowserTab:
         players_header_row.pack(fill=tk.X, padx=10, pady=(3,0))
         self._players_header_label = make_toolbar_label(players_header_row, self.app,
                                                            lambda: t("save.players_section"),
-                                                           font=_SECTION_HEADER_FONT)
+                                                           bold=True)
         players_outer = self._players_outer = BgFrame(pf, self.app, bg=theme.CARD_BG)
         players_outer.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0,4))
         self._players_canvas = players_canvas = BgFrame(players_outer, self.app, bg=theme.CARD_BG)
@@ -769,15 +773,15 @@ class SaveBrowserTab:
         body = tk.Frame(outer, background=bg)
 
         if player.parse_error:
-            tk.Label(body, text=f"{t('save.player_id_label')}: {player.player_id}", font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE, "bold"),
+            tk.Label(body, text=f"{t('save.player_id_label')}: {player.player_id}", font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
                     fg=theme.TEXT, background=bg, anchor=tk.W).pack(fill=tk.X)
-            tk.Label(body, text=t("save.player_parse_error"), font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS), fg=theme.ERROR,
+            tk.Label(body, text=t("save.player_parse_error"), font=theme.font_tuple(theme.FONT_SIZE_XS), fg=theme.ERROR,
                     background=bg, anchor=tk.W).pack(fill=tk.X)
             self._build_player_id_row(body, player, bg, id_col_width)
         else:
             header = tk.Frame(body, background=bg)
             header.pack(fill=tk.X)
-            tk.Label(header, text=name, font=(theme.FONT_FAMILY, theme.FONT_SIZE_BASE, "bold"), fg=theme.TEXT,
+            tk.Label(header, text=name, font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True), fg=theme.TEXT,
                     background=bg, anchor=tk.W).pack(side=tk.LEFT)
 
             self._build_player_id_row(body, player, bg, id_col_width)
@@ -792,7 +796,7 @@ class SaveBrowserTab:
                 f"{t('save.stat_hunger')}: {fmt(player.hunger)}   "
                 f"{t('save.stat_temperature')}: {fmt(player.temperature)}"
             )
-            tk.Label(body, text=stats, font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS), fg=theme.TEXT_MUTED, background=bg, anchor=tk.W).pack(fill=tk.X)
+            tk.Label(body, text=stats, font=theme.font_tuple(theme.FONT_SIZE_XS), fg=theme.TEXT_MUTED, background=bg, anchor=tk.W).pack(fill=tk.X)
 
         if icon_path:
             body.update_idletasks()
@@ -849,10 +853,10 @@ class SaveBrowserTab:
 
         note_frame = tk.Frame(id_row, background=bg)
         note_frame.pack(side=tk.LEFT, padx=(12,0))
-        tk.Label(note_frame, text=f"{t('save.player_note_label')}:", font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS),
+        tk.Label(note_frame, text=f"{t('save.player_note_label')}:", font=theme.font_tuple(theme.FONT_SIZE_XS),
                 fg=theme.TEXT_MUTED, background=bg).pack(side=tk.LEFT)
         note_var = tk.StringVar(value=get_player_note(player.player_id))
-        note_entry = ttk.Entry(note_frame, textvariable=note_var, width=16, font=(theme.FONT_FAMILY, theme.FONT_SIZE_XS))
+        note_entry = ttk.Entry(note_frame, textvariable=note_var, width=16, font=theme.font_tuple(theme.FONT_SIZE_XS))
         note_entry.pack(side=tk.LEFT, padx=(4,0))
 
         def _save_note(event=None, pid=player.player_id, var=note_var):
@@ -921,7 +925,7 @@ class SaveBrowserTab:
         # 后剩的 Klei 根目录也删了）。整节结构改成跟下面"每个玩家角色状
         # 态"（pf/players_header_row/players_outer）同一套嵌套：外层
         # env_section（padx=_PAGE_PADX） -> env_header_row（标题"基本信
-        # 息"，padx=10，字号/样式用 _SECTION_HEADER_FONT，跟"每个玩家角
+        # 息"，padx=10，make_toolbar_label(bold=True)，跟"每个玩家角
         # 色状态"标题保持一致）-> _selected_cluster_frame（实际内容，
         # padx=10，对应 players_outer，只是内容固定、不需要滚动条）。
         env_section = BgFrame(parent, self.app, bg=theme.CARD_BG)
@@ -930,7 +934,7 @@ class SaveBrowserTab:
         env_header_row.pack(fill=tk.X, padx=10, pady=(3,0))
         self._env_header_label = make_toolbar_label(env_header_row, self.app,
                                                        lambda: t("save.basic_info"),
-                                                       font=_SECTION_HEADER_FONT)
+                                                       bold=True)
         self._restore_btn = ttk.Button(env_header_row, text=t("save.restore_backup"), command=self._on_restore_backup)
         self._restore_btn.pack(side=tk.RIGHT, padx=(0, 2))
         self._backup_btn = ttk.Button(env_header_row, text=t("save.backup_now"), command=self._on_backup_now)
@@ -1026,7 +1030,7 @@ class SaveBrowserTab:
         game_mode = next((disp for raw, disp in game_mode_choices if raw == game_mode_raw), game_mode_raw)
         max_players = config.gameplay.get("max_players", "?")
         cluster_name = config.network.get("cluster_name", "?")
-        info_font = (theme.FONT_FAMILY, theme.FONT_SIZE_XS)
+        info_font = theme.font_tuple(theme.FONT_SIZE_XS)
         # "存档位置"这行应用户要求挪到最前面、加上"存档位置："前缀，字
         # 体跟下面"游戏模式"/"Caves(...)"两行保持一致——原来用的是
         # Consolas 8 号（等宽字体，为了路径对齐），现在统一成同一个字体
