@@ -36,6 +36,10 @@ class WorldCreationPlan:
     caves: WorldShardPlan
     cluster_ini: ClusterConfig = field(default_factory=ClusterConfig)
     mod_ids: frozenset[str] = frozenset()
+    # workshop id -> modoverrides.lua entry.  This is intentionally kept
+    # separate from the id set so the creation wizard can preserve each mod's
+    # graphical configuration_options without coupling itself to a live save.
+    mod_overrides: dict[str, dict] = field(default_factory=dict)
 
 
 def validate_creation_plan(plan: WorldCreationPlan) -> None:
@@ -46,6 +50,13 @@ def validate_creation_plan(plan: WorldCreationPlan) -> None:
     if plan.caves.location != CAVE_LOCATION:
         raise ValueError("Caves 必须使用 cave 世界")
     normalized = {str(value).removeprefix("workshop-") for value in plan.mod_ids}
+    for value, entry in plan.mod_overrides.items():
+        mod_id = str(value).removeprefix("workshop-")
+        enabled = not isinstance(entry, dict) or bool(entry.get("enabled", True))
+        if enabled:
+            normalized.add(mod_id)
+        else:
+            normalized.discard(mod_id)
     if plan.master.location == PORKLAND_LOCATION and PORKLAND_MOD_ID not in normalized:
         raise ValueError("猪镇世界必须启用 3322803908 Mod")
 
@@ -54,7 +65,12 @@ def _write_lua(path: Path, data: dict) -> None:
     path.write_text(serialize_lua_table(data) + "\n", encoding="utf-8")
 
 
-def _write_shard(root: Path, shard: WorldShardPlan, mod_ids: frozenset[str]) -> None:
+def _write_shard(
+    root: Path,
+    shard: WorldShardPlan,
+    mod_ids: frozenset[str],
+    mod_overrides: dict[str, dict],
+) -> None:
     root.mkdir(parents=True, exist_ok=True)
     raw = {
         "id": shard.preset_id,
@@ -64,10 +80,20 @@ def _write_shard(root: Path, shard: WorldShardPlan, mod_ids: frozenset[str]) -> 
         "overrides": dict(shard.overrides),
     }
     _write_lua(root / "leveldataoverride.lua", raw)
-    overrides = {
-        (value if str(value).startswith("workshop-") else f"workshop-{value}"): {"enabled": True}
-        for value in mod_ids
-    }
+    def _mod_key(value) -> str:
+        text = str(value)
+        if text.startswith("workshop-") or not text.isdigit():
+            return text
+        # Keep the historical convenience for callers that pass a bare
+        # numeric Workshop id, while preserving non-numeric local mod names.
+        return f"workshop-{text}"
+
+    overrides = {_mod_key(value): {"enabled": True} for value in mod_ids}
+    for value, entry in mod_overrides.items():
+        key = _mod_key(value)
+        data = dict(entry) if isinstance(entry, dict) else {}
+        data.setdefault("enabled", True)
+        overrides[key] = data
     _write_lua(root / "modoverrides.lua", overrides)
 
 
@@ -83,8 +109,8 @@ def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
         write_cluster_ini(plan.cluster_ini, temp_dir / "cluster.ini")
         (temp_dir / "cluster_token.txt").write_text("", encoding="utf-8")
         (temp_dir / "adminlist.txt").write_text("", encoding="utf-8")
-        _write_shard(temp_dir / "Master", plan.master, plan.mod_ids)
-        _write_shard(temp_dir / "Caves", plan.caves, plan.mod_ids)
+        _write_shard(temp_dir / "Master", plan.master, plan.mod_ids, plan.mod_overrides)
+        _write_shard(temp_dir / "Caves", plan.caves, plan.mod_ids, plan.mod_overrides)
         os.replace(temp_dir, destination)
         return destination
     except Exception:

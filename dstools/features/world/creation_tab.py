@@ -1,9 +1,11 @@
 """Standalone create-world tab reusing the existing world renderer."""
 
+import copy
 import tkinter as tk
-from pathlib import Path
-import re
+import webbrowser
 from tkinter import ttk
+
+from PIL import Image
 
 from dstools.features.world.creation import WorldCreationPlan, create_world
 from dstools.features.world.defaults import default_plans_from_cluster, find_verified_template
@@ -14,11 +16,20 @@ from dstools.features.world.render import REF_WIDTH, render_world_panel
 from dstools.features.world.reader import WorldOverride, WorldPreset
 from dstools.features.world.value_sets import get_value_set
 from dstools.features.world.view_model import build_world_view_model
-from dstools.features.mod.sync import get_enabled_mod_ids
+from dstools.features.mod.icons import get_mod_icon_path
+from dstools.features.mod.parser import (
+    find_mod_folder,
+    list_installed_mod_ids,
+    parse_modinfo,
+    resolve_wegame_client_mods_dir,
+)
+from dstools.features.mod.render import render_mod_list
+from dstools.features.mod.tab import ModConfigDialog
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.toolbar_widgets import make_toolbar_label
 from dstools.i18n import t
+from dstools.models import ModEntry, Platform
 
 
 class WorldCreationTab:
@@ -31,7 +42,14 @@ class WorldCreationTab:
         self._mod_settings = {}
         self._template_root = None
         self._selected_mod_ids: set[str] = set()
-        self._mod_vars: dict[str, tk.BooleanVar] = {}
+        self._mod_overrides: dict[str, dict] = {}
+        self._mod_data: dict[str, ModEntry] = {}
+        self._mod_infos = {}
+        self._icon_imgs = {}
+        self._icon_thumb_cache = {}
+        self._full_resolved_cache = {}
+        self._mod_panel = None
+        self._mod_scan_status = None
         self._build()
 
     def _build(self):
@@ -67,10 +85,16 @@ class WorldCreationTab:
         header = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         header.pack(fill=tk.X, padx=12, pady=10)
         make_toolbar_label(header, self.app, lambda: "创建存档 Mod").pack(side=tk.LEFT)
-        ttk.Label(header, text="此列表独立于其他存档").pack(side=tk.LEFT, padx=12)
-        self.porkland_mod_var = tk.BooleanVar(value=False)
+        ttk.Label(header, text="独立于主页 Mod 管理，仅作用于正在创建的存档").pack(side=tk.LEFT, padx=12)
+        ttk.Button(header, text="重新扫描", command=self._scan_installed_mods).pack(side=tk.RIGHT)
+        self._mod_scan_status = tk.StringVar(value="正在读取已安装 Mod…")
+        ttk.Label(header, textvariable=self._mod_scan_status,
+                  foreground=theme.TEXT_MUTED).pack(side=tk.RIGHT, padx=10)
         self._mod_list_frame = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         self._mod_list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
+        from dstools.shared.gui.image_scroll import ImageScrollPanel
+        self._mod_panel = ImageScrollPanel(self._mod_list_frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
+        self._mod_panel.frame.pack(fill=tk.BOTH, expand=True)
         self._build_mod_list()
 
     def _reload_template(self):
@@ -96,45 +120,135 @@ class WorldCreationTab:
         return set(self._selected_mod_ids)
 
     def _build_mod_list(self):
-        """从本机 Steam Workshop 扫描 Mod，创建页独立维护勾选状态。"""
-        candidates = []
-        for base in (Path("F:/MyGamePath/SteamGames/steamapps/workshop/content/322330"),):
-            if base.is_dir():
-                candidates.extend(sorted(p for p in base.iterdir() if p.is_dir() and p.name.isdigit()))
-        for child in self._mod_list_frame.winfo_children(): child.destroy()
-        make_toolbar_label(self._mod_list_frame, self.app, lambda: "可选 Mod").pack(side=tk.LEFT)
-        for mod_dir in candidates:
-            text = mod_dir.name
-            info = mod_dir / "modinfo.lua"
-            if info.exists():
-                match = re.search(r"name\s*=\s*[\"']([^\"']+)", info.read_text(encoding="utf-8", errors="ignore"))
-                if match: text = f"{match.group(1)} ({mod_dir.name})"
-            var = self._mod_vars.setdefault(mod_dir.name, tk.BooleanVar(value=False))
-            ttk.Checkbutton(self._mod_list_frame, text=text, variable=var,
-                            command=lambda mid=mod_dir.name, v=var: self._toggle_mod(mid, v)).pack(side=tk.LEFT, padx=4)
+        """扫描并渲染已安装 Mod，使用主页 Mod 管理的同一套图形列表。"""
+        self._scan_installed_mods()
 
-    def _toggle_mod(self, mod_id, var):
-        if var.get(): self._selected_mod_ids.add(mod_id)
-        else: self._selected_mod_ids.discard(mod_id)
-        if mod_id == "3322803908":
-            self.porkland_mod_var.set(var.get())
+    def _scan_installed_mods(self):
+        """重新读取本机 Mod 元数据；创建页不读取或修改主页当前存档。"""
+        platform, client_mods_dir = self._resolve_mod_folder_args(None)
+        ids = []
+        seen = set()
+        for raw_id in list_installed_mod_ids(platform, client_mods_dir):
+            mod_id = str(raw_id)
+            if mod_id not in seen:
+                seen.add(mod_id)
+                ids.append(mod_id)
+
+        self._mod_data.clear()
+        self._mod_infos.clear()
+        self._icon_imgs.clear()
+        self._icon_thumb_cache.clear()
+        for mod_id in ids:
+            folder = find_mod_folder(mod_id, platform, client_mods_dir)
+            info = parse_modinfo(folder) if folder else None
+            self._mod_infos[mod_id] = info
+            configured = self._mod_overrides.get(mod_id, {})
+            entry = ModEntry(
+                workshop_id=mod_id,
+                enabled=mod_id in self._selected_mod_ids,
+                configuration_options=copy.deepcopy(configured.get("configuration_options", {})),
+                name=info.name if info else "",
+                description=info.description if info else "",
+            )
+            self._mod_data[mod_id] = entry
+            if info and folder:
+                try:
+                    icon_path = get_mod_icon_path(info, folder, platform)
+                    if icon_path and icon_path.exists():
+                        with Image.open(icon_path) as icon:
+                            self._icon_imgs[mod_id] = icon.convert("RGBA")
+                except Exception:
+                    pass
+
+        if self._mod_scan_status is not None:
+            self._mod_scan_status.set(f"已发现 {len(ids)} 个 Mod")
+        self._render_list()
+
+    def _render_list(self):
+        if self._mod_panel is None:
+            return
+        from dstools.features.mod.render import REF_WIDTH
+        rows = []
+        for mod_id, mod in self._mod_data.items():
+            info = self._mod_infos.get(mod_id)
+            rows.append({
+                "workshop_id": mod_id,
+                "name": info.name if info else mod.name,
+                "enabled": bool(mod.enabled),
+                "has_config": bool(info and (info.config_options or info.unsupported_schema)),
+                "has_link": mod_id.removeprefix("workshop-").isdigit(),
+            })
+        rows.sort(key=lambda row: (row["name"] or row["workshop_id"]).casefold())
+        img, hits, hovers = render_mod_list(
+            rows,
+            self._icon_imgs,
+            on_toggle=self._toggle_mod,
+            on_config=self._open_mod_config,
+            on_link=self._open_mod_link,
+            ref_width=REF_WIDTH,
+            icon_thumb_cache=self._icon_thumb_cache,
+        )
+        self._mod_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
+
+    def _toggle_mod(self, mod_id):
+        mod = self._mod_data.get(mod_id)
+        if mod is None:
+            return
+        mod.enabled = not mod.enabled
+        if mod.enabled:
+            self._selected_mod_ids.add(mod_id)
+        else:
+            self._selected_mod_ids.discard(mod_id)
+        self._save_mods(silent=True)
         self.location_combo["values"] = available_master_locations(self._selected_mod_ids)
         if self.location_var.get() not in self.location_combo["values"]:
             self.location_var.set("forest")
         self._reload_template()
+        self._render_list()
 
-    def _on_mod_toggle(self):
-        if self.porkland_mod_var.get():
-            self._selected_mod_ids.add("3322803908")
+    def _open_mod_config(self, mod_id):
+        mod = self._mod_data.get(mod_id)
+        info = self._mod_infos.get(mod_id)
+        if not mod or not info or not (info.config_options or info.unsupported_schema):
+            return
+        ModConfigDialog(self, mod_id, mod, info)
+
+    def _open_mod_link(self, mod_id):
+        numeric_id = str(mod_id).removeprefix("workshop-")
+        if not numeric_id.isdigit():
+            return
+        platform, _ = self._resolve_mod_folder_args(None)
+        if platform == Platform.WEGAME:
+            webbrowser.open(f"https://www.wegame.com.cn/pc_game/assistant.html#/2000004/newMod/{numeric_id}")
         else:
-            self._selected_mod_ids.discard("3322803908")
-        if "3322803908" in self._mod_vars:
-            self._mod_vars["3322803908"].set(self.porkland_mod_var.get())
-        values = available_master_locations(self._selected_mod_ids)
-        self.location_combo["values"] = values
-        if self.location_var.get() not in values:
-            self.location_var.set(values[0])
-        self._reload_template()
+            webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
+
+    def _sync_mod_overrides(self):
+        self._mod_overrides = {}
+        for mod_id, mod in self._mod_data.items():
+            if not mod.enabled:
+                continue
+            entry = {"enabled": True}
+            if mod.configuration_options:
+                entry["configuration_options"] = copy.deepcopy(mod.configuration_options)
+            self._mod_overrides[mod_id] = entry
+
+    # ModConfigDialog is shared with the home tab.  These small adapter
+    # methods give it the same save/refresh contract while keeping all writes
+    # in memory until the user clicks “创建存档”.
+    def _mark_dirty(self):
+        if self.status_var.get().startswith("已加载"):
+            self.status_var.set("Mod 配置已修改，创建存档时写入")
+
+    def _save_mods(self, silent=False):
+        self._sync_mod_overrides()
+
+    def _get_cluster(self):
+        return None
+
+    def _resolve_mod_folder_args(self, _cluster):
+        platform = self.app._get_platform_filter() if hasattr(self.app, "_get_platform_filter") else Platform.STEAM
+        return platform, resolve_wegame_client_mods_dir(platform)
 
     def _render(self):
         plan = self._active_preset()
@@ -186,7 +300,17 @@ class WorldCreationTab:
             if self._template_root is None:
                 raise FileNotFoundError("未找到默认世界模板")
             root = self._template_root.parent
-            out = create_world(WorldCreationPlan(name, self._plan_master, self._plan_caves, mod_ids=frozenset(self._enabled_mod_ids())), root)
+            self._sync_mod_overrides()
+            out = create_world(
+                WorldCreationPlan(
+                    name,
+                    self._plan_master,
+                    self._plan_caves,
+                    mod_ids=frozenset(self._enabled_mod_ids()),
+                    mod_overrides=copy.deepcopy(self._mod_overrides),
+                ),
+                root,
+            )
             dlg.show_info(self.app.root, "创建存档", f"已创建：{out}")
         except Exception as exc:
             dlg.show_error(self.app.root, "创建存档失败", str(exc))
