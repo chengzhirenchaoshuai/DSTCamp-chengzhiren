@@ -10,7 +10,7 @@ from dstools.features.world.location_selector import available_master_locations
 from dstools.features.world.mod_settings import get_mod_world_settings
 from dstools.features.world.categories import CATEGORY_COLORS
 from dstools.features.world.render import REF_WIDTH, render_world_panel
-from dstools.features.world.reader import WorldOverride
+from dstools.features.world.reader import WorldOverride, WorldPreset
 from dstools.features.world.value_sets import get_value_set
 from dstools.features.world.view_model import build_world_view_model
 from dstools.features.mod.sync import get_enabled_mod_ids
@@ -83,7 +83,14 @@ class WorldCreationTab:
         return get_enabled_mod_ids(cluster) if cluster else set()
 
     def _render(self):
-        preset = self._active_preset()
+        plan = self._active_preset()
+        if not plan:
+            return
+        preset = WorldPreset(
+            preset_id=plan.preset_id, name=plan.name,
+            description=plan.description, location=plan.location,
+            overrides=[WorldOverride(key, value) for key, value in plan.overrides.items()],
+        )
         view = build_world_view_model(preset, self._mod_settings, [])
         self._rules_by_cat, self._rules_cats = view.rules_by_category, view.rule_categories
         self._gen_by_cat, self._gen_cats = view.generation_by_category, view.generation_categories
@@ -107,10 +114,10 @@ class WorldCreationTab:
         preset = self._active_preset()
         if not preset: return
         values = get_value_set(key, self._mod_settings, location=preset.location, is_rule=is_rule)
-        current = next((o.value for o in self._plan_master.overrides if o.key == key), "default")
+        current = next((o.value for o in preset.overrides if o.key == key), "default")
         idx = values.index(current) if current in values else 0
         new = values[max(0, min(len(values) - 1, idx + delta))]
-        preset.overrides = [WorldOverride(o.key, new if o.key == key else o.value) for o in preset.overrides]
+        plan.overrides[key] = new
         self._render()
 
     def _active_preset(self):
