@@ -54,7 +54,7 @@ def _write_lua(path: Path, data: dict) -> None:
     path.write_text(serialize_lua_table(data) + "\n", encoding="utf-8")
 
 
-def _write_shard(root: Path, shard: WorldShardPlan) -> None:
+def _write_shard(root: Path, shard: WorldShardPlan, mod_ids: frozenset[str]) -> None:
     root.mkdir(parents=True, exist_ok=True)
     raw = {
         "id": shard.preset_id,
@@ -64,7 +64,11 @@ def _write_shard(root: Path, shard: WorldShardPlan) -> None:
         "overrides": dict(shard.overrides),
     }
     _write_lua(root / "leveldataoverride.lua", raw)
-    _write_lua(root / "modoverrides.lua", {})
+    overrides = {
+        (value if str(value).startswith("workshop-") else f"workshop-{value}"): {"enabled": True}
+        for value in mod_ids
+    }
+    _write_lua(root / "modoverrides.lua", overrides)
 
 
 def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
@@ -79,8 +83,8 @@ def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
         write_cluster_ini(plan.cluster_ini, temp_dir / "cluster.ini")
         (temp_dir / "cluster_token.txt").write_text("", encoding="utf-8")
         (temp_dir / "adminlist.txt").write_text("", encoding="utf-8")
-        _write_shard(temp_dir / "Master", plan.master)
-        _write_shard(temp_dir / "Caves", plan.caves)
+        _write_shard(temp_dir / "Master", plan.master, plan.mod_ids)
+        _write_shard(temp_dir / "Caves", plan.caves, plan.mod_ids)
         os.replace(temp_dir, destination)
         return destination
     except Exception:

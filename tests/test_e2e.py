@@ -1103,6 +1103,8 @@ def test_world_creation_plan_and_atomic_writer():
         assert master and master.location == "porkland"
         assert caves and caves.location == "cave"
         assert (path / "cluster.ini").exists()
+        mod_overrides = (path / "Master" / "modoverrides.lua").read_text(encoding="utf-8")
+        assert "workshop-3322803908" in mod_overrides and "enabled" in mod_overrides
         try:
             create_world(plan, Path(td))
         except FileExistsError:
@@ -1130,6 +1132,31 @@ def test_world_defaults_from_verified_templates():
     assert porkland.location == "porkland" and len(porkland.overrides) >= 80
     assert pork_caves.location == "cave"
     print("  PASS: full defaults load from Cluster_2/Cluster_4 templates")
+
+
+def test_world_creation_from_porkland_template():
+    """用 Cluster_4 完整模板创建后，key 数量和 location/mod 必须保持。"""
+    print("\n" + "=" * 60)
+    print("Test 30: World Creation From Porkland Template")
+    from dstools.features.world.creation import WorldCreationPlan, create_world
+    from dstools.features.world.defaults import default_plans_from_cluster
+    from dstools.features.world.reader import load_leveldata
+
+    roots = list(Path("D:/").glob("**/DoNotStarveTogether/280257116"))
+    if not roots:
+        print("  SKIP: user sample root not found")
+        return
+    master, caves = default_plans_from_cluster(roots[0] / "Cluster_4")
+    with tempfile.TemporaryDirectory() as td:
+        out = create_world(
+            WorldCreationPlan("Cluster_Porkland_Full", master, caves,
+                              mod_ids=frozenset({"3322803908"})), Path(td),
+        )
+        created_master = load_leveldata(out / "Master" / "leveldataoverride.lua").preset
+        assert created_master and len(created_master.overrides) == len(master.overrides)
+        assert created_master.location == "porkland"
+        assert "workshop-3322803908" in (out / "Master" / "modoverrides.lua").read_text(encoding="utf-8")
+    print("  PASS: full Porkland template survives creation")
 
 
 def test_world_value_sets_match_user_samples():
@@ -2116,6 +2143,7 @@ def main():
         test_porkland_location_selector,
         test_world_creation_plan_and_atomic_writer,
         test_world_defaults_from_verified_templates,
+        test_world_creation_from_porkland_template,
         test_world_value_sets_match_user_samples,
         test_world_categories_bilingual,
         test_custom_background,
