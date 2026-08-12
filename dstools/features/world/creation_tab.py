@@ -41,6 +41,10 @@ class WorldCreationTab:
         self.location_combo.pack(side=tk.LEFT, padx=5)
         self.location_combo.bind("<<ComboboxSelected>>", lambda _e: self._reload_template())
         ttk.Button(top, text="选择默认模板", command=self._choose_template).pack(side=tk.LEFT, padx=5)
+        make_toolbar_label(top, self.app, lambda: "编辑世界").pack(side=tk.LEFT, padx=(12, 4))
+        self.shard_var = tk.StringVar(value="Master")
+        ttk.Combobox(top, textvariable=self.shard_var, values=("Master", "Caves"), state="readonly", width=10).pack(side=tk.LEFT)
+        self.shard_var.trace_add("write", lambda *_: self._render())
         self.template_var = tk.StringVar()
         ttk.Label(top, textvariable=self.template_var).pack(side=tk.LEFT, padx=5)
         self._sub = ttk.Notebook(self.frame); self._sub.pack(fill=tk.BOTH, expand=True, padx=8)
@@ -77,28 +81,38 @@ class WorldCreationTab:
         return get_enabled_mod_ids(cluster) if cluster else set()
 
     def _render(self):
-        preset = self._plan_master
+        preset = self._active_preset()
         view = build_world_view_model(preset, self._mod_settings, [])
         self._rules_by_cat, self._rules_cats = view.rules_by_category, view.rule_categories
         self._gen_by_cat, self._gen_cats = view.generation_by_category, view.generation_categories
         from dstools.shared.gui.image_scroll import ImageScrollPanel
-        for attr, frame, cats, rows, editable in (("_rules_panel", self._rules_frame, self._rules_cats, self._rules_by_cat, True), ("_gen_panel", self._gen_frame, self._gen_cats, self._gen_by_cat, False)):
+        for attr, frame, cats, rows, editable, callback in (("_rules_panel", self._rules_frame, self._rules_cats, self._rules_by_cat, True, self._on_click), ("_gen_panel", self._gen_frame, self._gen_cats, self._gen_by_cat, True, self._on_gen_click)):
             old = getattr(self, attr, None)
             if old is not None: old.frame.destroy()
             panel = ImageScrollPanel(frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
             panel.frame.pack(fill=tk.BOTH, expand=True)
-            img, hits = render_world_panel(cats, rows, CATEGORY_COLORS, editable=editable, on_click=self._on_click if editable else None, ref_width=REF_WIDTH, location=preset.location, mod_settings=self._mod_settings)
+            img, hits = render_world_panel(cats, rows, CATEGORY_COLORS, editable=editable, on_click=callback, ref_width=REF_WIDTH, location=preset.location, mod_settings=self._mod_settings)
             panel.set_image(img, hits, keep_scroll=False)
             setattr(self, attr, panel)
 
     def _on_click(self, key, delta):
-        if not self._plan_master: return
-        values = get_value_set(key, self._mod_settings, location=self._plan_master.location, is_rule=True)
+        self._change_value(key, delta, True)
+
+    def _on_gen_click(self, key, delta):
+        self._change_value(key, delta, False)
+
+    def _change_value(self, key, delta, is_rule):
+        preset = self._active_preset()
+        if not preset: return
+        values = get_value_set(key, self._mod_settings, location=preset.location, is_rule=is_rule)
         current = next((o.value for o in self._plan_master.overrides if o.key == key), "default")
         idx = values.index(current) if current in values else 0
         new = values[max(0, min(len(values) - 1, idx + delta))]
-        self._plan_master.overrides = [WorldOverride(o.key, new if o.key == key else o.value) for o in self._plan_master.overrides]
+        preset.overrides = [WorldOverride(o.key, new if o.key == key else o.value) for o in preset.overrides]
         self._render()
+
+    def _active_preset(self):
+        return self._plan_caves if self.shard_var.get() == "Caves" else self._plan_master
 
     def _create(self):
         if not self._plan_master or not self._plan_caves:
