@@ -7,7 +7,8 @@ from tkinter import ttk
 
 from PIL import Image
 
-from dstools.features.world.creation import WorldCreationPlan, create_world
+from dstools.features.world.creation import WorldCreationPlan, create_world, default_cluster_config
+from dstools.features.world.creation_server_config import CreationServerConfigTab
 from dstools.features.world.defaults import default_plans_from_cluster, find_verified_template
 from dstools.features.world.location_selector import available_master_locations
 from dstools.features.world.mod_settings import get_mod_world_settings
@@ -50,6 +51,7 @@ class WorldCreationTab:
         self._full_resolved_cache = {}
         self._mod_panel = None
         self._mod_scan_status = None
+        self._server_config = None
         self._build()
 
     def _build(self):
@@ -68,11 +70,14 @@ class WorldCreationTab:
         ttk.Combobox(top, textvariable=self.shard_var, values=("Master", "Caves"), state="readonly", width=10).pack(side=tk.LEFT)
         self.shard_var.trace_add("write", lambda *_: self._render())
         self._sub = ttk.Notebook(self.frame); self._sub.pack(fill=tk.BOTH, expand=True, padx=8)
+        self._server_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._mod_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._rules_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._gen_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
+        self._sub.add(self._server_frame, text="服务器配置")
         self._sub.add(self._mod_frame, text="Mod 管理")
         self._sub.add(self._rules_frame, text="世界规则"); self._sub.add(self._gen_frame, text="世界生成")
+        self._build_server_panel()
         self._build_mod_panel()
         bottom = BgFrame(self.frame, self.app, bg=theme.CARD_BG); bottom.pack(fill=tk.X, padx=12, pady=8)
         self.status_var = tk.StringVar(value="请选择一个官方默认存档模板")
@@ -80,6 +85,10 @@ class WorldCreationTab:
         ttk.Button(bottom, text="创建存档", command=self._create).pack(side=tk.RIGHT)
         # 不在启动应用时弹出文件选择框；用户进入本页后主动选择模板。
         self._reload_template()
+
+    def _build_server_panel(self):
+        self._server_config = CreationServerConfigTab(self._server_frame, self.app, self.name_var.get())
+        self.name_var.trace_add("write", lambda *_: self._server_config.set_cluster_name(self.name_var.get()))
 
     def _build_mod_panel(self):
         header = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
@@ -301,13 +310,19 @@ class WorldCreationTab:
                 raise FileNotFoundError("未找到默认世界模板")
             root = self._template_root.parent
             self._sync_mod_overrides()
+            server_settings = self._server_config.read_creation_settings() if self._server_config else {}
             out = create_world(
                 WorldCreationPlan(
                     name,
                     self._plan_master,
                     self._plan_caves,
+                    cluster_ini=server_settings.get("cluster_ini") or default_cluster_config(name),
                     mod_ids=frozenset(self._enabled_mod_ids()),
                     mod_overrides=copy.deepcopy(self._mod_overrides),
+                    shard_configs=server_settings.get("shard_configs", {}),
+                    cluster_token=server_settings.get("cluster_token", ""),
+                    admin_ids=server_settings.get("admin_ids", ()),
+                    block_ids=server_settings.get("block_ids", ()),
                 ),
                 root,
             )

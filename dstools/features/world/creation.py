@@ -40,6 +40,10 @@ class WorldCreationPlan:
     # separate from the id set so the creation wizard can preserve each mod's
     # graphical configuration_options without coupling itself to a live save.
     mod_overrides: dict[str, dict] = field(default_factory=dict)
+    shard_configs: dict[str, ShardConfig] = field(default_factory=dict)
+    cluster_token: str = ""
+    admin_ids: tuple[str, ...] = ()
+    block_ids: tuple[str, ...] = ()
 
 
 def validate_creation_plan(plan: WorldCreationPlan) -> None:
@@ -65,6 +69,44 @@ def _write_lua(path: Path, data: dict) -> None:
     path.write_text(serialize_lua_table(data) + "\n", encoding="utf-8")
 
 
+def default_cluster_config(cluster_name: str = "Cluster_New") -> ClusterConfig:
+    """Return the verified fresh-server ``cluster.ini`` defaults."""
+    return ClusterConfig(
+        gameplay={
+            "game_mode": "survival",
+            "max_players": 6,
+            "pvp": False,
+            "pause_when_empty": True,
+        },
+        network={
+            "lan_only_cluster": True,
+            "cluster_password": "",
+            "cluster_description": "",
+            "cluster_name": cluster_name,
+            "offline_cluster": True,
+            "cluster_language": "zh",
+        },
+        misc={"console_enabled": True},
+        shard={
+            "shard_enabled": True,
+            "bind_ip": "127.0.0.1",
+            "master_ip": "127.0.0.1",
+            "master_port": 10888,
+            "cluster_key": "defaultPass",
+        },
+    )
+
+
+def default_shard_config(is_master: bool) -> ShardConfig:
+    """Return the verified fresh Master/Caves ``server.ini`` defaults."""
+    return ShardConfig(
+        network={"server_port": 10999 if is_master else 10998},
+        shard={"is_master": is_master} if is_master else {"is_master": False, "name": "Caves"},
+        account={"encode_user_path": True},
+        steam={} if is_master else {"master_server_port": 27017, "authentication_port": 8767},
+    )
+
+
 def _write_default_server_ini(root: Path) -> None:
     """Write the minimal server.ini that makes a newly-created shard visible.
 
@@ -73,14 +115,7 @@ def _write_default_server_ini(root: Path) -> None:
     to exist before that first launch.  These values match a fresh DST
     two-shard cluster observed in the user's verified saves.
     """
-    is_master = root.name.casefold() == "master"
-    config = ShardConfig(
-        network={"server_port": 10999 if is_master else 10998},
-        shard={"is_master": is_master} if is_master else {"is_master": False, "name": "Caves"},
-        account={"encode_user_path": True},
-        steam={} if is_master else {"master_server_port": 27017, "authentication_port": 8767},
-    )
-    write_server_ini(config, root / "server.ini")
+    write_server_ini(default_shard_config(root.name.casefold() == "master"), root / "server.ini")
 
 
 def _write_shard(
@@ -88,9 +123,13 @@ def _write_shard(
     shard: WorldShardPlan,
     mod_ids: frozenset[str],
     mod_overrides: dict[str, dict],
+    shard_config: ShardConfig | None = None,
 ) -> None:
     root.mkdir(parents=True, exist_ok=True)
-    _write_default_server_ini(root)
+    if shard_config is None:
+        _write_default_server_ini(root)
+    else:
+        write_server_ini(shard_config, root / "server.ini")
     raw = {
         "id": shard.preset_id,
         "name": shard.name,
@@ -128,35 +167,23 @@ def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
         cluster_ini = plan.cluster_ini
         if not any((cluster_ini.gameplay, cluster_ini.network, cluster_ini.misc,
                     cluster_ini.shard, cluster_ini.steam)):
-            cluster_ini = ClusterConfig(
-                gameplay={
-                    "game_mode": "survival",
-                    "max_players": 6,
-                    "pvp": False,
-                    "pause_when_empty": True,
-                },
-                network={
-                    "lan_only_cluster": True,
-                    "cluster_password": "",
-                    "cluster_description": "",
-                    "cluster_name": plan.cluster_name,
-                    "offline_cluster": True,
-                    "cluster_language": "zh",
-                },
-                misc={"console_enabled": True},
-                shard={
-                    "shard_enabled": True,
-                    "bind_ip": "127.0.0.1",
-                    "master_ip": "127.0.0.1",
-                    "master_port": 10888,
-                    "cluster_key": "defaultPass",
-                },
-            )
+            cluster_ini = default_cluster_config(plan.cluster_name)
         write_cluster_ini(cluster_ini, temp_dir / "cluster.ini")
-        (temp_dir / "cluster_token.txt").write_text("", encoding="utf-8")
-        (temp_dir / "adminlist.txt").write_text("", encoding="utf-8")
-        _write_shard(temp_dir / "Master", plan.master, plan.mod_ids, plan.mod_overrides)
-        _write_shard(temp_dir / "Caves", plan.caves, plan.mod_ids, plan.mod_overrides)
+        (temp_dir / "cluster_token.txt").write_text(plan.cluster_token or "", encoding="utf-8")
+        (temp_dir / "adminlist.txt").write_text(
+            "\n".join(plan.admin_ids) + ("\n" if plan.admin_ids else ""), encoding="utf-8"
+        )
+        (temp_dir / "blocklist.txt").write_text(
+            "\n".join(plan.block_ids) + ("\n" if plan.block_ids else ""), encoding="utf-8"
+        )
+        _write_shard(
+            temp_dir / "Master", plan.master, plan.mod_ids, plan.mod_overrides,
+            plan.shard_configs.get("Master"),
+        )
+        _write_shard(
+            temp_dir / "Caves", plan.caves, plan.mod_ids, plan.mod_overrides,
+            plan.shard_configs.get("Caves"),
+        )
         os.replace(temp_dir, destination)
         return destination
     except Exception:
