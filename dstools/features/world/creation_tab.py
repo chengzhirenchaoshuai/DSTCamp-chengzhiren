@@ -49,25 +49,29 @@ class WorldCreationTab:
         self.shard_var = tk.StringVar(value="Master")
         ttk.Combobox(top, textvariable=self.shard_var, values=("Master", "Caves"), state="readonly", width=10).pack(side=tk.LEFT)
         self.shard_var.trace_add("write", lambda *_: self._render())
-        mod_frame = BgFrame(self.frame, self.app, bg=theme.CARD_BG); mod_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
-        make_toolbar_label(mod_frame, self.app, lambda: "启用 Mod").pack(side=tk.LEFT)
-        self.porkland_mod_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(mod_frame, text="3322803908 · 云霄国度/猪镇", variable=self.porkland_mod_var,
-                        command=self._on_mod_toggle).pack(side=tk.LEFT, padx=8)
-        ttk.Label(mod_frame, text="创建配置独立于当前存档").pack(side=tk.LEFT, padx=8)
-        self._mod_list_frame = BgFrame(self.frame, self.app, bg=theme.CARD_BG)
-        self._mod_list_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
-        self._build_mod_list()
         self._sub = ttk.Notebook(self.frame); self._sub.pack(fill=tk.BOTH, expand=True, padx=8)
+        self._mod_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._rules_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._gen_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
+        self._sub.add(self._mod_frame, text="Mod 管理")
         self._sub.add(self._rules_frame, text="世界规则"); self._sub.add(self._gen_frame, text="世界生成")
+        self._build_mod_panel()
         bottom = BgFrame(self.frame, self.app, bg=theme.CARD_BG); bottom.pack(fill=tk.X, padx=12, pady=8)
         self.status_var = tk.StringVar(value="请选择一个官方默认存档模板")
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT)
         ttk.Button(bottom, text="创建存档", command=self._create).pack(side=tk.RIGHT)
         # 不在启动应用时弹出文件选择框；用户进入本页后主动选择模板。
         self._reload_template()
+
+    def _build_mod_panel(self):
+        header = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
+        header.pack(fill=tk.X, padx=12, pady=10)
+        make_toolbar_label(header, self.app, lambda: "创建存档 Mod").pack(side=tk.LEFT)
+        ttk.Label(header, text="此列表独立于其他存档").pack(side=tk.LEFT, padx=12)
+        self.porkland_mod_var = tk.BooleanVar(value=False)
+        self._mod_list_frame = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
+        self._mod_list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
+        self._build_mod_list()
 
     def _reload_template(self):
         try:
