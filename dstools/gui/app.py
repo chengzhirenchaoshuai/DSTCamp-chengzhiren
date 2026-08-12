@@ -371,6 +371,12 @@ class DSToolsApp:
                                      bottom_grip=3, top_grip=2)
 
     def _on_tab_select(self, key: str) -> None:
+        # 创建向导不依赖当前存档，隐藏全局存档选择栏，避免把创建状态
+        # 误认为是在编辑顶部选中的已有存档。
+        if key == "create":
+            self._cluster_bar.pack_forget()
+        elif not self._cluster_bar.winfo_ismapped():
+            self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
         for k, card in self._tab_cards.items():
             if k == key:
                 card.grid()

@@ -29,6 +29,7 @@ class WorldCreationTab:
         self._rules_cats = []; self._gen_cats = []
         self._mod_settings = {}
         self._template_root = None
+        self._selected_mod_ids: set[str] = set()
         self._build()
 
     def _build(self):
@@ -46,6 +47,12 @@ class WorldCreationTab:
         self.shard_var = tk.StringVar(value="Master")
         ttk.Combobox(top, textvariable=self.shard_var, values=("Master", "Caves"), state="readonly", width=10).pack(side=tk.LEFT)
         self.shard_var.trace_add("write", lambda *_: self._render())
+        mod_frame = BgFrame(self.frame, self.app, bg=theme.CARD_BG); mod_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+        make_toolbar_label(mod_frame, self.app, lambda: "启用 Mod").pack(side=tk.LEFT)
+        self.porkland_mod_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(mod_frame, text="3322803908 · 云霄国度/猪镇", variable=self.porkland_mod_var,
+                        command=self._on_mod_toggle).pack(side=tk.LEFT, padx=8)
+        ttk.Label(mod_frame, text="创建配置独立于当前存档").pack(side=tk.LEFT, padx=8)
         self._sub = ttk.Notebook(self.frame); self._sub.pack(fill=tk.BOTH, expand=True, padx=8)
         self._rules_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._gen_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
@@ -59,10 +66,8 @@ class WorldCreationTab:
 
     def _reload_template(self):
         try:
-            root = self.app.get_selected_cluster().path.parent if self.app.get_selected_cluster() else None
-            if root is None:
-                from dstools.shared.discovery import find_klei_root
-                root = find_klei_root()
+            from dstools.shared.discovery import find_klei_root
+            root = find_klei_root()
             if root is None:
                 raise FileNotFoundError("未找到 Klei 存档目录")
             template_root = find_verified_template(root, self.location_var.get())
@@ -79,8 +84,18 @@ class WorldCreationTab:
             self.status_var.set(str(exc))
 
     def _enabled_mod_ids(self):
-        cluster = self.app.get_selected_cluster() if hasattr(self.app, "get_selected_cluster") else None
-        return get_enabled_mod_ids(cluster) if cluster else set()
+        return set(self._selected_mod_ids)
+
+    def _on_mod_toggle(self):
+        if self.porkland_mod_var.get():
+            self._selected_mod_ids.add("3322803908")
+        else:
+            self._selected_mod_ids.discard("3322803908")
+        values = available_master_locations(self._selected_mod_ids)
+        self.location_combo["values"] = values
+        if self.location_var.get() not in values:
+            self.location_var.set(values[0])
+        self._reload_template()
 
     def _render(self):
         plan = self._active_preset()
