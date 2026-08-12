@@ -15,8 +15,8 @@ import tempfile
 from dstools.features.world.location_selector import (
     CAVE_LOCATION, FOREST_LOCATION, PORKLAND_LOCATION, PORKLAND_MOD_ID,
 )
-from dstools.shared.ini_parser import write_cluster_ini
-from dstools.models import ClusterConfig
+from dstools.shared.ini_parser import write_cluster_ini, write_server_ini
+from dstools.models import ClusterConfig, ShardConfig
 from dstools.shared.lua_parser import serialize_lua_table
 
 
@@ -65,6 +65,24 @@ def _write_lua(path: Path, data: dict) -> None:
     path.write_text(serialize_lua_table(data) + "\n", encoding="utf-8")
 
 
+def _write_default_server_ini(root: Path) -> None:
+    """Write the minimal server.ini that makes a newly-created shard visible.
+
+    The game fills in additional runtime fields on first launch, but the
+    discovery layer (and the dedicated-server launcher) needs the shard file
+    to exist before that first launch.  These values match a fresh DST
+    two-shard cluster observed in the user's verified saves.
+    """
+    is_master = root.name.casefold() == "master"
+    config = ShardConfig(
+        network={"server_port": 10999 if is_master else 10998},
+        shard={"is_master": is_master} if is_master else {"is_master": False, "name": "Caves"},
+        account={"encode_user_path": True},
+        steam={} if is_master else {"master_server_port": 27017, "authentication_port": 8767},
+    )
+    write_server_ini(config, root / "server.ini")
+
+
 def _write_shard(
     root: Path,
     shard: WorldShardPlan,
@@ -72,6 +90,7 @@ def _write_shard(
     mod_overrides: dict[str, dict],
 ) -> None:
     root.mkdir(parents=True, exist_ok=True)
+    _write_default_server_ini(root)
     raw = {
         "id": shard.preset_id,
         "name": shard.name,
@@ -106,7 +125,34 @@ def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
     destination_root.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(tempfile.mkdtemp(prefix=f".{plan.cluster_name}.", dir=destination_root))
     try:
-        write_cluster_ini(plan.cluster_ini, temp_dir / "cluster.ini")
+        cluster_ini = plan.cluster_ini
+        if not any((cluster_ini.gameplay, cluster_ini.network, cluster_ini.misc,
+                    cluster_ini.shard, cluster_ini.steam)):
+            cluster_ini = ClusterConfig(
+                gameplay={
+                    "game_mode": "survival",
+                    "max_players": 6,
+                    "pvp": False,
+                    "pause_when_empty": True,
+                },
+                network={
+                    "lan_only_cluster": True,
+                    "cluster_password": "",
+                    "cluster_description": "",
+                    "cluster_name": plan.cluster_name,
+                    "offline_cluster": True,
+                    "cluster_language": "zh",
+                },
+                misc={"console_enabled": True},
+                shard={
+                    "shard_enabled": True,
+                    "bind_ip": "127.0.0.1",
+                    "master_ip": "127.0.0.1",
+                    "master_port": 10888,
+                    "cluster_key": "defaultPass",
+                },
+            )
+        write_cluster_ini(cluster_ini, temp_dir / "cluster.ini")
         (temp_dir / "cluster_token.txt").write_text("", encoding="utf-8")
         (temp_dir / "adminlist.txt").write_text("", encoding="utf-8")
         _write_shard(temp_dir / "Master", plan.master, plan.mod_ids, plan.mod_overrides)

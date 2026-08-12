@@ -80,12 +80,17 @@ def find_user_dir(klei_root: Path) -> Path | None:
 
 
 def list_clusters(klei_root: Path) -> list[Path]:
-    """列出给定根目录下的全部 cluster 目录。"""
+    """列出给定根目录下的有效 cluster 目录。
+
+    A partially-created directory may contain ``cluster.ini`` but no shard
+    yet (for example after an interrupted create operation).  It is not a
+    usable save and should not appear in the GUI or make discovery fail.
+    """
     clusters = []
     if not klei_root.exists():
         return clusters
     for entry in sorted(klei_root.iterdir()):
-        if _is_cluster_dir(entry):
+        if _is_cluster_dir(entry) and list_shards(entry):
             clusters.append(entry)
     return clusters
 
