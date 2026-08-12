@@ -1081,6 +1081,57 @@ def test_porkland_location_selector():
     print("  PASS: location selection is isolated and reversible")
 
 
+def test_world_creation_plan_and_atomic_writer():
+    """创建层生成双世界目录，拒绝覆盖并可回读。"""
+    print("\n" + "=" * 60)
+    print("Test 28: World Creation Plan and Writer")
+    from dstools.features.world.creation import (
+        WorldCreationPlan, WorldShardPlan, create_world,
+    )
+    from dstools.features.world.reader import load_leveldata
+
+    with tempfile.TemporaryDirectory() as td:
+        plan = WorldCreationPlan(
+            cluster_name="Cluster_Porkland_Test",
+            mod_ids=frozenset({"3322803908"}),
+            master=WorldShardPlan("porkland", "PORKLAND_DEFAULT", "猪镇", "危险丛林"),
+            caves=WorldShardPlan("cave", "DST_CAVE", "洞穴"),
+        )
+        path = create_world(plan, Path(td))
+        master = load_leveldata(path / "Master" / "leveldataoverride.lua").preset
+        caves = load_leveldata(path / "Caves" / "leveldataoverride.lua").preset
+        assert master and master.location == "porkland"
+        assert caves and caves.location == "cave"
+        assert (path / "cluster.ini").exists()
+        try:
+            create_world(plan, Path(td))
+        except FileExistsError:
+            pass
+        else:
+            raise AssertionError("existing cluster must not be overwritten")
+    print("  PASS: atomic creation and read-back validation")
+
+
+def test_world_defaults_from_verified_templates():
+    """默认值必须来自完整真实存档模板，而不是部分硬编码。"""
+    print("\n" + "=" * 60)
+    print("Test 29: World Defaults From Verified Templates")
+    from dstools.features.world.defaults import default_plans_from_cluster
+
+    roots = list(Path("D:/").glob("**/DoNotStarveTogether/280257116"))
+    if not roots:
+        print("  SKIP: user sample root not found")
+        return
+    root = roots[0]
+    forest, caves = default_plans_from_cluster(root / "Cluster_2")
+    porkland, pork_caves = default_plans_from_cluster(root / "Cluster_4")
+    assert forest.location == "forest" and len(forest.overrides) >= 190
+    assert caves.location == "cave" and len(caves.overrides) >= 100
+    assert porkland.location == "porkland" and len(porkland.overrides) >= 80
+    assert pork_caves.location == "cave"
+    print("  PASS: full defaults load from Cluster_2/Cluster_4 templates")
+
+
 def test_world_value_sets_match_user_samples():
     """用户提供的默认/全量非默认存档值必须全部落在已确认表中。"""
     print("\n" + "=" * 60)
@@ -2063,6 +2114,8 @@ def main():
         test_world_catalog_layers_are_isolated,
         test_porkland_samples_match_mod_catalog,
         test_porkland_location_selector,
+        test_world_creation_plan_and_atomic_writer,
+        test_world_defaults_from_verified_templates,
         test_world_value_sets_match_user_samples,
         test_world_categories_bilingual,
         test_custom_background,
