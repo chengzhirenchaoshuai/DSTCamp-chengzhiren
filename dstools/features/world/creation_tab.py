@@ -2,10 +2,10 @@
 
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import ttk
 
 from dstools.features.world.creation import WorldCreationPlan, create_world
-from dstools.features.world.defaults import default_plans_from_cluster
+from dstools.features.world.defaults import default_plans_from_cluster, find_verified_template
 from dstools.features.world.location_selector import available_master_locations
 from dstools.features.world.mod_settings import get_mod_world_settings
 from dstools.features.world.categories import CATEGORY_COLORS
@@ -28,6 +28,7 @@ class WorldCreationTab:
         self._rules_by_cat = {}; self._gen_by_cat = {}
         self._rules_cats = []; self._gen_cats = []
         self._mod_settings = {}
+        self._template_root = None
         self._build()
 
     def _build(self):
@@ -38,15 +39,13 @@ class WorldCreationTab:
         make_toolbar_label(top, self.app, lambda: "Master 世界").pack(side=tk.LEFT)
         self.location_var = tk.StringVar(value="forest")
         self.location_combo = ttk.Combobox(top, textvariable=self.location_var, state="readonly", width=12)
+        self.location_combo["values"] = available_master_locations(self._enabled_mod_ids())
         self.location_combo.pack(side=tk.LEFT, padx=5)
         self.location_combo.bind("<<ComboboxSelected>>", lambda _e: self._reload_template())
-        ttk.Button(top, text="选择默认模板", command=self._choose_template).pack(side=tk.LEFT, padx=5)
         make_toolbar_label(top, self.app, lambda: "编辑世界").pack(side=tk.LEFT, padx=(12, 4))
         self.shard_var = tk.StringVar(value="Master")
         ttk.Combobox(top, textvariable=self.shard_var, values=("Master", "Caves"), state="readonly", width=10).pack(side=tk.LEFT)
         self.shard_var.trace_add("write", lambda *_: self._render())
-        self.template_var = tk.StringVar()
-        ttk.Label(top, textvariable=self.template_var).pack(side=tk.LEFT, padx=5)
         self._sub = ttk.Notebook(self.frame); self._sub.pack(fill=tk.BOTH, expand=True, padx=8)
         self._rules_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._gen_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
@@ -56,16 +55,19 @@ class WorldCreationTab:
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT)
         ttk.Button(bottom, text="创建存档", command=self._create).pack(side=tk.RIGHT)
         # 不在启动应用时弹出文件选择框；用户进入本页后主动选择模板。
-
-    def _choose_template(self):
-        value = filedialog.askdirectory(parent=self.frame, title="选择官方默认存档模板目录")
-        if value:
-            self.template_var.set(value); self._reload_template()
+        self._reload_template()
 
     def _reload_template(self):
-        if not self.template_var.get(): return
         try:
-            master, caves = default_plans_from_cluster(Path(self.template_var.get()))
+            root = self.app.get_selected_cluster().path.parent if self.app.get_selected_cluster() else None
+            if root is None:
+                from dstools.shared.discovery import find_klei_root
+                root = find_klei_root()
+            if root is None:
+                raise FileNotFoundError("未找到 Klei 存档目录")
+            template_root = find_verified_template(root, self.location_var.get())
+            self._template_root = template_root
+            master, caves = default_plans_from_cluster(template_root)
             if self.location_var.get() != master.location:
                 from dstools.features.world.location_selector import select_master_location
                 master = select_master_location(master, self.location_var.get())
@@ -120,7 +122,9 @@ class WorldCreationTab:
             return
         try:
             name = self.name_var.get().strip()
-            root = Path(self.template_var.get()).parent
+            if self._template_root is None:
+                raise FileNotFoundError("未找到默认世界模板")
+            root = self._template_root.parent
             out = create_world(WorldCreationPlan(name, self._plan_master, self._plan_caves, mod_ids=frozenset(self._enabled_mod_ids())), root)
             dlg.show_info(self.app.root, "创建存档", f"已创建：{out}")
         except Exception as exc:
