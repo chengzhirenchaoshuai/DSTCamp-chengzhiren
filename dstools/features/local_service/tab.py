@@ -420,17 +420,14 @@ class _ConsolePane:
         self.cmd_entry.bind("<Control-f>", self._open_search)
 
         # Mod 加载完整性提示——world_ready 那一刻起才有意义，见 pump()。
-        # 应用户反馈从控制台最下面（挡在快捷按钮上方，"不美观"）挪到日志
-        # 头部——跟 _search_bar 同款做法，pack(before=self.text) 插到日志
-        # 文本框正上方，跟这个 body 是同一个容器（不是 self.frame），效
-        # 果是贴在日志框顶端的一条状态条，不是浮在整个控制台标签页底部。
-        # 之前挂在 self.frame 上、side=BOTTOM 时，晚于 body(fill=BOTH,
-        # expand=True) 才追加的横幅在 Notebook+PanedWindow 这层嵌套下不
-        # 会触发 body 收缩腾地方（真机复现过，見那次改动的说明），当时靠
-        # 手动 pack_forget()+pack() 硬逼一次重新布局搞定；这次改用
-        # before=self.text 插入，跟 _search_bar 一样能正常触发收缩，不需
-        # 要再手动重新布局。缺失/正常两种状态共用同一个 Label（同一时间
-        # 只会有一种在显示），颜色配置在 pump() 里按状态切换。
+        # 贴在日志框顶端的一条状态条，是 body 的子控件（不是 self.frame
+        # 的），跟 _search_bar 一样用 pack(before=self.text) 插到日志文
+        # 本框正上方。这个容器嵌在 ttk.Notebook+ttk.PanedWindow 里，迟到
+        # 追加的兄弟控件如果只是简单 side=BOTTOM append，不会触发已经
+        # fill=BOTH,expand=True 的 body 收缩腾地方（真机复现过）；用
+        # before=self.text 插入能正常触发收缩，不需要手动强制重新布局。
+        # 缺失/正常两种状态共用同一个 Label，颜色配置在 pump() 里按状态
+        # 切换。
         self._mod_status_label = tk.Label(body, text="", anchor=tk.W, padx=10, pady=0,
                                            borderwidth=0, highlightthickness=0,
                                            font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
@@ -552,13 +549,11 @@ class _ConsolePane:
         if lines:
             at_bottom = self.text.yview()[1] >= 0.999
             self.text.configure(state=tk.NORMAL)
-            # 应用户反馈截图核实过：每行都跟一个"\n"插入，会在最后一行
-            # 后面多留一个真实存在的空行（Tk Text 本身固定带一个隐式换
-            # 行，"line\n"+"line\n" 会变成两个连续的"\n"，多出来的那个
-            # 空行会被渲染出来）——用最小复现脚本验证过，跟这次新加的
-            # Mod 检查横幅完全无关，是这套逐行 insert 写法本来就有的旧
-            # 毛病。改成行间插分隔符（每批次开头按需要补一个"\n"，不在
-            # 每行后面加），批次之间无缝衔接，末尾不会再多出这个空行。
+            # 每行都跟一个"\n"插入会在最后一行后面多留一个真实存在的空
+            # 行（Tk Text 固定带隐式换行，"line\n"+"line\n" 变成两个连
+            # 续的"\n"，多出来的那个会被渲染出来）。改成行间插分隔符
+            # （每批次开头按需要补一个"\n"，不在每行后面加），批次之间
+            # 无缝衔接，末尾不会再多出空行。
             prefix = "\n" if self.text.index("end-1c") != "1.0" else ""
             self.text.insert(tk.END, prefix + "\n".join(lines))
             if at_bottom:

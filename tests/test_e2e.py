@@ -1639,11 +1639,7 @@ def test_steam_library_folder_casing():
 
 def test_font_style_switch():
     """测试字体样式一键切换功能的核心逻辑（纯逻辑，不需要真实 Tk 窗口）。
-    这个功能原来是"细体/常规/粗体"三档字重切换，应用户反馈"按钮变粗
-    之后正文又显得太粗"，字重开关整个删掉重做成了字体*样式*切换（默
-    认微软雅黑 / 打包的开源可爱风字体"荆南麦圆体"），按钮的粗细改用
-    apply_theme() 里 TButton 样式单独固定 bold=True 解决，不再依赖全局
-    开关。这里验证：(a) shared/gui/fonts.py 的 set_font_style() 正确切
+    验证：(a) shared/gui/fonts.py 的 set_font_style() 正确切
     换 PIL 渲染用的字体文件路径，且切换后清空缓存；(b) theme.py 的
     set_font_style_choice() 正确联动 FONT_FAMILY，并且同步更新了
     fonts.py 那一侧（Tk 和 PIL 两条渲染路径不能各用各的字体）；(c) 字
@@ -1693,13 +1689,9 @@ def test_font_style_switch():
         assert theme.FONT_STYLE_CHOICE == "cute"
         print("  PASS: 切换颜色主题(set_theme())不会连带改动已选好的字体样式")
 
-        # 应用户反馈：切到荆南麦圆体之后，整个应用（菜单/标签/按钮……）
-        # 字号完全没变，只有字体设置弹窗自己放大过的预览行看得出效果——
-        # 之前 set_font_style_choice() 只换了 FONT_FAMILY，没有跟着调整
-        # FONT_SIZE_XL/LG/MD/BASE/SM/XS 这套全局字号阶梯，荆南麦圆体笔
-        # 画粗壮，跟微软雅黑用一样的字号看着明显更拥挤。这里验证切到
-        # cute 后字号阶梯按 FONT_SIZE_SCALE_BY_STYLE 整体放大了，且切
-        # 换颜色主题不会打乱这个放大倍数。
+        # 荆南麦圆体笔画粗壮，跟微软雅黑用一样的字号看着更拥挤，需要整
+        # 体放大——验证切到 cute 后字号阶梯按 FONT_SIZE_SCALE_BY_STYLE
+        # 放大了，且切换颜色主题不会打乱这个放大倍数。
         theme.set_font_style_choice("default")
         default_base = theme.FONT_SIZE_BASE
         theme.set_font_style_choice("cute")

@@ -14,10 +14,7 @@ Treeview/Scrollbar 调用点；`set_theme()` 支持运行时按需重新应用�
 `_MY_COLOR = theme.PRIMARY`）——普通的 Python 名字绑定会把
 `theme.PRIMARY` 那一刻的值冻结住，之后 `set_theme()` 重新赋值 theme.py
 自己的模块级变量时，没法波及某个其它模块里已经绑定好的本地名字。
-DSToolsApp.py 曾经踩过这个坑（以前是 `from dstools.shared.gui.theme
-import ERROR, HEADING, ...`），还有几个 gui/ 模块把派生颜色缓存成模块常
-量（toggle_switch.py、mod_render.py、world_render.py、themed_dialog.py、
-local_service_tab.py）——都已经改成现查 `theme.X`。
+违反这条规则的模块级颜色缓存，切主题后不会跟着变。
 
 **每次页签刷新都会重建**的控件（PIL 面板、逐行 destroy() 再重建的 ttk
 控件）下次重建时自然会用上新调色板，不需要额外处理。**只构造一次、不会
@@ -52,20 +49,16 @@ from dstools.shared.resource_paths import bundled_resource_dir
 # 梯/字体/圆角/边距各套主题保持一致（这些是布局常量，不是配色，没有理
 # 由随主题变化，只有下面这批调色板相关的键才按主题各自取值）。
 #
-# 自定义背景图片（core/custom_background.py）是跟主题**完全解耦**的独立
-# 功能，不属于任何一套主题——任选一套主题，只要设置过背景图就会叠加显
-# 示（见 gui/app.py._rebuild_shared_bg_image()，不再看任何 theme.X 开
-# 关）。历史上背景图曾经只绑定给一个专门叫 "custom_bg" 的主题（这也是
-# "gray" 这套主题曾经用这个名字的原因），后来发现"背景图只能在一套主题下
-# 用"限制没有必要，改回两者独立。
+# 自定义背景图片（core/custom_background.py）跟主题**完全解耦**——任选
+# 一套主题，只要设置过背景图就会叠加显示（见
+# gui/app.py._rebuild_shared_bg_image()，不看任何 theme.X 开关）。
 #
 # WINDOW_ALPHA / FONT_FAMILY / FONT_SIZE_* / CARD_RADIUS / CARD_MARGIN
 # 这几个字段：
 # - WINDOW_ALPHA：整窗透明度（Tk 在 Windows 上唯一稳定支持的真透明手
 #   段），1.0 = 不透明，apply_theme() 里调 root.attributes("-alpha", ...)。
-#   这套主题目前设成 1.0（不透明）——之前试过 0.92 的整窗透明效果，用户
-#   反馈要去掉，"透明"这个需求只保留下面"自定义背景图片"这一处（图片本
-#   身按不透明度跟背景色混合），不是整个窗口透视桌面。
+#   "透明"需求只在"自定义背景图片"里保留（图片按不透明度跟背景色混
+#   合），不是整个窗口透视桌面。
 # - FONT_FAMILY：默认是"Microsoft YaHei UI Light"（微软雅黑 Light，
 #   Windows 10/11 通常自带）——项目全程中英文混排，这款字体本身自带完
 #   整中文字形，不需要像纯拉丁字体（如以前用过的 "Segoe UI Light"）那
@@ -145,15 +138,11 @@ _THEMES = {
 }
 THEME_NAMES = ["gray", "mint", "twilight", "campfire", "sakura"]  # 菜单里出现的顺序
 
-# ── 字体样式（跟颜色主题完全解耦，独立设置，同"自定义背景图片"一个思
-# 路）──最早这里是"细体/常规/粗体"三档字重切换，应用户反馈"按钮字
-# 太细"上线过，但统一调粗之后正文/标签又显得太粗——按钮的粗细问题后
-# 来改成 apply_theme() 里 TButton 样式单独固定 bold=True 解决（不需要
-# 全局字重开关），这套字重切换本身就不再需要，整个删掉，改成字体*样
-# 式*（字体族）切换。具体有哪些样式、各自的族名/文件名/字号缩放倍数
-# 全部集中在 font_styles.py 里一张表（FONT_STYLES），这里只管"拿这张
-# 表做事"，不重复维护第二份列表——新增/删除一款字体样式改那一个文件
-# 就够了，见那边顶部的说明。
+# ── 字体样式（跟颜色主题完全解耦，独立设置，同"自定义背景图片"一个
+# 思路）——具体有哪些样式、各自的族名/文件名/字号缩放倍数全部集中在
+# font_styles.py 的 FONT_STYLES 表里，这里只管"拿这张表做事"，不重复
+# 维护第二份列表。按钮统一固定粗体（见 apply_theme() 的 TButton 样
+# 式），不需要单独的全局字重开关。
 #
 # "default" 之外的每个样式对应的族名都不是系统自带字体，Tk 原生控件要
 # 用它们，必须先把对应文件私有加载进当前进程（custom_font_loader.py
@@ -327,14 +316,9 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     style.configure("TLabelframe", background=BG_SOFT, foreground=TEXT)
     style.configure("TLabelframe.Label", background=BG_SOFT, foreground=HEADING)
 
-    # 应用户反馈：之前试过给全局字重开一档"粗体"，统一调粗之后按钮里的
-    # 字确实清楚了，但正文/标签这些非按钮的文字又显得太粗——后来去掉了
-    # 那套全局字重开关（见上面"字体样式"一节的说明），按钮文字改成单
-    # 独固定成粗体（font_tuple() 的显式 bold=True，不受字体样式切换影
-    # 响），其它地方维持默认字重。这里改的是 ttk 全局 "TButton" 样式，
-    # 项目里目前所有 ttk.Button 都没有单独指定过 style（含各个弹窗的确
-    # 认/取消按钮），所以是真正意义上的"全部按钮"一起变粗，不是分页签
-    # 单独处理。
+    # 按钮文字固定粗体（font_tuple() 显式 bold=True），其它控件维持默认
+    # 字重——项目里所有 ttk.Button 都没单独指定过 style，这里改的是 ttk
+    # 全局 "TButton" 样式，等于一次性覆盖全部按钮。
     style.configure("TButton", background=PRIMARY, foreground="#FFFFFF",
                      borderwidth=0, focusthickness=0, padding=(12, 6),
                      font=font_tuple(default_size, bold=True))
@@ -343,15 +327,11 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
                           ("active", PRIMARY_DARK)],
               foreground=[("disabled", TEXT_MUTED)])
 
-    # "Big.TButton" -- 目前只给顶部全局存档选择栏的"刷新"按钮用，比普通
-    # TButton 字号和内边距略大一点，跟旁边的存档下拉框视觉上匹配（原来是
-    # padding(16,8)+字号12，用户反馈太大了，调小了一号）。这里原来写的
-    # 是 font=("", 11)——空字符串族名不会跟着 FONT_FAMILY 走，Tk 会拿系
-    # 统默认字体（不是微软雅黑）来画，导致这个按钮的字体跟界面其它按钮
-    # 明显不一样（真机反馈过"刷新"按钮字体看着不搭）。改成 font_tuple()
-    # 才能跟其它 ttk 控件用同一个字体族名；字号用 FONT_SIZE_MD 而不是
-    # 写死的 11——这样也能跟着 FONT_SIZE_SCALE_BY_STYLE 一起缩放，不
-    # 会变成"其它按钮都跟着字体样式放大了，就这个刷新按钮没反应"。
+    # "Big.TButton" -- 只给顶部全局存档选择栏的"刷新"按钮用，字号/内边
+    # 距比普通 TButton 略大，跟旁边的存档下拉框视觉匹配。字体必须用
+    # font_tuple()：写 font=("", N) 空族名不会跟着 FONT_FAMILY 走，Tk
+    # 会拿系统默认字体画，跟界面其它按钮不一致；字号用 FONT_SIZE_MD 而
+    # 不是写死数字，这样才会跟着字体样式的缩放系数一起变。
     style.configure("Big.TButton", background=PRIMARY, foreground="#FFFFFF",
                      borderwidth=0, focusthickness=0, padding=(12, 6), font=font_tuple(FONT_SIZE_MD))
     style.map("Big.TButton",
@@ -390,11 +370,8 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
               bordercolor=[("active", ACCENT)])
 
     # "Archive.TMenubutton" -- 顶部全局存档选择器专用，字号/内边距比基础
-    # 样式略大一点（跟旁边的"刷新"按钮视觉匹配），其余外观继承基础样式。
-    # 原来是 padding(8,4)+字号12，用户反馈太大了，调小了一号。同 Big.
-    # TButton 的说明——原来的 font=("", 11) 空族名不跟随 FONT_FAMILY，
-    # 改成 font_tuple() 保持跟其它控件字体一致；字号也改用 FONT_SIZE_MD
-    # 而不是写死的 11，跟着 FONT_SIZE_SCALE_BY_STYLE 一起缩放。
+    # 样式略大（跟旁边"刷新"按钮视觉匹配），其余外观继承基础样式；字体
+    # 同 Big.TButton 的理由，必须用 font_tuple()+FONT_SIZE_MD。
     style.configure("Archive.TMenubutton", padding=(7, 3), font=font_tuple(FONT_SIZE_MD))
 
     # "ModOption.TMenubutton" -- Mod配置弹窗每个设置项、以及服务器配置里

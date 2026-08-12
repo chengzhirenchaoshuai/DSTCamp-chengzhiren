@@ -464,17 +464,10 @@ class ClusterConfigTab:
             for w in frame.winfo_children(): w.destroy()
         self._entries.clear()
 
-    # 之前默认的 ttk 字体太小、看不清；这几个是设置项统一放大后用的字
-    # 体。原来是 _ROW_LABEL_FONT = ("", 11) 这种写死的类属性——空字符
-    # 串族名不会跟着 theme.FONT_FAMILY 走（Tk 会拿系统默认字体来画），
-    # 而且是类定义时算一次就冻住，之后 theme.set_font_style_choice()
-    # 切换字体样式也不会波及已经算好的这个值，导致"服务器配置"页签里
-    # "服务器名称/服务器描述"这些标签切到荆南麦圆体后完全没反应（真机
-    # 反馈过）。改成 @property，每次读 self._ROW_LABEL_FONT/
-    # _ROW_VALUE_FONT 都现查一遍 theme.FONT_FAMILY，不用改下面几处调用
-    # 点的写法。字号改用 FONT_SIZE_SM（原来是字面量 11，相当于
-    # FONT_SIZE_BASE）——之前系统默认字体在这个字号下显得偏小，换成
-    # 微软雅黑之后同样数字反而显得偏大，应用户反馈调小一档。
+    # 用 @property 而不是类属性/模块级常量，是因为要每次现查
+    # theme.FONT_FAMILY（类属性在类定义时算一次就冻住，字体样式切换后
+    # 不会再变）。字号用 FONT_SIZE_SM，让这几个设置项标签比默认字体大
+    # 一号但不会显得过大。
     @property
     def _ROW_LABEL_FONT(self):
         return theme.font_tuple(theme.FONT_SIZE_SM)
@@ -934,17 +927,12 @@ class ClusterConfigTab:
         self._token_visible = False
         self._token_display.configure(state=tk.NORMAL); self._token_display.delete("1.0", tk.END)
         self._token_raw = read_token(cluster.token_path) if cluster.token_path else ""
-        # 应用户反馈：全局令牌池设置好之后，"已经存在、但缺令牌"的服务
-        # 器存档（不是这次用"复制为服务器存档"新建出来的——比如更早创
-        # 建、或者创建那会儿全局令牌池还是空的）完全没受益，还是显示
-        # "未设置"，启动服务器照样报错，得自己手动去 Klei 后台申请再粘
-        # 贴进来，全局令牌池等于形同虚设。cluster_copy.py 那边的自动填
-        # 充只在"复制"那一刻生效，管不到已经存在的存档。这里补上同一
-        # 套判断，只要是服务器存档（is_valid_token() 判断标准跟
-        # cluster_copy.py 完全一致，不区分"完全没有文件"还是"文件存在
-        # 但内容无效"）、全局令牌池不为空，打开这个存档的"服务器令牌"
-        # 页签时就顺手自动补上——本地存档（cluster.source 不是 SERVER）
-        # 本来就不需要 token，不能乱填。
+        # 只要是服务器存档且当前 token 无效（is_valid_token()，跟
+        # cluster_copy.py 判断标准一致，不区分"没有文件"还是"文件内容
+        # 无效"）、全局令牌池非空，打开这个存档的"服务器令牌"页签时就
+        # 自动补上——不止"复制为服务器存档"那一刻才生效（那边的自动填
+        # 充见 cluster_copy.py），已存在的老存档也能受益。本地存档不需
+        # 要 token，不填。
         if not is_valid_token(self._token_raw) and cluster.source == SaveSource.SERVER:
             pool = app_settings.get_global_tokens()
             if pool:

@@ -54,6 +54,7 @@ python tests/test_e2e_phase2.py    # i18n/exe-gui 可导入性测试
 - **禁止给 `Toplevel` 写死固定像素宽高**（高 DPI 缩放机器上会挤成看不见的细线）——用 `win.update_idletasks()` + `winfo_reqwidth/reqheight()` 让 Tk 自己算尺寸，或调用 `shared/gui/dialog_geometry.center_over_parent()`。
 - **下拉框一律用 `shared/gui/menu_combo.MenuCombo`，滑块一律用 `shared/gui/slider.Slider`**——`ttk.Combobox`/`ttk.Scale` 在这台机器上确认损坏（选中内容消失/点击跳到随机位置）。
 - **只读展示型文字用 `BgFrame` + `create_text`，不用 `ttk.Entry`/`ttk.Label`**——原生控件不透明，会挡住自定义背景图。
+- **`ttk.Notebook` 嵌在 `ttk.PanedWindow` 里时，往已经 `fill=BOTH,expand=True` 稳定下来的兄弟容器旁边迟到 `pack()` 一个新控件不会触发它收缩腾地方**（`update()`/`update_idletasks()` 都没用），新控件会分到 0 高度、`winfo_ismapped()` 是 0——用 `pack(before=已存在的那个控件)` 插入能正常触发收缩（`features/local_service/tab.py` 的日志搜索栏/Mod 状态条都是这样插的）。
 - **GUI 主题**：任何消费方必须现查 `theme.X`，不能在 import/构造时缓存；长期存活容器需要 `apply_theme()`；新增顶层页签必须实现 `retheme()`（`app.py._switch_theme()` 用 `getattr` 探测，没实现会被静默跳过）。字体一律用 `theme.font_tuple(size, bold=...)`，不要写死 `(theme.FONT_FAMILY, size)` 字面量元组，否则切字体样式（设置 → 字体设置）时这个控件不会跟着变。
 - **新增/删除字体样式**：改 `shared/gui/font_styles.py` 的 `FONT_STYLES` 列表这一处就够了（`theme.py`/`fonts.py`/`font_settings_dialog.py` 都从它派生），字体文件放 `tools/fonts/`，`family` 字段必须真机核对准确族名，见该文件顶部说明。
 - **页签 `__init__` 里不能塞重活**——用 `_refresh()`/`_on_tab_select()` 懒加载，否则启动瞬间所有页签抢跑。

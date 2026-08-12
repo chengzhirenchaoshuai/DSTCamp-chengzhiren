@@ -1,5 +1,5 @@
-""""主题"菜单"字体设置…"打开的小弹窗——选字体样式（默认/荆南麦圆
-体）。"""
+""""主题"菜单"字体设置…"打开的小弹窗——按钮列表从 theme.FONT_STYLE_
+NAMES 生成，样式数量/名字改 font_styles.py 就够了，这里不用跟着改。"""
 
 import tkinter as tk
 from tkinter import font as tkfont
@@ -47,25 +47,17 @@ class FontSettingsDialog:
         self._buttons: dict[str, tk.Button] = {}
         # 各按钮自己的 Font 对象要保留引用（不能用局部变量，Tk 只认活着
         # 的 Font 对象），族名固定用该样式对应的族名，不跟随全局字体样
-        # 式——按钮本身就是"这个选项长什么样"的实物展示。
-        # 字号用 FONT_SIZE_LG（跟下面预览行一样大）——之前一路调到 22
-        # 只是为了验证"字大一点是不是更清楚"，真正的修复是全局字号会
-        # 按 FONT_SIZE_SCALE_BY_STYLE 跟着字体样式一起放大（见
-        # theme.py），这两个按钮只是弹窗里的演示用途，不需要跟着继续
-        # 加码，改回正常字号。
+        # 式——按钮本身就是"这个选项长什么样"的实物展示，字号用
+        # FONT_SIZE_LG（弹窗演示用途，不需要跟着全局缩放系数再放大）。
         self._btn_fonts: dict[str, tkfont.Font] = {
             style: tkfont.Font(family=theme.FONT_FAMILY_BY_STYLE[style], size=theme.FONT_SIZE_LG)
             for style in theme.FONT_STYLE_NAMES
         }
-        # 不用 width=/height=——tk.Button 的这两个尺寸参数都是按"这个按
-        # 钮自己字体的平均字符宽度/行高"折算的单位，两个按钮各用各的字
-        # 体，同一个数值换算出来的像素尺寸不一样（真机反馈过两次："默
-        # 认"这个按钮先是明显更宽，改成像素单位的 padx 后又发现明显更
-        # 高——根因是"Microsoft YaHei UI Light"在这个字号下的行高
-        # (metrics("linespace")) 比"KN Maiyuan"大，同样的 pady 加上去，
-        # 行高更高的字体总高度自然更高）。这里按各自字体实际行高反着补
-        # 齐 pady：行高小的字体多补一点上下留白，两个按钮的总高度才能
-        # 对齐，不依赖两款字体行高恰好相等这个巧合。
+        # 不用 width=/height=——tk.Button 这两个尺寸参数按"自己字体的平
+        # 均字符宽度/行高"折算，各按钮字体不同，同一数值换算出的像素尺
+        # 寸也不同（不同字体同字号下 metrics("linespace") 不一样，同样
+        # 的 pady 加上去，行高更高的字体总高度自然更高）。这里按各自字
+        # 体实际行高反着补齐 pady，行高小的多补一点，让按钮总高度对齐。
         base_pady = 6
         max_linespace = max(f.metrics("linespace") for f in self._btn_fonts.values())
         for style in theme.FONT_STYLE_NAMES:
@@ -78,12 +70,10 @@ class FontSettingsDialog:
             self._buttons[style] = btn
 
         # 预览行用一个独立的 tkfont.Font 对象（不是裸元组）——切样式后
-        # 要能重新 configure() 它，立刻在弹窗里看到效果，不用关掉弹窗
-        # 重开。字号固定用字面量（不读 theme.FONT_SIZE_LG）——那个值现
-        # 在会跟着 FONT_SIZE_SCALE_BY_STYLE 一起放大，选中"cute"时这行
-        # 预览文字本身偏长，字号再跟着放大容易把弹窗撑到显示区域外面
-        # （真机反馈过），这里就是一句纯展示文字，没必要跟全局字号联
-        # 动，固定小一号更稳妥。
+        # 要能重新 configure() 它，立刻在弹窗里看到效果，不用关掉弹窗重
+        # 开。字号固定用字面量，不读 theme.FONT_SIZE_LG：那个值跟着
+        # FONT_SIZE_SCALE_BY_STYLE 放大，这行预览文字本身偏长，字号再
+        # 跟着放大会把弹窗撑出显示区域。
         self._preview_font = tkfont.Font(family=theme.FONT_FAMILY, size=_PREVIEW_FONT_SIZE)
         row_preview = tk.Frame(card, background=theme.CARD_BG)
         row_preview.pack(fill=tk.X, padx=24, pady=(0, 24))

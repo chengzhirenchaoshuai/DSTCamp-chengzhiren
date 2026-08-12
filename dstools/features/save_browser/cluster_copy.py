@@ -94,16 +94,12 @@ def copy_local_cluster_to_server(local_cluster_path: Path, klei_root: Path,
             log(t("copy.copying_file", name=entry.name))
             shutil.copy2(entry, target)
 
-    # 本地存档一般没有 cluster_token.txt（离线单机不需要）——全局令牌池
-    # 非空时固定取第一个自动填上（应用户要求，不随机选），省得每次复
-    # 制成服务器存档都要手动去 Klei 后台申请一遍。已经带了*有效*token 的
-    # （比如从别的服务器存档复制过来）不覆盖——判断标准是"读出来的内容
-    # 像不像一个真令牌"（is_valid_token()），不能只看文件存不存在：真
-    # 机反馈过，本地存档偶尔会带一个已经存在但内容是空的 cluster_
-    # token.txt（比如以前手动建过、后来又清空过），只判断"文件存不存
-    # 在"会把这份空文件误判成"已经有 token 了"而跳过自动填充，复制完
-    # 之后全局令牌池明明有值，新存档却还是显示"未设置"、启动时报没有
-    # 令牌。
+    # 本地存档一般没有 cluster_token.txt——全局令牌池非空时固定取第一
+    # 个自动填上，省得每次复制成服务器存档都要手动去 Klei 后台申请。
+    # 已经带了*有效*token 的不覆盖，判断标准是 is_valid_token() 而不是
+    # "文件存不存在"：本地存档可能带一个已存在但内容为空的
+    # cluster_token.txt，只判断文件存在与否会把这份空文件误判成"已经
+    # 有 token"而跳过自动填充。
     token_path = dest / "cluster_token.txt"
     if not is_valid_token(read_token(token_path)):
         pool = app_settings.get_global_tokens()

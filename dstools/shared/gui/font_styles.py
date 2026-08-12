@@ -1,14 +1,11 @@
-"""字体样式的集中注册表——新增/删除一款候选字体样式只需要改这一个列
-表，不用再满世界找哪几个文件的哪几处 dict 要跟着改一遍（theme.py 的
-FONT_FAMILY_BY_STYLE/FONT_STYLE_NAMES/FONT_SIZE_SCALE_BY_STYLE、
-fonts.py 的 PIL 候选路径表、私有字体加载列表，全部从这里派生）。应用
-户要求："方便快速嵌入或删除字体样式，后面会再试几款字体" ——之前这
-几处要挨个改，漏一处只会在运行时静默 fallback 回默认字体，不报错，容
-易漏改了都不知道。
+"""字体样式的集中注册表——theme.py 的 FONT_FAMILY_BY_STYLE/
+FONT_STYLE_NAMES/FONT_SIZE_SCALE_BY_STYLE、fonts.py 的 PIL 候选路径
+表、私有字体加载列表，全部从下面 FONT_STYLES 这一份列表派生，新增/
+删除样式只改这一处。漏改某处不会报错，只会静默 fallback 回默认字
+体，所以要单一数据源。
 
-这是纯数据模块，不 import tkinter/PIL/theme.py/fonts.py 任何一个——
-theme.py 已经 import fonts.py，两边都从这个模块读配置，不会产生新的
-循环依赖。
+纯数据模块，不 import tkinter/PIL/theme.py/fonts.py——theme.py 已经
+import fonts.py，两边都从这个模块读配置，不会产生循环依赖。
 
 新增一款字体样式的步骤：
 1. 把字体文件（+ 许可证文件，走 OFL/MIT 这类允许打包的开源协议）放进
@@ -56,16 +53,10 @@ class FontStyleDef:
 FONT_STYLES: list[FontStyleDef] = [
     FontStyleDef(key="default", family="Microsoft YaHei UI Light", filename=None, scale=1.0),
     FontStyleDef(key="cute", family="KN Maiyuan", filename="KNMaiyuan-Regular.ttf", scale=1.2),
-    # Fusion Pixel Font 简体中文版——TakWolf/fusion-pixel-font，MIT 协
-    # 议。真机核对过项目 i18n/strings.py 里全部 590 个不重复汉字，这款
-    # 字体一个都不缺（之前试过的另一款点阵字体"寒蝉点阵体"按 16px 网
-    # 格设计，日常界面常用的 11~14px 字号下棱角会被抗锯齿磨平，像素感
-    # 不明显，应用户反馈换成了这一款——小字号下依然能看出明显的像素
-    # 块状笔画）。scale 用 1.0：实测同一磅值下这款字体的字形实际像素尺
-    # 寸跟雅黑几乎一模一样（用 PIL getbbox 量过 11~20px 各档，宽高比例
-    # 都在 1.0 上下），不像荆南麦圆体那样笔画细需要额外放大——之前照
-    # 抄上一款点阵字体（ChillBitmap）遗留的 1.3 倍缩放，导致换字体后整
-    # 体看起来比预想大了一圈，应用户反馈核实后改正。
+    # Fusion Pixel Font 简体中文版（TakWolf/fusion-pixel-font，MIT）。
+    # 已核对项目 i18n/strings.py 用到的全部汉字，字形一个不缺。
+    # scale=1.0：实测同一磅值下字形像素尺寸跟雅黑基本一致（用 PIL
+    # getbbox 量过 11~20px 各档），不像荆南麦圆体那样笔画细需要放大。
     FontStyleDef(key="pixel", family="Fusion Pixel 12px Prop zh_hans",
                  filename="fusion-pixel-12px-proportional-zh_hans.ttf", scale=1.0),
 ]

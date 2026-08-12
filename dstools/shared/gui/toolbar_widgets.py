@@ -73,26 +73,14 @@ def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None, 
     行多高"这件事）。
 
     text_getter: callable() -> str，现查当前文字（跟随语言切换）。font
-    默认跟随 theme.FONT_FAMILY（字号沿用 TkDefaultFont 的原有大小，不
-    跟着变——这里只补字体族的一致性，不改动尺寸这个更容易引起连带视
-    觉变化的维度），传"("", 11, "bold")"这类固定字体元组会被当成显式覆
-    盖，完全用调用方给的字体，不再跟随字体设置（族名/字号/字重都固定
-    住，包括字体样式切换也不会波及）——只有真的需要"这个标签永远长这
-    个样子，不受字体设置影响"时才应该这样传。绝大多数"小节标题"场景
-    （字号跟正文一样、只是加粗突出）应该用 bold=True 而不是传 font 元
-    组：bold=True 仍然走跟随 theme.FONT_FAMILY/字体样式缩放的默认分
-    支，只是叠加粗体，这样字体样式切换时这些标题也能正常跟着变（真机
-    反馈过："服务器配置"页签的字段标签用的是这种写死字体元组的旧写
-    法，切到荆南麦圆体后完全没反应，就是没走这条默认分支）。
-    返回的 BgFrame 挂了一个 `redraw()` 方法，语言切换/字体设置切换时调
-    用一次即可刷新文字和字体。
-
-    **坑**：之前 font=None 这个默认分支直接用 tkfont.nametofont(
-    "TkDefaultFont")——那是 Tk 自己的系统默认字体，从来没有跟随过
-    theme.FONT_FAMILY，跟全项目其它地方用的字体族不是同一个（这个项目
-    几乎所有工具栏"小节标题"文字都是通过这个函数画的，且全部调用点都
-    没传 font 参数，等于说这一类文字一直在用系统默认字体，是没被注意
-    到的不一致，不是这次改动才引入的）。这次一并统一。"""
+    默认跟随 theme.FONT_FAMILY，字号沿用 TkDefaultFont 原有大小；传显
+    式 font 元组会完全脱离字体设置跟随（族名/字号/字重都固定住，字体
+    样式切换也不会波及），只有"这个标签必须永远长这个样子"时才该这样
+    传。绝大多数"小节标题"场景应该用 bold=True 而不是传 font 元组——
+    bold=True 仍然走跟随 theme.FONT_FAMILY/字体样式缩放的默认分支，只
+    是叠加粗体；传固定 font 元组的标签不会跟着字体样式切换变化。
+    返回的 BgFrame 挂了 `redraw()` 方法，语言切换/字体设置切换后调用一
+    次即可刷新文字和字体。"""
     explicit_font = font is not None
     if explicit_font:
         font_obj = tkfont.Font(font=font)

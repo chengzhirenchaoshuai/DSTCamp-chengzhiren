@@ -25,8 +25,6 @@ if IS_WINDOWS:
     _gdi32 = ctypes.windll.gdi32
     _gdi32.AddFontResourceExW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p]
     _gdi32.AddFontResourceExW.restype = ctypes.c_int
-    _gdi32.RemoveFontResourceExW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_void_p]
-    _gdi32.RemoveFontResourceExW.restype = wintypes.BOOL
 
 # FR_PRIVATE——MSDN 文档里的标准常量值，只对当前进程可见。
 _FR_PRIVATE = 0x10

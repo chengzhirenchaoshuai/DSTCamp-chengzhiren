@@ -25,12 +25,9 @@ _DEFAULT_CANDIDATES = [
 ]
 
 # 键必须跟 gui/theme.py 的 FONT_STYLE_CHOICE 取值完全对应（两边都从
-# font_styles.FONT_STYLES 派生，天然对得上）——theme.set_font_style_
-# choice() 切换时会原样把这个字符串传给 set_font_style()。"default"
-# （filename 是 None）沿用雅黑兜底链（不再区分细体/常规/粗体——PIL 这
-# 条渲染路径本来就没有单独的粗体需求，之前的字重开关删掉之后这里只需
-# 要一份候选列表）；其它样式优先用打包的对应字体，找不到（比如打包遗
-# 漏、文件被误删）才退回同一份雅黑兜底链，不会整个崩掉。
+# font_styles.FONT_STYLES 派生，天然对得上）。"default"（filename 是
+# None）直接用雅黑兜底链；其它样式优先用打包的对应字体，找不到（打包
+# 遗漏、文件被误删）才退回同一份雅黑兜底链，不会整个崩掉。
 _CANDIDATES_BY_STYLE: dict[str, list[str]] = {
     d.key: ([str(bundled_resource_dir() / "tools" / "fonts" / d.filename), *_DEFAULT_CANDIDATES]
             if d.filename else _DEFAULT_CANDIDATES)
