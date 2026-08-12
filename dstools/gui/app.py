@@ -36,6 +36,7 @@ from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.features.sakura.tab import SakuraTab
 from dstools.features.save_browser.tab import SaveBrowserTab
 from dstools.features.world.tab import WorldSettingsTab
+from dstools.features.world.creation_tab import WorldCreationTab
 from dstools.i18n import get_lang, set_lang, t
 from dstools.models import Platform, SaveSource, Shard
 
@@ -108,7 +109,7 @@ class DSToolsApp:
         # Notebook（SaveBrowserTab.sub_notebook、WorldSettingsTab._sub_nb、
         # ClusterConfigTab._cc_notebook）仍保持原生 ttk 外观，只是被
         # apply_theme() 重新上色。
-        self._tab_keys = ["local", "mods", "world", "server", "saves", "sakura"]
+        self._tab_keys = ["local", "mods", "world", "create", "server", "saves", "sakura"]
         self._pill_bar = PillTabBar(
             self.root,
             tabs=[(k, t(f"tab.{k}")) for k in self._tab_keys],
@@ -236,6 +237,7 @@ class DSToolsApp:
         self.save_tab = SaveBrowserTab(self._tab_cards["saves"].body, self)
         self.mod_tab = ModManagerTab(self._tab_cards["mods"].body, self)
         self.world_tab = WorldSettingsTab(self._tab_cards["world"].body, self)
+        self.creation_tab = WorldCreationTab(self._tab_cards["create"].body, self)
         self.cluster_tab = ClusterConfigTab(self._tab_cards["server"].body, self)
         self.sakura_tab = SakuraTab(self._tab_cards["sakura"].body, self)
 
@@ -247,12 +249,12 @@ class DSToolsApp:
         # 补一次——反正 on_cluster_changed() 不传 cluster 参数时会自己从
         # get_selected_cluster() 现查，不会读到过期的存档。
         self._cluster_tab_map = {"local": self.local_tab, "mods": self.mod_tab,
-                                  "world": self.world_tab, "server": self.cluster_tab,
+                                 "world": self.world_tab, "create": self.creation_tab, "server": self.cluster_tab,
                                   "saves": self.save_tab, "sakura": self.sakura_tab}
         self._stale_cluster_tabs: set[str] = set()
         self._current_tab_key = "local"
 
-        self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.cluster_tab, self.save_tab, self.sakura_tab]
+        self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.creation_tab, self.cluster_tab, self.save_tab, self.sakura_tab]
         for key, tab in zip(self._tab_keys, self._tabs):
             tab.frame.pack(fill=tk.BOTH, expand=True)
         # 只留 "local" 参与布局，其余 5 个先 grid_remove() 掉——之前是全部

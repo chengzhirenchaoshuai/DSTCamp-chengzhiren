@@ -205,6 +205,7 @@ STRINGS = {
 
         # 世界设置页签
         "tab.world": "  世界设置  ",
+        "tab.create": "  创建存档  ",
         "world.cluster": "服务器:",
         "world.shard": "世界:",
         "world.preset_name": "预设名称",
@@ -821,6 +822,7 @@ STRINGS = {
 
         # 世界设置页签
         "tab.world": "  World Settings  ",
+        "tab.create": "  Create World  ",
         "world.cluster": "Cluster:",
         "world.shard": "Shard:",
         "world.preset_name": "Preset Name",
