@@ -2,6 +2,7 @@
 
 import tkinter as tk
 from pathlib import Path
+import re
 from tkinter import ttk
 
 from dstools.features.world.creation import WorldCreationPlan, create_world
@@ -30,6 +31,7 @@ class WorldCreationTab:
         self._mod_settings = {}
         self._template_root = None
         self._selected_mod_ids: set[str] = set()
+        self._mod_vars: dict[str, tk.BooleanVar] = {}
         self._build()
 
     def _build(self):
@@ -53,6 +55,9 @@ class WorldCreationTab:
         ttk.Checkbutton(mod_frame, text="3322803908 · 云霄国度/猪镇", variable=self.porkland_mod_var,
                         command=self._on_mod_toggle).pack(side=tk.LEFT, padx=8)
         ttk.Label(mod_frame, text="创建配置独立于当前存档").pack(side=tk.LEFT, padx=8)
+        self._mod_list_frame = BgFrame(self.frame, self.app, bg=theme.CARD_BG)
+        self._mod_list_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+        self._build_mod_list()
         self._sub = ttk.Notebook(self.frame); self._sub.pack(fill=tk.BOTH, expand=True, padx=8)
         self._rules_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._gen_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
@@ -86,11 +91,41 @@ class WorldCreationTab:
     def _enabled_mod_ids(self):
         return set(self._selected_mod_ids)
 
+    def _build_mod_list(self):
+        """从本机 Steam Workshop 扫描 Mod，创建页独立维护勾选状态。"""
+        candidates = []
+        for base in (Path("F:/MyGamePath/SteamGames/steamapps/workshop/content/322330"),):
+            if base.is_dir():
+                candidates.extend(sorted(p for p in base.iterdir() if p.is_dir() and p.name.isdigit()))
+        for child in self._mod_list_frame.winfo_children(): child.destroy()
+        make_toolbar_label(self._mod_list_frame, self.app, lambda: "可选 Mod").pack(side=tk.LEFT)
+        for mod_dir in candidates:
+            text = mod_dir.name
+            info = mod_dir / "modinfo.lua"
+            if info.exists():
+                match = re.search(r"name\s*=\s*[\"']([^\"']+)", info.read_text(encoding="utf-8", errors="ignore"))
+                if match: text = f"{match.group(1)} ({mod_dir.name})"
+            var = self._mod_vars.setdefault(mod_dir.name, tk.BooleanVar(value=False))
+            ttk.Checkbutton(self._mod_list_frame, text=text, variable=var,
+                            command=lambda mid=mod_dir.name, v=var: self._toggle_mod(mid, v)).pack(side=tk.LEFT, padx=4)
+
+    def _toggle_mod(self, mod_id, var):
+        if var.get(): self._selected_mod_ids.add(mod_id)
+        else: self._selected_mod_ids.discard(mod_id)
+        if mod_id == "3322803908":
+            self.porkland_mod_var.set(var.get())
+        self.location_combo["values"] = available_master_locations(self._selected_mod_ids)
+        if self.location_var.get() not in self.location_combo["values"]:
+            self.location_var.set("forest")
+        self._reload_template()
+
     def _on_mod_toggle(self):
         if self.porkland_mod_var.get():
             self._selected_mod_ids.add("3322803908")
         else:
             self._selected_mod_ids.discard("3322803908")
+        if "3322803908" in self._mod_vars:
+            self._mod_vars["3322803908"].set(self.porkland_mod_var.get())
         values = available_master_locations(self._selected_mod_ids)
         self.location_combo["values"] = values
         if self.location_var.get() not in values:
