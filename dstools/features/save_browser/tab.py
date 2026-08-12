@@ -7,7 +7,8 @@ import queue
 import threading
 import tkinter as tk
 from datetime import datetime
-from tkinter import font as tkfont, ttk
+from pathlib import Path
+from tkinter import filedialog, font as tkfont, ttk
 
 from PIL import Image, ImageTk
 
@@ -30,6 +31,72 @@ from dstools.shared.gui.toggle_switch import ToggleSwitch
 from dstools.shared.gui.toolbar_widgets import make_toolbar_label
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
+from dstools.features.world.creation import WorldCreationPlan, create_world
+from dstools.features.world.defaults import default_plans_from_cluster
+from dstools.features.world.location_selector import available_master_locations
+from dstools.features.save_browser.cluster_copy import validate_cluster_folder_name
+
+
+class _CreateWorldDialog:
+    """Create a new two-shard cluster from a verified game template."""
+
+    def __init__(self, parent, destination_root: Path, enabled_mod_ids, on_created):
+        self.result = None
+        self._destination_root = destination_root
+        self._enabled_mod_ids = set(enabled_mod_ids)
+        self._on_created = on_created
+        self.win = win = tk.Toplevel(parent)
+        win.title("创建存档")
+        win.configure(background=theme.BG_SOFT)
+        win.resizable(False, False)
+        body = ttk.Frame(win, padding=14)
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(body, text="存档名称").grid(row=0, column=0, sticky="w", pady=4)
+        self.name_var = tk.StringVar(value="Cluster_New")
+        ttk.Entry(body, textvariable=self.name_var, width=34).grid(row=0, column=1, columnspan=2, pady=4)
+        ttk.Label(body, text="Master 世界").grid(row=1, column=0, sticky="w", pady=4)
+        self.location_var = tk.StringVar(value="forest")
+        ttk.Combobox(
+            body, textvariable=self.location_var,
+            values=available_master_locations(self._enabled_mod_ids),
+            state="readonly", width=31,
+        ).grid(row=1, column=1, columnspan=2, pady=4)
+        ttk.Label(body, text="默认模板目录").grid(row=2, column=0, sticky="w", pady=4)
+        self.template_var = tk.StringVar()
+        ttk.Entry(body, textvariable=self.template_var, width=27).grid(row=2, column=1, pady=4)
+        ttk.Button(body, text="浏览…", command=self._browse_template).grid(row=2, column=2, padx=(6, 0))
+        self.error_var = tk.StringVar()
+        ttk.Label(body, textvariable=self.error_var, foreground="#c62828").grid(row=3, column=0, columnspan=3, sticky="w")
+        buttons = ttk.Frame(body)
+        buttons.grid(row=4, column=0, columnspan=3, sticky="e", pady=(12, 0))
+        ttk.Button(buttons, text="取消", command=win.destroy).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(buttons, text="创建", command=self._create).pack(side=tk.RIGHT, padx=4)
+        win.transient(parent)
+        win.grab_set()
+        center_over_parent(win, parent)
+
+    def _browse_template(self):
+        value = filedialog.askdirectory(parent=self.win, title="选择官方默认存档模板目录")
+        if value:
+            self.template_var.set(value)
+
+    def _create(self):
+        try:
+            name = self.name_var.get().strip()
+            validate_cluster_folder_name(name)
+            template = Path(self.template_var.get().strip())
+            master, caves = default_plans_from_cluster(template)
+            selected = self.location_var.get()
+            if selected != master.location:
+                raise ValueError("所选模板的 Master 世界类型与当前选择不一致")
+            plan = WorldCreationPlan(name, master, caves, mod_ids=frozenset(self._enabled_mod_ids))
+            self.result = create_world(plan, self._destination_root)
+        except Exception as exc:
+            self.error_var.set(str(exc))
+            return
+        self.win.destroy()
+        if self._on_created:
+            self._on_created(self.result)
 
 
 # 页面顶部各区块统一用的左右留白，必须用同一个值，不然会出现"卡片跟
@@ -941,6 +1008,8 @@ class SaveBrowserTab:
         self._backup_btn.pack(side=tk.RIGHT, padx=(0, 2))
         self._backup_policy_btn = ttk.Button(env_header_row, text=t("save.backup_policy_btn"), command=self._on_backup_policy)
         self._backup_policy_btn.pack(side=tk.RIGHT, padx=(0, 2))
+        self._create_world_btn = ttk.Button(env_header_row, text="创建存档", command=self._on_create_world)
+        self._create_world_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
         # 不再是"全部存档"的可滚动列表——顶部全局选择栏已经选了具体是哪
         # 个存档，这里只需要现查、现画那一个存档自己的详情（存档位置/
@@ -954,6 +1023,17 @@ class SaveBrowserTab:
 
     def _on_backup_policy(self):
         _BackupPolicyDialog(self.app.root)
+
+    def _on_create_world(self):
+        cluster = self._get_cluster()
+        if not cluster:
+            dlg.show_error(self.app.root, "创建存档", "请先选择一个存档，以确定目标目录。")
+            return
+        from dstools.features.mod.sync import get_enabled_mod_ids
+        _CreateWorldDialog(
+            self.app.root, cluster.path.parent, get_enabled_mod_ids(cluster),
+            lambda path: dlg.show_info(self.app.root, "创建存档", f"存档已创建：{path.name}"),
+        )
 
     def _on_backup_now(self):
         c = self._get_cluster()
