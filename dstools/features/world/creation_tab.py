@@ -285,7 +285,7 @@ class WorldCreationTab:
         current = preset.overrides.get(key, "default")
         idx = values.index(current) if current in values else 0
         new = values[max(0, min(len(values) - 1, idx + delta))]
-        plan.overrides[key] = new
+        preset.overrides[key] = new
         self._render()
 
     def _active_preset(self):
