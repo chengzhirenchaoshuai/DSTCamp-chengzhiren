@@ -68,6 +68,7 @@ from dstools.features.local_service.luajit_injector import (
     resolve_launch_bin64_dir, write_marker,
 )
 from dstools.shared.steam_discovery import parse_library_folders, read_game_version_file
+from dstools.shared.tex_convert import _has_vc2013_x86_runtime
 
 
 @contextlib.contextmanager
@@ -936,6 +937,187 @@ def test_theme_set_theme():
         theme.PRIMARY = original_primary  # 双保险，确保测试不影响后续状态
 
 
+def test_world_reader_and_view_model():
+    """世界 Lua 的读取状态、原子保存和 UI 无关视图模型必须可独立验证。"""
+    print("\n" + "=" * 60)
+    print("Test 23: World Reader and View Model")
+
+    from dstools.features.world.reader import (
+        LeveldataStatus, WorldPreset, load_leveldata, save_leveldata,
+    )
+    from dstools.features.world.view_model import WorldDisplayOverride, build_world_view_model
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        path = root / "leveldataoverride.lua"
+        path.write_text(
+            'return { id = "ENDLESS", name = "Endless", desc = "keep me", '
+            'location = "forest", custom = { enabled = true }, '
+            'overrides = { day = "default", autumn = "longseason" } }',
+            encoding="utf-8",
+        )
+        result = load_leveldata(path)
+        assert result.status == LeveldataStatus.OK and result.preset is not None
+        preset = result.preset
+        preset.overrides[0].value = "onlyday"
+        save_leveldata(preset, path)
+        reloaded = load_leveldata(path)
+        assert reloaded.status == LeveldataStatus.OK and reloaded.preset is not None
+        assert reloaded.preset.description == "keep me"
+        assert reloaded.preset.raw["custom"]["enabled"] is True
+        assert {item.key: item.value for item in reloaded.preset.overrides}["day"] == "onlyday"
+        assert not list(root.glob("*.tmp")), "原子写入完成后不应遗留临时文件"
+
+        assert load_leveldata(root / "missing.lua").status == LeveldataStatus.MISSING
+        invalid = root / "invalid.lua"
+        invalid.write_text("return { overrides = {", encoding="utf-8")
+        assert load_leveldata(invalid).status == LeveldataStatus.INVALID
+
+    view = build_world_view_model(WorldPreset(location="forest"), {}, [])
+    rows = [row for items in view.rules_by_category.values() for row in items]
+    day = next(row for row in rows if row.key == "day")
+    assert isinstance(day, WorldDisplayOverride) and day.persisted is False
+    print("  PASS: world I/O preserves metadata, reports errors, and uses explicit display defaults")
+
+
+def test_world_catalog_audit_and_cave_hidden_forest_sections():
+    """洞穴共享项需被识别；未知项必须被审计报告而非伪造为可编辑设置。"""
+    print("\n" + "=" * 60)
+    print("Test 24: World Catalog Audit")
+
+    from dstools.features.world.audit import audit_leveldata_paths
+    from dstools.features.world.categories import get_setting_info
+
+    assert get_setting_info("day", "cave")[0] == "other"
+    assert get_setting_info("basicresource_regrowth", "cave")[0] == "other"
+    assert get_setting_info("roads", "cave")[0] == "other"
+    assert get_setting_info("day", "porkland")[0] == "global"
+    assert get_setting_info("specialevent", "porkland")[0] == "other", "猪镇 Mod 明确删除了该设置"
+    assert get_setting_info("layout_mode", "porkland")[0] == "other", "地图内部元数据不能伪造为设置"
+
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "leveldataoverride.lua"
+        path.write_text(
+            'return { location = "cave", overrides = { day = "default", roads = "default", '
+            'layout_mode = "RestrictNodesByKey" } }', encoding="utf-8",
+        )
+        report = audit_leveldata_paths([path])
+    cave = report.by_location["cave"]
+    assert report.statuses == {"ok": 1}
+    assert cave.recognized_overrides == 0
+    assert cave.unknown_keys == {"day", "layout_mode", "roads"}
+    print("  PASS: catalog audit separates verified settings from preserved unknown metadata")
+
+
+def test_world_catalog_layers_are_isolated():
+    """原版目录与猪镇 Mod 覆盖层必须分离。"""
+    print("\n" + "=" * 60)
+    print("Test 25: World Catalog Layer Isolation")
+
+    from dstools.features.world.catalog_resolver import resolve_vanilla_settings
+    from dstools.features.world.categories import FOREST_RULES_DICT, get_setting_info
+
+    assert "specialevent" in FOREST_RULES_DICT
+    assert "specialevent" not in resolve_vanilla_settings("porkland", True)
+    assert "day" in resolve_vanilla_settings("porkland", True)
+    assert get_setting_info("specialevent", "porkland")[0] == "other"
+    assert get_setting_info("day", "porkland")[0] == "global"
+    assert get_setting_info("season_start", "porkland")[0] == "other"
+    assert get_setting_info("regrowth", "porkland")[0] == "other"
+    print("  PASS: vanilla catalog remains unchanged and Porkland uses an isolated overlay")
+
+
+def test_porkland_samples_match_mod_catalog():
+    """3322803908 的默认/全修改样本必须全部落在 Mod 注册值表内。"""
+    print("\n" + "=" * 60)
+    print("Test 26: Porkland Mod Catalog Against User Samples")
+    from dstools.features.world.mod_settings import get_mod_world_settings
+    from dstools.features.world.reader import load_leveldata
+
+    roots = list(Path("D:/").glob("**/DoNotStarveTogether/280257116"))
+    if not roots:
+        print("  SKIP: user sample root not found")
+        return
+    root = roots[0]
+    settings = get_mod_world_settings({"3322803908"})
+    for cluster_name in ("Cluster_4", "Cluster_5"):
+        preset = load_leveldata(root / cluster_name / "Master" / "leveldataoverride.lua").preset
+        assert preset is not None and preset.location == "porkland"
+        from dstools.features.world.value_sets import get_value_set
+        for override in preset.overrides:
+            info = settings.get(override.key)
+            if info and info.values:
+                assert override.value in info.values, (override.key, override.value)
+            elif override.key in {"task_set", "start_location"}:
+                assert override.value in get_value_set(override.key, is_rule=False), (
+                    override.key, override.value,
+                )
+    print("  PASS: Cluster_4/Cluster_5 Porkland Mod values are accepted")
+
+
+def test_porkland_location_selector():
+    """世界选择器只切换 Master 身份，不污染洞穴或 overrides。"""
+    print("\n" + "=" * 60)
+    print("Test 27: Porkland World Location Selector")
+    from dstools.features.world.location_selector import (
+        available_master_locations, select_master_location,
+    )
+    from dstools.features.world.reader import WorldOverride, WorldPreset
+
+    assert available_master_locations(set()) == ("forest",)
+    assert available_master_locations({"workshop-3322803908"}) == ("forest", "porkland")
+    preset = WorldPreset(
+        preset_id="SURVIVAL_TOGETHER", name="地上", location="forest",
+        overrides=[WorldOverride(key="task_set", value="default")],
+        raw={"location": "forest", "overrides": {"task_set": "default"}},
+    )
+    porkland = select_master_location(preset, "porkland")
+    assert porkland.location == "porkland"
+    assert porkland.preset_id == "PORKLAND_DEFAULT"
+    assert porkland.name == "猪镇"
+    assert porkland.raw["location"] == "porkland"
+    assert porkland.overrides == preset.overrides
+    assert preset.location == "forest"
+    print("  PASS: location selection is isolated and reversible")
+
+
+def test_world_value_sets_match_user_samples():
+    """用户提供的默认/全量非默认存档值必须全部落在已确认表中。"""
+    print("\n" + "=" * 60)
+    print("Test 26: World Value Sets Against User Samples")
+
+    from dstools.features.world.catalog_resolver import resolve_vanilla_settings
+    from dstools.features.world.reader import load_leveldata
+    from dstools.features.world.value_sets import get_value_set
+
+    roots = list(Path("D:/").glob("**/DoNotStarveTogether/280257116"))
+    if not roots:
+        print("  SKIP: user sample root not found")
+        return
+    root = roots[0]
+    for cluster_name in ("Cluster_2", "Cluster_3"):
+        for shard in ("Master", "Caves"):
+            result = load_leveldata(root / cluster_name / shard / "leveldataoverride.lua")
+            assert result.preset is not None
+            location = result.preset.location
+            catalog = {
+                **resolve_vanilla_settings(location, True),
+                **resolve_vanilla_settings(location, False),
+            }
+            for override in result.preset.overrides:
+                if override.key not in catalog:
+                    continue
+                is_rule = catalog[override.key][0] != "resources" and override.key not in {
+                    "task_set", "start_location", "world_size", "branching", "loop", "roads",
+                    "season_start", "prefabswaps_start", "touchstone", "boons",
+                    "ocean_seastack", "ocean_waterplant",
+                }
+                assert override.value in get_value_set(
+                    override.key, location=location, is_rule=is_rule
+                ), (cluster_name, shard, override.key, override.value)
+    print("  PASS: Cluster_2/Cluster_3 observed values are accepted by the corrected tables")
+
+
 def test_world_categories_bilingual():
     """测试 categories.py 的 get_setting_info()/get_categories() 会根据当
     前 i18n 语言返回中/英文名——对应修复过的 bug"世界设置切英文不生
@@ -982,7 +1164,7 @@ def test_world_ocean_frequency_labels():
     用）。之前 render.py 的 _VALUE_LABELS 只补了 "ocean_uncommon" 一
     个，漏了其它 7 档，包括这次实际触发问题的 "ocean_default"。"""
     print("\n" + "=" * 60)
-    print("Test 37: World Ocean Frequency Value Labels")
+    print("Test 38: World Ocean Frequency Value Labels")
 
     from dstools.features.world.render import get_value_label
 
@@ -1760,6 +1942,22 @@ def test_frp_selfhost_port_conflict_detection():
     print("  PASS: 从没部署过 frps 时 frps_bind_port 为 None，不会跟任何端口误判相等")
 
 
+def test_ktech_runtime_detector():
+    """缺少任一 VC++ 2013 x86 DLL 时必须在启动 ktech.exe 前识别出来。"""
+    print("\n" + "=" * 60)
+    print("Test 37: Ktech VC++ 2013 Runtime Detector")
+    with tempfile.TemporaryDirectory() as tmp:
+        runtime_dir = Path(tmp)
+        for dll_name in ("MSVCR120.dll", "MSVCP120.dll", "VCOMP120.dll"):
+            (runtime_dir / dll_name).touch()
+        assert _has_vc2013_x86_runtime(runtime_dir) is True
+
+        # 真实反馈缺的是 VCOMP120.dll；此前会先让 Windows 弹加载器错误框。
+        (runtime_dir / "VCOMP120.dll").unlink()
+        assert _has_vc2013_x86_runtime(runtime_dir) is False
+    print("  PASS: VCOMP120.dll 缺失会被无弹窗地识别为缺 VC++ 2013 x86 运行库")
+
+
 def test_server_mod_completeness_check():
     """真实需求：服务器启动完毕之后，检查 modoverrides.lua 里启用的 Mod
     是不是真的全部加载成功了（比如某个订阅的 Workshop mod 在这台机器上
@@ -1774,7 +1972,7 @@ def test_server_mod_completeness_check():
     出来的行构造测试数据（不是编出来的格式），覆盖"全部正常加载"和
     "人为去掉其中一个 Loading mod 行模拟真实缺失场景"两种情况。"""
     print("\n" + "=" * 60)
-    print("Test 38: Server Mod Completeness Check")
+    print("Test 39: Server Mod Completeness Check")
 
     import queue
     from dstools.features.local_service.dedicated_server import ServerProcess
@@ -1860,6 +2058,12 @@ def main():
         test_app_settings_toggles,
         test_mod_sync_junction,
         test_theme_set_theme,
+        test_world_reader_and_view_model,
+        test_world_catalog_audit_and_cave_hidden_forest_sections,
+        test_world_catalog_layers_are_isolated,
+        test_porkland_samples_match_mod_catalog,
+        test_porkland_location_selector,
+        test_world_value_sets_match_user_samples,
         test_world_categories_bilingual,
         test_custom_background,
         test_mod_resolve_cache,
@@ -1875,6 +2079,7 @@ def main():
         test_steam_library_folder_casing,
         test_font_style_switch,
         test_frp_selfhost_port_conflict_detection,
+        test_ktech_runtime_detector,
         test_world_ocean_frequency_labels,
         test_server_mod_completeness_check,
     ]

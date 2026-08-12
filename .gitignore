@@ -17,3 +17,8 @@ tools/sakura/
 # 源码直跑时的运行时缓存（mod 图标/角色头像/mod 解析结果等），
 # 正常应落在 %APPDATA%/DSTCamp/cache/，这里只防误入仓库。
 cache/
+
+# Agent-specific local instructions and Codex runtime state
+AGENTS.md
+CLAUDE.md
+.codex/

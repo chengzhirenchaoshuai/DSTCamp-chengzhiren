@@ -400,6 +400,17 @@ CAVE_GEN_DICT = {
     "tentacles": ("hostile_spawners", {"zh": "触手", "en": "Tentacles"}),
 }
 
+# 经真实 DST 洞穴 leveldataoverride.lua 样本核对后确认：以下条目并不是
+# "地面专属"，而是 Master/Caves 共享的世界规则/生成项。此前洞穴表漏掉
+# 它们，导致文件存在却被 UI 当作未知项隐藏。这里复用地面表的已验证名称、
+# 分类和取值定义，避免维护两份会漂移的副本；洞穴专属表仍优先覆盖同名项。
+# 洞穴的自定义世界界面不会显示森林专属的“全局/活动/冒险家”目录，
+# 也不会显示基础资源再生、世界生成-全局、世界-道路。存档里可能仍
+# 保留这些 key（游戏会写入共享/备份值），但它们不是洞穴可编辑项，
+# 因此不能并入洞穴目录。
+CAVE_ALL_RULES_DICT = dict(CAVE_RULES_DICT)
+CAVE_ALL_GEN_DICT = dict(CAVE_GEN_DICT)
+
 # ── 查询函数 ─────────────────────────────────────────────────────────────
 
 def localized_name(names: dict) -> str:
@@ -416,9 +427,8 @@ _localized = localized_name
 
 def _get_settings(location: str, is_rule: bool):
     """按地点/类型取对应的设置字典。"""
-    if location == "forest":
-        return FOREST_RULES_DICT if is_rule else FOREST_GEN_DICT
-    return CAVE_RULES_DICT if is_rule else CAVE_GEN_DICT
+    from dstools.features.world.catalog_resolver import resolve_vanilla_settings
+    return resolve_vanilla_settings(location, is_rule)
 
 
 def get_setting_info(key: str, location: str = "forest", mod_settings: dict | None = None):
@@ -428,18 +438,8 @@ def get_setting_info(key: str, location: str = "forest", mod_settings: dict | No
     mod 贡献的登记表）就归到 "mod" 分类；再查不到就返回
     ("other", False, key)（未登记的 mod key，走现有的"不显示"兜底）。
     """
-    rules_d = _get_settings(location, True)
-    if key in rules_d:
-        cat, names = rules_d[key]
-        return (cat, True, _localized(names))
-    gen_d = _get_settings(location, False)
-    if key in gen_d:
-        cat, names = gen_d[key]
-        return (cat, False, _localized(names))
-    if mod_settings and key in mod_settings:
-        info = mod_settings[key]
-        return (info.category, info.is_rule, localized_name(info.name))
-    return ("other", False, key)
+    from dstools.features.world.catalog_resolver import resolve_setting_info
+    return resolve_setting_info(key, location, mod_settings)
 
 
 def get_order(key: str, location: str = "forest", is_rule: bool = True) -> int:
@@ -462,10 +462,8 @@ def get_categories(location: str, setting_type: str, mod_categories=None) -> lis
     有对应的条目）由调用方（world/render.py 的 visible_cats 过滤）决
     定，这里只负责把"存在哪些分类、什么顺序"这件事拼完整。
     """
-    if location == "forest":
-        raw = SURFACE_RULES if setting_type == "rules" else SURFACE_GEN
-    else:
-        raw = CAVE_RULES if setting_type == "rules" else CAVE_GEN
+    from dstools.features.world.catalog_resolver import resolve_vanilla_categories
+    raw = resolve_vanilla_categories(location, setting_type)
     cats = [(key, _localized(names)) for key, names in mod_categories] if mod_categories else []
     cats.extend((key, _localized(names)) for key, names in raw)
     return cats

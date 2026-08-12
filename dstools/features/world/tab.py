@@ -3,7 +3,7 @@
 import tkinter as tk
 from tkinter import font as tkfont, ttk
 
-from dstools.features.world.reader import parse_leveldata, save_leveldata
+from dstools.features.world.reader import LeveldataStatus, load_leveldata, save_leveldata
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.menu_combo import MenuCombo
@@ -210,12 +210,14 @@ class WorldSettingsTab:
                     self._gen_panel.set_image(*self._empty_image())
                     return
                 self._wl_path = s.leveldata_path
-                preset = parse_leveldata(s.leveldata_path)
-                if not preset:
-                    self._wl_title_var.set(t("world.no_leveldata")); self._wl_desc_var.set("")
+                load_result = load_leveldata(s.leveldata_path)
+                if load_result.status != LeveldataStatus.OK:
+                    title = t("world.invalid_leveldata") if load_result.status == LeveldataStatus.INVALID else t("world.no_leveldata")
+                    self._wl_title_var.set(title); self._wl_desc_var.set("")
                     self._rules_panel.set_image(*self._empty_image())
                     self._gen_panel.set_image(*self._empty_image())
                     return
+                preset = load_result.preset
                 self._wl_preset = preset
                 loc = preset.location if hasattr(preset, 'location') and preset.location else "forest"
                 loc_label = t("world.location_forest") if loc == "forest" else t("world.location_cave")
@@ -223,70 +225,19 @@ class WorldSettingsTab:
                 # 不再截断到 80 个字符——卡片会把完整描述换行显示，而不是裁掉。
                 self._wl_desc_var.set(preset.description or "")
 
-                from dstools.features.world.categories import (
-                    get_setting_info, get_categories, get_order,
-                    _get_settings, localized_name,
-                )
-                rules_dict = _get_settings(loc, True)
-                gen_dict = _get_settings(loc, False)
-                rules_by_cat, gen_by_cat = {}, {}
-                seen_keys = set()
-                for ov in preset.overrides:
-                    cat, is_rule, name = get_setting_info(ov.key, loc, self._mod_settings)
-                    ov.name = name or ov.key
-                    seen_keys.add(ov.key)
-                    if cat == "other":
-                        continue
-                    (rules_by_cat if is_rule else gen_by_cat).setdefault(cat, []).append(ov)
-
-                # 把存档里没有的规则 key 用默认值补上。
-                for wkey, (wcat, wname) in rules_dict.items():
-                    if wkey in seen_keys:
-                        continue
-                    if wcat in ("resources", "creatures_spawners", "hostile_spawners"):
-                        continue
-                    filler = type('FillerOv', (), {
-                        'key': wkey, 'name': localized_name(wname), 'value': 'default'})()
-                    rules_by_cat.setdefault(wcat, []).append(filler)
-
-                # 把存档里没有的生成 key 用默认值补上，跟上面规则同理——跳过
-                # 资源/生物刷新点这类噪音分类，每个都有几十条基本没人会改的条目。
-                for wkey, (wcat, wname) in gen_dict.items():
-                    if wkey in seen_keys:
-                        continue
-                    if wcat in ("resources", "creatures_spawners", "hostile_spawners"):
-                        continue
-                    filler = type('FillerOv', (), {
-                        'key': wkey, 'name': localized_name(wname), 'value': 'default'})()
-                    gen_by_cat.setdefault(wcat, []).append(filler)
-
-                # mod 贡献的设置——存档里还没有对应 key 时（比如刚启用这
-                # 个 mod、还没重新生成过世界）一样按 default 补一行，跟原
-                # 版 key 同等对待，点了之后由 _on_rule_click() 负责把这一
-                # 行"转正"成真正会被保存的 WorldOverride。
-                for wkey, info in self._mod_settings.items():
-                    if wkey in seen_keys:
-                        continue
-                    filler = type('FillerOv', (), {
-                        'key': wkey, 'name': localized_name(info.name), 'value': info.initial_value})()
-                    (rules_by_cat if info.is_rule else gen_by_cat).setdefault(info.category, []).append(filler)
-
-                for items in rules_by_cat.values():
-                    items.sort(key=lambda ov: get_order(ov.key, loc, True))
-                for items in gen_by_cat.values():
-                    items.sort(key=lambda ov: get_order(ov.key, loc, False))
-
-                self._rules_by_cat = rules_by_cat
-                self._rules_cats = get_categories(loc, "rules", self._mod_categories)
+                from dstools.features.world.view_model import build_world_view_model
+                view_model = build_world_view_model(preset, self._mod_settings, self._mod_categories)
+                self._rules_by_cat = view_model.rules_by_category
+                self._rules_cats = view_model.rule_categories
                 self._render_rules()
 
-                self._gen_by_cat = gen_by_cat
-                self._gen_cats = get_categories(loc, "generation", self._mod_categories)
+                self._gen_by_cat = view_model.generation_by_category
+                self._gen_cats = view_model.generation_categories
                 self._render_gen()
 
                 self._sub_tab_bar.relabel({
-                    "rules": self._rules_tab_label(sum(len(v) for v in rules_by_cat.values())),
-                    "gen": f"{t('world.generation')} ({sum(len(v) for v in gen_by_cat.values())})",
+                    "rules": self._rules_tab_label(sum(len(v) for v in self._rules_by_cat.values())),
+                    "gen": f"{t('world.generation')} ({sum(len(v) for v in self._gen_by_cat.values())})",
                 })
                 break
 
@@ -338,7 +289,8 @@ class WorldSettingsTab:
         if not self._wl_preset: return
         from dstools.features.world.value_sets import get_value_set
         from dstools.features.world.reader import WorldOverride
-        values = get_value_set(key, self._mod_settings)
+        loc = getattr(self._wl_preset, 'location', 'forest') or 'forest'
+        values = get_value_set(key, self._mod_settings, location=loc, is_rule=True)
         ov = next((o for o in self._wl_preset.overrides if o.key == key), None)
         if ov is not None:
             try: idx = values.index(ov.value)
@@ -355,7 +307,7 @@ class WorldSettingsTab:
             # 有几个 key 的合法档位里根本没有"default"这个值，见
             # ModWorldSetting.initial_value 的说明），"转正"成一条真正
             # 会被 _save_rules() 写盘的 WorldOverride，同时把界面上那一
-            # 行原本的占位对象（FillerOv，只用于显示，不在
+            # 行原本的仅展示默认项（不会加入
             # self._wl_preset.overrides 里，直接改它的 .value 不会被保
             # 存）替换掉，这样这次点击立刻能看到效果，不用等下次重新加
             # 载世界设置。

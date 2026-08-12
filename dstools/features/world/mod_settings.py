@@ -731,7 +731,8 @@ PORKLAND_SETTINGS: dict[str, ModWorldSetting] = {
 
     # ── 世界生成（只读）──
     "porkland_season_start": ModWorldSetting(key="porkland_season_start", is_rule=False, mod_id=_PORKLAND_ID,
-        name={"zh": "猪镇起始季节", "en": "Hamlet Starting Season"}, values=None,
+        name={"zh": "猪镇起始季节", "en": "Hamlet Starting Season"},
+        values=["default", "humid", "lush", "temperate|humid|lush"],
         icon_element="season_start.tex"),
     "dungpile": ModWorldSetting(key="dungpile", is_rule=False, mod_id=_PORKLAND_ID,
         name={"zh": "粪堆", "en": "Dung Pile"}, values=None, icon_element="dungpile.tex"),

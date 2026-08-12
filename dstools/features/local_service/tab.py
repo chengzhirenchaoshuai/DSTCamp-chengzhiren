@@ -37,6 +37,7 @@ from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
 _POLL_MS = 150
+_LUAJIT_VCREDIST_DOWNLOAD_URL = "https://wwwu.lanzoub.com/b0nyns22d"
 
 _STATUS_KEYS = {
     ServerStatus.STARTING: "local.status_starting",
@@ -1078,7 +1079,6 @@ class LocalServiceTab:
             # 打开，订阅这一步用户自己在 Steam 里点。
             if dlg.ask_yes_no(self.app.root, t("local.luajit_confirm_install_title"),
                                t("local.luajit_workshop_not_subscribed_msg")):
-                import webbrowser
                 webbrowser.open(luajit_injector.WORKSHOP_PAGE_URL)
             return
 
@@ -1088,9 +1088,12 @@ class LocalServiceTab:
 
         # 这段风险声明比 ask_yes_no() 默认给短提示留的宽度（320px）长得
         # 多，用默认宽度会挤成很多行、窗口又高又窄；加宽显著减少行数。
-        if not dlg.ask_yes_no(self.app.root, t("local.luajit_confirm_install_title"),
-                               t("local.luajit_confirm_install_msg"),
-                               wraplength=520, min_width=560):
+        if not dlg.ask_yes_no_with_auxiliary(
+                self.app.root, t("local.luajit_confirm_install_title"),
+                t("local.luajit_confirm_install_msg"),
+                t("local.luajit_runtime_btn"),
+                self._open_luajit_runtime_download,
+                wraplength=520, min_width=560):
             return
 
         self._luajit_install_btn.configure(state=tk.DISABLED)
@@ -1129,6 +1132,14 @@ class LocalServiceTab:
 
         threading.Thread(target=_worker, daemon=True).start()
         self.frame.after(100, _poll_log)
+
+    def _open_luajit_runtime_download(self) -> None:
+        """打开下载页前复制提取码，避免用户在蓝奏页面与应用间来回查找。"""
+        self.app.root.clipboard_clear()
+        self.app.root.clipboard_append("bzuu")
+        self.app.root.update()
+        dlg.show_toast(self.app.root, t("local.luajit_runtime_copied"))
+        webbrowser.open(_LUAJIT_VCREDIST_DOWNLOAD_URL)
 
     def _on_luajit_uninstall_clicked(self) -> None:
         bin64_dir = self._luajit_bin64_dir

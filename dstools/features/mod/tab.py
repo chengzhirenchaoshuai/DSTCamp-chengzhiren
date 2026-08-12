@@ -248,7 +248,7 @@ class ModManagerTab:
         self.list_panel.on_hover_change = self._on_mod_list_hover
         self._mod_list_tip = None
 
-        # "保存修改"/"应用到所有世界"居中，跟"世界设置"页签"保存世界规
+        # "保存修改"/"只应用当前世界"居中，跟"世界设置"页签"保存世界规
         # 则"按钮的位置一致；"配置集"这组按钮性质不同（不是针对当前编辑
         # 会话的存盘操作），改放这一整行最右侧，避免跟中间那组主操作挤
         # 成一排看起来像同一类功能。用 grid 分三列（左侧留白/居中主操
@@ -274,7 +274,7 @@ class ModManagerTab:
         center_group.grid(row=0, column=1)
         self._md_bs = ttk.Button(center_group, text=t("mod.save_btn"), command=self._save_mods)
         self._md_bs.pack(side=tk.LEFT, padx=(0, 5))
-        self._md_ba = ttk.Button(center_group, text=t("mod.apply_all"), command=self._apply_all_shards)
+        self._md_ba = ttk.Button(center_group, text=t("mod.apply_current"), command=self._apply_current_shard)
         self._md_ba.pack(side=tk.LEFT)
         self._md_bs.configure(state=tk.DISABLED)
         self._md_ba.configure(state=tk.DISABLED)
@@ -739,7 +739,7 @@ class ModManagerTab:
         # 刚从磁盘（重新）加载完——在这之前的任何"未保存修改"标记都已经
         # 没有意义了，因为现在显示的状态本身就又是已保存的状态（覆盖首
         # 次加载、"重载Mod信息"、切换世界，以及 _save_mods/
-        # _apply_all_shards 写盘之后自己触发的重新加载这几种情况）。
+        # _apply_current_shard 写盘之后自己触发的重新加载这几种情况）。
         self._clear_dirty()
         self._render_list()
 
@@ -955,15 +955,16 @@ class ModManagerTab:
             enabled_count = sum(1 for m in overrides.mods.values() if m.enabled)
             dlg.show_info(self.app.root, t("dlg.save_ok"),
                           t("dlg.saved_mods", count=enabled_count, shard=s.name))
-            # DST 默认要求各世界的 mod 状态一致，单个世界单独修改会导致
-            # 主从不同步等问题，因此保存后主动询问是否同步到其他世界。
+            # “保存修改”是常规操作：保存当前世界后自动把同一份状态同步
+            # 到其它世界，不再额外弹确认框，避免用户以为已经保存但实际
+            # 仍有其它世界没有更新。
             other_shards = [sh for sh in c.shards if sh.name != s.name and sh.mod_overrides_path]
-            if other_shards and dlg.ask_yes_no(self.app.root, t("mod.save_btn"), t("dlg.sync_all_shards_confirm")):
-                cnt = 0
-                for sh in other_shards:
-                    dst = load_mod_overrides(sh.mod_overrides_path)
-                    sync_mods(overrides, dst); save_mod_overrides(dst); cnt += 1
-                dlg.show_info(self.app.root, t("mod.apply_all"), t("dlg.apply_done", count=cnt))
+            cnt = 0
+            for sh in other_shards:
+                dst = load_mod_overrides(sh.mod_overrides_path)
+                sync_mods(overrides, dst); save_mod_overrides(dst); cnt += 1
+            if cnt:
+                dlg.show_info(self.app.root, t("mod.save_btn"), t("dlg.sync_done", count=cnt))
             self._refresh_mods()
 
     def _write_mod_states(self, overrides):
@@ -1000,21 +1001,16 @@ class ModManagerTab:
                 overrides.mods[wid] = ModEntry(workshop_id=wid, enabled=mod.enabled,
                                                configuration_options=config)
 
-    def _apply_all_shards(self):
+    def _apply_current_shard(self):
         c = self._get_cluster(); src = self.app._current_shard
         if not c or not src or not src.mod_overrides_path or c.source != SaveSource.SERVER: return
-        if not dlg.ask_yes_no(self.app.root, t("mod.apply_all"), t("dlg.apply_all_confirm", name=c.name)): return
+        if not dlg.ask_yes_no(self.app.root, t("mod.apply_current"), t("dlg.apply_current_confirm", shard=src.name)):
+            return
         overrides = load_mod_overrides(src.mod_overrides_path)
         self._write_mod_states(overrides)
         save_mod_overrides(overrides)
-        src_overrides = load_mod_overrides(src.mod_overrides_path)
-        cnt = 0
-        for s in c.shards:
-            if s.name == src.name or not s.mod_overrides_path: continue
-            dst = load_mod_overrides(s.mod_overrides_path)
-            sync_mods(src_overrides, dst); save_mod_overrides(dst); cnt += 1
         self.app.mark_world_tab_stale()
-        dlg.show_info(self.app.root, t("mod.apply_all"), t("dlg.apply_done", count=cnt))
+        dlg.show_info(self.app.root, t("mod.apply_current"), t("dlg.current_saved", shard=src.name))
         self._refresh_mods()
 
     def _resolve_wegame_sync_dirs(self):
@@ -1137,7 +1133,7 @@ class ModManagerTab:
     def refresh_language(self):
         self._md_lbl2.redraw()
         self._md_br.configure(text=t("mod.reload_full")); self._md_bs.configure(text=t("mod.save_btn"))
-        self._md_ba.configure(text=t("mod.apply_all"))
+        self._md_ba.configure(text=t("mod.apply_current"))
         self._md_sync.configure(
             text=t("local.remove_junction_btn") if self._sync_already_linked else t("local.sync_mods_btn"))
         self._md_preset_save.configure(text=t("mod.preset_save_btn"))

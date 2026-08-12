@@ -272,7 +272,7 @@ FOREST_GEN_ICONS = {
     "merm": "Leaky_Shack_Settings_Icon.png",  # 漏雨的小屋
     "houndmound": "Hound_Mound_Settings_Icon.png",  # 猎犬丘
     "moon_spiders": "Shattered_Spider_Hole_Settings_Icon.png",  # 破碎蜘蛛洞
-    "spiders": "Spider_Settings_Icon.png",  # 蜘蛛巢
+    "spiders": "Spider_Den_Settings_Icon.png",  # 蜘蛛巢
     "tentacles": "Tentacle_Settings_Icon.png",  # 触手
     "tallbirds": "Tallbird_DST_Settings_Icon.png",  # 高脚鸟
 }

@@ -21,6 +21,9 @@ icons.py 完全一致的顺序——先按 FOREST_RULES_DICT 的 key 顺序走�
 """
 
 DEFAULT_SET = ["never", "rare", "default", "often", "always"]
+WORLDGEN_FREQUENCY_SET = [
+    "never", "rare", "uncommon", "default", "often", "mostly", "always", "insane",
+]
 
 VALUE_SETS = {
     # ══════════════ 森林-世界规则 (对照 FOREST_RULES_DICT 顺序) ══════════════
@@ -42,27 +45,29 @@ VALUE_SETS = {
     "portalresurection": ["none", "always"],
     "ghostsanitydrain": ["none", "always"],
     "resettime": ["none", "slow", "default", "fast", "always"],
+    "cavelight": ["never", "slow", "default", "fast", "always"],
     "beefaloheat": ["never", "rare", "default", "often", "always"],
     "krampus": ["never", "rare", "default", "often", "always"],
     # 活动|events
-    "crow_carnival": ["never", "default"],
+    "crow_carnival": ["default", "enabled"],
     # TODO(未完全确认)：这些年度活动 key 是否真的在"自定义世界"界面里各自
     # 独立可调，还是实际上都由上面的 specialevent 统一控制、这里只是展示当前
     # 生效的活动状态——还没有找到权威资料确认，需要人工在游戏里核实。
-    "hallowed_nights": ["disabled", "enabled"],
-    "winters_feast": ["disabled", "enabled"],
-    "year_of_the_gobbler": ["disabled", "enabled"],
-    "year_of_the_varg": ["disabled", "enabled"],
-    "year_of_the_pig": ["disabled", "enabled"],
-    "year_of_the_carrat": ["disabled", "enabled"],
-    "year_of_the_beefalo": ["disabled", "enabled"],
-    "year_of_the_catcoon": ["disabled", "enabled"],
-    "year_of_the_bunnyman": ["disabled", "enabled"],
-    "year_of_the_dragonfly": ["disabled", "enabled"],
-    "year_of_the_snake": ["disabled", "enabled"],
-    "year_of_the_knight": ["disabled", "enabled"],
+    "hallowed_nights": ["default", "enabled"],
+    "winters_feast": ["default", "enabled"],
+    "year_of_the_gobbler": ["default", "enabled"],
+    "year_of_the_varg": ["default", "enabled"],
+    "year_of_the_pig": ["default", "enabled"],
+    "year_of_the_carrat": ["default", "enabled"],
+    "year_of_the_beefalo": ["default", "enabled"],
+    "year_of_the_catcoon": ["default", "enabled"],
+    "year_of_the_bunnyman": ["default", "enabled"],
+    "year_of_the_dragonfly": ["default", "enabled"],
+    "year_of_the_snake": ["default", "enabled"],
+    "year_of_the_knight": ["default", "enabled"],
     # 冒险家|survivor
-    "extrastartingitems": ["0", "5", "10", "15", "20", "none"],
+    # 游戏源码中 DAY_10 的 data 实际是 "default"，不是 "10"。
+    "extrastartingitems": ["0", "5", "default", "15", "20", "none"],
     "seasonalstartingitems": ["never", "default"],
     "spawnprotection": ["never", "default", "always"],
     "dropeverythingondespawn": ["default", "always"],
@@ -220,11 +225,40 @@ VALUE_SETS = {
     "stageplays": ["never", "default"],
 }
 
+# 世界生成（只读）设置的值表。它们不参与规则按钮的循环，但创建/审计
+# 和只读界面必须能得到正确取值，不能回退到世界规则的五档频率。
+GEN_VALUE_SETS = {
+    "task_set": ["default", "classic", "cave_default", "porkland"],
+    "start_location": ["default", "darkness", "caves", "PorkLandStart"],
+    "world_size": ["small", "medium", "default", "huge"],
+    "branching": ["never", "least", "default", "most", "random"],
+    "loop": ["never", "default", "always"],
+    "roads": ["never", "default", "always"],
+    "season_start": [
+        "default", "winter", "spring", "summer", "autumn|spring",
+        "winter|summer", "autumn|winter|spring|summer",
+    ],
+    "prefabswaps_start": ["classic", "default", "highly random"],
+    "touchstone": WORLDGEN_FREQUENCY_SET,
+    "boons": WORLDGEN_FREQUENCY_SET,
+    "balatro": ["never", "default"],
+    "stageplays": ["never", "default"],
+}
+
+OCEAN_WORLDGEN_SET = ["default", *[f"ocean_{value}" for value in WORLDGEN_FREQUENCY_SET]]
+# Only ocean generation-frequency controls use the ``ocean_``-prefixed
+# values.  Entity-density controls such as ocean_otterdens keep the regular
+# frequency values (``default``, ``rare`` ...).
+OCEAN_FREQUENCY_KEYS = {"ocean_seastack", "ocean_waterplant"}
+
 UNCONFIRMED_KEYS = {
 }
 
 
-def get_value_set(key: str, mod_settings: dict | None = None) -> list[str]:
+def get_value_set(
+    key: str, mod_settings: dict | None = None,
+    location: str | None = None, is_rule: bool = True,
+) -> list[str]:
     """取一个世界规则 key 的合法取值有序列表。
 
     mod_settings（features/world/mod_settings.py 登记表，调用方传当前存
@@ -237,4 +271,18 @@ def get_value_set(key: str, mod_settings: dict | None = None) -> list[str]:
         info = mod_settings.get(key)
         if info is not None and info.values:
             return info.values
-    return VALUE_SETS.get(key, DEFAULT_SET)
+    if key in OCEAN_FREQUENCY_KEYS:
+        return OCEAN_WORLDGEN_SET
+    if not is_rule:
+        return GEN_VALUE_SETS.get(key, WORLDGEN_FREQUENCY_SET)
+    values = VALUE_SETS.get(key)
+    if values is not None:
+        return values
+    # 海洋 worldgen key 的合法值由原版 worldgen_frequency_descriptions
+    # 自动加 ocean_ 前缀；即使某个版本新增 ocean_* key，也不能退回普通
+    # never/rare/default/often/always。
+    # Vanilla's remaining resource-density controls all use the complete
+    # worldgen frequency table.  Keeping this as the final vanilla fallback
+    # prevents newer controls (for example angrybees) from losing the
+    # ``uncommon/mostly/insane`` options before they get a dedicated entry.
+    return WORLDGEN_FREQUENCY_SET

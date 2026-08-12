@@ -46,7 +46,8 @@ else:
         pass
 
 
-def _show(parent, title, message, kind, buttons, wraplength=420, min_width=460):
+def _show(parent, title, message, kind, buttons, wraplength=420, min_width=460,
+          auxiliary_button=None):
     """buttons: [(label, value, is_default), ...] 列表。返回被选中的
     value，弹窗没选就关掉则返回 None。
 
@@ -94,6 +95,9 @@ def _show(parent, title, message, kind, buttons, wraplength=420, min_width=460):
         win.destroy()
 
     default_btn = None
+    if auxiliary_button is not None:
+        label, command = auxiliary_button
+        ttk.Button(btn_row, text=label, command=command).pack(side=tk.LEFT)
     for label, value, is_default in buttons:
         b = ttk.Button(btn_row, text=label, command=lambda v=value: choose(v))
         b.pack(side=tk.RIGHT, padx=(8, 0))
@@ -128,7 +132,67 @@ def show_error(parent, title, message, wraplength=420, min_width=460):
           wraplength=wraplength, min_width=min_width)
 
 
+def show_toast(parent, message, duration_ms=2400):
+    """显示不抢焦点的置顶短提示，自动淡入淡出并销毁。"""
+    win = tk.Toplevel(parent)
+    win.withdraw()
+    win.overrideredirect(True)
+    win.transient(parent)
+    win.configure(background=theme.CARD_BORDER)
+    supports_alpha = True
+    try:
+        win.attributes("-topmost", True)
+        win.attributes("-alpha", 0.0)
+    except tk.TclError:
+        supports_alpha = False
+
+    card = tk.Frame(win, background=theme.CARD_BG)
+    card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+    tk.Label(card, text=message, font=theme.font_tuple(theme.FONT_SIZE_BASE),
+             fg=theme.TEXT, bg=theme.CARD_BG).pack(padx=18, pady=12)
+
+    win.update_idletasks()
+    x = parent.winfo_rootx() + (parent.winfo_width() - win.winfo_reqwidth()) // 2
+    y = parent.winfo_rooty() + (parent.winfo_height() - win.winfo_reqheight()) // 2
+    win.geometry(f"+{max(0, x)}+{max(0, y)}")
+    win.deiconify()
+
+    def _fade_in(step=0):
+        try:
+            win.attributes("-alpha", min(1.0, (step + 1) / 6))
+        except tk.TclError:
+            return
+        if step < 5:
+            win.after(25, _fade_in, step + 1)
+        else:
+            win.after(duration_ms, _fade_out)
+
+    def _fade_out(step=6):
+        try:
+            win.attributes("-alpha", max(0.0, (step - 1) / 6))
+        except tk.TclError:
+            return
+        if step > 1:
+            win.after(25, _fade_out, step - 1)
+        else:
+            win.destroy()
+
+    if supports_alpha:
+        _fade_in()
+    else:
+        win.after(duration_ms, win.destroy)
+
+
 def ask_yes_no(parent, title, message, wraplength=420, min_width=460) -> bool:
     return bool(_show(parent, title, message, "question",
                        [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)],
                        wraplength=wraplength, min_width=min_width))
+
+
+def ask_yes_no_with_auxiliary(parent, title, message, auxiliary_label, auxiliary_command,
+                               wraplength=420, min_width=460) -> bool:
+    """确认框左下角提供不会关闭窗口的辅助操作，例如打开依赖安装说明。"""
+    return bool(_show(parent, title, message, "question",
+                       [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)],
+                       wraplength=wraplength, min_width=min_width,
+                       auxiliary_button=(auxiliary_label, auxiliary_command)))

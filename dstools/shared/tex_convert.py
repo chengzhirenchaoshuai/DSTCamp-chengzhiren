@@ -37,6 +37,7 @@ from"这一行日志虽然在控制台里显示成乱码，但底层字节在这
 """
 
 import ctypes
+import os
 import shutil
 import subprocess
 import sys
@@ -53,7 +54,7 @@ _KTECH_EXE = _TOOLS_DIR / "ktech.exe"
 # 微软官方原始文件（下载自 download.microsoft.com，装前核实过数字签名
 # 确实是 Microsoft Corporation 签发），随软件本体一起打包，用户点安装
 # 提示时全程不需要联网，绕开"官方下载页在国内访问不稳定"的问题。
-_VCREDIST_EXE = bundled_resource_dir() / "tools" / "vcredist" / "vcredist_x86.exe"
+_VCREDIST_EXE = bundled_resource_dir() / "tools" / "vcredist" / "VC++ 2013 x86.exe"
 
 # ktech.exe 是控制台程序，不加这个每次调用都会在 GUI 上方一闪而过一个黑色
 # 控制台窗口（首次转换某个图标/头像时能看到，比如刚发现一个新拷贝进来的
@@ -61,55 +62,43 @@ _VCREDIST_EXE = bundled_resource_dir() / "tools" / "vcredist" / "vcredist_x86.ex
 _CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
 # ktech.exe 依赖同目录下一批老版本 ImageMagick 的 DLL（CORE_RL_*/IM_MOD_
-# RL_*），这批 DLL 又依赖 MSVCR120.dll/MSVCP120.dll（Visual C++ 2013 运
-# 行库，Windows 不自带）。缺这个运行库时 Windows 加载器崩溃报的退出码
-# **不是固定唯一的一个**——真机对照测试过（同一台机器装/卸同一份
-# vcredist_x86.exe 反复验证）：
-#   0xC000007B  STATUS_INVALID_IMAGE_FORMAT （最早发现、写进代码的那版）
-#   0xC0000135  STATUS_DLL_NOT_FOUND        （后来另一台机器复现出的第二种）
-# 两个都是同一个根因（缺这份 VC++ 2013 运行库）在不同 Windows 版本/具体
-# 缺失情况下的不同表现，缺一个都会导致这里判断漏检——之前只认第一个，
-# 真实反馈过"图标全部解析不出来，但 Mod 管理页签完全没有提示"，根因就
-# 是这里漏掉了第二种退出码，探测函数悄悄判定"运行库正常"。
-#
-# **坑**：这两个 STATUS_* 码 Python 读出来的正负号不固定——同一台机器上
-# 用 cmd.exe 的 %errorlevel% 看到的是有符号表示（比如 -1073741515），但
-# 这个项目实测 `subprocess.run().returncode` 对同一次崩溃返回的是**无符
-# 号**表示（3221225781）。没法假设固定是哪一种，下面统一按位与
-# 0xFFFFFFFF 转换成无符号 32 位再比较，两种符号习惯都能命中。
-_MISSING_RUNTIME_STATUS_CODES = (0xC000007B, 0xC0000135)
+# RL_*），这批 DLL 又依赖 Visual C++ 2013 x86 的三个系统 DLL。不能通过
+# "直接启动 ktech.exe 再看退出码"探测：缺 VCOMP120.dll 时 Windows 会抢先
+# 弹出加载器错误框，用户会先看到生硬的系统提示、应用自己的安装引导反而来
+# 不及出现。改为先直接检查 x86 系统 DLL 目录，不启动任何可能弹窗的子进程。
+_VC2013_X86_DLLS = ("MSVCR120.dll", "MSVCP120.dll", "VCOMP120.dll")
 
 _runtime_probed = False
 _runtime_missing = False
 
 
+def _has_vc2013_x86_runtime(runtime_dir: Path) -> bool:
+    """三个 DLL 必须齐全；少任意一个，32 位 ktech.exe 都无法启动。"""
+    return all((runtime_dir / dll_name).is_file() for dll_name in _VC2013_X86_DLLS)
+
+
 def probe_ktech_runtime() -> bool:
-    """探测 ktech.exe 能不能正常启动（缺 VC++ 2013 运行库时会在加载阶段
-    直接崩溃，退出码换算成无符号 32 位后是 `_MISSING_RUNTIME_STATUS_CODES`
-    里已知的某一个）。真正探测一次的开销跑一次子进程，整个程序生命周期
-    内只探测一次，结果缓存复用。
+    """探测 32 位 ktech.exe 所需的 VC++ 2013 运行库是否齐全。
+
+    64 位 Windows 的 x86 运行库位于 ``%WINDIR%/SysWOW64``；32 位 Windows
+    没有该目录，运行库位于 ``System32``。只做文件存在性检查，避免缺 DLL
+    时直接运行 ktech.exe 触发 Windows 加载器错误弹窗。整个程序生命周期内
+    只检查一次，结果缓存复用。
 
     返回 True 表示确认缺运行库，调用方（GUI 层）据此提示用户安装；
-    返回 False 涵盖"运行库正常"和"没法判断"（ktech.exe 缺失等）两种
-    情况——后者不属于这个函数要处理的问题，交给 tex_to_png() 正常报错。
+    返回 False 表示运行库文件齐全，或当前并非 Windows 平台。
     """
     global _runtime_probed, _runtime_missing
     if _runtime_probed:
         return _runtime_missing
     _runtime_probed = True
-    if not _KTECH_EXE.exists():
+    if sys.platform != "win32":
         return False
-    try:
-        result = subprocess.run(
-            [str(_KTECH_EXE)],
-            cwd=str(_TOOLS_DIR),
-            capture_output=True,
-            timeout=10,
-            creationflags=_CREATIONFLAGS,
-        )
-    except Exception:
-        return False
-    _runtime_missing = (result.returncode & 0xFFFFFFFF) in _MISSING_RUNTIME_STATUS_CODES
+    windows_dir = Path(os.environ.get("WINDIR", r"C:\\Windows"))
+    x86_runtime_dir = windows_dir / "SysWOW64"
+    if not x86_runtime_dir.is_dir():
+        x86_runtime_dir = windows_dir / "System32"
+    _runtime_missing = not _has_vc2013_x86_runtime(x86_runtime_dir)
     return _runtime_missing
 
 
@@ -161,10 +150,10 @@ def _enum_visible_windows() -> set:
 
 def _bring_new_window_to_front(before: set, timeout: float = 60.0) -> None:
     """在后台线程里轮询，把安装向导真正弹出的那个新窗口抢到前台——真机
-    反馈过 vcredist_x86.exe 拉起后默认停在主窗口后面，用户看不到、以为
+    反馈过 VC++ 2013 x86.exe 拉起后默认停在主窗口后面，用户看不到、以为
     "点了没反应"。
 
-    vcredist_x86.exe 装系统级运行库需要管理员权限，非提权状态下启动会
+    VC++ 2013 x86.exe 装系统级运行库需要管理员权限，非提权状态下启动会
     先弹 UAC 确认框——那个框显示在"安全桌面"上，跟普通桌面是隔离的两个
     会话，Win32 的 EnumWindows/SetForegroundWindow 天然够不着，也不需要
     我们处理（系统自己会保证 UAC 框显示在最前面，这是操作系统的安全设
@@ -173,7 +162,7 @@ def _bring_new_window_to_front(before: set, timeout: float = 60.0) -> None:
     宽松（默认 60 秒，够用户看到 UAC 框并做出选择）。
 
     用"启动前后可见窗口快照做差集"而不是跟踪某一个固定 PID——
-    vcredist_x86.exe 是自解压引导程序，真正弹出向导界面的可能是它专门
+    VC++ 2013 x86.exe 是自解压引导程序，真正弹出向导界面的可能是它专门
     释放出来运行的另一个子进程，PID 会变，靠前后窗口快照的差集更稳。
     """
     SW_RESTORE = 9
