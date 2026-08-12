@@ -114,7 +114,7 @@ class WorldCreationTab:
         preset = self._active_preset()
         if not preset: return
         values = get_value_set(key, self._mod_settings, location=preset.location, is_rule=is_rule)
-        current = next((o.value for o in preset.overrides if o.key == key), "default")
+        current = preset.overrides.get(key, "default")
         idx = values.index(current) if current in values else 0
         new = values[max(0, min(len(values) - 1, idx + delta))]
         plan.overrides[key] = new
