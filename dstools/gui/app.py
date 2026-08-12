@@ -416,7 +416,12 @@ class DSToolsApp:
         widget = event.widget
         if isinstance(widget, (tk.Entry, ttk.Entry, tk.Text)):
             return
-        focused = self.root.focus_get()
+        # ttk.Combobox 的 popdown 在鼠标事件期间可能刚被销毁；Tk
+        # 仍返回旧路径时，focus_get() 的 nametowidget 会抛 KeyError。
+        try:
+            focused = self.root.focus_get()
+        except (KeyError, tk.TclError):
+            return
         if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
             self.root.focus_set()
 
