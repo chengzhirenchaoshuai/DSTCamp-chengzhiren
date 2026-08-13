@@ -5,6 +5,7 @@
 """
 
 import tkinter as tk
+import weakref
 from tkinter import ttk
 
 from dstools.shared.gui import theme
@@ -21,29 +22,50 @@ class _CreationWindowChrome:
     def __init__(self, entry, window: tk.Toplevel):
         self.entry = entry
         self.window = window
-        self._aspect = None
+        self._aspect = entry.app.WINDOW_BASE_W / entry.app.WINDOW_BASE_H
+        self._bg_surfaces: list = []
+        self._local_bg_drag_suppressed = False
         self._is_pseudo_maximized = False
         self._pre_maximize_geom: tuple[int, int, int, int] | None = None
 
+    def __getattr__(self, name):
+        """把业务层访问的主应用接口转发出去，只覆盖窗口级背景接口。"""
+        return getattr(self.entry.app, name)
+
     @property
     def _bg_drag_suppressed(self):
-        return getattr(self.entry.app, "_bg_drag_suppressed", False)
+        return self._local_bg_drag_suppressed or getattr(self.entry.app, "_bg_drag_suppressed", False)
 
     @property
     def _theme_switch_suppressed(self):
         return getattr(self.entry.app, "_theme_switch_suppressed", False)
 
     def _register_bg_surface(self, surface):
+        self._bg_surfaces.append(weakref.ref(surface))
+        # 仍注册到主应用，主题切换/背景设置变化时可统一刷新；创建窗口
+        # 自己拖动时不再调用主应用的全局拖动抑制链路。
         return self.entry.app._register_bg_surface(surface)
 
     def _get_bg_slice(self, widget, width, height):
         return self.entry.app._get_bg_slice(widget, width, height)
 
     def _begin_bg_drag_suppress(self):
-        return self.entry.app._begin_bg_drag_suppress()
+        self._local_bg_drag_suppressed = True
+        for ref in self._bg_surfaces:
+            surface = ref()
+            if surface is not None:
+                surface.clear_bg_image()
 
     def _end_bg_drag_suppress(self):
-        return self.entry.app._end_bg_drag_suppress()
+        self._local_bg_drag_suppressed = False
+        alive = []
+        for ref in self._bg_surfaces:
+            surface = ref()
+            if surface is None:
+                continue
+            alive.append(ref)
+            surface.render_now()
+        self._bg_surfaces = alive
 
     def _on_close(self):
         self.entry._close_wizard()
@@ -154,15 +176,22 @@ class WorldCreationEntryTab:
         ttk.Label(loading, text="正在加载创建向导…").pack(expand=True)
         win.protocol("WM_DELETE_WINDOW", self._close_wizard)
         win.update_idletasks()
-        center_over_parent(win, self.app.root, min_width=900)
-        base_width = max(win.winfo_width(), win.winfo_reqwidth())
-        base_height = max(win.winfo_height(), win.winfo_reqheight())
-        self._window_chrome._aspect = base_width / base_height
+        # 默认窗口按主窗口的比例缩小，不能直接使用 loading 页面的自然
+        # 高度；后者会把“创建向导”的长宽比拉成长条。
+        aspect = self._window_chrome._aspect
+        root_width = max(1, self.app.root.winfo_width())
+        default_width = max(win.winfo_reqwidth(), round(root_width * 0.9))
+        default_height = max(1, round(default_width / aspect))
+        center_over_parent(win, self.app.root, width=default_width, height=default_height)
+        min_width = max(win.winfo_reqwidth(), round(default_width * 0.55))
+        min_height = max(1, round(min_width / aspect))
         custom_titlebar.ResizeGrips(
             win, self._window_chrome,
-            base_width, base_height,
+            self.app.WINDOW_BASE_W, self.app.WINDOW_BASE_H,
             top_reserve=self._titlebar.winfo_height(),
             top_grip=2,
+            min_width=min_width,
+            min_height=min_height,
         )
         win.deiconify()
         win.focus_force()
@@ -192,10 +221,16 @@ class WorldCreationEntryTab:
             loading.destroy()
             from dstools.features.world.creation_tab import WorldCreationTab
 
-            self._wizard = WorldCreationTab(self._wizard_host, self.app)
+            # 向导内所有 BgFrame 都使用窗口级 host，这样拖动内层时只
+            # 抑制/刷新内层背景；业务方法仍由 _CreationWindowChrome 转发给主应用。
+            self._wizard = WorldCreationTab(self._wizard_host, self._window_chrome)
             self._wizard.frame.pack(fill=tk.BOTH, expand=True)
             win.update_idletasks()
-            center_over_parent(win, self.app.root, min_width=900)
+            # 世界/Mod 控件加载后只更新内容，不重新按 requested height
+            # 定位窗口；否则 Tk 会把窗口改回不同比例的长条。
+            width = max(1, win.winfo_width())
+            height = max(1, round(width / self._window_chrome._aspect))
+            win.geometry(f"{width}x{height}+{win.winfo_x()}+{win.winfo_y()}")
         except Exception as exc:
             self._status_var.set("创建向导加载失败")
             error = ttk.Frame(win)

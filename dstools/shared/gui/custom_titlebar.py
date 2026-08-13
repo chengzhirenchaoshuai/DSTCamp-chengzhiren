@@ -294,7 +294,8 @@ class ResizeGrips:
 
     def __init__(self, root: tk.Tk, app, base_width: int, base_height: int,
                  bottom_reserve: int = 0, top_reserve: int = 0,
-                 bottom_grip: int | None = None, top_grip: int | None = None):
+                 bottom_grip: int | None = None, top_grip: int | None = None,
+                 min_width: int | None = None, min_height: int | None = None):
         """n/nw/ne 三个手柄现在**始终贴在窗口真实顶边**（y=0，固定值，
         不受 top_reserve 影响），尺寸用 top_grip——早期版本靠 top_reserve
         把它们整体下移一整条标题栏+菜单条的高度，用户反馈"应该跟
@@ -344,8 +345,8 @@ class ResizeGrips:
         self.root = root
         self._app = app
         self.aspect = base_width / base_height
-        self.min_width = base_width
-        self.min_height = base_height
+        self.min_width = min_width if min_width is not None else base_width
+        self.min_height = min_height if min_height is not None else base_height
         self._start = None
         self._edge = None
         self._pending_rect = None
