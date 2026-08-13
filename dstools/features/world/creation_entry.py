@@ -9,8 +9,73 @@ from tkinter import ttk
 
 from dstools.shared.gui import theme
 from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui import custom_titlebar
 from dstools.shared.gui.dialog_geometry import center_over_parent
+from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.shared.gui.toolbar_widgets import make_toolbar_label
+
+
+class _CreationWindowChrome:
+    """把独立向导接入主窗口同款的自绘标题栏和缩放手柄。"""
+
+    def __init__(self, entry, window: tk.Toplevel):
+        self.entry = entry
+        self.window = window
+        self._aspect = None
+        self._is_pseudo_maximized = False
+        self._pre_maximize_geom: tuple[int, int, int, int] | None = None
+
+    @property
+    def _bg_drag_suppressed(self):
+        return getattr(self.entry.app, "_bg_drag_suppressed", False)
+
+    @property
+    def _theme_switch_suppressed(self):
+        return getattr(self.entry.app, "_theme_switch_suppressed", False)
+
+    def _register_bg_surface(self, surface):
+        return self.entry.app._register_bg_surface(surface)
+
+    def _get_bg_slice(self, widget, width, height):
+        return self.entry.app._get_bg_slice(widget, width, height)
+
+    def _begin_bg_drag_suppress(self):
+        return self.entry.app._begin_bg_drag_suppress()
+
+    def _end_bg_drag_suppress(self):
+        return self.entry.app._end_bg_drag_suppress()
+
+    def _on_close(self):
+        self.entry._close_wizard()
+
+    def _toggle_pseudo_maximize(self):
+        if not self.window.winfo_exists():
+            return
+        if self._is_pseudo_maximized:
+            if self._pre_maximize_geom is not None:
+                x, y, width, height = self._pre_maximize_geom
+                self.window.geometry(f"{width}x{height}+{x}+{y}")
+            self._is_pseudo_maximized = False
+            self._pre_maximize_geom = None
+            return
+
+        self.window.update_idletasks()
+        self._pre_maximize_geom = (
+            self.window.winfo_x(), self.window.winfo_y(),
+            self.window.winfo_width(), self.window.winfo_height(),
+        )
+        left, top, right, bottom = custom_titlebar.get_monitor_work_area(self.window)
+        avail_w, avail_h = right - left, bottom - top
+        aspect = self._aspect or (self.entry.app.WINDOW_BASE_W / self.entry.app.WINDOW_BASE_H)
+        candidate_w = avail_h * aspect
+        if candidate_w <= avail_w:
+            width, height = int(candidate_w), avail_h
+        else:
+            width, height = avail_w, int(avail_w / aspect)
+        x = left + max(0, (avail_w - width) // 2)
+        y = top + max(0, (avail_h - height) // 2)
+        self.window.geometry(f"{width}x{height}+{x}+{y}")
+        self._is_pseudo_maximized = True
 
 
 class WorldCreationEntryTab:
@@ -22,10 +87,8 @@ class WorldCreationEntryTab:
         self._window: tk.Toplevel | None = None
         self._wizard = None
         self._wizard_host = None
-        self._maximize_btn = None
-        self._maximized = False
-        self._fullscreen_fallback = False
-        self._restore_geometry = None
+        self._window_chrome = None
+        self._titlebar = None
         self._open_btn = None
         self._status_var = tk.StringVar(value="创建向导按需加载，不影响软件启动速度")
         self._build()
@@ -72,13 +135,15 @@ class WorldCreationEntryTab:
         win.resizable(True, True)
         win.transient(self.app.root)
 
-        chrome = ttk.Frame(win)
-        chrome.pack(fill=tk.X, padx=10, pady=(8, 0))
-        ttk.Label(chrome, text="创建存档", font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True)).pack(side=tk.LEFT)
-        self._maximize_btn = ttk.Button(chrome, text="最大化", command=self._toggle_maximize)
-        self._maximize_btn.pack(side=tk.RIGHT)
-        ttk.Button(chrome, text="关闭", command=self._close_wizard).pack(side=tk.RIGHT, padx=(0, 6))
-
+        # 创建窗口沿用主窗口的无原生边框、自绘标题栏和伪最大化，避免出现
+        # 一套 ttk“关闭/最大化”按钮与主窗口风格不一致。
+        custom_titlebar.apply_borderless_style(win)
+        self._window_chrome = _CreationWindowChrome(self, win)
+        icon_path = bundled_resource_dir() / "icons" / "app" / "icon.png"
+        self._titlebar = custom_titlebar.CustomTitleBar(
+            win, self._window_chrome, icon_path=icon_path,
+        )
+        self._titlebar.pack(fill=tk.X, side=tk.TOP)
         self._wizard_host = ttk.Frame(win)
         self._wizard_host.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
         loading = ttk.Frame(self._wizard_host)
@@ -87,6 +152,15 @@ class WorldCreationEntryTab:
         win.protocol("WM_DELETE_WINDOW", self._close_wizard)
         win.update_idletasks()
         center_over_parent(win, self.app.root, min_width=900)
+        base_width = max(win.winfo_width(), win.winfo_reqwidth())
+        base_height = max(win.winfo_height(), win.winfo_reqheight())
+        self._window_chrome._aspect = base_width / base_height
+        custom_titlebar.ResizeGrips(
+            win, self._window_chrome,
+            base_width, base_height,
+            top_reserve=self._titlebar.winfo_height(),
+            top_grip=2,
+        )
         win.deiconify()
         win.focus_force()
         self._status_var.set("创建向导已打开")
@@ -96,30 +170,9 @@ class WorldCreationEntryTab:
         win.after(50, lambda w=win, loading=loading: self._load_wizard(w, loading))
 
     def _toggle_maximize(self) -> None:
-        if self._window is None or not self._window.winfo_exists():
-            return
-        win = self._window
-        if self._maximized:
-            if self._fullscreen_fallback:
-                win.attributes("-fullscreen", False)
-                self._fullscreen_fallback = False
-            win.state("normal")
-            if self._restore_geometry:
-                win.geometry(self._restore_geometry)
-            self._maximized = False
-            if self._maximize_btn is not None:
-                self._maximize_btn.configure(text="最大化")
-            return
-        self._restore_geometry = win.geometry()
-        try:
-            win.state("zoomed")
-        except tk.TclError:
-            # 某些窗口管理器不支持 zoomed，退化为铺满工作区的可恢复状态。
-            win.attributes("-fullscreen", True)
-            self._fullscreen_fallback = True
-        self._maximized = True
-        if self._maximize_btn is not None:
-            self._maximize_btn.configure(text="还原")
+        """保留旧调用入口，实际转发给主窗口同款的伪最大化逻辑。"""
+        if self._window_chrome is not None:
+            self._window_chrome._toggle_pseudo_maximize()
 
     def _load_wizard(self, win: tk.Toplevel, loading: ttk.Frame) -> None:
         if self._window is not win or not win.winfo_exists():
@@ -147,10 +200,8 @@ class WorldCreationEntryTab:
         self._window = None
         self._wizard = None
         self._wizard_host = None
-        self._maximize_btn = None
-        self._maximized = False
-        self._fullscreen_fallback = False
-        self._restore_geometry = None
+        self._window_chrome = None
+        self._titlebar = None
         if win.winfo_exists():
             win.destroy()
         self._status_var.set("创建向导已关闭，可再次打开")

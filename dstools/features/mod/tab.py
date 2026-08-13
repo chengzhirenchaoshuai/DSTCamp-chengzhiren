@@ -1393,7 +1393,8 @@ class _SavePresetDialog:
                 self.win, t("preset.save_dialog_title"), t("preset.save_overwrite_confirm", name=name)):
             return
         cluster = self.tab._get_cluster()
-        platform = cluster.platform.value if cluster else ""
+        platform = (cluster.platform.value if cluster
+                    else getattr(self.tab, "_preset_source_platform", ""))
         preset = presets.capture_preset(name, self.tab._mod_data, self.tab._mod_infos, selected, platform)
         presets.save_preset(preset, overwrite=True)
         dlg.show_info(self.win, t("preset.save_dialog_title"), t("preset.save_done", name=name, count=len(selected)))

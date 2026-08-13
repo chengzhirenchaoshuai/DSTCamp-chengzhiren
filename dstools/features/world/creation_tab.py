@@ -4,7 +4,7 @@ import copy
 import threading
 import tkinter as tk
 import webbrowser
-from tkinter import simpledialog, ttk
+from tkinter import ttk
 
 from PIL import Image
 
@@ -27,13 +27,13 @@ from dstools.features.mod.parser import (
     resolve_wegame_client_mods_dir,
 )
 from dstools.features.mod.render import render_mod_list
-from dstools.features.mod.tab import ModConfigDialog
+from dstools.features.mod.tab import ModConfigDialog, _SavePresetDialog
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.pill_tabs import PillTabBar
-from dstools.shared.gui.toolbar_widgets import make_toolbar_label
+from dstools.shared.gui.toolbar_widgets import make_toolbar_label, make_filter_chips
 from dstools.i18n import t
 from dstools.models import ModEntry, Platform
 
@@ -51,6 +51,7 @@ class WorldCreationTab:
         self._mod_overrides: dict[str, dict] = {}
         self._mod_data: dict[str, ModEntry] = {}
         self._mod_infos = {}
+        self._preset_source_platform = ""
         self._icon_imgs = {}
         self._icon_thumb_cache = {}
         self._full_resolved_cache = {}
@@ -60,6 +61,7 @@ class WorldCreationTab:
         self._mod_scan_generation = 0
         self._mod_scan_running = False
         self._mod_filter_var = None
+        self._mod_show_var = None
         self._mod_filter_after_id = None
         self._server_config = None
         self._initialized_pages: set[str] = set()
@@ -222,6 +224,16 @@ class WorldCreationTab:
         self._mod_filter_var = tk.StringVar()
         self._mod_filter_var.trace_add("write", self._on_mod_filter_changed)
         ttk.Entry(filter_row, textvariable=self._mod_filter_var, width=30).pack(side=tk.LEFT, padx=(5, 0))
+        self._mod_show_var = tk.StringVar(value="all")
+        make_filter_chips(
+            filter_row,
+            self.app,
+            [("all", lambda: t("mod.show_all")),
+             ("enabled", lambda: t("mod.show_enabled")),
+             ("disabled", lambda: t("mod.show_disabled"))],
+            self._mod_show_var,
+            self._render_list,
+        )
         self._mod_list_frame = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         self._mod_list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
         from dstools.shared.gui.image_scroll import ImageScrollPanel
@@ -349,11 +361,18 @@ class WorldCreationTab:
             return
         from dstools.features.mod.render import REF_WIDTH
         query = (self._mod_filter_var.get() if self._mod_filter_var is not None else "").strip().casefold()
+        show = self._mod_show_var.get() if self._mod_show_var is not None else "all"
         rows = []
         for mod_id, mod in self._mod_data.items():
             info = self._mod_infos.get(mod_id)
             name = info.name if info else mod.name
-            if query and query not in " ".join((name or "", mod_id, info.description if info else "")).casefold():
+            if show == "enabled" and not mod.enabled:
+                continue
+            if show == "disabled" and mod.enabled:
+                continue
+            # 与主页保持一致：搜索只匹配 Mod 名称和 workshop ID，描述文本
+            # 不参与匹配，避免“相关描述”把用户未查找的 Mod 过滤进来。
+            if query and query not in (name or "").casefold() and query not in mod_id.casefold():
                 continue
             rows.append({
                 "workshop_id": mod_id,
@@ -369,6 +388,7 @@ class WorldCreationTab:
             on_toggle=self._toggle_mod,
             on_config=self._open_mod_config,
             on_link=self._open_mod_link,
+            on_copy_id=self._on_copy_id,
             ref_width=REF_WIDTH,
             icon_thumb_cache=self._icon_thumb_cache,
         )
@@ -386,27 +406,44 @@ class WorldCreationTab:
         self._mod_filter_after_id = None
         self._render_list()
 
+    def _on_copy_id(self, workshop_id):
+        """复制 Mod 的纯数字 ID，并沿用主页的自动消失提示。"""
+        numeric_id = workshop_id.replace("workshop-", "")
+        self.frame.clipboard_clear()
+        self.frame.clipboard_append(numeric_id)
+        x_root = self.frame.winfo_pointerx()
+        y_root = self.frame.winfo_pointery()
+        self._show_copy_toast(t("mod.id_copied_toast", id=numeric_id), x_root, y_root)
+
+    def _show_copy_toast(self, text, x_root, y_root):
+        tip = tk.Toplevel(self.frame)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x_root + 12}+{y_root + 16}")
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        tk.Label(
+            tip,
+            text=text,
+            justify=tk.LEFT,
+            background="#323232",
+            foreground="#ffffff",
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        ).pack(ipadx=8, ipady=4)
+        tip.after(700, tip.destroy)
+
     def _save_creation_preset(self):
+        """打开主页同款配置集保存窗口，配置仍只保存到用户配置集。"""
         if self._mod_scan_running:
             dlg.show_info(self.frame.winfo_toplevel(), "保存为配置集", "Mod 仍在扫描，请稍候再保存。")
             return
         if not self._mod_data:
             dlg.show_info(self.frame.winfo_toplevel(), "保存为配置集", "当前没有可保存的 Mod。")
             return
-        name = simpledialog.askstring("保存为配置集", "配置集名称：", parent=self.frame.winfo_toplevel())
-        if not name or not name.strip():
-            return
         platform, _ = self._resolve_mod_folder_args(None)
-        preset = presets.capture_preset(
-            name.strip(), self._mod_data, self._mod_infos,
-            set(self._mod_data), platform.value,
-        )
-        existing = presets.find_preset(preset.name)
-        if existing and not dlg.ask_yes_no(
-                self.frame.winfo_toplevel(), "保存为配置集", f"配置集“{preset.name}”已存在，是否覆盖？"):
-            return
-        presets.save_preset(preset, overwrite=True)
-        dlg.show_info(self.frame.winfo_toplevel(), "保存为配置集", f"已保存配置集“{preset.name}”。")
+        self._preset_source_platform = platform.value
+        _SavePresetDialog(self)
 
     def _open_creation_preset_dialog(self):
         if self._mod_scan_running:
