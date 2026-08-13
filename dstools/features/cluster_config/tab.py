@@ -20,6 +20,7 @@ from dstools.shared.token_manager import is_valid_token, mask_token, read_token,
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.card_frame import CardFrame
+from dstools.shared.gui.transparent_widgets import TransparentLabel, TransparentIdList
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.pill_tabs import PillTabBar
@@ -280,12 +281,19 @@ class ClusterConfigTab:
         self._section_window_ids = {}
         self._section_content_heights = {}
         self._section_save_btns = {}
+        # server.ini 世界设置不需要随窗口横向铺满。固定为应用默认客户区
+        # 宽度的一半，右侧留出的背景区域能保持呼吸感；内层创建窗口也
+        # 复用同一个默认宽度基准，因此内外层行为一致。
+        self._shard_fixed_width = max(560, round(getattr(app, "WINDOW_BASE_W", 1600) * 0.5))
         for tab_key in ("Cluster", "Shard Config"):
             # 每个页签一个 page，装可滚动的 canvas + 一行 footer 放"保
             # 存"按钮（footer 在滚动区域之外，不会跟着内容滚出视野）。
             # page/footer 用 tk.Frame 显式指定 CARD_BG，scroll_area 内部
             # 仍是默认背景，让绿色只框住真正的配置行。
             page = self._surface_frame(self._sub_content)
+            if tab_key == "Shard Config":
+                page.configure(width=self._shard_fixed_width)
+                page.pack_propagate(False)
             scroll_area = self._layout_frame(page)
             scroll_area.pack(side=tk.TOP, fill=tk.X)
             footer = self._surface_frame(page)
@@ -405,7 +413,12 @@ class ClusterConfigTab:
     def _on_sub_tab_select(self, key):
         self._sub_pages[self._sub_tab_key].pack_forget()
         self._sub_tab_key = key
-        self._sub_pages[key].pack(fill=tk.BOTH, expand=True)
+        if key == "shard":
+            # 固定 server.ini 页签宽度，窗口放大时只扩展外层背景，不拉
+            # 长输入框和世界设置列。
+            self._sub_pages[key].pack(fill=tk.Y, expand=False, anchor=tk.NW)
+        else:
+            self._sub_pages[key].pack(fill=tk.BOTH, expand=True)
         # 跟原来 ttk.Notebook 版本 <<NotebookTabChanged>> 绑定的效果一
         # 样——见 __init__ 里这段的说明。
         self._sub_content.focus_set()
@@ -422,24 +435,30 @@ class ClusterConfigTab:
 
     def _build_id_list_panel(self, parent, title_key):
         lf = self._layout_frame(parent); lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        title_lbl = ttk.Label(lf, text=t(title_key), font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True)); title_lbl.pack(anchor=tk.W)
-        listbox = tk.Listbox(
-            lf, height=10, font=self._ROW_VALUE_FONT,
-            bg=theme.CARD_BG, fg=theme.TEXT, selectbackground=theme.PRIMARY,
-            selectforeground=theme.CARD_BG, highlightbackground=theme.CARD_BORDER,
-            highlightcolor=theme.CARD_BORDER, relief=tk.FLAT,
+        title_lbl = TransparentLabel(
+            lf, self.app, text=t(title_key),
+            font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
+            padx=5, pady=4,
         )
+        title_lbl.pack(anchor=tk.W)
+        listbox = TransparentIdList(lf, self.app, font=self._ROW_VALUE_FONT,
+                                    height=10)
         listbox.pack(fill=tk.BOTH, expand=True, pady=5)
         bf = self._layout_frame(lf); bf.pack(fill=tk.X)
         add_btn = ttk.Button(bf, text=t("admin.add")); add_btn.pack(side=tk.LEFT, padx=2)
         remove_btn = ttk.Button(bf, text=t("admin.remove")); remove_btn.pack(side=tk.LEFT, padx=2)
-        status = ttk.Label(lf, text="", font=self._ROW_VALUE_FONT); status.pack(anchor=tk.W, pady=(5,0))
+        status = TransparentLabel(lf, self.app, text="", font=self._ROW_VALUE_FONT,
+                                  foreground=theme.TEXT_MUTED, padx=5, pady=2)
+        status.pack(anchor=tk.W, pady=(5,0))
         return title_lbl, listbox, add_btn, remove_btn, status
 
     def _build_token_panel(self, parent):
         p = self._layout_frame(parent); p.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        self._token_title_lbl = ttk.Label(p, text=t("token.current_title"),
-                                           font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
+        self._token_title_lbl = TransparentLabel(
+            p, self.app, text=t("token.current_title"),
+            font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+            padx=5, pady=4,
+        )
         self._token_title_lbl.pack(anchor=tk.W)
         # 普通 tk.Text 不会跟着 theme.apply_theme() 走 ttk 皮肤，不显式给
         # bg/fg 的话就是系统默认的白底黑字，跟其它页签的薄荷绿卡片+深色
@@ -468,9 +487,12 @@ class ClusterConfigTab:
         self._global_tokens_btn = ttk.Button(global_bf, text=t("token.set_global_btn"),
                                               command=self._open_global_tokens_dialog)
         self._global_tokens_btn.pack(side=tk.LEFT)
-        self._global_tokens_hint_lbl = ttk.Label(p, text=t("token.global_hint"), foreground=theme.TEXT_MUTED,
-                                                  font=theme.font_tuple(theme.FONT_SIZE_XS),
-                                                  wraplength=420, justify=tk.LEFT)
+        self._global_tokens_hint_lbl = TransparentLabel(
+            p, self.app, text=t("token.global_hint"),
+            foreground=theme.TEXT_MUTED,
+            font=theme.font_tuple(theme.FONT_SIZE_XS),
+            wraplength=420, justify=tk.LEFT, padx=5, pady=2,
+        )
         self._global_tokens_hint_lbl.pack(anchor=tk.W, pady=(4, 0))
 
     def _open_global_tokens_dialog(self):
@@ -571,8 +593,10 @@ class ClusterConfigTab:
         # 不再固定 width=26 -- 那是按英文字段名调的宽度，中文标签普遍短
         # 很多，右对齐配上这么宽的固定列会在文字左边留出一大截空白。去
         # 掉固定宽度后，列宽由 grid 按这一列实际最长的标签自动收紧。
-        lbl = ttk.Label(parent, text=f"{label_text}:", anchor=tk.E, font=self._ROW_LABEL_FONT)
-        lbl.grid(row=row, column=0, sticky=tk.E, padx=(5,8), pady=2)
+        lbl = TransparentLabel(parent, self.app, text=f"{label_text}:",
+                               anchor=tk.E, font=self._ROW_LABEL_FONT,
+                               padx=5, pady=2)
+        lbl.grid(row=row, column=0, sticky=tk.E, padx=(0,3), pady=2)
         if desc:
             Tooltip(lbl, desc)
 
@@ -593,8 +617,9 @@ class ClusterConfigTab:
                 text = next((disp for raw, disp in enum_choices if raw == value), str(value))
             else:
                 text = str(value) if value is not None else ""
-            value_lbl = ttk.Label(parent, text=text, anchor=tk.W, foreground=theme.TEXT_MUTED, justify=tk.LEFT,
-                     wraplength=260, font=self._ROW_VALUE_FONT)
+            value_lbl = TransparentLabel(parent, self.app, text=text,
+                     anchor=tk.W, foreground=theme.TEXT_MUTED, justify=tk.LEFT,
+                     wraplength=260, font=self._ROW_VALUE_FONT, padx=0, pady=2)
             value_lbl.grid(row=row, column=1, sticky=tk.W, pady=2)
             if tooltip:
                 Tooltip(value_lbl, tooltip)
@@ -694,8 +719,11 @@ class ClusterConfigTab:
             for sec_name, sec_data in sections:
                 if not sec_data:
                     continue
-                ttk.Label(col_frame, text=t(self._SECTION_HEADER_KEYS[sec_name]), font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
-                         foreground=theme.HEADING).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(10,3))
+                TransparentLabel(
+                    col_frame, self.app, text=t(self._SECTION_HEADER_KEYS[sec_name]),
+                    font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
+                    foreground=theme.HEADING, padx=5, pady=3,
+                ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(10,3))
                 row += 1
                 order = self._SECTION_FIELD_ORDER.get(sec_name, [])
                 ordered_keys = [k for k in order if k in sec_data] + [k for k in sec_data if k not in order]
@@ -739,9 +767,11 @@ class ClusterConfigTab:
             # 框内部文字对不齐（真机截图"3.png"确认过）。子 Frame 整体
             # 当一个单元格 sticky=W，就只贴这个 frame 真正的左边缘，不
             # 再受两列各自富余宽度的影响。
-            selector_row = ttk.Frame(frame)
+            selector_row = self._layout_frame(frame)
             selector_row.grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=5)
-            ttk.Label(selector_row, text=t("save.shard"), font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(side=tk.LEFT, padx=(5,5))
+            TransparentLabel(selector_row, self.app, text=t("save.shard"),
+                             font=theme.font_tuple(theme.FONT_SIZE_SM),
+                             padx=5, pady=2).pack(side=tk.LEFT)
             self._shard_sel_var = tk.StringVar()
             shard_sel = MenuCombo(selector_row, textvariable=self._shard_sel_var, width=15)
             shard_sel["values"] = [s.name for s in c.shards]
@@ -791,7 +821,9 @@ class ClusterConfigTab:
         for w in frame.winfo_children(): w.destroy()
         keys_to_remove = [k for k in self._entries if k[0].startswith("SHARD_")]
         for k in keys_to_remove: del self._entries[k]
-        ttk.Label(frame, text=t("cluster.editing", shard=target_shard.name), font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True)).grid(row=0, column=0, columnspan=2, sticky=tk.W, padx=5, pady=5)
+        TransparentLabel(frame, self.app, text=t("cluster.editing", shard=target_shard.name),
+                         font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+                         padx=5, pady=5).grid(row=0, column=0, columnspan=2, sticky=tk.W)
 
         # 从世界(is_master=false)的 server.ini 经常缺 name/id——Klei 官方
         # Master+Caves 示例（论坛/wiki 的世界配置说明）里每个世界都必须有
@@ -832,7 +864,9 @@ class ClusterConfigTab:
         for sec in ["NETWORK","SHARD","ACCOUNT","STEAM"]:
             data = getattr(shard_config, sec.lower(), {})
             if data:
-                ttk.Label(frame, text=f"[{sec}]", font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True)).grid(row=row, column=0, columnspan=2, sticky=tk.W, padx=5, pady=(5,0))
+                TransparentLabel(frame, self.app, text=f"[{sec}]",
+                                 font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True),
+                                 padx=5, pady=2).grid(row=row, column=0, columnspan=2, sticky=tk.W)
                 row += 1
                 for key, value in data.items():
                     # server_port 一旦被"樱花映射"接管（远程端口回写进这
