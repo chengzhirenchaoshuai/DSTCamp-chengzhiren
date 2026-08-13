@@ -795,11 +795,18 @@ class ClusterConfigTab:
                     readonly = not is_server
                     port_tooltip = None
                     if sec == "NETWORK" and key == "server_port" and is_server:
-                        if self.app.sakura_tab.has_active_mapping(self._shard_config_cluster, self._shard_config_shard):
+                        # 创建存档页会在主窗口的 Sakura 页签完成构造前
+                        # 先创建一个临时服务器配置草稿；此时不能假定
+                        # app.sakura_tab 已经存在。缺少映射页签只代表没有
+                        # 可检查的端口接管，不影响服务器配置编辑。
+                        sakura_tab = getattr(self.app, "sakura_tab", None)
+                        if sakura_tab and sakura_tab.has_active_mapping(
+                                self._shard_config_cluster, self._shard_config_shard):
                             readonly = True
                             # 樱花映射和自建 frps 共用同一套只读判断，提
                             # 示文字要分清楚具体是哪一个接管的。
-                            if self.app.sakura_tab.selfhost_page.has_active_mapping(
+                            selfhost_page = getattr(sakura_tab, "selfhost_page", None)
+                            if selfhost_page and selfhost_page.has_active_mapping(
                                     self._shard_config_cluster, self._shard_config_shard):
                                 port_tooltip = t("cluster.server_port_selfhost_locked")
                             else:
