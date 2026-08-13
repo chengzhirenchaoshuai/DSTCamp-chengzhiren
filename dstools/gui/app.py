@@ -36,7 +36,7 @@ from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.features.sakura.tab import SakuraTab
 from dstools.features.save_browser.tab import SaveBrowserTab
 from dstools.features.world.tab import WorldSettingsTab
-from dstools.features.world.creation_tab import WorldCreationTab
+from dstools.features.world.creation_entry import WorldCreationEntryTab
 from dstools.i18n import get_lang, set_lang, t
 from dstools.models import Platform, SaveSource, Shard
 
@@ -237,7 +237,9 @@ class DSToolsApp:
         self.save_tab = SaveBrowserTab(self._tab_cards["saves"].body, self)
         self.mod_tab = ModManagerTab(self._tab_cards["mods"].body, self)
         self.world_tab = WorldSettingsTab(self._tab_cards["world"].body, self)
-        self.creation_tab = WorldCreationTab(self._tab_cards["create"].body, self)
+        # 创建存档是独立的重型向导：主页只挂载轻量入口，用户点击后才
+        # 在独立窗口里加载世界模板、服务器配置和 Mod 元数据。
+        self.creation_tab = WorldCreationEntryTab(self._tab_cards["create"].body, self)
         self.cluster_tab = ClusterConfigTab(self._tab_cards["server"].body, self)
         self.sakura_tab = SakuraTab(self._tab_cards["sakura"].body, self)
 

@@ -1,6 +1,7 @@
 """Standalone create-world tab reusing the existing world renderer."""
 
 import copy
+import threading
 import tkinter as tk
 import webbrowser
 from tkinter import ttk
@@ -51,7 +52,12 @@ class WorldCreationTab:
         self._full_resolved_cache = {}
         self._mod_panel = None
         self._mod_scan_status = None
+        self._mod_scan_btn = None
+        self._mod_scan_generation = 0
+        self._mod_scan_running = False
         self._server_config = None
+        self._initialized_pages: set[str] = set()
+        self._create_btn = None
         self._build()
 
     def _build(self):
@@ -64,7 +70,7 @@ class WorldCreationTab:
         self.location_combo = ttk.Combobox(top, textvariable=self.location_var, state="readonly", width=12)
         self.location_combo["values"] = available_master_locations(self._enabled_mod_ids())
         self.location_combo.pack(side=tk.LEFT, padx=5)
-        self.location_combo.bind("<<ComboboxSelected>>", lambda _e: self._reload_template())
+        self.location_combo.bind("<<ComboboxSelected>>", self._on_location_changed)
         make_toolbar_label(top, self.app, lambda: "编辑世界").pack(side=tk.LEFT, padx=(12, 4))
         self.shard_var = tk.StringVar(value="Master")
         ttk.Combobox(top, textvariable=self.shard_var, values=("Master", "Caves"), state="readonly", width=10).pack(side=tk.LEFT)
@@ -77,14 +83,44 @@ class WorldCreationTab:
         self._sub.add(self._server_frame, text="服务器配置")
         self._sub.add(self._mod_frame, text="Mod 管理")
         self._sub.add(self._rules_frame, text="世界规则"); self._sub.add(self._gen_frame, text="世界生成")
-        self._build_server_panel()
-        self._build_mod_panel()
+        self._sub.bind("<<NotebookTabChanged>>", self._on_page_changed)
         bottom = BgFrame(self.frame, self.app, bg=theme.CARD_BG); bottom.pack(fill=tk.X, padx=12, pady=8)
         self.status_var = tk.StringVar(value="请选择一个官方默认存档模板")
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT)
-        ttk.Button(bottom, text="创建存档", command=self._create).pack(side=tk.RIGHT)
-        # 不在启动应用时弹出文件选择框；用户进入本页后主动选择模板。
-        self._reload_template()
+        self._create_btn = ttk.Button(bottom, text="创建存档", command=self._create)
+        self._create_btn.pack(side=tk.RIGHT)
+        # 默认页签是服务器配置，只初始化当前页；Mod 扫描和世界模板在
+        # 用户真正切过去时再加载，避免打开向导也一次性执行全部重活。
+        self._ensure_page("server")
+
+    def _on_page_changed(self, _event=None) -> None:
+        selected = str(self._sub.select())
+        page_key = next((key for key, frame in {
+            "server": self._server_frame,
+            "mod": self._mod_frame,
+            "rules": self._rules_frame,
+            "generation": self._gen_frame,
+        }.items() if str(frame) == selected), None)
+        if page_key:
+            self._ensure_page(page_key)
+
+    def _ensure_page(self, page_key: str) -> None:
+        if page_key in self._initialized_pages:
+            return
+        if page_key == "server":
+            self._build_server_panel()
+        elif page_key == "mod":
+            self._build_mod_panel()
+        elif page_key in ("rules", "generation"):
+            self._reload_template()
+        else:
+            return
+        self._initialized_pages.add(page_key)
+
+    def _on_location_changed(self, _event=None) -> None:
+        """仅在世界设置页已初始化后重载模板，保持顶部选择器轻量。"""
+        if self._initialized_pages.intersection({"rules", "generation"}):
+            self._reload_template()
 
     def _build_server_panel(self):
         self._server_config = CreationServerConfigTab(self._server_frame, self.app, self.name_var.get())
@@ -99,7 +135,8 @@ class WorldCreationTab:
         header.pack(fill=tk.X, padx=12, pady=10)
         make_toolbar_label(header, self.app, lambda: "创建存档 Mod").pack(side=tk.LEFT)
         ttk.Label(header, text="独立于主页 Mod 管理，仅作用于正在创建的存档").pack(side=tk.LEFT, padx=12)
-        ttk.Button(header, text="重新扫描", command=self._scan_installed_mods).pack(side=tk.RIGHT)
+        self._mod_scan_btn = ttk.Button(header, text="重新扫描", command=self._scan_installed_mods)
+        self._mod_scan_btn.pack(side=tk.RIGHT)
         self._mod_scan_status = tk.StringVar(value="正在读取已安装 Mod…")
         ttk.Label(header, textvariable=self._mod_scan_status,
                   foreground=theme.TEXT_MUTED).pack(side=tk.RIGHT, padx=10)
@@ -137,44 +174,92 @@ class WorldCreationTab:
         self._scan_installed_mods()
 
     def _scan_installed_mods(self):
-        """重新读取本机 Mod 元数据；创建页不读取或修改主页当前存档。"""
+        """后台读取本机 Mod 元数据；创建页不读取或修改主页当前存档。"""
+        if self._mod_scan_running:
+            return
         platform, client_mods_dir = self._resolve_mod_folder_args(None)
-        ids = []
-        seen = set()
-        for raw_id in list_installed_mod_ids(platform, client_mods_dir):
-            mod_id = str(raw_id)
-            if mod_id not in seen:
-                seen.add(mod_id)
-                ids.append(mod_id)
+        self._mod_scan_generation += 1
+        generation = self._mod_scan_generation
+        self._mod_scan_running = True
+        if self._mod_scan_status is not None:
+            self._mod_scan_status.set("正在后台扫描 Mod…")
+        if self._mod_scan_btn is not None:
+            self._mod_scan_btn.configure(state=tk.DISABLED)
+        if self._create_btn is not None:
+            self._create_btn.configure(state=tk.DISABLED)
+        threading.Thread(
+            target=self._scan_mods_worker,
+            args=(generation, platform, client_mods_dir),
+            daemon=True,
+        ).start()
+
+    def _scan_mods_worker(self, generation, platform, client_mods_dir):
+        """只做文件、Lua 和图标读取，绝不在工作线程触碰 Tk 控件。"""
+        try:
+            ids = []
+            seen = set()
+            for raw_id in list_installed_mod_ids(platform, client_mods_dir):
+                mod_id = str(raw_id)
+                if mod_id not in seen:
+                    seen.add(mod_id)
+                    ids.append(mod_id)
+
+            records = []
+            for mod_id in ids:
+                folder = find_mod_folder(mod_id, platform, client_mods_dir)
+                info = parse_modinfo(folder) if folder else None
+                icon = None
+                if info and folder:
+                    try:
+                        icon_path = get_mod_icon_path(info, folder, platform)
+                        if icon_path and icon_path.exists():
+                            with Image.open(icon_path) as source:
+                                icon = source.convert("RGBA")
+                    except Exception:
+                        pass
+                records.append((mod_id, info, icon))
+            self._post_mod_scan_result(generation, records, None)
+        except Exception as exc:
+            self._post_mod_scan_result(generation, [], exc)
+
+    def _post_mod_scan_result(self, generation, records, error):
+        try:
+            self.frame.after(0, lambda: self._apply_mod_scan_result(generation, records, error))
+        except (RuntimeError, tk.TclError):
+            # 向导被关闭后，后台线程可能刚好完成；此时无需再回调 Tk。
+            return
+
+    def _apply_mod_scan_result(self, generation, records, error):
+        if generation != self._mod_scan_generation:
+            return
+        self._mod_scan_running = False
+        if self._mod_scan_btn is not None:
+            self._mod_scan_btn.configure(state=tk.NORMAL)
+        if self._create_btn is not None:
+            self._create_btn.configure(state=tk.NORMAL)
+        if error is not None:
+            if self._mod_scan_status is not None:
+                self._mod_scan_status.set(f"Mod 扫描失败：{error}")
+            return
 
         self._mod_data.clear()
         self._mod_infos.clear()
         self._icon_imgs.clear()
         self._icon_thumb_cache.clear()
-        for mod_id in ids:
-            folder = find_mod_folder(mod_id, platform, client_mods_dir)
-            info = parse_modinfo(folder) if folder else None
+        for mod_id, info, icon in records:
             self._mod_infos[mod_id] = info
             configured = self._mod_overrides.get(mod_id, {})
-            entry = ModEntry(
+            self._mod_data[mod_id] = ModEntry(
                 workshop_id=mod_id,
                 enabled=mod_id in self._selected_mod_ids,
                 configuration_options=copy.deepcopy(configured.get("configuration_options", {})),
                 name=info.name if info else "",
                 description=info.description if info else "",
             )
-            self._mod_data[mod_id] = entry
-            if info and folder:
-                try:
-                    icon_path = get_mod_icon_path(info, folder, platform)
-                    if icon_path and icon_path.exists():
-                        with Image.open(icon_path) as icon:
-                            self._icon_imgs[mod_id] = icon.convert("RGBA")
-                except Exception:
-                    pass
-
+            if icon is not None:
+                self._icon_imgs[mod_id] = icon
         if self._mod_scan_status is not None:
-            self._mod_scan_status.set(f"已发现 {len(ids)} 个 Mod")
+            self._mod_scan_status.set(f"已发现 {len(records)} 个 Mod")
         self._render_list()
 
     def _render_list(self):
@@ -216,6 +301,9 @@ class WorldCreationTab:
         self.location_combo["values"] = available_master_locations(self._selected_mod_ids)
         if self.location_var.get() not in self.location_combo["values"]:
             self.location_var.set("forest")
+        # Mod 页面已经加载时，世界模板可能尚未初始化；此处需要更新
+        # Mod 对应的世界设置，但仍然只在用户实际操作 Mod 后触发。
+        self._ensure_page("rules")
         self._reload_template()
         self._render_list()
 
@@ -305,6 +393,12 @@ class WorldCreationTab:
         return self._plan_caves if self.shard_var.get() == "Caves" else self._plan_master
 
     def _create(self):
+        self._ensure_page("server")
+        self._ensure_page("mod")
+        self._ensure_page("rules")
+        if self._mod_scan_running:
+            self.status_var.set("Mod 仍在扫描，请稍候完成后再创建存档")
+            return
         if not self._plan_master or not self._plan_caves:
             dlg.show_error(self.app.root, "创建存档", "请先选择默认模板")
             return
@@ -338,3 +432,11 @@ class WorldCreationTab:
     def on_cluster_changed(self, *_args): pass
     def refresh_language(self): pass
     def retheme(self): pass
+
+    def dispose(self) -> None:
+        """关闭独立向导时取消过期回调并清理临时服务器配置草稿。"""
+        self._mod_scan_generation += 1
+        self._mod_scan_running = False
+        draft = getattr(self._server_config, "_draft_dir_ctx", None)
+        if draft is not None:
+            draft.cleanup()
