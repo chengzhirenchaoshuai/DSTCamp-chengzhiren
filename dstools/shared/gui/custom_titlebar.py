@@ -526,8 +526,9 @@ class CustomTitleBar(BgFrame):
     # 钮）。
     _EDGE_MARGIN = 5
 
-    def __init__(self, root: tk.Tk, app, icon_path=None, title_getter=None):
-        super().__init__(root, app, bg=theme.CARD_BG)
+    def __init__(self, root: tk.Tk, app, icon_path=None, title_getter=None, bg=None):
+        # 创建向导标题栏使用窗口背景色，BgFrame 会继续裁剪独立窗口的背景图。
+        super().__init__(root, app, bg=bg or theme.CARD_BG)
         self.configure(height=self._HEIGHT, cursor="")
         self.root = root
         self._app = app

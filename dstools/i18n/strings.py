@@ -224,7 +224,7 @@ STRINGS = {
         "world.desc": "说明",
 
         # 管理员名单
-        "admin.title": "管理员列表",
+        "admin.title": "管理员",
         "admin.add": "添加",
         "admin.remove": "删除",
         "admin.id_placeholder": "KU_XXXXXXXX",
@@ -842,7 +842,7 @@ STRINGS = {
         "world.desc": "Description",
 
         # 管理员名单
-        "admin.title": "Admin List",
+        "admin.title": "Admin",
         "admin.add": "Add",
         "admin.remove": "Remove",
         "admin.id_placeholder": "KU_XXXXXXXX",

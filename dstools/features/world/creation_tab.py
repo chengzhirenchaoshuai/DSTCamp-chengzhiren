@@ -46,7 +46,7 @@ from dstools.models import ModEntry, Platform
 class WorldCreationTab:
     def __init__(self, parent, app):
         self.app = app
-        self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
+        self.frame = BgFrame(parent, app, bg=theme.BG_SOFT)
         self._plan_master = self._plan_caves = None
         self._rules_by_cat = {}; self._gen_by_cat = {}
         self._rules_cats = []; self._gen_cats = []
@@ -74,7 +74,7 @@ class WorldCreationTab:
         self._build()
 
     def _build(self):
-        top = BgFrame(self.frame, self.app, bg=theme.CARD_BG); top.pack(fill=tk.X, padx=12, pady=8)
+        top = BgFrame(self.frame, self.app, bg=theme.BG_SOFT); top.pack(fill=tk.X, padx=12, pady=8)
         make_toolbar_label(top, self.app, lambda: "存档名称").pack(side=tk.LEFT)
         self.name_var = tk.StringVar(value="Cluster_New")
         ttk.Entry(top, textvariable=self.name_var, width=18).pack(side=tk.LEFT, padx=(5, 14))
@@ -85,19 +85,19 @@ class WorldCreationTab:
             tabs=[("server", "服务器配置"), ("mod", "Mod 管理"), ("world", "世界设置")],
             on_select=self._on_creation_sub_tab_select,
             app=self.app,
-            bg=theme.CARD_BG,
+            bg=theme.BG_SOFT,
             height=32,
             pill_h=24,
             font_size=10,
         )
         self._sub_tab_bar.pack(fill=tk.X, padx=8, pady=(0, 4))
-        self._sub_content = BgFrame(self.frame, self.app, bg=theme.CARD_BG)
+        self._sub_content = BgFrame(self.frame, self.app, bg=theme.BG_SOFT)
         self._sub_content.pack(fill=tk.BOTH, expand=True, padx=8)
-        self._server_frame = BgFrame(self._sub_content, self.app, bg=theme.CARD_BG)
-        self._mod_frame = BgFrame(self._sub_content, self.app, bg=theme.CARD_BG)
-        self._world_frame = BgFrame(self._sub_content, self.app, bg=theme.CARD_BG)
+        self._server_frame = BgFrame(self._sub_content, self.app, bg=theme.BG_SOFT)
+        self._mod_frame = BgFrame(self._sub_content, self.app, bg=theme.BG_SOFT)
+        self._world_frame = BgFrame(self._sub_content, self.app, bg=theme.BG_SOFT)
         self._server_frame.pack(fill=tk.BOTH, expand=True)
-        bottom = BgFrame(self.frame, self.app, bg=theme.CARD_BG); bottom.pack(fill=tk.X, padx=12, pady=8)
+        bottom = BgFrame(self.frame, self.app, bg=theme.BG_SOFT); bottom.pack(fill=tk.X, padx=12, pady=8)
         self.status_var = tk.StringVar(value="")
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT)
         self._create_btn = ttk.Button(bottom, text="创建存档", command=self._create)

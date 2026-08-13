@@ -180,7 +180,7 @@ class WorldCreationEntryTab:
         self._window = win
         self._wizard = None
         win.withdraw()
-        win.title("DSTCamp·创建存档")
+        win.title("DSTCamp · 创建存档")
         win.configure(background=theme.BG_SOFT)
         win.resizable(True, True)
 
@@ -204,7 +204,8 @@ class WorldCreationEntryTab:
         icon_path = bundled_resource_dir() / "icons" / "app" / "icon.png"
         self._titlebar = custom_titlebar.CustomTitleBar(
             win, self._window_chrome, icon_path=icon_path,
-            title_getter=lambda: "DSTCamp·创建存档",
+            title_getter=lambda: "DSTCamp · 创建存档",
+            bg=theme.BG_SOFT,
         )
         self._titlebar.pack(fill=tk.X, side=tk.TOP)
         self._wizard_host = BgFrame(win, self._window_chrome, bg=theme.BG_SOFT)

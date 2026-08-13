@@ -19,6 +19,7 @@ from dstools.shared import app_settings
 from dstools.shared.token_manager import is_valid_token, mask_token, read_token, write_token
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui.card_frame import CardFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.pill_tabs import PillTabBar
@@ -249,7 +250,7 @@ class ClusterConfigTab:
         # 外层用 PillTabBar 代替原生 ttk.Notebook（不透明、没法透背景
         # 图），5 个页面各自的内容/滚动逻辑不变，父容器换成下面的
         # self._sub_content。
-        self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG); self._entries = {}
+        self.app = app; self.frame = BgFrame(parent, app, bg=theme.BG_SOFT); self._entries = {}
         self._creation_transparent = bool(getattr(app, "_creation_window_mode", False))
         # "存档"选择器在顶部全局选择栏，这里不重复一份。
 
@@ -258,10 +259,10 @@ class ClusterConfigTab:
             ("admin", t("admin.title")), ("block", t("blocklist.title")), ("token", t("token.title")),
         ]
         self._sub_tab_bar = PillTabBar(self.frame, tabs=self._sub_tabs, on_select=self._on_sub_tab_select,
-                                        app=app, bg=theme.CARD_BG, height=_SUB_TAB_H,
+                                        app=app, bg=theme.BG_SOFT, height=_SUB_TAB_H,
                                         pill_h=_SUB_PILL_H, font_size=_SUB_FONT_SIZE)
         self._sub_tab_bar.pack(fill=tk.X, padx=5, pady=(5,0))
-        self._sub_content = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._sub_content = BgFrame(self.frame, app, bg=theme.BG_SOFT)
         self._sub_content.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self._sub_pages = {}  # key -> page frame，_on_sub_tab_select 用来 pack()/pack_forget()
         self._sub_tab_key = "cluster"
@@ -275,6 +276,9 @@ class ClusterConfigTab:
         # 行（每次重新加载一起重建），不固定在页签底部，避免内容少的分
         # 区下面空出一大截。
         self._section_frames = {}
+        self._section_canvases = {}
+        self._section_window_ids = {}
+        self._section_content_heights = {}
         self._section_save_btns = {}
         for tab_key in ("Cluster", "Shard Config"):
             # 每个页签一个 page，装可滚动的 canvas + 一行 footer 放"保
@@ -307,14 +311,17 @@ class ClusterConfigTab:
             frame = self._surface_frame(canvas)
             frame.grid_columnconfigure(0, weight=1)
             frame.grid_columnconfigure(1, weight=1)
+            # 该 Canvas 同时承载 grid 子控件；关闭 grid propagation，避免
+            # 三列内容的请求宽度把 Canvas window 从可用宽度压回几百像素。
+            frame.grid_propagate(False)
             canvas.configure(yscrollcommand=scrollbar.set)
             win_id = canvas.create_window((0,0), window=frame, anchor=tk.NW)
 
-            def _on_frame_configure(e, c=canvas):
+            def _on_frame_configure(e, c=canvas, key=tab_key):
                 bbox = c.bbox("all")
                 c.configure(scrollregion=bbox)
                 if bbox:
-                    c.configure(height=bbox[3])
+                    c.configure(height=max(bbox[3], self._section_content_heights.get(key, 0)))
 
             frame.bind("<Configure>", _on_frame_configure)
             # 不做这步的话内嵌 frame 会钉死在自然宽度上，放大窗口只会
@@ -325,9 +332,17 @@ class ClusterConfigTab:
             # 才真正应用。
             resize_state = {"after_id": None}
 
-            def _settle_width(c=canvas, wid=win_id, state=resize_state):
+            def _settle_width(c=canvas, wid=win_id, state=resize_state, frm=frame):
                 state["after_id"] = None
-                c.itemconfig(wid, width=c.winfo_width())
+                width = c.winfo_width()
+                if width <= 4:
+                    state["after_id"] = c.after(120, _settle_width)
+                    return
+                c.itemconfig(wid, width=width)
+                # Canvas window 的 width 在部分 Tk 版本上不会反向更新子
+                # Canvas/Frame 的几何尺寸，显式同步控件本身才能让三列真正
+                # 使用可用宽度，而不是保持在默认的 1px 请求宽度。
+                frm.configure(width=width)
 
             def _on_canvas_configure(e, state=resize_state, settle=_settle_width):
                 if state["after_id"] is not None:
@@ -335,9 +350,14 @@ class ClusterConfigTab:
                 state["after_id"] = e.widget.after(120, settle)
 
             canvas.bind("<Configure>", _on_canvas_configure)
+            # 页面首次显示时可能已经错过 <Configure>，主动在空闲回调中把
+            # Canvas window 拉到当前可用宽度，避免三列卡片暂时挤成 1px。
+            canvas.after_idle(_settle_width)
             sub_key = "cluster" if tab_key == "Cluster" else "shard"
             self._sub_pages[sub_key] = page
             self._section_frames[tab_key] = frame
+            self._section_canvases[tab_key] = canvas
+            self._section_window_ids[tab_key] = win_id
 
         # 管理员、黑名单、Token 三个页签——管理员和黑名单是完全相同的
         # "每行一个 Klei ID"文件格式（adminlist.txt 授权、blocklist.txt
@@ -392,19 +412,13 @@ class ClusterConfigTab:
 
     def _surface_frame(self, parent, bg=None):
         """创建可透出独立创建窗口背景图的容器；主页保持原有控件样式。"""
-        if self._creation_transparent:
-            return BgFrame(parent, self.app, bg=bg or theme.CARD_BG)
-        return tk.Frame(parent, background=bg or theme.CARD_BG)
+        return BgFrame(parent, self.app, bg=bg or theme.BG_SOFT)
 
     def _layout_frame(self, parent):
-        if self._creation_transparent:
-            return BgFrame(parent, self.app, bg=theme.CARD_BG)
-        return ttk.Frame(parent)
+        return BgFrame(parent, self.app, bg=theme.BG_SOFT)
 
     def _surface_canvas(self, parent):
-        if self._creation_transparent:
-            return BgFrame(parent, self.app, bg=theme.CARD_BG)
-        return tk.Canvas(parent, highlightthickness=0)
+        return BgFrame(parent, self.app, bg=theme.BG_SOFT)
 
     def _build_id_list_panel(self, parent, title_key):
         lf = self._layout_frame(parent); lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -667,11 +681,13 @@ class ClusterConfigTab:
         # 栏的细分）。
         for col in range(3):
             outer.grid_columnconfigure(col, weight=1, uniform="cluster_config_columns")
-        # 三列使用完全相同的外边距；此前前两列只留右边距、最右列不留
-        # 边距，导致同样的 grid 权重下视觉宽度不一致。
-        col1 = ttk.Frame(outer); col1.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=10)
-        col2 = ttk.Frame(outer); col2.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E), padx=10)
-        col3 = ttk.Frame(outer); col3.grid(row=0, column=2, sticky=(tk.N, tk.W, tk.E), padx=10)
+        # 每列单独使用圆角卡片，卡片外的区域由 BgFrame 透出窗口背景图。
+        col1 = CardFrame(outer, self.app, padding=8, bg=theme.BG_SOFT, border=theme.CARD_BORDER)
+        col2 = CardFrame(outer, self.app, padding=8, bg=theme.BG_SOFT, border=theme.CARD_BORDER)
+        col3 = CardFrame(outer, self.app, padding=8, bg=theme.BG_SOFT, border=theme.CARD_BORDER)
+        for column, card in enumerate((col1, col2, col3)):
+            card.grid(row=0, column=column, sticky=(tk.N, tk.W, tk.E), padx=8, pady=8)
+            card.grid_propagate(False)
 
         def _fill_column(col_frame, sections):
             row = 0
@@ -687,9 +703,18 @@ class ClusterConfigTab:
                     self._make_row(col_frame, sec_name, key, sec_data[key], row, readonly=not is_server)
                     row += 1
 
-        _fill_column(col1, [("NETWORK",config.network)])
-        _fill_column(col2, [("GAMEPLAY",config.gameplay), ("MISC",config.misc)])
-        _fill_column(col3, [("SHARD",config.shard), ("STEAM",config.steam)])
+        _fill_column(col1.body, [("NETWORK",config.network)])
+        _fill_column(col2.body, [("GAMEPLAY",config.gameplay), ("MISC",config.misc)])
+        _fill_column(col3.body, [("SHARD",config.shard), ("STEAM",config.steam)])
+        for card in (col1, col2, col3):
+            card.update_idletasks()
+            card.configure(height=card.body.winfo_reqheight() + 16)
+        content_height = max(card.body.winfo_reqheight() + 16 for card in (col1, col2, col3))
+        self._section_content_heights["Cluster"] = content_height
+        outer.configure(height=content_height)
+        cluster_canvas = self._section_canvases["Cluster"]
+        cluster_canvas.itemconfigure(self._section_window_ids["Cluster"], height=content_height)
+        cluster_canvas.configure(height=content_height)
 
         # 按钮本身现在常驻在页签的 footer 里（只建一次，在绿色可滚动卡
         # 片外面——见 __init__ 里子页签搭建的那个循环），这里每次重新
