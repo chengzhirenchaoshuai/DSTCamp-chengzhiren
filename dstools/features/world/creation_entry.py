@@ -21,6 +21,11 @@ class WorldCreationEntryTab:
         self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
         self._window: tk.Toplevel | None = None
         self._wizard = None
+        self._wizard_host = None
+        self._maximize_btn = None
+        self._maximized = False
+        self._fullscreen_fallback = False
+        self._restore_geometry = None
         self._open_btn = None
         self._status_var = tk.StringVar(value="创建向导按需加载，不影响软件启动速度")
         self._build()
@@ -35,7 +40,7 @@ class WorldCreationEntryTab:
 
         ttk.Label(
             panel,
-            text="创建存档向导包含服务器配置、Mod 管理、世界规则和世界生成。",
+            text="创建存档向导包含服务器配置、Mod 管理和世界设置。",
             foreground=theme.TEXT_MUTED,
         ).pack(anchor=tk.W, pady=(0, 8))
         ttk.Label(
@@ -67,8 +72,17 @@ class WorldCreationEntryTab:
         win.resizable(True, True)
         win.transient(self.app.root)
 
-        loading = ttk.Frame(win)
-        loading.pack(fill=tk.BOTH, expand=True, padx=32, pady=32)
+        chrome = ttk.Frame(win)
+        chrome.pack(fill=tk.X, padx=10, pady=(8, 0))
+        ttk.Label(chrome, text="创建存档", font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True)).pack(side=tk.LEFT)
+        self._maximize_btn = ttk.Button(chrome, text="最大化", command=self._toggle_maximize)
+        self._maximize_btn.pack(side=tk.RIGHT)
+        ttk.Button(chrome, text="关闭", command=self._close_wizard).pack(side=tk.RIGHT, padx=(0, 6))
+
+        self._wizard_host = ttk.Frame(win)
+        self._wizard_host.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        loading = ttk.Frame(self._wizard_host)
+        loading.pack(fill=tk.BOTH, expand=True, padx=26, pady=26)
         ttk.Label(loading, text="正在加载创建向导…").pack(expand=True)
         win.protocol("WM_DELETE_WINDOW", self._close_wizard)
         win.update_idletasks()
@@ -81,6 +95,32 @@ class WorldCreationEntryTab:
         # 主页无响应却没有反馈。真正的 Mod 扫描仍由创建页自己的逻辑负责。
         win.after(50, lambda w=win, loading=loading: self._load_wizard(w, loading))
 
+    def _toggle_maximize(self) -> None:
+        if self._window is None or not self._window.winfo_exists():
+            return
+        win = self._window
+        if self._maximized:
+            if self._fullscreen_fallback:
+                win.attributes("-fullscreen", False)
+                self._fullscreen_fallback = False
+            win.state("normal")
+            if self._restore_geometry:
+                win.geometry(self._restore_geometry)
+            self._maximized = False
+            if self._maximize_btn is not None:
+                self._maximize_btn.configure(text="最大化")
+            return
+        self._restore_geometry = win.geometry()
+        try:
+            win.state("zoomed")
+        except tk.TclError:
+            # 某些窗口管理器不支持 zoomed，退化为铺满工作区的可恢复状态。
+            win.attributes("-fullscreen", True)
+            self._fullscreen_fallback = True
+        self._maximized = True
+        if self._maximize_btn is not None:
+            self._maximize_btn.configure(text="还原")
+
     def _load_wizard(self, win: tk.Toplevel, loading: ttk.Frame) -> None:
         if self._window is not win or not win.winfo_exists():
             return
@@ -88,7 +128,7 @@ class WorldCreationEntryTab:
             loading.destroy()
             from dstools.features.world.creation_tab import WorldCreationTab
 
-            self._wizard = WorldCreationTab(win, self.app)
+            self._wizard = WorldCreationTab(self._wizard_host, self.app)
             self._wizard.frame.pack(fill=tk.BOTH, expand=True)
             win.update_idletasks()
             center_over_parent(win, self.app.root, min_width=900)
@@ -106,6 +146,11 @@ class WorldCreationEntryTab:
             self._wizard.dispose()
         self._window = None
         self._wizard = None
+        self._wizard_host = None
+        self._maximize_btn = None
+        self._maximized = False
+        self._fullscreen_fallback = False
+        self._restore_geometry = None
         if win.winfo_exists():
             win.destroy()
         self._status_var.set("创建向导已关闭，可再次打开")

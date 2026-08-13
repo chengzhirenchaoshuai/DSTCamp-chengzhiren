@@ -109,7 +109,9 @@ class DSToolsApp:
         # Notebook（SaveBrowserTab.sub_notebook、WorldSettingsTab._sub_nb、
         # ClusterConfigTab._cc_notebook）仍保持原生 ttk 外观，只是被
         # apply_theme() 重新上色。
-        self._tab_keys = ["local", "mods", "world", "create", "server", "saves", "sakura"]
+        # 创建存档是独立向导，放在内网穿透之后，避免在常用的运行/配置
+        # 页签之间插入一个会打开独立窗口的入口。
+        self._tab_keys = ["local", "mods", "world", "server", "saves", "sakura", "create"]
         self._pill_bar = PillTabBar(
             self.root,
             tabs=[(k, t(f"tab.{k}")) for k in self._tab_keys],
@@ -256,7 +258,7 @@ class DSToolsApp:
         self._stale_cluster_tabs: set[str] = set()
         self._current_tab_key = "local"
 
-        self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.creation_tab, self.cluster_tab, self.save_tab, self.sakura_tab]
+        self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.cluster_tab, self.save_tab, self.sakura_tab, self.creation_tab]
         for key, tab in zip(self._tab_keys, self._tabs):
             tab.frame.pack(fill=tk.BOTH, expand=True)
         # 只留 "local" 参与布局，其余 5 个先 grid_remove() 掉——之前是全部
@@ -853,6 +855,9 @@ class DSToolsApp:
         self._bg_surfaces: list = []  # BgFrame 的弱引用列表
         self._shared_bg_image = None  # PIL Image，跟 root 客户区同尺寸
         self._shared_bg_key = None
+        # 独立创建向导等 Toplevel 不属于 root 客户区，不能直接从 root
+        # 共享图裁剪；按每个独立窗口尺寸惰性生成一份背景图。
+        self._secondary_bg_images: dict[str, tuple[tuple, object]] = {}
         self._bg_settle_after_id = None
         self._bg_drag_suppressed = False  # ResizeGrips 拖拽期间为 True，见下
         self._theme_switch_suppressed = False  # _switch_theme() 执行期间为 True，见下
@@ -939,11 +944,32 @@ class DSToolsApp:
         大（比如窗口刚变大、共享大图还没来得及在停顿后重新生成），裁出
         来的区域会被裁到大图边界内，不会报错，只是暂时看起来小一圈，等
         停顿后的重建补上就好。"""
-        if self._shared_bg_image is None:
-            return None
-        big = self._shared_bg_image
-        ox = widget.winfo_rootx() - self.root.winfo_rootx()
-        oy = widget.winfo_rooty() - self.root.winfo_rooty()
+        top = widget.winfo_toplevel()
+        if top is not self.root:
+            # Toplevel 可能比主窗口更大或位于主窗口之外，不能再把坐标
+            # 强行裁到 root 的共享图边界，否则背景会出现缺块/纯色边。
+            bg_path = get_custom_bg_path()
+            if bg_path is None:
+                return None
+            tw = max(1, top.winfo_width())
+            th = max(1, top.winfo_height())
+            opacity = get_custom_bg_opacity()
+            key = (bg_path, opacity, tw, th, theme.BG_SOFT)
+            cache_key = str(top)
+            cached = self._secondary_bg_images.get(cache_key)
+            if cached is None or cached[0] != key:
+                big = render_background(bg_path, tw, th, opacity, theme.BG_SOFT)
+                self._secondary_bg_images[cache_key] = (key, big)
+            else:
+                big = cached[1]
+            ox = widget.winfo_rootx() - top.winfo_rootx()
+            oy = widget.winfo_rooty() - top.winfo_rooty()
+        else:
+            if self._shared_bg_image is None:
+                return None
+            big = self._shared_bg_image
+            ox = widget.winfo_rootx() - self.root.winfo_rootx()
+            oy = widget.winfo_rooty() - self.root.winfo_rooty()
         x0 = max(0, min(ox, big.width))
         y0 = max(0, min(oy, big.height))
         x1 = max(x0, min(ox + w, big.width))

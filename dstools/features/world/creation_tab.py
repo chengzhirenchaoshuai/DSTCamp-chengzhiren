@@ -4,7 +4,7 @@ import copy
 import threading
 import tkinter as tk
 import webbrowser
-from tkinter import ttk
+from tkinter import simpledialog, ttk
 
 from PIL import Image
 
@@ -19,6 +19,7 @@ from dstools.features.world.reader import WorldOverride, WorldPreset
 from dstools.features.world.value_sets import get_value_set
 from dstools.features.world.view_model import build_world_view_model
 from dstools.features.mod.icons import get_mod_icon_path
+from dstools.features.mod import presets
 from dstools.features.mod.parser import (
     find_mod_folder,
     list_installed_mod_ids,
@@ -29,6 +30,9 @@ from dstools.features.mod.render import render_mod_list
 from dstools.features.mod.tab import ModConfigDialog
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui.dialog_geometry import center_over_parent
+from dstools.shared.gui.menu_combo import MenuCombo
+from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.shared.gui.toolbar_widgets import make_toolbar_label
 from dstools.i18n import t
 from dstools.models import ModEntry, Platform
@@ -55,6 +59,8 @@ class WorldCreationTab:
         self._mod_scan_btn = None
         self._mod_scan_generation = 0
         self._mod_scan_running = False
+        self._mod_filter_var = None
+        self._mod_filter_after_id = None
         self._server_config = None
         self._initialized_pages: set[str] = set()
         self._create_btn = None
@@ -65,24 +71,13 @@ class WorldCreationTab:
         make_toolbar_label(top, self.app, lambda: "存档名称").pack(side=tk.LEFT)
         self.name_var = tk.StringVar(value="Cluster_New")
         ttk.Entry(top, textvariable=self.name_var, width=18).pack(side=tk.LEFT, padx=(5, 14))
-        make_toolbar_label(top, self.app, lambda: "Master 世界").pack(side=tk.LEFT)
-        self.location_var = tk.StringVar(value="forest")
-        self.location_combo = ttk.Combobox(top, textvariable=self.location_var, state="readonly", width=12)
-        self.location_combo["values"] = available_master_locations(self._enabled_mod_ids())
-        self.location_combo.pack(side=tk.LEFT, padx=5)
-        self.location_combo.bind("<<ComboboxSelected>>", self._on_location_changed)
-        make_toolbar_label(top, self.app, lambda: "编辑世界").pack(side=tk.LEFT, padx=(12, 4))
-        self.shard_var = tk.StringVar(value="Master")
-        ttk.Combobox(top, textvariable=self.shard_var, values=("Master", "Caves"), state="readonly", width=10).pack(side=tk.LEFT)
-        self.shard_var.trace_add("write", lambda *_: self._render())
         self._sub = ttk.Notebook(self.frame); self._sub.pack(fill=tk.BOTH, expand=True, padx=8)
         self._server_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._mod_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
-        self._rules_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
-        self._gen_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
+        self._world_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
         self._sub.add(self._server_frame, text="服务器配置")
         self._sub.add(self._mod_frame, text="Mod 管理")
-        self._sub.add(self._rules_frame, text="世界规则"); self._sub.add(self._gen_frame, text="世界生成")
+        self._sub.add(self._world_frame, text="世界设置")
         self._sub.bind("<<NotebookTabChanged>>", self._on_page_changed)
         bottom = BgFrame(self.frame, self.app, bg=theme.CARD_BG); bottom.pack(fill=tk.X, padx=12, pady=8)
         self.status_var = tk.StringVar(value="请选择一个官方默认存档模板")
@@ -98,8 +93,7 @@ class WorldCreationTab:
         page_key = next((key for key, frame in {
             "server": self._server_frame,
             "mod": self._mod_frame,
-            "rules": self._rules_frame,
-            "generation": self._gen_frame,
+            "world": self._world_frame,
         }.items() if str(frame) == selected), None)
         if page_key:
             self._ensure_page(page_key)
@@ -111,7 +105,8 @@ class WorldCreationTab:
             self._build_server_panel()
         elif page_key == "mod":
             self._build_mod_panel()
-        elif page_key in ("rules", "generation"):
+        elif page_key == "world":
+            self._build_world_panel()
             self._reload_template()
         else:
             return
@@ -119,8 +114,87 @@ class WorldCreationTab:
 
     def _on_location_changed(self, _event=None) -> None:
         """仅在世界设置页已初始化后重载模板，保持顶部选择器轻量。"""
-        if self._initialized_pages.intersection({"rules", "generation"}):
+        if "world" in self._initialized_pages:
             self._reload_template()
+
+    def _build_world_panel(self) -> None:
+        """构造与外层“世界设置”一致的世界选择、说明和双子页签。"""
+        toolbar = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
+        toolbar.pack(fill=tk.X, padx=12, pady=(10, 6))
+        make_toolbar_label(toolbar, self.app, lambda: "Master 世界").pack(side=tk.LEFT)
+        self.location_var = tk.StringVar(value="forest")
+        self.location_combo = MenuCombo(toolbar, textvariable=self.location_var, width=16)
+        self.location_combo["values"] = available_master_locations(self._enabled_mod_ids())
+        self.location_combo.pack(side=tk.LEFT, padx=(5, 16))
+        self.location_combo.bind("<<ComboboxSelected>>", self._on_location_changed)
+        make_toolbar_label(toolbar, self.app, lambda: "世界").pack(side=tk.LEFT)
+        self.shard_var = tk.StringVar(value="Master")
+        self.shard_combo = MenuCombo(toolbar, textvariable=self.shard_var, width=14)
+        self.shard_combo["values"] = ("Master", "Caves")
+        self.shard_combo.current(0)
+        self.shard_combo.pack(side=tk.LEFT, padx=5)
+        self.shard_combo.bind("<<ComboboxSelected>>", lambda _e: self._render())
+
+        ttk.Label(
+            self._world_frame,
+            text="在这里分别调整当前世界的世界规则和世界生成；设置只作用于正在创建的存档。",
+            foreground=theme.TEXT_MUTED,
+        ).pack(anchor=tk.W, padx=12, pady=(0, 4))
+
+        self._world_info_frame = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
+        self._world_info_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
+        self._world_title_var = tk.StringVar()
+        self._world_desc_var = tk.StringVar()
+        self._world_info_frame.bind("<Configure>", lambda _e: self._redraw_world_info(), add="+")
+        self._world_title_var.trace_add("write", lambda *_: self._redraw_world_info())
+        self._world_desc_var.trace_add("write", lambda *_: self._redraw_world_info())
+
+        self._world_sub_tab_key = "rules"
+        self._world_sub_tab_bar = PillTabBar(
+            self._world_frame,
+            tabs=[("rules", "世界规则"), ("generation", "世界生成")],
+            on_select=self._on_world_sub_tab_select,
+            app=self.app,
+            bg=theme.CARD_BG,
+            height=32,
+            pill_h=24,
+            font_size=10,
+        )
+        self._world_sub_tab_bar.pack(fill=tk.X, padx=12, pady=(0, 0))
+        self._world_content = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
+        self._world_content.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
+        from dstools.shared.gui.image_scroll import ImageScrollPanel
+        self._rules_panel = ImageScrollPanel(self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG)
+        self._gen_panel = ImageScrollPanel(self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG)
+        self._rules_panel.frame.pack(fill=tk.BOTH, expand=True)
+
+    def _on_world_sub_tab_select(self, key: str) -> None:
+        current = self._rules_panel if self._world_sub_tab_key == "rules" else self._gen_panel
+        current.frame.pack_forget()
+        self._world_sub_tab_key = key
+        target = self._rules_panel if key == "rules" else self._gen_panel
+        target.frame.pack(fill=tk.BOTH, expand=True)
+
+    def _redraw_world_info(self) -> None:
+        frame = getattr(self, "_world_info_frame", None)
+        if frame is None or frame.winfo_width() < 4:
+            return
+        frame.delete("world_info_text")
+        y = 6
+        title = self._world_title_var.get()
+        if title:
+            frame.create_text(10, y, text=title, anchor=tk.NW, fill=theme.TEXT,
+                              font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
+                              tags="world_info_text")
+            y += 22
+        desc = self._world_desc_var.get()
+        if desc:
+            frame.create_text(10, y, text=desc, anchor=tk.NW, fill=theme.TEXT_MUTED,
+                              width=max(200, frame.winfo_width() - 20),
+                              font=theme.font_tuple(theme.FONT_SIZE_XS),
+                              tags="world_info_text")
+        bbox = frame.bbox("world_info_text")
+        frame.configure(height=(bbox[3] + 8) if bbox else 20)
 
     def _build_server_panel(self):
         self._server_config = CreationServerConfigTab(self._server_frame, self.app, self.name_var.get())
@@ -135,11 +209,19 @@ class WorldCreationTab:
         header.pack(fill=tk.X, padx=12, pady=10)
         make_toolbar_label(header, self.app, lambda: "创建存档 Mod").pack(side=tk.LEFT)
         ttk.Label(header, text="独立于主页 Mod 管理，仅作用于正在创建的存档").pack(side=tk.LEFT, padx=12)
+        ttk.Button(header, text="保存为配置集", command=self._save_creation_preset).pack(side=tk.LEFT, padx=(8, 2))
+        ttk.Button(header, text="载入配置集", command=self._open_creation_preset_dialog).pack(side=tk.LEFT, padx=2)
         self._mod_scan_btn = ttk.Button(header, text="重新扫描", command=self._scan_installed_mods)
         self._mod_scan_btn.pack(side=tk.RIGHT)
         self._mod_scan_status = tk.StringVar(value="正在读取已安装 Mod…")
         ttk.Label(header, textvariable=self._mod_scan_status,
                   foreground=theme.TEXT_MUTED).pack(side=tk.RIGHT, padx=10)
+        filter_row = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
+        filter_row.pack(fill=tk.X, padx=12, pady=(0, 4))
+        make_toolbar_label(filter_row, self.app, lambda: "搜索 Mod").pack(side=tk.LEFT)
+        self._mod_filter_var = tk.StringVar()
+        self._mod_filter_var.trace_add("write", self._on_mod_filter_changed)
+        ttk.Entry(filter_row, textvariable=self._mod_filter_var, width=30).pack(side=tk.LEFT, padx=(5, 0))
         self._mod_list_frame = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         self._mod_list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
         from dstools.shared.gui.image_scroll import ImageScrollPanel
@@ -266,12 +348,16 @@ class WorldCreationTab:
         if self._mod_panel is None:
             return
         from dstools.features.mod.render import REF_WIDTH
+        query = (self._mod_filter_var.get() if self._mod_filter_var is not None else "").strip().casefold()
         rows = []
         for mod_id, mod in self._mod_data.items():
             info = self._mod_infos.get(mod_id)
+            name = info.name if info else mod.name
+            if query and query not in " ".join((name or "", mod_id, info.description if info else "")).casefold():
+                continue
             rows.append({
                 "workshop_id": mod_id,
-                "name": info.name if info else mod.name,
+                "name": name,
                 "enabled": bool(mod.enabled),
                 "has_config": bool(info and (info.config_options or info.unsupported_schema)),
                 "has_link": mod_id.removeprefix("workshop-").isdigit(),
@@ -288,6 +374,65 @@ class WorldCreationTab:
         )
         self._mod_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
 
+    def _on_mod_filter_changed(self, *_args):
+        if self._mod_filter_after_id is not None:
+            try:
+                self.frame.after_cancel(self._mod_filter_after_id)
+            except tk.TclError:
+                pass
+        self._mod_filter_after_id = self.frame.after(150, self._apply_mod_filter)
+
+    def _apply_mod_filter(self):
+        self._mod_filter_after_id = None
+        self._render_list()
+
+    def _save_creation_preset(self):
+        if self._mod_scan_running:
+            dlg.show_info(self.frame.winfo_toplevel(), "保存为配置集", "Mod 仍在扫描，请稍候再保存。")
+            return
+        if not self._mod_data:
+            dlg.show_info(self.frame.winfo_toplevel(), "保存为配置集", "当前没有可保存的 Mod。")
+            return
+        name = simpledialog.askstring("保存为配置集", "配置集名称：", parent=self.frame.winfo_toplevel())
+        if not name or not name.strip():
+            return
+        platform, _ = self._resolve_mod_folder_args(None)
+        preset = presets.capture_preset(
+            name.strip(), self._mod_data, self._mod_infos,
+            set(self._mod_data), platform.value,
+        )
+        existing = presets.find_preset(preset.name)
+        if existing and not dlg.ask_yes_no(
+                self.frame.winfo_toplevel(), "保存为配置集", f"配置集“{preset.name}”已存在，是否覆盖？"):
+            return
+        presets.save_preset(preset, overwrite=True)
+        dlg.show_info(self.frame.winfo_toplevel(), "保存为配置集", f"已保存配置集“{preset.name}”。")
+
+    def _open_creation_preset_dialog(self):
+        if self._mod_scan_running:
+            dlg.show_info(self.frame.winfo_toplevel(), "载入配置集", "Mod 仍在扫描，请稍候再载入。")
+            return
+        _CreationPresetDialog(self)
+
+    def _apply_preset_to_session(self, preset):
+        """只把配置集写入创建会话内存，不写主页存档或磁盘存档。"""
+        self._mod_overrides = copy.deepcopy(preset.mods)
+        self._selected_mod_ids = {
+            wid for wid, saved in preset.mods.items()
+            if isinstance(saved, dict) and bool(saved.get("enabled", True))
+        }
+        for mod_id, mod in self._mod_data.items():
+            saved = preset.mods.get(mod_id, {})
+            mod.enabled = bool(saved.get("enabled", False)) if saved else False
+            mod.configuration_options = copy.deepcopy(saved.get("configuration_options", {})) if saved else {}
+        if "world" in self._initialized_pages:
+            self.location_combo["values"] = available_master_locations(self._selected_mod_ids)
+            if self.location_var.get() not in self.location_combo["values"]:
+                self.location_var.set("forest")
+            self._reload_template()
+        self._render_list()
+        self.status_var.set(f"已载入 Mod 配置集：{preset.name}")
+
     def _toggle_mod(self, mod_id):
         mod = self._mod_data.get(mod_id)
         if mod is None:
@@ -298,12 +443,14 @@ class WorldCreationTab:
         else:
             self._selected_mod_ids.discard(mod_id)
         self._save_mods(silent=True)
+        # Mod 设置会影响可选世界类型；世界页尚未打开时先只更新会话状态，
+        # 打开世界设置页再创建并填充下拉框。
+        self._ensure_page("world")
         self.location_combo["values"] = available_master_locations(self._selected_mod_ids)
         if self.location_var.get() not in self.location_combo["values"]:
             self.location_var.set("forest")
         # Mod 页面已经加载时，世界模板可能尚未初始化；此处需要更新
         # Mod 对应的世界设置，但仍然只在用户实际操作 Mod 后触发。
-        self._ensure_page("rules")
         self._reload_template()
         self._render_list()
 
@@ -352,6 +499,8 @@ class WorldCreationTab:
         return platform, resolve_wegame_client_mods_dir(platform)
 
     def _render(self):
+        if not hasattr(self, "_rules_panel"):
+            return
         plan = self._active_preset()
         if not plan:
             return
@@ -363,15 +512,17 @@ class WorldCreationTab:
         view = build_world_view_model(preset, self._mod_settings, [])
         self._rules_by_cat, self._rules_cats = view.rules_by_category, view.rule_categories
         self._gen_by_cat, self._gen_cats = view.generation_by_category, view.generation_categories
-        from dstools.shared.gui.image_scroll import ImageScrollPanel
-        for attr, frame, cats, rows, editable, callback in (("_rules_panel", self._rules_frame, self._rules_cats, self._rules_by_cat, True, self._on_click), ("_gen_panel", self._gen_frame, self._gen_cats, self._gen_by_cat, True, self._on_gen_click)):
-            old = getattr(self, attr, None)
-            if old is not None: old.frame.destroy()
-            panel = ImageScrollPanel(frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
-            panel.frame.pack(fill=tk.BOTH, expand=True)
-            img, hits = render_world_panel(cats, rows, CATEGORY_COLORS, editable=editable, on_click=callback, ref_width=REF_WIDTH, location=preset.location, mod_settings=self._mod_settings)
+        self._world_title_var.set(f"{plan.name} ({plan.preset_id})")
+        self._world_desc_var.set(plan.description or "")
+        for panel, cats, rows, callback in (
+                (self._rules_panel, self._rules_cats, self._rules_by_cat, self._on_click),
+                (self._gen_panel, self._gen_cats, self._gen_by_cat, self._on_gen_click)):
+            img, hits = render_world_panel(
+                cats, rows, CATEGORY_COLORS, editable=True, on_click=callback,
+                ref_width=REF_WIDTH, location=preset.location,
+                mod_settings=self._mod_settings,
+            )
             panel.set_image(img, hits, keep_scroll=False)
-            setattr(self, attr, panel)
 
     def _on_click(self, key, delta):
         self._change_value(key, delta, True)
@@ -395,7 +546,7 @@ class WorldCreationTab:
     def _create(self):
         self._ensure_page("server")
         self._ensure_page("mod")
-        self._ensure_page("rules")
+        self._ensure_page("world")
         if self._mod_scan_running:
             self.status_var.set("Mod 仍在扫描，请稍候完成后再创建存档")
             return
@@ -435,8 +586,79 @@ class WorldCreationTab:
 
     def dispose(self) -> None:
         """关闭独立向导时取消过期回调并清理临时服务器配置草稿。"""
+        if self._mod_filter_after_id is not None:
+            try:
+                self.frame.after_cancel(self._mod_filter_after_id)
+            except tk.TclError:
+                pass
+            self._mod_filter_after_id = None
         self._mod_scan_generation += 1
         self._mod_scan_running = False
         draft = getattr(self._server_config, "_draft_dir_ctx", None)
         if draft is not None:
             draft.cleanup()
+
+
+class _CreationPresetDialog:
+    """创建会话专用的配置集选择器，复用 features.mod.presets 存储格式。"""
+
+    def __init__(self, tab: WorldCreationTab):
+        self.tab = tab
+        self.win = tk.Toplevel(tab.frame.winfo_toplevel())
+        self.win.withdraw()
+        self.win.title("载入配置集")
+        self.win.configure(background=theme.BG_SOFT)
+        self.win.resizable(False, True)
+        self._presets = presets.list_presets()
+
+        body = ttk.Frame(self.win)
+        body.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
+        ttk.Label(body, text="选择要载入当前创建会话的 Mod 配置集：").pack(anchor=tk.W, pady=(0, 8))
+        self._list = tk.Listbox(body, height=min(12, max(4, len(self._presets))),
+                                font=theme.font_tuple(theme.FONT_SIZE_SM))
+        self._list.pack(fill=tk.BOTH, expand=True)
+        for item in self._presets:
+            self._list.insert(tk.END, f"{item.name}（{len(item.mods)} 个 Mod）")
+        if self._presets:
+            self._list.selection_set(0)
+        else:
+            self._list.insert(tk.END, "暂无配置集")
+
+        buttons = ttk.Frame(body)
+        buttons.pack(fill=tk.X, pady=(12, 0))
+        ttk.Button(buttons, text="删除", command=self._delete).pack(side=tk.LEFT)
+        ttk.Button(buttons, text="取消", command=self.win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(buttons, text="载入", command=self._apply).pack(side=tk.RIGHT, padx=(0, 6))
+        self.win.bind("<Escape>", lambda _e: self.win.destroy())
+        self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
+        self.win.update_idletasks()
+        center_over_parent(self.win, tab.frame.winfo_toplevel(), min_width=460)
+        self.win.transient(tab.frame.winfo_toplevel())
+        self.win.deiconify()
+        self.win.grab_set()
+
+    def _selected(self):
+        selected = self._list.curselection()
+        if not selected or not self._presets:
+            return None
+        index = selected[0]
+        return self._presets[index] if index < len(self._presets) else None
+
+    def _apply(self):
+        preset = self._selected()
+        if preset is None:
+            return
+        self.tab._apply_preset_to_session(preset)
+        self.win.destroy()
+
+    def _delete(self):
+        preset = self._selected()
+        if preset is None:
+            return
+        if not dlg.ask_yes_no(self.win, "删除配置集", f"确定删除配置集“{preset.name}”吗？"):
+            return
+        presets.delete_preset(preset.name)
+        self._presets = presets.list_presets()
+        self._list.delete(0, tk.END)
+        for item in self._presets:
+            self._list.insert(tk.END, f"{item.name}（{len(item.mods)} 个 Mod）")
