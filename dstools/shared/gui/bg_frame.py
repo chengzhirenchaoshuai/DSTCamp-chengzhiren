@@ -108,12 +108,22 @@ class BgFrame(tk.Canvas):
         w, h = self.winfo_width(), self.winfo_height()
         if w < 2 or h < 2:
             return
+        # Tk 在 Canvas 子窗口之间切换时，旧页签的窗口像素有时不会立刻
+        # 收到 expose 重绘，尤其是没有自定义背景图的纯色主题。显式画一
+        # 层兜底色可以把旧页签残影清掉；有背景图时这层会被下面的照片
+        # 完整覆盖，不改变透明背景效果。
+        self.create_rectangle(
+            0, 0, w, h, fill=self._resolve_color(), outline="",
+            tags="bg_fill",
+        )
         photo = self._app._get_bg_slice(self, w, h)
         self._photo = photo  # 必须留一份引用，否则 PhotoImage 会被 GC 掉
         if photo is None:
+            self.tag_lower("bg_fill")
             return
         self.create_image(0, 0, image=photo, anchor=tk.NW, tags="bg_image")
         self.tag_lower("bg_image")
+        self.tag_lower("bg_fill")
 
     def clear_bg_image(self) -> None:
         """DSToolsApp._begin_bg_drag_suppress() 拖拽开始时调用——只删掉

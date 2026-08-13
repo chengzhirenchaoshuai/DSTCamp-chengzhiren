@@ -286,10 +286,9 @@ class ClusterConfigTab:
         # 复用同一个默认宽度基准，因此内外层行为一致。
         self._shard_fixed_width = max(560, round(getattr(app, "WINDOW_BASE_W", 1600) * 0.5))
         for tab_key in ("Cluster", "Shard Config"):
-            # 每个页签一个 page，装可滚动的 canvas + 一行 footer 放"保
-            # 存"按钮（footer 在滚动区域之外，不会跟着内容滚出视野）。
-            # page/footer 用 tk.Frame 显式指定 CARD_BG，scroll_area 内部
-            # 仍是默认背景，让绿色只框住真正的配置行。
+            # 每个页签一个 page，装可滚动的 canvas。保存按钮由两个页签
+            # 各自放到设置卡片下方；footer 只保留为构造阶段兼容占位，随后
+            # 会被隐藏并销毁其按钮。
             page = self._surface_frame(self._sub_content)
             if tab_key == "Shard Config":
                 page.configure(width=self._shard_fixed_width)
@@ -322,6 +321,34 @@ class ClusterConfigTab:
             # 该 Canvas 同时承载 grid 子控件；关闭 grid propagation，避免
             # 三列内容的请求宽度把 Canvas window 从可用宽度压回几百像素。
             frame.grid_propagate(False)
+
+            if tab_key == "Cluster":
+                # 房间设置保存按钮不再固定在整个页签最底部，而是由
+                # _load_config() 放到第三列（多层世界/Steam 群组）卡片
+                # 下方。先拆掉旧 footer 按钮，避免页面保留一个不可见的
+                # 重复控件。
+                footer.pack_forget()
+                save_btn.destroy()
+                self._cluster_save_row = self._layout_frame(frame)
+                self._cluster_save_row.place_forget()
+                save_btn = ttk.Button(
+                    self._cluster_save_row, text=t("cluster.save_btn"),
+                    command=save_cmd,
+                )
+                save_btn.pack(side=tk.RIGHT)
+                self._section_save_btns[tab_key] = save_btn
+                self._cluster_save_positioning = False
+                frame.bind(
+                    "<Configure>",
+                    lambda _e: self._schedule_cluster_save_position(), add="+",
+                )
+            else:
+                # 世界设置页签也把保存按钮放到动态设置卡片下方；旧
+                # footer 仅作为构造阶段占位，真正按钮在 _load_config()
+                # 里创建到 server.ini 内容框中。
+                footer.pack_forget()
+                save_btn.destroy()
+                self._section_save_btns[tab_key] = None
             canvas.configure(yscrollcommand=scrollbar.set)
             win_id = canvas.create_window((0,0), window=frame, anchor=tk.NW)
 
@@ -518,9 +545,55 @@ class ClusterConfigTab:
         # shard 配置 frame 等）是每次 _load_config() 调用时作为这两个
         # 容器的子控件现建的，所以销毁这两个容器的子控件，就等于把旧
         # 的分区子 frame 连同里面的全部内容一起拆掉。
+        if getattr(self, "_cluster_save_row", None) is not None:
+            self._cluster_save_row.place_forget()
+        preserve = {getattr(self, "_cluster_save_row", None)}
         for frame in self._section_frames.values():
-            for w in frame.winfo_children(): w.destroy()
+            for w in frame.winfo_children():
+                if w not in preserve:
+                    w.destroy()
         self._entries.clear()
+
+    def _position_cluster_save_row(self):
+        """把 cluster.ini 保存按钮定位到第三列卡片正下方。"""
+        if getattr(self, "_cluster_save_positioning", False):
+            return
+        row = getattr(self, "_cluster_save_row", None)
+        cards = getattr(self, "_cluster_cards", None)
+        outer = self._section_frames.get("Cluster")
+        if row is None or cards is None or outer is None or not row.winfo_exists():
+            return
+        self._cluster_save_positioning = True
+        try:
+            outer.update_idletasks()
+            col3 = cards[2]
+            if not col3.winfo_exists():
+                return
+            width = max(1, col3.winfo_width())
+            x = col3.winfo_x()
+            y = col3.winfo_y() + col3.winfo_height() + 8
+            row.place(x=x, y=y, width=width,
+                      height=max(1, row.winfo_reqheight()))
+            required_height = y + row.winfo_height() + 8
+            current_height = self._section_content_heights.get("Cluster", 0)
+            if required_height > current_height:
+                self._section_content_heights["Cluster"] = required_height
+                outer.configure(height=required_height)
+                canvas = self._section_canvases.get("Cluster")
+                window_id = self._section_window_ids.get("Cluster")
+                if canvas is not None and window_id is not None:
+                    canvas.itemconfigure(window_id, height=required_height)
+                    canvas.configure(height=required_height)
+        finally:
+            self._cluster_save_positioning = False
+
+    def _schedule_cluster_save_position(self):
+        """等卡片完成一次 grid 传播后再定位保存行。"""
+        self._position_cluster_save_row()
+        row = getattr(self, "_cluster_save_row", None)
+        if row is not None and row.winfo_exists():
+            row.after_idle(self._position_cluster_save_row)
+            row.after(120, self._position_cluster_save_row)
 
     # 用 @property 而不是类属性/模块级常量，是因为要每次现查
     # theme.FONT_FAMILY（类属性在类定义时算一次就冻住，字体样式切换后
@@ -713,6 +786,12 @@ class ClusterConfigTab:
         for column, card in enumerate((col1, col2, col3)):
             card.grid(row=0, column=column, sticky=(tk.N, tk.W, tk.E), padx=8, pady=8)
             card.grid_propagate(False)
+        self._cluster_cards = (col1, col2, col3)
+        for card in self._cluster_cards:
+            card.bind(
+                "<Configure>",
+                lambda _e: self._schedule_cluster_save_position(), add="+",
+            )
 
         def _fill_column(col_frame, sections):
             row = 0
@@ -738,15 +817,22 @@ class ClusterConfigTab:
             card.update_idletasks()
             card.configure(height=card.body.winfo_reqheight() + 16)
         content_height = max(card.body.winfo_reqheight() + 16 for card in (col1, col2, col3))
+        self._schedule_cluster_save_position()
+        self._cluster_save_row.update_idletasks()
+        save_bottom = (
+            self._cluster_save_row.winfo_y()
+            + self._cluster_save_row.winfo_height()
+            + 8
+        )
+        content_height = max(content_height, save_bottom)
         self._section_content_heights["Cluster"] = content_height
         outer.configure(height=content_height)
         cluster_canvas = self._section_canvases["Cluster"]
         cluster_canvas.itemconfigure(self._section_window_ids["Cluster"], height=content_height)
         cluster_canvas.configure(height=content_height)
 
-        # 按钮本身现在常驻在页签的 footer 里（只建一次，在绿色可滚动卡
-        # 片外面——见 __init__ 里子页签搭建的那个循环），这里每次重新
-        # 加载只需要更新它能不能点，不需要重建。
+        # 房间设置按钮常驻在第三列卡片下方，这里每次重新加载只更新
+        # 是否可点，不重建按钮。
         self._section_save_btns["Cluster"].configure(state=tk.NORMAL if is_server else tk.DISABLED)
 
         # 世界配置带一个世界选择器——SERVER 和 LOCAL 现在共用完全一样
@@ -782,11 +868,36 @@ class ClusterConfigTab:
             row += 1
             ttk.Separator(frame, orient=tk.HORIZONTAL).grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=5)
             row += 1
-            self._shard_config_frame = self._layout_frame(frame)
-            self._shard_config_frame.grid(row=row, column=0, columnspan=2, sticky=tk.NSEW, padx=5)
+            # server.ini 字段也放进和 cluster.ini 三列相同的圆角设置
+            # 卡片；卡片下方单独留出保存行，按钮固定在右下角。
+            self._shard_card = CardFrame(
+                frame, self.app, padding=8,
+                bg=theme.BG_SOFT, border=theme.CARD_BORDER,
+            )
+            self._shard_card.grid(
+                row=row, column=0, columnspan=2,
+                sticky=(tk.N, tk.W, tk.E), padx=8, pady=8,
+            )
+            self._shard_card.grid_propagate(False)
+            self._shard_config_frame = self._layout_frame(self._shard_card.body)
+            self._shard_config_frame.pack(fill=tk.BOTH, expand=True)
             row += 1
+            self._shard_save_row = self._layout_frame(frame)
+            self._shard_save_row.grid(
+                row=row, column=0, columnspan=2,
+                sticky=tk.E, padx=8, pady=(0, 8),
+            )
+            save_btn = ttk.Button(
+                self._shard_save_row, text=t("cluster.save_btn"),
+                command=self._save_shard_ini,
+            )
+            save_btn.pack(side=tk.RIGHT)
+            self._section_save_btns["Shard Config"] = save_btn
             self._load_shard_config()
-        self._section_save_btns["Shard Config"].configure(state=tk.NORMAL if is_server else tk.DISABLED)
+        if self._section_save_btns["Shard Config"] is not None:
+            self._section_save_btns["Shard Config"].configure(
+                state=tk.NORMAL if is_server else tk.DISABLED,
+            )
 
         self._load_id_list_into(c, "adminlist_path", self._admin_listbox, self._admin_add_btn, self._admin_remove_btn)
         self._load_id_list_into(c, "blocklist_path", self._block_listbox, self._block_add_btn, self._block_remove_btn)
@@ -901,6 +1012,55 @@ class ClusterConfigTab:
                         # 本身还在处理"开关被点了一下"这个事件的过程中，就
                         # 把开关自己所在的行销毁重建——这在 Tk 里不安全。
                         var.trace_add("write", lambda *a: self.app.root.after(1, self._on_is_master_toggle))
+
+        # 动态字段完成后再按内容高度撑开圆角卡片；保存行在卡片下方，
+        # 不会随着字段数量变化跑到卡片内部。
+        card = getattr(self, "_shard_card", None)
+        if card is not None and card.winfo_exists():
+            self._shard_config_frame.update_idletasks()
+            card.configure(height=max(48, self._shard_config_frame.winfo_reqheight() + 16))
+            self._update_shard_layout()
+            # CardFrame 的最终 y/height 要等 grid 和 Canvas window 完成一
+            # 轮几何传播后才可靠；立即计算时可能只得到 1px 请求高度，
+            # 导致保存行被裁在 Canvas 外面。
+            self._shard_config_frame.after_idle(self._update_shard_layout)
+            self._shard_config_frame.after(120, self._update_shard_layout)
+
+    def _update_shard_layout(self):
+        """让 server.ini 卡片和其下方保存行完整纳入滚动内容高度。"""
+        if getattr(self, "_shard_layout_updating", False):
+            return
+        card = getattr(self, "_shard_card", None)
+        save_row = getattr(self, "_shard_save_row", None)
+        frame = self._section_frames.get("Shard Config")
+        canvas = self._section_canvases.get("Shard Config")
+        window_id = self._section_window_ids.get("Shard Config")
+        if not all((card, save_row, frame, canvas, window_id)):
+            return
+        try:
+            if not card.winfo_exists() or not save_row.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        self._shard_layout_updating = True
+        try:
+            frame.update_idletasks()
+            card.update_idletasks()
+            save_row.update_idletasks()
+            bottom = max(
+                card.winfo_y() + card.winfo_height(),
+                save_row.winfo_y() + save_row.winfo_height(),
+            ) + 8
+            content_height = max(1, bottom)
+            frame.configure(height=content_height)
+            self._section_content_heights["Shard Config"] = content_height
+            canvas.itemconfigure(window_id, height=content_height)
+            canvas.configure(height=content_height)
+            page = self._sub_pages.get("shard")
+            if page is not None and page.winfo_exists():
+                page.configure(height=content_height)
+        finally:
+            self._shard_layout_updating = False
 
     def _snapshot_shard_entries_into(self, shard_config):
         """把 self._entries 里所有 SHARD_* 字段当前（可能还没保存）的值
@@ -1189,6 +1349,10 @@ class ClusterConfigTab:
         self._token_apply_btn.configure(text=t("token.apply"))
         self._global_tokens_btn.configure(text=t("token.set_global_btn"))
         self._global_tokens_hint_lbl.configure(text=t("token.global_hint"))
+        for key in ("Cluster", "Shard Config"):
+            button = self._section_save_btns.get(key)
+            if button is not None and button.winfo_exists():
+                button.configure(text=t("cluster.save_btn"))
         # 字段标签/悬浮说明（来自 ini_field_info）以及本地存档的只读提
         # 示都跟界面语言相关——重新渲染一遍才能跟着切换语言，不然会停
         # 留在这个存档上次加载时所用的语言上。
