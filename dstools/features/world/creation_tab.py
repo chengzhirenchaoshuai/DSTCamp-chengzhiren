@@ -88,6 +88,10 @@ class WorldCreationTab:
 
     def _build_server_panel(self):
         self._server_config = CreationServerConfigTab(self._server_frame, self.app, self.name_var.get())
+        # ClusterConfigTab 自身会创建一个根 frame；主页由 DSToolsApp
+        # 统一 pack，这里嵌在创建页的 Notebook 中，需要显式挂载，否则
+        # 配置数据虽已加载，服务器配置页仍只显示空白容器。
+        self._server_config.frame.pack(fill=tk.BOTH, expand=True)
         self.name_var.trace_add("write", lambda *_: self._server_config.set_cluster_name(self.name_var.get()))
 
     def _build_mod_panel(self):
