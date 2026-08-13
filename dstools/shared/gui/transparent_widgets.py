@@ -168,6 +168,11 @@ class TransparentIdList(BgFrame):
         self._redraw()
 
     def delete(self, first, last=None):
+        # BgFrame 的背景刷新会调用 ``delete("bg_image")``；这里必须把
+        # Canvas 标签删除和 Listbox 的数字索引删除区分开，不能把标签
+        # 当成 int 转换。
+        if isinstance(first, str) and not first.isdigit():
+            return tk.Canvas.delete(self, first)
         if not self._items:
             return
         start = max(0, int(first))
