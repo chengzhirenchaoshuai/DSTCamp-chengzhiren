@@ -92,6 +92,42 @@ class _CreationWindowChrome:
             surface.render_now()
         self._bg_surfaces = alive
 
+    def refresh_bg_surfaces(self) -> None:
+        """窗口真正显示后，补刷一次所有背景表面。
+
+        创建向导是在 ``Toplevel.withdraw()`` 状态下先搭建控件的。此时
+        ``BgFrame`` 收到的首次 ``<Configure>`` 会因为窗口尚未映射而跳过
+        渲染，窗口显示后不一定还会产生第二次尺寸事件，结果就是只有
+        后续动态创建的卡片有背景图，宿主区域却退回纯色。这里在
+        ``deiconify`` 之后补刷直接挂在顶层的标题栏、宿主和缩放手柄；
+        子级表面则通过 ``BgFrame`` 自己的 ``<Map>`` 事件按需刷新。
+        """
+        try:
+            if not self.window.winfo_exists():
+                return
+        except tk.TclError:
+            # 用户可能在延迟补刷前关闭了向导；Toplevel 销毁后，
+            # Tk 仍可能把已经排队的 after 回调投递回来。
+            return
+        self.window.update_idletasks()
+        alive = []
+        for ref in self._bg_surfaces:
+            surface = ref()
+            if surface is None:
+                continue
+            try:
+                if not surface.winfo_exists():
+                    continue
+            except tk.TclError:
+                continue
+            alive.append(ref)
+            # 子级表面会在自己的 <Map>/<Configure> 中按最终尺寸节流
+            # 刷新；这里仅补刷直接挂在 Toplevel 上的宿主、标题栏和缩放
+            # 手柄，避免一次性裁剪几十张大图造成卡顿。
+            if surface.master is self.window and surface.winfo_ismapped():
+                surface.render_now()
+        self._bg_surfaces = alive
+
     def _on_close(self):
         self.entry._close_wizard()
 
@@ -233,6 +269,14 @@ class WorldCreationEntryTab:
             min_height=min_height,
         )
         win.deiconify()
+        # withdraw 期间的首次 Configure 无法绘制背景图；窗口映射后立刻
+        # 补刷一次，并在 idle 再补一轮，覆盖系统完成任务栏/边框布局后的
+        # 最终尺寸，避免右下空白区域回退成主题灰色。
+        self._window_chrome.refresh_bg_surfaces()
+        win.after_idle(self._window_chrome.refresh_bg_surfaces)
+        # Windows 任务栏样式和无边框客户区有时在 idle 之后才完成映射，
+        # 再延迟一帧确保宿主区域也拿到最终尺寸。
+        win.after(120, self._window_chrome.refresh_bg_surfaces)
         win.focus_force()
         self._status_var.set("创建向导已打开")
         # 独立顶层窗口要等真正显示后再改 Win32 样式，确保始终拥有任务栏按钮。

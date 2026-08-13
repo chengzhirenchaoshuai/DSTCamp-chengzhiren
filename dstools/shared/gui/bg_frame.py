@@ -41,6 +41,11 @@ class BgFrame(tk.Canvas):
         self._photo = None
         self._render_after_id = None
         self.bind("<Configure>", lambda e: self._request_render())
+        # ``BgFrame`` 常在 Toplevel.withdraw() 期间先收到一次 Configure。
+        # 此时 render_now() 会因尚未映射而跳过，之后不一定再有尺寸事件，
+        # 宿主区域就会永久显示兜底色。Map 是窗口真正进入可见层级的可靠
+        # 时机，补一次节流渲染即可避免这种“只有局部有背景图”的情况。
+        self.bind("<Map>", lambda e: self._request_render(), add="+")
         app._register_bg_surface(self)
 
     def _resolve_color(self) -> str:
