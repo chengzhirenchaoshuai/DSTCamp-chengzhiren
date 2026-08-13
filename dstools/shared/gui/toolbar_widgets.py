@@ -118,6 +118,41 @@ def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None, 
     return label
 
 
+def make_transparent_status(row: BgFrame, app: "DSToolsApp", variable: tk.Variable,
+                            width: int = 220, side=tk.RIGHT, padx=(8, 0)) -> BgFrame:
+    """在工具栏中显示一行随变量更新的透明状态文字。
+
+    直接使用 ``ttk.Label`` 会绘制不透明主题背景，遮住自定义背景图；这里用
+    ``BgFrame`` 承载 ``create_text``，让背景继续由宿主窗口统一裁剪。
+    """
+    status = BgFrame(row, app, bg=theme.CARD_BG)
+    status.configure(width=max(80, width), height=24)
+
+    def _redraw(*_args):
+        if not status.winfo_exists():
+            return
+        status.delete("status_text")
+        text = str(variable.get() or "")
+        if not text or status.winfo_width() < 4 or status.winfo_height() < 4:
+            return
+        status.create_text(
+            status.winfo_width() - 2,
+            status.winfo_height() / 2,
+            text=text,
+            anchor=tk.E,
+            fill=theme.TEXT_MUTED,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            tags="status_text",
+        )
+
+    status.bind("<Configure>", _redraw, add="+")
+    variable.trace_add("write", _redraw)
+    status.pack(side=side, padx=padx)
+    _redraw()
+    status.redraw = _redraw
+    return status
+
+
 def make_filter_chips(row: BgFrame, app: "DSToolsApp", options, variable: tk.StringVar,
                        command, font=None) -> BgFrame:
     """在工具栏行(BgFrame)里嵌一组互斥的纯文字筛选项（"全部/已启用/已禁

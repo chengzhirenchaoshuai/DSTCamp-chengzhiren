@@ -158,7 +158,19 @@ class WorldCreationEntryTab:
         win.title("创建存档")
         win.configure(background=theme.BG_SOFT)
         win.resizable(True, True)
-        win.transient(self.app.root)
+
+        icon_dir = bundled_resource_dir() / "icons" / "app"
+        try:
+            # Toplevel 不一定可靠继承 Tk 根窗口的图标，显式设置后任务栏按钮不会
+            # 因窗口创建时序而显示成空白图标。
+            win.iconbitmap(default=str(icon_dir / "icon.ico"))
+        except Exception:
+            try:
+                icon_photo = tk.PhotoImage(file=str(icon_dir / "icon.png"))
+                win.iconphoto(True, icon_photo)
+                win._creation_icon_photo = icon_photo
+            except Exception:
+                pass
 
         # 创建窗口沿用主窗口的无原生边框、自绘标题栏和伪最大化，避免出现
         # 一套 ttk“关闭/最大化”按钮与主窗口风格不一致。
@@ -196,9 +208,9 @@ class WorldCreationEntryTab:
         win.deiconify()
         win.focus_force()
         self._status_var.set("创建向导已打开")
-        # transient 窗口要等真正显示后再改 Win32 样式，否则 Windows 会
-        # 在映射窗口时重新加回 TOOLWINDOW，导致最小化后没有任务栏按钮。
+        # 独立顶层窗口要等真正显示后再改 Win32 样式，确保始终拥有任务栏按钮。
         win.after_idle(lambda w=win: self._ensure_wizard_taskbar(w))
+        win.after(120, lambda w=win: self._ensure_wizard_taskbar(w))
 
         # 先让窗口和加载提示完成一次绘制，再构造重型页面，避免用户看到
         # 主页无响应却没有反馈。真正的 Mod 扫描仍由创建页自己的逻辑负责。

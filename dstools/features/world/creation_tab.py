@@ -33,7 +33,11 @@ from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.pill_tabs import PillTabBar
-from dstools.shared.gui.toolbar_widgets import make_toolbar_label, make_filter_chips
+from dstools.shared.gui.toolbar_widgets import (
+    make_filter_chips,
+    make_toolbar_label,
+    make_transparent_status,
+)
 from dstools.i18n import t
 from dstools.models import ModEntry, Platform
 
@@ -82,7 +86,7 @@ class WorldCreationTab:
         self._sub.add(self._world_frame, text="世界设置")
         self._sub.bind("<<NotebookTabChanged>>", self._on_page_changed)
         bottom = BgFrame(self.frame, self.app, bg=theme.CARD_BG); bottom.pack(fill=tk.X, padx=12, pady=8)
-        self.status_var = tk.StringVar(value="请选择一个官方默认存档模板")
+        self.status_var = tk.StringVar(value="")
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT)
         self._create_btn = ttk.Button(bottom, text="创建存档", command=self._create)
         self._create_btn.pack(side=tk.RIGHT)
@@ -136,12 +140,6 @@ class WorldCreationTab:
         self.shard_combo.current(0)
         self.shard_combo.pack(side=tk.LEFT, padx=5)
         self.shard_combo.bind("<<ComboboxSelected>>", lambda _e: self._render())
-
-        ttk.Label(
-            self._world_frame,
-            text="在这里分别调整当前世界的世界规则和世界生成；设置只作用于正在创建的存档。",
-            foreground=theme.TEXT_MUTED,
-        ).pack(anchor=tk.W, padx=12, pady=(0, 4))
 
         self._world_info_frame = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
         self._world_info_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
@@ -210,14 +208,12 @@ class WorldCreationTab:
         header = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         header.pack(fill=tk.X, padx=12, pady=10)
         make_toolbar_label(header, self.app, lambda: "创建存档 Mod").pack(side=tk.LEFT)
-        ttk.Label(header, text="独立于主页 Mod 管理，仅作用于正在创建的存档").pack(side=tk.LEFT, padx=12)
         ttk.Button(header, text="保存为配置集", command=self._save_creation_preset).pack(side=tk.LEFT, padx=(8, 2))
         ttk.Button(header, text="载入配置集", command=self._open_creation_preset_dialog).pack(side=tk.LEFT, padx=2)
         self._mod_scan_btn = ttk.Button(header, text="重新扫描", command=self._scan_installed_mods)
         self._mod_scan_btn.pack(side=tk.RIGHT)
         self._mod_scan_status = tk.StringVar(value="正在读取已安装 Mod…")
-        ttk.Label(header, textvariable=self._mod_scan_status,
-                  foreground=theme.TEXT_MUTED).pack(side=tk.RIGHT, padx=10)
+        make_transparent_status(header, self.app, self._mod_scan_status, width=220)
         filter_row = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         filter_row.pack(fill=tk.X, padx=12, pady=(0, 4))
         make_toolbar_label(filter_row, self.app, lambda: "搜索 Mod").pack(side=tk.LEFT)
@@ -256,7 +252,7 @@ class WorldCreationTab:
             self._plan_master, self._plan_caves = master, caves
             self._mod_settings = get_mod_world_settings(self._enabled_mod_ids())
             self._render()
-            self.status_var.set(f"已加载 {master.name}：可调整世界规则")
+            self.status_var.set("")
         except Exception as exc:
             self.status_var.set(str(exc))
 
@@ -522,8 +518,7 @@ class WorldCreationTab:
     # methods give it the same save/refresh contract while keeping all writes
     # in memory until the user clicks “创建存档”.
     def _mark_dirty(self):
-        if self.status_var.get().startswith("已加载"):
-            self.status_var.set("Mod 配置已修改，创建存档时写入")
+        self.status_var.set("Mod 配置已修改，创建存档时写入")
 
     def _save_mods(self, silent=False):
         self._sync_mod_overrides()

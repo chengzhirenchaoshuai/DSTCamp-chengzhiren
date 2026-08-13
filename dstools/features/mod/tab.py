@@ -33,7 +33,12 @@ from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
-from dstools.shared.gui.toolbar_widgets import ReadonlyBanner, make_filter_chips, make_toolbar_label
+from dstools.shared.gui.toolbar_widgets import (
+    ReadonlyBanner,
+    make_filter_chips,
+    make_toolbar_label,
+    make_transparent_status,
+)
 from dstools.i18n import t
 from dstools.models import ModEntry, Platform, SaveSource
 
@@ -132,6 +137,7 @@ class ModManagerTab:
         self._filter_render_after_id = None
         self._loading = False
         self._loading_key = None
+        self._mod_scan_status_var = tk.StringVar(value="")
         self._refresh_gen = 0
         # 每一个曾经被完整解析过的 mod（静态解析 + 整份文件 Lua 沙箱——
         # 见 _load_mods_worker/_reload_full）都会一直保留在这里，直到应
@@ -219,6 +225,7 @@ class ModManagerTab:
              ("enabled", lambda: t("mod.show_enabled")),
              ("disabled", lambda: t("mod.show_disabled"))],
             self.show_var, self._render_list)
+        make_transparent_status(ff, app, self._mod_scan_status_var, width=220)
 
         # 本地存档选中时显示的醒目提示——本地存档的 mod 启用/配置实际由
         # 客户端账号级 modindex 决定，这里只读查看，默认不 show()。
@@ -575,11 +582,13 @@ class ModManagerTab:
             self._icon_thumb_cache.clear()
             self._loading = False
             self._loading_key = None
+            self._mod_scan_status_var.set("已发现 0 个 Mod")
             self._render_list()
             return
         self._loading = True
         self._loading_full = full
         self._loading_key = loading_key
+        self._mod_scan_status_var.set("正在扫描 Mod…")
         self._render_list()
         platform, wegame_client_mods_dir = self._resolve_mod_folder_args(c)
         # LuaJIT 补丁只服务 Steam 版专用服务器（features/local_service/luajit_injector.py），
@@ -736,6 +745,7 @@ class ModManagerTab:
         self._icon_thumb_cache.clear()
         self._luajit_mod_locked = luajit_active
         self._loading = False
+        self._mod_scan_status_var.set(f"已发现 {len(self._mod_data)} 个 Mod")
         # 刚从磁盘（重新）加载完——在这之前的任何"未保存修改"标记都已经
         # 没有意义了，因为现在显示的状态本身就又是已保存的状态（覆盖首
         # 次加载、"重载Mod信息"、切换世界，以及 _save_mods/
