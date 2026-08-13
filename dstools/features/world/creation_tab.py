@@ -210,10 +210,6 @@ class WorldCreationTab:
         make_toolbar_label(header, self.app, lambda: "创建存档 Mod").pack(side=tk.LEFT)
         ttk.Button(header, text="保存为配置集", command=self._save_creation_preset).pack(side=tk.LEFT, padx=(8, 2))
         ttk.Button(header, text="载入配置集", command=self._open_creation_preset_dialog).pack(side=tk.LEFT, padx=2)
-        self._mod_scan_btn = ttk.Button(header, text="重新扫描", command=self._scan_installed_mods)
-        self._mod_scan_btn.pack(side=tk.RIGHT)
-        self._mod_scan_status = tk.StringVar(value="正在读取已安装 Mod…")
-        make_transparent_status(header, self.app, self._mod_scan_status, width=220)
         filter_row = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         filter_row.pack(fill=tk.X, padx=12, pady=(0, 4))
         make_toolbar_label(filter_row, self.app, lambda: "搜索 Mod").pack(side=tk.LEFT)
@@ -230,6 +226,10 @@ class WorldCreationTab:
             self._mod_show_var,
             self._render_list,
         )
+        self._mod_scan_btn = ttk.Button(filter_row, text="重新扫描", command=self._scan_installed_mods)
+        self._mod_scan_btn.pack(side=tk.RIGHT, padx=(6, 0))
+        self._mod_scan_status = tk.StringVar(value="正在读取已安装 Mod…")
+        make_transparent_status(filter_row, self.app, self._mod_scan_status, width=220)
         self._mod_list_frame = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         self._mod_list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
         from dstools.shared.gui.image_scroll import ImageScrollPanel
@@ -378,6 +378,18 @@ class WorldCreationTab:
                 "has_link": mod_id.removeprefix("workshop-").isdigit(),
             })
         rows.sort(key=lambda row: (row["name"] or row["workshop_id"]).casefold())
+        if not rows:
+            from PIL import Image as _Image, ImageDraw as _ImageDraw
+            from dstools.shared.gui.fonts import get_font
+            width = self._mod_panel.current_width(REF_WIDTH)
+            img = _Image.new("RGB", (width, 60), theme.CARD_BG)
+            if query or show != "all":
+                _ImageDraw.Draw(img).text(
+                    (width / 2, 30), t("mod.no_filtered"),
+                    font=get_font(16), fill=theme.TEXT_MUTED, anchor="mm",
+                )
+            self._mod_panel.set_image(img, [], keep_scroll=True)
+            return
         img, hits, hovers = render_mod_list(
             rows,
             self._icon_imgs,

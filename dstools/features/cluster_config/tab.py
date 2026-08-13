@@ -644,10 +644,12 @@ class ClusterConfigTab:
         # columnconfigure(1) 里又用了一次，那是每一列内部标签/字段两
         # 栏的细分）。
         for col in range(3):
-            outer.grid_columnconfigure(col, weight=1)
-        col1 = ttk.Frame(outer); col1.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=(0,20))
-        col2 = ttk.Frame(outer); col2.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E), padx=(0,20))
-        col3 = ttk.Frame(outer); col3.grid(row=0, column=2, sticky=(tk.N, tk.W, tk.E))
+            outer.grid_columnconfigure(col, weight=1, uniform="cluster_config_columns")
+        # 三列使用完全相同的外边距；此前前两列只留右边距、最右列不留
+        # 边距，导致同样的 grid 权重下视觉宽度不一致。
+        col1 = ttk.Frame(outer); col1.grid(row=0, column=0, sticky=(tk.N, tk.W, tk.E), padx=10)
+        col2 = ttk.Frame(outer); col2.grid(row=0, column=1, sticky=(tk.N, tk.W, tk.E), padx=10)
+        col3 = ttk.Frame(outer); col3.grid(row=0, column=2, sticky=(tk.N, tk.W, tk.E), padx=10)
 
         def _fill_column(col_frame, sections):
             row = 0

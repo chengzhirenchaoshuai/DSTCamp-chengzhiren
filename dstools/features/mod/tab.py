@@ -187,15 +187,13 @@ class ModManagerTab:
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
         self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_select)
-        # "重载mod信息"：跟普通刷新不同，这个按钮总是对每个已安装 mod
+        # “重新扫描”：跟普通刷新不同，这个按钮总是对每个已安装 mod
         # （名字/配置/图标）重新跑一遍整份文件的 Lua 沙箱解析，而不只是
         # 快速的静态扫描——见 _load_mods_worker 的 `full` 参数。这个页
         # 签第一次加载某个 shard 的 mod 列表时（见 _refresh_mods）也会
         # 自动跑一次同样的全量解析——接受这一次性的较长加载时间，换来
         # 每个 mod 的标题/配置从一开始就是对的，而不是只有单独打开某个
         # mod 的配置弹窗之后才修正。
-        self._md_br = ttk.Button(sf, text=t("mod.reload_full"), command=self._reload_full); self._md_br.pack(side=tk.LEFT, padx=(0,10))
-        Tooltip(self._md_br, lambda: t("mod.reload_full_hover"))
         # "本地模组"（modinfo.lua 里 client_only_mod = true）只影响玩家
         # 自己的客户端——它们不需要 modoverrides.lua 里有一条对应记录才
         # 能生效，所以跟这里其它行不同，本工具没有实质意义上的
@@ -225,6 +223,9 @@ class ModManagerTab:
              ("enabled", lambda: t("mod.show_enabled")),
              ("disabled", lambda: t("mod.show_disabled"))],
             self.show_var, self._render_list)
+        self._md_br = ttk.Button(ff, text=t("mod.reload_full"), command=self._reload_full)
+        self._md_br.pack(side=tk.RIGHT, padx=(6, 0))
+        Tooltip(self._md_br, lambda: t("mod.reload_full_hover"))
         make_transparent_status(ff, app, self._mod_scan_status_var, width=220)
 
         # 本地存档选中时显示的醒目提示——本地存档的 mod 启用/配置实际由
@@ -810,7 +811,7 @@ class ModManagerTab:
             return
         rows = self._build_rows()
         if not rows:
-            self._render_placeholder("", ref_width)
+            self._render_placeholder(t("mod.no_filtered") if self.filter_var.get().strip() or self.show_var.get() != "all" else "", ref_width)
             return
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)

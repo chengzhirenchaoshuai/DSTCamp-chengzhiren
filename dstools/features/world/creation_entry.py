@@ -8,12 +8,15 @@ import tkinter as tk
 import weakref
 from tkinter import ttk
 
+from dstools.shared.app_settings import get_custom_bg_opacity
+from dstools.shared.custom_background import get_custom_bg_path, render_background
 from dstools.shared.gui import theme
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui import custom_titlebar
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.shared.gui.toolbar_widgets import make_toolbar_label
+from dstools.i18n import t
 
 
 class _CreationWindowChrome:
@@ -24,6 +27,8 @@ class _CreationWindowChrome:
         self.window = window
         self._aspect = entry.app.WINDOW_BASE_W / entry.app.WINDOW_BASE_H
         self._bg_surfaces: list = []
+        self._bg_image = None
+        self._bg_image_key = None
         self._local_bg_drag_suppressed = False
         self._is_pseudo_maximized = False
         self._pre_maximize_geom: tuple[int, int, int, int] | None = None
@@ -34,20 +39,38 @@ class _CreationWindowChrome:
 
     @property
     def _bg_drag_suppressed(self):
-        return self._local_bg_drag_suppressed or getattr(self.entry.app, "_bg_drag_suppressed", False)
+        return self._local_bg_drag_suppressed
 
     @property
     def _theme_switch_suppressed(self):
-        return getattr(self.entry.app, "_theme_switch_suppressed", False)
+        return False
 
     def _register_bg_surface(self, surface):
         self._bg_surfaces.append(weakref.ref(surface))
-        # 仍注册到主应用，主题切换/背景设置变化时可统一刷新；创建窗口
-        # 自己拖动时不再调用主应用的全局拖动抑制链路。
-        return self.entry.app._register_bg_surface(surface)
 
     def _get_bg_slice(self, widget, width, height):
-        return self.entry.app._get_bg_slice(widget, width, height)
+        """按创建窗口自己的尺寸缓存背景图，不读取主窗口共享图。"""
+        bg_path = get_custom_bg_path()
+        if bg_path is None:
+            return None
+        top = widget.winfo_toplevel()
+        tw = max(1, top.winfo_width())
+        th = max(1, top.winfo_height())
+        opacity = get_custom_bg_opacity()
+        key = (str(bg_path), opacity, tw, th, theme.BG_SOFT)
+        if self._bg_image is None or self._bg_image_key != key:
+            self._bg_image = render_background(bg_path, tw, th, opacity, theme.BG_SOFT)
+            self._bg_image_key = key
+        ox = widget.winfo_rootx() - top.winfo_rootx()
+        oy = widget.winfo_rooty() - top.winfo_rooty()
+        x0 = max(0, min(ox, self._bg_image.width))
+        y0 = max(0, min(oy, self._bg_image.height))
+        x1 = max(x0, min(ox + width, self._bg_image.width))
+        y1 = max(y0, min(oy + height, self._bg_image.height))
+        if x1 <= x0 or y1 <= y0:
+            return None
+        from PIL import ImageTk
+        return ImageTk.PhotoImage(self._bg_image.crop((x0, y0, x1, y1)))
 
     def _begin_bg_drag_suppress(self):
         self._local_bg_drag_suppressed = True
@@ -155,7 +178,7 @@ class WorldCreationEntryTab:
         self._window = win
         self._wizard = None
         win.withdraw()
-        win.title("创建存档")
+        win.title(f"{t('app.title')}-创建存档")
         win.configure(background=theme.BG_SOFT)
         win.resizable(True, True)
 
@@ -179,12 +202,13 @@ class WorldCreationEntryTab:
         icon_path = bundled_resource_dir() / "icons" / "app" / "icon.png"
         self._titlebar = custom_titlebar.CustomTitleBar(
             win, self._window_chrome, icon_path=icon_path,
+            title_getter=lambda: f"{t('app.title')}-创建存档",
         )
         self._titlebar.pack(fill=tk.X, side=tk.TOP)
-        self._wizard_host = ttk.Frame(win)
-        self._wizard_host.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-        loading = ttk.Frame(self._wizard_host)
-        loading.pack(fill=tk.BOTH, expand=True, padx=26, pady=26)
+        self._wizard_host = BgFrame(win, self._window_chrome, bg=theme.BG_SOFT)
+        self._wizard_host.pack(fill=tk.BOTH, expand=True)
+        loading = BgFrame(self._wizard_host, self._window_chrome, bg=theme.BG_SOFT)
+        loading.pack(fill=tk.BOTH, expand=True)
         ttk.Label(loading, text="正在加载创建向导…").pack(expand=True)
         win.protocol("WM_DELETE_WINDOW", self._close_wizard)
         win.update_idletasks()

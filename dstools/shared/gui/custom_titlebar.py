@@ -37,8 +37,14 @@ if IS_WINDOWS:
     from ctypes import wintypes
 
     GWL_EXSTYLE = -20
+    GWL_STYLE = -16
     WS_EX_TOOLWINDOW = 0x00000080
     WS_EX_APPWINDOW = 0x00040000
+    # 无边框窗口仍需保留这两个能力位，Windows 任务栏才会把它当作
+    # 普通可最小化窗口处理；否则 WS_POPUP 在点击当前任务栏按钮时只会
+    # 激活，不会切换到最小化状态。
+    WS_SYSMENU = 0x00080000
+    WS_MINIMIZEBOX = 0x00020000
     # SetWindowPos 的几个标志位，只用来在改完 GWL_EXSTYLE 之后触发一次
     # "样式生效"的刷新（见 apply_borderless_style() 里的说明），不实际
     # 移动/缩放/改层叠顺序，所以三个 NOxxx 都要带上。
@@ -210,6 +216,8 @@ def ensure_taskbar_visible(root: tk.Tk, refresh_shell: bool = False) -> bool:
         # APPWINDOW 仍不会出现在任务栏；先清掉 TOOLWINDOW 再强制加入。
         taskbar_style = (ex_style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
         user32.SetWindowLongW(hwnd, GWL_EXSTYLE, taskbar_style)
+        style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+        user32.SetWindowLongW(hwnd, GWL_STYLE, style | WS_SYSMENU | WS_MINIMIZEBOX)
         user32.SetWindowPos(hwnd, None, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
         if refresh_shell:
@@ -518,11 +526,12 @@ class CustomTitleBar(BgFrame):
     # 钮）。
     _EDGE_MARGIN = 5
 
-    def __init__(self, root: tk.Tk, app, icon_path=None):
+    def __init__(self, root: tk.Tk, app, icon_path=None, title_getter=None):
         super().__init__(root, app, bg=theme.CARD_BG)
         self.configure(height=self._HEIGHT, cursor="")
         self.root = root
         self._app = app
+        self._title_getter = title_getter
         self._title_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_SM)
         # 最小化/关闭按钮的"−"/"×"是纯符号字形，不是给人读的文字内容，
         # 刻意不跟 theme.FONT_FAMILY 走——Segoe UI 画这两个符号字形干净、
@@ -610,7 +619,8 @@ class CustomTitleBar(BgFrame):
             self.create_image(x, cy, image=self._icon_photo, anchor=tk.W, tags="titlebar_content")
             x += self._icon_photo.width() + 8
         from dstools.i18n import t
-        self.create_text(x, cy, text=t("app.title"), anchor=tk.W, fill=theme.TEXT,
+        title = self._title_getter() if self._title_getter is not None else t("app.title")
+        self.create_text(x, cy, text=title, anchor=tk.W, fill=theme.TEXT,
                           font=self._title_font, tags="titlebar_content")
 
         # 右侧按钮：关闭在最右，往左依次是"伪最大化"、最小化——从右往左排
