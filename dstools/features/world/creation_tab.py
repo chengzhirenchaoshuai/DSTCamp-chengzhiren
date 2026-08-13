@@ -30,6 +30,7 @@ from dstools.features.mod.render import render_mod_list
 from dstools.features.mod.tab import ModConfigDialog, _SavePresetDialog
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.cluster_names import validate_cluster_folder_name
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.pill_tabs import PillTabBar
@@ -77,14 +78,25 @@ class WorldCreationTab:
         make_toolbar_label(top, self.app, lambda: "存档名称").pack(side=tk.LEFT)
         self.name_var = tk.StringVar(value="Cluster_New")
         ttk.Entry(top, textvariable=self.name_var, width=18).pack(side=tk.LEFT, padx=(5, 14))
-        self._sub = ttk.Notebook(self.frame); self._sub.pack(fill=tk.BOTH, expand=True, padx=8)
-        self._server_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
-        self._mod_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
-        self._world_frame = BgFrame(self._sub, self.app, bg=theme.CARD_BG)
-        self._sub.add(self._server_frame, text="服务器配置")
-        self._sub.add(self._mod_frame, text="Mod 管理")
-        self._sub.add(self._world_frame, text="世界设置")
-        self._sub.bind("<<NotebookTabChanged>>", self._on_page_changed)
+        # 使用自绘页签和 BgFrame 内容区，避免 ttk.Notebook 的不透明主题背景遮住窗口背景图。
+        self._sub_tab_key = "server"
+        self._sub_tab_bar = PillTabBar(
+            self.frame,
+            tabs=[("server", "服务器配置"), ("mod", "Mod 管理"), ("world", "世界设置")],
+            on_select=self._on_creation_sub_tab_select,
+            app=self.app,
+            bg=theme.CARD_BG,
+            height=32,
+            pill_h=24,
+            font_size=10,
+        )
+        self._sub_tab_bar.pack(fill=tk.X, padx=8, pady=(0, 4))
+        self._sub_content = BgFrame(self.frame, self.app, bg=theme.CARD_BG)
+        self._sub_content.pack(fill=tk.BOTH, expand=True, padx=8)
+        self._server_frame = BgFrame(self._sub_content, self.app, bg=theme.CARD_BG)
+        self._mod_frame = BgFrame(self._sub_content, self.app, bg=theme.CARD_BG)
+        self._world_frame = BgFrame(self._sub_content, self.app, bg=theme.CARD_BG)
+        self._server_frame.pack(fill=tk.BOTH, expand=True)
         bottom = BgFrame(self.frame, self.app, bg=theme.CARD_BG); bottom.pack(fill=tk.X, padx=12, pady=8)
         self.status_var = tk.StringVar(value="")
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT)
@@ -95,14 +107,19 @@ class WorldCreationTab:
         self._ensure_page("server")
 
     def _on_page_changed(self, _event=None) -> None:
-        selected = str(self._sub.select())
-        page_key = next((key for key, frame in {
-            "server": self._server_frame,
-            "mod": self._mod_frame,
-            "world": self._world_frame,
-        }.items() if str(frame) == selected), None)
-        if page_key:
-            self._ensure_page(page_key)
+        # 兼容旧调用方；实际页签由 PillTabBar 通过 _on_creation_sub_tab_select 驱动。
+        self._ensure_page(getattr(self, "_sub_tab_key", "server"))
+
+    def _on_creation_sub_tab_select(self, key: str) -> None:
+        current = getattr(self, "_sub_tab_key", "server")
+        if current == key:
+            self._ensure_page(key)
+            return
+        pages = {"server": self._server_frame, "mod": self._mod_frame, "world": self._world_frame}
+        pages[current].pack_forget()
+        self._sub_tab_key = key
+        pages[key].pack(fill=tk.BOTH, expand=True)
+        self._ensure_page(key)
 
     def _ensure_page(self, page_key: str) -> None:
         if page_key in self._initialized_pages:
@@ -164,8 +181,8 @@ class WorldCreationTab:
         self._world_content = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
         self._world_content.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
         from dstools.shared.gui.image_scroll import ImageScrollPanel
-        self._rules_panel = ImageScrollPanel(self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG)
-        self._gen_panel = ImageScrollPanel(self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG)
+        self._rules_panel = ImageScrollPanel(self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app)
+        self._gen_panel = ImageScrollPanel(self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app)
         self._rules_panel.frame.pack(fill=tk.BOTH, expand=True)
 
     def _on_world_sub_tab_select(self, key: str) -> None:
@@ -233,7 +250,7 @@ class WorldCreationTab:
         self._mod_list_frame = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         self._mod_list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
         from dstools.shared.gui.image_scroll import ImageScrollPanel
-        self._mod_panel = ImageScrollPanel(self._mod_list_frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
+        self._mod_panel = ImageScrollPanel(self._mod_list_frame, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app)
         self._mod_panel.frame.pack(fill=tk.BOTH, expand=True)
         self._build_mod_list()
 
@@ -602,6 +619,21 @@ class WorldCreationTab:
             if self._template_root is None:
                 raise FileNotFoundError("未找到默认世界模板")
             root = self._template_root.parent
+            name_error = validate_cluster_folder_name(name)
+            if name_error == "empty":
+                dlg.show_error(self.frame.winfo_toplevel(), "创建存档", "存档名称不能为空")
+                return
+            if name_error == "invalid_chars":
+                dlg.show_error(self.frame.winfo_toplevel(), "创建存档", "存档名称只能包含英文、数字和下划线")
+                return
+            destination = root / name
+            if destination.exists():
+                dlg.show_error(
+                    self.frame.winfo_toplevel(),
+                    "创建存档",
+                    f"存档名称“{name}”已存在，请换一个名称。",
+                )
+                return
             self._sync_mod_overrides()
             server_settings = self._server_config.read_creation_settings() if self._server_config else {}
             out = create_world(
@@ -655,11 +687,15 @@ class _CreationPresetDialog:
         self.win.resizable(False, True)
         self._presets = presets.list_presets()
 
-        body = ttk.Frame(self.win)
+        body = BgFrame(self.win, self.tab.app, bg=theme.BG_SOFT)
         body.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
         ttk.Label(body, text="选择要载入当前创建会话的 Mod 配置集：").pack(anchor=tk.W, pady=(0, 8))
-        self._list = tk.Listbox(body, height=min(12, max(4, len(self._presets))),
-                                font=theme.font_tuple(theme.FONT_SIZE_SM))
+        self._list = tk.Listbox(
+            body, height=min(12, max(4, len(self._presets))),
+            font=theme.font_tuple(theme.FONT_SIZE_SM), bg=theme.CARD_BG,
+            fg=theme.TEXT, selectbackground=theme.PRIMARY,
+            selectforeground=theme.CARD_BG, relief=tk.FLAT,
+        )
         self._list.pack(fill=tk.BOTH, expand=True)
         for item in self._presets:
             self._list.insert(tk.END, f"{item.name}（{len(item.mods)} 个 Mod）")
@@ -668,7 +704,7 @@ class _CreationPresetDialog:
         else:
             self._list.insert(tk.END, "暂无配置集")
 
-        buttons = ttk.Frame(body)
+        buttons = BgFrame(body, self.tab.app, bg=theme.BG_SOFT)
         buttons.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(buttons, text="删除", command=self._delete).pack(side=tk.LEFT)
         ttk.Button(buttons, text="取消", command=self.win.destroy).pack(side=tk.RIGHT)

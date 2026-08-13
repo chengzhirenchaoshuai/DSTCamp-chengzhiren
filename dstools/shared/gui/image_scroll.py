@@ -17,6 +17,8 @@ import tkinter as tk
 
 from PIL import Image, ImageTk
 
+from dstools.shared.gui.bg_frame import BgFrame
+
 
 class ImageScrollPanel:
     """底层是一个 Canvas，显示一张按 canvas 宽度缩放的高图，支持纵向滚
@@ -27,12 +29,17 @@ class ImageScrollPanel:
     # （见 `on_settle`），用来消除拉伸导致的模糊。
     SETTLE_DELAY_MS = 150
 
-    def __init__(self, parent, ref_width: int = 1400, bg: str = "#ffffff"):
+    def __init__(self, parent, ref_width: int = 1400, bg: str = "#ffffff", app=None):
         self.ref_width = ref_width
         self.bg = bg
+        self.app = app
 
-        self.frame = tk.Frame(parent)
-        self.canvas = tk.Canvas(self.frame, highlightthickness=0, bg=bg)
+        if app is not None:
+            self.frame = BgFrame(parent, app, bg=bg)
+            self.canvas = BgFrame(self.frame, app, bg=bg)
+        else:
+            self.frame = tk.Frame(parent)
+            self.canvas = tk.Canvas(self.frame, highlightthickness=0, bg=bg)
         self.vbar = tk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self._on_scrollbar)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.vbar.pack(side=tk.RIGHT, fill=tk.Y)

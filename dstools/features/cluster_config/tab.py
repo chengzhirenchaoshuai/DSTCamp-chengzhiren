@@ -250,6 +250,7 @@ class ClusterConfigTab:
         # 图），5 个页面各自的内容/滚动逻辑不变，父容器换成下面的
         # self._sub_content。
         self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG); self._entries = {}
+        self._creation_transparent = bool(getattr(app, "_creation_window_mode", False))
         # "存档"选择器在顶部全局选择栏，这里不重复一份。
 
         self._sub_tabs = [
@@ -280,17 +281,17 @@ class ClusterConfigTab:
             # 存"按钮（footer 在滚动区域之外，不会跟着内容滚出视野）。
             # page/footer 用 tk.Frame 显式指定 CARD_BG，scroll_area 内部
             # 仍是默认背景，让绿色只框住真正的配置行。
-            page = tk.Frame(self._sub_content, background=theme.CARD_BG)
-            scroll_area = ttk.Frame(page)
+            page = self._surface_frame(self._sub_content)
+            scroll_area = self._layout_frame(page)
             scroll_area.pack(side=tk.TOP, fill=tk.X)
-            footer = tk.Frame(page, background=theme.CARD_BG)
+            footer = self._surface_frame(page)
             footer.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
             save_cmd = self._save_cluster_ini if tab_key == "Cluster" else self._save_shard_ini
             save_btn = ttk.Button(footer, text=t("cluster.save_btn"), command=save_cmd)
             save_btn.pack(side=tk.RIGHT)
             self._section_save_btns[tab_key] = save_btn
 
-            canvas = tk.Canvas(scroll_area, highlightthickness=0)
+            canvas = self._surface_canvas(scroll_area)
             # 没有 pack 出来——在这次按钮/footer 重构之前它也从没显示/
             # pack 过（原来是 canvas 直接交给 notebook.add()，会自动填
             # 满整个页签；这里从来就没有可见的滚动条或滚轮绑定，两栏布
@@ -303,7 +304,7 @@ class ClusterConfigTab:
             # 在下面通过 canvas.configure(height=...) 跟踪内容自身尺
             # 寸来处理，不靠纵向的 expand/fill。
             canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            frame = ttk.Frame(canvas)
+            frame = self._surface_frame(canvas)
             frame.grid_columnconfigure(0, weight=1)
             frame.grid_columnconfigure(1, weight=1)
             canvas.configure(yscrollcommand=scrollbar.set)
@@ -342,7 +343,7 @@ class ClusterConfigTab:
         # "每行一个 Klei ID"文件格式（adminlist.txt 授权、blocklist.txt
         # 封禁），所以下面共用同一套通用面板/加载/增删代码，靠传入不
         # 同的 Cluster 属性名+文件名来区分。
-        self._admin_frame = ttk.Frame(self._sub_content)
+        self._admin_frame = self._layout_frame(self._sub_content)
         (self._admin_title_lbl, self._admin_listbox, self._admin_add_btn,
          self._admin_remove_btn, self._admin_status) = self._build_id_list_panel(self._admin_frame, "admin.title")
         self._admin_add_btn.configure(command=lambda: self._add_id_entry(
@@ -353,7 +354,7 @@ class ClusterConfigTab:
             self._admin_add_btn, self._admin_remove_btn))
         self._sub_pages["admin"] = self._admin_frame
 
-        self._block_frame = ttk.Frame(self._sub_content)
+        self._block_frame = self._layout_frame(self._sub_content)
         (self._block_title_lbl, self._block_listbox, self._block_add_btn,
          self._block_remove_btn, self._block_status) = self._build_id_list_panel(self._block_frame, "blocklist.title")
         self._block_add_btn.configure(command=lambda: self._add_id_entry(
@@ -364,7 +365,7 @@ class ClusterConfigTab:
             self._block_add_btn, self._block_remove_btn))
         self._sub_pages["block"] = self._block_frame
 
-        self._token_frame = ttk.Frame(self._sub_content); self._build_token_panel(self._token_frame)
+        self._token_frame = self._layout_frame(self._sub_content); self._build_token_panel(self._token_frame)
         self._sub_pages["token"] = self._token_frame
 
         # 5 个页面全部建完，只 pack() 默认选中的第一个（"cluster"），其
@@ -389,19 +390,40 @@ class ClusterConfigTab:
         # 样——见 __init__ 里这段的说明。
         self._sub_content.focus_set()
 
+    def _surface_frame(self, parent, bg=None):
+        """创建可透出独立创建窗口背景图的容器；主页保持原有控件样式。"""
+        if self._creation_transparent:
+            return BgFrame(parent, self.app, bg=bg or theme.CARD_BG)
+        return tk.Frame(parent, background=bg or theme.CARD_BG)
+
+    def _layout_frame(self, parent):
+        if self._creation_transparent:
+            return BgFrame(parent, self.app, bg=theme.CARD_BG)
+        return ttk.Frame(parent)
+
+    def _surface_canvas(self, parent):
+        if self._creation_transparent:
+            return BgFrame(parent, self.app, bg=theme.CARD_BG)
+        return tk.Canvas(parent, highlightthickness=0)
+
     def _build_id_list_panel(self, parent, title_key):
-        lf = ttk.Frame(parent); lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        lf = self._layout_frame(parent); lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         title_lbl = ttk.Label(lf, text=t(title_key), font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True)); title_lbl.pack(anchor=tk.W)
-        listbox = tk.Listbox(lf, height=10, font=self._ROW_VALUE_FONT)
+        listbox = tk.Listbox(
+            lf, height=10, font=self._ROW_VALUE_FONT,
+            bg=theme.CARD_BG, fg=theme.TEXT, selectbackground=theme.PRIMARY,
+            selectforeground=theme.CARD_BG, highlightbackground=theme.CARD_BORDER,
+            highlightcolor=theme.CARD_BORDER, relief=tk.FLAT,
+        )
         listbox.pack(fill=tk.BOTH, expand=True, pady=5)
-        bf = ttk.Frame(lf); bf.pack(fill=tk.X)
+        bf = self._layout_frame(lf); bf.pack(fill=tk.X)
         add_btn = ttk.Button(bf, text=t("admin.add")); add_btn.pack(side=tk.LEFT, padx=2)
         remove_btn = ttk.Button(bf, text=t("admin.remove")); remove_btn.pack(side=tk.LEFT, padx=2)
         status = ttk.Label(lf, text="", font=self._ROW_VALUE_FONT); status.pack(anchor=tk.W, pady=(5,0))
         return title_lbl, listbox, add_btn, remove_btn, status
 
     def _build_token_panel(self, parent):
-        p = ttk.Frame(parent); p.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        p = self._layout_frame(parent); p.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         self._token_title_lbl = ttk.Label(p, text=t("token.current_title"),
                                            font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
         self._token_title_lbl.pack(anchor=tk.W)
@@ -416,7 +438,7 @@ class ClusterConfigTab:
                                        relief=tk.FLAT, highlightthickness=1,
                                        highlightbackground=theme.CARD_BORDER, highlightcolor=theme.ACCENT)
         self._token_display.pack(fill=tk.X, pady=5); self._token_display.configure(state=tk.DISABLED)
-        bf = ttk.Frame(p); bf.pack(fill=tk.X)
+        bf = self._layout_frame(p); bf.pack(fill=tk.X)
         self._token_show_btn = ttk.Button(bf, text=t("token.show"), command=self._toggle_token); self._token_show_btn.pack(side=tk.LEFT, padx=2)
         self._token_copy_btn = ttk.Button(bf, text=t("token.copy"), command=self._copy_token); self._token_copy_btn.pack(side=tk.LEFT, padx=2)
         self._token_change_btn = ttk.Button(bf, text=t("token.change"), command=self._change_token); self._token_change_btn.pack(side=tk.LEFT, padx=2)
@@ -428,7 +450,7 @@ class ClusterConfigTab:
         # save_browser/cluster_copy.py），不需要每次都手动申请/填写。这
         # 里只负责管理这个池子，跟当前存档具体用的是哪个令牌是两回事，
         # 不需要在 on_cluster_changed()/_load_token() 里刷新。
-        global_bf = ttk.Frame(p); global_bf.pack(fill=tk.X, pady=(15, 0))
+        global_bf = self._layout_frame(p); global_bf.pack(fill=tk.X, pady=(15, 0))
         self._global_tokens_btn = ttk.Button(global_bf, text=t("token.set_global_btn"),
                                               command=self._open_global_tokens_dialog)
         self._global_tokens_btn.pack(side=tk.LEFT)
@@ -705,7 +727,7 @@ class ClusterConfigTab:
             row += 1
             ttk.Separator(frame, orient=tk.HORIZONTAL).grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=5)
             row += 1
-            self._shard_config_frame = ttk.Frame(frame)
+            self._shard_config_frame = self._layout_frame(frame)
             self._shard_config_frame.grid(row=row, column=0, columnspan=2, sticky=tk.NSEW, padx=5)
             row += 1
             self._load_shard_config()

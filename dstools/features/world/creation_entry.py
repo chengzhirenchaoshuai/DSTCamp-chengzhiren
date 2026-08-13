@@ -25,6 +25,8 @@ class _CreationWindowChrome:
     def __init__(self, entry, window: tk.Toplevel):
         self.entry = entry
         self.window = window
+        # 供复用的服务器配置页识别当前位于独立创建窗口，切换到透出背景图的容器。
+        self._creation_window_mode = True
         self._aspect = entry.app.WINDOW_BASE_W / entry.app.WINDOW_BASE_H
         self._bg_surfaces: list = []
         self._bg_image = None
@@ -178,7 +180,7 @@ class WorldCreationEntryTab:
         self._window = win
         self._wizard = None
         win.withdraw()
-        win.title(f"{t('app.title')}-创建存档")
+        win.title("DSTCamp·创建存档")
         win.configure(background=theme.BG_SOFT)
         win.resizable(True, True)
 
@@ -202,7 +204,7 @@ class WorldCreationEntryTab:
         icon_path = bundled_resource_dir() / "icons" / "app" / "icon.png"
         self._titlebar = custom_titlebar.CustomTitleBar(
             win, self._window_chrome, icon_path=icon_path,
-            title_getter=lambda: f"{t('app.title')}-创建存档",
+            title_getter=lambda: "DSTCamp·创建存档",
         )
         self._titlebar.pack(fill=tk.X, side=tk.TOP)
         self._wizard_host = BgFrame(win, self._window_chrome, bg=theme.BG_SOFT)
@@ -269,7 +271,7 @@ class WorldCreationEntryTab:
             win.geometry(f"{width}x{height}+{win.winfo_x()}+{win.winfo_y()}")
         except Exception as exc:
             self._status_var.set("创建向导加载失败")
-            error = ttk.Frame(win)
+            error = BgFrame(win, self._window_chrome, bg=theme.BG_SOFT)
             error.pack(fill=tk.BOTH, expand=True, padx=32, pady=32)
             ttk.Label(error, text=f"创建向导加载失败：{exc}", wraplength=720).pack(expand=True)
 

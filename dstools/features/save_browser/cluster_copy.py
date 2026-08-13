@@ -8,21 +8,18 @@ Options Guide）、Don't Starve Wiki 的搭建教程、以及社区开源工具�
 层面的基本合法性校验，不强制匹配 `Cluster_\\d+`。
 """
 
-import re
 import shutil
 from pathlib import Path
 
 from dstools.i18n import t
 from dstools.shared import app_settings
+from dstools.shared.cluster_names import validate_cluster_folder_name as _validate_cluster_folder_name
 from dstools.shared.token_manager import is_valid_token, read_token, write_token
 
 # 应用户明确要求收紧成白名单——只允许英文字母/数字/下划线，参照 Linux
 # 主机名那种严格程度，不再是"排除几个 Windows 文件系统特殊字符"这种黑
 # 名单思路（原来的黑名单会放行中文/空格/其它标点，用户反馈过这些字符
 # 实际用起来有问题，已经手动验证过收紧到这个白名单没问题）。
-_VALID_NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
-
-
 def validate_cluster_folder_name(name: str) -> str | None:
     """返回校验失败的原因代码，通过则返回 None。返回的是代码
     （"empty"/"invalid_chars"）而不是拼好的提示文字——这个函数的校验结
@@ -35,12 +32,7 @@ def validate_cluster_folder_name(name: str) -> str | None:
     白名单本身已经排除了"."/".."这两个曾经单独判过的保留名——只有字
     母/数字/下划线的字符串不可能等于纯句点，原来那条专门判断已经是永
     远走不到的死代码，白名单收紧后一并去掉了。"""
-    name = name.strip()
-    if not name:
-        return "empty"
-    if not _VALID_NAME_RE.match(name):
-        return "invalid_chars"
-    return None
+    return _validate_cluster_folder_name(name)
 
 
 def suggest_new_cluster_name(klei_root: Path, preferred: str) -> str:
