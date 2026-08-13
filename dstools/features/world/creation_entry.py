@@ -121,6 +121,9 @@ class WorldCreationEntryTab:
     def open_wizard(self) -> None:
         """打开或提已有创建向导窗口。"""
         if self._window is not None and self._window.winfo_exists():
+            # 自绘标题栏的最小化走 Win32 ShowWindow，单独 deiconify
+            # 无法恢复这种状态；使用与主窗口一致的恢复路径。
+            custom_titlebar.restore_window(self._window)
             self._window.deiconify()
             self._window.lift()
             self._window.focus_force()
@@ -164,10 +167,18 @@ class WorldCreationEntryTab:
         win.deiconify()
         win.focus_force()
         self._status_var.set("创建向导已打开")
+        # transient 窗口要等真正显示后再改 Win32 样式，否则 Windows 会
+        # 在映射窗口时重新加回 TOOLWINDOW，导致最小化后没有任务栏按钮。
+        win.after_idle(lambda w=win: self._ensure_wizard_taskbar(w))
 
         # 先让窗口和加载提示完成一次绘制，再构造重型页面，避免用户看到
         # 主页无响应却没有反馈。真正的 Mod 扫描仍由创建页自己的逻辑负责。
         win.after(50, lambda w=win, loading=loading: self._load_wizard(w, loading))
+
+    def _ensure_wizard_taskbar(self, win: tk.Toplevel) -> None:
+        if self._window is not win or not win.winfo_exists():
+            return
+        custom_titlebar.ensure_taskbar_visible(win, refresh_shell=True)
 
     def _toggle_maximize(self) -> None:
         """保留旧调用入口，实际转发给主窗口同款的伪最大化逻辑。"""

@@ -37,6 +37,7 @@ if IS_WINDOWS:
     from ctypes import wintypes
 
     GWL_EXSTYLE = -20
+    WS_EX_TOOLWINDOW = 0x00000080
     WS_EX_APPWINDOW = 0x00040000
     # SetWindowPos 的几个标志位，只用来在改完 GWL_EXSTYLE 之后触发一次
     # "样式生效"的刷新（见 apply_borderless_style() 里的说明），不实际
@@ -205,7 +206,10 @@ def ensure_taskbar_visible(root: tk.Tk, refresh_shell: bool = False) -> bool:
     try:
         hwnd = _get_hwnd(root)
         ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_APPWINDOW)
+        # Toplevel/transient 窗口通常带有 TOOLWINDOW，单纯 OR 上
+        # APPWINDOW 仍不会出现在任务栏；先清掉 TOOLWINDOW 再强制加入。
+        taskbar_style = (ex_style & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, taskbar_style)
         user32.SetWindowPos(hwnd, None, 0, 0, 0, 0,
                              SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED)
         if refresh_shell:
