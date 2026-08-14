@@ -40,6 +40,7 @@ from dstools.features.world.location_profiles import (  # noqa: E402
     PORKLAND_MOD_ID,
     SHIPWRECKED_LOCATION,
     VOLCANO_LOCATION,
+    missing_installed_mod_ids,
     resolve_world_location_profile,
 )
 from dstools.features.world.mod_settings import get_mod_world_settings  # noqa: E402
@@ -293,6 +294,40 @@ def test_main_mod_dependency_confirmation() -> None:
     assert not declined.dirty_marked and not declined.world_stale
 
 
+def test_creation_installed_mod_id_normalization() -> None:
+    child_key = f"workshop-{IA_SHIPWRECKED_MOD_ID}"
+    core_key = f"workshop-{IA_CORE_MOD_ID}"
+    assert not missing_installed_mod_ids(
+        {child_key, core_key},
+        {child_key: object(), core_key: object()},
+    )
+    assert missing_installed_mod_ids(
+        {child_key},
+        {child_key: object()},
+    ) == frozenset({IA_CORE_MOD_ID})
+
+
+def test_creation_error_dialog_uses_wizard_parent() -> None:
+    with TemporaryDirectory() as directory:
+        tab = WorldCreationTab.__new__(WorldCreationTab)
+        tab.frame = _FrameProbe()
+        tab._ensure_page = lambda _key: None
+        tab._mod_scan_running = False
+        tab._plan_master = object()
+        tab._plan_caves = object()
+        tab.name_var = SimpleNamespace(get=lambda: "Cluster_Test")
+        tab._template_root = Path(directory)
+        tab._server_root = Path(directory)
+        tab._enabled_mod_ids = lambda: {f"workshop-{IA_SHIPWRECKED_MOD_ID}"}
+        tab._mod_data = {}
+
+        with patch("dstools.features.world.creation_tab.dlg.show_error") as error:
+            tab._create()
+        error.assert_called_once()
+        assert error.call_args.args[0] is tab.frame
+        assert "缺少已选择 Mod" in error.call_args.args[2]
+
+
 def test_pending_mod_world_preview() -> None:
     cluster = SimpleNamespace(name="Cluster_Test", path=Path("C:/saves/Cluster_Test"))
     tab = ModManagerTab.__new__(ModManagerTab)
@@ -412,6 +447,8 @@ def main() -> None:
         test_world_setting_icon_rendering,
         test_creation_dependency_confirmation,
         test_main_mod_dependency_confirmation,
+        test_creation_installed_mod_id_normalization,
+        test_creation_error_dialog_uses_wizard_parent,
         test_pending_mod_world_preview,
         test_creation_matrix,
         test_creation_rejects_invalid_combinations,

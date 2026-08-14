@@ -22,6 +22,7 @@ from dstools.features.world.location_profiles import (
     MASTER_SHARD,
     find_mod_key,
     get_location_definition,
+    missing_installed_mod_ids,
     resolve_world_location_profile,
     with_required_dependencies,
 )
@@ -776,7 +777,7 @@ class WorldCreationTab:
             self.status_var.set("Mod 仍在扫描，请稍候完成后再创建存档")
             return
         if not self._plan_master or not self._plan_caves:
-            dlg.show_error(self.app.root, "创建存档", "请先选择默认模板")
+            dlg.show_error(self.frame.winfo_toplevel(), "创建存档", "请先选择默认模板")
             return
         try:
             name = self.name_var.get().strip()
@@ -800,8 +801,9 @@ class WorldCreationTab:
                     f"存档名称“{name}”已存在，请换一个名称。",
                 )
                 return
-            effective_mod_ids = with_required_dependencies(self._enabled_mod_ids())
-            missing_mod_ids = sorted(effective_mod_ids.difference(self._mod_data))
+            missing_mod_ids = sorted(missing_installed_mod_ids(
+                self._enabled_mod_ids(), self._mod_data,
+            ))
             if missing_mod_ids:
                 raise FileNotFoundError(
                     "缺少已选择 Mod 或其依赖：" + "、".join(missing_mod_ids)
@@ -823,9 +825,16 @@ class WorldCreationTab:
                 ),
                 root,
             )
-            dlg.show_info(self.app.root, "创建存档", f"已创建：{out}")
+            dlg.show_info(self.frame.winfo_toplevel(), "创建存档", f"已创建：{out}")
+            # 存档已经原子写入并通过 create_world() 返回成功；用户确认
+            # 成功提示后关闭独立创建向导，避免向导继续占着一个已经完成的
+            # 创建会话。_CreationWindowChrome 会把关闭请求转发给入口页，
+            # 同时负责 dispose() 和清理临时服务器配置草稿。
+            close_wizard = getattr(self.app, "_on_close", None)
+            if callable(close_wizard):
+                close_wizard()
         except Exception as exc:
-            dlg.show_error(self.app.root, "创建存档失败", str(exc))
+            dlg.show_error(self.frame.winfo_toplevel(), "创建存档失败", str(exc))
 
     def refresh(self): pass
     def on_cluster_changed(self, *_args): pass
