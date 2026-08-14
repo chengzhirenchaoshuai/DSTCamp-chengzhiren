@@ -8,6 +8,8 @@ location_profiles.py、catalog_resolver.py 和 mod_settings.py 的登记表中�
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +47,9 @@ from dstools.features.world.icons import get_pil_icon  # noqa: E402
 from dstools.features.world.render import render_world_panel  # noqa: E402
 from dstools.features.world.reader import WorldOverride  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
+from dstools.features.mod.tab import ModManagerTab  # noqa: E402
+from dstools.features.world.creation_tab import WorldCreationTab  # noqa: E402
+from dstools.models import ModEntry  # noqa: E402
 from PIL import Image  # noqa: E402
 from dstools.shared.lua_parser import (  # noqa: E402
     parse_lua_file,
@@ -190,6 +195,80 @@ def test_world_setting_icon_rendering() -> None:
     assert (255, 0, 255) in set(panel.getdata())
 
 
+class _StatusProbe:
+    def __init__(self):
+        self.value = ""
+
+    def set(self, value):
+        self.value = value
+
+
+class _FrameProbe:
+    def winfo_toplevel(self):
+        return self
+
+
+def _dependency_tab() -> WorldCreationTab:
+    tab = WorldCreationTab.__new__(WorldCreationTab)
+    tab.frame = _FrameProbe()
+    tab.status_var = _StatusProbe()
+    tab._selected_mod_ids = {IA_SHIPWRECKED_MOD_ID}
+    tab._mod_data = {
+        IA_SHIPWRECKED_MOD_ID: ModEntry(
+            workshop_id=IA_SHIPWRECKED_MOD_ID, enabled=True,
+        ),
+        IA_CORE_MOD_ID: ModEntry(
+            workshop_id=IA_CORE_MOD_ID, enabled=False,
+        ),
+    }
+    return tab
+
+
+def test_creation_dependency_confirmation() -> None:
+    accepted = _dependency_tab()
+    with patch(
+        "dstools.features.world.creation_tab.dlg.ask_yes_no", return_value=True,
+    ) as confirm:
+        assert accepted._ensure_island_adventures_dependency(show_dialog=True)
+    confirm.assert_called_once()
+    assert accepted._mod_data[IA_CORE_MOD_ID].enabled
+    assert IA_CORE_MOD_ID in accepted._selected_mod_ids
+
+    declined = _dependency_tab()
+    with patch(
+        "dstools.features.world.creation_tab.dlg.ask_yes_no", return_value=False,
+    ):
+        assert not declined._ensure_island_adventures_dependency(show_dialog=True)
+    assert not declined._mod_data[IA_SHIPWRECKED_MOD_ID].enabled
+    assert IA_SHIPWRECKED_MOD_ID not in declined._selected_mod_ids
+    assert not declined._mod_data[IA_CORE_MOD_ID].enabled
+
+
+def test_pending_mod_world_preview() -> None:
+    cluster = SimpleNamespace(name="Cluster_Test", path=Path("C:/saves/Cluster_Test"))
+    tab = ModManagerTab.__new__(ModManagerTab)
+    tab._dirty = True
+    tab._loading = False
+    tab._loading_key = (cluster.name, "Master")
+    tab._mod_data = {
+        "workshop-1289779251": ModEntry(
+            workshop_id="workshop-1289779251", enabled=True,
+        ),
+        "workshop-3322803908": ModEntry(
+            workshop_id="workshop-3322803908", enabled=False,
+        ),
+    }
+    tab._get_cluster = lambda: cluster
+    assert tab.get_pending_enabled_mod_ids(cluster) == frozenset({CHERRY_FOREST_MOD_ID})
+
+    # 没有待保存状态，或请求的是另一个存档时，必须退回磁盘数据。
+    tab._dirty = False
+    assert tab.get_pending_enabled_mod_ids(cluster) is None
+    tab._dirty = True
+    other = SimpleNamespace(name="Other", path=Path("C:/saves/Other"))
+    assert tab.get_pending_enabled_mod_ids(other) is None
+
+
 def test_creation_matrix() -> None:
     with TemporaryDirectory() as directory:
         root = Path(directory)
@@ -282,6 +361,8 @@ def main() -> None:
         test_lua_multiline_roundtrip,
         test_en_zh_mod_metadata,
         test_world_setting_icon_rendering,
+        test_creation_dependency_confirmation,
+        test_pending_mod_world_preview,
         test_creation_matrix,
         test_creation_rejects_invalid_combinations,
         test_porkland_creation,

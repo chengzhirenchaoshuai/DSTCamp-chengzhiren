@@ -196,7 +196,16 @@ class WorldSettingsTab:
             get_mod_categories,
             get_mod_world_settings,
         )
-        all_mod_settings = get_mod_world_settings(get_enabled_mod_ids(c))
+        enabled_mod_ids = get_enabled_mod_ids(c)
+        # Mod 管理的开关在点击“保存修改”前只存在内存里。世界设置优先
+        # 使用同一存档的待保存集合做即时预览；没有待保存修改时仍以磁盘
+        # 为准，绝不因为查看世界设置而隐式保存 Mod。
+        mod_tab = getattr(self.app, "mod_tab", None)
+        if mod_tab is not None:
+            pending = mod_tab.get_pending_enabled_mod_ids(c)
+            if pending is not None:
+                enabled_mod_ids = pending
+        all_mod_settings = get_mod_world_settings(enabled_mod_ids)
         # 图标解析要读 mod 自己的图集文件（真机验证过：只有第一次或者
         # mod 更新过才会真的调 ktech.exe，其余时候直接命中磁盘缓存），
         # 没有贡献设置的存档这里是空字典，不会碰任何文件。

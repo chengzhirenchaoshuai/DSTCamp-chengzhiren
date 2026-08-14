@@ -638,8 +638,26 @@ class WorldCreationTab:
             if show_dialog:
                 dlg.show_error(self.frame.winfo_toplevel(), "缺少 Mod 依赖", message)
             return False
+        if not core.enabled and show_dialog:
+            if not dlg.ask_yes_no(
+                self.frame.winfo_toplevel(),
+                t("mod.dependency_required_title"),
+                t(
+                    "mod.dependency_required_confirm",
+                    mod="岛屿冒险 - 海难",
+                    dependency="岛屿冒险 - 核心 (3435352667)",
+                ),
+            ):
+                child.enabled = False
+                self._selected_mod_ids.discard(IA_SHIPWRECKED_MOD_ID)
+                self.status_var.set(t("mod.dependency_enable_cancelled"))
+                return False
         core.enabled = True
         self._selected_mod_ids.add(IA_CORE_MOD_ID)
+        if show_dialog:
+            self.status_var.set(
+                t("mod.dependency_enabled", dependency="岛屿冒险 - 核心")
+            )
         return True
 
     def _open_mod_config(self, mod_id):

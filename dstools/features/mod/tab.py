@@ -760,9 +760,35 @@ class ModManagerTab:
         self._md_ba.configure(state=tk.NORMAL)
 
     def _clear_dirty(self):
+        had_pending_preview = self._dirty
         self._dirty = False
         self._md_bs.configure(state=tk.DISABLED)
         self._md_ba.configure(state=tk.DISABLED)
+        if had_pending_preview:
+            # 重新读取磁盘会丢弃尚未保存的 Mod 开关；世界设置如果已经
+            # 展示过那份预览，也要标脏以便恢复成真实磁盘状态。
+            self.app.mark_world_tab_stale()
+
+    def get_pending_enabled_mod_ids(self, cluster):
+        """返回当前存档尚未保存的启用集合；没有可靠预览时返回 None。
+
+        世界设置页用它即时预览 Mod 开关，但不会因此写盘。只有当前加载
+        完成、确实有未保存修改且仍是同一个存档时才提供，避免把一个存档
+        的临时状态串到另一个存档。
+        """
+        if not self._dirty or self._loading or cluster is None:
+            return None
+        selected = self._get_cluster()
+        if selected is None or getattr(selected, "path", None) != getattr(cluster, "path", None):
+            return None
+        loading_key = getattr(self, "_loading_key", None)
+        if loading_key and loading_key[0] != cluster.name:
+            return None
+        return frozenset(
+            str(workshop_id).removeprefix("workshop-")
+            for workshop_id, mod in self._mod_data.items()
+            if mod.enabled
+        )
 
     def _build_rows(self):
         ft = self.filter_var.get().lower()
@@ -875,6 +901,9 @@ class ModManagerTab:
         if not mod: return
         mod.enabled = not mod.enabled
         self._mark_dirty()
+        # 切到世界设置时立即按尚未保存的 Mod 开关重建目录，不要求用户
+        # 为了查看设置项先执行一次磁盘保存。
+        self.app.mark_world_tab_stale()
         self._render_list()
 
     def _on_filter_changed(self, *_args):

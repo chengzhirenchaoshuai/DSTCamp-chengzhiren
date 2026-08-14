@@ -470,6 +470,10 @@ STRINGS = {
         "mod.location_picker_title": "选择 Steam 客户端 mods 文件夹",
         "mod.location_recheck_not_found": "没能重新识别到 Mod 位置，请点「更换路径」手动指定。",
         "mod.id_copied_toast": "已复制: {id}",
+        "mod.dependency_required_title": "需要依赖 Mod",
+        "mod.dependency_required_confirm": "“{mod}”必须同时启用“{dependency}”才能正常运行。是否同时启用？",
+        "mod.dependency_enabled": "已同时启用依赖 Mod：{dependency}",
+        "mod.dependency_enable_cancelled": "已取消启用：未启用所需的依赖 Mod",
 
         # Mod 配置集
         "mod.preset_save_btn": "保存为配置集",
@@ -1088,6 +1092,10 @@ STRINGS = {
         "mod.location_picker_title": "Select the Steam client's mods folder",
         "mod.location_recheck_not_found": "Couldn't re-detect the mod location -- click \"Change Path\" to set it manually.",
         "mod.id_copied_toast": "Copied: {id}",
+        "mod.dependency_required_title": "Required Dependency",
+        "mod.dependency_required_confirm": "{mod} requires {dependency} to work. Enable the dependency too?",
+        "mod.dependency_enabled": "Also enabled required dependency: {dependency}",
+        "mod.dependency_enable_cancelled": "Enable cancelled because the required dependency was not enabled",
 
         # Mod presets
         "mod.preset_save_btn": "Save as Preset",
