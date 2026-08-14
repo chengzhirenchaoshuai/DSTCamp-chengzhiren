@@ -63,11 +63,7 @@ def shard_plan_from_template(path: Path) -> WorldShardPlan:
 
 
 def default_plans_from_cluster(cluster_root: Path) -> tuple[WorldShardPlan, WorldShardPlan]:
-    """Load verified Master/Caves defaults from a complete cluster template."""
+    """读取两个官方分片目录，不再把目录名误当成固定 location。"""
     master = shard_plan_from_template(cluster_root / "Master" / "leveldataoverride.lua")
     caves = shard_plan_from_template(cluster_root / "Caves" / "leveldataoverride.lua")
-    if caves.location != "cave":
-        raise ValueError("默认模板的 Caves 必须是 cave")
-    if master.location not in {"forest", "porkland"}:
-        raise ValueError("默认模板的 Master 必须是 forest 或 porkland")
     return master, caves

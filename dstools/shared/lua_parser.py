@@ -623,8 +623,16 @@ def _lua_value(value: Any) -> str:
             return str(int(value))
         return str(value)
     elif isinstance(value, str):
-        # 转义特殊字符
-        escaped = value.replace('\\', '\\\\').replace('"', '\\"')
+        # Lua 的短字符串不能直接跨行。按顺序先转义反斜杠，
+        # 再转义会破坏引号或行结构的字符，保证序列化结果可被
+        # 游戏和本项目解析器共同读取。
+        escaped = (
+            value.replace('\\', '\\\\')
+            .replace('"', '\\"')
+            .replace('\r', '\\r')
+            .replace('\n', '\\n')
+            .replace('\t', '\\t')
+        )
         return f'"{escaped}"'
     elif value is None:
         return "nil"
@@ -635,5 +643,4 @@ def _lua_value(value: Any) -> str:
         return f"{{ {items} }}"
     else:
         return f'"{value}"'
-
 

@@ -12,8 +12,12 @@ from pathlib import Path
 import shutil
 import tempfile
 
-from dstools.features.world.location_selector import (
-    CAVE_LOCATION, FOREST_LOCATION, PORKLAND_LOCATION, PORKLAND_MOD_ID,
+from dstools.features.world.location_profiles import (
+    get_location_definition,
+    location_requirements_met,
+    normalize_mod_ids,
+    resolve_world_location_profile,
+    with_required_dependencies,
 )
 from dstools.shared.ini_parser import write_cluster_ini, write_server_ini
 from dstools.models import ClusterConfig, ShardConfig
@@ -46,14 +50,8 @@ class WorldCreationPlan:
     block_ids: tuple[str, ...] = ()
 
 
-def validate_creation_plan(plan: WorldCreationPlan) -> None:
-    if not plan.cluster_name or any(ch in plan.cluster_name for ch in '\\/:*?"<>|'):
-        raise ValueError("非法存档名称")
-    if plan.master.location not in (FOREST_LOCATION, PORKLAND_LOCATION):
-        raise ValueError("Master 世界类型无效")
-    if plan.caves.location != CAVE_LOCATION:
-        raise ValueError("Caves 必须使用 cave 世界")
-    normalized = {str(value).removeprefix("workshop-") for value in plan.mod_ids}
+def _selected_mod_ids(plan: WorldCreationPlan) -> frozenset[str]:
+    normalized = set(normalize_mod_ids(plan.mod_ids))
     for value, entry in plan.mod_overrides.items():
         mod_id = str(value).removeprefix("workshop-")
         enabled = not isinstance(entry, dict) or bool(entry.get("enabled", True))
@@ -61,8 +59,50 @@ def validate_creation_plan(plan: WorldCreationPlan) -> None:
             normalized.add(mod_id)
         else:
             normalized.discard(mod_id)
-    if plan.master.location == PORKLAND_LOCATION and PORKLAND_MOD_ID not in normalized:
-        raise ValueError("猪镇世界必须启用 3322803908 Mod")
+    return frozenset(normalized)
+
+
+def resolve_creation_mods(
+    plan: WorldCreationPlan,
+) -> tuple[frozenset[str], dict[str, dict]]:
+    """补齐硬依赖并返回两个分片应写入的统一 Mod 配置。"""
+    selected = _selected_mod_ids(plan)
+    effective = with_required_dependencies(selected)
+    overrides = copy_mod_overrides(plan.mod_overrides)
+    for mod_id in effective:
+        overrides.setdefault(mod_id, {"enabled": True})
+        overrides[mod_id]["enabled"] = True
+    return effective, overrides
+
+
+def copy_mod_overrides(source: dict[str, dict]) -> dict[str, dict]:
+    result: dict[str, dict] = {}
+    for value, entry in source.items():
+        key = str(value).removeprefix("workshop-")
+        result[key] = dict(entry) if isinstance(entry, dict) else {}
+    return result
+
+
+def validate_creation_plan(plan: WorldCreationPlan) -> None:
+    if not plan.cluster_name or any(ch in plan.cluster_name for ch in '\\/:*?"<>|'):
+        raise ValueError("非法存档名称")
+
+    selected = _selected_mod_ids(plan)
+    effective = with_required_dependencies(selected)
+    profile = resolve_world_location_profile(effective)
+    if profile.warnings:
+        raise ValueError(profile.warnings[0])
+
+    for shard_name, shard_plan in (("Master", plan.master), ("Caves", plan.caves)):
+        get_location_definition(shard_plan.location)
+        if shard_plan.location not in profile.available_locations(shard_name):
+            raise ValueError(
+                f"{shard_name} 当前不能使用 {shard_plan.location} 世界"
+            )
+        if not location_requirements_met(shard_plan.location, effective):
+            raise ValueError(f"{shard_plan.location} 世界缺少所需 Mod")
+        if not shard_plan.preset_id:
+            raise ValueError(f"{shard_name} 世界预设不能为空")
 
 
 def _write_lua(path: Path, data: dict) -> None:
@@ -158,6 +198,7 @@ def _write_shard(
 def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
     """Create a new cluster without overwriting an existing directory."""
     validate_creation_plan(plan)
+    effective_mod_ids, effective_mod_overrides = resolve_creation_mods(plan)
     destination = destination_root / plan.cluster_name
     if destination.exists():
         raise FileExistsError(destination)
@@ -177,11 +218,11 @@ def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
             "\n".join(plan.block_ids) + ("\n" if plan.block_ids else ""), encoding="utf-8"
         )
         _write_shard(
-            temp_dir / "Master", plan.master, plan.mod_ids, plan.mod_overrides,
+            temp_dir / "Master", plan.master, effective_mod_ids, effective_mod_overrides,
             plan.shard_configs.get("Master"),
         )
         _write_shard(
-            temp_dir / "Caves", plan.caves, plan.mod_ids, plan.mod_overrides,
+            temp_dir / "Caves", plan.caves, effective_mod_ids, effective_mod_overrides,
             plan.shard_configs.get("Caves"),
         )
         os.replace(temp_dir, destination)

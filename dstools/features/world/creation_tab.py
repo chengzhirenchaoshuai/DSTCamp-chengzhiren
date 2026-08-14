@@ -17,9 +17,12 @@ from dstools.features.world.defaults import (
 )
 from dstools.features.world.location_profiles import (
     CAVES_SHARD,
+    IA_CORE_MOD_ID,
+    IA_SHIPWRECKED_MOD_ID,
     MASTER_SHARD,
     get_location_definition,
     resolve_world_location_profile,
+    with_required_dependencies,
 )
 from dstools.features.world.mod_settings import get_mod_world_settings
 from dstools.features.world.categories import CATEGORY_COLORS
@@ -446,6 +449,7 @@ class WorldCreationTab:
             )
             if icon is not None:
                 self._icon_imgs[mod_id] = icon
+        self._ensure_island_adventures_dependency(show_dialog=False)
         if self._mod_scan_status is not None:
             self._mod_scan_status.set(f"已发现 {len(records)} 个 Mod")
         self._render_list()
@@ -568,6 +572,7 @@ class WorldCreationTab:
             saved = preset.mods.get(mod_id, {})
             mod.enabled = bool(saved.get("enabled", False)) if saved else False
             mod.configuration_options = copy.deepcopy(saved.get("configuration_options", {})) if saved else {}
+        self._ensure_island_adventures_dependency(show_dialog=True)
         if "world" in self._initialized_pages:
             self._reload_template(apply_profile_defaults=True)
         self._render_list()
@@ -582,6 +587,15 @@ class WorldCreationTab:
             self._selected_mod_ids.add(mod_id)
         else:
             self._selected_mod_ids.discard(mod_id)
+        if mod_id == IA_CORE_MOD_ID and not mod.enabled:
+            child = self._mod_data.get(IA_SHIPWRECKED_MOD_ID)
+            if child is not None and child.enabled:
+                child.enabled = False
+                self._selected_mod_ids.discard(IA_SHIPWRECKED_MOD_ID)
+                self.status_var.set("已同时关闭依赖岛屿冒险核心的海难内容包")
+        if not self._ensure_island_adventures_dependency(show_dialog=True):
+            self._render_list()
+            return
         self._save_mods(silent=True)
         # Mod 设置会影响可选世界类型；世界页尚未打开时先只更新会话状态，
         # 打开世界设置页再创建并填充下拉框。
@@ -590,6 +604,24 @@ class WorldCreationTab:
         # Mod 对应的世界设置，但仍然只在用户实际操作 Mod 后触发。
         self._reload_template(apply_profile_defaults=True)
         self._render_list()
+
+    def _ensure_island_adventures_dependency(self, show_dialog: bool) -> bool:
+        """启用 1467214795 时同步启用真实硬依赖 3435352667。"""
+        child = self._mod_data.get(IA_SHIPWRECKED_MOD_ID)
+        if child is None or not child.enabled:
+            return True
+        core = self._mod_data.get(IA_CORE_MOD_ID)
+        if core is None:
+            child.enabled = False
+            self._selected_mod_ids.discard(IA_SHIPWRECKED_MOD_ID)
+            message = "岛屿冒险 - 海难缺少依赖 Mod 3435352667，请先订阅并安装核心。"
+            self.status_var.set(message)
+            if show_dialog:
+                dlg.show_error(self.frame.winfo_toplevel(), "缺少 Mod 依赖", message)
+            return False
+        core.enabled = True
+        self._selected_mod_ids.add(IA_CORE_MOD_ID)
+        return True
 
     def _open_mod_config(self, mod_id):
         mod = self._mod_data.get(mod_id)
@@ -726,6 +758,12 @@ class WorldCreationTab:
                     f"存档名称“{name}”已存在，请换一个名称。",
                 )
                 return
+            effective_mod_ids = with_required_dependencies(self._enabled_mod_ids())
+            missing_mod_ids = sorted(effective_mod_ids.difference(self._mod_data))
+            if missing_mod_ids:
+                raise FileNotFoundError(
+                    "缺少已选择 Mod 或其依赖：" + "、".join(missing_mod_ids)
+                )
             self._sync_mod_overrides()
             server_settings = self._server_config.read_creation_settings() if self._server_config else {}
             out = create_world(
