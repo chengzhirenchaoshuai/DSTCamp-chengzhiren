@@ -10,8 +10,17 @@ from PIL import Image
 
 from dstools.features.world.creation import WorldCreationPlan, create_world, default_cluster_config
 from dstools.features.world.creation_server_config import CreationServerConfigTab
-from dstools.features.world.defaults import default_plans_from_cluster, find_verified_template
-from dstools.features.world.location_selector import available_master_locations
+from dstools.features.world.defaults import (
+    default_plan_for_location,
+    default_plans_from_cluster,
+    find_verified_template,
+)
+from dstools.features.world.location_profiles import (
+    CAVES_SHARD,
+    MASTER_SHARD,
+    get_location_definition,
+    resolve_world_location_profile,
+)
 from dstools.features.world.mod_settings import get_mod_world_settings
 from dstools.features.world.categories import CATEGORY_COLORS
 from dstools.features.world.render import REF_WIDTH, render_world_panel
@@ -48,10 +57,15 @@ class WorldCreationTab:
         self.app = app
         self.frame = BgFrame(parent, app, bg=theme.BG_SOFT)
         self._plan_master = self._plan_caves = None
+        self._location_drafts = {}
+        self._user_selected_location_shards: set[str] = set()
+        self._world_profile = resolve_world_location_profile(set())
+        self._location_display_to_id = {}
         self._rules_by_cat = {}; self._gen_by_cat = {}
         self._rules_cats = []; self._gen_cats = []
         self._mod_settings = {}
         self._template_root = None
+        self._server_root = None
         self._selected_mod_ids: set[str] = set()
         self._mod_overrides: dict[str, dict] = {}
         self._mod_data: dict[str, ModEntry] = {}
@@ -136,27 +150,34 @@ class WorldCreationTab:
         self._initialized_pages.add(page_key)
 
     def _on_location_changed(self, _event=None) -> None:
-        """仅在世界设置页已初始化后重载模板，保持顶部选择器轻量。"""
-        if "world" in self._initialized_pages:
-            self._reload_template()
+        """只切换当前分片的 location，不污染另一分片或其他 location 草稿。"""
+        shard = self.shard_var.get()
+        location = self._location_display_to_id.get(self.location_var.get())
+        if not location:
+            return
+        self._user_selected_location_shards.add(shard)
+        self._switch_shard_location(shard, location)
+
+    def _on_shard_changed(self, _event=None) -> None:
+        self._refresh_location_combo()
+        self._render()
 
     def _build_world_panel(self) -> None:
         """构造与外层“世界设置”一致的世界选择、说明和双子页签。"""
         toolbar = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
         toolbar.pack(fill=tk.X, padx=12, pady=(10, 6))
-        make_toolbar_label(toolbar, self.app, lambda: "Master 世界").pack(side=tk.LEFT)
-        self.location_var = tk.StringVar(value="forest")
-        self.location_combo = MenuCombo(toolbar, textvariable=self.location_var, width=16)
-        self.location_combo["values"] = available_master_locations(self._enabled_mod_ids())
-        self.location_combo.pack(side=tk.LEFT, padx=(5, 16))
-        self.location_combo.bind("<<ComboboxSelected>>", self._on_location_changed)
         make_toolbar_label(toolbar, self.app, lambda: "世界").pack(side=tk.LEFT)
-        self.shard_var = tk.StringVar(value="Master")
+        self.shard_var = tk.StringVar(value=MASTER_SHARD)
         self.shard_combo = MenuCombo(toolbar, textvariable=self.shard_var, width=14)
-        self.shard_combo["values"] = ("Master", "Caves")
+        self.shard_combo["values"] = (MASTER_SHARD, CAVES_SHARD)
         self.shard_combo.current(0)
-        self.shard_combo.pack(side=tk.LEFT, padx=5)
-        self.shard_combo.bind("<<ComboboxSelected>>", lambda _e: self._render())
+        self.shard_combo.pack(side=tk.LEFT, padx=(5, 16))
+        self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_changed)
+        make_toolbar_label(toolbar, self.app, lambda: "选择世界").pack(side=tk.LEFT)
+        self.location_var = tk.StringVar()
+        self.location_combo = MenuCombo(toolbar, textvariable=self.location_var, width=16)
+        self.location_combo.pack(side=tk.LEFT, padx=5)
+        self.location_combo.bind("<<ComboboxSelected>>", self._on_location_changed)
 
         self._world_info_frame = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
         self._world_info_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
@@ -254,24 +275,83 @@ class WorldCreationTab:
         self._mod_panel.frame.pack(fill=tk.BOTH, expand=True)
         self._build_mod_list()
 
-    def _reload_template(self):
+    def _reload_template(self, apply_profile_defaults: bool = False):
         try:
             from dstools.shared.discovery import find_klei_root
             root = find_klei_root()
             if root is None:
                 raise FileNotFoundError("未找到 Klei 存档目录")
-            template_root = find_verified_template(root, self.location_var.get())
+            template_root = find_verified_template(root, "forest")
+            # 模板可以来自用户级本地存档，但新建的集群必须始终落在
+            # DoNotStarveTogether 根目录下，避免误写进 Steam 用户 ID 目录。
+            self._server_root = root
             self._template_root = template_root
-            master, caves = default_plans_from_cluster(template_root)
-            if self.location_var.get() != master.location:
-                from dstools.features.world.location_selector import select_master_location
-                master = select_master_location(master, self.location_var.get())
-            self._plan_master, self._plan_caves = master, caves
-            self._mod_settings = get_mod_world_settings(self._enabled_mod_ids())
+            if self._plan_master is None or self._plan_caves is None:
+                master, caves = default_plans_from_cluster(template_root)
+                self._plan_master, self._plan_caves = master, caves
+                self._location_drafts[(MASTER_SHARD, master.location)] = master
+                self._location_drafts[(CAVES_SHARD, caves.location)] = caves
+                apply_profile_defaults = True
+
+            profile = resolve_world_location_profile(self._enabled_mod_ids())
+            profile_changed = profile.effective_mod_ids != self._world_profile.effective_mod_ids
+            self._world_profile = profile
+            if apply_profile_defaults and profile_changed:
+                for shard in (MASTER_SHARD, CAVES_SHARD):
+                    if shard not in self._user_selected_location_shards:
+                        self._switch_shard_location(
+                            shard, profile.default_location(shard), render=False,
+                        )
+            for shard in (MASTER_SHARD, CAVES_SHARD):
+                plan = self._plan_for_shard(shard)
+                if plan and plan.location not in profile.available_locations(shard):
+                    self._switch_shard_location(
+                        shard, profile.default_location(shard), render=False,
+                    )
+
+            self._mod_settings = get_mod_world_settings(profile.effective_mod_ids)
+            self._refresh_location_combo()
             self._render()
-            self.status_var.set("")
+            self.status_var.set(profile.warnings[0] if profile.warnings else "")
         except Exception as exc:
             self.status_var.set(str(exc))
+
+    def _plan_for_shard(self, shard: str):
+        return self._plan_caves if shard == CAVES_SHARD else self._plan_master
+
+    def _set_plan_for_shard(self, shard: str, plan) -> None:
+        if shard == CAVES_SHARD:
+            self._plan_caves = plan
+        else:
+            self._plan_master = plan
+
+    def _switch_shard_location(self, shard: str, location: str, render: bool = True) -> None:
+        if location not in self._world_profile.available_locations(shard):
+            raise ValueError(f"{shard} 当前不能选择 {location}")
+        current = self._plan_for_shard(shard)
+        if current is not None:
+            self._location_drafts[(shard, current.location)] = current
+        plan = self._location_drafts.get((shard, location))
+        if plan is None:
+            plan = default_plan_for_location(location)
+            self._location_drafts[(shard, location)] = plan
+        self._set_plan_for_shard(shard, plan)
+        if render:
+            self._refresh_location_combo()
+            self._render()
+
+    def _refresh_location_combo(self) -> None:
+        if not hasattr(self, "location_combo"):
+            return
+        shard = self.shard_var.get() or MASTER_SHARD
+        locations = self._world_profile.available_locations(shard)
+        self._location_display_to_id = {
+            get_location_definition(location).name_zh: location for location in locations
+        }
+        self.location_combo["values"] = tuple(self._location_display_to_id)
+        plan = self._plan_for_shard(shard)
+        location = plan.location if plan else self._world_profile.default_location(shard)
+        self.location_var.set(get_location_definition(location).name_zh)
 
     def _enabled_mod_ids(self):
         return set(self._selected_mod_ids)
@@ -488,10 +568,7 @@ class WorldCreationTab:
             mod.enabled = bool(saved.get("enabled", False)) if saved else False
             mod.configuration_options = copy.deepcopy(saved.get("configuration_options", {})) if saved else {}
         if "world" in self._initialized_pages:
-            self.location_combo["values"] = available_master_locations(self._selected_mod_ids)
-            if self.location_var.get() not in self.location_combo["values"]:
-                self.location_var.set("forest")
-            self._reload_template()
+            self._reload_template(apply_profile_defaults=True)
         self._render_list()
         self.status_var.set(f"已载入 Mod 配置集：{preset.name}")
 
@@ -508,12 +585,9 @@ class WorldCreationTab:
         # Mod 设置会影响可选世界类型；世界页尚未打开时先只更新会话状态，
         # 打开世界设置页再创建并填充下拉框。
         self._ensure_page("world")
-        self.location_combo["values"] = available_master_locations(self._selected_mod_ids)
-        if self.location_var.get() not in self.location_combo["values"]:
-            self.location_var.set("forest")
         # Mod 页面已经加载时，世界模板可能尚未初始化；此处需要更新
         # Mod 对应的世界设置，但仍然只在用户实际操作 Mod 后触发。
-        self._reload_template()
+        self._reload_template(apply_profile_defaults=True)
         self._render_list()
 
     def _open_mod_config(self, mod_id):
@@ -602,7 +676,7 @@ class WorldCreationTab:
         self._render()
 
     def _active_preset(self):
-        return self._plan_caves if self.shard_var.get() == "Caves" else self._plan_master
+        return self._plan_for_shard(self.shard_var.get())
 
     def _create(self):
         self._ensure_page("server")
@@ -618,7 +692,9 @@ class WorldCreationTab:
             name = self.name_var.get().strip()
             if self._template_root is None:
                 raise FileNotFoundError("未找到默认世界模板")
-            root = self._template_root.parent
+            root = self._server_root
+            if root is None:
+                raise FileNotFoundError("未找到服务器存档目录")
             name_error = validate_cluster_folder_name(name)
             if name_error == "empty":
                 dlg.show_error(self.frame.winfo_toplevel(), "创建存档", "存档名称不能为空")

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from dstools.features.world.creation import WorldShardPlan
+from dstools.features.world.location_profiles import get_location_definition
 from dstools.features.world.reader import LeveldataStatus, load_leveldata
 
 
@@ -26,6 +27,18 @@ def find_verified_template(klei_root: Path, location: str) -> Path:
     return sorted(candidates, key=lambda p: p.name)[0]
 
 
+def default_plan_for_location(location: str) -> WorldShardPlan:
+    """按已验证预设创建一个干净计划，由游戏预设补齐 location 默认值。"""
+    definition = get_location_definition(location)
+    return WorldShardPlan(
+        location=location,
+        preset_id=definition.default_preset_id,
+        name=definition.name_zh,
+        description=definition.description_zh,
+        overrides={},
+    )
+
+
 def shard_plan_from_template(path: Path) -> WorldShardPlan:
     """Convert a real game-generated leveldataoverride.lua into a plan.
 
@@ -36,7 +49,9 @@ def shard_plan_from_template(path: Path) -> WorldShardPlan:
     if result.status != LeveldataStatus.OK or result.preset is None:
         raise ValueError(f"无法读取官方世界模板: {path}")
     preset = result.preset
-    if preset.location not in {"forest", "cave", "porkland"}:
+    try:
+        get_location_definition(preset.location)
+    except ValueError as exc:
         raise ValueError(f"模板世界类型无效: {preset.location}")
     return WorldShardPlan(
         location=preset.location,
