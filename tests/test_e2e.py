@@ -1065,7 +1065,9 @@ def test_porkland_location_selector():
     from dstools.features.world.reader import WorldOverride, WorldPreset
 
     assert available_master_locations(set()) == ("forest",)
-    assert available_master_locations({"workshop-3322803908"}) == ("forest", "porkland")
+    # 3322803908 的发布版 modservercreationmain.lua 把 Master 候选表
+    # 明确写成仅 PORKLAND；森林只在开发模式/显式开关下才会加入。
+    assert available_master_locations({"workshop-3322803908"}) == ("porkland",)
     preset = WorldPreset(
         preset_id="SURVIVAL_TOGETHER", name="地上", location="forest",
         overrides=[WorldOverride(key="task_set", value="default")],
