@@ -419,7 +419,8 @@ class DSToolsApp:
 
     def _dismiss_entry_focus(self, event):
         """点击到的控件本身不是输入框时，如果当前焦点停在某个 Entry/Text
-        上，把焦点转移到 root 上（不选中任何东西的中性容器）。点到的正
+        上，把焦点转移到实际点击控件所属的顶层窗口（不选中任何东西的
+        中性容器）。点到的正
         好是另一个 Entry/Text 时提前放行——那种情况原生点击行为本来就会
         正确把焦点转过去，这里再抢一道反而会把刚刚拿到的焦点立刻夺回
         来，导致点哪个输入框都对不上光标。"""
@@ -433,7 +434,13 @@ class DSToolsApp:
         except (KeyError, tk.TclError):
             return
         if isinstance(focused, (tk.Entry, ttk.Entry, tk.Text)):
-            self.root.focus_set()
+            # bind_all 会同时收到独立创建向导 Toplevel 内的点击。如果
+            # 这里固定让主 root 获取焦点，Windows 就会把主窗口重新激活
+            # 并盖到创建窗口上。焦点必须留在用户真正点击的顶层窗口内。
+            try:
+                widget.winfo_toplevel().focus_set()
+            except tk.TclError:
+                pass
 
     def _on_close(self):
         """窗口右上角 X 专用入口——按"设置"里"关闭时最小化到任务栏"这
