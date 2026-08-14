@@ -20,6 +20,7 @@ from dstools.features.world.location_profiles import (
     IA_CORE_MOD_ID,
     IA_SHIPWRECKED_MOD_ID,
     MASTER_SHARD,
+    find_mod_key,
     get_location_definition,
     resolve_world_location_profile,
     with_required_dependencies,
@@ -606,11 +607,12 @@ class WorldCreationTab:
             self._selected_mod_ids.add(mod_id)
         else:
             self._selected_mod_ids.discard(mod_id)
-        if mod_id == IA_CORE_MOD_ID and not mod.enabled:
-            child = self._mod_data.get(IA_SHIPWRECKED_MOD_ID)
+        if str(mod_id).removeprefix("workshop-") == IA_CORE_MOD_ID and not mod.enabled:
+            child_key = find_mod_key(self._mod_data, IA_SHIPWRECKED_MOD_ID)
+            child = self._mod_data.get(child_key) if child_key else None
             if child is not None and child.enabled:
                 child.enabled = False
-                self._selected_mod_ids.discard(IA_SHIPWRECKED_MOD_ID)
+                self._selected_mod_ids.discard(child_key)
                 self.status_var.set("已同时关闭依赖岛屿冒险核心的海难内容包")
         if not self._ensure_island_adventures_dependency(show_dialog=True):
             self._render_list()
@@ -626,13 +628,15 @@ class WorldCreationTab:
 
     def _ensure_island_adventures_dependency(self, show_dialog: bool) -> bool:
         """启用 1467214795 时同步启用真实硬依赖 3435352667。"""
-        child = self._mod_data.get(IA_SHIPWRECKED_MOD_ID)
+        child_key = find_mod_key(self._mod_data, IA_SHIPWRECKED_MOD_ID)
+        child = self._mod_data.get(child_key) if child_key else None
         if child is None or not child.enabled:
             return True
-        core = self._mod_data.get(IA_CORE_MOD_ID)
+        core_key = find_mod_key(self._mod_data, IA_CORE_MOD_ID)
+        core = self._mod_data.get(core_key) if core_key else None
         if core is None:
             child.enabled = False
-            self._selected_mod_ids.discard(IA_SHIPWRECKED_MOD_ID)
+            self._selected_mod_ids.discard(child_key)
             message = "岛屿冒险 - 海难缺少依赖 Mod 3435352667，请先订阅并安装核心。"
             self.status_var.set(message)
             if show_dialog:
@@ -649,11 +653,11 @@ class WorldCreationTab:
                 ),
             ):
                 child.enabled = False
-                self._selected_mod_ids.discard(IA_SHIPWRECKED_MOD_ID)
+                self._selected_mod_ids.discard(child_key)
                 self.status_var.set(t("mod.dependency_enable_cancelled"))
                 return False
         core.enabled = True
-        self._selected_mod_ids.add(IA_CORE_MOD_ID)
+        self._selected_mod_ids.add(core_key)
         if show_dialog:
             self.status_var.set(
                 t("mod.dependency_enabled", dependency="岛屿冒险 - 核心")

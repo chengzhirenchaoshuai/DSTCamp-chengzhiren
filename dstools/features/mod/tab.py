@@ -28,6 +28,11 @@ from dstools.features.mod.parser import (
     resolve_wegame_client_mods_dir, visible_config_options,
 )
 from dstools.features.mod.sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync, remove_mod_sync_junction
+from dstools.features.world.location_profiles import (
+    IA_CORE_MOD_ID,
+    IA_SHIPWRECKED_MOD_ID,
+    find_mod_key,
+)
 from dstools.shared.gui import fonts, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
@@ -900,6 +905,38 @@ class ModManagerTab:
         mod = self._mod_data.get(workshop_id)
         if not mod: return
         mod.enabled = not mod.enabled
+        normalized_id = str(workshop_id).removeprefix("workshop-")
+        if normalized_id == IA_SHIPWRECKED_MOD_ID and mod.enabled:
+            core_key = find_mod_key(self._mod_data, IA_CORE_MOD_ID)
+            core = self._mod_data.get(core_key) if core_key else None
+            if core is None:
+                mod.enabled = False
+                dlg.show_error(
+                    self.app.root,
+                    "缺少 Mod 依赖",
+                    "岛屿冒险 - 海难缺少依赖 Mod 3435352667，请先订阅并安装核心。",
+                )
+                self._render_list()
+                return
+            if not core.enabled:
+                if not dlg.ask_yes_no(
+                    self.app.root,
+                    t("mod.dependency_required_title"),
+                    t(
+                        "mod.dependency_required_confirm",
+                        mod="岛屿冒险 - 海难",
+                        dependency="岛屿冒险 - 核心 (3435352667)",
+                    ),
+                ):
+                    mod.enabled = False
+                    self._render_list()
+                    return
+                core.enabled = True
+        elif normalized_id == IA_CORE_MOD_ID and not mod.enabled:
+            child_key = find_mod_key(self._mod_data, IA_SHIPWRECKED_MOD_ID)
+            child = self._mod_data.get(child_key) if child_key else None
+            if child is not None and child.enabled:
+                child.enabled = False
         self._mark_dirty()
         # 切到世界设置时立即按尚未保存的 Mod 开关重建目录，不要求用户
         # 为了查看设置项先执行一次磁盘保存。

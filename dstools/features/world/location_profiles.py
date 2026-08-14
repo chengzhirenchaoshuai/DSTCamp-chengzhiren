@@ -122,6 +122,21 @@ def normalize_mod_ids(mod_ids) -> frozenset[str]:
     return frozenset(str(value).removeprefix("workshop-") for value in mod_ids)
 
 
+def find_mod_key(mod_ids, mod_id: str) -> str | None:
+    """从映射或 ID 集合中找到指定 Mod 的实际键名。
+
+    Mod 列表和 ``modoverrides.lua`` 使用 ``workshop-<id>``，部分世界兼容
+    规则使用纯数字 ID；依赖联动必须保留调用方真实键名，不能归一化后再
+    把一个不存在的纯数字键写回列表。
+    """
+    target = str(mod_id).removeprefix("workshop-")
+    return next(
+        (str(value) for value in mod_ids
+         if str(value).removeprefix("workshop-") == target),
+        None,
+    )
+
+
 def with_required_dependencies(mod_ids) -> frozenset[str]:
     """返回加入已验证硬依赖后的 Mod 集合，不修改调用方容器。"""
     normalized = set(normalize_mod_ids(mod_ids))
@@ -209,4 +224,3 @@ def get_location_definition(location: str) -> WorldLocationDefinition:
 def location_requirements_met(location: str, enabled_mod_ids) -> bool:
     definition = get_location_definition(location)
     return definition.required_mod_ids.issubset(normalize_mod_ids(enabled_mod_ids))
-

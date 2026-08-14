@@ -49,7 +49,7 @@ from dstools.features.world.reader import WorldOverride  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
 from dstools.features.mod.tab import ModManagerTab  # noqa: E402
 from dstools.features.world.creation_tab import WorldCreationTab  # noqa: E402
-from dstools.models import ModEntry  # noqa: E402
+from dstools.models import ModEntry, SaveSource  # noqa: E402
 from PIL import Image  # noqa: E402
 from dstools.shared.lua_parser import (  # noqa: E402
     parse_lua_file,
@@ -212,13 +212,13 @@ def _dependency_tab() -> WorldCreationTab:
     tab = WorldCreationTab.__new__(WorldCreationTab)
     tab.frame = _FrameProbe()
     tab.status_var = _StatusProbe()
-    tab._selected_mod_ids = {IA_SHIPWRECKED_MOD_ID}
+    tab._selected_mod_ids = {f"workshop-{IA_SHIPWRECKED_MOD_ID}"}
     tab._mod_data = {
-        IA_SHIPWRECKED_MOD_ID: ModEntry(
-            workshop_id=IA_SHIPWRECKED_MOD_ID, enabled=True,
+        f"workshop-{IA_SHIPWRECKED_MOD_ID}": ModEntry(
+            workshop_id=f"workshop-{IA_SHIPWRECKED_MOD_ID}", enabled=True,
         ),
-        IA_CORE_MOD_ID: ModEntry(
-            workshop_id=IA_CORE_MOD_ID, enabled=False,
+        f"workshop-{IA_CORE_MOD_ID}": ModEntry(
+            workshop_id=f"workshop-{IA_CORE_MOD_ID}", enabled=False,
         ),
     }
     return tab
@@ -231,17 +231,66 @@ def test_creation_dependency_confirmation() -> None:
     ) as confirm:
         assert accepted._ensure_island_adventures_dependency(show_dialog=True)
     confirm.assert_called_once()
-    assert accepted._mod_data[IA_CORE_MOD_ID].enabled
-    assert IA_CORE_MOD_ID in accepted._selected_mod_ids
+    core_key = f"workshop-{IA_CORE_MOD_ID}"
+    child_key = f"workshop-{IA_SHIPWRECKED_MOD_ID}"
+    assert accepted._mod_data[core_key].enabled
+    assert core_key in accepted._selected_mod_ids
 
     declined = _dependency_tab()
     with patch(
         "dstools.features.world.creation_tab.dlg.ask_yes_no", return_value=False,
     ):
         assert not declined._ensure_island_adventures_dependency(show_dialog=True)
-    assert not declined._mod_data[IA_SHIPWRECKED_MOD_ID].enabled
-    assert IA_SHIPWRECKED_MOD_ID not in declined._selected_mod_ids
-    assert not declined._mod_data[IA_CORE_MOD_ID].enabled
+    assert not declined._mod_data[child_key].enabled
+    assert child_key not in declined._selected_mod_ids
+    assert not declined._mod_data[core_key].enabled
+
+
+def _main_mod_dependency_tab() -> ModManagerTab:
+    tab = ModManagerTab.__new__(ModManagerTab)
+    tab.app = SimpleNamespace(
+        root=object(),
+        mark_world_tab_stale=lambda: setattr(tab, "world_stale", True),
+    )
+    tab._get_cluster = lambda: SimpleNamespace(source=SaveSource.SERVER)
+    tab._luajit_mod_locked = False
+    tab._mod_data = {
+        f"workshop-{IA_SHIPWRECKED_MOD_ID}": ModEntry(
+            workshop_id=f"workshop-{IA_SHIPWRECKED_MOD_ID}", enabled=False,
+        ),
+        f"workshop-{IA_CORE_MOD_ID}": ModEntry(
+            workshop_id=f"workshop-{IA_CORE_MOD_ID}", enabled=False,
+        ),
+    }
+    tab._mark_dirty = lambda: setattr(tab, "dirty_marked", True)
+    tab._render_list = lambda: None
+    tab.dirty_marked = False
+    tab.world_stale = False
+    return tab
+
+
+def test_main_mod_dependency_confirmation() -> None:
+    child_key = f"workshop-{IA_SHIPWRECKED_MOD_ID}"
+    core_key = f"workshop-{IA_CORE_MOD_ID}"
+
+    accepted = _main_mod_dependency_tab()
+    with patch(
+        "dstools.features.mod.tab.dlg.ask_yes_no", return_value=True,
+    ) as confirm:
+        accepted._on_toggle(child_key)
+    confirm.assert_called_once()
+    assert accepted._mod_data[child_key].enabled
+    assert accepted._mod_data[core_key].enabled
+    assert accepted.dirty_marked and accepted.world_stale
+
+    declined = _main_mod_dependency_tab()
+    with patch(
+        "dstools.features.mod.tab.dlg.ask_yes_no", return_value=False,
+    ):
+        declined._on_toggle(child_key)
+    assert not declined._mod_data[child_key].enabled
+    assert not declined._mod_data[core_key].enabled
+    assert not declined.dirty_marked and not declined.world_stale
 
 
 def test_pending_mod_world_preview() -> None:
@@ -362,6 +411,7 @@ def main() -> None:
         test_en_zh_mod_metadata,
         test_world_setting_icon_rendering,
         test_creation_dependency_confirmation,
+        test_main_mod_dependency_confirmation,
         test_pending_mod_world_preview,
         test_creation_matrix,
         test_creation_rejects_invalid_combinations,
