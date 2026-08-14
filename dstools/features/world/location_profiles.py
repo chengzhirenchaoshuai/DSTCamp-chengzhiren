@@ -154,17 +154,6 @@ def missing_required_dependencies(mod_ids) -> dict[str, frozenset[str]]:
     return missing
 
 
-def missing_installed_mod_ids(selected_mod_ids, installed_mod_ids) -> frozenset[str]:
-    """返回创建计划需要、但本机没有安装的 Mod ID。
-
-    两边都先去掉 ``workshop-`` 前缀，避免把列表中的标准 Workshop 键与
-    世界兼容层使用的纯数字 ID 误判成两个不同 Mod。
-    """
-    required = with_required_dependencies(selected_mod_ids)
-    installed = normalize_mod_ids(installed_mod_ids)
-    return frozenset(required.difference(installed))
-
-
 def resolve_world_location_profile(enabled_mod_ids) -> WorldLocationProfile:
     """按真实前端源码解析两个分片的候选 location 和新建默认值。"""
     selected = normalize_mod_ids(enabled_mod_ids)

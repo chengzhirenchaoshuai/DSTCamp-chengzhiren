@@ -22,7 +22,6 @@ from dstools.features.world.location_profiles import (
     MASTER_SHARD,
     find_mod_key,
     get_location_definition,
-    missing_installed_mod_ids,
     resolve_world_location_profile,
     with_required_dependencies,
 )
@@ -801,13 +800,6 @@ class WorldCreationTab:
                     f"存档名称“{name}”已存在，请换一个名称。",
                 )
                 return
-            missing_mod_ids = sorted(missing_installed_mod_ids(
-                self._enabled_mod_ids(), self._mod_data,
-            ))
-            if missing_mod_ids:
-                raise FileNotFoundError(
-                    "缺少已选择 Mod 或其依赖：" + "、".join(missing_mod_ids)
-                )
             self._sync_mod_overrides()
             server_settings = self._server_config.read_creation_settings() if self._server_config else {}
             out = create_world(
