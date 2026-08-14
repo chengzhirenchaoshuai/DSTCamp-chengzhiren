@@ -159,25 +159,19 @@ class ServerStatus(Enum):
 # 实 server_log.txt 核对过（用户亲测的当前版本日志 + 一份 2019 年的历史
 # 存档日志：https://github.com/rawii22/DSTSaves）：
 #
-# - Master：玩家能进游戏不需要等副本(Caves 等)连上——它自己的日志里
-#   "Reset() returning"（紧跟在 "ModIndex: Load sequence finished
-#   successfully." 后面）是世界读盘/建好之后的最后一步，在这之后才是
-#   portal 校验/Sim paused/向 Klei 注册这些收尾动作，跟副本有没有连上
-#   完全无关；旧版本额外会打一个 IPC 信号 "DST_Master_Ready"，当前版本
-#   实测已经不打了，但留着也不影响（多一条能匹配的标记，不会误判）。
+# - Master：玩家能进游戏不需要等副本(Caves 等)连上。不能使用
+#   "Reset() returning"：新建世界时临时 worldgen Lua 也会打印完整的
+#   "About to start a server" + "Reset() returning"，但随后会销毁临时
+#   Lua 环境并重新加载正式世界。真实日志确认正式 Master 初始化完成后会
+#   打印 "Sim paused"（空服暂停）或 "Sim unpaused"；这两种状态都只在
+#   正式 Sim 建立后出现。旧版本的 "DST_Master_Ready" 继续兼容。
 # - Secondary：必须真的连上 Master 之后才有意义，日志里打
 #   "... is now ready!"（当前版本叫 "secondary shard LUA is now
 #   ready!"，旧版本叫 "Slave LUA is now ready!"）。
 #
-# 坑：真机日志实测发现，游戏进程启动早期会先跑一遍"仅建 modindex"的预
-# 备流程（"ModIndex: Beginning normal load sequence..." -> 一样会打印
-# "ModIndex: Load sequence finished successfully."/"Reset() returning"），
-# 跟真正加载这个存档世界的流程长得一样，比下面这行真正开始加载世界的
-# 标记早得多——如果不管三七二十一见到 "reset() returning" 就认为世界加
-# 载完，Master 会在这个预备流程里被误判成"已就绪"。所以要求先看到这行
-# （真正开始加载这个存档世界的分界线，预备流程里不会出现）之后，才开始
-# 检查上面两组就绪标记；这一步对 Secondary 无害——它的 ready 行本来就
-# 只会在这行之后才出现。
+# 坑：新建世界的临时 worldgen 流程和正式启动流程高度相似，甚至都会出现
+# "About to start..." 与 "Reset() returning"。启动分界线仍用于过滤更早
+# 的杂音，但 Master 必须再等正式 Sim 状态，不能把 Reset 当完成标记。
 #
 # 真机复现过的坑（用户反馈"公告/玩家列表/重置世界/回档"全部一直只读，
 # 哪怕世界明明已经加载完）：这行的措辞不是固定的，跟 cluster.ini 的
@@ -196,8 +190,29 @@ _REAL_START_MARKERS = (
     "about to start a shard with these settings",
     "about to start a server with the following settings",
 )
-_MASTER_READY_MARKERS = ("reset() returning", "dst_master_ready")
+_MASTER_READY_MARKERS = ("sim paused", "sim unpaused", "dst_master_ready")
 _SECONDARY_READY_MARKERS = ("is now ready!",)
+
+# 工具为运行环境自动维护的配套组件仍必须参与“是否缺失”的完整性检查，
+# 但不应混进玩家主动选择的 Mod 数量。这里仅登记已经明确由 DSTCamp 管理
+# 的 LuaJIT 配套 Mod，不能按名称或其它特征猜测普通 Mod。
+_INTERNAL_MOD_KEYS = frozenset({"workshop-3444078585"})
+
+
+def advance_world_ready_marker(
+    line: str, is_master: bool, real_start_seen: bool,
+) -> tuple[bool, bool]:
+    """消费一行日志并返回（已进入正式启动阶段，本行是否确认就绪）。
+
+    后台进程判定和 GUI 已展示进度共用同一函数，避免两边对启动标记的理解
+    漂移；GUI 只有实际消费到就绪行后才显示 Mod 检查结果。
+    """
+    lowered = line.lower()
+    if not real_start_seen:
+        real_start_seen = any(marker in lowered for marker in _REAL_START_MARKERS)
+        return real_start_seen, False
+    markers = _MASTER_READY_MARKERS if is_master else _SECONDARY_READY_MARKERS
+    return real_start_seen, any(marker in lowered for marker in markers)
 
 # Mod 加载完整性检查——真机核对过多份 server_log.txt（正常/无缺失场
 # 景），服务器解析 modoverrides.lua 时会先打一行 "modoverrides.lua
@@ -243,6 +258,11 @@ class ServerProcess:
         self.mods_loaded: set[str] = set()
         self.missing_mods: list[str] | None = None
 
+    @property
+    def visible_mod_count(self) -> int:
+        """玩家可见的已启用 Mod 数量，不包含工具内部配套组件。"""
+        return len(self.mods_enabled - _INTERNAL_MOD_KEYS)
+
     def start(self) -> None:
         bitness = pick_bitness(self.install_dir)  # 位数判断始终用真实安装目录
         bin64_dir = self.bin64_override if self.bin64_override is not None \
@@ -261,13 +281,11 @@ class ServerProcess:
         threading.Thread(target=self._read_loop, daemon=True).start()
 
     def _read_loop(self) -> None:
-        markers = _MASTER_READY_MARKERS if self.is_master else _SECONDARY_READY_MARKERS
         real_start_seen = False
         try:
             for line in self.proc.stdout:
                 line = line.rstrip("\n")
                 if not self.world_ready:
-                    lowered = line.lower()
                     m = _MOD_ENABLING_RE.search(line)
                     if m:
                         self.mods_enabled.add(m.group(1))
@@ -275,10 +293,10 @@ class ServerProcess:
                         m = _MOD_LOADING_RE.search(line)
                         if m:
                             self.mods_loaded.add(m.group(1))
-                    if not real_start_seen:
-                        if any(marker in lowered for marker in _REAL_START_MARKERS):
-                            real_start_seen = True
-                    elif any(marker in lowered for marker in markers):
+                    real_start_seen, ready_now = advance_world_ready_marker(
+                        line, self.is_master, real_start_seen,
+                    )
+                    if ready_now:
                         self.world_ready = True
                         self.missing_mods = sorted(self.mods_enabled - self.mods_loaded)
                 self._out_queue.put(line)

@@ -2068,6 +2068,7 @@ def test_server_mod_completeness_check():
         "Loading mod: workshop-949808360 ( 卡尼猫) Version:2.2.8\t",
         "About to start a server with the following settings:",
         "Reset() returning",
+        "Sim paused",
     ]
 
     def run(lines: list[str]) -> ServerProcess:

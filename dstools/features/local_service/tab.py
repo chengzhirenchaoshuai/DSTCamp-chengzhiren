@@ -22,6 +22,7 @@ from dstools.features.local_service.backup_manager import create_backup
 from dstools.features.cluster_config.config_manager import load_cluster_config, load_shard_config
 from dstools.features.local_service.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
+    advance_world_ready_marker,
     detect_external_shard_processes, find_bin64_dir, find_dedicated_server_dir,
     is_valid_install_dir, resolve_conf_dir_arg,
 )
@@ -362,6 +363,11 @@ class _ConsolePane:
         self.close_btn.pack(side=tk.RIGHT)
 
         self._mod_check_reported = False
+        # 与后台 world_ready 分开记录“当前控制台已经消费到哪里”。后台线程
+        # 可能先读到就绪行，而 Tk 还在分批绘制此前的大量 Mod 日志；提示必须
+        # 等当前控制台自己消费到就绪行，不能抢在日志画面前出现。
+        self._mod_check_real_start_seen = False
+        self._mod_check_ready_seen = False
 
         body = ttk.Frame(self.frame)
         body.pack(fill=tk.BOTH, expand=True)
@@ -542,12 +548,19 @@ class _ConsolePane:
         self.text.configure(state=tk.DISABLED)
         self._mod_status_label.pack_forget()
         self._mod_check_reported = False
+        self._mod_check_real_start_seen = False
+        self._mod_check_ready_seen = False
         self.pump()
 
     def pump(self):
         """轮询一次：把新到的输出行追加到 Text，同步状态徽标/命令框可用性。"""
         lines = self.proc.read_available_lines()
         if lines:
+            for line in lines:
+                self._mod_check_real_start_seen, ready_now = advance_world_ready_marker(
+                    line, self.proc.is_master, self._mod_check_real_start_seen,
+                )
+                self._mod_check_ready_seen |= ready_now
             at_bottom = self.text.yview()[1] >= 0.999
             self.text.configure(state=tk.NORMAL)
             # 每行都跟一个"\n"插入会在最后一行后面多留一个真实存在的空
@@ -579,7 +592,8 @@ class _ConsolePane:
         # missing_mods 只在 world_ready 那一刻算一次（见 dedicated_
         # server.py），非 None 之后才是"真的算完了"；每个进程只报一次，
         # 不然每次 pump() 轮询都重新 pack() 一遍没意义。
-        if world_ready and not self._mod_check_reported and self.proc.missing_mods is not None:
+        if (world_ready and self._mod_check_ready_seen and not self._mod_check_reported
+                and self.proc.missing_mods is not None):
             self._mod_check_reported = True
             if self.proc.missing_mods:
                 self._mod_status_label.configure(
@@ -587,11 +601,11 @@ class _ConsolePane:
                             ids=", ".join(self.proc.missing_mods)),
                     bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
                 self._mod_status_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
-            elif self.proc.mods_enabled:
+            elif self.proc.visible_mod_count:
                 # 一个 mod 都没启用的存档不需要报"全部正常加载"，没什么
                 # 信息量；只有真的启用了 mod 又全部加载成功才提示。
                 self._mod_status_label.configure(
-                    text=t("local.mods_check_ok", count=len(self.proc.mods_enabled)),
+                    text=t("local.mods_check_ok", count=self.proc.visible_mod_count),
                     bg=theme.BG_SOFT, fg=theme.SERVER_COLOR)
                 self._mod_status_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
 
