@@ -6,6 +6,7 @@ complete two-shard directory in a temporary sibling, then atomically moves it
 into place.
 """
 
+import copy
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ import shutil
 import tempfile
 
 from dstools.features.world.location_profiles import (
+    get_verified_creation_level_data,
     get_location_definition,
     location_requirements_met,
     normalize_mod_ids,
@@ -30,7 +32,11 @@ class WorldShardPlan:
     preset_id: str
     name: str
     description: str = ""
-    overrides: dict[str, str] = field(default_factory=dict)
+    overrides: dict[str, object] = field(default_factory=dict)
+    # leveldataoverride.lua 除身份字段和 overrides 外的完整 Level 元数据。
+    # 官方创建界面会保留 version、background_node_range、required_prefabs 等
+    # 字段；岛屿冒险的世界生成同样依赖这些数据。
+    level_data: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -170,13 +176,20 @@ def _write_shard(
         _write_default_server_ini(root)
     else:
         write_server_ini(shard_config, root / "server.ini")
-    raw = {
+    # 最后一层仍合并已核对的 location 默认值，避免旧草稿、调用方手工构造
+    # WorldShardPlan 或未来 UI 回归再次写出 overrides={} 的海难/火山。
+    raw = get_verified_creation_level_data(shard.location)
+    location_overrides = raw.pop("overrides", {})
+    raw.update(copy.deepcopy(shard.level_data))
+    overrides = copy.deepcopy(location_overrides)
+    overrides.update(copy.deepcopy(shard.overrides))
+    raw.update({
         "id": shard.preset_id,
         "name": shard.name,
         "desc": shard.description,
         "location": shard.location,
-        "overrides": dict(shard.overrides),
-    }
+        "overrides": overrides,
+    })
     _write_lua(root / "leveldataoverride.lua", raw)
     def _mod_key(value) -> str:
         text = str(value)

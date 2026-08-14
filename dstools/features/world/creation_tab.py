@@ -339,6 +339,13 @@ class WorldCreationTab:
             self._location_drafts[(shard, current.location)] = current
         plan = self._location_drafts.get((shard, location))
         if plan is None:
+            # 岛屿冒险允许两个槽位任选四种世界。森林/洞穴的完整默认数据
+            # 来自真实官方模板；跨槽位选择时复用另一槽位已加载的模板，不能
+            # 退回只有 id/location 的残缺计划。
+            other_shard = CAVES_SHARD if shard == MASTER_SHARD else MASTER_SHARD
+            other_plan = self._location_drafts.get((other_shard, location))
+            plan = copy.deepcopy(other_plan) if other_plan is not None else None
+        if plan is None:
             plan = default_plan_for_location(location)
             self._location_drafts[(shard, location)] = plan
         self._set_plan_for_shard(shard, plan)

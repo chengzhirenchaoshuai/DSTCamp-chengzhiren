@@ -22,6 +22,7 @@ from dstools.features.world.catalog_resolver import (  # noqa: E402
     resolve_vanilla_settings,
 )
 from dstools.features.world.creation import (  # noqa: E402
+    WorldShardPlan,
     WorldCreationPlan,
     create_world,
     validate_creation_plan,
@@ -32,19 +33,24 @@ from dstools.features.world.defaults import (  # noqa: E402
 )
 from dstools.features.world.location_profiles import (  # noqa: E402
     CAVE_LOCATION,
+    CAVES_SHARD,
     CHERRY_FOREST_MOD_ID,
     FOREST_LOCATION,
     IA_CORE_MOD_ID,
     IA_SHIPWRECKED_MOD_ID,
+    MASTER_SHARD,
     PORKLAND_LOCATION,
     PORKLAND_MOD_ID,
     SHIPWRECKED_LOCATION,
     VOLCANO_LOCATION,
+    get_location_definition,
+    get_verified_creation_level_data,
     resolve_world_location_profile,
 )
 from dstools.features.world.mod_settings import get_mod_world_settings  # noqa: E402
 from dstools.features.world.icons import get_pil_icon  # noqa: E402
 from dstools.features.world.render import render_world_panel  # noqa: E402
+from dstools.features.world.value_sets import get_value_set  # noqa: E402
 from dstools.features.world.reader import WorldOverride  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
 from dstools.features.mod.tab import ModManagerTab  # noqa: E402
@@ -64,6 +70,21 @@ ISLAND_LOCATIONS = (
     SHIPWRECKED_LOCATION,
     VOLCANO_LOCATION,
 )
+
+ISLAND_REQUIRED_OVERRIDES = {
+    SHIPWRECKED_LOCATION: {
+        "task_set": "shipwrecked",
+        "start_location": "shipwrecked_default",
+        "layout_mode": "LinkNodesByKeys",
+        "has_ocean": True,
+    },
+    VOLCANO_LOCATION: {
+        "task_set": "volcano",
+        "start_location": "volcano_default",
+        "layout_mode": "LinkNodesByKeys",
+        "has_ocean": False,
+    },
+}
 
 
 def _expect_value_error(callback, message: str) -> None:
@@ -150,6 +171,79 @@ def test_island_vanilla_catalogs() -> None:
     }
     assert set(shipwrecked) == IA_SHIPWRECKED_VANILLA_KEYS
     assert set(volcano) == IA_VOLCANO_VANILLA_KEYS
+
+
+def test_island_creation_defaults_are_complete() -> None:
+    """回归真实报错：火山没有 task_set 时 Level:ChooseTasks 会直接断言。"""
+    for location, required in ISLAND_REQUIRED_OVERRIDES.items():
+        source = get_verified_creation_level_data(location)
+        plan = default_plan_for_location(location)
+        assert plan.overrides == source["overrides"]
+        assert plan.level_data["version"] == 4
+        assert plan.level_data["required_prefabs"] == ["multiplayer_portal"]
+        for key, value in required.items():
+            assert plan.overrides[key] == value
+
+    assert get_value_set(
+        "task_set", location=SHIPWRECKED_LOCATION, is_rule=False,
+    ) == ["shipwrecked"]
+    assert get_value_set(
+        "start_location", location=SHIPWRECKED_LOCATION, is_rule=False,
+    ) == ["shipwrecked_default"]
+    assert get_value_set(
+        "task_set", location=VOLCANO_LOCATION, is_rule=False,
+    ) == ["volcano"]
+    assert get_value_set(
+        "start_location", location=VOLCANO_LOCATION, is_rule=False,
+    ) == ["volcano_default"]
+
+
+def test_island_writer_repairs_partial_legacy_plan() -> None:
+    """创建层必须兜住旧草稿中的空 overrides，不能再次生成本次坏存档。"""
+    with TemporaryDirectory() as directory:
+        volcano = get_location_definition(VOLCANO_LOCATION)
+        shipwrecked = get_location_definition(SHIPWRECKED_LOCATION)
+        plan = WorldCreationPlan(
+            "legacy_partial",
+            WorldShardPlan(
+                SHIPWRECKED_LOCATION, shipwrecked.default_preset_id,
+                shipwrecked.name_zh,
+            ),
+            WorldShardPlan(
+                VOLCANO_LOCATION, volcano.default_preset_id, volcano.name_zh,
+            ),
+            mod_ids=frozenset({IA_SHIPWRECKED_MOD_ID}),
+        )
+        output = create_world(plan, Path(directory))
+        master = parse_lua_file(output / "Master" / "leveldataoverride.lua")
+        caves = parse_lua_file(output / "Caves" / "leveldataoverride.lua")
+        assert master["overrides"]["task_set"] == "shipwrecked"
+        assert caves["overrides"]["task_set"] == "volcano"
+        assert caves["background_node_range"] == {"1": 0, "2": 0}
+
+
+def test_island_cross_shard_reuses_verified_vanilla_template() -> None:
+    """森林/洞穴互换槽位时必须复制完整官方模板，而非创建空计划。"""
+    tab = WorldCreationTab.__new__(WorldCreationTab)
+    forest = WorldShardPlan(
+        FOREST_LOCATION, "SURVIVAL_TOGETHER", "森林",
+        overrides={"task_set": "default"}, level_data={"version": 4},
+    )
+    cave = WorldShardPlan(
+        CAVE_LOCATION, "DST_CAVE", "洞穴",
+        overrides={"task_set": "cave_default"}, level_data={"version": 4},
+    )
+    tab._plan_master = forest
+    tab._plan_caves = cave
+    tab._location_drafts = {
+        (MASTER_SHARD, FOREST_LOCATION): forest,
+        (CAVES_SHARD, CAVE_LOCATION): cave,
+    }
+    tab._world_profile = resolve_world_location_profile({IA_SHIPWRECKED_MOD_ID})
+    tab._switch_shard_location(CAVES_SHARD, FOREST_LOCATION, render=False)
+    assert tab._plan_caves is not forest
+    assert tab._plan_caves.overrides == forest.overrides
+    assert tab._plan_caves.level_data == forest.level_data
 
 
 def test_lua_multiline_roundtrip() -> None:
@@ -361,6 +455,14 @@ def test_creation_matrix() -> None:
                     )
                     expected = master_location if shard == "Master" else caves_location
                     assert leveldata["location"] == expected
+                    if expected in ISLAND_REQUIRED_OVERRIDES:
+                        assert leveldata["version"] == 4
+                        # Lua 数组由项目解析器表示为从 "1" 开始的映射。
+                        assert set(leveldata["required_prefabs"].values()) == {
+                            "multiplayer_portal"
+                        }
+                        for key, value in ISLAND_REQUIRED_OVERRIDES[expected].items():
+                            assert leveldata["overrides"][key] == value
 
                     mods = parse_lua_file(output / shard / "modoverrides.lua")
                     assert mods[f"workshop-{IA_CORE_MOD_ID}"]["enabled"] is True
@@ -424,6 +526,9 @@ def main() -> None:
         test_location_profiles,
         test_setting_location_isolation,
         test_island_vanilla_catalogs,
+        test_island_creation_defaults_are_complete,
+        test_island_writer_repairs_partial_legacy_plan,
+        test_island_cross_shard_reuses_verified_vanilla_template,
         test_lua_multiline_roundtrip,
         test_en_zh_mod_metadata,
         test_world_setting_icon_rendering,

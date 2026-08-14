@@ -6,6 +6,7 @@ Mod 可以注册新的 location，也可以在 ``modservercreationmain.lua`` 中
 行为，不执行任意 Mod Lua，也不根据文件名猜测兼容规则。
 """
 
+import copy
 from dataclasses import dataclass
 
 
@@ -88,6 +89,73 @@ LOCATION_DEFINITIONS: dict[str, WorldLocationDefinition] = {
         frozenset({PORKLAND_MOD_ID}),
     ),
 }
+
+
+# 逐项取自 Island Adventures 1467214795 的真实源码：
+# scripts/map/sw_locations.lua、scripts/map/levels/shipwrecked.lua 和
+# scripts/map/levels/volcano.lua。官方创建界面会把 AddLocation 默认值合并
+# 到 AddWorldGenLevel 后再写 leveldataoverride.lua；不能只写一个空 overrides。
+_ISLAND_CREATION_LEVEL_DATA: dict[str, dict[str, object]] = {
+    SHIPWRECKED_LOCATION: {
+        "version": 4,
+        "hideminimap": False,
+        "min_playlist_position": 0,
+        "max_playlist_position": 999,
+        "override_level_string": False,
+        "numrandom_set_pieces": 0,
+        "random_set_pieces": [],
+        "background_node_range": [0, 2],
+        "required_prefabs": ["multiplayer_portal"],
+        "overrides": {
+            "start_location": "shipwrecked_default",
+            "season_start": "default",
+            "world_size": "default",
+            "task_set": "shipwrecked",
+            "layout_mode": "LinkNodesByKeys",
+            "keep_disconnected_tiles": True,
+            "has_ocean": True,
+            "clocktype": "tropical",
+            "poi": "never",
+            "dst_boats": "none",
+            "ia_boats": "always",
+            "ia_drowning": "always",
+        },
+    },
+    VOLCANO_LOCATION: {
+        "version": 4,
+        "hideminimap": False,
+        "min_playlist_position": 0,
+        "max_playlist_position": 999,
+        "override_level_string": False,
+        "numrandom_set_pieces": 0,
+        "random_set_pieces": [],
+        "background_node_range": [0, 0],
+        "required_prefabs": ["multiplayer_portal"],
+        "overrides": {
+            "start_location": "volcano_default",
+            "season_start": "default",
+            "world_size": "small",
+            "task_set": "volcano",
+            "layout_mode": "LinkNodesByKeys",
+            "keep_disconnected_tiles": True,
+            "has_ocean": False,
+            "clocktype": "tropical",
+            "boons": "never",
+            "poi": "never",
+            "traps": "never",
+            "prefabswaps_start": "classic",
+            "grassgekkos": "never",
+            "dst_boats": "none",
+            "ia_boats": "always",
+            "ia_drowning": "always",
+        },
+    },
+}
+
+
+def get_verified_creation_level_data(location: str) -> dict[str, object]:
+    """返回已从真实 Mod 源码核对过的创建数据副本。"""
+    return copy.deepcopy(_ISLAND_CREATION_LEVEL_DATA.get(location, {}))
 
 
 @dataclass(frozen=True)

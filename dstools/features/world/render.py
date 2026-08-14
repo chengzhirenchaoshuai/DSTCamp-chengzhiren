@@ -182,8 +182,11 @@ _PER_KEY_LABELS = {
     # "0" → 总是, "none" → 从不；其余数字走下面 get_value_label 里的动态格式化("第N天后")
     "extrastartingitems": {"0": {"zh": "总是", "en": "Always"}, "none": {"zh": "从不", "en": "Never"}},
     "loop": {"never": {"zh": "从不", "en": "Never"}},
-    "task_set": {"default": {"zh": "联机版", "en": "Together"}, "cave_default": {"zh": "地下", "en": "Caves"}},
-    "start_location": {"default": {"zh": "默认", "en": "Default"}, "caves": {"zh": "洞穴", "en": "Caves"}},
+    "task_set": {"default": {"zh": "联机版", "en": "Together"}, "cave_default": {"zh": "地下", "en": "Caves"},
+                 "shipwrecked": {"zh": "海难", "en": "Shipwrecked"}, "volcano": {"zh": "火山", "en": "Volcano"}},
+    "start_location": {"default": {"zh": "默认", "en": "Default"}, "caves": {"zh": "洞穴", "en": "Caves"},
+                       "shipwrecked_default": {"zh": "海难", "en": "Shipwrecked"},
+                       "volcano_default": {"zh": "火山", "en": "Volcano"}},
     "moon_spider": {"rare": {"zh": "很少", "en": "Rare"}, "never": {"zh": "无", "en": "None"}},
     "moon_spiders": {"uncommon": {"zh": "默认", "en": "Default"}, "never": {"zh": "无", "en": "None"}},
     "worms": {"uncommon": {"zh": "稀有", "en": "Rare"}},

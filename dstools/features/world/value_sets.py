@@ -271,6 +271,19 @@ def get_value_set(
         info = mod_settings.get(key)
         if info is not None and info.values:
             return info.values
+    # 岛屿冒险的 AddLocation 把这两项固定为各自世界生成所需的唯一值。
+    # 它们不是官方 forest/cave 的通用值，误循环到其它 task_set 会直接导致
+    # 世界生成崩溃。
+    if not is_rule and location == "shipwrecked":
+        if key == "task_set":
+            return ["shipwrecked"]
+        if key == "start_location":
+            return ["shipwrecked_default"]
+    if not is_rule and location == "volcanoworld":
+        if key == "task_set":
+            return ["volcano"]
+        if key == "start_location":
+            return ["volcano_default"]
     if key in OCEAN_FREQUENCY_KEYS:
         return OCEAN_WORLDGEN_SET
     if not is_rule:

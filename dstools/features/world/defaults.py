@@ -1,9 +1,14 @@
-"""Load complete world defaults from a verified game-generated template."""
+"""从游戏模板或已核对的 Mod 源码加载完整世界默认值。"""
+
+import copy
 
 from pathlib import Path
 
 from dstools.features.world.creation import WorldShardPlan
-from dstools.features.world.location_profiles import get_location_definition
+from dstools.features.world.location_profiles import (
+    get_location_definition,
+    get_verified_creation_level_data,
+)
 from dstools.features.world.reader import LeveldataStatus, load_leveldata
 
 
@@ -28,14 +33,17 @@ def find_verified_template(klei_root: Path, location: str) -> Path:
 
 
 def default_plan_for_location(location: str) -> WorldShardPlan:
-    """按已验证预设创建一个干净计划，由游戏预设补齐 location 默认值。"""
+    """按已验证预设创建计划；Mod location 必须显式带齐默认生成参数。"""
     definition = get_location_definition(location)
+    level_data = get_verified_creation_level_data(location)
+    overrides = level_data.pop("overrides", {})
     return WorldShardPlan(
         location=location,
         preset_id=definition.default_preset_id,
         name=definition.name_zh,
         description=definition.description_zh,
-        overrides={},
+        overrides=overrides,
+        level_data=level_data,
     )
 
 
@@ -53,12 +61,17 @@ def shard_plan_from_template(path: Path) -> WorldShardPlan:
         get_location_definition(preset.location)
     except ValueError as exc:
         raise ValueError(f"模板世界类型无效: {preset.location}")
+    raw = copy.deepcopy(preset.raw)
+    overrides = raw.pop("overrides", {})
+    for key in ("id", "name", "desc", "location"):
+        raw.pop(key, None)
     return WorldShardPlan(
         location=preset.location,
         preset_id=preset.preset_id,
         name=preset.name,
         description=preset.description,
-        overrides={override.key: override.value for override in preset.overrides},
+        overrides=overrides if isinstance(overrides, dict) else {},
+        level_data=raw,
     )
 
 
