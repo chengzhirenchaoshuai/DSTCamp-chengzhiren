@@ -101,7 +101,7 @@ class WorldCreationTab:
         self._sub_tab_key = "server"
         self._sub_tab_bar = PillTabBar(
             self.frame,
-            tabs=[("server", "服务器配置"), ("mod", "Mod 管理"), ("world", "世界设置")],
+            tabs=[("server", "服务器配置"), ("world", "世界设置"), ("mod", "Mod 管理")],
             on_select=self._on_creation_sub_tab_select,
             app=self.app,
             bg=theme.BG_SOFT,

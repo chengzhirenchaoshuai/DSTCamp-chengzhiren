@@ -111,7 +111,7 @@ class DSToolsApp:
         # apply_theme() 重新上色。
         # 创建存档是独立向导，放在内网穿透之后，避免在常用的运行/配置
         # 页签之间插入一个会打开独立窗口的入口。
-        self._tab_keys = ["local", "mods", "world", "server", "saves", "sakura", "create"]
+        self._tab_keys = ["local", "world", "mods", "server", "saves", "sakura", "create"]
         self._pill_bar = PillTabBar(
             self.root,
             tabs=[(k, t(f"tab.{k}")) for k in self._tab_keys],
@@ -258,7 +258,7 @@ class DSToolsApp:
         self._stale_cluster_tabs: set[str] = set()
         self._current_tab_key = "local"
 
-        self._tabs = [self.local_tab, self.mod_tab, self.world_tab, self.cluster_tab, self.save_tab, self.sakura_tab, self.creation_tab]
+        self._tabs = [self.local_tab, self.world_tab, self.mod_tab, self.cluster_tab, self.save_tab, self.sakura_tab, self.creation_tab]
         for key, tab in zip(self._tab_keys, self._tabs):
             tab.frame.pack(fill=tk.BOTH, expand=True)
         # 只留 "local" 参与布局，其余 5 个先 grid_remove() 掉——之前是全部
