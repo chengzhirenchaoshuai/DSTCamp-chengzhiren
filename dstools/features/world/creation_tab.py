@@ -64,6 +64,7 @@ class WorldCreationTab:
         self._rules_by_cat = {}; self._gen_by_cat = {}
         self._rules_cats = []; self._gen_cats = []
         self._mod_settings = {}
+        self._active_mod_settings = {}
         self._template_root = None
         self._server_root = None
         self._selected_mod_ids: set[str] = set()
@@ -644,7 +645,22 @@ class WorldCreationTab:
             description=plan.description, location=plan.location,
             overrides=[WorldOverride(key, value) for key, value in plan.overrides.items()],
         )
-        view = build_world_view_model(preset, self._mod_settings, [])
+        from dstools.features.world.mod_settings import (
+            filter_mod_world_settings,
+            get_mod_categories,
+        )
+        self._active_mod_settings = filter_mod_world_settings(
+            self._mod_settings,
+            preset.location,
+            self.shard_var.get() == MASTER_SHARD,
+        )
+        mod_categories = get_mod_categories(self._active_mod_settings)
+        view = build_world_view_model(
+            preset,
+            self._active_mod_settings,
+            mod_categories,
+            is_master_world=self.shard_var.get() == MASTER_SHARD,
+        )
         self._rules_by_cat, self._rules_cats = view.rules_by_category, view.rule_categories
         self._gen_by_cat, self._gen_cats = view.generation_by_category, view.generation_categories
         self._world_title_var.set(f"{plan.name} ({plan.preset_id})")
@@ -655,7 +671,7 @@ class WorldCreationTab:
             img, hits = render_world_panel(
                 cats, rows, CATEGORY_COLORS, editable=True, on_click=callback,
                 ref_width=REF_WIDTH, location=preset.location,
-                mod_settings=self._mod_settings,
+                mod_settings=self._active_mod_settings,
             )
             panel.set_image(img, hits, keep_scroll=False)
 
@@ -668,7 +684,7 @@ class WorldCreationTab:
     def _change_value(self, key, delta, is_rule):
         preset = self._active_preset()
         if not preset: return
-        values = get_value_set(key, self._mod_settings, location=preset.location, is_rule=is_rule)
+        values = get_value_set(key, self._active_mod_settings, location=preset.location, is_rule=is_rule)
         current = preset.overrides.get(key, "default")
         idx = values.index(current) if current in values else 0
         new = values[max(0, min(len(values) - 1, idx + delta))]

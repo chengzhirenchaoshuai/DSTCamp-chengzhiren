@@ -40,6 +40,14 @@
 
 from dataclasses import dataclass
 
+from dstools.features.world.location_profiles import (
+    CAVE_LOCATION,
+    FOREST_LOCATION,
+    PORKLAND_LOCATION,
+    SHIPWRECKED_LOCATION,
+    VOLCANO_LOCATION,
+)
+
 
 @dataclass
 class ModWorldSetting:
@@ -63,10 +71,19 @@ class ModWorldSetting:
     # 也确实是这两个之一，不是 "default"。硬编码 "default" 会让占位行显
     # 示一个这个 key 实际上不存在的档位，所以做成每条各自可覆盖的字段。
     initial_value: str = "default"
+    # 对应 AddCustomizeItem() 的 ``world`` 字段；None 表示源码没有限制。
+    locations: frozenset[str] | None = None
+    # 对应官方 ``master_controlled``，只在 Master 分片显示和编辑。
+    master_controlled: bool = False
 
     @property
     def category(self) -> str:
         return f"mod_{self.mod_id}"
+
+    def visible_in(self, location: str, is_master_world: bool = True) -> bool:
+        if self.locations is not None and location not in self.locations:
+            return False
+        return is_master_world or not self.master_controlled
 
 
 # workshop-1289779251 == Cherry Forest（简体中文社区里通称"新版樱花林"，
@@ -767,6 +784,137 @@ PORKLAND_SETTINGS: dict[str, ModWorldSetting] = {
 }
 
 
+def _set_verified_scope(
+    settings: dict[str, ModWorldSetting],
+    keys,
+    locations,
+    *,
+    master_controlled: bool = False,
+) -> None:
+    """把真实 AddCustomizeItem 字段写回登记项，并校验 key 没有抄错。"""
+    scope = frozenset(locations) if locations is not None else None
+    for key in keys:
+        if key not in settings:
+            raise KeyError(f"未登记的 Mod 世界设置 key: {key}")
+        settings[key].locations = scope
+        if master_controlled:
+            settings[key].master_controlled = True
+
+
+_ALL_VERIFIED_LOCATIONS = {
+    FOREST_LOCATION, CAVE_LOCATION, SHIPWRECKED_LOCATION,
+    VOLCANO_LOCATION, PORKLAND_LOCATION,
+}
+_OCEAN_LOCATIONS = {FOREST_LOCATION, SHIPWRECKED_LOCATION, PORKLAND_LOCATION}
+
+# Cherry Forest 的 world 缺省值由 init_worldgen.lua 明确补成这三个地点；
+# 世界生成条目则在 cherry_customizations.lua 中逐项限制为 forest/shipwrecked。
+_set_verified_scope(
+    CHERRY_FOREST_SETTINGS,
+    [key for key, info in CHERRY_FOREST_SETTINGS.items() if info.is_rule],
+    {FOREST_LOCATION, SHIPWRECKED_LOCATION, VOLCANO_LOCATION},
+)
+_set_verified_scope(
+    CHERRY_FOREST_SETTINGS,
+    [key for key, info in CHERRY_FOREST_SETTINGS.items() if not info.is_rule],
+    {FOREST_LOCATION, SHIPWRECKED_LOCATION},
+)
+_set_verified_scope(
+    CHERRY_FOREST_SETTINGS,
+    {"cherry_bugseason", "cherrift", "petalwind"},
+    {FOREST_LOCATION, SHIPWRECKED_LOCATION, VOLCANO_LOCATION},
+    master_controlled=True,
+)
+
+# Island Adventures - Core。
+_set_verified_scope(IA_CORE_SETTINGS, {"poison"}, None, master_controlled=True)
+_set_verified_scope(
+    IA_CORE_SETTINGS,
+    {"dst_boats", "ia_boats", "primeape_setting", "snake_setting"},
+    _ALL_VERIFIED_LOCATIONS,
+)
+_set_verified_scope(IA_CORE_SETTINGS, {"ia_drowning"}, _OCEAN_LOCATIONS)
+
+# Island Adventures - Shipwrecked：以下集合逐项对应
+# modservercreationmain.lua 的 ia_settings_customize_table / ia_worldgen_customize_table。
+_set_verified_scope(
+    IA_SHIPWRECKED_SETTINGS,
+    {"mild", "hurricane", "monsoon", "dry"},
+    None,
+    master_controlled=True,
+)
+_set_verified_scope(
+    IA_SHIPWRECKED_SETTINGS,
+    {"shipwrecked_season_start"},
+    None,
+    master_controlled=True,
+)
+_set_verified_scope(
+    IA_SHIPWRECKED_SETTINGS,
+    {
+        "floods", "tides", "oceanwaves", "whalehunt", "alternatewhalehunt",
+        "waterencounters", "sweet_potato_regrowth", "palmtree_regrowth",
+        "jungletree_regrowth", "mangrovetree_regrowth",
+        "coral_brain_rock_regrowth", "seashell_regrowth", "sandhill_regrowth",
+        "bioluminescence_regrowth", "crab_setting", "sharkitten_setting",
+        "lobster_setting", "jellyfish_setting", "rainbowjellyfish_setting",
+        "solofish_setting", "swordfish_setting", "stungray_setting",
+        "chessnavy_setting", "twister", "tigershark", "kraken",
+    },
+    {SHIPWRECKED_LOCATION},
+)
+_set_verified_scope(
+    IA_SHIPWRECKED_SETTINGS,
+    {"rock_obsidian_regrowth", "rock_charcoal_regrowth", "volcano_shrub_regrowth", "magmarock_regrowth"},
+    {VOLCANO_LOCATION},
+)
+_set_verified_scope(
+    IA_SHIPWRECKED_SETTINGS,
+    {"dragoonegg"},
+    {SHIPWRECKED_LOCATION, VOLCANO_LOCATION},
+)
+_set_verified_scope(
+    IA_SHIPWRECKED_SETTINGS,
+    {"wildbores_setting", "fishermerm_setting", "dragoon_setting"},
+    _ALL_VERIFIED_LOCATIONS,
+)
+_set_verified_scope(IA_SHIPWRECKED_SETTINGS, {"ballphin_setting"}, _OCEAN_LOCATIONS)
+
+_set_verified_scope(
+    IA_SHIPWRECKED_SETTINGS,
+    {
+        "volcano", "bermudatriangle", "volcanoisland", "sweet_potato",
+        "limpets", "mussel_farm", "seaweed", "seashell", "bamboo",
+        "bush_vine", "coral", "coral_brain_rock", "crate", "tidalpool",
+        "sandhill", "poisonhole", "bioluminescence", "tar_pool",
+        "shipwrecked_trees", "shipwreck", "waterygrave", "crabhole", "ox",
+        "doydoy", "wildbores", "ballphin", "primeape", "fishermerm",
+        "lobster", "solofish", "jellyfish", "rainbowjellyfish", "fishinhole",
+        "seagull", "flup", "swordfish", "stungray", "snake",
+    },
+    {SHIPWRECKED_LOCATION},
+)
+_set_verified_scope(
+    IA_SHIPWRECKED_SETTINGS,
+    {"coffeebush", "elephantcactus", "rock_obsidian", "rock_charcoal", "volcano_shrub", "dragoon"},
+    {VOLCANO_LOCATION},
+)
+_set_verified_scope(
+    IA_SHIPWRECKED_SETTINGS,
+    {"magma_rocks"},
+    {SHIPWRECKED_LOCATION, VOLCANO_LOCATION},
+)
+
+# Above the Clouds 新增条目在注册前统一补 ``world={"porkland"}``。
+_set_verified_scope(PORKLAND_SETTINGS, PORKLAND_SETTINGS, {PORKLAND_LOCATION})
+_set_verified_scope(
+    PORKLAND_SETTINGS,
+    {"temperate", "humid", "lush", "porkland_season_start"},
+    {PORKLAND_LOCATION},
+    master_controlled=True,
+)
+
+
 # workshop id（不带 "workshop-" 前缀）-> 该 mod 贡献的世界设置登记表。
 MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
     _CHERRY_FOREST_ID: CHERRY_FOREST_SETTINGS,
@@ -798,7 +946,11 @@ MOD_ICON_ATLAS: dict[str, tuple[str, str]] = {
 }
 
 
-def get_mod_world_settings(enabled_mod_ids) -> dict[str, ModWorldSetting]:
+def get_mod_world_settings(
+    enabled_mod_ids,
+    location: str | None = None,
+    is_master_world: bool = True,
+) -> dict[str, ModWorldSetting]:
     """合并 `enabled_mod_ids`（不带前缀的纯数字 workshop id 集合，调用方
     传 features/mod/sync.py 的 get_enabled_mod_ids() 结果）里每个*已登记
     过*的 mod 贡献的世界设置。
@@ -807,12 +959,27 @@ def get_mod_world_settings(enabled_mod_ids) -> dict[str, ModWorldSetting]:
     的行为（leveldataoverride.lua 的 overrides 表是全局扁平命名空间，不
     按 mod 隔离），这里如实反映（后登记的覆盖先登记的），不做额外去重
     或警告。"""
+    normalized = {str(mod_id).removeprefix("workshop-") for mod_id in enabled_mod_ids}
     merged: dict[str, ModWorldSetting] = {}
-    for mod_id in enabled_mod_ids:
-        settings = MOD_WORLD_SETTINGS.get(mod_id)
-        if settings:
-            merged.update(settings)
+    for mod_id, settings in MOD_WORLD_SETTINGS.items():
+        if mod_id not in normalized:
+            continue
+        for key, info in settings.items():
+            if location is None or info.visible_in(location, is_master_world):
+                merged[key] = info
     return merged
+
+
+def filter_mod_world_settings(
+    mod_settings: dict[str, ModWorldSetting],
+    location: str,
+    is_master_world: bool = True,
+) -> dict[str, ModWorldSetting]:
+    """按当前 location/分片过滤已经合并的登记表。"""
+    return {
+        key: info for key, info in mod_settings.items()
+        if info.visible_in(location, is_master_world)
+    }
 
 
 def get_mod_categories(mod_settings: dict) -> list[tuple[str, dict]]:

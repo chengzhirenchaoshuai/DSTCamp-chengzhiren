@@ -34,6 +34,44 @@ PORKLAND_REMOVED_RULE_KEYS |= frozenset(
 )
 PORKLAND_REMOVED_GEN_KEYS = frozenset({"season_start"})
 
+# 1467214795 会把这些原版 OPTIONS 的 ``world`` 列表扩展到新 location。
+# 两个集合逐项来自该 Mod 的 vanilla_options_in_islands / in_volcano。
+IA_SHIPWRECKED_VANILLA_KEYS = frozenset({
+    "task_set", "start_location", "world_size", "grass", "sapling", "flowers",
+    "touchstone", "boons", "balatro", "terrariumchest", "marshbush", "reeds",
+    "flint", "rock", "berrybush", "mushroom", "bees", "spiders", "merm",
+    "angrybees", "tallbirds", "liefs", "beequeen", "fruitfly", "klaus",
+    "spiderqueen", "eyeofterror", "lureplants", "wasps", "merms",
+    "spiders_setting", "spider_warriors", "butterfly", "birds", "bees_setting",
+    "pigs_setting", "bunnymen_setting", "grassgekkos", "regrowth",
+    "flowers_regrowth", "reeds_regrowth", "lightning", "weather",
+    "moles_setting", "prefabswaps_start", "twiggytrees_regrowth", "fishschools",
+})
+IA_VOLCANO_VANILLA_KEYS = frozenset({
+    "task_set", "start_location", "fruitfly", "spiderqueen", "liefs", "merms",
+    "spiders_setting", "spider_warriors", "bees_setting", "pigs_setting",
+    "bunnymen_setting", "lightning", "weather", "regrowth", "moles_setting",
+})
+
+
+def _resolve_ia_vanilla_settings(
+    allowed_keys: frozenset[str], is_rule: bool,
+) -> dict[str, tuple[str, dict[str, str]]]:
+    from dstools.features.world import categories
+
+    sources = (
+        (categories.FOREST_RULES_DICT, categories.CAVE_ALL_RULES_DICT)
+        if is_rule else
+        (categories.FOREST_GEN_DICT, categories.CAVE_ALL_GEN_DICT)
+    )
+    resolved: dict[str, tuple[str, dict[str, str]]] = {}
+    for key in allowed_keys:
+        for source in sources:
+            if key in source:
+                resolved[key] = source[key]
+                break
+    return resolved
+
 
 def resolve_vanilla_settings(location: str, is_rule: bool) -> dict[str, tuple[str, dict[str, str]]]:
     """返回某地点实际继承的原版设置，不包含任何 Mod 新增项。"""
@@ -56,6 +94,10 @@ def resolve_vanilla_settings(location: str, is_rule: bool) -> dict[str, tuple[st
             for key in PORKLAND_REMOVED_GEN_KEYS:
                 resolved.pop(key, None)
         return resolved
+    if location == "shipwrecked":
+        return _resolve_ia_vanilla_settings(IA_SHIPWRECKED_VANILLA_KEYS, is_rule)
+    if location == "volcanoworld":
+        return _resolve_ia_vanilla_settings(IA_VOLCANO_VANILLA_KEYS, is_rule)
     return {}
 
 
@@ -70,6 +112,21 @@ def resolve_vanilla_categories(location: str, setting_type: str) -> list[tuple[s
     if location == "porkland":
         source = categories.SURFACE_RULES if setting_type == "rules" else categories.SURFACE_GEN
         return [item for item in source if not (setting_type == "rules" and item[0] == "events")]
+    if location in {"shipwrecked", "volcanoworld"}:
+        settings = resolve_vanilla_settings(location, setting_type == "rules")
+        used_categories = {category for category, _names in settings.values()}
+        source = (
+            list(categories.SURFACE_RULES) + list(categories.CAVE_RULES)
+            if setting_type == "rules" else
+            list(categories.SURFACE_GEN) + list(categories.CAVE_GEN)
+        )
+        result = []
+        seen = set()
+        for item in source:
+            if item[0] in used_categories and item[0] not in seen:
+                result.append(item)
+                seen.add(item[0])
+        return result
     return []
 
 

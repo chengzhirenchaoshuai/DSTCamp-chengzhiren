@@ -191,16 +191,19 @@ class WorldSettingsTab:
         # 本来就是并集所有世界的 modoverrides.lua)，不分具体哪个世界，
         # 跟 mod 本身"启用是针对整个存档"的语义一致。
         from dstools.features.mod.sync import get_enabled_mod_ids
-        from dstools.features.world.mod_settings import get_mod_world_settings, get_mod_categories
-        self._mod_settings = get_mod_world_settings(get_enabled_mod_ids(c))
-        self._mod_categories = get_mod_categories(self._mod_settings)
+        from dstools.features.world.mod_settings import (
+            filter_mod_world_settings,
+            get_mod_categories,
+            get_mod_world_settings,
+        )
+        all_mod_settings = get_mod_world_settings(get_enabled_mod_ids(c))
         # 图标解析要读 mod 自己的图集文件（真机验证过：只有第一次或者
         # mod 更新过才会真的调 ktech.exe，其余时候直接命中磁盘缓存），
         # 没有贡献设置的存档这里是空字典，不会碰任何文件。
         from dstools.features.world.mod_icons import resolve_mod_setting_icons
         from dstools.features.mod.parser import resolve_wegame_client_mods_dir
         wegame_dir = resolve_wegame_client_mods_dir(c.platform)
-        self._mod_icons = resolve_mod_setting_icons(self._mod_settings, c.platform, wegame_dir)
+        self._mod_icons = resolve_mod_setting_icons(all_mod_settings, c.platform, wegame_dir)
         for s in c.shards:
             if s.name == self.shard_var.get():
                 self.app._current_shard = s
@@ -220,13 +223,25 @@ class WorldSettingsTab:
                 preset = load_result.preset
                 self._wl_preset = preset
                 loc = preset.location if hasattr(preset, 'location') and preset.location else "forest"
-                loc_label = t("world.location_forest") if loc == "forest" else t("world.location_cave")
+                is_master_world = s.name == "Master"
+                self._mod_settings = filter_mod_world_settings(
+                    all_mod_settings, loc, is_master_world,
+                )
+                self._mod_categories = get_mod_categories(self._mod_settings)
+                from dstools.features.world.location_profiles import get_location_definition
+                try:
+                    loc_label = get_location_definition(loc).name_zh
+                except ValueError:
+                    loc_label = loc
                 self._wl_title_var.set(f"{preset.name} ({preset.preset_id})   {loc_label}")
                 # 不再截断到 80 个字符——卡片会把完整描述换行显示，而不是裁掉。
                 self._wl_desc_var.set(preset.description or "")
 
                 from dstools.features.world.view_model import build_world_view_model
-                view_model = build_world_view_model(preset, self._mod_settings, self._mod_categories)
+                view_model = build_world_view_model(
+                    preset, self._mod_settings, self._mod_categories,
+                    is_master_world=is_master_world,
+                )
                 self._rules_by_cat = view_model.rules_by_category
                 self._rules_cats = view_model.rule_categories
                 self._render_rules()

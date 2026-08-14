@@ -39,15 +39,22 @@ class WorldViewModel:
 def build_world_view_model(
     preset: WorldPreset, mod_settings: dict,
     mod_categories: list[tuple[str, str]] | None = None,
+    is_master_world: bool = True,
 ) -> WorldViewModel:
     """按位置和已启用 Mod 补齐可展示项，并保持未保存项显式可辨。"""
     location = preset.location or "forest"
+    visible_mod_settings = {
+        key: info for key, info in mod_settings.items()
+        if not hasattr(info, "visible_in") or info.visible_in(location, is_master_world)
+    }
     rules_by_category: dict[str, list[WorldOverride | WorldDisplayOverride]] = {}
     generation_by_category: dict[str, list[WorldOverride | WorldDisplayOverride]] = {}
     seen_keys: set[str] = set()
 
     for override in preset.overrides:
-        category, is_rule, name = get_setting_info(override.key, location, mod_settings)
+        category, is_rule, name = get_setting_info(
+            override.key, location, visible_mod_settings,
+        )
         override.name = name or override.key
         seen_keys.add(override.key)
         if category != "other":
@@ -65,7 +72,7 @@ def build_world_view_model(
     add_builtin_defaults(True, rules_by_category)
     add_builtin_defaults(False, generation_by_category)
 
-    for key, info in mod_settings.items():
+    for key, info in visible_mod_settings.items():
         if key in seen_keys:
             continue
         target = rules_by_category if info.is_rule else generation_by_category
