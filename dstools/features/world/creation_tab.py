@@ -68,6 +68,7 @@ class WorldCreationTab:
         self._rules_cats = []; self._gen_cats = []
         self._mod_settings = {}
         self._active_mod_settings = {}
+        self._mod_world_icons = {}
         self._template_root = None
         self._server_root = None
         self._selected_mod_ids: set[str] = set()
@@ -409,18 +410,35 @@ class WorldCreationTab:
                     except Exception:
                         pass
                 records.append((mod_id, info, icon))
-            self._post_mod_scan_result(generation, records, None)
+            # 世界设置图标跟普通 Mod 列表图标一样在扫描线程解析，避免
+            # 第一次进入“世界设置”时同步调用 ktech.exe 卡住界面。
+            from dstools.features.world.mod_icons import resolve_mod_setting_icons
+            installed_settings = get_mod_world_settings(ids)
+            try:
+                world_icons = resolve_mod_setting_icons(
+                    installed_settings, platform, client_mods_dir,
+                )
+            except Exception:
+                # 单个 Mod 图集损坏不能拖垮整个 Mod 列表；渲染层会对
+                # 缺失图标使用原有兜底。
+                world_icons = {}
+            self._post_mod_scan_result(generation, records, world_icons, None)
         except Exception as exc:
-            self._post_mod_scan_result(generation, [], exc)
+            self._post_mod_scan_result(generation, [], {}, exc)
 
-    def _post_mod_scan_result(self, generation, records, error):
+    def _post_mod_scan_result(self, generation, records, world_icons, error):
         try:
-            self.frame.after(0, lambda: self._apply_mod_scan_result(generation, records, error))
+            self.frame.after(
+                0,
+                lambda: self._apply_mod_scan_result(
+                    generation, records, world_icons, error,
+                ),
+            )
         except (RuntimeError, tk.TclError):
             # 向导被关闭后，后台线程可能刚好完成；此时无需再回调 Tk。
             return
 
-    def _apply_mod_scan_result(self, generation, records, error):
+    def _apply_mod_scan_result(self, generation, records, world_icons, error):
         if generation != self._mod_scan_generation:
             return
         self._mod_scan_running = False
@@ -437,6 +455,7 @@ class WorldCreationTab:
         self._mod_infos.clear()
         self._icon_imgs.clear()
         self._icon_thumb_cache.clear()
+        self._mod_world_icons = world_icons
         for mod_id, info, icon in records:
             self._mod_infos[mod_id] = info
             configured = self._mod_overrides.get(mod_id, {})
@@ -704,6 +723,7 @@ class WorldCreationTab:
                 cats, rows, CATEGORY_COLORS, editable=True, on_click=callback,
                 ref_width=REF_WIDTH, location=preset.location,
                 mod_settings=self._active_mod_settings,
+                mod_icons=self._mod_world_icons,
             )
             panel.set_image(img, hits, keep_scroll=False)
 

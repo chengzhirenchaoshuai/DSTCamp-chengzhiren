@@ -41,6 +41,11 @@ from dstools.features.world.location_profiles import (  # noqa: E402
     resolve_world_location_profile,
 )
 from dstools.features.world.mod_settings import get_mod_world_settings  # noqa: E402
+from dstools.features.world.icons import get_pil_icon  # noqa: E402
+from dstools.features.world.render import render_world_panel  # noqa: E402
+from dstools.features.world.reader import WorldOverride  # noqa: E402
+from dstools.features.mod.parser import parse_modinfo  # noqa: E402
+from PIL import Image  # noqa: E402
 from dstools.shared.lua_parser import (  # noqa: E402
     parse_lua_file,
     parse_lua_table,
@@ -147,6 +152,44 @@ def test_lua_multiline_roundtrip() -> None:
     assert parse_lua_table(serialize_lua_table(original)) == original
 
 
+def test_en_zh_mod_metadata() -> None:
+    with TemporaryDirectory() as directory:
+        mod = Path(directory) / "1234567890"
+        mod.mkdir()
+        (mod / "modinfo.lua").write_text(
+            'local function en_zh(en, zh) return zh end\n'
+            'name = en_zh("Island Adventures - Core", "岛屿冒险 - 核心")\n'
+            'author = en_zh("Island Adventures Team", "岛屿冒险团队")\n'
+            'description = en_zh("Core content", "核心内容")\n'
+            'version = "1.0"\n',
+            encoding="utf-8",
+        )
+        info = parse_modinfo(mod)
+        assert info is not None
+        assert info.name == "岛屿冒险 - 核心"
+        assert info.author == "岛屿冒险团队"
+        assert info.description == "核心内容"
+
+
+def test_world_setting_icon_rendering() -> None:
+    # 原版图标仍从内置素材加载。
+    assert get_pil_icon("autumn", 48, FOREST_LOCATION) is not None
+    assert get_pil_icon("task_set", 48, SHIPWRECKED_LOCATION) is not None
+
+    # Mod 图标由创建向导扫描线程解析后传给同一个渲染器。用唯一的洋红色
+    # 合成图验证渲染器确实把传入图标画进最终面板，而不是只画占位背景。
+    mod_icon = Image.new("RGBA", (48, 48), (255, 0, 255, 255))
+    panel, _hits = render_world_panel(
+        [("mod_test", "测试 Mod")],
+        {"mod_test": [WorldOverride("test_mod_icon", "default", name="测试设置")]},
+        {"mod_test": "#ffffff"},
+        editable=False,
+        location=SHIPWRECKED_LOCATION,
+        mod_icons={"test_mod_icon": mod_icon},
+    )
+    assert (255, 0, 255) in set(panel.getdata())
+
+
 def test_creation_matrix() -> None:
     with TemporaryDirectory() as directory:
         root = Path(directory)
@@ -237,6 +280,8 @@ def main() -> None:
         test_setting_location_isolation,
         test_island_vanilla_catalogs,
         test_lua_multiline_roundtrip,
+        test_en_zh_mod_metadata,
+        test_world_setting_icon_rendering,
         test_creation_matrix,
         test_creation_rejects_invalid_combinations,
         test_porkland_creation,

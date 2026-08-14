@@ -575,6 +575,19 @@ def _extract_quoted(text: str, key: str) -> str | None:
     m = re.search(rf'\b{re.escape(key)}\s*=\s*\w+\s+and\s+(?:{_QUOTED_ALT})', text)
     if m:
         return _pick_quoted(m)
+    # Island Adventures 等 Mod 使用一个非常直接的双语辅助函数：
+    # ``name = en_zh("English", "中文")``。批量列表扫描不会执行任意
+    # modinfo.lua，因此只识别这个已经从真实源码确认过、两个参数都是
+    # 字符串字面量的安全形状，并取第二个中文参数；更复杂的函数调用仍
+    # 保持未解析，交给按需 Lua 沙箱处理。
+    m = re.search(
+        rf'\b{re.escape(key)}\s*=\s*en_zh\s*\(\s*'
+        rf'(?:{_QUOTED_ALT})\s*,\s*(?:{_QUOTED_ALT})\s*\)',
+        text,
+        re.DOTALL,
+    )
+    if m:
+        return m.group(3) if m.group(3) is not None else m.group(4)
     # 同样的惯用写法，但用 `[[...]]` 长括号字符串而不是带引号的——例如
     # `name =\nCh and\n[[ 卡尼猫]] or\n[[ Carney]]`（真实 mod 的例子；
     # 也说明这可以跨多行，\s* 本来就能匹配换行符，天然兼容）。
@@ -672,6 +685,10 @@ def _extract_string(text: str, key: str, info: ModInfo):
 
 def _extract_description(text: str, info: ModInfo):
     """提取 description，可能是拼接起来的字符串。"""
+    localized = _extract_quoted(text, "description")
+    if localized is not None:
+        info.description = _unescape_lua_string(localized).strip()
+        return
     # 先试简单的带引号形式
     for pat in [rf'description\s*=\s*"({_QSTR})"', r"description\s*=\s*'([^']*)'"]:
         m = re.search(pat, text, re.DOTALL)
