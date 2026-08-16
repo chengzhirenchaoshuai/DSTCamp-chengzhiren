@@ -42,6 +42,7 @@ class BgFrame(tk.Canvas):
         super().__init__(parent, highlightthickness=0, bd=0,
                           background=self._resolve_color(), **kw)
         self._photo = None
+        self._last_render_key = None  # render_now 缓存键，避免恢复窗口时无谓重画
         self._render_after_id = None
         self._bg_retry_after_id = None
         self._bg_retry_done = False
@@ -114,11 +115,22 @@ class BgFrame(tk.Canvas):
             return
         if not self.winfo_ismapped():
             return
-        self.delete("bg_image")
-        self.delete("bg_fill")
         w, h = self.winfo_width(), self.winfo_height()
         if w < 2 or h < 2:
             return
+        # 缓存：共享图 key 和尺寸都没变、且已画过 bg_image，说明裁剪结果没
+        # 变（典型是从任务栏恢复窗口时 <Map> 触发的大批 render_now），直接
+        # 复用，省掉 delete+crop+PhotoImage 这套无谓重活。
+        shared_key = getattr(self._app, "_shared_bg_key", None)
+        # theme.BG_SOFT 也参与 render_background 的混合，切主题后共享图内容
+        # 变了但 _shared_bg_key 不含它，这里把 BG_SOFT 一并算进缓存键，切主
+        # 题后缓存自动失效、重新裁剪。
+        render_key = (shared_key, w, h, theme.BG_SOFT)
+        if render_key == self._last_render_key and self.find_withtag("bg_image"):
+            return
+        self._last_render_key = render_key
+        self.delete("bg_image")
+        self.delete("bg_fill")
         # Tk 在 Canvas 子窗口之间切换时，旧页签的窗口像素有时不会立刻
         # 收到 expose 重绘，尤其是没有自定义背景图的纯色主题。显式画一
         # 层兜底色可以把旧页签残影清掉；有背景图时这层会被下面的照片
