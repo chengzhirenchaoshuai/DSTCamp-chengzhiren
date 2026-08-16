@@ -1042,4 +1042,9 @@ class SelfHostFrpPage:
         for shard in cluster.shards:
             app_settings.set_selfhost_frp_mapping(cluster.path, shard.name, None)
         self._frpc_config_path(cluster.path).unlink(missing_ok=True)
-        self.frpc.stop(cluster.path, on_done=lambda p: self.frame.after(0, self._render_shard_rows))
+        # 不能把 _render_shard_rows 挂在 frpc.stop 的 on_done 上：frpc 没在跑
+        # 时（_procs 里没有记录）stop() 直接 return、on_done 根本不触发，界面
+        # 就纹丝不动（映射其实已经清了，但按钮还停在"关闭映射"、连通性按钮
+        # 还亮着）。这里无条件刷新，frpc 进程在后台异步停掉即可。
+        self.frpc.stop(cluster.path)
+        self._render_shard_rows()
