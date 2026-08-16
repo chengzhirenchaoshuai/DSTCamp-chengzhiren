@@ -136,7 +136,6 @@ def _localize_mod_name(wid: str, name: str) -> str:
 # 订阅必要模组引导列表：(workshop id, 名称, 一句话描述)。
 RECOMMENDED_MODS = [
     ("3444078585", "DontStarveLuaJit2", "LuaJIT 性能补丁，大幅降低卡顿"),
-    ("3377689002", "崩溃？别在意", "崩溃后自动处理，减少坏档卡死"),
     ("2941527805", "Chinese++ Pro", "汉化其它模组的名称与配置项，Mod 列表和设置直接显示中文"),
 ]
 
