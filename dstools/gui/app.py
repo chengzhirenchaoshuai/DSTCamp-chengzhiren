@@ -1,6 +1,6 @@
 """饥荒存档管理工具的 GUI。页签：存档信息 | Mod | 世界 | 配置 | 环境。"""
 
-import sys, threading, tkinter as tk, weakref
+import sys, threading, time, tkinter as tk, weakref
 from pathlib import Path
 from types import SimpleNamespace
 from tkinter import font as tkfont, ttk
@@ -915,12 +915,16 @@ class DSToolsApp:
         self._bg_surfaces.append(weakref.ref(surface))
 
     def _on_root_map(self, event) -> None:
-        """窗口从 Unmap 变 Map（从任务栏恢复/首次显示）时，强制一次同步
-        绘制所有内容——Tk 对 overrideredirect 窗口的恢复是分层 expose 重
-        绘（父容器先、子控件后），中间未绘制的区域会短暂透明露出桌面背
-        景。这里 update 一次让所有层一次性出现，消除"分层加载"观感。"""
-        if event.widget is not self.root:
+        """恢复窗口（或首次显示）时 Tk 会逐个投递子 widget 的 Map/Visibility/
+        Expose 事件（root 自己的 Map 反而最后投递），逐个 Expose 重绘就是
+        "分层加载"的来源。在最早的一个 Map 事件就强制同步绘制一次——此时
+        所有 widget 其实已经完成映射（只是事件还没逐个投递完），update 一
+        次性画完，后续 Expose 无内容可重绘。用时间戳节流，同一批恢复只
+        update 一次。"""
+        now = time.monotonic()
+        if now - getattr(self, "_last_map_update", 0) < 0.5:
             return
+        self._last_map_update = now
         self.root.update_idletasks()
         self.root.update()
 
