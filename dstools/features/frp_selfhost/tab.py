@@ -322,14 +322,19 @@ class SelfHostFrpPage:
         if not self.has_active_mapping(cluster, shard):
             return
         config_path = self._frpc_config_path(cluster.path)
+        if not config_path.exists():
+            # 配置被删（如用户清理缓存目录）时按当前映射重新生成，再继续。
+            self._rebuild_frpc_config(cluster)
         exe = _frpc_exe_path()
-        if not config_path.exists() or not exe.exists():
+        if not config_path.exists():
             return
         # 先认领一次可能存在的孤儿进程（见 client.py 顶部说明），避免在
         # 已经有一个孤儿 frpc.exe 真的在转发流量的情况下又启动第二个—
         # —两个进程会抢着向 frps 注册同一批代理，大概率互相冲突失败。
         if self.frpc.reconcile(cluster.path, exe, config_path):
             return
+        # FrpcProcess.start() 内部会检查 exe 是否存在——被隔离/删除时记下
+        # CRASHED+error，状态行据此显示"启动失败"，而不是这里静默 return。
         self.frpc.start(cluster.path, exe, config_path)
 
     def stop_frpc_for_shard(self, cluster, shard, on_done=None) -> None:

@@ -470,10 +470,12 @@ class SakuraTab:
         pointer_path = self._frpc_pointer_path(cluster.path, shard.name)
         if pointer_path.exists():
             exe = _frpc_exe_path()
-            if exe.exists() and not self.frpc.get(cluster.path, shard.name):
+            if not self.frpc.get(cluster.path, shard.name):
                 token = app_settings.get_sakura_token()
                 tunnel_id = pointer_path.read_text(encoding="utf-8").strip()
                 if token and tunnel_id:
+                    # FrpcProcess.start() 内部检查 exe 是否存在——被隔离/删除
+                    # 时记 CRASHED+error，状态行据此显示"启动失败"。
                     self.frpc.start(cluster.path, shard.name, exe, token, int(tunnel_id))
         self.selfhost_page.maybe_start_frpc(cluster, shard)
 
