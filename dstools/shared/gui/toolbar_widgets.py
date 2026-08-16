@@ -7,9 +7,13 @@ ttk.Label/ttk.Radiobutton 的绘制区域永远不透明，会挡住 BgFrame 透
 
 import tkinter as tk
 from tkinter import font as tkfont
+from typing import TYPE_CHECKING
 
 from dstools.shared.gui import theme
 from dstools.shared.gui.bg_frame import BgFrame
+
+if TYPE_CHECKING:
+    from dstools.gui.app import DSToolsApp
 
 
 class ReadonlyBanner:
