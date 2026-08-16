@@ -407,9 +407,11 @@ class DSToolsApp:
 
             self._cluster_tab_map[key].on_cluster_changed()
 
-            # 重活做完后再刷一次兜底，保证最终状态一定是对的。
+            # 重活完成后，各 BgFrame 的 <Configure> 会走 16ms 节流裁剪补上
+            # 最终背景，不需要再来一次 250ms 的全量刷新（之前这里刷第二次，
+            # 是切标脏页签卡顿的第二个来源）。保留 update_idletasks 让几何
+            # 排布先完成、触发那次节流裁剪。
             self.root.update_idletasks()
-            self._refresh_all_bg_surfaces()
 
         # "服务器是否在运行"跟选了哪个存档无关——用户可能没切存档，只是
         # 去"本地服务器"页签启停了一下再切回来，这种情况不会被标脏，
@@ -734,7 +736,18 @@ class DSToolsApp:
         # 语言前后专门保存/恢复"当前选中项"——preserve=True 会按 Cluster
         # 的 path 直接匹配回同一个存档，同时把菜单文字刷新成新语言。
         self._populate_global_cluster_combo(preserve=True)
-        for tab in self._tabs: tab.refresh_language(); tab.refresh()
+        # 语言切换跟主题切换共用同一套"只当前页 refresh、其余标脏"的骨架：
+        # refresh_language() 便宜、全部页签都做；refresh() 是重活（Lua 沙箱
+        # 扫描/PIL 面板重绘/玩家头像解析），只对当前页签立即做，其余标脏、
+        # 真正切过去时才补（见 _apply_visual_refresh / _on_tab_select）。
+        for key, tab in zip(self._tab_keys, self._tabs):
+            refresh_language = getattr(tab, "refresh_language", None)
+            if refresh_language:
+                refresh_language()
+            if key == self._current_tab_key:
+                tab.refresh()
+            else:
+                self._stale_cluster_tabs.add(key)
         entry = getattr(self.save_tab, "_creation_entry", None)
         if entry is not None:
             entry.refresh_language()

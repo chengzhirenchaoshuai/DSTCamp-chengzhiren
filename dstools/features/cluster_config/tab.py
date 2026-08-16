@@ -1530,9 +1530,9 @@ class ClusterConfigTab:
             if button is not None and button.winfo_exists():
                 button.configure(text=t("cluster.save_btn"))
         # 字段标签/悬浮说明（来自 ini_field_info）以及本地存档的只读提
-        # 示都跟界面语言相关——重新渲染一遍才能跟着切换语言，不然会停
-        # 留在这个存档上次加载时所用的语言上。
-        self._load_config()
+        # 示都跟界面语言相关，但重建表单是重活，交给 refresh() 的
+        # on_cluster_changed()——配合 app.py 语言切换"只当前页 refresh、
+        # 其余标脏"，这里不再重复 _load_config()。
 
     def retheme(self):
         """主题切换时调用——_sub_tab_bar（PillTabBar）是构造一次就不再

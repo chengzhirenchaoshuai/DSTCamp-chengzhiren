@@ -1418,7 +1418,9 @@ class ModManagerTab:
         self._mod_location_recheck_btn.configure(text=t("local.install_recheck_btn"))
         self._mod_location_change_btn.configure(text=t("local.install_change_btn"))
         self._redraw_mod_location_row_text()
-        self._refresh_mods()
+        # 语言相关的动态内容（mod 列表名/描述）交给 refresh() 重新扫描渲
+        # 染——配合 app.py 语言切换"只当前页 refresh、其余标脏"，这里不
+        # 再重复触发一次 _refresh_mods()。
 
     def retheme(self):
         """主题切换时调用——这个横幅、以及 make_toolbar_label() 画的说明
