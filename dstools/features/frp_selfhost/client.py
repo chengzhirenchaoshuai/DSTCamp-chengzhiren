@@ -90,6 +90,7 @@ class FrpcStatus(Enum):
     RUNNING = "running"
     STOPPING = "stopping"
     STOPPED = "stopped"
+    CRASHED = "crashed"
 
 
 def build_frpc_toml(server_host: str, server_port: int, token: str, proxies: list[dict]) -> str:

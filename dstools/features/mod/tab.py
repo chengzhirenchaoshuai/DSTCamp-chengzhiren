@@ -1041,7 +1041,7 @@ class ModManagerTab:
             name_row = tk.Frame(row)
             name_row.pack(fill=tk.X)
             tk.Label(name_row, text=name, anchor=tk.W,
-                     font=theme.font_tuple(theme.FONT_SIZE, bold=True)).pack(side=tk.LEFT)
+                     font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True)).pack(side=tk.LEFT)
             if is_mod_subscribed(wid):
                 tk.Label(name_row, text=t("mod.recommend_subscribed"),
                          fg=theme.TEXT_MUTED).pack(side=tk.RIGHT)
