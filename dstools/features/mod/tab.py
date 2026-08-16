@@ -137,7 +137,7 @@ def _localize_mod_name(wid: str, name: str) -> str:
 RECOMMENDED_MODS = [
     ("3444078585", "DontStarveLuaJit2", "LuaJIT 性能补丁，大幅降低卡顿"),
     ("3377689002", "崩溃？别在意", "崩溃后自动处理，减少坏档卡死"),
-    ("2941527805", "Chinese++ Pro", "中文加强 + 汉化其它模组"),
+    ("2941527805", "Chinese++ Pro", "汉化其它模组的名称与配置项，Mod 列表和设置直接显示中文"),
 ]
 
 
@@ -216,16 +216,7 @@ class ModManagerTab:
 
         sf = BgFrame(self.frame, app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=5, pady=5)
         # "存档"选择器已经搬到顶部的全局选择栏（见 DSToolsApp._cluster_bar），
-        # 这里不再重复一份。"同步mod文件到服务器"仍然摆在这一行最前面、
-        # "世界:"标签左边——同步针对的是整个存档(所有世界)的 Mod，不是当前
-        # 选中的某一个世界，放在世界选择器左边能提示"这不是只同步当前世界"。
-        # 不受 self._dirty 门控，同步的是已经写进 modoverrides.lua 的状态，
-        # 跟这次编辑有没有存盘无关；本地存档不需要这个功能，选中本地存档
-        # 时置灰（见 on_cluster_changed）。文字/图标状态由
-        # refresh_sync_button_state() 探测实际联接状态后维护，初始值只是
-        # 占位，构造完成后第一次刷新之前不代表任何真实状态。
-        self._md_recommend = ttk.Button(sf, text=t("mod.recommend_btn"), command=self._open_recommend_mods)
-        self._md_recommend.pack(side=tk.LEFT, padx=(0,10))
+        # 这里不再重复一份。
         self._md_lbl2 = make_toolbar_label(sf, app, lambda: t("mod.shard"))
         self.shard_var = tk.StringVar(value="Master")
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
@@ -267,6 +258,10 @@ class ModManagerTab:
              ("enabled", lambda: t("mod.show_enabled")),
              ("disabled", lambda: t("mod.show_disabled"))],
             self.show_var, self._render_list)
+        # "订阅常用模组"放在"已禁用"筛选项右侧（filter chips 之后、重新扫描
+        # 之前），跟筛选功能挤在同一行，不再占 mod 列表顶部工具栏。
+        self._md_recommend = ttk.Button(ff, text=t("mod.recommend_btn"), command=self._open_recommend_mods)
+        self._md_recommend.pack(side=tk.LEFT, padx=(8, 0))
         self._md_br = ttk.Button(ff, text=t("mod.reload_full"), command=self._reload_full)
         self._md_br.pack(side=tk.RIGHT, padx=(6, 0))
         Tooltip(self._md_br, lambda: t("mod.reload_full_hover"))
