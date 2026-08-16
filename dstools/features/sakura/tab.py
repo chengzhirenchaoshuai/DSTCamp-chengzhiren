@@ -949,6 +949,9 @@ class SakuraTab:
         else:
             status_text = t("sakura.frpc_status_stopped")
             color = theme.TEXT_MUTED
+        # "启动失败"比"未启动"长，文字变了要重新量宽度，否则被后面按钮挡住
+        f = tkfont.nametofont("TkDefaultFont")
+        self._frpc_status_label.configure(width=f.measure(status_text) + 4)
         self._frpc_status_label.itemconfig("label_text", text=status_text, fill=color)
         self._frpc_toggle_btn.configure(
             text=t("sakura.frpc_stop_btn") if running else t("sakura.frpc_start_btn"))

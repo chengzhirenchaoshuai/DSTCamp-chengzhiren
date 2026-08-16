@@ -1027,30 +1027,58 @@ class ModManagerTab:
             webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
 
     def _open_recommend_mods(self):
-        """订阅常用模组引导：列出推荐 mod，已订阅显示「已订阅」，未订阅显示
-        「订阅」按钮跳转到创意工坊/WeGame 订阅页。"""
+        """订阅常用模组引导：列出推荐 mod（图标 + 名称 + 描述），已订阅显示
+        「已订阅」，未订阅显示「订阅」按钮跳转到创意工坊/WeGame 订阅页。"""
         from dstools.features.mod.parser import is_mod_subscribed
         from dstools.shared.gui.dialog_geometry import center_over_parent
+        from dstools.shared.resource_paths import bundled_resource_dir
+        from PIL import Image, ImageTk
+
         win = tk.Toplevel(self.frame)
         win.title(t("mod.recommend_title"))
         win.transient(self.frame.winfo_toplevel())
         win.resizable(False, False)
+        win.configure(bg=theme.CARD_BG)
+
+        icon_dir = bundled_resource_dir() / "icons" / "recommended"
+        icon_size = 48
+
         for wid, name, desc in RECOMMENDED_MODS:
-            row = tk.Frame(win)
-            row.pack(fill=tk.X, padx=14, pady=(10, 0))
-            name_row = tk.Frame(row)
+            row = tk.Frame(win, bg=theme.CARD_BG)
+            row.pack(fill=tk.X, padx=16, pady=(14, 0))
+
+            # 左侧图标（预先转好的 PNG，随程序打包，未订阅也能显示）
+            icon_photo = None
+            icon_path = icon_dir / f"{wid}.png"
+            if icon_path.exists():
+                try:
+                    img = Image.open(icon_path).convert("RGBA")
+                    img = img.resize((icon_size, icon_size), Image.LANCZOS)
+                    icon_photo = ImageTk.PhotoImage(img)
+                except Exception:
+                    icon_photo = None
+            if icon_photo is not None:
+                icon_lbl = tk.Label(row, image=icon_photo, bg=theme.CARD_BG)
+                icon_lbl.image = icon_photo  # 防被垃圾回收
+                icon_lbl.pack(side=tk.LEFT, padx=(0, 12))
+
+            # 右侧：名称 + 状态（第一行）、描述（第二行）
+            text_col = tk.Frame(row, bg=theme.CARD_BG)
+            text_col.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            name_row = tk.Frame(text_col, bg=theme.CARD_BG)
             name_row.pack(fill=tk.X)
-            tk.Label(name_row, text=name, anchor=tk.W,
-                     font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True)).pack(side=tk.LEFT)
+            tk.Label(name_row, text=name, anchor=tk.W, bg=theme.CARD_BG, fg=theme.TEXT,
+                     font=theme.font_tuple(theme.FONT_SIZE_LG, bold=True)).pack(side=tk.LEFT)
             if is_mod_subscribed(wid):
-                tk.Label(name_row, text=t("mod.recommend_subscribed"),
+                tk.Label(name_row, text=t("mod.recommend_subscribed"), bg=theme.CARD_BG,
                          fg=theme.TEXT_MUTED).pack(side=tk.RIGHT)
             else:
                 ttk.Button(name_row, text=t("mod.recommend_subscribe"),
                            command=lambda w=wid: self._on_link(f"workshop-{w}")).pack(side=tk.RIGHT)
-            tk.Label(row, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=380,
-                     fg=theme.TEXT_MUTED).pack(fill=tk.X)
-        ttk.Button(win, text=t("dlg.close"), command=win.destroy).pack(pady=14)
+            tk.Label(text_col, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=380,
+                     bg=theme.CARD_BG, fg=theme.TEXT_MUTED).pack(fill=tk.X, pady=(3, 0))
+
+        ttk.Button(win, text=t("dlg.close"), command=win.destroy).pack(pady=16)
         center_over_parent(win, self.frame.winfo_toplevel())
 
     def _on_copy_id(self, workshop_id):

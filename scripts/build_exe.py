@@ -51,6 +51,7 @@ def build():
     world_icons_src = project_root / "icons" / "world"
     ui_icons_src = project_root / "icons" / "ui"
     app_icons_src = project_root / "icons" / "app"
+    recommended_icons_src = project_root / "icons" / "recommended"
     tools_src = project_root / "tools"
     app_ico = app_icons_src / "icon.ico"
 
@@ -91,6 +92,9 @@ def build():
         f"--add-data={world_icons_src}{sep}icons{os.sep}world",
         f"--add-data={ui_icons_src}{sep}icons{os.sep}ui",
         f"--add-data={app_icons_src}{sep}icons{os.sep}app",
+        # 推荐订阅 mod 的图标（icons/recommended/），订阅引导弹窗里直接显示，
+        # 随程序打包，未订阅时也能看到图标。
+        f"--add-data={recommended_icons_src}{sep}icons{os.sep}recommended",
         # 整个 tools/（含 ktools/frp_selfhost/sakura/vcredist 的 exe 二进制
         # 和 fonts 字体）都打包进 exe。运行时 tool_binary_dir() 会先把这些
         # 二进制从 _MEI 临时目录复制到 exe 旁边的 tools/ 再运行——避免
