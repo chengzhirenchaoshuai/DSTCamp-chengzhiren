@@ -1053,7 +1053,7 @@ class ModManagerTab:
         # 左侧主体：canvas（列表）+ 底部关闭按钮
         main = tk.Frame(win, bg=theme.CARD_BG)
         main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        canvas = tk.Canvas(main, width=560, height=520, highlightthickness=0,
+        canvas = tk.Canvas(main, width=800, height=520, highlightthickness=0,
                            bd=0, bg=theme.CARD_BG)
         canvas.configure(yscrollcommand=vbar.set)
         vbar.configure(command=canvas.yview)
@@ -1130,7 +1130,7 @@ class ModManagerTab:
             else:
                 ttk.Button(name_row, text=t("mod.recommend_subscribe"),
                            command=lambda w=wid: self._on_link(f"workshop-{w}")).pack(side=tk.RIGHT)
-            tk.Label(text_col, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=440,
+            tk.Label(text_col, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=680,
                      bg=theme.CARD_BG, fg=theme.TEXT_MUTED).pack(fill=tk.X, pady=(3, 0))
 
         ttk.Button(main, text=t("dlg.close_btn"), command=win.destroy).pack(pady=16)
