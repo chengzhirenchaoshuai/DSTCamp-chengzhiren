@@ -151,8 +151,8 @@ STRINGS = {
         "mod.no_overrides": "未找到 modoverrides.lua",
         "mod.on": "[启用]",
         "mod.off": "[禁用]",
-        "mod.recommend_btn": "订阅常用模组",
-        "mod.recommend_title": "订阅常用模组",
+        "mod.recommend_btn": "订阅必要模组",
+        "mod.recommend_title": "订阅必要模组",
         "mod.recommend_subscribed": "已订阅",
         "mod.recommend_subscribe": "订阅",
 
@@ -842,8 +842,8 @@ STRINGS = {
         "mod.no_overrides": "No modoverrides.lua found",
         "mod.on": "[ON]",
         "mod.off": "[OFF]",
-        "mod.recommend_btn": "Subscribe Common Mods",
-        "mod.recommend_title": "Subscribe Common Mods",
+        "mod.recommend_btn": "Subscribe Essential Mods",
+        "mod.recommend_title": "Subscribe Essential Mods",
         "mod.recommend_subscribed": "Subscribed",
         "mod.recommend_subscribe": "Subscribe",
 
