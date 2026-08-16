@@ -133,7 +133,7 @@ def _localize_mod_name(wid: str, name: str) -> str:
     return name
 
 
-# 订阅必要模组引导列表：(workshop id, 名称, 一句话描述)。
+# 订阅推荐模组引导列表：(workshop id, 名称, 一句话描述)。
 RECOMMENDED_MODS = [
     ("3444078585", "DontStarveLuaJit2", "LuaJIT 性能补丁，大幅降低卡顿"),
     ("2941527805", "Chinese++ Pro", "汉化其它模组的名称与配置项，Mod 列表和设置直接显示中文"),
@@ -257,7 +257,7 @@ class ModManagerTab:
              ("enabled", lambda: t("mod.show_enabled")),
              ("disabled", lambda: t("mod.show_disabled"))],
             self.show_var, self._render_list)
-        # "订阅必要模组"放在"已禁用"筛选项右侧（filter chips 之后、重新扫描
+        # "订阅推荐模组"放在"已禁用"筛选项右侧（filter chips 之后、重新扫描
         # 之前），跟筛选功能挤在同一行，不再占 mod 列表顶部工具栏。
         self._md_recommend = ttk.Button(ff, text=t("mod.recommend_btn"), command=self._open_recommend_mods)
         self._md_recommend.pack(side=tk.LEFT, padx=(8, 0))
@@ -1027,7 +1027,7 @@ class ModManagerTab:
             webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
 
     def _open_recommend_mods(self):
-        """订阅必要模组引导：列出推荐 mod（图标 + 名称 + 描述），已订阅显示
+        """订阅推荐模组引导：列出推荐 mod（图标 + 名称 + 描述），已订阅显示
         「已订阅」，未订阅显示「订阅」按钮跳转到创意工坊/WeGame 订阅页。
 
         列表放进可滚动容器，右侧垂直滚动条 + 鼠标滚轮；只给 canvas 一个
