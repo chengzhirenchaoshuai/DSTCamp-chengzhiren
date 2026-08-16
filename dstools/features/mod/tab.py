@@ -1096,11 +1096,11 @@ class ModManagerTab:
         canvas.bind("<MouseWheel>", _on_wheel)
 
         icon_dir = bundled_resource_dir() / "icons" / "recommended"
-        icon_size = 48
+        icon_size = 64
 
         for wid, name, desc in RECOMMENDED_MODS:
             row = tk.Frame(content, bg=theme.CARD_BG)
-            row.pack(fill=tk.X, padx=16, pady=(16, 0))
+            row.pack(fill=tk.X, padx=16, pady=(20, 0))
 
             # 左侧图标（预先转好的 PNG，随程序打包，未订阅也能显示）
             icon_photo = None
