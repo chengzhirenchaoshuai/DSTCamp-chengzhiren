@@ -32,6 +32,7 @@ class TransparentLabel(BgFrame):
         self._padx = max(0, int(padx))
         self._pady = max(0, int(pady))
         self._redrawing = False
+        self._last_draw_key = None  # 文字绘制缓存键，避免恢复窗口时无谓重画
         super().__init__(parent, app, bg=bg or theme.BG_SOFT, **kw)
         self.bind("<Configure>", lambda _e: self._redraw(), add="+")
         self._redraw()
@@ -84,6 +85,15 @@ class TransparentLabel(BgFrame):
     def _redraw(self):
         if self._redrawing or not self.winfo_exists():
             return
+        # 内容缓存：从任务栏恢复窗口时 <Configure> 触发这里，但文字/字体/
+        # 颜色/尺寸都没变，跳过 delete+create_text，避免"文字闪一下"。
+        fa = self._font.actual()
+        key = (self._text, self._foreground, self._anchor, self._justify,
+               self._wraplength, self.winfo_width(), self.winfo_height(),
+               fa.get("family"), fa.get("size"), fa.get("weight"))
+        if key == self._last_draw_key and self.find_withtag("transparent_label_text"):
+            return
+        self._last_draw_key = key
         self._redrawing = True
         try:
             self.delete("transparent_label_text")
