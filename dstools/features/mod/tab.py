@@ -1028,7 +1028,11 @@ class ModManagerTab:
 
     def _open_recommend_mods(self):
         """订阅常用模组引导：列出推荐 mod（图标 + 名称 + 描述），已订阅显示
-        「已订阅」，未订阅显示「订阅」按钮跳转到创意工坊/WeGame 订阅页。"""
+        「已订阅」，未订阅显示「订阅」按钮跳转到创意工坊/WeGame 订阅页。
+
+        列表放进可滚动容器，右侧垂直滚动条 + 鼠标滚轮；只给 canvas 一个
+        请求尺寸（不是给 Toplevel 写死像素），让窗口比内容本身更宽敞，后
+        续推荐列表变长也能滚动而不撑破窗口。"""
         from dstools.features.mod.parser import is_mod_subscribed
         from dstools.shared.gui.dialog_geometry import center_over_parent
         from dstools.shared.resource_paths import bundled_resource_dir
@@ -1040,12 +1044,45 @@ class ModManagerTab:
         win.resizable(False, False)
         win.configure(bg=theme.CARD_BG)
 
+        # 滚动主体：内容放 canvas，右侧垂直滚动条
+        body = tk.Frame(win, bg=theme.CARD_BG)
+        body.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(body, width=520, height=420, highlightthickness=0,
+                           bd=0, bg=theme.CARD_BG)
+        vbar = ttk.Scrollbar(body, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        content = tk.Frame(canvas, bg=theme.CARD_BG)
+        content_id = canvas.create_window((0, 0), window=content, anchor=tk.NW)
+
+        def _sync_scrollregion(_e=None):
+            # 内容高度变化时刷新可滚动范围，否则滚轮/滚动条拉不动
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        def _sync_content_width(e):
+            # 内容宽度跟随 canvas（否则 create_window 内容只按自身最小宽排）
+            canvas.itemconfigure(content_id, width=e.width)
+
+        content.bind("<Configure>", _sync_scrollregion)
+        canvas.bind("<Configure>", _sync_content_width)
+
+        # Windows 滚轮 delta 是 ±120 的倍数、向上为正。绑定到顶层窗口，事件
+        # 沿 bindtags 冒泡，鼠标停在内容里任意子控件上也能滚动。
+        def _on_wheel(e):
+            canvas.yview_scroll(int(-e.delta / 120), "units")
+
+        win.bind("<MouseWheel>", _on_wheel)
+        win.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+        win.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+
         icon_dir = bundled_resource_dir() / "icons" / "recommended"
         icon_size = 48
 
         for wid, name, desc in RECOMMENDED_MODS:
-            row = tk.Frame(win, bg=theme.CARD_BG)
-            row.pack(fill=tk.X, padx=16, pady=(14, 0))
+            row = tk.Frame(content, bg=theme.CARD_BG)
+            row.pack(fill=tk.X, padx=16, pady=(16, 0))
 
             # 左侧图标（预先转好的 PNG，随程序打包，未订阅也能显示）
             icon_photo = None
@@ -1075,7 +1112,7 @@ class ModManagerTab:
             else:
                 ttk.Button(name_row, text=t("mod.recommend_subscribe"),
                            command=lambda w=wid: self._on_link(f"workshop-{w}")).pack(side=tk.RIGHT)
-            tk.Label(text_col, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=380,
+            tk.Label(text_col, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=400,
                      bg=theme.CARD_BG, fg=theme.TEXT_MUTED).pack(fill=tk.X, pady=(3, 0))
 
         ttk.Button(win, text=t("dlg.close"), command=win.destroy).pack(pady=16)
