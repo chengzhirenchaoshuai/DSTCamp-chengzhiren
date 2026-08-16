@@ -196,6 +196,17 @@ class ModManagerTab:
         self._mod_location_var = tk.StringVar()
         self._mod_location_var.trace_add("write", lambda *a: self._redraw_mod_location_row_text())
         mod_location_row.bind("<Configure>", lambda e: self._redraw_mod_location_row_text(), add="+")
+        # "软链接mods文件夹到服务器"/"删除mod软连接"按钮放这一行最右侧
+        # （"更换路径 重新检测"的右边）——文字会在两种状态间切换，放在行末
+        # 向右伸缩就不会推动左侧元素。初始用短文案"删除mod软连接"，探测到
+        # 未链接才变长、只向右扩展。文字/状态由 refresh_sync_button_state()
+        # 探测后维护，初始值只是占位。
+        self._sync_already_linked = False
+        self._md_sync = ttk.Button(mod_location_row, text=t("local.remove_junction_btn"),
+                                   command=self._sync_mods_to_server)
+        self._md_sync.pack(side=tk.RIGHT, padx=(5, 0))
+        from dstools.shared.gui.tooltip import Tooltip
+        Tooltip(self._md_sync, self._sync_button_hover_text)
         self._mod_location_recheck_btn = ttk.Button(mod_location_row, text=t("local.install_recheck_btn"),
                                                      command=self._recheck_mod_location)
         self._mod_location_recheck_btn.pack(side=tk.RIGHT)
@@ -213,21 +224,8 @@ class ModManagerTab:
         # 时置灰（见 on_cluster_changed）。文字/图标状态由
         # refresh_sync_button_state() 探测实际联接状态后维护，初始值只是
         # 占位，构造完成后第一次刷新之前不代表任何真实状态。
-        self._sync_already_linked = False
-        # 固定按钮宽度：文字会在"软链接mods文件夹到服务器"和"删除mod软连接"
-        # 之间切换，前者比后者长很多，不固定宽度的话文字一变、按钮跟着变
-        # 窄，后面的"订阅常用模组"按钮和"世界:"标签会左移，观感差。按最长
-        # 文案的像素宽度换算成字符宽度固定住（中文字符约 2 个平均字符宽）。
-        _f = tkfont.nametofont("TkDefaultFont")
-        _sync_px = max(_f.measure(t("local.sync_mods_btn")), _f.measure(t("local.remove_junction_btn")))
-        _char_px = max(1, _f.measure("0"))
-        self._md_sync = ttk.Button(sf, text=t("local.sync_mods_btn"), command=self._sync_mods_to_server,
-                                   width=int(_sync_px / _char_px) + 2)
-        self._md_sync.pack(side=tk.LEFT, padx=(0,10))
         self._md_recommend = ttk.Button(sf, text=t("mod.recommend_btn"), command=self._open_recommend_mods)
         self._md_recommend.pack(side=tk.LEFT, padx=(0,10))
-        from dstools.shared.gui.tooltip import Tooltip
-        Tooltip(self._md_sync, self._sync_button_hover_text)
         self._md_lbl2 = make_toolbar_label(sf, app, lambda: t("mod.shard"))
         self.shard_var = tk.StringVar(value="Master")
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
