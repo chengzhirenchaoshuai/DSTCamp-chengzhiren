@@ -45,17 +45,31 @@ class FrpcProcess:
         self.tunnel_id = tunnel_id
         self.status = FrpcStatus.STARTING
         self.proc: subprocess.Popen | None = None
+        self.error: str | None = None
         self._out_queue: "queue.Queue[str]" = queue.Queue()
 
     def start(self) -> None:
-        creationflags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
-        self.proc = subprocess.Popen(
-            [str(self.frpc_exe), "-f", f"{self.token}:{self.tunnel_id}"],
-            cwd=str(self.frpc_exe.parent),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace",
-            creationflags=creationflags,
-        )
+        # frpc.exe 被杀毒软件隔离/手动删除时，Popen 会抛 FileNotFoundError，
+        # 之前没捕获，异常被 Tk 回调吞掉，用户点启动"没反应"却不知道为什么。
+        # 这里提前检查文件存在性并捕获 OSError，记下可读的失败原因，让 UI 能
+        # 显示"启动失败 + 原因"。
+        if not self.frpc_exe.exists():
+            self.status = FrpcStatus.CRASHED
+            self.error = "frpc.exe 不存在（可能被杀毒软件隔离或已手动删除）"
+            return
+        try:
+            creationflags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
+            self.proc = subprocess.Popen(
+                [str(self.frpc_exe), "-f", f"{self.token}:{self.tunnel_id}"],
+                cwd=str(self.frpc_exe.parent),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=creationflags,
+            )
+        except OSError as exc:
+            self.status = FrpcStatus.CRASHED
+            self.error = f"启动失败：{exc}"
+            return
         self.status = FrpcStatus.RUNNING
         threading.Thread(target=self._read_loop, daemon=True).start()
 

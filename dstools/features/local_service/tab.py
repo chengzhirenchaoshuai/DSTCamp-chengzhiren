@@ -759,14 +759,14 @@ class LocalServiceTab:
 
         self._lan_row = lan_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
         lan_row.pack(fill=tk.X)
-        self._lan_label, self._lan_set_text = self._make_connect_label(
+        self._lan_label, self._lan_set_text, self._lan_set_status = self._make_connect_label(
             lan_row, t("local.lan_connect_label"), t("local.lan_connect_hint"),
             connect_title_w, self._copy_lan_connect)
         self._lan_label.pack(fill=tk.X)
 
         self._nat_row = nat_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
         nat_row.pack(fill=tk.X, pady=(3, 0))
-        self._nat_label, self._nat_set_text = self._make_connect_label(
+        self._nat_label, self._nat_set_text, self._nat_set_status = self._make_connect_label(
             nat_row, t("local.nat_connect_label"), t("local.nat_connect_hint"),
             connect_title_w, self._copy_nat_connect)
         self._nat_label.pack(fill=tk.X)
@@ -914,9 +914,9 @@ class LocalServiceTab:
         tip.after(700, lambda: _fade_out())
 
     def _make_connect_label(self, parent, title, hint, title_w, on_click):
-        """直连代码标签——标题、值分两个 BgFrame；标题宽度统一成 title_w
-        （两行值对齐），悬停注释只挂标题。返回 (label, set_text)，标题和值
-        都绑 on_click（点击整行复制）。"""
+        """直连代码标签——标题、值、状态分三个 BgFrame；标题宽度统一成
+        title_w，悬停注释只挂标题。返回 (label, set_text, set_status)，标题
+        和值绑 on_click（点击整行复制），状态列在右侧显示就绪/失败等。"""
         f = tkfont.nametofont("TkDefaultFont")
         label_h = f.metrics("linespace") + 4
         container = BgFrame(parent, self.app, bg=theme.CARD_BG)
@@ -934,23 +934,46 @@ class LocalServiceTab:
         value_label.pack(side=tk.LEFT)
         value_label.bind("<Button-1>", on_click)
 
+        status_label = BgFrame(container, self.app, bg=theme.CARD_BG)
+        status_label.configure(height=label_h)
+        status_label.pack(side=tk.LEFT, padx=(8, 0))
+
         def set_text(value):
             value_label.configure(width=f.measure(value) + 4)
             value_label.delete("connect_value")
             value_label.create_text(2, label_h / 2, text=value, anchor=tk.W,
                                     fill=theme.TEXT, font=f, tags="connect_value")
 
-        return container, set_text
+        def set_status(text, color=None):
+            status_label.delete("connect_status")
+            status_label.configure(width=f.measure(text) + 4)
+            status_label.create_text(2, label_h / 2, text=text, anchor=tk.W,
+                                    fill=color or theme.TEXT_MUTED, font=f, tags="connect_status")
+
+        return container, set_text, set_status
 
     def _refresh_connect_labels(self):
-        """刷新两行直连代码标签：局域网同步算，内网穿透后台查映射后异步回填。
-        注意 set_text 只接收"值"部分，标题已经由 _make_connect_label 画好了。"""
+        """刷新两行直连代码标签：局域网同步算，内网穿透后台查映射后异步回填。"""
         lan_code = self._lan_connect_code()
         self._lan_code = lan_code
         self._lan_set_text(lan_code or t("local.connect_unavailable"))
+        self._refresh_lan_status()
         self._nat_code = None
         self._nat_set_text(t("local.connect_loading"))
+        self._nat_set_status("")
         threading.Thread(target=self._fetch_nat_connect_async, daemon=True).start()
+
+    def _refresh_lan_status(self):
+        """局域网直连状态：主世界在跑就「已就绪」。"""
+        cluster = self._get_cluster()
+        ready = False
+        if cluster:
+            master = self._master_shard(cluster)
+            if master:
+                proc = self.manager.get(cluster.path, master.name)
+                ready = proc is not None and proc.status in _RUNNING_LIKE
+        self._lan_set_status(t("local.connect_ready") if ready else "",
+                             theme.ACCENT if ready else None)
 
     def _fetch_nat_connect_async(self):
         """后台线程查内网穿透映射，拿到后回主线程更新标签。"""
@@ -961,7 +984,25 @@ class LocalServiceTab:
             code = self._build_connect_string(host, port, cluster)
         self._nat_code = code
         text = code if code else t("local.nat_not_mapped_short")
-        self.frame.after(0, lambda: self._nat_set_text(text))
+        self.frame.after(0, lambda: self._apply_nat_result(text, code is not None))
+
+    def _apply_nat_result(self, text, mapped):
+        # 映射成功只是樱花后台有隧道记录；要 frpc 本地客户端也在跑才算真正
+        # 就绪（frpc 被隔离/删除时，映射在但流量不通）。
+        ready = mapped and self._nat_frpc_ready()
+        self._nat_set_text(text)
+        self._nat_set_status(t("local.connect_ready") if ready else "",
+                             theme.ACCENT if ready else None)
+
+    def _nat_frpc_ready(self) -> bool:
+        """内网穿透的 frpc 客户端是否在跑（樱花映射或自建 frps 任一）。"""
+        try:
+            cluster = self._get_cluster()
+            sakura = self.app.sakura_tab
+            return (sakura._frpc_all_running(cluster)
+                    or sakura.selfhost_page._frpc_running(cluster))
+        except Exception:
+            return False
 
     def on_cluster_changed(self, cluster=None):
         """顶部全局存档选择器变化时由 DSToolsApp 广播调用，取代原来这个

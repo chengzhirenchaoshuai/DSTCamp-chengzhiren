@@ -21,7 +21,7 @@ from dstools.features.cluster_config.config_manager import (
     get_cluster_option, get_shard_option, load_cluster_config, load_shard_config,
     save_shard_config, set_shard_option,
 )
-from dstools.features.sakura.frpc import FrpcManager
+from dstools.features.sakura.frpc import FrpcManager, FrpcStatus
 from dstools.shared.resource_paths import cache_dir, tool_binary_dir
 from dstools.shared.token_manager import is_valid_token, mask_token
 from dstools.shared.gui import theme, themed_dialog as dlg
@@ -362,8 +362,9 @@ class SakuraTab:
         # 片是不是全部都在跑"算，跟 _action_btn 的开启/关闭是同一个粒度
         # （整个存档一起，不细分到单个世界）。
         self._frpc_row = BgFrame(self._sakura_page, app, bg=theme.CARD_BG)
-        self._frpc_status_label = self._label(self._frpc_row, self._frpc_status_text(False))
+        self._frpc_status_label = self._label(self._frpc_row, t("sakura.frpc_status_stopped"))
         self._frpc_status_label.pack(side=tk.LEFT)
+        Tooltip(self._frpc_status_label, lambda: self._frpc_failed_error(self._current_cluster) or "")
         self._frpc_toggle_btn = ttk.Button(self._frpc_row, text=t("sakura.frpc_start_btn"),
                                             command=self._on_frpc_toggle)
         self._frpc_toggle_btn.pack(side=tk.LEFT, padx=(10, 0))
@@ -916,19 +917,39 @@ class SakuraTab:
 
     def _frpc_all_running(self, cluster) -> bool:
         shards = self._mapped_shards(cluster)
-        return bool(shards) and all(self.frpc.get(cluster.path, s.name) is not None for s in shards)
+        if not shards:
+            return False
+        return all(
+            (proc := self.frpc.get(cluster.path, s.name)) is not None
+            and proc.status == FrpcStatus.RUNNING
+            for s in shards
+        )
 
-    @staticmethod
-    def _frpc_status_text(running: bool) -> str:
-        return t("sakura.frpc_status_running" if running else "sakura.frpc_status_stopped")
+    def _frpc_failed_error(self, cluster) -> str | None:
+        """某个 shard 的 frpc 启动失败原因（frpc.exe 被隔离/删除等），都没有
+        返回 None。"""
+        for s in self._mapped_shards(cluster):
+            proc = self.frpc.get(cluster.path, s.name)
+            if proc is not None and proc.status == FrpcStatus.CRASHED and proc.error:
+                return proc.error
+        return None
 
     def _refresh_frpc_row(self) -> None:
         cluster = self._current_cluster
         running = bool(cluster) and self._frpc_all_running(cluster)
-        self._frpc_status_label.itemconfig(
-            "label_text", text=self._frpc_status_text(running),
-            fill=theme.ACCENT if running else theme.TEXT_MUTED)
-        self._frpc_toggle_btn.configure(text=t("sakura.frpc_stop_btn") if running else t("sakura.frpc_start_btn"))
+        error = self._frpc_failed_error(cluster) if cluster else None
+        if error:
+            status_text = t("sakura.frpc_status_failed")
+            color = theme.ERROR
+        elif running:
+            status_text = t("sakura.frpc_status_running")
+            color = theme.ACCENT
+        else:
+            status_text = t("sakura.frpc_status_stopped")
+            color = theme.TEXT_MUTED
+        self._frpc_status_label.itemconfig("label_text", text=status_text, fill=color)
+        self._frpc_toggle_btn.configure(
+            text=t("sakura.frpc_stop_btn") if running else t("sakura.frpc_start_btn"))
 
     def _on_frpc_toggle(self):
         cluster = self._current_cluster

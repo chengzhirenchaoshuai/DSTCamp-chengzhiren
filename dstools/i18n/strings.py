@@ -151,6 +151,10 @@ STRINGS = {
         "mod.no_overrides": "未找到 modoverrides.lua",
         "mod.on": "[启用]",
         "mod.off": "[禁用]",
+        "mod.recommend_btn": "订阅常用模组",
+        "mod.recommend_title": "订阅常用模组",
+        "mod.recommend_subscribed": "已订阅",
+        "mod.recommend_subscribe": "订阅",
 
         # 服务器配置页签
         "cluster.cluster": "服务器:",
@@ -297,6 +301,7 @@ STRINGS = {
         "sakura.disable_btn": "关闭映射",
         "sakura.frpc_status_running": "本地frpc客户端状态: 已启动",
         "sakura.frpc_status_stopped": "本地frpc客户端状态: 未启动",
+        "sakura.frpc_status_failed": "本地frpc客户端状态: 启动失败",
         "sakura.other_mapping_conflict_msg": "「{shards}」已经用另一种内网穿透方式（樱花映射/自建 frps）映射了，两种方式不能同时用在同一个世界上（会互相覆盖 server_port 等配置，导致映射时好时坏），请先关闭那边的映射。",
         "sakura.frpc_start_btn": "启动",
         "sakura.frpc_stop_btn": "结束进程",
@@ -387,6 +392,7 @@ STRINGS = {
         "selfhost.status_unreachable": "服务器frps状态: 连接失败",
         "selfhost.frpc_status_running": "本地frpc客户端状态: 已启动",
         "selfhost.frpc_status_stopped": "本地frpc客户端状态: 未启动",
+        "selfhost.frpc_status_failed": "本地frpc客户端状态: 启动失败",
         "selfhost.permission_root": "权限: root",
         "selfhost.permission_sudo": "权限: sudo 免密",
         "selfhost.permission_denied": "⚠ 权限不足",
@@ -626,6 +632,7 @@ STRINGS = {
         "local.nat_not_mapped": "这个存档还没有内网穿透映射（樱花 / 自建 frps），请先在「内网穿透」页签开启映射后再复制。",
         "local.connect_unavailable": "未配置",
         "local.connect_loading": "获取中…",
+        "local.connect_ready": "已就绪",
         "local.nat_not_mapped_short": "未映射",
 
         # 系统托盘
@@ -816,6 +823,10 @@ STRINGS = {
         "mod.no_overrides": "No modoverrides.lua found",
         "mod.on": "[ON]",
         "mod.off": "[OFF]",
+        "mod.recommend_btn": "Subscribe Common Mods",
+        "mod.recommend_title": "Subscribe Common Mods",
+        "mod.recommend_subscribed": "Subscribed",
+        "mod.recommend_subscribe": "Subscribe",
 
         # 服务器配置页签
         "cluster.cluster": "Cluster:",
@@ -962,6 +973,7 @@ STRINGS = {
         "sakura.disable_btn": "Disable Mapping",
         "sakura.frpc_status_running": "Local frpc client status: Running",
         "sakura.frpc_status_stopped": "Local frpc client status: Stopped",
+        "sakura.frpc_status_failed": "Local frpc client status: Failed to start",
         "sakura.other_mapping_conflict_msg": "\"{shards}\" is already mapped using the other method (SakuraFrp / self-hosted frps) -- both cannot be active on the same world at once (they'd overwrite each other's server_port and similar settings, causing the mapping to work intermittently). Please disable the other one first.",
         "sakura.frpc_start_btn": "Start",
         "sakura.frpc_stop_btn": "Kill Process",
@@ -1043,6 +1055,7 @@ STRINGS = {
         "selfhost.status_unreachable": "Server frps status: Connection failed",
         "selfhost.frpc_status_running": "Local frpc client status: Running",
         "selfhost.frpc_status_stopped": "Local frpc client status: Stopped",
+        "selfhost.frpc_status_failed": "Local frpc client status: Failed to start",
         "selfhost.permission_root": "Permission: root",
         "selfhost.permission_sudo": "Permission: passwordless sudo",
         "selfhost.permission_denied": "⚠ Insufficient permission",
@@ -1291,6 +1304,7 @@ STRINGS = {
         "local.nat_not_mapped": "This save has no NAT traversal mapping (SakuraFrp / self-hosted frps) yet. Enable mapping on the \"NAT Traversal\" tab first.",
         "local.connect_unavailable": "Not configured",
         "local.connect_loading": "Loading…",
+        "local.connect_ready": "Ready",
         "local.nat_not_mapped_short": "Not mapped",
 
         # 系统托盘

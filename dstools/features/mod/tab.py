@@ -133,6 +133,14 @@ def _localize_mod_name(wid: str, name: str) -> str:
     return name
 
 
+# 订阅常用模组引导列表：(workshop id, 名称, 一句话描述)。
+RECOMMENDED_MODS = [
+    ("3444078585", "DontStarveLuaJit2", "LuaJIT 性能补丁，大幅降低卡顿"),
+    ("3377689002", "崩溃？别在意", "崩溃后自动处理，减少坏档卡死"),
+    ("2941527805", "Chinese++ Pro", "中文加强 + 汉化其它模组"),
+]
+
+
 class ModManagerTab:
     """样式仿照游戏内"Mods"界面的 mod 列表。
 
@@ -208,6 +216,8 @@ class ModManagerTab:
         self._sync_already_linked = False
         self._md_sync = ttk.Button(sf, text=t("local.sync_mods_btn"), command=self._sync_mods_to_server)
         self._md_sync.pack(side=tk.LEFT, padx=(0,10))
+        self._md_recommend = ttk.Button(sf, text=t("mod.recommend_btn"), command=self._open_recommend_mods)
+        self._md_recommend.pack(side=tk.LEFT, padx=(0,10))
         from dstools.shared.gui.tooltip import Tooltip
         Tooltip(self._md_sync, self._sync_button_hover_text)
         self._md_lbl2 = make_toolbar_label(sf, app, lambda: t("mod.shard"))
@@ -1015,6 +1025,33 @@ class ModManagerTab:
             webbrowser.open(f"https://www.wegame.com.cn/pc_game/assistant.html#/2000004/newMod/{numeric_id}")
         else:
             webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
+
+    def _open_recommend_mods(self):
+        """订阅常用模组引导：列出推荐 mod，已订阅显示「已订阅」，未订阅显示
+        「订阅」按钮跳转到创意工坊/WeGame 订阅页。"""
+        from dstools.features.mod.parser import is_mod_subscribed
+        from dstools.shared.gui.dialog_geometry import center_over_parent
+        win = tk.Toplevel(self.frame)
+        win.title(t("mod.recommend_title"))
+        win.transient(self.frame.winfo_toplevel())
+        win.resizable(False, False)
+        for wid, name, desc in RECOMMENDED_MODS:
+            row = tk.Frame(win)
+            row.pack(fill=tk.X, padx=14, pady=(10, 0))
+            name_row = tk.Frame(row)
+            name_row.pack(fill=tk.X)
+            tk.Label(name_row, text=name, anchor=tk.W,
+                     font=theme.font_tuple(theme.FONT_SIZE, bold=True)).pack(side=tk.LEFT)
+            if is_mod_subscribed(wid):
+                tk.Label(name_row, text=t("mod.recommend_subscribed"),
+                         fg=theme.TEXT_MUTED).pack(side=tk.RIGHT)
+            else:
+                ttk.Button(name_row, text=t("mod.recommend_subscribe"),
+                           command=lambda w=wid: self._on_link(f"workshop-{w}")).pack(side=tk.RIGHT)
+            tk.Label(row, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=380,
+                     fg=theme.TEXT_MUTED).pack(fill=tk.X)
+        ttk.Button(win, text=t("dlg.close"), command=win.destroy).pack(pady=14)
+        center_over_parent(win, self.frame.winfo_toplevel())
 
     def _on_copy_id(self, workshop_id):
         """点一下 mod 名字下方那行 workshop id 文字——复制纯数字 ID（不

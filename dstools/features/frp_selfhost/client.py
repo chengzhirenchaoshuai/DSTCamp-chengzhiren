@@ -137,17 +137,30 @@ class FrpcProcess:
         self.config_path = config_path
         self.status = FrpcStatus.RUNNING if adopted_pid is not None else FrpcStatus.STARTING
         self.proc: subprocess.Popen | None = None
+        self.error: str | None = None
         self._adopted_pid = adopted_pid
         self._out_queue: "queue.Queue[str]" = queue.Queue()
 
     def start(self) -> None:
-        self.proc = subprocess.Popen(
-            [str(self.frpc_exe), "-c", str(self.config_path)],
-            cwd=str(self.frpc_exe.parent),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding="utf-8", errors="replace",
-            creationflags=_SUBPROCESS_FLAGS,
-        )
+        # frpc.exe 被杀毒软件隔离/手动删除时 Popen 抛 FileNotFoundError，之前
+        # 没捕获导致用户点启动"没反应"。提前检查并捕获 OSError，记下可读的
+        # 失败原因，让 UI 能显示"启动失败 + 原因"。
+        if not self.frpc_exe.exists():
+            self.status = FrpcStatus.CRASHED
+            self.error = "frpc.exe 不存在（可能被杀毒软件隔离或已手动删除）"
+            return
+        try:
+            self.proc = subprocess.Popen(
+                [str(self.frpc_exe), "-c", str(self.config_path)],
+                cwd=str(self.frpc_exe.parent),
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=_SUBPROCESS_FLAGS,
+            )
+        except OSError as exc:
+            self.status = FrpcStatus.CRASHED
+            self.error = f"启动失败：{exc}"
+            return
         self.status = FrpcStatus.RUNNING
         threading.Thread(target=self._read_loop, daemon=True).start()
 

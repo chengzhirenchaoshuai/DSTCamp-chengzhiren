@@ -42,7 +42,7 @@ from dstools.features.mod.parser import (
     resolve_wegame_client_mods_dir,
 )
 from dstools.features.mod.render import render_mod_list
-from dstools.features.mod.tab import ModConfigDialog, _SavePresetDialog, _mod_name_cmp
+from dstools.features.mod.tab import ModConfigDialog, _SavePresetDialog, _localize_mod_name, _mod_name_cmp
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.fonts import strip_unrenderable
 from dstools.shared.gui import theme, themed_dialog as dlg
@@ -524,7 +524,7 @@ class WorldCreationTab:
         rows = []
         for mod_id, mod in self._mod_data.items():
             info = self._mod_infos.get(mod_id)
-            name = info.name if info else mod.name
+            name = _localize_mod_name(mod_id, info.name if info else mod.name)
             if show == "enabled" and not mod.enabled:
                 continue
             if show == "disabled" and mod.enabled:

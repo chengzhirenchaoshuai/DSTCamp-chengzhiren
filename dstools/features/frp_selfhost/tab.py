@@ -17,7 +17,7 @@ from dstools.features.cluster_config.config_manager import (
     get_cluster_option, load_cluster_config, load_shard_config, save_shard_config, set_shard_option,
 )
 from dstools.features.frp_selfhost import connectivity, deploy, probe, remote_deploy
-from dstools.features.frp_selfhost.client import FrpcManager, build_frpc_toml
+from dstools.features.frp_selfhost.client import FrpcManager, FrpcStatus, build_frpc_toml
 from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.resource_paths import cache_dir, tool_binary_dir
 from dstools.shared.gui import theme, themed_dialog as dlg
@@ -279,6 +279,7 @@ class SelfHostFrpPage:
         self._frpc_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
         self._frpc_status_label = self._label(self._frpc_row, self._frpc_status_text(False))
         self._frpc_status_label.pack(side=tk.LEFT)
+        Tooltip(self._frpc_status_label, lambda: self._frpc_failed_error(self._current_cluster) or "")
         self._frpc_toggle_btn = ttk.Button(self._frpc_row, text=t("sakura.frpc_start_btn"),
                                             command=self._on_frpc_toggle)
         self._frpc_toggle_btn.pack(side=tk.LEFT, padx=(10, 0))
@@ -834,7 +835,14 @@ class SelfHostFrpPage:
         # DSTCamp 上次没走"停止"按钮就退出的话，界面在没有这一步之前
         # 会一直显示"未启动"，即便孤儿 frpc.exe 其实还在正常转发流量。
         self.frpc.reconcile(cluster.path, _frpc_exe_path(), self._frpc_config_path(cluster.path))
-        return self.frpc.get(cluster.path) is not None
+        proc = self.frpc.get(cluster.path)
+        return proc is not None and proc.status == FrpcStatus.RUNNING
+
+    def _frpc_failed_error(self, cluster) -> str | None:
+        proc = self.frpc.get(cluster.path)
+        if proc is not None and proc.status == FrpcStatus.CRASHED and proc.error:
+            return proc.error
+        return None
 
     @staticmethod
     def _frpc_status_text(running: bool) -> str:
@@ -847,9 +855,17 @@ class SelfHostFrpPage:
     def _refresh_frpc_row(self):
         cluster = self._current_cluster
         running = bool(cluster) and self._frpc_running(cluster)
-        self._frpc_status_label.itemconfig(
-            "label_text", text=self._frpc_status_text(running),
-            fill=theme.SERVER_COLOR if running else theme.TEXT_MUTED)
+        error = self._frpc_failed_error(cluster) if cluster else None
+        if error:
+            status_text = t("selfhost.frpc_status_failed")
+            color = theme.ERROR
+        elif running:
+            status_text = t("selfhost.frpc_status_running")
+            color = theme.SERVER_COLOR
+        else:
+            status_text = t("selfhost.frpc_status_stopped")
+            color = theme.TEXT_MUTED
+        self._frpc_status_label.itemconfig("label_text", text=status_text, fill=color)
         self._frpc_toggle_btn.configure(text=t("sakura.frpc_stop_btn") if running else t("sakura.frpc_start_btn"))
 
     def _on_frpc_toggle(self):

@@ -294,6 +294,18 @@ def find_workshop_dir() -> Path | None:
     return None
 
 
+def is_mod_subscribed(workshop_id: str) -> bool:
+    """判断某个 workshop mod 是否已订阅。本地判断依据：workshop 内容目录
+    下有没有对应子文件夹、且带 modinfo.lua（确认下载完整，不是空目录/半
+    途）——订阅是 Steam 账号操作，DSTCamp 没有 API 能代劳，也没有比"本地
+    内容在不在"更权威的判断。"""
+    workshop_dir = find_workshop_dir()
+    if workshop_dir is None:
+        return False
+    candidate = workshop_dir / workshop_id
+    return candidate.exists() and (candidate / "modinfo.lua").exists()
+
+
 def find_shared_ugc_directory() -> Path | None:
     """专用服务器 `-ugc_directory` 启动参数要用的路径——真机验证过：直接
     传这台机器 Steam 自己维护的 `steamapps/workshop` 目录（`content/322330/
