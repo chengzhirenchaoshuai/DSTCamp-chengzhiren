@@ -984,12 +984,16 @@ class DSToolsApp:
         key = (bg_path, opacity, w, h)
         if self._shared_bg_key == key:
             return False
+        # 尺寸太小（最小化到任务栏时可能变 0/1）直接返回、不更新 key——
+        # 之前这个判断放在 bg_path 分支之后，纯色主题（bg_path 为 None）下
+        # 最小化会把 key 更新成 (None, opacity, 0, 0)，恢复时又变回来，两
+        # 次都返回 True 触发全量刷新，就是"全部页签闪一下"的来源。
+        if w < 4 or h < 4:
+            return False
         if bg_path is None:
             self._shared_bg_image = None
             self._shared_bg_key = key
             return True
-        if w < 4 or h < 4:
-            return False
         self._shared_bg_image = render_background(bg_path, w, h, opacity, theme.BG_SOFT)
         self._shared_bg_key = key
         return True

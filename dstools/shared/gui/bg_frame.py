@@ -126,7 +126,9 @@ class BgFrame(tk.Canvas):
         # 变了但 _shared_bg_key 不含它，这里把 BG_SOFT 一并算进缓存键，切主
         # 题后缓存自动失效、重新裁剪。
         render_key = (shared_key, w, h, theme.BG_SOFT)
-        if render_key == self._last_render_key and self.find_withtag("bg_image"):
+        # 纯色主题下没有 bg_image（只有 bg_fill 兜底矩形），两个都要认，否
+        # 则纯色主题从任务栏恢复时缓存永不命中、每次都重画一遍。
+        if render_key == self._last_render_key and (self.find_withtag("bg_image") or self.find_withtag("bg_fill")):
             return
         self._last_render_key = render_key
         self.delete("bg_image")
