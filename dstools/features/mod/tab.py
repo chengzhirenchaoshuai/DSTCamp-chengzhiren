@@ -1044,15 +1044,20 @@ class ModManagerTab:
         win.resizable(False, False)
         win.configure(bg=theme.CARD_BG)
 
-        # 滚动主体：内容放 canvas，右侧垂直滚动条
-        body = tk.Frame(win, bg=theme.CARD_BG)
-        body.pack(fill=tk.BOTH, expand=True)
-        canvas = tk.Canvas(body, width=520, height=520, highlightthickness=0,
-                           bd=0, bg=theme.CARD_BG)
-        vbar = ttk.Scrollbar(body, orient=tk.VERTICAL, command=canvas.yview)
-        canvas.configure(yscrollcommand=vbar.set)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 右侧滚动条直接挂在窗口上，fill=Y 让它从顶延伸到底、覆盖窗口右侧
+        # 完整高度（之前挂在 body 里、body 只到关闭按钮上方，滚动条比窗口
+        # 短一截，跟底部按钮那一行对不齐，看起来没覆盖住右侧）。
+        vbar = ttk.Scrollbar(win, orient=tk.VERTICAL)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # 左侧主体：canvas（列表）+ 底部关闭按钮
+        main = tk.Frame(win, bg=theme.CARD_BG)
+        main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(main, width=560, height=520, highlightthickness=0,
+                           bd=0, bg=theme.CARD_BG)
+        canvas.configure(yscrollcommand=vbar.set)
+        vbar.configure(command=canvas.yview)
+        canvas.pack(fill=tk.BOTH, expand=True)
 
         content = tk.Frame(canvas, bg=theme.CARD_BG)
         content_id = canvas.create_window((0, 0), window=content, anchor=tk.NW)
@@ -1125,10 +1130,10 @@ class ModManagerTab:
             else:
                 ttk.Button(name_row, text=t("mod.recommend_subscribe"),
                            command=lambda w=wid: self._on_link(f"workshop-{w}")).pack(side=tk.RIGHT)
-            tk.Label(text_col, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=400,
+            tk.Label(text_col, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=440,
                      bg=theme.CARD_BG, fg=theme.TEXT_MUTED).pack(fill=tk.X, pady=(3, 0))
 
-        ttk.Button(win, text=t("dlg.close_btn"), command=win.destroy).pack(pady=16)
+        ttk.Button(main, text=t("dlg.close_btn"), command=win.destroy).pack(pady=16)
         center_over_parent(win, self.frame.winfo_toplevel())
 
     def _on_copy_id(self, workshop_id):
