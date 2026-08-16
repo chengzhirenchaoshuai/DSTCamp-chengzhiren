@@ -29,15 +29,14 @@ VALUE_SETS = {
     # ══════════════ 森林-世界规则 (对照 FOREST_RULES_DICT 顺序) ══════════════
     # 全局|global
     "specialevent": ["none", "default"],
-    "autumn": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason"],
-    "winter": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason"],
-    "spring": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason"],
-    "summer": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason"],
-    "day": ["onlyday", "onlydusk", "onlynight", "default", "longday", "longdusk", "longnight", "noday", "nodusk", "nonight"],
-    # spawnmode 真实的选项集合没有从源码完全确认过（函数只对 "default"
-    # -> "fixed" 做了特殊处理，其它值直接转发）——"scatter" 是在真实存档
-    # 数据里观察到的。
-    "spawnmode": ["default", "fixed", "wandering", "scatter"],
+    "autumn": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason", "random"],
+    "winter": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason", "random"],
+    "spring": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason", "random"],
+    "summer": ["noseason", "veryshortseason", "shortseason", "default", "longseason", "verylongseason", "random"],
+    "day": ["default", "longday", "longdusk", "longnight", "noday", "nodusk", "nonight", "onlyday", "onlydusk", "onlynight"],
+    # 出生模式真实只有 2 档：fixed(绚丽之门)/scatter(随机)，customize.lua 的
+    # spawnmode_descriptions 确认。
+    "spawnmode": ["fixed", "scatter"],
     # 下面这三个只在游戏里表现出 2 个真实选项——"default" 是内部对
     # "always" 的别名(见 worldsettings_overrides.lua: "if difficulty ==
     # 'default' then difficulty = 'always' end")，不是单独可选的档位。
@@ -45,7 +44,6 @@ VALUE_SETS = {
     "portalresurection": ["none", "always"],
     "ghostsanitydrain": ["none", "always"],
     "resettime": ["none", "slow", "default", "fast", "always"],
-    "cavelight": ["never", "slow", "default", "fast", "always"],
     "beefaloheat": ["never", "rare", "default", "often", "always"],
     "krampus": ["never", "rare", "default", "often", "always"],
     # 活动|events
@@ -71,8 +69,8 @@ VALUE_SETS = {
     "seasonalstartingitems": ["never", "default"],
     "spawnprotection": ["never", "default", "always"],
     "dropeverythingondespawn": ["default", "always"],
-    "healthpenalty": ["none", "default", "always"],
-    "lessdamagetaken": ["none", "default", "more", "always"],
+    "healthpenalty": ["none", "always"],
+    "lessdamagetaken": ["always", "none", "more"],
     "temperaturedamage": ["nonlethal", "default"],
     "hunger": ["nonlethal", "default"],
     "darkness": ["nonlethal", "default"],
@@ -80,8 +78,8 @@ VALUE_SETS = {
     "brightmarecreatures": ["never", "rare", "default", "often", "always"],
     # 世界|world
     "hounds": ["never", "rare", "default", "often", "always"],
-    "winterhounds": ["never", "rare", "default", "often", "always"],
-    "summerhounds": ["never", "rare", "default", "often", "always"],
+    "winterhounds": ["never", "default"],
+    "summerhounds": ["never", "default"],
     "lunarhail_frequency": ["never", "rare", "default", "often", "always"],
     "petrification": ["none", "few", "default", "many", "max"],
     "meteorshowers": ["never", "rare", "default", "often", "always"],
@@ -92,8 +90,8 @@ VALUE_SETS = {
     "rifts_frequency": ["never", "rare", "default", "often", "always"],
     "wildfires": ["never", "rare", "default", "often", "always"],
     "lightning": ["never", "rare", "default", "often", "always"],
-    "weather": ["never", "rare", "default", "often", "always", "squall"],
-    "frograin": ["never", "rare", "default", "often", "always", "force"],
+    "weather": ["never", "rare", "default", "often", "always"],
+    "frograin": ["never", "rare", "default", "often", "always"],
     # 资源再生|regrowth
     "regrowth": ["never", "veryslow", "slow", "default", "fast", "veryfast"],
     "cactus_regrowth": ["never", "veryslow", "slow", "default", "fast", "veryfast"],
@@ -228,12 +226,15 @@ VALUE_SETS = {
 # 世界生成（只读）设置的值表。它们不参与规则按钮的循环，但创建/审计
 # 和只读界面必须能得到正确取值，不能回退到世界规则的五档频率。
 GEN_VALUE_SETS = {
+    # task_set/start_location 是动态取值（customize.lua 用 tasksets/startlocations
+    # 的 GetGen* 函数），森林/洞穴各是不同子集，见 get_value_set() 里按
+    # location 分支返回；这里保留合并值仅作兜底。
     "task_set": ["default", "classic", "cave_default", "porkland"],
-    "start_location": ["default", "darkness", "caves", "PorkLandStart"],
+    "start_location": ["default", "plus", "darkness", "caves", "PorkLandStart"],
     "world_size": ["small", "medium", "default", "huge"],
     "branching": ["never", "least", "default", "most", "random"],
     "loop": ["never", "default", "always"],
-    "roads": ["never", "default", "always"],
+    "roads": ["never", "default"],
     "season_start": [
         "default", "winter", "spring", "summer", "autumn|spring",
         "winter|summer", "autumn|winter|spring|summer",
@@ -241,11 +242,16 @@ GEN_VALUE_SETS = {
     "prefabswaps_start": ["classic", "default", "highly random"],
     "touchstone": WORLDGEN_FREQUENCY_SET,
     "boons": WORLDGEN_FREQUENCY_SET,
+    # 洞穴光照是"世界生成(只读)"项，且是 speed_descriptions 六档
+    # （customize.lua 确认，末档 veryfast 而非 always）。
+    "cavelight": ["never", "veryslow", "slow", "default", "fast", "veryfast"],
+    "junkyard": ["never", "default"],
+    "terrariumchest": ["never", "default"],
     "balatro": ["never", "default"],
     "stageplays": ["never", "default"],
 }
 
-OCEAN_WORLDGEN_SET = ["default", *[f"ocean_{value}" for value in WORLDGEN_FREQUENCY_SET]]
+OCEAN_WORLDGEN_SET = [f"ocean_{value}" for value in WORLDGEN_FREQUENCY_SET]
 # Only ocean generation-frequency controls use the ``ocean_``-prefixed
 # values.  Entity-density controls such as ocean_otterdens keep the regular
 # frequency values (``default``, ``rare`` ...).
@@ -278,12 +284,23 @@ def get_value_set(
         if key == "task_set":
             return ["shipwrecked"]
         if key == "start_location":
-            return ["shipwrecked_default"]
+            return ["shipwrecked_default", "shipwrecked_plus", "shipwrecked_darkness"]
     if not is_rule and location == "volcanoworld":
         if key == "task_set":
             return ["volcano"]
         if key == "start_location":
             return ["volcano_default"]
+    # 原版森林/洞穴的 task_set/start_location 各是不同子集（customize.lua
+    # 用 tasksets/startlocations 的 GetGen* 动态返回，非 GEN_VALUE_SETS 的
+    # 合并值）。
+    if not is_rule and key == "task_set":
+        if location == "cave":
+            return ["cave_default"]
+        return ["default", "classic"]
+    if not is_rule and key == "start_location":
+        if location == "cave":
+            return ["caves"]
+        return ["default", "plus", "darkness"]
     if key in OCEAN_FREQUENCY_KEYS:
         return OCEAN_WORLDGEN_SET
     if not is_rule:

@@ -283,7 +283,7 @@ class WorldSettingsTab:
                                        on_click=self._on_rule_click if is_server else None,
                                        ref_width=ref_width, flash=self._flash_key,
                                        location=loc, mod_settings=self._mod_settings,
-                                       mod_icons=self._mod_icons)
+                                       mod_icons=self._mod_icons, is_rule=True)
         self._rules_panel.set_image(img, hits, keep_scroll=True)
 
     def _render_gen(self, ref_width=None):
@@ -297,7 +297,8 @@ class WorldSettingsTab:
         loc = getattr(self._wl_preset, 'location', 'forest') or 'forest'
         img, hits = render_world_panel(self._gen_cats, self._gen_by_cat, CATEGORY_COLORS,
                                        editable=False, ref_width=ref_width, location=loc,
-                                       mod_settings=self._mod_settings, mod_icons=self._mod_icons)
+                                       mod_settings=self._mod_settings, mod_icons=self._mod_icons,
+                                       is_rule=False)
         self._gen_panel.set_image(img, hits, keep_scroll=True)
 
     def _empty_image(self):

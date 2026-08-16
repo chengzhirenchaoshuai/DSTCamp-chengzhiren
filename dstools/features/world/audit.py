@@ -4,7 +4,7 @@
 源码确认后才进入可编辑目录。创建存档功能可用同一审计作为发布前校验。
 """
 
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 

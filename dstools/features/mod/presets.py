@@ -19,7 +19,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from dstools.shared import app_settings
 from dstools.i18n import t

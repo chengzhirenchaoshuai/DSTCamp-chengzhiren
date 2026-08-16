@@ -99,9 +99,18 @@ class FontSettingsDialog:
         win.wait_window()
 
     def _on_select(self, style: str) -> None:
+        # _switch_font_style() 的视觉刷新会调用 root.update()，这会重入
+        # Tk 事件循环。用户如果在这次重入期间关闭了字体弹窗，当前回调
+        # 返回后再刷新按钮就会访问已经销毁的 Tcl 控件，报
+        # ``invalid command name ...button``。所有跨越全局刷新的控件访问
+        # 都必须重新确认窗口仍然存在。
+        if not self._window_exists():
+            return
         if style == theme.FONT_STYLE_CHOICE:
             return
         self.app._switch_font_style(style)
+        if not self._window_exists():
+            return
         self._preview_font.configure(family=theme.FONT_FAMILY, size=_PREVIEW_FONT_SIZE)
         self._refresh_button_styles()
         # 弹窗是 resizable(False, False)，初始尺寸是 __init__ 最后那次
@@ -110,9 +119,27 @@ class FontSettingsDialog:
         # 一次的话新内容可能比弹窗窄/宽，超出或留白显示区域。
         center_over_parent(self.win, self.app.root, min_width=360)
 
+    def _window_exists(self) -> bool:
+        """判断字体弹窗和 Tk 控件树是否仍然存在。
+
+        ``winfo_exists()`` 在应用退出或父窗口先销毁的极端时序下也可能
+        抛 ``TclError``，这里统一吞掉，调用方把它当成窗口已经关闭处理。
+        """
+        try:
+            return bool(self.win.winfo_exists())
+        except tk.TclError:
+            return False
+
     def _refresh_button_styles(self) -> None:
+        if not self._window_exists():
+            return
         for style, btn in self._buttons.items():
             selected = style == theme.FONT_STYLE_CHOICE
-            btn.configure(relief=tk.SUNKEN if selected else tk.RAISED,
-                          bg=theme.CARD_BG_ALT if selected else theme.CARD_BG,
-                          fg=theme.TEXT)
+            try:
+                btn.configure(relief=tk.SUNKEN if selected else tk.RAISED,
+                              bg=theme.CARD_BG_ALT if selected else theme.CARD_BG,
+                              fg=theme.TEXT)
+            except tk.TclError:
+                # 父窗口可能刚好在同一个 Tk 事件循环重入中被销毁；
+                # 当前刷新已无意义，直接结束，不把 UI 关闭误报成异常。
+                return

@@ -17,7 +17,10 @@ from PIL import Image
 
 from dstools.shared import app_settings, tex_convert
 from dstools.features.local_service import luajit_injector
-from dstools.features.local_service.dedicated_server import find_bin64_dir
+from dstools.features.local_service.dedicated_server import (
+    detect_external_shard_processes,
+    find_bin64_dir,
+)
 from dstools.features.mod import chs_translation, presets
 from dstools.features.mod.icons import get_mod_icon_path
 from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
@@ -108,6 +111,26 @@ def _mod_name_cmp(a: str, b: str) -> int:
     if ca != cb:
         return ca - cb
     return _windows_name_cmp(a, b)
+
+
+def _localize_mod_name(wid: str, name: str) -> str:
+    """mod 显示名的本地化：中文界面下，对已登记中文名的 mod（贡献世界设置
+    的那几个）显示中文名，其余保持 modinfo 里的原名。只影响列表/对话框的
+    显示文本，不影响排序（排序仍用原英文名，见 _mod_name_cmp）。"""
+    if not name:
+        return name
+    try:
+        from dstools.i18n import get_lang
+        if get_lang() != "zh":
+            return name
+        from dstools.features.world.mod_settings import MOD_DISPLAY_NAMES
+        display = MOD_DISPLAY_NAMES.get(wid) or MOD_DISPLAY_NAMES.get(
+            str(wid).removeprefix("workshop-"))
+        if display:
+            return display.get("zh") or name
+    except Exception:
+        pass
+    return name
 
 
 class ModManagerTab:
@@ -460,11 +483,20 @@ class ModManagerTab:
 
     def _server_running_for(self, cluster) -> bool:
         """这个存档（不分具体哪个世界，同步是整个存档一起做的）是不是有
-        世界正被这个工具自己启动的本地服务器进程占着——服务器跑起来的时候
-        直接复制/替换存档目录下的文件，可能因为文件被占用而失败。"""
+        世界正被本工具或外部专服进程占着——服务器跑起来的时候直接替换
+        安装目录下的 mods/，可能因为文件被占用而失败。"""
         if not cluster:
             return False
-        return any(p.cluster_path == cluster.path for p in self.app.local_tab.manager.running())
+        if any(p.cluster_path == cluster.path for p in self.app.local_tab.manager.running()):
+            return True
+        # WeGame 或用户从外部启动的专服不一定由 DSTools 的 manager 追踪，
+        # 这里按世界配置的端口反查实际运行状态，避免替换正在使用的目录。
+        try:
+            external = detect_external_shard_processes(cluster)
+            return any(info.get("running") for info in external.values())
+        except (OSError, ValueError, KeyError):
+            # 状态探测失败时不阻塞常规流程，真正替换仍会捕获 Windows 权限/占用错误。
+            return False
 
     def _passive_sync_dirs(self, cluster):
         """跟 _sync_mods_to_server()/_resolve_wegame_sync_dirs() 算的是同
@@ -508,7 +540,7 @@ class ModManagerTab:
         走撤销流程（见 _sync_mods_to_server()）。"""
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
-        running = self._server_running_for(c)
+        running = self._server_running_for(c) if is_server else False
         self._md_sync.configure(state=tk.NORMAL if (is_server and not running) else tk.DISABLED)
 
         install_dir, client_mods_dir = self._passive_sync_dirs(c)
@@ -812,7 +844,7 @@ class ModManagerTab:
             if not show_local:
                 if show == "enabled" and not mod.enabled: continue
                 if show == "disabled" and mod.enabled: continue
-            name = info.name if info else ""
+            name = _localize_mod_name(wid, info.name if info else "")
             if ft and ft not in wid.lower() and ft not in name.lower(): continue
             numeric_id = wid.replace("workshop-", "")
             # LuaJIT 补丁生效时，配套 mod 的开关强制显示为开、锁住不能点
@@ -1008,7 +1040,19 @@ class ModManagerTab:
             pass
         tk.Label(tip, text=text, justify=tk.LEFT, background="#323232", foreground="#ffffff",
                  font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=8, ipady=4)
-        tip.after(700, tip.destroy)
+        # 停留 700ms 后开始淡出（逐步降 alpha 到 0）再销毁，比直接消失柔和。
+        def _fade_out(step: int = 0, total: int = 8, interval: int = 40):
+            if step >= total:
+                tip.destroy()
+                return
+            alpha = 1.0 - step / total
+            try:
+                tip.attributes("-alpha", alpha)
+            except Exception:
+                tip.destroy()
+                return
+            tip.after(interval, lambda: _fade_out(step + 1))
+        tip.after(700, lambda: _fade_out())
 
     def _save_mods(self, silent=False):
         c = self._get_cluster(); s = self.app._current_shard
@@ -1130,7 +1174,18 @@ class ModManagerTab:
         install_dir, _client_mods_dir = self._passive_sync_dirs(cluster)
         if install_dir is None:
             return
-        remove_mod_sync_junction(install_dir)
+        try:
+            removed = remove_mod_sync_junction(install_dir)
+        except OSError as exc:
+            dlg.show_warning(
+                self.app.root,
+                t("local.remove_junction_btn"),
+                t("sync.error_prefix", detail=str(exc)),
+            )
+            return
+        if not removed:
+            self.refresh_sync_button_state()
+            return
         dlg.show_info(self.app.root, t("local.remove_junction_btn"), t("local.remove_junction_done"))
         self.refresh_sync_button_state()
 
@@ -1146,6 +1201,10 @@ class ModManagerTab:
         c = self._get_cluster()
         if not c or c.source != SaveSource.SERVER:
             dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.select_cluster_first"))
+            return
+        if self._server_running_for(c):
+            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.sync_running_hover"))
+            self.refresh_sync_button_state()
             return
         if self._sync_already_linked:
             self._remove_mod_sync_junction(c)
@@ -1169,11 +1228,20 @@ class ModManagerTab:
         if plan.client_mods_dir is None:
             dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.sync_no_client_mods_dir"))
             return
+        if plan.invalid_reason:
+            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), plan.invalid_reason)
+            return
         if plan.needs_confirm_delete:
             if plan.lost_on_replace:
                 detail = t("local.sync_replace_lost_detail", items="、".join(plan.lost_on_replace))
+            elif plan.target_kind == "file":
+                detail = t("local.sync_replace_file_detail")
+            elif plan.target_kind in {"junction", "link"}:
+                detail = t("local.sync_replace_link_detail")
             else:
                 detail = t("local.sync_replace_nothing_lost")
+            if plan.backup_path is not None:
+                detail += "\n" + t("local.sync_backup_detail", path=str(plan.backup_path))
             if not dlg.ask_yes_no(self.app.root, t("local.sync_mods_btn"),
                                    t("local.sync_replace_confirm_msg", detail=detail)):
                 return
@@ -1183,8 +1251,14 @@ class ModManagerTab:
         log_queue: "queue.Queue" = queue.Queue()
 
         def _worker():
-            apply_mod_sync(plan, install_dir, on_log=log_queue.put)
-            log_queue.put(None)  # 哨兵：标记同步已经跑完
+            try:
+                apply_mod_sync(plan, install_dir, on_log=log_queue.put)
+            except Exception as exc:
+                # 无论出现哪种未预期异常，都要把哨兵送回 GUI，避免按钮
+                # 永远停留在“同步中...”状态。
+                log_queue.put(t("sync.error_prefix", detail=str(exc)))
+            finally:
+                log_queue.put(None)  # 哨兵：标记同步已经跑完
 
         def _poll_log():
             done = False
@@ -1348,7 +1422,7 @@ class _SavePresetDialog:
 
         def _make_row(parent, wid: str, default_checked: bool) -> None:
             info = tab._mod_infos.get(wid)
-            name = (info.name if info else "") or wid
+            name = _localize_mod_name(wid, (info.name if info else "") or wid)
             var = tk.BooleanVar(value=default_checked)
             self.vars[wid] = var
             full_text = f"{name}  ({wid})"

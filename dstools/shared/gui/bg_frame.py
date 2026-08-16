@@ -40,6 +40,8 @@ class BgFrame(tk.Canvas):
                           background=self._resolve_color(), **kw)
         self._photo = None
         self._render_after_id = None
+        self._bg_retry_after_id = None
+        self._bg_retry_done = False
         self.bind("<Configure>", lambda e: self._request_render())
         # ``BgFrame`` 常在 Toplevel.withdraw() 期间先收到一次 Configure。
         # 此时 render_now() 会因尚未映射而跳过，之后不一定再有尺寸事件，
@@ -105,6 +107,7 @@ class BgFrame(tk.Canvas):
         if not self.winfo_ismapped():
             return
         self.delete("bg_image")
+        self.delete("bg_fill")
         w, h = self.winfo_width(), self.winfo_height()
         if w < 2 or h < 2:
             return
@@ -120,10 +123,50 @@ class BgFrame(tk.Canvas):
         self._photo = photo  # 必须留一份引用，否则 PhotoImage 会被 GC 掉
         if photo is None:
             self.tag_lower("bg_fill")
+            # 动态创建的配置文字可能在共享背景图完成前先收到 Configure。
+            # 延迟一次重试，避免偶发地永久停留在纯色矩形背景。
+            if not self._bg_retry_done and self._bg_retry_after_id is None:
+                self._bg_retry_done = True
+                self._bg_retry_after_id = self.after(80, self._retry_bg_render)
             return
+        if self._bg_retry_after_id is not None:
+            try:
+                self.after_cancel(self._bg_retry_after_id)
+            except tk.TclError:
+                pass
+            self._bg_retry_after_id = None
+        self._bg_retry_done = False
         self.create_image(0, 0, image=photo, anchor=tk.NW, tags="bg_image")
         self.tag_lower("bg_image")
         self.tag_lower("bg_fill")
+
+    def refresh_descendants(self) -> None:
+        """在动态窗口完成布局后递归刷新所有背景表面。
+
+        独立创建窗口在 withdraw 状态下先构造控件，卡片内部的
+        ``<Configure>`` 可能早于最终窗口尺寸触发。窗口真正显示后，
+        只刷新最外层会留下旧的纯色切片，因此这里提供一次性的深度刷新。
+        """
+        try:
+            if not self.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        def _refresh_widget(widget) -> None:
+            if isinstance(widget, BgFrame):
+                widget.render_now()
+            for child in widget.winfo_children():
+                _refresh_widget(child)
+
+        _refresh_widget(self)
+
+    def _retry_bg_render(self):
+        self._bg_retry_after_id = None
+        try:
+            if self.winfo_exists():
+                self.render_now()
+        except tk.TclError:
+            pass
 
     def clear_bg_image(self) -> None:
         """DSToolsApp._begin_bg_drag_suppress() 拖拽开始时调用——只删掉

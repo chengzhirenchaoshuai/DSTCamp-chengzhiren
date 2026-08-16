@@ -169,7 +169,12 @@ def test_island_vanilla_catalogs() -> None:
         **resolve_vanilla_settings(VOLCANO_LOCATION, True),
         **resolve_vanilla_settings(VOLCANO_LOCATION, False),
     }
-    assert set(shipwrecked) == IA_SHIPWRECKED_VANILLA_KEYS
+    # shipwrecked 是 Master，show_global=True：白名单 + world=nil 的
+    # global/events/survivor 全局项都要显示。
+    assert IA_SHIPWRECKED_VANILLA_KEYS <= set(shipwrecked)
+    assert {"day", "ghostenabled", "krampus", "specialevent", "autumn"} <= set(shipwrecked)
+    assert "crow_carnival" in shipwrecked and "extrastartingitems" in shipwrecked
+    # volcano 是 Caves，show_global=False：只显示白名单。
     assert set(volcano) == IA_VOLCANO_VANILLA_KEYS
 
 
@@ -189,7 +194,7 @@ def test_island_creation_defaults_are_complete() -> None:
     ) == ["shipwrecked"]
     assert get_value_set(
         "start_location", location=SHIPWRECKED_LOCATION, is_rule=False,
-    ) == ["shipwrecked_default"]
+    ) == ["shipwrecked_default", "shipwrecked_plus", "shipwrecked_darkness"]
     assert get_value_set(
         "task_set", location=VOLCANO_LOCATION, is_rule=False,
     ) == ["volcano"]

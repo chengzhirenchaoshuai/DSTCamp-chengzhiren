@@ -7,11 +7,7 @@
 from dataclasses import replace
 
 from dstools.features.world.location_profiles import (
-    CAVE_LOCATION,
-    FOREST_LOCATION,
     LOCATION_DEFINITIONS,
-    PORKLAND_LOCATION,
-    PORKLAND_MOD_ID,
     get_location_definition,
     resolve_world_location_profile,
 )

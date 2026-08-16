@@ -43,7 +43,8 @@ class CardFrame(tk.Frame):
     来；`app` 用来让 body 接入 DSToolsApp 统一维护的共享背景图系统。"""
 
     def __init__(self, parent, app, radius: int | None = None, padding: int = 16,
-                 bg: str = None, border: str = None, **kw):
+                 bg: str = None, border: str = None, body_bg: str = None,
+                 body_follows_bg: bool = False, **kw):
         bg = bg or theme.BG_SOFT
         super().__init__(parent, background=bg, **kw)
         self._app = app
@@ -53,7 +54,11 @@ class CardFrame(tk.Frame):
         self._explicit_radius = radius
         self._radius = radius if radius is not None else theme.CARD_RADIUS
         self._padding = padding
-        self._card_bg = theme.CARD_BG
+        # body_bg 用于需要完全融入页面背景的配置卡片。保留默认值，避免
+        # 影响其他仍需要卡片底色的旧页面。
+        self._body_bg_override = body_bg
+        self._body_follows_bg = body_follows_bg
+        self._card_bg = bg if body_follows_bg else (body_bg or theme.CARD_BG)
         self._border = border or theme.CARD_BORDER
 
         self._canvas = BgFrame(self, app, bg=bg)
@@ -88,7 +93,9 @@ class CardFrame(tk.Frame):
         裁一次背景图切片），而不是直接 .configure()。"""
         self.configure(background=theme.BG_SOFT)
         self._canvas.apply_theme(bg=theme.BG_SOFT)
-        self._card_bg = theme.CARD_BG
+        self._card_bg = theme.BG_SOFT if self._body_follows_bg else (
+            self._body_bg_override or theme.CARD_BG
+        )
         self._border = theme.CARD_BORDER
         if self._explicit_radius is None:
             self._radius = theme.CARD_RADIUS

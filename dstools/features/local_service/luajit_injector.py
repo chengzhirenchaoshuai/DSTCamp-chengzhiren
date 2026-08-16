@@ -45,6 +45,7 @@ WORKSHOP_ID 这个物品的正牌 Workshop mod，只要这台机器的 Steam 账
 
 import json
 import shutil
+import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -59,6 +60,12 @@ from dstools.i18n import t
 TRIGGER_FILE = "Winmm.dll"
 # 副本健全性校验锚点——真正的 hook 逻辑所在，缺了说明还没成功装过/被破坏。
 _CORE_PAYLOAD_FILE = "Injector.dll"
+# 专用服务器启动文件。不同安装可能只有 64 位或只有 32 位，校验时只
+# 检查真实 bin64/bin 中实际存在的那个，避免把测试/旧版安装误判成失败。
+_SERVER_EXECUTABLE_NAMES = (
+    "dontstarve_dedicated_server_nullrenderer_x64.exe",
+    "dontstarve_dedicated_server_nullrenderer.exe",
+)
 
 # 隔离副本目录名——跟真实 bin64/ 同级（install_dir 下），整个复制一份
 # bin64 内容进去，注入文件也装进这里，真实 bin64/ 永远不被触碰。
@@ -261,17 +268,59 @@ def _copy_injector_files_into(source_dir: Path, dest_dir: Path, on_log=None) -> 
 
 
 def _rebuild_luajit_copy(bin64_dir: Path, luajit_dir: Path, source_dir: Path, on_log=None) -> None:
-    """整个覆盖式复制真实 bin64_dir 到 luajit_dir，再把订阅内容里的注入
-    文件套进去——apply_install()/regenerate() 共用的核心步骤。"""
+    """在临时目录完整构建 LuaJIT 副本，校验通过后再替换正式目录。
+
+    不能先 ``rmtree(luajit_dir)`` 再直接 ``copytree``：Windows 杀毒软件、
+    Steam 同步、磁盘空间或文件占用都可能让复制中途失败，留下只有注入 DLL
+    的半成品。临时目录方案保证失败时旧副本仍然可用，成功时正式目录一次性
+    切换到完整副本。"""
     def log(line: str) -> None:
         if on_log:
             on_log(line)
 
-    if luajit_dir.exists():
-        shutil.rmtree(luajit_dir)
-    shutil.copytree(bin64_dir, luajit_dir)
-    log(t("local.luajit_log_bin64_copied", dir=str(luajit_dir)))
-    _copy_injector_files_into(source_dir, luajit_dir, on_log=log)
+    install_dir = luajit_dir.parent
+    temp_dir = Path(tempfile.mkdtemp(prefix=f".{LUAJIT_DIR_NAME}.tmp-", dir=str(install_dir)))
+    # mkdtemp 已经创建了目录，copytree 需要一个不存在的目标路径。
+    shutil.rmtree(temp_dir)
+    backup_dir: Path | None = None
+    try:
+        log(t("local.luajit_log_copying_bin64"))
+        shutil.copytree(bin64_dir, temp_dir)
+        log(t("local.luajit_log_copying_injector"))
+        _copy_injector_files_into(source_dir, temp_dir, on_log=log)
+
+        # 先在临时目录校验，再触碰正式目录。除了注入锚点，也校验真实
+        # bin64/bin 中实际存在的服务器启动文件，直接覆盖“只剩 DLL”的
+        # 半成品问题。
+        expected_server_files = [
+            name for name in _SERVER_EXECUTABLE_NAMES
+            if (bin64_dir / name).is_file()
+        ]
+        missing = [
+            name for name in expected_server_files + [TRIGGER_FILE, _CORE_PAYLOAD_FILE]
+            if not (temp_dir / name).is_file()
+        ]
+        if missing:
+            raise RuntimeError(t("local.luajit_error_copy_incomplete", files=", ".join(missing)))
+
+        if luajit_dir.exists() or luajit_dir.is_symlink():
+            backup_dir = Path(tempfile.mkdtemp(prefix=f".{LUAJIT_DIR_NAME}.backup-", dir=str(install_dir)))
+            shutil.rmtree(backup_dir)
+            luajit_dir.replace(backup_dir)
+        temp_dir.replace(luajit_dir)
+        log(t("local.luajit_log_bin64_copied", dir=str(luajit_dir)))
+    except Exception:
+        # 如果正式目录已经移到备份位置但新目录替换失败，优先恢复旧副本。
+        if backup_dir is not None and backup_dir.exists() and not luajit_dir.exists():
+            backup_dir.replace(luajit_dir)
+        raise
+    finally:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        if backup_dir is not None and backup_dir.exists():
+            # 新副本已经生效，旧副本仅作为回滚保护；清理失败不应再把
+            # 本次成功报告成失败。
+            shutil.rmtree(backup_dir, ignore_errors=True)
 
 
 def apply_install(bin64_dir: Path, mod_overrides_paths: list[Path], on_log=None) -> InstallResult:
@@ -291,29 +340,34 @@ def apply_install(bin64_dir: Path, mod_overrides_paths: list[Path], on_log=None)
     result = InstallResult()
     install_dir = bin64_dir.parent
 
-    source_dir = _injector_source_dir()
-    if source_dir is None:
-        result.errors.append(t("local.luajit_error_no_injector_source"))
-        log(result.errors[-1])
-        return result
-
     luajit_dir = get_luajit_dir(install_dir)
-    _rebuild_luajit_copy(bin64_dir, luajit_dir, source_dir, on_log=log)
+    try:
+        source_dir = _injector_source_dir()
+        if source_dir is None:
+            result.errors.append(t("local.luajit_error_no_injector_source"))
+            log(result.errors[-1])
+            return result
 
-    build_id = current_game_build_id(install_dir) or ""
-    luajit_version = current_injector_version() or ""
-    write_marker(luajit_dir, LuajitMarker(DST_version=build_id, luajit_version=luajit_version))
+        _rebuild_luajit_copy(bin64_dir, luajit_dir, source_dir, on_log=log)
 
-    n_shards = 0
-    for mo_path in mod_overrides_paths:
-        overrides = load_mod_overrides(mo_path)
-        enable_mod(overrides, WORKSHOP_MOD_KEY)
-        save_mod_overrides(overrides)
-        n_shards += 1
-    log(t("local.luajit_log_mod_enabled", n=n_shards))
+        build_id = current_game_build_id(install_dir) or ""
+        luajit_version = current_injector_version() or ""
+        write_marker(luajit_dir, LuajitMarker(DST_version=build_id, luajit_version=luajit_version))
 
-    set_luajit_enabled(True)
-    result.ok = True
+        n_shards = 0
+        for mo_path in mod_overrides_paths:
+            overrides = load_mod_overrides(mo_path)
+            enable_mod(overrides, WORKSHOP_MOD_KEY)
+            save_mod_overrides(overrides)
+            n_shards += 1
+        log(t("local.luajit_log_mod_enabled", n=n_shards))
+
+        set_luajit_enabled(True)
+        result.ok = True
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        result.errors.append(t("local.luajit_error_operation_failed", detail=detail))
+        log(result.errors[-1])
     return result
 
 
@@ -389,23 +443,28 @@ def regenerate(bin64_dir: Path, on_log=None) -> InstallResult:
     install_dir = bin64_dir.parent
     luajit_dir = get_luajit_dir(install_dir)
 
-    source_dir = _injector_source_dir()
-    if source_dir is None:
-        result.errors.append(t("local.luajit_error_no_injector_source"))
-        log(result.errors[-1])
-        return result
-
     build_id = current_game_build_id(install_dir) or ""
     luajit_version = current_injector_version() or ""
     old_marker = read_marker(luajit_dir)
     build_changed = old_marker is None or build_id != old_marker.DST_version
 
-    if build_changed:
-        _rebuild_luajit_copy(bin64_dir, luajit_dir, source_dir, on_log=log)
-    else:
-        luajit_dir.mkdir(parents=True, exist_ok=True)
-        _copy_injector_files_into(source_dir, luajit_dir, on_log=log)
+    try:
+        source_dir = _injector_source_dir()
+        if source_dir is None:
+            result.errors.append(t("local.luajit_error_no_injector_source"))
+            log(result.errors[-1])
+            return result
 
-    write_marker(luajit_dir, LuajitMarker(DST_version=build_id, luajit_version=luajit_version))
-    result.ok = True
+        if build_changed:
+            _rebuild_luajit_copy(bin64_dir, luajit_dir, source_dir, on_log=log)
+        else:
+            luajit_dir.mkdir(parents=True, exist_ok=True)
+            _copy_injector_files_into(source_dir, luajit_dir, on_log=log)
+
+        write_marker(luajit_dir, LuajitMarker(DST_version=build_id, luajit_version=luajit_version))
+        result.ok = True
+    except Exception as exc:
+        detail = f"{type(exc).__name__}: {exc}"
+        result.errors.append(t("local.luajit_error_operation_failed", detail=detail))
+        log(result.errors[-1])
     return result

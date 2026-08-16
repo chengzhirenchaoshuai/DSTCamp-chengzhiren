@@ -13,6 +13,7 @@
   `%APPDATA%/DSTCamp/` 这棵目录树。
 """
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -36,6 +37,57 @@ def exe_dir() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     return Path(__file__).parent.parent.parent
+
+
+def _sync_tool_binaries(src: Path, dst: Path) -> bool:
+    """把打包进 exe（_MEI）的 tools/ 二进制同步到目标目录 dst。
+
+    幂等：目标已存在且每个文件大小都跟源一致就直接复用，不重复复制，避
+    免每次启动都白拷一遍。返回 True 表示目标已就绪可用；False 表示复制
+    失败，调用方据此退回 _MEI 里的原始位置，至少保证功能还能用。
+    """
+    if not src.is_dir():
+        return False
+    try:
+        src_files = {p.relative_to(src): p.stat().st_size
+                     for p in src.rglob("*") if p.is_file()}
+    except OSError:
+        return False
+    if dst.is_dir():
+        try:
+            dst_files = {p.relative_to(dst): p.stat().st_size
+                         for p in dst.rglob("*") if p.is_file()}
+        except OSError:
+            dst_files = {}
+        if dst_files == src_files:
+            return True
+    try:
+        if dst.exists():
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+        return True
+    except OSError:
+        return False
+
+
+def tool_binary_dir() -> Path:
+    """第三方工具二进制（frpc/ktech/vcredist 等）所在目录。
+
+    打包后这些二进制仍随 exe 一起分发（PyInstaller --add-data），运行时先
+    把 _MEI 临时解压目录里的 tools/ 复制到 %APPDATA%/DSTCamp/tools/ 再返
+    回——避免 Windows Defender 对"从 PyInstaller 的 _MEI 临时目录运行 exe"
+    误报（Defender 的 Wacatac.B!ml 触发点是"运行"动作，不是"复制"动作；
+    复制到固定目录再运行就不带"_MEI 里跑 exe"这个特征）。放
+    %APPDATA%/DSTCamp/tools/ 而不是 exe 旁边，是因为 %APPDATA% 一定可写
+    （exe 可能装在 Program Files 这类只读目录），且不受"缓存存放在 exe 目
+    录"那个设置开关影响。复制失败时退回 _MEI，保证功能可用。源码直跑时用
+    仓库的 tools/ 目录。
+    """
+    if getattr(sys, "frozen", False):
+        src = Path(sys._MEIPASS) / "tools"
+        dst = get_settings_dir() / "tools"
+        return dst if _sync_tool_binaries(src, dst) else src
+    return Path(__file__).parent.parent.parent / "tools"
 
 
 def cache_root_dir() -> Path:

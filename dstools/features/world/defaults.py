@@ -59,7 +59,7 @@ def shard_plan_from_template(path: Path) -> WorldShardPlan:
     preset = result.preset
     try:
         get_location_definition(preset.location)
-    except ValueError as exc:
+    except ValueError:
         raise ValueError(f"模板世界类型无效: {preset.location}")
     raw = copy.deepcopy(preset.raw)
     overrides = raw.pop("overrides", {})

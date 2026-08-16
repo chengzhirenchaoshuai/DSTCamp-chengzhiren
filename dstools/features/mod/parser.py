@@ -28,6 +28,12 @@ def _pick_quoted(m: re.Match) -> str:
     return m.group(1) if m.group(1) is not None else m.group(2)
 
 
+def _contains_cjk(s: str) -> bool:
+    """字符串里是否含有 CJK 统一表意文字（汉字）——用于判断一个字符串字
+    面量是不是中文，见 _extract_quoted 的三元双语名处理。"""
+    return any('一' <= ch <= '鿿' for ch in s)
+
+
 _LUA_ESCAPES = {'n': '\n', 't': '\t', 'r': '\r', '\\': '\\', '"': '"', "'": "'"}
 
 # 一整个带引号的字符串（任一风格），供 _replace_idents_outside_strings 整
@@ -574,7 +580,17 @@ def _extract_quoted(text: str, key: str) -> str | None:
     """
     m = re.search(rf'\b{re.escape(key)}\s*=\s*\w+\s+and\s+(?:{_QUOTED_ALT})', text)
     if m:
-        return _pick_quoted(m)
+        first = _pick_quoted(m)
+        # 三元惯用写法 `key = IDENT and A or B`：多数 mod 写 `Ch/ZH and
+        # "中文" or "英文"`（A=中文），但也有 `L/EN and "英文" or "中文"`
+        # （A=英文）这种反过来的。不靠条件变量命名去猜，直接看 A/B 哪个含
+        # 汉字，取中文那个（都没有或都是中文就维持原样取 A）——这样两种写
+        # 法都能拿到中文名。
+        if not _contains_cjk(first):
+            or_m = re.search(rf'\s+or\s+(?:{_QUOTED_ALT})', text[m.end():])
+            if or_m and _contains_cjk(_pick_quoted(or_m)):
+                return _pick_quoted(or_m)
+        return first
     # Island Adventures 等 Mod 使用一个非常直接的双语辅助函数：
     # ``name = en_zh("English", "中文")``。批量列表扫描不会执行任意
     # modinfo.lua，因此只识别这个已经从真实源码确认过、两个参数都是

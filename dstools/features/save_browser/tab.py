@@ -973,6 +973,7 @@ class SaveBrowserTab:
         self._backup_btn.configure(text=t("save.backup_now"))
         self._restore_btn.configure(text=t("save.restore_backup"))
         self._backup_policy_btn.configure(text=t("save.backup_policy_btn"))
+        self._create_save_btn.configure(text=t("save.create_server_save"))
 
     def retheme(self):
         """主题切换时调用——make_toolbar_label() 画的说明文字、以及
@@ -1008,8 +1009,12 @@ class SaveBrowserTab:
         self._backup_btn.pack(side=tk.RIGHT, padx=(0, 2))
         self._backup_policy_btn = ttk.Button(env_header_row, text=t("save.backup_policy_btn"), command=self._on_backup_policy)
         self._backup_policy_btn.pack(side=tk.RIGHT, padx=(0, 2))
-        self._create_world_btn = ttk.Button(env_header_row, text="创建存档", command=self._on_create_world)
-        self._create_world_btn.pack(side=tk.RIGHT, padx=(0, 2))
+        # "创建服务器存档"是这一行按钮组里最靠左、最靠近"基本信息"标题的
+        # 主要操作（最后一个 side=RIGHT pack，排在已 pack 按钮的左边），用
+        # 稍大的右边距跟右侧备份相关按钮做视觉分组。
+        self._create_save_btn = ttk.Button(env_header_row, text=t("save.create_server_save"),
+                                           command=self._on_create_server_save)
+        self._create_save_btn.pack(side=tk.RIGHT, padx=(0, 10))
 
         # 不再是"全部存档"的可滚动列表——顶部全局选择栏已经选了具体是哪
         # 个存档，这里只需要现查、现画那一个存档自己的详情（存档位置/
@@ -1021,19 +1026,20 @@ class SaveBrowserTab:
         self._selected_cluster_frame = BgFrame(env_section, self.app, bg=theme.CARD_BG)
         self._selected_cluster_frame.pack(fill=tk.X, padx=10, pady=(0,4))
 
+    def _on_create_server_save(self):
+        """打开"创建服务器存档"的独立向导（世界模板/服务器配置/Mod 元数
+        据都在独立窗口里按需加载）。复用 WorldCreationEntryTab 的窗口启
+        动逻辑——它原本是主页签上的轻量入口，现在入口挪到这里，只剩
+        open_wizard() 这个启动能力被用到，完整入口页不再显示，所以懒到首
+        次点击才建实例、不 pack 它的 frame。"""
+        from dstools.features.world.creation_entry import WorldCreationEntryTab
+        entry = getattr(self, "_creation_entry", None)
+        if entry is None:
+            entry = self._creation_entry = WorldCreationEntryTab(self.frame, self.app)
+        entry.open_wizard()
+
     def _on_backup_policy(self):
         _BackupPolicyDialog(self.app.root)
-
-    def _on_create_world(self):
-        cluster = self._get_cluster()
-        if not cluster:
-            dlg.show_error(self.app.root, "创建存档", "请先选择一个存档，以确定目标目录。")
-            return
-        from dstools.features.mod.sync import get_enabled_mod_ids
-        _CreateWorldDialog(
-            self.app.root, cluster.path.parent, get_enabled_mod_ids(cluster),
-            lambda path: dlg.show_info(self.app.root, "创建存档", f"存档已创建：{path.name}"),
-        )
 
     def _on_backup_now(self):
         c = self._get_cluster()

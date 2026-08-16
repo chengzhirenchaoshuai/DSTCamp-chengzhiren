@@ -1,555 +1,3729 @@
 [
   {
     "name": "全局",
+    "en": "General",
     "settings": [
       {
+        "key": "specialevent",
         "name": "活动",
-        "value": "自动"
+        "en": "Special Event",
+        "default": "default",
+        "values": [
+          {
+            "raw": "none",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "自动",
+            "en": "Auto"
+          }
+        ]
       },
       {
+        "key": "autumn",
         "name": "秋",
-        "value": "短"
+        "en": "Autumn",
+        "default": "default",
+        "values": [
+          {
+            "raw": "noseason",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryshortseason",
+            "zh": "极短",
+            "en": "Very Short"
+          },
+          {
+            "raw": "shortseason",
+            "zh": "短",
+            "en": "Short"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "longseason",
+            "zh": "长",
+            "en": "Long"
+          },
+          {
+            "raw": "verylongseason",
+            "zh": "极长",
+            "en": "Very Long"
+          },
+          {
+            "raw": "random",
+            "zh": "随机",
+            "en": "Random"
+          }
+        ]
       },
       {
+        "key": "winter",
         "name": "冬",
-        "value": "短"
+        "en": "Winter",
+        "default": "default",
+        "values": [
+          {
+            "raw": "noseason",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryshortseason",
+            "zh": "极短",
+            "en": "Very Short"
+          },
+          {
+            "raw": "shortseason",
+            "zh": "短",
+            "en": "Short"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "longseason",
+            "zh": "长",
+            "en": "Long"
+          },
+          {
+            "raw": "verylongseason",
+            "zh": "极长",
+            "en": "Very Long"
+          },
+          {
+            "raw": "random",
+            "zh": "随机",
+            "en": "Random"
+          }
+        ]
       },
       {
+        "key": "spring",
         "name": "春",
-        "value": "短"
+        "en": "Spring",
+        "default": "default",
+        "values": [
+          {
+            "raw": "noseason",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryshortseason",
+            "zh": "极短",
+            "en": "Very Short"
+          },
+          {
+            "raw": "shortseason",
+            "zh": "短",
+            "en": "Short"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "longseason",
+            "zh": "长",
+            "en": "Long"
+          },
+          {
+            "raw": "verylongseason",
+            "zh": "极长",
+            "en": "Very Long"
+          },
+          {
+            "raw": "random",
+            "zh": "随机",
+            "en": "Random"
+          }
+        ]
       },
       {
+        "key": "summer",
         "name": "夏",
-        "value": "长"
+        "en": "Summer",
+        "default": "default",
+        "values": [
+          {
+            "raw": "noseason",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryshortseason",
+            "zh": "极短",
+            "en": "Very Short"
+          },
+          {
+            "raw": "shortseason",
+            "zh": "短",
+            "en": "Short"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "longseason",
+            "zh": "长",
+            "en": "Long"
+          },
+          {
+            "raw": "verylongseason",
+            "zh": "极长",
+            "en": "Very Long"
+          },
+          {
+            "raw": "random",
+            "zh": "随机",
+            "en": "Random"
+          }
+        ]
       },
       {
+        "key": "day",
         "name": "昼夜选项",
-        "value": "长白天"
+        "en": "Day/Night Cycle",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "longday",
+            "zh": "长白天",
+            "en": "Long Day"
+          },
+          {
+            "raw": "longdusk",
+            "zh": "长黄昏",
+            "en": "Long Dusk"
+          },
+          {
+            "raw": "longnight",
+            "zh": "长夜晚",
+            "en": "Long Night"
+          },
+          {
+            "raw": "noday",
+            "zh": "无白天",
+            "en": "No Day"
+          },
+          {
+            "raw": "nodusk",
+            "zh": "无黄昏",
+            "en": "No Dusk"
+          },
+          {
+            "raw": "nonight",
+            "zh": "无夜晚",
+            "en": "No Night"
+          },
+          {
+            "raw": "onlyday",
+            "zh": "仅白天",
+            "en": "Only Day"
+          },
+          {
+            "raw": "onlydusk",
+            "zh": "仅黄昏",
+            "en": "Only Dusk"
+          },
+          {
+            "raw": "onlynight",
+            "zh": "仅夜晚",
+            "en": "Only Night"
+          }
+        ]
       },
       {
+        "key": "spawnmode",
         "name": "出生模式",
-        "value": "随机"
+        "en": "Spawn Mode",
+        "default": "fixed",
+        "values": [
+          {
+            "raw": "fixed",
+            "zh": "绚丽之门",
+            "en": "Florid Postern"
+          },
+          {
+            "raw": "scatter",
+            "zh": "随机",
+            "en": "Random"
+          }
+        ]
       },
       {
+        "key": "ghostenabled",
         "name": "冒险家死亡",
-        "value": "更改冒险家"
+        "en": "Player Death",
+        "default": "always",
+        "values": [
+          {
+            "raw": "none",
+            "zh": "更改冒险家",
+            "en": "Change Survivor"
+          },
+          {
+            "raw": "always",
+            "zh": "变鬼魂",
+            "en": "Become a Ghost"
+          }
+        ]
       },
       {
+        "key": "portalresurection",
         "name": "在绚丽之门复活",
-        "value": "启用"
+        "en": "Resurrection at Portal",
+        "default": "none",
+        "values": [
+          {
+            "raw": "none",
+            "zh": "禁用",
+            "en": "Disabled"
+          },
+          {
+            "raw": "always",
+            "zh": "启用",
+            "en": "Enabled"
+          }
+        ]
       },
       {
+        "key": "ghostsanitydrain",
         "name": "鬼魂理智值惩罚",
-        "value": "启用"
+        "en": "Ghost Sanity Drain",
+        "default": "always",
+        "values": [
+          {
+            "raw": "none",
+            "zh": "禁用",
+            "en": "Disabled"
+          },
+          {
+            "raw": "always",
+            "zh": "启用",
+            "en": "Enabled"
+          }
+        ]
       },
       {
+        "key": "resettime",
         "name": "死亡重置倒计时",
-        "value": "慢"
+        "en": "Reset Time",
+        "default": "default",
+        "values": [
+          {
+            "raw": "none",
+            "zh": "禁用",
+            "en": "Disabled"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "always",
+            "zh": "立刻",
+            "en": "Instant"
+          }
+        ]
       },
       {
+        "key": "beefaloheat",
         "name": "皮弗娄牛交配频率",
-        "value": "很少"
+        "en": "Beefalo Heat",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "krampus",
         "name": "坎普斯",
-        "value": "默认"
+        "en": "Krampus",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "经常",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "总是",
+            "en": "Tons"
+          }
+        ]
       }
     ]
   },
   {
     "name": "活动",
+    "en": "Events",
     "settings": [
       {
+        "key": "crow_carnival",
         "name": "盛夏嘉年华",
-        "value": "总是"
+        "en": "Crow Carnival",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "hallowed_nights",
         "name": "万圣夜",
-        "value": "总是"
+        "en": "Hallowed Nights",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "winters_feast",
         "name": "冬季盛宴",
-        "value": "总是"
+        "en": "Winter's Feast",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "year_of_the_gobbler",
         "name": "火鸡之年",
-        "value": "总是"
+        "en": "Year of the Gobbler",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
-        "name": "碎铃之年",
-        "value": "总是"
+        "key": "year_of_the_varg",
+        "name": "座狼之年",
+        "en": "Year of the Varg",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "year_of_the_pig",
         "name": "猪王之年",
-        "value": "总是"
+        "en": "Year of the Pig",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "year_of_the_carrat",
         "name": "胡萝卜鼠之年",
-        "value": "总是"
+        "en": "Year of the Carrat",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "year_of_the_beefalo",
         "name": "皮弗娄牛之年",
-        "value": "总是"
+        "en": "Year of the Beefalo",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "year_of_the_catcoon",
         "name": "浣猫之年",
-        "value": "总是"
+        "en": "Year of the Catcoon",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "year_of_the_bunnyman",
         "name": "兔人之年",
-        "value": "总是"
+        "en": "Year of the Bunnyman",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "year_of_the_dragonfly",
         "name": "龙蝇之年",
-        "value": "总是"
+        "en": "Year of the Dragonfly",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "year_of_the_snake",
         "name": "洞穴蠕虫之年",
-        "value": "总是"
+        "en": "Year of the Snake",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "year_of_the_knight",
         "name": "发条骑士之年",
-        "value": "总是"
+        "en": "Year of the Knight",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "enabled",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       }
     ]
   },
   {
     "name": "冒险家",
+    "en": "Survivor",
     "settings": [
       {
+        "key": "extrastartingitems",
         "name": "额外起始资源",
-        "value": "第15天后"
+        "en": "Extra Starting Items",
+        "default": "default",
+        "values": [
+          {
+            "raw": "0",
+            "zh": "总是",
+            "en": "Always"
+          },
+          {
+            "raw": "5",
+            "zh": "第5天后",
+            "en": "After Day 5"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "15",
+            "zh": "第15天后",
+            "en": "After Day 15"
+          },
+          {
+            "raw": "20",
+            "zh": "第20天后",
+            "en": "After Day 20"
+          },
+          {
+            "raw": "none",
+            "zh": "从不",
+            "en": "Never"
+          }
+        ]
       },
       {
+        "key": "seasonalstartingitems",
         "name": "季节起始物品",
-        "value": "无"
+        "en": "Seasonal Starting Items",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "spawnprotection",
         "name": "防骚扰出生保护",
-        "value": "总是"
+        "en": "Spawn Protection",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "自动检测",
+            "en": "Auto Detect"
+          },
+          {
+            "raw": "always",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "dropeverythingondespawn",
         "name": "离开游戏后物品掉落",
-        "value": "默认"
+        "en": "Drop Everything on Despawn",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "always",
+            "zh": "所有",
+            "en": "Everything"
+          }
+        ]
       },
       {
+        "key": "healthpenalty",
         "name": "生命值上限惩罚",
-        "value": "禁用"
+        "en": "Health Penalty",
+        "default": "always",
+        "values": [
+          {
+            "raw": "none",
+            "zh": "禁用",
+            "en": "Disabled"
+          },
+          {
+            "raw": "always",
+            "zh": "启用",
+            "en": "Enabled"
+          }
+        ]
       },
       {
+        "key": "lessdamagetaken",
         "name": "受到的伤害",
-        "value": "较少"
+        "en": "Damage Taken",
+        "default": "none",
+        "values": [
+          {
+            "raw": "always",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "none",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "more",
+            "zh": "较多",
+            "en": "More"
+          }
+        ]
       },
       {
+        "key": "temperaturedamage",
         "name": "温度伤害",
-        "value": "非致命"
+        "en": "Temperature Damage",
+        "default": "default",
+        "values": [
+          {
+            "raw": "nonlethal",
+            "zh": "非致命",
+            "en": "Non-lethal"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "hunger",
         "name": "饥饿伤害",
-        "value": "非致命"
+        "en": "Hunger Damage",
+        "default": "default",
+        "values": [
+          {
+            "raw": "nonlethal",
+            "zh": "非致命",
+            "en": "Non-lethal"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "darkness",
         "name": "黑暗伤害",
-        "value": "非致命"
+        "en": "Darkness Damage",
+        "default": "default",
+        "values": [
+          {
+            "raw": "nonlethal",
+            "zh": "非致命",
+            "en": "Non-lethal"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "shadowcreatures",
         "name": "理智怪兽",
-        "value": "很少"
+        "en": "Sanity Monsters",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "brightmarecreatures",
         "name": "启蒙怪兽",
-        "value": "很少"
+        "en": "Brightmare Monsters",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       }
     ]
   },
   {
     "name": "世界",
+    "en": "World",
     "settings": [
       {
+        "key": "hounds",
         "name": "猎犬袭击",
-        "value": "很少"
+        "en": "Hound Attacks",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "winterhounds",
         "name": "寒冰猎犬群",
-        "value": "无"
+        "en": "Icehound Packs",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "summerhounds",
         "name": "火焰猎犬群",
-        "value": "无"
+        "en": "Firehound Packs",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "lunarhail_frequency",
         "name": "月雹",
-        "value": "很少"
+        "en": "Moon Hail Frequency",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "petrification",
         "name": "森林石化",
-        "value": "慢"
+        "en": "Petrification",
+        "default": "default",
+        "values": [
+          {
+            "raw": "none",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "few",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "many",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "max",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "meteorshowers",
         "name": "流星频率",
-        "value": "很少"
+        "en": "Meteor Showers",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "wanderingtrader_enabled",
         "name": "流浪商人",
-        "value": "禁用"
+        "en": "Wandering Trader",
+        "default": "always",
+        "values": [
+          {
+            "raw": "none",
+            "zh": "禁用",
+            "en": "Disabled"
+          },
+          {
+            "raw": "always",
+            "zh": "启用",
+            "en": "Enabled"
+          }
+        ]
       },
       {
+        "key": "hunt",
         "name": "狩猎",
-        "value": "很少"
+        "en": "Hunting",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "alternatehunt",
         "name": "狩猎惊喜",
-        "value": "很少"
+        "en": "Hunt Surprises",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "rifts_enabled",
         "name": "荒野裂隙",
-        "value": "无"
+        "en": "Wilderness Rifts",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "自动检测",
+            "en": "Auto Detect"
+          },
+          {
+            "raw": "always",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "rifts_frequency",
         "name": "荒野裂隙频率",
-        "value": "很少"
+        "en": "Wilderness Rifts Frequency",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "wildfires",
         "name": "野火",
-        "value": "很少"
+        "en": "Wildfires",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "lightning",
         "name": "闪电",
-        "value": "很少"
+        "en": "Lightning",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "weather",
         "name": "雨",
-        "value": "很少"
+        "en": "Rain",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "frograin",
         "name": "青蛙雨",
-        "value": "很少"
+        "en": "Frog Rain",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       }
     ]
   },
   {
     "name": "资源再生",
+    "en": "Regrowth",
     "settings": [
       {
+        "key": "regrowth",
         "name": "再生速度",
-        "value": "慢"
+        "en": "Regrowth Rate",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "cactus_regrowth",
         "name": "仙人掌",
-        "value": "慢"
+        "en": "Cactus",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "basicresource_regrowth",
         "name": "基础资源",
-        "value": "禁用"
+        "en": "Basic Resources",
+        "default": "none",
+        "values": [
+          {
+            "raw": "none",
+            "zh": "禁用",
+            "en": "Disabled"
+          },
+          {
+            "raw": "always",
+            "zh": "启用",
+            "en": "Enabled"
+          }
+        ]
       },
       {
+        "key": "twiggytrees_regrowth",
         "name": "多枝树",
-        "value": "慢"
+        "en": "Twiggy Trees",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "evergreen_regrowth",
         "name": "常青树",
-        "value": "慢"
+        "en": "Evergreens",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "moon_tree_regrowth",
         "name": "月树",
-        "value": "慢"
+        "en": "Moon Trees",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
-        "name": "竹栗树",
-        "value": "慢"
+        "key": "deciduoustree_regrowth",
+        "name": "桦栗树",
+        "en": "Deciduous Trees",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "palmconetree_regrowth",
         "name": "棕榈松果树",
-        "value": "慢"
+        "en": "Palm Trees",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "saltstack_regrowth",
         "name": "盐堆",
-        "value": "慢"
+        "en": "Salt Formations",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "carrots_regrowth",
         "name": "胡萝卜",
-        "value": "慢"
+        "en": "Carrots",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "reeds_regrowth",
         "name": "芦苇",
-        "value": "慢"
+        "en": "Reeds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       },
       {
+        "key": "flowers_regrowth",
         "name": "花",
-        "value": "慢"
+        "en": "Flowers",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "veryslow",
+            "zh": "极慢",
+            "en": "Very Slow"
+          },
+          {
+            "raw": "slow",
+            "zh": "慢",
+            "en": "Slow"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "fast",
+            "zh": "快",
+            "en": "Fast"
+          },
+          {
+            "raw": "veryfast",
+            "zh": "极快",
+            "en": "Very Fast"
+          }
+        ]
       }
     ]
   },
   {
     "name": "非自然传送门资源",
+    "en": "Portal Resources",
     "settings": [
       {
+        "key": "portal_spawnrate",
         "name": "传送频率",
-        "value": "很少"
+        "en": "Portal Spawn Rate",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "lightcrab_portalrate",
         "name": "发光蟹",
-        "value": "很少"
+        "en": "Lightcrab",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "palmcone_seed_portalrate",
         "name": "棕榈松果树芽",
-        "value": "很少"
+        "en": "Palm Cone Sprout",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "powder_monkey_portalrate",
         "name": "火药猴",
-        "value": "很少"
+        "en": "Powder Monkey",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "monkeytail_portalrate",
         "name": "猴尾草",
-        "value": "很少"
+        "en": "Monkey Tail Plant",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "bananabush_portalrate",
         "name": "香蕉丛",
-        "value": "很少"
+        "en": "Banana Bush",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       }
     ]
   },
   {
     "name": "生物",
+    "en": "Creatures",
     "settings": [
       {
+        "key": "gnarwail",
         "name": "一角鲸",
-        "value": "很少"
+        "en": "Gnarwail",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "penguins",
         "name": "企鹅",
-        "value": "很少"
+        "en": "Penguins",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "bunnymen_setting",
         "name": "兔人",
-        "value": "很少"
+        "en": "Bunnymen",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "rabbits_setting",
         "name": "兔子",
-        "value": "很少"
+        "en": "Rabbits",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "otters_setting",
         "name": "水獭掠夺者",
-        "value": "很少"
+        "en": "Otters",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "catcoons",
         "name": "浣猫",
-        "value": "很少"
+        "en": "Catcoons",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "perd",
         "name": "火鸡",
-        "value": "很少"
+        "en": "Perds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "pigs_setting",
         "name": "猪",
-        "value": "很少"
+        "en": "Pigs",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "grassgekkos",
         "name": "草壁虎转化",
-        "value": "很少"
+        "en": "Grass Gekkos",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "bees_setting",
         "name": "蜜蜂",
-        "value": "很少"
+        "en": "Bees",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "butterfly",
         "name": "蝴蝶",
-        "value": "很少"
+        "en": "Butterflies",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "fishschools",
         "name": "鱼群",
-        "value": "很少"
+        "en": "Fish Schools",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "birds",
         "name": "鸟",
-        "value": "很少"
+        "en": "Birds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "moles_setting",
         "name": "鼹鼠",
-        "value": "很少"
+        "en": "Moles",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "wobsters",
         "name": "龙虾",
-        "value": "很少"
+        "en": "Wobsters",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       }
     ]
   },
   {
     "name": "敌对生物",
+    "en": "Hostile Creatures",
     "settings": [
       {
+        "key": "pirateraids",
         "name": "月亮码头海盗",
-        "value": "很少"
+        "en": "Pirate Raids",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "wasps",
         "name": "杀人蜂",
-        "value": "很少"
+        "en": "Killer Bees",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "walrus_setting",
         "name": "海象",
-        "value": "很少"
+        "en": "Walruses",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "hound_mounds",
         "name": "猎犬",
-        "value": "很少"
+        "en": "Hound Mounds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "mosquitos",
         "name": "蚊子",
-        "value": "很少"
+        "en": "Mosquitoes",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "spiders_setting",
         "name": "蜘蛛",
-        "value": "很少"
+        "en": "Spiders",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "spider_warriors",
         "name": "蜘蛛战士",
-        "value": "无"
+        "en": "Spider Warriors",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "bats_setting",
         "name": "蝙蝠",
-        "value": "很少"
+        "en": "Bats",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "frogs",
         "name": "青蛙",
-        "value": "很少"
+        "en": "Frogs",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "lureplants",
         "name": "食人花",
-        "value": "很少"
+        "en": "Lure Plants",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "cookiecutters",
         "name": "饼干切割机",
-        "value": "很少"
+        "en": "Cookie Cutters",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "merms",
         "name": "鱼人",
-        "value": "很少"
+        "en": "Merms",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "squid",
         "name": "鱿鱼",
-        "value": "很少"
+        "en": "Squid",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "sharks",
         "name": "鲨鱼",
-        "value": "很少"
+        "en": "Sharks",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       }
     ]
   },
   {
     "name": "巨兽",
+    "en": "Giants",
     "settings": [
       {
+        "key": "klaus",
         "name": "克劳斯",
-        "value": "很少"
+        "en": "Klaus",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "sharkboi",
         "name": "大霜鲨",
-        "value": "很少"
+        "en": "Sharkboi",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "crabking",
         "name": "帝王蟹",
-        "value": "很少"
+        "en": "Crab King",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "eyeofterror",
         "name": "恐怖之眼",
-        "value": "很少"
+        "en": "Eye of Terror",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "daywalker2",
         "name": "拾荒疯猪",
-        "value": "很少"
+        "en": "Scrappy Werepig",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "fruitfly",
         "name": "果蝇王",
-        "value": "很少"
+        "en": "Fruit Fly King",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "liefs",
         "name": "树精守卫",
-        "value": "很少"
+        "en": "Treeguards",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "deciduousmonster",
         "name": "毒桦栗树",
-        "value": "很少"
+        "en": "Poison Birchnutter",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "bearger",
         "name": "熊獾",
-        "value": "很少"
+        "en": "Bearger",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "deerclops",
         "name": "独眼巨鹿",
-        "value": "很少"
+        "en": "Deerclops",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "antliontribute",
         "name": "蚁狮贡品",
-        "value": "很少"
+        "en": "Antlion Tribute",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "beequeen",
         "name": "蜂王",
-        "value": "很少"
+        "en": "Bee Queen",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "spiderqueen",
         "name": "蜘蛛女王",
-        "value": "很少"
+        "en": "Spider Queen",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "malbatross",
         "name": "邪天翁",
-        "value": "很少"
+        "en": "Malbatross",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "goosemoose",
         "name": "麋鹿鹅",
-        "value": "很少"
+        "en": "Moose/Goose",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "dragonfly",
         "name": "龙蝇",
-        "value": "很少"
+        "en": "Dragonfly",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       }
     ]
   },
   {
     "name": "月亮变异",
+    "en": "Lunar Mutations",
     "settings": [
       {
-        "name": "高喙鸟",
-        "value": "无"
+        "key": "mutated_bird_gestalt",
+        "name": "亮喙鸟",
+        "en": "Lunar Tallbird",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "mutated_birds",
         "name": "变异狗鸟",
-        "value": "无"
+        "en": "Mutated Birds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "mutated_merm",
         "name": "变异鱼人",
-        "value": "无"
+        "en": "Mutated Merms",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "mutated_hounds",
         "name": "恐怖猎犬",
-        "value": "无"
+        "en": "Mutated Hounds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "mutated_deerclops",
         "name": "晶体独眼巨鹿",
-        "value": "无"
+        "en": "Mutated Deerclops",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "mutated_buzzard_gestalt",
         "name": "水晶冠秃鹫",
-        "value": "无"
+        "en": "Mutated Buzzards",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "penguins_moon",
         "name": "冰冻企鹅",
-        "value": "无"
+        "en": "Mutated Penguins",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "moon_spider",
         "name": "破碎蜘蛛",
-        "value": "无"
+        "en": "Mutated Spiders",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          }
+        ]
       },
       {
+        "key": "mutated_spiderqueen",
         "name": "破碎蜘蛛洞",
-        "value": "默认"
+        "en": "Mutated Spider Den",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "mutated_bearger",
         "name": "装甲熊獾",
-        "value": "无"
+        "en": "Mutated Bearger",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "mutated_warg",
         "name": "附身座狼",
-        "value": "无"
+        "en": "Mutated Warg",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       }
     ]
   }

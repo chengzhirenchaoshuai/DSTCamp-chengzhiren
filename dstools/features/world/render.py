@@ -96,13 +96,13 @@ CYCLE_VALUES = DEFAULT_SET
 
 _VALUE_LABELS = {
     "default": {"zh": "默认", "en": "Default"},
-    "never": {"zh": "无", "en": "Never"},
-    "rare": {"zh": "很少", "en": "Rare"},
-    "often": {"zh": "经常", "en": "Often"},
-    "always": {"zh": "总是", "en": "Always"},
+    "never": {"zh": "无", "en": "None"},
+    "rare": {"zh": "很少", "en": "Little"},
+    "often": {"zh": "较多", "en": "More"},
+    "always": {"zh": "大量", "en": "Tons"},
     "few": {"zh": "很少", "en": "Few"},
     "many": {"zh": "大量", "en": "Many"},
-    "none": {"zh": "禁用", "en": "None"},
+    "none": {"zh": "禁用", "en": "Disabled"},
     "max": {"zh": "最多", "en": "Max"},
     "veryslow": {"zh": "极慢", "en": "Very Slow"},
     "slow": {"zh": "慢", "en": "Slow"},
@@ -120,9 +120,9 @@ _VALUE_LABELS = {
     "shortseason": {"zh": "短", "en": "Short"},
     "longseason": {"zh": "长", "en": "Long"},
     "verylongseason": {"zh": "极长", "en": "Very Long"},
-    "onlyday": {"zh": "仅白天", "en": "Day Only"},
-    "onlydusk": {"zh": "仅黄昏", "en": "Dusk Only"},
-    "onlynight": {"zh": "仅夜晚", "en": "Night Only"},
+    "onlyday": {"zh": "仅白天", "en": "Only Day"},
+    "onlydusk": {"zh": "仅黄昏", "en": "Only Dusk"},
+    "onlynight": {"zh": "仅夜晚", "en": "Only Night"},
     "longday": {"zh": "长白天", "en": "Long Day"},
     "longdusk": {"zh": "长黄昏", "en": "Long Dusk"},
     "longnight": {"zh": "长夜晚", "en": "Long Night"},
@@ -131,13 +131,13 @@ _VALUE_LABELS = {
     "nonight": {"zh": "无夜晚", "en": "No Night"},
     "fixed": {"zh": "固定", "en": "Fixed"},
     "wandering": {"zh": "流浪", "en": "Wandering"},
-    "scatter": {"zh": "随机", "en": "Scattered"},
+    "scatter": {"zh": "随机", "en": "Random"},
     "disabled": {"zh": "禁用", "en": "Disabled"},
-    "enabled": {"zh": "总是", "en": "Enabled"},
+    "enabled": {"zh": "总是", "en": "Always"},
     "auto": {"zh": "自动", "en": "Auto"},
-    "uncommon": {"zh": "较少", "en": "Uncommon"},
-    "mostly": {"zh": "较多", "en": "Mostly"},
-    "insane": {"zh": "极多", "en": "Insane"},
+    "uncommon": {"zh": "较少", "en": "Less"},
+    "mostly": {"zh": "很多", "en": "Lots"},
+    "insane": {"zh": "疯狂", "en": "Insane"},
     # ocean_waterplant（海草）/ocean_seastack 这两个"世界生成(仅查看)"
     # 字段用的是独立的一套频率取值，不是"never"/"rare"/"default"这些普
     # 通值——真机核对过游戏自己的 scripts/map/customize.lua：
@@ -147,14 +147,14 @@ _VALUE_LABELS = {
     # 本完全一样，不是另一套语义。之前只补了 "ocean_uncommon" 一个，其
     # 它几档漏了（真机反馈过："海草"这一项的值直接显示成了原始字符串
     # "ocean_default"，没翻译成中文）。
-    "ocean_never": {"zh": "无", "en": "Never"},
-    "ocean_rare": {"zh": "很少", "en": "Rare"},
-    "ocean_uncommon": {"zh": "较少", "en": "Uncommon"},
+    "ocean_never": {"zh": "无", "en": "None"},
+    "ocean_rare": {"zh": "很少", "en": "Little"},
+    "ocean_uncommon": {"zh": "较少", "en": "Less"},
     "ocean_default": {"zh": "默认", "en": "Default"},
-    "ocean_often": {"zh": "经常", "en": "Often"},
-    "ocean_mostly": {"zh": "较多", "en": "Mostly"},
-    "ocean_always": {"zh": "总是", "en": "Always"},
-    "ocean_insane": {"zh": "极多", "en": "Insane"},
+    "ocean_often": {"zh": "较多", "en": "More"},
+    "ocean_mostly": {"zh": "很多", "en": "Lots"},
+    "ocean_always": {"zh": "大量", "en": "Tons"},
+    "ocean_insane": {"zh": "疯狂", "en": "Insane"},
     "least": {"zh": "最少", "en": "Least"},
     "most": {"zh": "最多", "en": "Most"},
     "classic": {"zh": "经典", "en": "Classic"},
@@ -172,32 +172,91 @@ _VALUE_LABELS = {
 # "default" 对活动来说是"自动"，对大多数其它设置是"默认"）。这里的条目
 # 会覆盖 _VALUE_LABELS 里对应 key 的通用文案。
 _PER_KEY_LABELS = {
+    # 活动：default 是"自动"，none 是"无"
     "specialevent": {"default": {"zh": "自动", "en": "Auto"}, "none": {"zh": "无", "en": "None"}},
-    "ghostenabled": {"none": {"zh": "更改冒险家", "en": "New Character"},
+    # 冒险家死亡：none=更改冒险家, always=变鬼魂
+    "ghostenabled": {"none": {"zh": "更改冒险家", "en": "Change Survivor"},
                      "always": {"zh": "变鬼魂", "en": "Become a Ghost"}},
+    # 禁用/启用 二档开关（enableddisabled_descriptions）
     "portalresurection": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
     "ghostsanitydrain": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
-    "lessdamagetaken": {"default": {"zh": "较少", "en": "Less"}, "always": {"zh": "较少", "en": "Less"},
-                        "more": {"zh": "较多", "en": "More"}, "none": {"zh": "默认", "en": "Default"}},
+    "healthpenalty": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    "basicresource_regrowth": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    "acidrain_enabled": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    "wanderingtrader_enabled": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    # 岛屿冒险(Island Adventures)核心 mod 的 4 个 enableddisabled 开关，
+    # desc 都是 enableddisabled_descriptions，none=禁用/always=启用。
+    "poison": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    "dst_boats": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    "ia_boats": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    "ia_drowning": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    # 受到的伤害：较少=always, 默认=none, 较多=more
+    "lessdamagetaken": {"always": {"zh": "较少", "en": "Less"}, "none": {"zh": "默认", "en": "Default"},
+                        "more": {"zh": "较多", "en": "More"}},
     # "0" → 总是, "none" → 从不；其余数字走下面 get_value_label 里的动态格式化("第N天后")
     "extrastartingitems": {"0": {"zh": "总是", "en": "Always"}, "none": {"zh": "从不", "en": "Never"}},
-    "loop": {"never": {"zh": "从不", "en": "Never"}},
-    "task_set": {"default": {"zh": "联机版", "en": "Together"}, "cave_default": {"zh": "地下", "en": "Caves"},
+    # 环形：never=从不, always=总是（default 走全局"默认"）
+    "loop": {"never": {"zh": "从不", "en": "Never"}, "always": {"zh": "总是", "en": "Always"}},
+    # 分支：never=从不（BRANCHINGNEVER，非 SLIDENEVER 的"无"）
+    "branching": {"never": {"zh": "从不", "en": "Never"}},
+    "task_set": {"default": {"zh": "联机版", "en": "Together"}, "classic": {"zh": "经典", "en": "Classic"},
+                 "cave_default": {"zh": "地下", "en": "Caves"},
                  "shipwrecked": {"zh": "海难", "en": "Shipwrecked"}, "volcano": {"zh": "火山", "en": "Volcano"}},
-    "start_location": {"default": {"zh": "默认", "en": "Default"}, "caves": {"zh": "洞穴", "en": "Caves"},
-                       "shipwrecked_default": {"zh": "海难", "en": "Shipwrecked"},
+    "start_location": {"default": {"zh": "默认", "en": "Default"}, "plus": {"zh": "额外资源", "en": "Plus"},
+                       "darkness": {"zh": "黑暗", "en": "Dark"}, "caves": {"zh": "洞穴", "en": "Caves"},
+                       "shipwrecked_default": {"zh": "默认", "en": "Default"},
+                       "shipwrecked_plus": {"zh": "额外资源", "en": "Plus"},
+                       "shipwrecked_darkness": {"zh": "黑暗", "en": "Dark"},
                        "volcano_default": {"zh": "火山", "en": "Volcano"}},
-    "moon_spider": {"rare": {"zh": "很少", "en": "Rare"}, "never": {"zh": "无", "en": "None"}},
-    "moon_spiders": {"uncommon": {"zh": "默认", "en": "Default"}, "never": {"zh": "无", "en": "None"}},
-    "worms": {"uncommon": {"zh": "稀有", "en": "Rare"}},
-    "rocky_setting": {"rare": {"zh": "较少", "en": "Less"}},
-    # spawnprotection 中间档"自动监测"目前假设原始值是 default，还未确认
-    "spawnprotection": {"default": {"zh": "自动监测", "en": "Auto-detect"}},
-    "acidrain_enabled": {"always": {"zh": "启用", "en": "Enabled"}},
-    "wanderingtrader_enabled": {"always": {"zh": "启用", "en": "Enabled"}},
-    # 从不(未实测，按同类设置推断)/稀有/常见 是这个 key 专属的文案
+    # 防骚扰出生保护：中间档"自动检测"（DETECT_AUTO），always=总是（DETECT_ALWAYS）
+    "spawnprotection": {"default": {"zh": "自动检测", "en": "Auto Detect"},
+                        "always": {"zh": "总是", "en": "Always"}},
+    # 大蠕虫：从不/稀有/常见/总是 是这个 key 专属文案（LOOP 系列）
     "wormattacks_boss": {"never": {"zh": "从不", "en": "Never"}, "rare": {"zh": "稀有", "en": "Rare"},
-                         "often": {"zh": "常见", "en": "Common"}},
+                         "often": {"zh": "常见", "en": "Often"}, "always": {"zh": "总是", "en": "Always"}},
+    # 森林石化：无/慢/默认/快/极快（petrification_descriptions）
+    "petrification": {"none": {"zh": "无", "en": "None"}, "few": {"zh": "慢", "en": "Slow"},
+                      "many": {"zh": "快", "en": "Fast"}, "max": {"zh": "极快", "en": "Very Fast"}},
+    # 起始季节（season_start_descriptions）
+    "season_start": {"default": {"zh": "秋", "en": "Autumn"}, "winter": {"zh": "冬", "en": "Winter"},
+                     "spring": {"zh": "春", "en": "Spring"}, "summer": {"zh": "夏", "en": "Summer"},
+                     "autumn|spring": {"zh": "春或秋", "en": "Autumn or Spring"},
+                     "winter|summer": {"zh": "冬或夏", "en": "Winter or Summer"},
+                     "autumn|winter|spring|summer": {"zh": "随机", "en": "Random"}},
+    # 海难开局季节（shipwrecked_season_start_descriptions，岛屿 mod 自定义
+    # 的 7 档，中文取自 ia_sc.po 的 CUSTOMIZATIONSCREEN 对应条目）
+    "shipwrecked_season_start": {
+        "default": {"zh": "温和季", "en": "Mild"},
+        "wet": {"zh": "飓风季", "en": "Hurricane"},
+        "green": {"zh": "雨季", "en": "Monsoon"},
+        "dry": {"zh": "旱季", "en": "Dry"},
+        "mild|green": {"zh": "温和季或雨季", "en": "Mild or Monsoon"},
+        "wet|dry": {"zh": "飓风季或旱季", "en": "Hurricane or Dry"},
+        "mild|wet|green|dry": {"zh": "随机", "en": "Random"},
+    },
+    # 猪镇起始季节（云霄国度 mod 的 season_start_descriptions，中文取自
+    # pl_chinese_s.po 的 SANDBOXMENU 对应条目）
+    "porkland_season_start": {
+        "default": {"zh": "平和季", "en": "Temperate"},
+        "humid": {"zh": "潮湿季", "en": "Humid"},
+        "lush": {"zh": "繁茂季", "en": "Lush"},
+        "temperate|humid|lush": {"zh": "随机", "en": "Random"},
+    },
+    # 世界大小：default 档显示"大"（size_descriptions 用 SLIDESLARGE）
+    "world_size": {"default": {"zh": "大", "en": "Large"}},
+    # 荒野裂隙：default 档是"自动检测"，always=总是（DETECT_ALWAYS）
+    "rifts_enabled": {"default": {"zh": "自动检测", "en": "Auto Detect"},
+                      "always": {"zh": "总是", "en": "Always"}},
+    "rifts_enabled_cave": {"default": {"zh": "自动检测", "en": "Auto Detect"},
+                           "always": {"zh": "总是", "en": "Always"}},
+    # 开始资源多样化：highly random 是"非常随机"
+    "prefabswaps_start": {"highly random": {"zh": "非常随机", "en": "Highly Random"}},
+    # 离开游戏后物品掉落：always=所有（EVERYTHING）
+    "dropeverythingondespawn": {"always": {"zh": "所有", "en": "Everything"}},
+    # 死亡重置倒计时：none=禁用, always=立刻（INSTANT）
+    "resettime": {"none": {"zh": "禁用", "en": "Disabled"}, "always": {"zh": "立刻", "en": "Instant"}},
+    # 出生模式：fixed=绚丽之门（PORTAL）
+    "spawnmode": {"fixed": {"zh": "绚丽之门", "en": "Florid Postern"}},
 }
 
 def _localized_value(names: dict) -> str:
@@ -243,7 +302,7 @@ def _value_color(raw_value: str) -> str:
 
 def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                         ref_width=None, flash=None, location="forest", mod_settings=None,
-                        mod_icons=None):
+                        mod_icons=None, is_rule=True):
     """把一个分类面板渲染成一张 PIL 图片。
 
     参数：
@@ -429,7 +488,7 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             if editable:
                 # 跟游戏内的循环切换行为保持一致：取值到了某一端时，只
                 # 有另一侧的箭头能点——到头的那一侧会淡出，而不是绕回去。
-                value_set = get_value_set(ov.key, mod_settings)
+                value_set = get_value_set(ov.key, mod_settings, location=location, is_rule=is_rule)
                 try:
                     vidx = value_set.index(ov.value)
                     at_min, at_max = vidx <= 0, vidx >= len(value_set) - 1

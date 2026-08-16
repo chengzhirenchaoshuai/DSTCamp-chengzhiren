@@ -395,6 +395,12 @@ class ServerManager:
     def start(self, cluster_name: str, cluster_path: Path, shard_name: str,
               install_dir: Path, conf_dir_arg: str | None, is_master: bool = True,
               ugc_directory: str | None = None, bin64_override: Path | None = None) -> ServerProcess:
+        existing = self.get(cluster_path, shard_name)
+        if existing and existing.status in (
+                ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING):
+            # UI 已经会禁用重复启动，但“全部启动”/未来其它调用方不能只靠
+            # 按钮状态兜底，否则旧进程引用会被覆盖并变成停不掉的孤儿。
+            return existing
         proc = ServerProcess(cluster_name, shard_name, cluster_path, install_dir, conf_dir_arg,
                               is_master, ugc_directory, bin64_override)
         proc.start()

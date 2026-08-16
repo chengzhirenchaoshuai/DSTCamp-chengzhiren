@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from dstools.features.world.categories import (
     _get_settings,
     get_categories,
-    get_order,
+    get_order_key,
     get_setting_info,
     localized_name,
 )
@@ -62,8 +62,13 @@ def build_world_view_model(
             target.setdefault(category, []).append(override)
 
     def add_builtin_defaults(is_rule: bool, target: dict) -> None:
+        # 补原版设置的"默认"占位——只要存档里没这个 key 就补，让只读的
+        # "世界生成"界面也跟游戏一样显示完整的资源/刷新点列表（grass/
+        # rock/bees/spiders 等）。之前这里跳过了 resources/creatures_spawners/
+        # hostile_spawners 三个分类，导致 mod 世界（如海难）里这三个分类只
+        # 有 mod 设置、原版设置整段缺失，跟游戏"原版+mod 混排"不一致。
         for key, (category, name) in _get_settings(location, is_rule).items():
-            if key in seen_keys or category in {"resources", "creatures_spawners", "hostile_spawners"}:
+            if key in seen_keys:
                 continue
             target.setdefault(category, []).append(
                 WorldDisplayOverride(key=key, name=localized_name(name), value="default")
@@ -81,9 +86,13 @@ def build_world_view_model(
         )
 
     for items in rules_by_category.values():
-        items.sort(key=lambda override: get_order(override.key, location, True))
+        items.sort(key=lambda override: get_order_key(
+            override.key, override.name, location, True, visible_mod_settings,
+        ))
     for items in generation_by_category.values():
-        items.sort(key=lambda override: get_order(override.key, location, False))
+        items.sort(key=lambda override: get_order_key(
+            override.key, override.name, location, False, visible_mod_settings,
+        ))
 
     return WorldViewModel(
         location=location,

@@ -189,6 +189,14 @@ def ask_yes_no(parent, title, message, wraplength=420, min_width=460) -> bool:
                        wraplength=wraplength, min_width=min_width))
 
 
+def ask_choice(parent, title, message, choices, default=None,
+               wraplength=420, min_width=460):
+    """显示多选项确认框，返回被选中的值；关闭窗口或按 Esc 返回 None。"""
+    buttons = [(label, value, value == default) for label, value in choices]
+    return _show(parent, title, message, "question", buttons,
+                 wraplength=wraplength, min_width=min_width)
+
+
 def ask_yes_no_with_auxiliary(parent, title, message, auxiliary_label, auxiliary_command,
                                wraplength=420, min_width=460) -> bool:
     """确认框左下角提供不会关闭窗口的辅助操作，例如打开依赖安装说明。"""

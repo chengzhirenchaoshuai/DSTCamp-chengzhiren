@@ -261,6 +261,20 @@ def apply_borderless_style(root: tk.Tk) -> dict:
     return result
 
 
+def apply_window_border(window, color: str | None = None, width: int = 2) -> None:
+    """给无系统边框的窗口补一圈轻量客户端边框。"""
+    border_color = color or theme.CARD_BORDER
+    try:
+        window.configure(
+            highlightthickness=max(0, int(width)),
+            highlightbackground=border_color,
+            highlightcolor=border_color,
+        )
+    except tk.TclError:
+        # 非 Tk 顶层或极少数平台实现不支持高亮边框时保持原样。
+        pass
+
+
 class ResizeGrips:
     """窗口 4 边 + 4 角的拖拽缩放手柄——纯 Tk 事件回调，不涉及任何原生钩
     子。宽高比换算逻辑照抄 win_aspect_lock.py 的 AspectLock._enforce()

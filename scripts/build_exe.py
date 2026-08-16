@@ -1,7 +1,7 @@
 """Build standalone Windows EXE for DSTCamp using PyInstaller.
 
 Usage (run from the project root):
-    pip install pyinstaller           # First time only
+    pip install -e ".[build]"         # First time only (installs pyinstaller)
     python scripts/build_exe.py       # Build the EXE
 
 Output:
@@ -69,8 +69,11 @@ def build():
         # project root so `python scripts/build_exe.py` always produces the
         # same dist/DSTCamp-<version>.exe regardless of the caller's cwd.
         f"--distpath={project_root / 'dist'}",
-        f"--workpath={project_root / 'build'}",
-        f"--specpath={project_root}",
+        # workpath 是打包中间产物(依赖分析/临时文件)、specpath 是打包配置，
+        # 都放到项目内 reference/_cache/ 下，跟 __pycache__ 一样可随时整删；
+        # dist/(最终 exe) 仍留在项目根。
+        f"--workpath={project_root / 'reference' / '_cache' / 'build'}",
+        f"--specpath={project_root / 'reference' / '_cache'}",
         f"--add-data={i18n_src}{sep}{i18n_dst}",
         # Read-only bundled assets only -- world-setting icons (icons/world/),
         # UI icons (icons/ui/), and the app icon (icons/app/, used at runtime
@@ -88,8 +91,11 @@ def build():
         f"--add-data={world_icons_src}{sep}icons{os.sep}world",
         f"--add-data={ui_icons_src}{sep}icons{os.sep}ui",
         f"--add-data={app_icons_src}{sep}icons{os.sep}app",
-        # Bundled ktech.exe (tools/ktools/) used to convert mod icon
-        # textures -- see dstools/shared/tex_convert.py.
+        # 整个 tools/（含 ktools/frp_selfhost/sakura/vcredist 的 exe 二进制
+        # 和 fonts 字体）都打包进 exe。运行时 tool_binary_dir() 会先把这些
+        # 二进制从 _MEI 临时目录复制到 exe 旁边的 tools/ 再运行——避免
+        # Windows Defender 对"从 PyInstaller 的 _MEI 临时目录运行 exe"误报
+        # （误报触发点是"运行"动作，不是"复制"动作）。
         f"--add-data={tools_src}{sep}tools",
         # lupa ships several compiled Lua-version backends as separate
         # .pyd submodules (lua51/52/53/.../luajit); only lua51 is ever

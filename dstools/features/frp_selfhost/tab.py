@@ -19,12 +19,13 @@ from dstools.features.cluster_config.config_manager import (
 from dstools.features.frp_selfhost import connectivity, deploy, probe, remote_deploy
 from dstools.features.frp_selfhost.client import FrpcManager, build_frpc_toml
 from dstools.features.local_service.tab import _RUNNING_LIKE
-from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
+from dstools.shared.resource_paths import cache_dir, tool_binary_dir
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.tooltip import Tooltip
+from dstools.shared.server_ports import stable_path_key
 from dstools.i18n import t
 from dstools.models import SaveSource
 
@@ -41,7 +42,7 @@ _UDP_CHECK_KEY_BY_STATUS = {
 
 
 def _frpc_exe_path():
-    return bundled_resource_dir() / "tools" / "frp_selfhost" / "frpc.exe"
+    return tool_binary_dir() / "frp_selfhost" / "frpc.exe"
 
 
 class _SSHAuthSetupDialog:
@@ -290,7 +291,28 @@ class SelfHostFrpPage:
     # ── 跨页签接口：给 sakura/tab.py 转发、local_service/tab.py 用 ──────
 
     def _frpc_config_path(self, cluster_path):
-        return cache_dir(_FRPC_CONFIG_CACHE_NAME) / f"{cluster_path.name}.toml"
+        root = cache_dir(_FRPC_CONFIG_CACHE_NAME)
+        current = root / f"{cluster_path.name}__{stable_path_key(cluster_path)}.toml"
+        if current.exists():
+            return current
+        legacy = root / f"{cluster_path.name}.toml"
+        if not legacy.exists():
+            return current
+        matches = [c for c in self.app.env.clusters if c.path.name == cluster_path.name]
+        mapped_matches = [
+            cluster for cluster in matches
+            if any(app_settings.get_selfhost_frp_mapping(cluster.path, shard.name) is not None
+                   for shard in cluster.shards)
+        ]
+        owner = mapped_matches[0] if len(mapped_matches) == 1 else (
+            matches[0] if len(matches) == 1 else None
+        )
+        if owner is not None and str(owner.path) == str(cluster_path):
+            try:
+                legacy.replace(current)
+            except OSError:
+                return legacy
+        return current
 
     def has_active_mapping(self, cluster, shard) -> bool:
         return app_settings.get_selfhost_frp_mapping(cluster.path, shard.name) is not None
@@ -890,7 +912,7 @@ class SelfHostFrpPage:
             shard_config = load_shard_config(shard.path)
             local_port = shard_config.network.get("server_port", remote_port)
             proxies.append({
-                "name": f"{cluster.path.name}-{shard.name}",
+                "name": f"{cluster.path.name}-{stable_path_key(cluster.path, length=8)}-{shard.name}",
                 "type": "udp",
                 "local_port": local_port,
                 "remote_port": remote_port,

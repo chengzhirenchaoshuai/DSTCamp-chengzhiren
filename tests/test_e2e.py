@@ -11,6 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from test_multi_cluster_ports import main as test_multi_cluster_ports
+
 from dstools.shared.lua_parser import (
     LuaTableParser,
     parse_lua_table,
@@ -52,7 +54,6 @@ from dstools.models import SaveSession, SaveSource
 from dstools.features.mod.parser import parse_modinfo, visible_config_options
 from dstools.features.cluster_config.admin_manager import read_adminlist, add_admin, remove_admin
 from dstools.shared.token_manager import read_token, write_token, mask_token, is_valid_token
-from dstools.features.mod.backup_utils import backup_file, _prune_old_backups
 from dstools.features.sakura.api import find_dstcamp_tunnel, sanitize_tunnel_name
 from dstools.features.sakura.frpc import FrpcManager
 from dstools.shared.app_settings import get_sakura_token, set_sakura_token
@@ -710,37 +711,6 @@ def test_token_manager():
         print("  PASS: mask_token shows only the ends of a real token, fully masks short ones")
 
 
-def test_backup_utils():
-    """测试真实的备份复制+裁剪逻辑（backup_utils.py）——之前的覆盖只测到
-    "源文件不存在"这个提前返回分支。"""
-    print("\n" + "=" * 60)
-    print("Test 17: Backup Utils")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "cluster.ini"
-        src.write_text("[GAMEPLAY]\nmax_players = 6\n", encoding="utf-8")
-
-        backup_path = backup_file(src)
-        assert backup_path is not None and backup_path.exists()
-        assert backup_path.parent == src.parent / "backup"
-        assert backup_path.read_text(encoding="utf-8") == src.read_text(encoding="utf-8")
-        print("  PASS: backup_file copies the source into a backup/ subfolder with matching content")
-
-        # _prune_old_backups 直接测（不依赖真的连续调用 backup_file 在同一
-        # 秒内产生足够多互不相同的时间戳文件名，那样会因为文件名撞车而不
-        # 可靠）：手工造 7 个时间戳递增的备份文件，裁剪到只留 5 个最新的。
-        backup_dir = src.parent / "backup"
-        for i in range(7):
-            (backup_dir / f"cluster.ini.bak.2024010{i}_000000").write_text("x", encoding="utf-8")
-        _prune_old_backups(backup_dir, "cluster.ini", 5)
-        remaining = sorted(p.name for p in backup_dir.glob("cluster.ini.bak.*"))
-        assert len(remaining) == 5
-        assert remaining == sorted(remaining), "The newest (lexically largest) timestamps must survive"
-        assert "cluster.ini.bak.20240100_000000" not in remaining
-        assert "cluster.ini.bak.20240101_000000" not in remaining
-        print("  PASS: _prune_old_backups keeps only the newest max_backups copies")
-
-
 def test_cluster_copy():
     """测试"复制为服务器存档"逻辑（cluster_copy.py）：名称校验、默认名建
     议、以及实际的文件夹复制。"""
@@ -858,16 +828,13 @@ def test_app_settings_toggles():
 
 
 def test_mod_sync_junction():
-    """测试 sync.py 的 _ensure_junction —— V1 mod 同步现在改用目录联接
-    (junction) 而不是复制（见 sync.py 顶部注释：真机验证过 -ugc_directory
-    能让 V2 mod 直接共享 Steam 自己的 workshop 内容，V1/手动安装的 mod
-    则改成对客户端 mods/ 文件夹建联接，不再逐个存档复制一份）。这里只测
-    最关键、有真实数据丢失风险的部分：联接创建/幂等/安全替换真实文件夹，
-    不涉及真实 Windows 权限提升。"""
+    """验证 Mod 目录联接的幂等、备份、回滚和源目标保护。"""
     print("\n" + "=" * 60)
     print("Test 21: Mod Sync Junction")
 
-    from dstools.features.mod.sync import _ensure_junction
+    from unittest.mock import patch
+
+    from dstools.features.mod.sync import _ensure_junction, plan_mod_sync
 
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "client_mods" / "workshop-123"
@@ -894,13 +861,46 @@ def test_mod_sync_junction():
         real_target.mkdir(parents=True)
         (real_target / "modinfo.lua").write_text("stale copied content")
 
-        _ensure_junction(real_target, real_src)
+        backup = _ensure_junction(real_target, real_src)
         assert os.path.isjunction(real_target), "已存在的真实文件夹应该被替换成联接"
         assert (real_target / "modinfo.lua").read_text() == "name = 'legacy copy source'", \
             "替换后应该读到 src 的内容，不是残留的旧复制内容"
         assert real_src.exists() and (real_src / "modinfo.lua").exists(), \
             "删除 target 这个联接本身，绝不能牵连删除它指向的 src 真实内容"
-        print("  PASS: an existing real folder is safely replaced by a junction, source untouched")
+        assert backup is not None and backup.exists(), "旧目录应该保留为同目录备份"
+        assert (backup / "modinfo.lua").read_text() == "stale copied content"
+        print("  PASS: an existing real folder is backed up and replaced by a junction")
+
+        # 模拟 mklink 失败，确认原目录会被恢复，不会停在半删除状态。
+        rollback_target = Path(tmp) / "server_mods" / "rollback"
+        rollback_src = Path(tmp) / "client_mods" / "rollback"
+        rollback_target.mkdir(parents=True)
+        rollback_src.mkdir(parents=True)
+        (rollback_target / "old.txt").write_text("keep")
+
+        class FailedMklink:
+            returncode = 1
+            stderr = "forced failure"
+            stdout = ""
+
+        with patch("dstools.features.mod.sync.subprocess.run", return_value=FailedMklink()):
+            try:
+                _ensure_junction(rollback_target, rollback_src)
+            except OSError:
+                pass
+            else:
+                raise AssertionError("mklink 失败时应该抛出异常")
+        assert rollback_target.is_dir() and not os.path.isjunction(rollback_target)
+        assert (rollback_target / "old.txt").read_text() == "keep"
+        print("  PASS: failed junction creation restores the original directory")
+
+        # 源目录和目标目录相同的场景必须在真正改动前拒绝。
+        same_root = Path(tmp) / "same_install"
+        same_target = same_root / "mods"
+        same_target.mkdir(parents=True)
+        plan = plan_mod_sync(same_root, same_target)
+        assert plan.invalid_reason and not plan.needs_confirm_delete
+        print("  PASS: same source and target are rejected before replacement")
 
 
 def test_theme_set_theme():
@@ -991,7 +991,8 @@ def test_world_catalog_audit_and_cave_hidden_forest_sections():
     assert get_setting_info("day", "cave")[0] == "other"
     assert get_setting_info("basicresource_regrowth", "cave")[0] == "other"
     assert get_setting_info("roads", "cave")[0] == "other"
-    assert get_setting_info("day", "porkland")[0] == "global"
+    assert get_setting_info("day", "porkland")[0] == "global", "day 是 world=nil 且未被 delete_items 删除的全局项"
+    assert get_setting_info("butterfly", "porkland")[0] == "creatures", "butterfly 在猪镇白名单里"
     assert get_setting_info("specialevent", "porkland")[0] == "other", "猪镇 Mod 明确删除了该设置"
     assert get_setting_info("layout_mode", "porkland")[0] == "other", "地图内部元数据不能伪造为设置"
 
@@ -1020,39 +1021,13 @@ def test_world_catalog_layers_are_isolated():
     assert "specialevent" in FOREST_RULES_DICT
     assert "specialevent" not in resolve_vanilla_settings("porkland", True)
     assert "day" in resolve_vanilla_settings("porkland", True)
+    assert "butterfly" in resolve_vanilla_settings("porkland", True)
     assert get_setting_info("specialevent", "porkland")[0] == "other"
     assert get_setting_info("day", "porkland")[0] == "global"
+    assert get_setting_info("butterfly", "porkland")[0] == "creatures"
     assert get_setting_info("season_start", "porkland")[0] == "other"
     assert get_setting_info("regrowth", "porkland")[0] == "other"
-    print("  PASS: vanilla catalog remains unchanged and Porkland uses an isolated overlay")
-
-
-def test_porkland_samples_match_mod_catalog():
-    """3322803908 的默认/全修改样本必须全部落在 Mod 注册值表内。"""
-    print("\n" + "=" * 60)
-    print("Test 26: Porkland Mod Catalog Against User Samples")
-    from dstools.features.world.mod_settings import get_mod_world_settings
-    from dstools.features.world.reader import load_leveldata
-
-    roots = list(Path("D:/").glob("**/DoNotStarveTogether/280257116"))
-    if not roots:
-        print("  SKIP: user sample root not found")
-        return
-    root = roots[0]
-    settings = get_mod_world_settings({"3322803908"})
-    for cluster_name in ("Cluster_4", "Cluster_5"):
-        preset = load_leveldata(root / cluster_name / "Master" / "leveldataoverride.lua").preset
-        assert preset is not None and preset.location == "porkland"
-        from dstools.features.world.value_sets import get_value_set
-        for override in preset.overrides:
-            info = settings.get(override.key)
-            if info and info.values:
-                assert override.value in info.values, (override.key, override.value)
-            elif override.key in {"task_set", "start_location"}:
-                assert override.value in get_value_set(override.key, is_rule=False), (
-                    override.key, override.value,
-                )
-    print("  PASS: Cluster_4/Cluster_5 Porkland Mod values are accepted")
+    print("  PASS: vanilla catalog remains unchanged and Porkland uses an isolated whitelist overlay")
 
 
 def test_porkland_location_selector():
@@ -1116,88 +1091,6 @@ def test_world_creation_plan_and_atomic_writer():
     print("  PASS: atomic creation and read-back validation")
 
 
-def test_world_defaults_from_verified_templates():
-    """默认值必须来自完整真实存档模板，而不是部分硬编码。"""
-    print("\n" + "=" * 60)
-    print("Test 29: World Defaults From Verified Templates")
-    from dstools.features.world.defaults import default_plans_from_cluster
-
-    roots = list(Path("D:/").glob("**/DoNotStarveTogether/280257116"))
-    if not roots:
-        print("  SKIP: user sample root not found")
-        return
-    root = roots[0]
-    forest, caves = default_plans_from_cluster(root / "Cluster_2")
-    porkland, pork_caves = default_plans_from_cluster(root / "Cluster_4")
-    assert forest.location == "forest" and len(forest.overrides) >= 190
-    assert caves.location == "cave" and len(caves.overrides) >= 100
-    assert porkland.location == "porkland" and len(porkland.overrides) >= 80
-    assert pork_caves.location == "cave"
-    print("  PASS: full defaults load from Cluster_2/Cluster_4 templates")
-
-
-def test_world_creation_from_porkland_template():
-    """用 Cluster_4 完整模板创建后，key 数量和 location/mod 必须保持。"""
-    print("\n" + "=" * 60)
-    print("Test 30: World Creation From Porkland Template")
-    from dstools.features.world.creation import WorldCreationPlan, create_world
-    from dstools.features.world.defaults import default_plans_from_cluster
-    from dstools.features.world.reader import load_leveldata
-
-    roots = list(Path("D:/").glob("**/DoNotStarveTogether/280257116"))
-    if not roots:
-        print("  SKIP: user sample root not found")
-        return
-    master, caves = default_plans_from_cluster(roots[0] / "Cluster_4")
-    with tempfile.TemporaryDirectory() as td:
-        out = create_world(
-            WorldCreationPlan("Cluster_Porkland_Full", master, caves,
-                              mod_ids=frozenset({"3322803908"})), Path(td),
-        )
-        created_master = load_leveldata(out / "Master" / "leveldataoverride.lua").preset
-        assert created_master and len(created_master.overrides) == len(master.overrides)
-        assert created_master.location == "porkland"
-        assert "workshop-3322803908" in (out / "Master" / "modoverrides.lua").read_text(encoding="utf-8")
-    print("  PASS: full Porkland template survives creation")
-
-
-def test_world_value_sets_match_user_samples():
-    """用户提供的默认/全量非默认存档值必须全部落在已确认表中。"""
-    print("\n" + "=" * 60)
-    print("Test 26: World Value Sets Against User Samples")
-
-    from dstools.features.world.catalog_resolver import resolve_vanilla_settings
-    from dstools.features.world.reader import load_leveldata
-    from dstools.features.world.value_sets import get_value_set
-
-    roots = list(Path("D:/").glob("**/DoNotStarveTogether/280257116"))
-    if not roots:
-        print("  SKIP: user sample root not found")
-        return
-    root = roots[0]
-    for cluster_name in ("Cluster_2", "Cluster_3"):
-        for shard in ("Master", "Caves"):
-            result = load_leveldata(root / cluster_name / shard / "leveldataoverride.lua")
-            assert result.preset is not None
-            location = result.preset.location
-            catalog = {
-                **resolve_vanilla_settings(location, True),
-                **resolve_vanilla_settings(location, False),
-            }
-            for override in result.preset.overrides:
-                if override.key not in catalog:
-                    continue
-                is_rule = catalog[override.key][0] != "resources" and override.key not in {
-                    "task_set", "start_location", "world_size", "branching", "loop", "roads",
-                    "season_start", "prefabswaps_start", "touchstone", "boons",
-                    "ocean_seastack", "ocean_waterplant",
-                }
-                assert override.value in get_value_set(
-                    override.key, location=location, is_rule=is_rule
-                ), (cluster_name, shard, override.key, override.value)
-    print("  PASS: Cluster_2/Cluster_3 observed values are accepted by the corrected tables")
-
-
 def test_world_categories_bilingual():
     """测试 categories.py 的 get_setting_info()/get_categories() 会根据当
     前 i18n 语言返回中/英文名——对应修复过的 bug"世界设置切英文不生
@@ -1250,8 +1143,8 @@ def test_world_ocean_frequency_labels():
 
     expected = {
         "ocean_never": "无", "ocean_rare": "很少", "ocean_uncommon": "较少",
-        "ocean_default": "默认", "ocean_often": "经常", "ocean_mostly": "较多",
-        "ocean_always": "总是", "ocean_insane": "极多",
+        "ocean_default": "默认", "ocean_often": "较多", "ocean_mostly": "很多",
+        "ocean_always": "大量", "ocean_insane": "疯狂",
     }
     for raw_value, zh_label in expected.items():
         got = get_value_label("ocean_waterplant", raw_value)
@@ -2133,7 +2026,6 @@ def main():
         test_modinfo_reader,
         test_admin_manager,
         test_token_manager,
-        test_backup_utils,
         test_cluster_copy,
         test_player_notes,
         test_app_settings_toggles,
@@ -2142,12 +2034,8 @@ def main():
         test_world_reader_and_view_model,
         test_world_catalog_audit_and_cave_hidden_forest_sections,
         test_world_catalog_layers_are_isolated,
-        test_porkland_samples_match_mod_catalog,
         test_porkland_location_selector,
         test_world_creation_plan_and_atomic_writer,
-        test_world_defaults_from_verified_templates,
-        test_world_creation_from_porkland_template,
-        test_world_value_sets_match_user_samples,
         test_world_categories_bilingual,
         test_custom_background,
         test_mod_resolve_cache,
@@ -2166,6 +2054,7 @@ def main():
         test_ktech_runtime_detector,
         test_world_ocean_frequency_labels,
         test_server_mod_completeness_check,
+        test_multi_cluster_ports,
     ]
 
     for test in tests:

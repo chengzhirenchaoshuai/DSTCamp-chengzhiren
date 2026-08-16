@@ -34,7 +34,7 @@ from typing import Callable
 import paramiko
 
 from dstools.features.frp_selfhost import deploy
-from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
+from dstools.shared.resource_paths import cache_dir, tool_binary_dir
 
 KNOWN_HOSTS_PATH = cache_dir("frp_selfhost") / "known_hosts"
 # "初次鉴权"生成的密钥对——固定路径，不分服务器（这个功能目前只支持
@@ -224,7 +224,7 @@ def verify_key_login(
 
 
 def _bundled_frps_binary_gz_path(arch: str) -> Path:
-    return bundled_resource_dir() / "tools" / "frp_selfhost" / f"frps_linux_{arch}.gz"
+    return tool_binary_dir() / "frp_selfhost" / f"frps_linux_{arch}.gz"
 
 
 def _detect_remote_arch(client: paramiko.SSHClient) -> str:

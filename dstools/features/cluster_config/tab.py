@@ -4,7 +4,7 @@
 
 import re
 import tkinter as tk
-from tkinter import simpledialog, ttk
+from tkinter import ttk
 
 from dstools.features.cluster_config.admin_manager import add_admin, read_adminlist, remove_admin
 from dstools.features.cluster_config.config_manager import (
@@ -24,8 +24,9 @@ from dstools.shared.gui.transparent_widgets import TransparentLabel, Transparent
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.pill_tabs import PillTabBar
+from dstools.shared.server_ports import collect_cluster_port_claims, find_port_conflicts
 from dstools.i18n import t
-from dstools.models import SaveSource
+from dstools.models import Platform, SaveSource
 
 # 子页签条尺寸——比顶层 5 个主页签的 PillTabBar（44px 高、34px 药丸）小一
 # 号，跟原来那条细的 ttk.Notebook 页签条比例更接近。
@@ -135,6 +136,58 @@ class _TokenInputDialog:
             return
         self.result = val
         self.win.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.win.destroy()
+
+
+class _IdInputDialog:
+    """管理员/黑名单 ID 输入框，使用与 Token 弹窗一致的应用内样式。"""
+
+    def __init__(self, parent_widget):
+        self.result: str | None = None
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("admin.add"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+
+        ttk.Label(
+            win, text=t("admin.add_prompt"),
+            font=theme.font_tuple(theme.FONT_SIZE_MD),
+        ).pack(anchor=tk.W, padx=20, pady=(20, 8))
+        self.var = tk.StringVar()
+        entry = ttk.Entry(win, textvariable=self.var, font=("Consolas", 12))
+        entry.pack(fill=tk.X, padx=20, pady=(0, 6))
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
+        ttk.Button(
+            btn_frame, text=t("dlg.cancel_btn"), command=self._cancel,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            btn_frame, text=t("dlg.confirm_btn"), command=self._confirm,
+        ).pack(side=tk.RIGHT)
+
+        entry.focus_set()
+        win.bind("<Return>", lambda e: win.after_idle(self._confirm))
+        win.bind("<Escape>", lambda e: self._cancel())
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        root = parent_widget.winfo_toplevel()
+        center_over_parent(win, root, min_width=500)
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _confirm(self):
+        value = self.var.get().strip()
+        if value:
+            self.result = value
+            self.win.destroy()
 
     def _cancel(self):
         self.result = None
@@ -279,6 +332,9 @@ class ClusterConfigTab:
         self._section_frames = {}
         self._section_canvases = {}
         self._section_window_ids = {}
+        # 每个滚动页各自保存一次可立即执行的宽度同步函数。加载时先隐藏页签，
+        # 布局完成后同步 Canvas window 宽度，避免依赖多轮 after 回调造成闪烁。
+        self._section_width_settlers = {}
         self._section_content_heights = {}
         self._section_save_btns = {}
         # server.ini 世界设置不需要随窗口横向铺满。固定为应用默认客户区
@@ -393,6 +449,7 @@ class ClusterConfigTab:
             self._section_frames[tab_key] = frame
             self._section_canvases[tab_key] = canvas
             self._section_window_ids[tab_key] = win_id
+            self._section_width_settlers[tab_key] = _settle_width
 
         # 管理员、黑名单、Token 三个页签——管理员和黑名单是完全相同的
         # "每行一个 Klei ID"文件格式（adminlist.txt 授权、blocklist.txt
@@ -437,18 +494,45 @@ class ClusterConfigTab:
         # 真正切过去时 _on_tab_select 才补一次）统一负责首次填充，构造阶
         # 段只搭好控件壳子。
 
-    def _on_sub_tab_select(self, key):
-        self._sub_pages[self._sub_tab_key].pack_forget()
-        self._sub_tab_key = key
+    def _pack_sub_page(self, key):
+        page = self._sub_pages[key]
         if key == "shard":
-            # 固定 server.ini 页签宽度，窗口放大时只扩展外层背景，不拉
-            # 长输入框和世界设置列。
-            self._sub_pages[key].pack(fill=tk.Y, expand=False, anchor=tk.NW)
+            # 固定 server.ini 页签宽度，窗口放大时只扩展外层背景，不拉伸输入框和世界设置列。
+            page.pack(fill=tk.Y, expand=False, anchor=tk.NW)
         else:
-            self._sub_pages[key].pack(fill=tk.BOTH, expand=True)
-        # 跟原来 ttk.Notebook 版本 <<NotebookTabChanged>> 绑定的效果一
-        # 样——见 __init__ 里这段的说明。
+            page.pack(fill=tk.BOTH, expand=True)
+
+    def _present_sub_page(self, key=None):
+        """在布局完成后一次性显示页签并刷新对应背景。"""
+        key = key or self._sub_tab_key
+        self._pack_sub_page(key)
+        self.frame.update_idletasks()
+        section_key = "Shard Config" if key == "shard" else "Cluster"
+        settle = self._section_width_settlers.get(section_key)
+        if settle is not None:
+            try:
+                settle()
+            except tk.TclError:
+                pass
+        if key == "cluster":
+            self._position_cluster_save_row()
+        self.frame.update_idletasks()
+        try:
+            refresh_surface = getattr(self.app, "refresh_bg_surface", None)
+            if refresh_surface is not None:
+                refresh_surface(self.frame)
+            else:
+                self.frame.refresh_descendants()
+        except tk.TclError:
+            pass
+
+    def _on_sub_tab_select(self, key):
+        current = self._sub_pages.get(self._sub_tab_key)
+        if current is not None:
+            current.pack_forget()
+        self._sub_tab_key = key
         self._sub_content.focus_set()
+        self._present_sub_page(key)
 
     def _surface_frame(self, parent, bg=None):
         """创建可透出独立创建窗口背景图的容器；主页保持原有控件样式。"""
@@ -574,7 +658,18 @@ class ClusterConfigTab:
             y = col3.winfo_y() + col3.winfo_height() + 8
             row.place(x=x, y=y, width=width,
                       height=max(1, row.winfo_reqheight()))
-            required_height = y + row.winfo_height() + 8
+            # NETWORK 卡片通常比第三列更高；保存行定位的延迟回调可能
+            # 先于第一列完成几何传播，必须每次都把所有卡片底部纳入
+            # 外层高度，避免后续把最高卡片裁掉。
+            cards_bottom = max(
+                card.winfo_y() + card.winfo_height() + 8
+                for card in cards
+                if card.winfo_exists()
+            )
+            required_height = max(
+                cards_bottom,
+                y + row.winfo_height() + 8,
+            )
             current_height = self._section_content_heights.get("Cluster", 0)
             if required_height > current_height:
                 self._section_content_heights["Cluster"] = required_height
@@ -593,7 +688,6 @@ class ClusterConfigTab:
         row = getattr(self, "_cluster_save_row", None)
         if row is not None and row.winfo_exists():
             row.after_idle(self._position_cluster_save_row)
-            row.after(120, self._position_cluster_save_row)
 
     # 用 @property 而不是类属性/模块级常量，是因为要每次现查
     # theme.FONT_FAMILY（类属性在类定义时算一次就冻住，字体样式切换后
@@ -628,7 +722,9 @@ class ClusterConfigTab:
         text_widget = tk.Text(parent, width=38, height=self._WRAPPED_TEXT_LINES,
                               wrap=tk.WORD, font=self._ROW_VALUE_FONT)
         text_widget.insert("1.0", str(value) if value is not None else "")
-        text_widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=2)
+        # cluster.ini 的字段较多；这里和普通字段统一使用紧凑的 1px
+        # 行间距，确保默认窗口高度下第三列底部的保存按钮仍在可视区域。
+        text_widget.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=1)
 
         # 不能用 bind("<Return>", lambda e: "break") 同步吞回车（真机反
         # 馈过的 bug）：这种事前拦截会打断输入法正在提交的组词，界面看
@@ -669,7 +765,11 @@ class ClusterConfigTab:
         lbl = TransparentLabel(parent, self.app, text=f"{label_text}:",
                                anchor=tk.E, font=self._ROW_LABEL_FONT,
                                padx=5, pady=2)
-        lbl.grid(row=row, column=0, sticky=tk.E, padx=(0,3), pady=2)
+        # 默认客户区在 16:9 窗口下高度有限，cluster.ini 的网络字段又
+        # 包含三行描述文本；把每行上下留白压到 1px，保留可读性同时
+        # 给第三列下方的保存按钮留出约 26px 的空间。
+        row_pad = 1 if not is_shard_section else 2
+        lbl.grid(row=row, column=0, sticky=tk.E, padx=(0,3), pady=row_pad)
         if desc:
             Tooltip(lbl, desc)
 
@@ -692,8 +792,8 @@ class ClusterConfigTab:
                 text = str(value) if value is not None else ""
             value_lbl = TransparentLabel(parent, self.app, text=text,
                      anchor=tk.W, foreground=theme.TEXT_MUTED, justify=tk.LEFT,
-                     wraplength=260, font=self._ROW_VALUE_FONT, padx=0, pady=2)
-            value_lbl.grid(row=row, column=1, sticky=tk.W, pady=2)
+                     wraplength=260, font=self._ROW_VALUE_FONT, padx=0, pady=row_pad)
+            value_lbl.grid(row=row, column=1, sticky=tk.W, pady=row_pad)
             if tooltip:
                 Tooltip(value_lbl, tooltip)
             var = tk.BooleanVar(value=bool(value)) if is_bool else tk.StringVar(value=str(value) if value is not None else "")
@@ -702,7 +802,9 @@ class ClusterConfigTab:
             # 不是自由文本框或普通 Checkbutton -- 既统一了观感，也没法
             # 手滑打错成 "ture"/"1" 之类游戏认不出的值。
             var = tk.BooleanVar(value=bool(value))
-            ToggleSwitch(parent, variable=var).grid(row=row, column=1, sticky=tk.W, pady=2)
+            ToggleSwitch(parent, variable=var, app=self.app).grid(
+                row=row, column=1, sticky=tk.W, pady=row_pad,
+            )
         elif enum_choices:
             # 只有几个固定取值的字段（如 game_mode/cluster_language）改成
             # 下拉选择，下拉框里显示翻译后的名称，但 _EnumVar 保证
@@ -714,7 +816,7 @@ class ClusterConfigTab:
             enum_combo = MenuCombo(parent, textvariable=display_var, width=35,
                                    style="ModOption.TMenubutton")
             enum_combo["values"] = [disp for _, disp in enum_choices]
-            enum_combo.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=2)
+            enum_combo.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=row_pad)
             var = _EnumVar(display_var, display_to_raw)
         elif (ini_section, key) in self._WRAPPED_TEXT_FIELDS:
             var = self._make_wrapped_text_row(parent, row, value)
@@ -739,16 +841,28 @@ class ClusterConfigTab:
 
             var.trace_add("write", _keep_digits_only)
             entry = ttk.Entry(parent, textvariable=var, width=38, font=self._ROW_VALUE_FONT)
-            entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=2)
+            entry.grid(row=row, column=1, sticky=(tk.W, tk.E), pady=row_pad)
             Tooltip(entry, t("cluster.range_hint", min=lo, max=hi))
         else:
             var = tk.StringVar(value=str(value) if value is not None else "")
             ttk.Entry(parent, textvariable=var, width=38,
-                     font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=2)
+                     font=self._ROW_VALUE_FONT).grid(row=row, column=1, sticky=(tk.W, tk.E), pady=row_pad)
         self._entries[(section, key)] = (var, readonly)
         return var
 
     def _load_config(self):
+        """以隐藏页签事务方式重建 cluster/server 表单，完成后只呈现一次。"""
+        page = self._sub_pages.get(self._sub_tab_key)
+        was_mapped = bool(page is not None and page.winfo_ismapped())
+        if was_mapped:
+            page.pack_forget()
+        try:
+            self._load_config_impl()
+        finally:
+            if was_mapped:
+                self._present_sub_page(self._sub_tab_key)
+
+    def _load_config_impl(self):
         self._clear_form()
         c = self._get_cluster()
         if not c: return
@@ -780,9 +894,18 @@ class ClusterConfigTab:
         for col in range(3):
             outer.grid_columnconfigure(col, weight=1, uniform="cluster_config_columns")
         # 每列单独使用圆角卡片，卡片外的区域由 BgFrame 透出窗口背景图。
-        col1 = CardFrame(outer, self.app, padding=8, bg=theme.BG_SOFT, border=theme.CARD_BORDER)
-        col2 = CardFrame(outer, self.app, padding=8, bg=theme.BG_SOFT, border=theme.CARD_BORDER)
-        col3 = CardFrame(outer, self.app, padding=8, bg=theme.BG_SOFT, border=theme.CARD_BORDER)
+        col1 = CardFrame(
+            outer, self.app, padding=8, bg=theme.BG_SOFT,
+            border=theme.CARD_BORDER, body_follows_bg=True,
+        )
+        col2 = CardFrame(
+            outer, self.app, padding=8, bg=theme.BG_SOFT,
+            border=theme.CARD_BORDER, body_follows_bg=True,
+        )
+        col3 = CardFrame(
+            outer, self.app, padding=8, bg=theme.BG_SOFT,
+            border=theme.CARD_BORDER, body_follows_bg=True,
+        )
         for column, card in enumerate((col1, col2, col3)):
             card.grid(row=0, column=column, sticky=(tk.N, tk.W, tk.E), padx=8, pady=8)
             card.grid_propagate(False)
@@ -813,10 +936,22 @@ class ClusterConfigTab:
         _fill_column(col1.body, [("NETWORK",config.network)])
         _fill_column(col2.body, [("GAMEPLAY",config.gameplay), ("MISC",config.misc)])
         _fill_column(col3.body, [("SHARD",config.shard), ("STEAM",config.steam)])
+        # 三列使用同一个卡片高度。网络设置字段最多，若其它两列按自身
+        # 内容缩短，底下会露出 Cluster 外层 BgFrame 的整块底色，看起来
+        # 像“玩法设置/多层世界”又套了一层大框；统一高度后每列都像网络
+        # 设置一样由自己的圆角 CardFrame 承载背景和文字切片。
         for card in (col1, col2, col3):
             card.update_idletasks()
-            card.configure(height=card.body.winfo_reqheight() + 16)
-        content_height = max(card.body.winfo_reqheight() + 16 for card in (col1, col2, col3))
+        card_height = max(card.body.winfo_reqheight() + 16 for card in (col1, col2, col3))
+        for card in (col1, col2, col3):
+            card.configure(height=card_height)
+        # 卡片自身放在 row=0、pady=8 的网格中，内容高度还必须包含上下
+        # 两侧的 8px 外边距；否则最高的 NETWORK 卡片底部会被外层
+        # Canvas 裁掉一截，圆角边框看起来像被遮住。
+        content_height = max(
+            card.winfo_y() + card.winfo_height() + 8
+            for card in (col1, col2, col3)
+        )
         self._schedule_cluster_save_position()
         self._cluster_save_row.update_idletasks()
         save_bottom = (
@@ -866,13 +1001,12 @@ class ClusterConfigTab:
             shard_sel.pack(side=tk.LEFT)
             shard_sel.bind("<<ComboboxSelected>>", self._load_shard_config)
             row += 1
-            ttk.Separator(frame, orient=tk.HORIZONTAL).grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=5)
-            row += 1
             # server.ini 字段也放进和 cluster.ini 三列相同的圆角设置
             # 卡片；卡片下方单独留出保存行，按钮固定在右下角。
             self._shard_card = CardFrame(
                 frame, self.app, padding=8,
                 bg=theme.BG_SOFT, border=theme.CARD_BORDER,
+                body_follows_bg=True,
             )
             self._shard_card.grid(
                 row=row, column=0, columnspan=2,
@@ -904,6 +1038,18 @@ class ClusterConfigTab:
         self._load_token(c)
 
     def _load_shard_config(self, e=None):
+        """在隐藏 server.ini 页签中切换世界并一次性呈现。"""
+        page = self._sub_pages.get("shard")
+        was_mapped = bool(page is not None and page.winfo_ismapped())
+        if was_mapped:
+            page.pack_forget()
+        try:
+            self._load_shard_config_impl(e)
+        finally:
+            if was_mapped and self._sub_tab_key == "shard":
+                self._present_sub_page("shard")
+
+    def _load_shard_config_impl(self, e=None):
         """加载当前选中世界的 server.ini（本地存档下只读展示）。
 
         通过 _get_cluster() 现查全局存档选择器
@@ -1145,7 +1291,7 @@ class ClusterConfigTab:
         # Cluster 对象。
         c = self._get_cluster()
         if not c: return
-        kid = simpledialog.askstring(t("admin.add"), t("admin.add_prompt"))
+        kid = _IdInputDialog(self.frame).result
         if not kid: return
         kid = kid.strip()
         if not _is_valid_klei_id(kid):
@@ -1281,20 +1427,44 @@ class ClusterConfigTab:
                           ("STEAM", "authentication_port")]
 
     def _find_port_conflict(self, cluster, shard, shard_config) -> str | None:
-        """检查 shard_config 里刚编辑好、还没写入文件的端口是否和集群内其它
-        世界已经保存的值撞车，撞了就返回一句说明文字，没撞返回 None。"""
-        for section, key in self._SHARD_PORT_FIELDS:
-            value = getattr(shard_config, section.lower()).get(key)
-            if value in (None, ""):
-                continue
-            for sibling in cluster.shards:
-                if sibling.path == shard.path:
-                    continue
-                sibling_value = getattr(load_shard_config(sibling.path), section.lower()).get(key)
-                if sibling_value not in (None, "") and str(sibling_value) == str(value):
-                    field_label, _ = get_field_info(section, key, is_shard=True) or (key, "")
-                    return t("cluster.port_conflict", field=field_label, value=value, shard=sibling.name)
+        """检查同一存档内的有效端口，包含默认值与跨字段冲突。"""
+        target_claims, _ = collect_cluster_port_claims(
+            cluster, [shard.name], shard_config_overrides={shard.name: shard_config},
+        )
+        sibling_claims, _ = collect_cluster_port_claims(
+            cluster, [item.name for item in cluster.shards if item.path != shard.path],
+        )
+        target_keys = {claim.owner_key for claim in target_claims}
+        conflicts = [
+            conflict for conflict in find_port_conflicts(target_claims + sibling_claims)
+            if any(claim.owner_key in target_keys for claim in conflict.claims)
+        ]
+        if conflicts:
+            conflict = conflicts[0]
+            owners = "; ".join(claim.display_owner() for claim in conflict.claims)
+            return t("cluster.port_conflict_effective", value=conflict.port, owners=owners)
         return None
+
+    def _find_cross_cluster_port_conflicts(self, cluster, shard, shard_config) -> list[str]:
+        target_claims, _ = collect_cluster_port_claims(
+            cluster, [shard.name], shard_config_overrides={shard.name: shard_config},
+        )
+        other_claims = []
+        for other in self.app.env.clusters:
+            if other.source != SaveSource.SERVER or other.platform != Platform.STEAM:
+                continue
+            if str(other.path) == str(cluster.path):
+                continue
+            claims, _ = collect_cluster_port_claims(other)
+            other_claims.extend(claims)
+        target_keys = {claim.owner_key for claim in target_claims}
+        return [
+            f"{conflict.port}: " + "; ".join(
+                claim.display_owner() for claim in conflict.claims
+            )
+            for conflict in find_port_conflicts(target_claims + other_claims)
+            if any(claim.owner_key in target_keys for claim in conflict.claims)
+        ]
 
     def _save_shard_ini(self):
         """"世界配置(server.ini)"页签的"保存"按钮——写的是选中那个世
@@ -1322,6 +1492,12 @@ class ClusterConfigTab:
         conflict = self._find_port_conflict(c, target, shard_config)
         if conflict:
             dlg.show_error(self.app.root, t("dlg.save_fail"), conflict)
+            return
+        cross_conflicts = self._find_cross_cluster_port_conflicts(c, target, shard_config)
+        if cross_conflicts and not dlg.ask_yes_no(
+                self.app.root, t("cluster.cross_cluster_port_title"),
+                t("cluster.cross_cluster_port_confirm", details="\n".join(cross_conflicts[:12])),
+                wraplength=780, min_width=840):
             return
 
         save_shard_config(shard_config, target.path)

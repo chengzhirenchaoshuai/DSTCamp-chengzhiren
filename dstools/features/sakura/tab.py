@@ -22,7 +22,7 @@ from dstools.features.cluster_config.config_manager import (
     save_shard_config, set_shard_option,
 )
 from dstools.features.sakura.frpc import FrpcManager
-from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
+from dstools.shared.resource_paths import cache_dir, tool_binary_dir
 from dstools.shared.token_manager import is_valid_token, mask_token
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
@@ -31,6 +31,7 @@ from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.tooltip import Tooltip
+from dstools.shared.server_ports import stable_path_key
 from dstools.i18n import t
 from dstools.models import SaveSource
 
@@ -42,7 +43,7 @@ _NODE_GRID_COLS = 3
 
 
 def _frpc_exe_path():
-    return bundled_resource_dir() / "tools" / "sakura" / "sakura-frpc.exe"
+    return tool_binary_dir() / "sakura" / "sakura-frpc.exe"
 
 
 def _format_bytes_adaptive(num_bytes: float) -> str:
@@ -396,8 +397,59 @@ class SakuraTab:
     def _frpc_pointer_path(self, cluster_path, shard_name):
         """不是完整的 frpc 配置文件——frpc 用 `-f token:隧道ID` 启动，自己
         向樱花服务器现拉配置，这里只需要落地这个世界对应的隧道 ID，供
-        maybe_start_frpc() 在 Tk 主线程零网络请求地读出来拼命令行。"""
-        return cache_dir(_FRPC_CACHE_NAME) / f"{cluster_path.name}__{shard_name}.txt"
+        maybe_start_frpc() 在 Tk 主线程零网络请求地读出来拼命令行。
+
+        新文件名加入完整路径哈希，避免不同根目录下同名 Cluster_1 相互覆
+        盖。旧文件仅在当前环境里这个目录名唯一时迁移；有歧义时不猜归属。
+        """
+        root = cache_dir(_FRPC_CACHE_NAME)
+        current = root / f"{cluster_path.name}__{stable_path_key(cluster_path)}__{shard_name}.txt"
+        if current.exists():
+            return current
+        legacy = root / f"{cluster_path.name}__{shard_name}.txt"
+        if not legacy.exists():
+            return current
+        matches = [
+            cluster for cluster in self.app.env.clusters
+            if cluster.path.name == cluster_path.name
+            and any(shard.name == shard_name for shard in cluster.shards)
+        ]
+        if len(matches) == 1 and str(matches[0].path) == str(cluster_path):
+            try:
+                legacy.replace(current)
+            except OSError:
+                return legacy
+        return current
+
+    def _legacy_tunnel_name_is_unambiguous(self, cluster) -> bool:
+        matches = [
+            item for item in self.app.env.clusters
+            if item.source == cluster.source and item.platform == cluster.platform
+            and item.path.name == cluster.path.name
+        ]
+        return len(matches) == 1
+
+    def _find_cluster_tunnel(self, tunnels, cluster, shard):
+        """优先按新名字查，旧同名存档出现歧义时按本地隧道 ID 兜底。"""
+        tunnel = sakura_frp.find_dstcamp_tunnel(
+            tunnels, cluster.path.name, shard.name,
+            cluster.source.value, cluster.platform.value,
+            cluster_identity=stable_path_key(cluster.path),
+            allow_legacy=self._legacy_tunnel_name_is_unambiguous(cluster),
+        )
+        if tunnel:
+            return tunnel
+        pointer = self._frpc_pointer_path(cluster.path, shard.name)
+        if not pointer.exists():
+            return None
+        try:
+            tunnel_id = int(pointer.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        return next((
+            item for item in tunnels
+            if str(item.get("id", "")).isdigit() and int(item["id"]) == tunnel_id
+        ), None)
 
     def _has_sakura_pointer(self, cluster, shard) -> bool:
         """只查樱花自己这一半（不包括自建 frps）——传给
@@ -588,9 +640,7 @@ class SakuraTab:
                 # 它读它的地方（比如"复制直连代码"）误用。
                 if cluster and cluster.source == SaveSource.SERVER:
                     for shard in cluster.shards:
-                        tunnel = sakura_frp.find_dstcamp_tunnel(
-                            tunnels, cluster.path.name, shard.name,
-                            cluster.source.value, cluster.platform.value)
+                        tunnel = self._find_cluster_tunnel(tunnels, cluster, shard)
                         if tunnel:
                             by_key[(str(cluster.path), shard.name)] = tunnel
                 # 方案 B：汇总"这个存档自己映射的隧道"最近 7 天用了多少流
@@ -623,8 +673,7 @@ class SakuraTab:
                     if c.source != SaveSource.SERVER:
                         continue
                     for shard in c.shards:
-                        occupant_tunnel = sakura_frp.find_dstcamp_tunnel(
-                            tunnels, c.path.name, shard.name, c.source.value, c.platform.value)
+                        occupant_tunnel = self._find_cluster_tunnel(tunnels, c, shard)
                         if occupant_tunnel:
                             occupants.append(f"{c.name}（{shard.name}）")
                 self.frame.after(0, lambda: self._apply_loaded(user_info, nodes, by_key, recent_bytes,
@@ -945,10 +994,9 @@ class SakuraTab:
 
                     tunnels = sakura_frp.list_tunnels(token)
                     name = sakura_frp.sanitize_tunnel_name(
-                        cluster.path.name, shard.name, cluster.source.value, cluster.platform.value)
-                    existing = sakura_frp.find_dstcamp_tunnel(
-                        tunnels, cluster.path.name, shard.name,
-                        cluster.source.value, cluster.platform.value)
+                        cluster.path.name, shard.name, cluster.source.value, cluster.platform.value,
+                        cluster_identity=stable_path_key(cluster.path))
+                    existing = self._find_cluster_tunnel(tunnels, cluster, shard)
                     if existing:
                         tunnel_id = existing["id"]
                         remote = existing.get("remote")
@@ -971,7 +1019,9 @@ class SakuraTab:
                     # 隧道自己的 local_port 也要同步改成 remote_port，让它
                     # 变成 R<->R 直通——不然回写完 server.ini 之后，frpc 转
                     # 发的目标端口就和 DST 实际监听端口对不上了（见计划四）。
-                    sakura_frp.edit_tunnel(token, tunnel_id, local_port=remote_port)
+                    sakura_frp.edit_tunnel(
+                        token, tunnel_id, name=name, local_port=remote_port,
+                    )
 
                     # frpc 用 `-f token:隧道ID` 启动、自己现拉配置，这里
                     # 只需要落地隧道 ID 本身（见 maybe_start_frpc()）。

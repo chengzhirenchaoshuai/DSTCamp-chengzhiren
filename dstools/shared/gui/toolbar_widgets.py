@@ -63,7 +63,7 @@ class ReadonlyBanner:
 
 
 def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None, bold=False,
-                        side=tk.LEFT, anchor=tk.W) -> BgFrame:
+                        side=tk.LEFT, anchor=tk.W, bg: str | None = None) -> BgFrame:
     """在工具栏行(BgFrame)里插入一小块只画一行说明文字的子画布，跟其它
     ttk 控件一起 pack()——ttk.Label/tk.Label 绘制区域永远不透明，会挡住
     背景图（跟 local_service_tab.py 里"专用服务器工具:"那段文字是同一个
@@ -89,7 +89,7 @@ def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None, 
         font_obj = tkfont.Font(family=theme.FONT_FAMILY, size=base_size,
                                weight="bold" if bold else "normal")
     label_h = font_obj.metrics("linespace") + 4
-    label = BgFrame(row, app, bg=theme.CARD_BG)
+    label = BgFrame(row, app, bg=bg or theme.CARD_BG)
     label.configure(height=label_h)
 
     def _redraw():

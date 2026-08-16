@@ -133,7 +133,8 @@ def node_accepts_new_tunnel(node: dict) -> bool:
     return bool(flag & _NODE_FLAG_ALLOW_CREATE) and not (flag & _NODE_FLAG_OFFLINE)
 
 
-def sanitize_tunnel_name(cluster_folder_name: str, shard_name: str, source: str, platform: str) -> str:
+def sanitize_tunnel_name(cluster_folder_name: str, shard_name: str, source: str, platform: str,
+                         cluster_identity: str | None = None) -> str:
     """樱花的隧道名规则是 3-20 个字符，只能用字母数字和下划线——**不允许
     短横线**（实测真实报错："隧道名不符合规范(3-20个字符,只能使用字母数
     字和下划线)"）。存档目录名是用户自己起的，长度、字符集都不可控，直
@@ -150,15 +151,21 @@ def sanitize_tunnel_name(cluster_folder_name: str, shard_name: str, source: str,
     的存档会走到这里（sakura_tab.py 已经在 UI 层挡掉本地存档），但
     source 仍然作为显式参数传入而不是硬编码 "server"，让这份签名本身
     就说明清楚"隧道身份跟这两个维度绑定"这件事，不依赖调用方自觉。"""
-    digest = hashlib.sha1(f"{platform}:{source}:{cluster_folder_name}:{shard_name}".encode("utf-8")).hexdigest()
+    identity = cluster_identity or cluster_folder_name
+    digest = hashlib.sha1(f"{platform}:{source}:{identity}:{shard_name}".encode("utf-8")).hexdigest()
     return f"dc_{digest[:12]}"
 
 
 def find_dstcamp_tunnel(tunnels: list[dict], cluster_folder_name: str, shard_name: str,
-                         source: str, platform: str) -> dict | None:
+                         source: str, platform: str, cluster_identity: str | None = None,
+                         allow_legacy: bool = True) -> dict | None:
     """按命名约定在 list_tunnels() 结果里找这个 (存档, 世界) 对应的隧道。"""
-    name = sanitize_tunnel_name(cluster_folder_name, shard_name, source, platform)
+    names = [sanitize_tunnel_name(
+        cluster_folder_name, shard_name, source, platform, cluster_identity,
+    )]
+    if cluster_identity is not None and allow_legacy:
+        names.append(sanitize_tunnel_name(cluster_folder_name, shard_name, source, platform))
     for t in tunnels:
-        if t.get("name") == name:
+        if t.get("name") in names:
             return t
     return None

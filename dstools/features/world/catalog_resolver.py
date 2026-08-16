@@ -8,31 +8,28 @@
 from typing import Any
 
 
-# Above the Clouds/Porkland 对原版设置的明确删除项，来源于该 Mod 的
-# modcustomizeitems.lua。这里只记录“原版基础目录的删改”，新增设置仍然
-# 必须从 mod_settings.py 的对应 workshop id 进入覆盖层。
+# Above the Clouds/Porkland（3322803908）猪镇世界显示的原版 key 白名单，
+# 逐项来自 modcustomizeitems.lua 的 change_items + delete_items：
+#   - change_items 把这 12 个原版 key 的 world 列表扩展进 porkland；
+#   - world=nil（master_controlled）的全局项里，没被 delete_items 删掉的
+#     global（day/ghostenabled/...）和 survivors（extrastartingitems/...）仍
+#     全显示，也要收进来；被 delete_items 删掉的（specialevent/autumn/...、
+#     events 全部、resources 全部）则不放进来。
+# 猪镇世界 = 这些原版 key + mod 自己新增的 key（PORKLAND_SETTINGS）。
 PORKLAND_MOD_ID = "3322803908"
-PORKLAND_REMOVED_RULE_KEYS = frozenset({
-    "specialevent", "autumn", "winter", "spring", "summer", "spawnmode",
-    "beefaloheat", "seasonalstartingitems", "temperaturedamage",
-    "brightmarecreatures", "crow_carnival", "hallowed_nights", "winters_feast",
-    "year_of_the_gobbler", "year_of_the_varg", "year_of_the_pig",
-    "year_of_the_carrat", "year_of_the_beefalo", "year_of_the_catcoon",
-    "year_of_the_bunnyman", "year_of_the_dragonfly", "year_of_the_snake",
-    "year_of_the_knight",
+PORKLAND_VANILLA_KEYS = frozenset({
+    # change_items
+    "rock", "sapling", "grass", "flowers", "reeds", "mushroom",  # worldgen resources
+    "task_set", "world_size", "boons",  # worldgen misc
+    "butterfly",  # world_settings animals
+    "lightning", "weather",  # world_settings misc
+    # world=nil 且未被 delete_items 删除的全局项
+    "day", "ghostenabled", "portalresurection", "ghostsanitydrain",
+    "resettime", "krampus",  # global
+    "extrastartingitems", "spawnprotection", "dropeverythingondespawn",
+    "healthpenalty", "lessdamagetaken", "hunger", "darkness",
+    "shadowcreatures",  # survivors
 })
-
-# Above the Clouds changes the vanilla customization screen for the Porkland
-# world.  These groups are hidden by the mod itself; keep their keys out of
-# the vanilla overlay so they are preserved in leveldata but never rendered
-# as editable Porkland settings.
-PORKLAND_REMOVED_RULE_KEYS |= frozenset(
-    key for key, (category, _names) in __import__(
-        "dstools.features.world.categories", fromlist=["FOREST_RULES_DICT"]
-    ).FOREST_RULES_DICT.items()
-    if category in {"events", "regrowth", "portal_resources"}
-)
-PORKLAND_REMOVED_GEN_KEYS = frozenset({"season_start"})
 
 # 1467214795 会把这些原版 OPTIONS 的 ``world`` 列表扩展到新 location。
 # 两个集合逐项来自该 Mod 的 vanilla_options_in_islands / in_volcano。
@@ -55,7 +52,7 @@ IA_VOLCANO_VANILLA_KEYS = frozenset({
 
 
 def _resolve_ia_vanilla_settings(
-    allowed_keys: frozenset[str], is_rule: bool,
+    allowed_keys: frozenset[str], is_rule: bool, show_global: bool,
 ) -> dict[str, tuple[str, dict[str, str]]]:
     from dstools.features.world import categories
 
@@ -64,12 +61,28 @@ def _resolve_ia_vanilla_settings(
         if is_rule else
         (categories.FOREST_GEN_DICT, categories.CAVE_ALL_GEN_DICT)
     )
+    # 白名单（vanilla_options_in_islands/in_volcano）里的 key 是 mod 把
+    # 原版 key 的 world 列表显式扩展进海难/火山的，两个世界都收。
+    #
+    # 另外还有一批"全局"原版 key（global/events/survivor 分类，以及
+    # regrowth 里唯一 world=nil 的 basicresource_regrowth）在 customize.lua
+    # 里 world 字段是 nil（没有限制），是 master_controlled 的全局设置，
+    # **只在 Master 分片显示**——真机核对过 day/autumn/specialevent/
+    # ghostenabled/crow_carnival/extrastartingitems 等都没有 world 字段。
+    # 海难（shipwrecked）是 Master，要显示；火山（volcanoworld）是 Caves
+    # 分片、依照洞穴做设置，不显示这批全局项。所以用 show_global 区分。
+    full_show_categories = (
+        {"global", "events", "survivor"} if is_rule else {"global"}
+    )
     resolved: dict[str, tuple[str, dict[str, str]]] = {}
-    for key in allowed_keys:
-        for source in sources:
-            if key in source:
-                resolved[key] = source[key]
-                break
+    for source in sources:
+        for key, item in source.items():
+            if key in allowed_keys:
+                resolved[key] = item
+            elif show_global and (
+                item[0] in full_show_categories or key == "basicresource_regrowth"
+            ):
+                resolved[key] = item
     return resolved
 
 
@@ -85,19 +98,11 @@ def resolve_vanilla_settings(location: str, is_rule: bool) -> dict[str, tuple[st
         source = categories.CAVE_ALL_RULES_DICT if is_rule else categories.CAVE_ALL_GEN_DICT
         return dict(source)
     if location == "porkland":
-        source = categories.FOREST_RULES_DICT if is_rule else categories.FOREST_GEN_DICT
-        resolved = dict(source)
-        if is_rule:
-            for key in PORKLAND_REMOVED_RULE_KEYS:
-                resolved.pop(key, None)
-        else:
-            for key in PORKLAND_REMOVED_GEN_KEYS:
-                resolved.pop(key, None)
-        return resolved
+        return _resolve_ia_vanilla_settings(PORKLAND_VANILLA_KEYS, is_rule, show_global=False)
     if location == "shipwrecked":
-        return _resolve_ia_vanilla_settings(IA_SHIPWRECKED_VANILLA_KEYS, is_rule)
+        return _resolve_ia_vanilla_settings(IA_SHIPWRECKED_VANILLA_KEYS, is_rule, show_global=True)
     if location == "volcanoworld":
-        return _resolve_ia_vanilla_settings(IA_VOLCANO_VANILLA_KEYS, is_rule)
+        return _resolve_ia_vanilla_settings(IA_VOLCANO_VANILLA_KEYS, is_rule, show_global=False)
     return {}
 
 
@@ -109,12 +114,20 @@ def resolve_vanilla_categories(location: str, setting_type: str) -> list[tuple[s
         return list(categories.SURFACE_RULES if setting_type == "rules" else categories.SURFACE_GEN)
     if location == "cave":
         return list(categories.CAVE_RULES if setting_type == "rules" else categories.CAVE_GEN)
-    if location == "porkland":
-        source = categories.SURFACE_RULES if setting_type == "rules" else categories.SURFACE_GEN
-        return [item for item in source if not (setting_type == "rules" and item[0] == "events")]
-    if location in {"shipwrecked", "volcanoworld"}:
+    if location in {"porkland", "shipwrecked", "volcanoworld"}:
         settings = resolve_vanilla_settings(location, setting_type == "rules")
         used_categories = {category for category, _names in settings.values()}
+        # mod 设置（登记了 group）映射到的官方分类也要放进分类列表——否
+        # 则像海滩世界的 global（mild/hurricane/monsoon/dry/poison 都归
+        # 它）会因不在列表里而被 render 过滤掉、整组不显示。世界设置和世
+        # 界生成用的是两套不同的分类 key，所以按 setting_type 选 GROUP_TO_
+        # CATEGORY（rules）或 GROUP_TO_CATEGORY_GEN（gen）；两者的值都是
+        # 官方分类 key，跟 SURFACE_RULES/CAVE_RULES（或 SURFACE_GEN/
+        # CAVE_GEN）里的 key 对齐。并进去只影响"分类标题是否出现"，不影
+        # 响每个分类下实际有哪些设置（那由 grouped 决定，空分类会被过滤）。
+        from dstools.features.world.mod_settings import GROUP_TO_CATEGORY, GROUP_TO_CATEGORY_GEN
+        mapping = GROUP_TO_CATEGORY if setting_type == "rules" else GROUP_TO_CATEGORY_GEN
+        used_categories |= set(mapping.values())
         source = (
             list(categories.SURFACE_RULES) + list(categories.CAVE_RULES)
             if setting_type == "rules" else

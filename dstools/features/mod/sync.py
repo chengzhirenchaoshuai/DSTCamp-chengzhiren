@@ -27,22 +27,16 @@
    find_wegame_server_dir()，根目录来自用户手动选一次的
    app_settings.get_wegame_root_path()，没有可靠的注册表项能自动找）。
 
-   **坑**：服务器自己的 mods/ 目录下有 dedicated_server_mods_setup.lua/
-   modsettings.lua 这些"控制文件"，一旦整个目录变成联接，这些就是客户
-   端那份的文件，不再是服务器独立的一份——所以不再由 DSTCamp 写
-   dedicated_server_mods_setup.lua（在线自动下载）了，服务器现在完全依
-   赖"客户端已经下载好的内容"这一份真源，不再有单独的在线下载兜底路径。
    如果服务器这个位置已经是真实文件夹（无论是旧版本复制方式留下的、还
-   是官方安装自带的），得先删除才能建联接，这一步有真实数据丢失风险，
-   必须由调用方（GUI 层）先弹窗确认——这里的 plan_mod_sync() 只负责算出
-   "删除后会丢失哪些服务器独有的子项"（ModSyncPlan.lost_on_replace），
-   不会未经确认就删；apply_mod_sync() 假定调用方已经拿到确认，直接执行。
+   是官方安装自带的），需要先由 GUI 弹窗确认，再在同目录重命名为备份，
+   最后建立联接。这里的 plan_mod_sync() 只负责计算服务器独有的子项和备
+   份路径，apply_mod_sync() 会在建链失败时尝试自动恢复原目录。
 """
 
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from dstools.features.mod.manager import load_mod_overrides
@@ -74,13 +68,63 @@ def _same_target(junction: Path, target: Path) -> bool:
         return False
 
 
+class ModSyncOperationError(OSError):
+    """链接替换失败时携带备份和回滚状态，供 GUI 给出准确反馈。"""
+
+    def __init__(self, message: str, *, backup_path: Path | None = None,
+                 rollback_restored: bool = False):
+        super().__init__(message)
+        self.backup_path = backup_path
+        self.rollback_restored = rollback_restored
+
+
+def _next_backup_path(target: Path) -> Path:
+    """在目标目录旁生成一个不会覆盖旧备份的路径。"""
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    base = target.with_name(f"{target.name}.dstcamp-backup-{stamp}")
+    candidate = base
+    index = 1
+    while os.path.lexists(candidate):
+        candidate = target.with_name(f"{base.name}-{index}")
+        index += 1
+    return candidate
+
+
+def _friendly_os_error(exc: OSError, path: Path) -> str:
+    """把 Windows 常见的拒绝访问转换成可执行的提示，同时保留原错误。"""
+    if isinstance(exc, PermissionError) or getattr(exc, "winerror", None) == 5:
+        return f"{t('sync.permission_denied', path=str(path))} ({exc})"
+    return f"{path}: {exc}"
+
+
+def _restore_backup(target: Path, backup_path: Path | None) -> bool:
+    """只清理本次创建的联接，再把原目标恢复；不碰未知的真实文件。"""
+    try:
+        if os.path.isjunction(target):
+            os.rmdir(target)
+        elif os.path.lexists(target):
+            # 目标可能被其它进程/程序重新创建，宁可保留现场也不误删。
+            return False
+        if backup_path is None:
+            return True
+        if not os.path.lexists(backup_path):
+            return False
+        backup_path.rename(target)
+        return True
+    except OSError:
+        return False
+
+
 @dataclass
 class ModSyncPlan:
     """plan_mod_sync() 的结果——只读计算，不做任何文件系统改动。"""
     client_mods_dir: Path | None = None       # 客户端的 mods/ 文件夹，None 表示找不到，没法建联接
     already_linked: bool = False              # 服务器 mods/ 已经是指向它的联接，不需要做任何事
-    needs_confirm_delete: bool = False        # 服务器 mods/ 目前是真实文件夹/别的联接，删除前需要用户确认
-    lost_on_replace: list[str] = field(default_factory=list)  # 仅供确认弹窗展示：删除后会丢失的、服务器独有的子项名字
+    needs_confirm_delete: bool = False        # 服务器 mods/ 目前是真实文件夹/别的联接，替换前需要用户确认
+    lost_on_replace: list[str] = field(default_factory=list)  # 仅供确认弹窗展示：服务器独有、会被放入备份的子项名字
+    backup_path: Path | None = None           # 计划采用的同目录备份路径
+    invalid_reason: str | None = None         # 预检失败时的可读原因
+    target_kind: str = "missing"             # missing/directory/file/junction/link
 
 
 def plan_mod_sync(install_dir: Path, client_mods_dir: Path | None) -> ModSyncPlan:
@@ -94,7 +138,7 @@ def plan_mod_sync(install_dir: Path, client_mods_dir: Path | None) -> ModSyncPla
     apply_mod_sync()。"""
     plan = ModSyncPlan()
     plan.client_mods_dir = client_mods_dir
-    if client_mods_dir is None or not client_mods_dir.exists():
+    if client_mods_dir is None or not client_mods_dir.exists() or not client_mods_dir.is_dir():
         plan.client_mods_dir = None
         return plan
 
@@ -104,13 +148,26 @@ def plan_mod_sync(install_dir: Path, client_mods_dir: Path | None) -> ModSyncPla
         if plan.already_linked:
             return plan
         plan.needs_confirm_delete = True
+        plan.target_kind = "junction"
+        plan.backup_path = _next_backup_path(target)
+        return plan
+
+    # 目标如果解析后就是源目录，任何替换动作都可能先删掉源内容，必须拒绝。
+    if os.path.lexists(target) and _same_target(target, client_mods_dir):
+        plan.invalid_reason = t("sync.same_directory", path=str(target))
         return plan
 
     if os.path.lexists(target):
         plan.needs_confirm_delete = True
-        if target.is_dir():
+        plan.backup_path = _next_backup_path(target)
+        if os.path.islink(target):
+            plan.target_kind = "link"
+        elif target.is_dir():
+            plan.target_kind = "directory"
             client_names = {p.name for p in client_mods_dir.iterdir()} if client_mods_dir.exists() else set()
             plan.lost_on_replace = sorted(p.name for p in target.iterdir() if p.name not in client_names)
+        else:
+            plan.target_kind = "file"
 
     return plan
 
@@ -120,6 +177,8 @@ class ModSyncResult:
     linked: bool = False
     already_linked: bool = False
     skipped_no_client_mods: bool = False
+    backup_path: Path | None = None
+    rollback_restored: bool = False
     errors: list[str] = field(default_factory=list)
 
 
@@ -138,6 +197,11 @@ def apply_mod_sync(plan: ModSyncPlan, install_dir: Path, on_log=None) -> ModSync
         log(t("sync.no_client_mods_dir"))
         return result
 
+    if plan.invalid_reason:
+        result.errors.append(plan.invalid_reason)
+        log(t("sync.error_prefix", detail=plan.invalid_reason))
+        return result
+
     if plan.already_linked:
         result.linked = True
         result.already_linked = True
@@ -146,9 +210,18 @@ def apply_mod_sync(plan: ModSyncPlan, install_dir: Path, on_log=None) -> ModSync
 
     target = install_dir / "mods"
     try:
-        _ensure_junction(target, plan.client_mods_dir)
+        result.backup_path = _ensure_junction(
+            target, plan.client_mods_dir, backup_path=plan.backup_path,
+        )
+        if result.backup_path is not None:
+            log(t("sync.backup_created", path=str(result.backup_path)))
         result.linked = True
         log(t("sync.mods_dir_linked", path=str(plan.client_mods_dir)))
+    except ModSyncOperationError as e:
+        result.backup_path = e.backup_path
+        result.rollback_restored = e.rollback_restored
+        result.errors.append(str(e))
+        log(t("sync.error_prefix", detail=str(e)))
     except OSError as e:
         result.errors.append(str(e))
         log(t("sync.error_prefix", detail=str(e)))
@@ -174,21 +247,60 @@ def remove_mod_sync_junction(install_dir: Path) -> bool:
     return True
 
 
-def _ensure_junction(target: Path, src: Path) -> None:
-    """让 target 变成指向 src 的目录联接(junction)——已经是对的联接就
-    什么都不做；是别的联接/真实文件夹就先原地删掉。联接只用 os.rmdir()
-    删链接本身（真机验证过：不会牵连删除它指向的真实内容）；真实文件夹
-    才用 shutil.rmtree() 整个删除——调用方（apply_mod_sync 的调用方）必
-    须已经为"删除真实文件夹"这一步拿到过用户确认，这里不重复确认。"""
-    if os.path.isjunction(target):
-        if _same_target(target, src):
-            return
-        os.rmdir(target)
-    elif os.path.lexists(target):
-        shutil.rmtree(target)
+def _ensure_junction(target: Path, src: Path, *, backup_path: Path | None = None) -> Path | None:
+    """安全地把 target 变成指向 src 的目录联接。
 
-    target.parent.mkdir(parents=True, exist_ok=True)
-    result = subprocess.run(["cmd", "/c", "mklink", "/J", str(target), str(src)],
-                             capture_output=True, text=True)
-    if result.returncode != 0:
-        raise OSError(f"mklink /J failed: {(result.stderr or result.stdout).strip()}")
+    已存在的目标先在同一父目录重命名为备份，建链并验证成功后保留备份；
+    任一步失败都只清理本次创建的联接并尝试恢复原目标，避免直接递归删除
+    导致半删除状态。返回实际保留的备份路径；目标本来不存在时返回 None。
+    """
+    target = Path(target)
+    src = Path(src)
+    if not src.exists() or not src.is_dir():
+        raise ModSyncOperationError(t("sync.no_client_mods_dir"))
+
+    if os.path.isjunction(target) and _same_target(target, src):
+        return None
+    if os.path.lexists(target) and _same_target(target, src):
+        raise ModSyncOperationError(t("sync.same_directory", path=str(target)))
+
+    moved_backup: Path | None = None
+    if os.path.lexists(target):
+        moved_backup = backup_path
+        if moved_backup is None or os.path.lexists(moved_backup):
+            moved_backup = _next_backup_path(target)
+        try:
+            # 同一父目录内重命名比 shutil.rmtree() 安全：失败时原目录仍在，
+            # 成功后也可以在建链失败时原样恢复。
+            target.rename(moved_backup)
+        except OSError as exc:
+            raise ModSyncOperationError(
+                _friendly_os_error(exc, target), backup_path=moved_backup,
+            ) from exc
+
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(target), str(src)],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise OSError(f"mklink /J failed: {detail}")
+        if not os.path.isjunction(target) or not _same_target(target, src):
+            raise OSError(t("sync.link_verify_failed", path=str(target)))
+    except OSError as exc:
+        restored = _restore_backup(target, moved_backup)
+        detail = str(exc)
+        if isinstance(exc, PermissionError) or getattr(exc, "winerror", None) == 5:
+            detail = _friendly_os_error(exc, target)
+        if moved_backup is not None:
+            detail += " " + (
+                t("sync.rollback_restored") if restored
+                else t("sync.rollback_failed", path=str(moved_backup))
+            )
+        raise ModSyncOperationError(
+            detail, backup_path=moved_backup, rollback_restored=restored,
+        ) from exc
+
+    return moved_backup

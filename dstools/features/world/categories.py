@@ -21,6 +21,7 @@ from dstools.i18n import get_lang
 
 SURFACE_RULES = [
     ("global", {"zh": "全局", "en": "General"}),
+    ("porkland_global", {"zh": "猪镇全局", "en": "Porkland General"}),
     ("events", {"zh": "活动", "en": "Events"}),
     ("survivor", {"zh": "冒险家", "en": "Survivor"}),
     ("world", {"zh": "世界", "en": "World"}),
@@ -57,7 +58,7 @@ CAVE_GEN = [
 ]
 
 CATEGORY_COLORS = {
-    "global": "#607d8b", "events": "#ff9800", "survivor": "#e91e63",
+    "global": "#607d8b", "porkland_global": "#c2185b", "events": "#ff9800", "survivor": "#e91e63",
     "world": "#4caf50", "regrowth": "#8bc34a", "portal_resources": "#9c27b0",
     "creatures": "#2196f3", "hostile_creatures": "#f44336",
     "bosses": "#d32f2f", "lunar": "#00bcd4",
@@ -70,7 +71,6 @@ CATEGORY_COLORS = {
     "mod_1289779251": "#795548",  # 新版樱花林(Cherry Forest)
     "mod_3435352667": "#3949ab",  # 岛屿冒险 - 核心(Island Adventures - Core)
     "mod_1467214795": "#00838f",  # 岛屿冒险 - 海难(Island Adventures - Shipwrecked)
-    "mod_3401927745": "#827717",  # 山河表里(Montfluv)
     "mod_3322803908": "#ad1457",  # 云霄国度(Above the Clouds / Porkland)
 }
 
@@ -94,11 +94,11 @@ FOREST_RULES_DICT = {
     # 活动|events
     # 用户核实：真实存档里根本没有 midsummer_cawnival 这个 key(是瞎编的)，
     # 游戏截图"盛夏嘉年华"对应的真实 key 是 crow_carnival，已删掉 midsummer_cawnival。
-    "crow_carnival": ("events", {"zh": "盛夏鸦年华", "en": "Crow Carnival"}),
+    "crow_carnival": ("events", {"zh": "盛夏嘉年华", "en": "Crow Carnival"}),
     "hallowed_nights": ("events", {"zh": "万圣夜", "en": "Hallowed Nights"}),
     "winters_feast": ("events", {"zh": "冬季盛宴", "en": "Winter's Feast"}),
     "year_of_the_gobbler": ("events", {"zh": "火鸡之年", "en": "Year of the Gobbler"}),
-    "year_of_the_varg": ("events", {"zh": "碎铃之年", "en": "Year of the Varg"}),
+    "year_of_the_varg": ("events", {"zh": "座狼之年", "en": "Year of the Varg"}),
     "year_of_the_pig": ("events", {"zh": "猪王之年", "en": "Year of the Pig"}),
     "year_of_the_carrat": ("events", {"zh": "胡萝卜鼠之年", "en": "Year of the Carrat"}),
     "year_of_the_beefalo": ("events", {"zh": "皮弗娄牛之年", "en": "Year of the Beefalo"}),
@@ -142,7 +142,7 @@ FOREST_RULES_DICT = {
     "twiggytrees_regrowth": ("regrowth", {"zh": "多枝树", "en": "Twiggy Trees"}),
     "evergreen_regrowth": ("regrowth", {"zh": "常青树", "en": "Evergreens"}),
     "moon_tree_regrowth": ("regrowth", {"zh": "月树", "en": "Moon Trees"}),
-    "deciduoustree_regrowth": ("regrowth", {"zh": "竹栗树", "en": "Deciduous Trees"}),
+    "deciduoustree_regrowth": ("regrowth", {"zh": "桦栗树", "en": "Deciduous Trees"}),
     "palmconetree_regrowth": ("regrowth", {"zh": "棕榈松果树", "en": "Palm Trees"}),
     "saltstack_regrowth": ("regrowth", {"zh": "盐堆", "en": "Salt Formations"}),
     "carrots_regrowth": ("regrowth", {"zh": "胡萝卜", "en": "Carrots"}),
@@ -204,7 +204,7 @@ FOREST_RULES_DICT = {
     "goosemoose": ("bosses", {"zh": "麋鹿鹅", "en": "Moose/Goose"}),
     "dragonfly": ("bosses", {"zh": "龙蝇", "en": "Dragonfly"}),
     # 月亮变异|lunar
-    "mutated_bird_gestalt": ("lunar", {"zh": "高喙鸟", "en": "Lunar Tallbird"}),
+    "mutated_bird_gestalt": ("lunar", {"zh": "亮喙鸟", "en": "Lunar Tallbird"}),
     "mutated_birds": ("lunar", {"zh": "变异狗鸟", "en": "Mutated Birds"}),
     "mutated_merm": ("lunar", {"zh": "变异鱼人", "en": "Mutated Merms"}),
     "mutated_hounds": ("lunar", {"zh": "恐怖猎犬", "en": "Mutated Hounds"}),
@@ -392,7 +392,7 @@ CAVE_GEN_DICT = {
     "slurtles": ("creatures_spawners", {"zh": "蝓龟窝", "en": "Slurtle Dens"}),
     # 敌对生物以及刷新点|hostile_spawners
     "chess": ("hostile_spawners", {"zh": "发条装置", "en": "Clockworks"}),
-    "fissure": ("hostile_spawners", {"zh": "梦裂缝", "en": "Nightmare Fissures"}),
+    "fissure": ("hostile_spawners", {"zh": "梦魇裂缝", "en": "Nightmare Fissures"}),
     "worms": ("hostile_spawners", {"zh": "洞穴蠕虫", "en": "Cave Worms"}),
     "cave_spiders": ("hostile_spawners", {"zh": "蛛网岩", "en": "Spider Web Rocks"}),
     "spiders": ("hostile_spawners", {"zh": "蜘蛛巢", "en": "Spider Dens"}),
@@ -440,6 +440,57 @@ def get_setting_info(key: str, location: str = "forest", mod_settings: dict | No
     """
     from dstools.features.world.catalog_resolver import resolve_setting_info
     return resolve_setting_info(key, location, mod_settings)
+
+
+# 官方 customize.lua 里每个设置项的 order 字段（只记有 order 的；无 order 的
+# 设置项在官方 UI 里按"显示名"字符串排序，见 get_order_key()）。这是官方世界
+# 设置界面分类内顺序的权威来源——不是 categories.py 字典的插入顺序。
+RULE_ITEM_ORDER = {
+    # 全局
+    "specialevent": 1, "autumn": 2, "winter": 3, "spring": 4, "summer": 5,
+    "day": 6, "spawnmode": 7, "ghostenabled": 8, "portalresurection": 9,
+    "ghostsanitydrain": 10, "resettime": 11, "beefaloheat": 12, "krampus": 13,
+    # 活动
+    "crow_carnival": 1, "hallowed_nights": 2, "winters_feast": 3,
+    "year_of_the_gobbler": 4, "year_of_the_varg": 5, "year_of_the_pig": 6,
+    "year_of_the_carrat": 7, "year_of_the_beefalo": 8, "year_of_the_catcoon": 9,
+    "year_of_the_bunnyman": 10, "year_of_the_dragonfly": 11,
+    "year_of_the_snake": 12, "year_of_the_knight": 13,
+    # 冒险家
+    "extrastartingitems": 1, "seasonalstartingitems": 2, "spawnprotection": 3,
+    "dropeverythingondespawn": 4, "healthpenalty": 5, "lessdamagetaken": 6,
+    "temperaturedamage": 7, "hunger": 8, "darkness": 9, "shadowcreatures": 10,
+    "brightmarecreatures": 11,
+    # 世界
+    "hounds": 1, "winterhounds": 2, "summerhounds": 3,
+    # 资源再生
+    "regrowth": 1,
+}
+
+GEN_ITEM_ORDER = {
+    # 世界
+    "task_set": 1, "start_location": 2, "world_size": 3, "branching": 4,
+    "loop": 5, "roads": 6, "touchstone": 17, "boons": 18, "cavelight": 18,
+    "prefabswaps_start": 20,
+    # 全局
+    "season_start": 1,
+}
+
+
+def get_order_key(key: str, name: str, location: str = "forest",
+                  is_rule: bool = True, mod_settings: dict | None = None):
+    """返回设置项在分类内的排序键，完全复刻官方 customize.lua 的
+    GetOptionsFromGroup 排序：有 order 的按 order 升序排前面；无 order 的按
+    显示名（当前语言字符串，近似引擎 stringidsorter 的 Unicode 码点比较）排
+    后面。mod 设置若登记了 order 也一并参与排序。"""
+    order = (RULE_ITEM_ORDER if is_rule else GEN_ITEM_ORDER).get(key)
+    if order is None and mod_settings:
+        info = mod_settings.get(key)
+        if info is not None and getattr(info, "order", None) is not None:
+            order = info.order
+    if order is not None:
+        return (0, order, "")
+    return (1, 0, name)
 
 
 def get_order(key: str, location: str = "forest", is_rule: bool = True) -> int:

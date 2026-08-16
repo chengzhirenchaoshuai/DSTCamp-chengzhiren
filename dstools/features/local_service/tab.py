@@ -7,6 +7,7 @@
 """
 
 import queue
+import socket
 import threading
 import time
 import tkinter as tk
@@ -17,9 +18,13 @@ from tkinter import filedialog, font as tkfont, ttk
 from dstools.features.local_service import luajit_injector
 from dstools.shared.app_settings import (
     get_backup_auto_enabled, get_backup_interval_minutes, set_dedicated_server_path,
+    get_sakura_token, get_selfhost_frp_mapping, get_selfhost_frp_server,
 )
 from dstools.features.local_service.backup_manager import create_backup
-from dstools.features.cluster_config.config_manager import load_cluster_config, load_shard_config
+from dstools.features.cluster_config.config_manager import (
+    get_cluster_option, get_shard_option, load_cluster_config, load_shard_config,
+)
+from dstools.features.sakura import api as sakura_frp
 from dstools.features.local_service.dedicated_server import (
     ConfDirCrossDriveError, ServerManager, ServerStatus,
     advance_world_ready_marker,
@@ -34,6 +39,10 @@ from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.toolbar_widgets import ReadonlyBanner
 from dstools.shared.gui.tooltip import Tooltip
+from dstools.shared.server_ports import (
+    collect_cluster_port_claims, find_port_conflicts, scan_udp_ports,
+    stable_path_key, system_port_claims, rewrite_cluster_ports_atomic,
+)
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
@@ -229,16 +238,18 @@ class _ShardRow:
 
     def update(self):
         proc = self.tab.manager.get(self.cluster.path, self.shard.name)
-        status = proc.status if proc else ServerStatus.STOPPED
+        key = (str(self.cluster.path), self.shard.name)
+        status = proc.status if proc else (
+            ServerStatus.STARTING if key in self.tab._launching_keys else ServerStatus.STOPPED
+        )
         self.status_var.set(t(_STATUS_KEYS[status]))
         self._status_fg = _status_color(status)
         self._redraw_text()
         running = status in _RUNNING_LIKE
-        # 别的存档还有世界在跑的话，这个世界自己的"启动"也要锁住——"停止"
-        # 不受影响，当前世界自己已经在跑的话本来就要能停。WeGame 世界则
-        # 是彻底不支持从这里启动（见 _do_start_shard 的说明），永远锁住。
+        # 多存档并行由启动前端口预检保证安全，不再因为别的存档运行就把
+        # 按钮一刀切锁住。WeGame 世界仍然不能从这里启动。
         is_wegame = self.cluster.platform == Platform.WEGAME
-        locked = (not running) and (is_wegame or self.tab._other_cluster_running(self.cluster))
+        locked = (not running) and is_wegame
         self.start_btn.configure(state=tk.DISABLED if (running or locked) else tk.NORMAL)
         self.stop_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
 
@@ -626,6 +637,9 @@ class LocalServiceTab:
         self._shard_rows: dict[str, _ShardRow] = {}
         self._shard_rows_cluster_path: str | None = None
         self._console_panes: dict[tuple[str, str], _ConsolePane] = {}
+        # LuaJIT 副本重新生成期间还没有 Popen，单靠 ServerManager 查不到；
+        # 单独记住待启动键，防止用户重复点击启动同一个世界。
+        self._launching_keys: set[tuple[str, str]] = set()
         self._install_dir: Path | None = None
         # cluster.path 字符串 -> 上一次给它做"运行时定期自动备份"的
         # time.monotonic() 时间戳，见 _maybe_periodic_backup()。
@@ -678,11 +692,8 @@ class LocalServiceTab:
         # 字又小又不显眼。默认不 show()。
         self._local_banner = ReadonlyBanner(self.frame, text=t("local.select_server_hint"))
 
-        # 切到另一个存档时，如果之前那个存档还有世界没停，"启动"/"全部
-        # 启动"要锁住——两个不同存档的服务器同时跑，端口/资源很容易撞在
-        # 一起，这个应用没打算支持"同时管理多个正在运行的存档"这种用法。
-        # 跟 _local_banner 一样默认不 show()，_update_start_lock_state()
-        # 按需要显示/隐藏。
+        # 其它存档仍在运行时显示信息提示；是否能启动由端口预检决定，不再
+        # 一刀切禁用多存档并行。
         self._other_running_banner = ReadonlyBanner(self.frame)
 
         # ttk.PanedWindow 本身保留原生（可拖拽分栏这个交互重写代价太
@@ -727,6 +738,39 @@ class LocalServiceTab:
         self._shard_list = BgFrame(left, app, bg=theme.CARD_BG)
         self._shard_list.pack(fill=tk.BOTH, expand=True)
 
+        # 左下角"直连代码"两行——局域网 + 内网穿透，各配一个复制按钮。
+        # side=tk.BOTTOM 放在世界列表下面；标签用 BgFrame+create_text 画字
+        # （不透明的 ttk.Label 会挡背景图），按钮是常驻控件。只在服务器存
+        # 档里显示（本地存档没有专用服务器进程，见 on_cluster_changed 里
+        # 的 pack/pack_forget）。
+        self._connect_row = connect_row = BgFrame(left, app, bg=theme.CARD_BG)
+        connect_row.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
+
+        # 两行标题长短不一（"局域网直连代码" 8 字、"内网穿透直连代码" 9
+        # 字），标题宽度统一成最长标题 + 冒号 + 空格，值才能左对齐。
+        _label_f = tkfont.nametofont("TkDefaultFont")
+        connect_title_w = max(
+            _label_f.measure(t("local.lan_connect_label") + ":"),
+            _label_f.measure(t("local.nat_connect_label") + ":"),
+        ) + _label_f.measure(" ")
+
+        self._lan_code = None
+        self._nat_code = None
+
+        self._lan_row = lan_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
+        lan_row.pack(fill=tk.X)
+        self._lan_label, self._lan_set_text = self._make_connect_label(
+            lan_row, t("local.lan_connect_label"), t("local.lan_connect_hint"),
+            connect_title_w, self._copy_lan_connect)
+        self._lan_label.pack(fill=tk.X)
+
+        self._nat_row = nat_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
+        nat_row.pack(fill=tk.X, pady=(3, 0))
+        self._nat_label, self._nat_set_text = self._make_connect_label(
+            nat_row, t("local.nat_connect_label"), t("local.nat_connect_hint"),
+            connect_title_w, self._copy_nat_connect)
+        self._nat_label.pack(fill=tk.X)
+
         # ttk.Notebook 同理保留原生（标签切换这个交互重写代价太高）——
         # 它自己的标签条还是不透明的；每个世界的控制台页面内部（_ConsolePane）
         # 暂时维持原样不透明，留到后续再评估是否值得改（日志区本身需要
@@ -750,6 +794,175 @@ class LocalServiceTab:
     def _get_cluster(self):
         return self.app.get_selected_cluster()
 
+    # ── 直连代码 ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _master_shard(cluster):
+        """饥荒直连(c_connect)只能连主世界——返回主世界 shard，找不到退回
+        第一个（跟 sakura_tab._is_master_shard 用同一个 is_master 字段）。"""
+        for shard in cluster.shards:
+            if load_shard_config(shard.path).shard.get("is_master", True):
+                return shard
+        return cluster.shards[0] if cluster.shards else None
+
+    @staticmethod
+    def _get_lan_ip() -> str:
+        """本机局域网 IP——UDP 连一个公网地址并不实际发包，只看路由出口的
+        本地 IP；连不上退回回环地址。"""
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        except OSError:
+            return "127.0.0.1"
+        finally:
+            s.close()
+
+    def _build_connect_string(self, host, port, cluster) -> str:
+        """拼 c_connect() 直连代码；房间有密码时带第三个可选参数。"""
+        password = get_cluster_option(load_cluster_config(cluster.path), "NETWORK", "cluster_password")
+        if password:
+            return f'c_connect("{host}", {port}, "{password}")'
+        return f'c_connect("{host}", {port})'
+
+    def _lan_connect_code(self):
+        """局域网直连代码（IP + 主世界端口 + 密码），选中的不是服务器存档
+        或读不到端口时返回 None。"""
+        cluster = self._get_cluster()
+        if not cluster:
+            return None
+        master = self._master_shard(cluster)
+        if not master:
+            return None
+        port = get_shard_option(load_shard_config(master.path), "NETWORK", "server_port")
+        if not port:
+            return None
+        return self._build_connect_string(self._get_lan_ip(), port, cluster)
+
+    def _copy_lan_connect(self, event=None):
+        if self._lan_code:
+            self._copy_to_clipboard(self._lan_code)
+
+    def _nat_connect_info(self):
+        """自动判断内网穿透方式，返回 (host, port) 或 (None, None)。优先樱花
+        映射（API 现查），没有再用自建 frps（本地记账的映射端口）。"""
+        cluster = self._get_cluster()
+        if not cluster:
+            return None, None
+        master = self._master_shard(cluster)
+        if not master:
+            return None, None
+        token = get_sakura_token()
+        if token:
+            try:
+                tunnels = sakura_frp.list_tunnels(token)
+                nodes = sakura_frp.list_nodes(token)
+                tunnel = sakura_frp.find_dstcamp_tunnel(
+                    tunnels, cluster.path.name, master.name,
+                    cluster.source.value, cluster.platform.value,
+                    cluster_identity=stable_path_key(cluster.path),
+                )
+                if tunnel:
+                    node = nodes.get(str(tunnel.get("node")), {})
+                    return node.get("host", ""), tunnel.get("remote", "")
+            except Exception:
+                pass
+        server = get_selfhost_frp_server()
+        if server:
+            remote = get_selfhost_frp_mapping(cluster.path, master.name)
+            if remote:
+                return server.get("host", ""), remote
+        return None, None
+
+    def _copy_nat_connect(self, event=None):
+        if self._nat_code:
+            self._copy_to_clipboard(self._nat_code)
+        else:
+            dlg.show_info(self.app.root, "", t("local.nat_not_mapped"))
+
+    def _copy_to_clipboard(self, text: str):
+        self.frame.clipboard_clear()
+        self.frame.clipboard_append(text)
+        self._show_copy_toast(t("local.connect_copied"))
+
+    def _show_copy_toast(self, text):
+        """鼠标位置冒一个自动消失的小提示（复制反馈），不用打断操作的
+        模态弹窗——mod 页签点 workshop id 复制是同一套。"""
+        x = self.frame.winfo_pointerx()
+        y = self.frame.winfo_pointery()
+        tip = tk.Toplevel(self.frame)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x + 12}+{y + 16}")
+        try:
+            tip.attributes("-topmost", True)
+        except Exception:
+            pass
+        tk.Label(tip, text=text, justify=tk.LEFT, background="#323232",
+                 foreground="#ffffff", font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=8, ipady=4)
+        # 停留 700ms 后开始淡出（逐步降 alpha 到 0）再销毁，比直接消失柔和。
+        def _fade_out(step: int = 0, total: int = 8, interval: int = 40):
+            if step >= total:
+                tip.destroy()
+                return
+            alpha = 1.0 - step / total
+            try:
+                tip.attributes("-alpha", alpha)
+            except Exception:
+                tip.destroy()
+                return
+            tip.after(interval, lambda: _fade_out(step + 1))
+        tip.after(700, lambda: _fade_out())
+
+    def _make_connect_label(self, parent, title, hint, title_w, on_click):
+        """直连代码标签——标题、值分两个 BgFrame；标题宽度统一成 title_w
+        （两行值对齐），悬停注释只挂标题。返回 (label, set_text)，标题和值
+        都绑 on_click（点击整行复制）。"""
+        f = tkfont.nametofont("TkDefaultFont")
+        label_h = f.metrics("linespace") + 4
+        container = BgFrame(parent, self.app, bg=theme.CARD_BG)
+
+        title_label = BgFrame(container, self.app, bg=theme.CARD_BG)
+        title_label.configure(height=label_h, width=title_w)
+        title_label.create_text(2, label_h / 2, text=title + ":", anchor=tk.W,
+                                fill=theme.TEXT, font=f, tags="connect_title")
+        Tooltip(title_label, hint)
+        title_label.pack(side=tk.LEFT)
+        title_label.bind("<Button-1>", on_click)
+
+        value_label = BgFrame(container, self.app, bg=theme.CARD_BG)
+        value_label.configure(height=label_h)
+        value_label.pack(side=tk.LEFT)
+        value_label.bind("<Button-1>", on_click)
+
+        def set_text(value):
+            value_label.configure(width=f.measure(value) + 4)
+            value_label.delete("connect_value")
+            value_label.create_text(2, label_h / 2, text=value, anchor=tk.W,
+                                    fill=theme.TEXT, font=f, tags="connect_value")
+
+        return container, set_text
+
+    def _refresh_connect_labels(self):
+        """刷新两行直连代码标签：局域网同步算，内网穿透后台查映射后异步回填。
+        注意 set_text 只接收"值"部分，标题已经由 _make_connect_label 画好了。"""
+        lan_code = self._lan_connect_code()
+        self._lan_code = lan_code
+        self._lan_set_text(lan_code or t("local.connect_unavailable"))
+        self._nat_code = None
+        self._nat_set_text(t("local.connect_loading"))
+        threading.Thread(target=self._fetch_nat_connect_async, daemon=True).start()
+
+    def _fetch_nat_connect_async(self):
+        """后台线程查内网穿透映射，拿到后回主线程更新标签。"""
+        host, port = self._nat_connect_info()
+        cluster = self._get_cluster()
+        code = None
+        if cluster and host and port:
+            code = self._build_connect_string(host, port, cluster)
+        self._nat_code = code
+        text = code if code else t("local.nat_not_mapped_short")
+        self.frame.after(0, lambda: self._nat_set_text(text))
+
     def on_cluster_changed(self, cluster=None):
         """顶部全局存档选择器变化时由 DSToolsApp 广播调用，取代原来这个
         页签自己的 cluster_combo + _on_cluster_select。选中本地存档时整
@@ -770,6 +983,9 @@ class LocalServiceTab:
         self._update_stop_all_btn_state(c)
         if is_server:
             self._local_banner.hide()
+            if not self._connect_row.winfo_ismapped():
+                self._connect_row.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
+            self._refresh_connect_labels()
             if is_wegame:
                 # pack() 调用顺序决定 side=tk.BOTTOM 这几个控件的上下叠放
                 # 顺序——真机截图验证过：先 pack 的在这一组的上方，后
@@ -793,6 +1009,8 @@ class LocalServiceTab:
             self._wegame_banner.hide()
             self._wegame_detect_btn.pack_forget()
             self._wegame_detect_text.pack_forget()
+            if self._connect_row.winfo_ismapped():
+                self._connect_row.pack_forget()
             self._rollback_btn.configure(state=tk.DISABLED)
             self._refresh_shard_rows(None)
             self._local_banner.show()
@@ -814,10 +1032,7 @@ class LocalServiceTab:
                 self._console_nb.hide(pane.frame)
 
     def _other_cluster_running(self, cluster) -> bool:
-        """除了 cluster 自己之外，是不是还有别的存档也有世界在跑——两个
-        不同存档的服务器同时跑，端口/资源很容易撞在一起，这个应用没打算
-        支持"同时管理多个正在运行的存档"这种用法，"启动"/"全部启动"要
-        锁住，"停止"不受影响（当前存档自己已经在跑的世界还是要能停）。"""
+        """除了 cluster 自己之外，是不是还有别的存档也有世界在跑。"""
         if not cluster:
             return False
         return any(p.cluster_path != cluster.path for p in self.manager.running())
@@ -852,8 +1067,11 @@ class LocalServiceTab:
         def _shard_running(s):
             proc = self.manager.get(cluster.path, s.name)
             return proc is not None and proc.status in _RUNNING_LIKE
-        all_running = bool(cluster.shards) and all(_shard_running(s) for s in cluster.shards)
-        self._start_all_btn.configure(state=tk.DISABLED if (other or all_running) else tk.NORMAL)
+        all_running = bool(cluster.shards) and all(
+            _shard_running(s) or (str(cluster.path), s.name) in self._launching_keys
+            for s in cluster.shards
+        )
+        self._start_all_btn.configure(state=tk.DISABLED if all_running else tk.NORMAL)
 
     def _update_stop_all_btn_state(self, cluster):
         """所有世界都是"停止"状态时"全部停止"没有意义，置灰——只有这个
@@ -1113,16 +1331,30 @@ class LocalServiceTab:
         self._luajit_install_btn.configure(state=tk.DISABLED)
         self._luajit_uninstall_btn.configure(state=tk.DISABLED)
         log_dialog = ModSyncLogDialog(self.app.root, title=t("local.luajit_confirm_install_title"))
+        log_dialog.append(t("local.luajit_log_preparing"))
         log_q: "queue.Queue" = queue.Queue()
 
         def _worker():
-            result = luajit_injector.apply_install(plan.bin64_dir, mod_overrides_paths,
-                                                     on_log=log_q.put)
-            log_q.put(result)  # 哨兵：一个 InstallResult 实例，标志"跑完了"——
-                                # 不拆成"None + result"两条分开 put，避免万一
-                                # 两次 put 被切到不同的轮询 tick 之间，
-                                # _poll_log() 局部变量 done 每次重新算，会
-                                # 永远等不到两者同时为真，日志弹窗卡死关不掉。
+            result = None
+            try:
+                result = luajit_injector.apply_install(plan.bin64_dir, mod_overrides_paths,
+                                                       on_log=log_q.put)
+            except Exception as exc:
+                # 业务层已经把常见文件错误转换成 InstallResult；这里再兜
+                # 一层，防止未来新增代码抛出未预期异常时没有哨兵，日志
+                # 窗口永久空白且无法关闭。
+                detail = f"{type(exc).__name__}: {exc}"
+                error = t("local.luajit_error_operation_failed", detail=detail)
+                log_q.put(error)
+                result = luajit_injector.InstallResult(ok=False, errors=[error])
+            finally:
+                # 一个 InstallResult 作为唯一完成哨兵，确保轮询一定能结束。
+                if result is None:
+                    result = luajit_injector.InstallResult(
+                        ok=False,
+                        errors=[t("local.luajit_error_operation_failed", detail="后台线程未返回结果")],
+                    )
+                log_q.put(result)
 
         def _poll_log():
             result = None
@@ -1191,8 +1423,147 @@ class LocalServiceTab:
             return True
         return dlg.ask_yes_no(self.app.root, t("local.token_missing_title"), t("local.token_missing_confirm"))
 
+    def _cluster_for_running_process(self, proc, current_cluster):
+        """把 ServerProcess 的路径重新映射到当前 discovery 得到的 Cluster。"""
+        if current_cluster and str(current_cluster.path) == str(proc.cluster_path):
+            return current_cluster
+        for candidate in self.app.env.clusters:
+            if str(candidate.path) == str(proc.cluster_path):
+                return candidate
+        return None
+
+    def _preflight_start(self, cluster, shards, *, allow_repair=True) -> bool:
+        """启动前一次性验证目标分片、其它存档和系统真实 UDP 占用。
+
+        对“全部启动”必须在任何 Popen 之前把整个批次一起检查，避免 Master
+        已经起来后才发现 Caves 端口冲突，留下难以理解的半启动状态。
+        """
+        target_names = {shard.name for shard in shards}
+        duplicate = sorted(
+            name for name in target_names
+            if (str(cluster.path), name) in self._launching_keys
+        )
+        if duplicate:
+            dlg.show_info(
+                self.app.root, t("local.port_preflight_title"),
+                t("local.launch_already_pending", shards="、".join(duplicate)),
+            )
+            return False
+        candidate_claims, issues = collect_cluster_port_claims(cluster, target_names)
+        if issues:
+            lines = [
+                f"{issue.cluster_name}/{issue.shard_name or '-'} {issue.field}="
+                f"{issue.value!r}：{issue.message}"
+                for issue in issues
+            ]
+            dlg.show_error(
+                self.app.root, t("local.port_preflight_title"),
+                t("local.port_preflight_invalid", details="\n".join(lines)),
+            )
+            return False
+
+        running_claims = []
+        managed_bindings: set[tuple[int, int]] = set()
+        other_cluster_running = False
+        for proc in self.manager.running():
+            if str(proc.cluster_path) == str(cluster.path) and proc.shard_name in target_names:
+                continue
+            other_cluster_running |= str(proc.cluster_path) != str(cluster.path)
+            model = self._cluster_for_running_process(proc, cluster)
+            if model is None:
+                continue
+            claims, _ = collect_cluster_port_claims(model, [proc.shard_name])
+            running_claims.extend(claims)
+            pid = proc.proc.pid if proc.proc is not None else None
+            if pid is not None:
+                managed_bindings.update((pid, claim.port) for claim in claims)
+
+        scan = scan_udp_ports()
+        if not scan.ok and other_cluster_running:
+            dlg.show_error(
+                self.app.root, t("local.port_preflight_title"),
+                t("local.port_preflight_scan_failed", detail=scan.error),
+            )
+            return False
+
+        all_claims = candidate_claims + running_claims
+        if scan.ok:
+            all_claims.extend(system_port_claims(scan, exclude_bindings=managed_bindings))
+        candidate_keys = {claim.owner_key for claim in candidate_claims}
+        conflicts = [
+            conflict for conflict in find_port_conflicts(all_claims)
+            if any(claim.owner_key in candidate_keys for claim in conflict.claims)
+        ]
+        if conflicts:
+            details = []
+            for conflict in conflicts[:12]:
+                owners = "; ".join(claim.display_owner() for claim in conflict.claims)
+                details.append(f"{conflict.port}: {owners}")
+            if len(conflicts) > 12:
+                details.append(t("local.port_preflight_more", count=len(conflicts) - 12))
+            detail_text = "\n".join(details)
+            target_running = any(
+                str(proc.cluster_path) == str(cluster.path) for proc in self.manager.running()
+            )
+            has_mapping = any(
+                self.app.sakura_tab.has_active_mapping(cluster, shard)
+                for shard in cluster.shards
+            )
+            can_repair = allow_repair and not target_running and not has_mapping
+            choices = [
+                (t("dlg.yes_btn"), "continue"),
+                (t("dlg.no_btn"), "cancel"),
+            ]
+            if can_repair:
+                choices.append((t("local.allocate_ports_btn"), "allocate"))
+            choice = dlg.ask_choice(
+                self.app.root, t("local.port_conflict_title"),
+                t("local.port_conflict_confirm", details=detail_text),
+                choices, default="cancel",
+                wraplength=780, min_width=840,
+            )
+            if choice == "continue":
+                return True
+            if choice == "allocate" and can_repair:
+                used = {claim.port for claim in running_claims}
+                for other in self.app.env.clusters:
+                    if other.source != SaveSource.SERVER or other.platform != Platform.STEAM:
+                        continue
+                    if str(other.path) == str(cluster.path):
+                        continue
+                    claims, _ = collect_cluster_port_claims(other)
+                    used.update(claim.port for claim in claims)
+                if scan.ok:
+                    used.update(
+                        port for ports_for_pid in scan.ports_by_pid.values()
+                        for port in ports_for_pid
+                    )
+                try:
+                    master_port, allocated = rewrite_cluster_ports_atomic(cluster, used)
+                except OSError as exc:
+                    dlg.show_error(
+                        self.app.root, t("local.port_repair_title"),
+                        t("local.port_repair_failed", detail=f"{type(exc).__name__}: {exc}"),
+                    )
+                    return False
+                summary = [f"master_port={master_port}"]
+                for shard_name, ports in allocated.items():
+                    summary.append(
+                        f"{shard_name}: server={ports['server_port']}, "
+                        f"steam={ports['master_server_port']}, auth={ports['authentication_port']}"
+                    )
+                dlg.show_info(
+                    self.app.root, t("local.port_repair_title"),
+                    t("local.port_repair_done", details="\n".join(summary)),
+                )
+                return self._preflight_start(cluster, shards, allow_repair=False)
+            return False
+        return True
+
     def start_shard(self, cluster, shard):
         if not self._confirm_token_ok(cluster):
+            return
+        if not self._preflight_start(cluster, [shard]):
             return
         self._do_start_shard(cluster, shard)
 
@@ -1232,18 +1603,34 @@ class LocalServiceTab:
             if not dlg.ask_yes_no(self.app.root, t("local.luajit_regenerate_title"),
                                    t("local.luajit_regenerate_confirm_msg")):
                 return
+            self._launching_keys.add((str(cluster.path), shard.name))
             self._regenerate_luajit_then_start(cluster, shard, conf_dir_arg)
             return
         self._continue_start_shard(cluster, shard, conf_dir_arg)
 
     def _regenerate_luajit_then_start(self, cluster, shard, conf_dir_arg):
+        shards = list(shard) if isinstance(shard, (list, tuple)) else [shard]
         bin64_dir = find_bin64_dir(self._install_dir)
         log_dialog = ModSyncLogDialog(self.app.root, title=t("local.luajit_regenerate_title"))
+        log_dialog.append(t("local.luajit_log_preparing"))
         log_q: "queue.Queue" = queue.Queue()
 
         def _worker():
-            result = luajit_injector.regenerate(bin64_dir, on_log=log_q.put)
-            log_q.put(result)
+            result = None
+            try:
+                result = luajit_injector.regenerate(bin64_dir, on_log=log_q.put)
+            except Exception as exc:
+                detail = f"{type(exc).__name__}: {exc}"
+                error = t("local.luajit_error_operation_failed", detail=detail)
+                log_q.put(error)
+                result = luajit_injector.InstallResult(ok=False, errors=[error])
+            finally:
+                if result is None:
+                    result = luajit_injector.InstallResult(
+                        ok=False,
+                        errors=[t("local.luajit_error_operation_failed", detail="后台线程未返回结果")],
+                    )
+                log_q.put(result)
 
         def _poll_log():
             result = None
@@ -1258,10 +1645,17 @@ class LocalServiceTab:
                 log_dialog.append(item)
             if result is not None:
                 log_dialog.finish()
-                if result.ok:
-                    self._continue_start_shard(cluster, shard, conf_dir_arg)
-                else:
-                    dlg.show_error(self.app.root, t("local.luajit_regenerate_title"), "\n".join(result.errors))
+                try:
+                    if result.ok:
+                        for target in shards:
+                            self._continue_start_shard(cluster, target, conf_dir_arg)
+                        if len(shards) > 1:
+                            self._select_master_console_tab(cluster)
+                    else:
+                        dlg.show_error(self.app.root, t("local.luajit_regenerate_title"), "\n".join(result.errors))
+                finally:
+                    for target in shards:
+                        self._launching_keys.discard((str(cluster.path), target.name))
                 return
             self.frame.after(100, _poll_log)
 
@@ -1285,10 +1679,18 @@ class LocalServiceTab:
         # 这里不做任何联网/重新生成，_do_start_shard() 已经处理过"要不要
         # 先重新生成"这件事。
         bin64_override = luajit_injector.resolve_launch_bin64_dir(self._install_dir)
-        proc = self.manager.start(cluster.name, cluster.path, shard.name, self._install_dir,
-                                   conf_dir_arg, is_master,
-                                   str(ugc_directory) if ugc_directory else None,
-                                   bin64_override=bin64_override)
+        try:
+            proc = self.manager.start(cluster.name, cluster.path, shard.name, self._install_dir,
+                                      conf_dir_arg, is_master,
+                                      str(ugc_directory) if ugc_directory else None,
+                                      bin64_override=bin64_override)
+        except OSError as exc:
+            dlg.show_error(
+                self.app.root, t("local.install_title"),
+                t("local.start_failed", shard=shard.name,
+                  detail=f"{type(exc).__name__}: {exc}"),
+            )
+            return
         self.app.sakura_tab.maybe_start_frpc(cluster, shard)
         key = (str(cluster.path), shard.name)
         existing = self._console_panes.get(key)
@@ -1378,8 +1780,31 @@ class LocalServiceTab:
         # 一模一样的确认，体验很差。
         if not self._confirm_token_ok(c):
             return
+        targets = []
         for s in _ordered_shards(c):
-            self._do_start_shard(c, s)
+            proc = self.manager.get(c.path, s.name)
+            if proc is None or proc.status not in _RUNNING_LIKE:
+                targets.append(s)
+        if not targets or not self._preflight_start(c, targets):
+            return
+        if self._install_dir is None and not self._recheck_install_dir():
+            return
+        try:
+            conf_dir_arg = resolve_conf_dir_arg(self.app.env.klei_root)
+        except ConfDirCrossDriveError:
+            dlg.show_error(self.app.root, t("local.install_title"), t("local.confdir_cross_drive_error"))
+            return
+        # LuaJIT 副本体积很大；批量启动只允许触发一次重新生成，完成后再
+        # 启动这个批次的全部世界，不能每个 shard 各开一个复制线程。
+        if luajit_injector.needs_regeneration(self._install_dir):
+            if not dlg.ask_yes_no(self.app.root, t("local.luajit_regenerate_title"),
+                                  t("local.luajit_regenerate_confirm_msg")):
+                return
+            self._launching_keys.update((str(c.path), s.name) for s in targets)
+            self._regenerate_luajit_then_start(c, targets, conf_dir_arg)
+        else:
+            for s in targets:
+                self._continue_start_shard(c, s, conf_dir_arg)
         # _do_start_shard() 每次都会把控制台标签页切到刚启动的那个世界，
         # 循环下来会停在最后一个世界上；玩家最关心的是主世界有没有起来，
         # 公告一般也发到主世界，"全部启动"结束后统一切回主世界，不管启

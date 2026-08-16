@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from dstools.features.mod.backup_utils import backup_file as _backup_file
 from dstools.shared.lua_parser import parse_lua_file, serialize_lua_table
 from dstools.models import ModEntry, ModOverrides
 
@@ -44,13 +43,9 @@ def load_mod_overrides(path: Path) -> ModOverrides:
 def save_mod_overrides(mod_overrides: ModOverrides) -> None:
     """把 mod 覆盖配置写回文件。
 
-    覆盖前会先创建备份。
-
     Args:
         mod_overrides: 要保存的 ModOverrides。
     """
-    _backup_file(mod_overrides.path)
-
     data = {}
     for workshop_id, entry in mod_overrides.mods.items():
         data[workshop_id] = {

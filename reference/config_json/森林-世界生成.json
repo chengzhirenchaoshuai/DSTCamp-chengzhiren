@@ -1,282 +1,2808 @@
 [
   {
     "name": "全局",
+    "en": "General",
     "settings": [
       {
+        "key": "season_start",
         "name": "起始季节",
-        "value": "秋"
+        "en": "Starting Season",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "秋",
+            "en": "Autumn"
+          },
+          {
+            "raw": "winter",
+            "zh": "冬",
+            "en": "Winter"
+          },
+          {
+            "raw": "spring",
+            "zh": "春",
+            "en": "Spring"
+          },
+          {
+            "raw": "summer",
+            "zh": "夏",
+            "en": "Summer"
+          },
+          {
+            "raw": "autumn|spring",
+            "zh": "春或秋",
+            "en": "Autumn or Spring"
+          },
+          {
+            "raw": "winter|summer",
+            "zh": "冬或夏",
+            "en": "Winter or Summer"
+          },
+          {
+            "raw": "autumn|winter|spring|summer",
+            "zh": "随机",
+            "en": "Random"
+          }
+        ]
       }
     ]
   },
   {
     "name": "世界",
+    "en": "World",
     "settings": [
       {
+        "key": "task_set",
         "name": "生物群落",
-        "value": "联机版"
+        "en": "Biomes",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "联机版",
+            "en": "Together"
+          },
+          {
+            "raw": "classic",
+            "zh": "经典",
+            "en": "Classic"
+          }
+        ]
       },
       {
+        "key": "start_location",
         "name": "出生点",
-        "value": "默认"
+        "en": "Start Location",
+        "default": "default",
+        "values": [
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "plus",
+            "zh": "额外资源",
+            "en": "Plus"
+          },
+          {
+            "raw": "darkness",
+            "zh": "黑暗",
+            "en": "Dark"
+          }
+        ]
       },
       {
+        "key": "world_size",
         "name": "世界大小",
-        "value": "小"
+        "en": "World Size",
+        "default": "default",
+        "values": [
+          {
+            "raw": "small",
+            "zh": "小",
+            "en": "Small"
+          },
+          {
+            "raw": "medium",
+            "zh": "中",
+            "en": "Medium"
+          },
+          {
+            "raw": "default",
+            "zh": "大",
+            "en": "Large"
+          },
+          {
+            "raw": "huge",
+            "zh": "巨大",
+            "en": "Huge"
+          }
+        ]
       },
       {
+        "key": "branching",
         "name": "分支",
-        "value": "最少"
+        "en": "Branching",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "从不",
+            "en": "Never"
+          },
+          {
+            "raw": "least",
+            "zh": "最少",
+            "en": "Least"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "most",
+            "zh": "最多",
+            "en": "Most"
+          },
+          {
+            "raw": "random",
+            "zh": "随机",
+            "en": "Random"
+          }
+        ]
       },
       {
+        "key": "loop",
         "name": "环形",
-        "value": "从不"
+        "en": "Loop",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "从不",
+            "en": "Never"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "always",
+            "zh": "总是",
+            "en": "Always"
+          }
+        ]
       },
       {
+        "key": "roads",
         "name": "道路",
-        "value": "无"
+        "en": "Roads",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "touchstone",
         "name": "试金石",
-        "value": "较少"
+        "en": "Touch Stones",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "boons",
         "name": "失败的冒险家",
-        "value": "较少"
+        "en": "Failed Adventurer",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "prefabswaps_start",
         "name": "开始资源多样化",
-        "value": "经典"
+        "en": "Starting Resource Variety",
+        "default": "default",
+        "values": [
+          {
+            "raw": "classic",
+            "zh": "经典",
+            "en": "Classic"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "highly random",
+            "zh": "非常随机",
+            "en": "Highly Random"
+          }
+        ]
       },
       {
+        "key": "junkyard",
         "name": "垃圾场",
-        "value": "无"
+        "en": "Junk Yard",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "moon_fissure",
         "name": "天体裂缝",
-        "value": "较少"
+        "en": "Celestial Rifts",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "balatro",
         "name": "小丑",
-        "value": "无"
+        "en": "Clown",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "terrariumchest",
         "name": "盒中泰拉",
-        "value": "无"
+        "en": "Terrarium",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       },
       {
+        "key": "stageplays",
         "name": "舞台剧",
-        "value": "无"
+        "en": "Stage Plays",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          }
+        ]
       }
     ]
   },
   {
     "name": "资源",
+    "en": "Resources",
     "settings": [
       {
+        "key": "cactus",
         "name": "仙人掌",
-        "value": "较少"
+        "en": "Cactus",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "ocean_bullkelp",
         "name": "公牛海带",
-        "value": "较少"
+        "en": "Bull Kelp",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "marshbush",
         "name": "尖刺灌木",
-        "value": "较少"
+        "en": "Spiky Bush",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "rock",
         "name": "巨石",
-        "value": "较少"
+        "en": "Boulders",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_sapling",
         "name": "月亮树苗",
-        "value": "较少"
+        "en": "Moon Sapling",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_rock",
         "name": "月亮石",
-        "value": "较少"
+        "en": "Moon Rocks",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_tree",
         "name": "月树",
-        "value": "较少"
+        "en": "Moon Trees",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "sapling",
         "name": "树苗",
-        "value": "较少"
+        "en": "Saplings",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "trees",
         "name": "树（所有）",
-        "value": "较少"
+        "en": "Trees (All)",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "palmconetree",
         "name": "棕榈松树",
-        "value": "较少"
+        "en": "Palm Trees",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "ponds",
         "name": "池塘",
-        "value": "较少"
+        "en": "Ponds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "meteorspawner",
         "name": "流星区域",
-        "value": "较少"
+        "en": "Meteor Zones",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "berrybush",
         "name": "浆果丛",
-        "value": "较少"
+        "en": "Berry Bushes",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_bullkelp",
         "name": "海岸公牛海带",
-        "value": "较少"
+        "en": "Moon Bull Kelp",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_starfish",
         "name": "海星",
-        "value": "较少"
+        "en": "Starfish",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "ocean_seastack",
         "name": "海蚀柱",
-        "value": "较少"
+        "en": "Sea Stacks",
+        "default": "ocean_default",
+        "values": [
+          {
+            "raw": "ocean_never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "ocean_rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "ocean_uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "ocean_default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "ocean_often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "ocean_mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "ocean_always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "ocean_insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_hotspring",
         "name": "温泉",
-        "value": "较少"
+        "en": "Hot Springs",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "flint",
         "name": "燧石",
-        "value": "较少"
+        "en": "Flint",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_berrybush",
         "name": "石果灌木丛",
-        "value": "较少"
+        "en": "Rock Berry Bush",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "carrot",
         "name": "胡萝卜",
-        "value": "较少"
+        "en": "Carrots",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "reeds",
         "name": "芦苇",
-        "value": "较少"
+        "en": "Reeds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "flowers",
         "name": "花，邪恶花",
-        "value": "较少"
+        "en": "Flowers (incl. Evil Flowers)",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "grass",
         "name": "草",
-        "value": "较少"
+        "en": "Grass",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "mushroom",
         "name": "蘑菇",
-        "value": "较少"
+        "en": "Mushrooms",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "rock_ice",
         "name": "迷你冰川",
-        "value": "较少"
+        "en": "Mini Glaciers",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "tumbleweed",
         "name": "风滚草",
-        "value": "较少"
+        "en": "Tumbleweeds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       }
     ]
   },
   {
     "name": "生物以及刷新点",
+    "en": "Creatures & Spawners",
     "settings": [
       {
+        "key": "lightninggoat",
         "name": "伏特羊",
-        "value": "较少"
+        "en": "Volt Goats",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "rabbits",
         "name": "兔洞",
-        "value": "较少"
+        "en": "Rabbit Holes",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "ocean_otterdens",
         "name": "水獭掠夺者窝点",
-        "value": "较少"
+        "en": "Otter Dens",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_fruitdragon",
         "name": "沙拉蝾螈",
-        "value": "较少"
+        "en": "Salamander",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "pigs",
         "name": "猪屋",
-        "value": "较少"
+        "en": "Pig Houses",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "beefalo",
         "name": "皮弗娄牛",
-        "value": "较少"
+        "en": "Beefalo",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "buzzard",
         "name": "秃鹫",
-        "value": "较少"
+        "en": "Buzzards",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "catcoon",
         "name": "空心树桩",
-        "value": "较少"
+        "en": "Hollow Stumps",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_carrot",
         "name": "胡萝卜鼠",
-        "value": "较少"
+        "en": "Carrats",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "bees",
         "name": "蜜蜂蜂窝",
-        "value": "较少"
+        "en": "Beehives",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "ocean_shoal",
         "name": "鱼群",
-        "value": "较少"
+        "en": "Fish Schools",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moles",
         "name": "鼹鼠丘",
-        "value": "较少"
+        "en": "Mole Hills",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "ocean_wobsterden",
         "name": "龙虾窝",
-        "value": "较少"
+        "en": "Wobster Dens",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       }
     ]
   },
   {
     "name": "敌对生物以及刷新点",
+    "en": "Hostile Creatures & Spawners",
     "settings": [
       {
+        "key": "chess",
         "name": "发条装置",
-        "value": "较少"
+        "en": "Clockworks",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "angrybees",
         "name": "杀人蜂蜂窝",
-        "value": "较少"
+        "en": "Killer Bee Hives",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "ocean_waterplant",
         "name": "海草",
-        "value": "较少"
+        "en": "Seaweed",
+        "default": "ocean_default",
+        "values": [
+          {
+            "raw": "ocean_never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "ocean_rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "ocean_uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "ocean_default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "ocean_often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "ocean_mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "ocean_always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "ocean_insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "walrus",
         "name": "海象营地",
-        "value": "较少"
+        "en": "Walrus Camps",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "merm",
         "name": "漏雨的小屋",
-        "value": "较少"
+        "en": "Leaky Shacks",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "houndmound",
         "name": "猎犬丘",
-        "value": "较少"
+        "en": "Hound Mounds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "moon_spiders",
         "name": "破碎蜘蛛洞",
-        "value": "较少"
+        "en": "Fissure Spider Dens",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "spiders",
         "name": "蜘蛛巢",
-        "value": "较少"
+        "en": "Spider Dens",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "tentacles",
         "name": "触手",
-        "value": "较少"
+        "en": "Tentacles",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       },
       {
+        "key": "tallbirds",
         "name": "高脚鸟",
-        "value": "较少"
+        "en": "Tallbirds",
+        "default": "default",
+        "values": [
+          {
+            "raw": "never",
+            "zh": "无",
+            "en": "None"
+          },
+          {
+            "raw": "rare",
+            "zh": "很少",
+            "en": "Little"
+          },
+          {
+            "raw": "uncommon",
+            "zh": "较少",
+            "en": "Less"
+          },
+          {
+            "raw": "default",
+            "zh": "默认",
+            "en": "Default"
+          },
+          {
+            "raw": "often",
+            "zh": "较多",
+            "en": "More"
+          },
+          {
+            "raw": "mostly",
+            "zh": "很多",
+            "en": "Lots"
+          },
+          {
+            "raw": "always",
+            "zh": "大量",
+            "en": "Tons"
+          },
+          {
+            "raw": "insane",
+            "zh": "疯狂",
+            "en": "Insane"
+          }
+        ]
       }
     ]
   }

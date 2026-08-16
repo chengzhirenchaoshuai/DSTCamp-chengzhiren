@@ -36,7 +36,6 @@ from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.features.sakura.tab import SakuraTab
 from dstools.features.save_browser.tab import SaveBrowserTab
 from dstools.features.world.tab import WorldSettingsTab
-from dstools.features.world.creation_entry import WorldCreationEntryTab
 from dstools.i18n import get_lang, set_lang, t
 from dstools.models import Platform, SaveSource, Shard
 
@@ -87,6 +86,7 @@ class DSToolsApp:
 
         self.style = ttk.Style(); self.style.theme_use("clam")
         theme.apply_theme(self.root, self.style)
+        custom_titlebar.apply_window_border(self.root)
         # theme.apply_theme() 会调 root.attributes("-alpha", ...)，这在
         # Windows 上会冲掉 apply_borderless_style() 设置的 WS_EX_APPWINDOW，
         # 导致任务栏/Alt+Tab 找不到窗口——每次调完 theme.apply_theme() 都
@@ -109,9 +109,7 @@ class DSToolsApp:
         # Notebook（SaveBrowserTab.sub_notebook、WorldSettingsTab._sub_nb、
         # ClusterConfigTab._cc_notebook）仍保持原生 ttk 外观，只是被
         # apply_theme() 重新上色。
-        # 创建存档是独立向导，放在内网穿透之后，避免在常用的运行/配置
-        # 页签之间插入一个会打开独立窗口的入口。
-        self._tab_keys = ["local", "world", "mods", "server", "saves", "sakura", "create"]
+        self._tab_keys = ["local", "world", "mods", "server", "saves", "sakura"]
         self._pill_bar = PillTabBar(
             self.root,
             tabs=[(k, t(f"tab.{k}")) for k in self._tab_keys],
@@ -239,9 +237,6 @@ class DSToolsApp:
         self.save_tab = SaveBrowserTab(self._tab_cards["saves"].body, self)
         self.mod_tab = ModManagerTab(self._tab_cards["mods"].body, self)
         self.world_tab = WorldSettingsTab(self._tab_cards["world"].body, self)
-        # 创建存档是独立的重型向导：主页只挂载轻量入口，用户点击后才
-        # 在独立窗口里加载世界模板、服务器配置和 Mod 元数据。
-        self.creation_tab = WorldCreationEntryTab(self._tab_cards["create"].body, self)
         self.cluster_tab = ClusterConfigTab(self._tab_cards["server"].body, self)
         self.sakura_tab = SakuraTab(self._tab_cards["sakura"].body, self)
 
@@ -253,12 +248,12 @@ class DSToolsApp:
         # 补一次——反正 on_cluster_changed() 不传 cluster 参数时会自己从
         # get_selected_cluster() 现查，不会读到过期的存档。
         self._cluster_tab_map = {"local": self.local_tab, "mods": self.mod_tab,
-                                 "world": self.world_tab, "create": self.creation_tab, "server": self.cluster_tab,
+                                 "world": self.world_tab, "server": self.cluster_tab,
                                   "saves": self.save_tab, "sakura": self.sakura_tab}
         self._stale_cluster_tabs: set[str] = set()
         self._current_tab_key = "local"
 
-        self._tabs = [self.local_tab, self.world_tab, self.mod_tab, self.cluster_tab, self.save_tab, self.sakura_tab, self.creation_tab]
+        self._tabs = [self.local_tab, self.world_tab, self.mod_tab, self.cluster_tab, self.save_tab, self.sakura_tab]
         for key, tab in zip(self._tab_keys, self._tabs):
             tab.frame.pack(fill=tk.BOTH, expand=True)
         # 只留 "local" 参与布局，其余 5 个先 grid_remove() 掉——之前是全部
@@ -290,7 +285,9 @@ class DSToolsApp:
         # 就塞在这个留白里，不需要状态栏额外让出空间。
         self._status_text_h = self._status_font.metrics("linespace") + 6
         status_h = self._status_text_h
-        self._status_bar = BgFrame(self.root, self, bg=theme.CARD_BG)
+        # 状态栏属于窗口底色的一部分；使用 CARD_BG 会在清除自定义背景图
+        # 后留下突兀的白色横条，改为默认底色并保留有背景图时的切片渲染。
+        self._status_bar = BgFrame(self.root, self, bg=theme.BG_SOFT)
         self._status_bar.configure(height=status_h)
         self._status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -375,11 +372,9 @@ class DSToolsApp:
                                      bottom_grip=3, top_grip=2)
 
     def _on_tab_select(self, key: str) -> None:
-        # 创建向导不依赖当前存档，隐藏全局存档选择栏，避免把创建状态
-        # 误认为是在编辑顶部选中的已有存档。
-        if key == "create":
-            self._cluster_bar.pack_forget()
-        elif not self._cluster_bar.winfo_ismapped():
+        # 全局存档选择栏对全部页签都常驻显示。这里保留"若之前被临时隐藏
+        # 就恢复"的兜底，防止以后某个页签隐藏它之后忘了恢复。
+        if not self._cluster_bar.winfo_ismapped():
             self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
         for k, card in self._tab_cards.items():
             if k == key:
@@ -401,9 +396,14 @@ class DSToolsApp:
         # 显示出来，避免用户看到画面僵住。
         if key in self._stale_cluster_tabs:
             self._stale_cluster_tabs.discard(key)
-            self.root.update_idletasks()
-            self._refresh_all_bg_surfaces()
-            self.root.update()
+            # 服务器配置页会在 on_cluster_changed() 中事务式重建两套动态
+            # 表单；此时不要先把空壳 page 强制绘制到屏幕，否则用户会看到
+            # 一次旧卡片/空白卡片，再看到最终布局。其它页签仍保留原有的
+            # 预绘制反馈，避免它们的重活让界面看起来无响应。
+            if key != "server":
+                self.root.update_idletasks()
+                self._refresh_all_bg_surfaces()
+                self.root.update()
 
             self._cluster_tab_map[key].on_cluster_changed()
 
@@ -471,9 +471,13 @@ class DSToolsApp:
         务器在跑，先问一句是否一并关闭；选"否"就是取消退出，窗口/托盘
         保持原样，不会像以前那样问完不管选什么都照样退出。"""
         if self.local_tab.has_running_servers():
-            count = len(self.local_tab.manager.running())
+            running = self.local_tab.manager.running()
+            world_count = len(running)
+            cluster_count = len({str(proc.cluster_path) for proc in running})
             if not dlg.ask_yes_no(self.root, t("local.confirm_close_title"),
-                                   t("local.confirm_close_msg", count=count)):
+                                   t("local.confirm_close_msg",
+                                     cluster_count=cluster_count,
+                                     world_count=world_count)):
                 return
             self.local_tab.confirm_and_shutdown_all(on_done=self._quit_app)
             return
@@ -777,6 +781,7 @@ class DSToolsApp:
         # 明，这里切换后也要重新找补一遍。
         from dstools.shared.gui import custom_titlebar
         custom_titlebar.ensure_taskbar_visible(self.root)
+        custom_titlebar.apply_window_border(self.root)
         self._titlebar.apply_theme(bg=theme.CARD_BG)
         self._build_menu()
         self._tab_area.apply_theme()
@@ -793,7 +798,7 @@ class DSToolsApp:
         self._pill_bar.apply_theme()
         self._retheme_cluster_bar()
         self._root_bg.apply_theme()
-        self._status_bar.apply_theme(bg=theme.CARD_BG)
+        self._status_bar.apply_theme(bg=theme.BG_SOFT)
         self._redraw_status_bar()
         # retheme() 很便宜（重新上色/重画静态文字，也含字体族/字重），6
         # 个页签都立即做；refresh() 才是重活（Lua 沙箱扫描/PIL 面板重绘
@@ -1009,6 +1014,17 @@ class DSToolsApp:
 
     def _refresh_all_bg_surfaces(self) -> None:
         self._for_each_alive_bg_surface(lambda surf: surf.render_now())
+
+    def refresh_bg_surface(self, surface) -> None:
+        """重建共享背景后只刷新指定的可见页面。"""
+        try:
+            self.root.update_idletasks()
+            self._shared_bg_key = None
+            self._rebuild_shared_bg_image()
+            if surface is not None and surface.winfo_exists():
+                surface.refresh_descendants()
+        except tk.TclError:
+            pass
 
     def _force_refresh_bg_now(self) -> None:
         """自定义背景图弹窗（选文件/调不透明度/清除）改完设置后调用——

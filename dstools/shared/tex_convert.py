@@ -46,15 +46,15 @@ import threading
 import time
 from pathlib import Path
 
-from dstools.shared.resource_paths import bundled_resource_dir
+from dstools.shared.resource_paths import tool_binary_dir
 
-_TOOLS_DIR = bundled_resource_dir() / "tools" / "ktools"
+_TOOLS_DIR = tool_binary_dir() / "ktools"
 _KTECH_EXE = _TOOLS_DIR / "ktech.exe"
 
 # 微软官方原始文件（下载自 download.microsoft.com，装前核实过数字签名
 # 确实是 Microsoft Corporation 签发），随软件本体一起打包，用户点安装
 # 提示时全程不需要联网，绕开"官方下载页在国内访问不稳定"的问题。
-_VCREDIST_EXE = bundled_resource_dir() / "tools" / "vcredist" / "VC++ 2013 x86.exe"
+_VCREDIST_EXE = tool_binary_dir() / "vcredist" / "VC++ 2013 x86.exe"
 
 # ktech.exe 是控制台程序，不加这个每次调用都会在 GUI 上方一闪而过一个黑色
 # 控制台窗口（首次转换某个图标/头像时能看到，比如刚发现一个新拷贝进来的
