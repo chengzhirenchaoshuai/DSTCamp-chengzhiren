@@ -897,8 +897,13 @@ class DSToolsApp:
 
     def _on_bg_settle(self) -> None:
         self._bg_settle_after_id = None
-        self._rebuild_shared_bg_image()
-        self._refresh_all_bg_surfaces()
+        # 从最小化/任务栏恢复时窗口尺寸没变，<Configure> 照样触发走到这
+        # 里——_rebuild_shared_bg_image() 会因 key 相同返回 False，此时跳
+        # 过 _refresh_all_bg_surfaces()（它无差别刷新 90 个表面、单次
+        # 250ms+，正是恢复瞬间"先出一部分再出另一部分"的来源）。各可见
+        # 表面已通过自己的 <Map> 事件走了便宜裁剪路径，不缺这一刷。
+        if self._rebuild_shared_bg_image():
+            self._refresh_all_bg_surfaces()
 
     def _begin_bg_drag_suppress(self) -> None:
         """custom_titlebar.ResizeGrips 按下手柄开始拖拽时调用——期间所
@@ -928,25 +933,30 @@ class DSToolsApp:
         self._rebuild_shared_bg_image()
         self._refresh_all_bg_surfaces()
 
-    def _rebuild_shared_bg_image(self) -> None:
+    def _rebuild_shared_bg_image(self) -> bool:
         """真正的重活——只在窗口停顿后（或者背景图设置改变时）调用一次。
         统一按 theme.BG_SOFT 混合：各表面自己具体的色号（CARD_BG 等）跟
         BG_SOFT 差异都很小，共用同一张混合结果换来的是"处处看起来是同
-        一张连续的图"，比每个表面自己抠自己的颜色更重要。"""
+        一张连续的图"，比每个表面自己抠自己的颜色更重要。
+
+        返回 True 表示这次真的重建/更新了共享大图（尺寸或背景设置变了），
+        False 表示跟上次完全一样、无需重建——调用方据此决定要不要再花
+        250ms+ 把 90 个表面全刷一遍。"""
         w, h = self.root.winfo_width(), self.root.winfo_height()
         bg_path = get_custom_bg_path()
         opacity = get_custom_bg_opacity()
         key = (bg_path, opacity, w, h)
         if self._shared_bg_key == key:
-            return
+            return False
         if bg_path is None:
             self._shared_bg_image = None
             self._shared_bg_key = key
-            return
+            return True
         if w < 4 or h < 4:
-            return
+            return False
         self._shared_bg_image = render_background(bg_path, w, h, opacity, theme.BG_SOFT)
         self._shared_bg_key = key
+        return True
 
     def _get_bg_slice_image(self, widget, w: int, h: int):
         """从共享大图里按 widget 相对 root 客户区的屏幕偏移量裁一块出来
