@@ -756,6 +756,8 @@ class LocalServiceTab:
 
         self._lan_code = None
         self._nat_code = None
+        self._lan_status_key = None  # 状态缓存，避免 poll 每 150ms 重复重画
+        self._nat_status_key = None
 
         self._lan_row = lan_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
         lan_row.pack(fill=tk.X)
@@ -916,7 +918,8 @@ class LocalServiceTab:
     def _make_connect_label(self, parent, title, hint, title_w, on_click):
         """直连代码标签——标题、值、状态分三个 BgFrame；标题宽度统一成
         title_w，悬停注释只挂标题。返回 (label, set_text, set_status)，标题
-        和值绑 on_click（点击整行复制），状态列在右侧显示就绪/失败等。"""
+        和值绑 on_click（点击整行复制），状态列在右侧显示就绪/失败，未就绪
+        时悬停显示原因（reason 传进 set_status，空则不弹）。"""
         f = tkfont.nametofont("TkDefaultFont")
         label_h = f.metrics("linespace") + 4
         container = BgFrame(parent, self.app, bg=theme.CARD_BG)
@@ -924,19 +927,22 @@ class LocalServiceTab:
         title_label = BgFrame(container, self.app, bg=theme.CARD_BG)
         title_label.configure(height=label_h, width=title_w)
         title_label.create_text(2, label_h / 2, text=title + ":", anchor=tk.W,
-                                fill=theme.TEXT, font=f, tags="connect_title")
+                                fill=theme.TEXT_MUTED, font=f, tags="connect_title")
         Tooltip(title_label, hint)
         title_label.pack(side=tk.LEFT)
         title_label.bind("<Button-1>", on_click)
 
         value_label = BgFrame(container, self.app, bg=theme.CARD_BG)
         value_label.configure(height=label_h)
-        value_label.pack(side=tk.LEFT)
+        value_label.pack(side=tk.LEFT, padx=(4, 0))
         value_label.bind("<Button-1>", on_click)
 
         status_label = BgFrame(container, self.app, bg=theme.CARD_BG)
         status_label.configure(height=label_h)
         status_label.pack(side=tk.LEFT, padx=(8, 0))
+        # 状态悬停原因用可调用对象，每次悬停都读最新值（就绪时为空、不弹）
+        status_reason = {"text": ""}
+        Tooltip(status_label, lambda: status_reason["text"])
 
         def set_text(value):
             value_label.configure(width=f.measure(value) + 4)
@@ -944,7 +950,8 @@ class LocalServiceTab:
             value_label.create_text(2, label_h / 2, text=value, anchor=tk.W,
                                     fill=theme.TEXT, font=f, tags="connect_value")
 
-        def set_status(text, color=None):
+        def set_status(text, color=None, reason=""):
+            status_reason["text"] = reason
             status_label.delete("connect_status")
             status_label.configure(width=f.measure(text) + 4)
             status_label.create_text(2, label_h / 2, text=text, anchor=tk.W,
@@ -954,6 +961,8 @@ class LocalServiceTab:
 
     def _refresh_connect_labels(self):
         """刷新两行直连代码标签：局域网同步算，内网穿透后台查映射后异步回填。"""
+        self._lan_status_key = None  # 重置缓存强制整行重画（含语言切换场景）
+        self._nat_status_key = None
         lan_code = self._lan_connect_code()
         self._lan_code = lan_code
         self._lan_set_text(lan_code or t("local.connect_unavailable"))
@@ -964,7 +973,8 @@ class LocalServiceTab:
         threading.Thread(target=self._fetch_nat_connect_async, daemon=True).start()
 
     def _refresh_lan_status(self):
-        """局域网直连状态：主世界在跑就「已就绪」。"""
+        """局域网直连状态：主世界在跑就「已就绪」，否则「未就绪」+ 原因。
+        状态没变就跳过（_poll 每 150ms 调一次，重复重画会闪）。"""
         cluster = self._get_cluster()
         ready = False
         if cluster:
@@ -972,8 +982,15 @@ class LocalServiceTab:
             if master:
                 proc = self.manager.get(cluster.path, master.name)
                 ready = proc is not None and proc.status in _RUNNING_LIKE
-        self._lan_set_status(t("local.connect_ready") if ready else "",
-                             theme.ACCENT if ready else None)
+        key = "ready" if ready else "not_ready"
+        if key == self._lan_status_key:
+            return
+        self._lan_status_key = key
+        if ready:
+            self._lan_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
+        else:
+            self._lan_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
+                                 t("local.lan_not_ready_reason"))
 
     def _fetch_nat_connect_async(self):
         """后台线程查内网穿透映射，拿到后回主线程更新标签。"""
@@ -988,11 +1005,37 @@ class LocalServiceTab:
 
     def _apply_nat_result(self, text, mapped):
         # 映射成功只是樱花后台有隧道记录；要 frpc 本地客户端也在跑才算真正
-        # 就绪（frpc 被隔离/删除时，映射在但流量不通）。
-        ready = mapped and self._nat_frpc_ready()
+        # 就绪（frpc 被隔离/删除时，映射在但流量不通）。未就绪分两种原因，
+        # 悬停状态列能看到具体是哪种。
         self._nat_set_text(text)
-        self._nat_set_status(t("local.connect_ready") if ready else "",
-                             theme.ACCENT if ready else None)
+        if mapped and self._nat_frpc_ready():
+            self._nat_status_key = "ready"
+            self._nat_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
+        elif not mapped:
+            self._nat_status_key = "nomap"
+            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
+                                 t("local.nat_not_mapped"))
+        else:
+            self._nat_status_key = "nofrpc"
+            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
+                                 t("local.nat_frpc_not_ready_reason"))
+
+    def _refresh_nat_status(self):
+        """轮询时刷新内网穿透状态——只重算 frpc 是否就绪（本地进程，同步快），
+        不重新查映射（查樱花 API 走网络，放切页签/切存档那次异步刷新里）。
+        映射还没查到（_nat_code 仍为 None）时不动作，等异步结果回填。状态
+        没变就跳过，避免 poll 每 150ms 重复重画。"""
+        if self._nat_code is None:
+            return
+        key = "ready" if self._nat_frpc_ready() else "nofrpc"
+        if key == self._nat_status_key:
+            return
+        self._nat_status_key = key
+        if key == "ready":
+            self._nat_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
+        else:
+            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
+                                 t("local.nat_frpc_not_ready_reason"))
 
     def _nat_frpc_ready(self) -> bool:
         """内网穿透的 frpc 客户端是否在跑（樱花映射或自建 frps 任一）。"""
@@ -1878,6 +1921,12 @@ class LocalServiceTab:
         self._update_start_lock_state(self._get_cluster())
         self._update_stop_all_btn_state(self._get_cluster())
         self._update_luajit_row(self._get_cluster())
+        # 直连代码状态随服务器/frpc 进程启停实时刷新——局域网查主世界进程、
+        # 内网穿透查 frpc，都是本地同步判断；只在服务器存档可见时刷新（本地
+        # 存档不显示这块，省掉无谓重画）。
+        if self._connect_row.winfo_ismapped():
+            self._refresh_lan_status()
+            self._refresh_nat_status()
         self._maybe_periodic_backup()
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 

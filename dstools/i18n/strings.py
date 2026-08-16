@@ -634,6 +634,9 @@ STRINGS = {
         "local.connect_unavailable": "未配置",
         "local.connect_loading": "获取中…",
         "local.connect_ready": "已就绪",
+        "local.connect_not_ready": "未就绪",
+        "local.lan_not_ready_reason": "主世界服务器尚未启动，启动后即可用此代码直连。",
+        "local.nat_frpc_not_ready_reason": "映射已建立，但 frpc 客户端未启动（可能被安全软件隔离或删除）。",
         "local.nat_not_mapped_short": "未映射",
 
         # 系统托盘
@@ -1307,6 +1310,9 @@ STRINGS = {
         "local.connect_unavailable": "Not configured",
         "local.connect_loading": "Loading…",
         "local.connect_ready": "Ready",
+        "local.connect_not_ready": "Not ready",
+        "local.lan_not_ready_reason": "The master shard is not running yet. Start it to enable this direct connection.",
+        "local.nat_frpc_not_ready_reason": "The mapping exists, but the frpc client is not running (it may have been quarantined or deleted).",
         "local.nat_not_mapped_short": "Not mapped",
 
         # 系统托盘
