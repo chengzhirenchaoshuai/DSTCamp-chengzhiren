@@ -117,6 +117,7 @@ class WorldSettingsTab:
         self._dirty = False
         self._rules_by_cat = {}; self._rules_cats = []
         self._gen_by_cat = {}; self._gen_cats = []
+        self._rules_rendered = False; self._gen_rendered = False  # 懒渲染标记
         self._flash_key = None; self._flash_after_id = None
         # 不在这里现场 on_cluster_changed()——那会同步渲染两大张 PIL 面板
         # （世界规则/世界生成），是这个页签最重的部分。这个页签在
@@ -132,6 +133,14 @@ class WorldSettingsTab:
         (self._rules_panel.frame if self._sub_tab_key == "rules" else self._gen_panel.frame).pack_forget()
         self._sub_tab_key = key
         (self._rules_panel.frame if key == "rules" else self._gen_panel.frame).pack(fill=tk.BOTH, expand=True)
+        # 懒渲染：另一个子页签在 _load_world 里没渲染（只渲染当前页），首次
+        # 切过去时补渲染一次（未渲染才做，避免重复）。
+        if key == "rules":
+            if not self._rules_rendered:
+                self._render_rules(); self._rules_rendered = True
+        else:
+            if not self._gen_rendered:
+                self._render_gen(); self._gen_rendered = True
 
     def _get_cluster(self):
         return self.app.get_selected_cluster()
@@ -171,6 +180,7 @@ class WorldSettingsTab:
         self._wl_preset = None; self._wl_path = None
         self._rules_by_cat = {}; self._rules_cats = []
         self._gen_by_cat = {}; self._gen_cats = []
+        self._rules_rendered = False; self._gen_rendered = False
         self._flash_key = None
         self._mod_settings = {}
         self._mod_categories = []
@@ -253,11 +263,13 @@ class WorldSettingsTab:
                 )
                 self._rules_by_cat = view_model.rules_by_category
                 self._rules_cats = view_model.rule_categories
-                self._render_rules()
-
                 self._gen_by_cat = view_model.generation_by_category
                 self._gen_cats = view_model.generation_categories
-                self._render_gen()
+                # 只渲染当前可见的子页签，另一个等切过去再懒渲染（省一半重活）。
+                if self._sub_tab_key == "rules":
+                    self._render_rules(); self._rules_rendered = True
+                else:
+                    self._render_gen(); self._gen_rendered = True
 
                 self._sub_tab_bar.relabel({
                     "rules": self._rules_tab_label(sum(len(v) for v in self._rules_by_cat.values())),

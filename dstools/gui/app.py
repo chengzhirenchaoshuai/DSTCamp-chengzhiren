@@ -549,9 +549,15 @@ class DSToolsApp:
         from dstools.shared.gui import custom_titlebar
 
         if self._is_pseudo_maximized:
-            if self._pre_maximize_geom is not None:
-                x, y, w, h = self._pre_maximize_geom
-                self.root.geometry(f"{w}x{h}+{x}+{y}")
+            # 还原同样是一次瞬时 reflow——先清空表面背景、再重建，避免
+            # geometry() 后各 BgFrame 拿旧共享图在新坐标上裁出割裂。
+            self._begin_bg_drag_suppress()
+            try:
+                if self._pre_maximize_geom is not None:
+                    x, y, w, h = self._pre_maximize_geom
+                    self.root.geometry(f"{w}x{h}+{x}+{y}")
+            finally:
+                self._end_bg_drag_suppress()
             self._is_pseudo_maximized = False
             self._pre_maximize_geom = None
             return
@@ -572,7 +578,11 @@ class DSToolsApp:
 
         x = left + max(0, (avail_w - w) // 2)
         y = top + max(0, (avail_h - h) // 2)
-        self.root.geometry(f"{w}x{h}+{x}+{y}")
+        self._begin_bg_drag_suppress()
+        try:
+            self.root.geometry(f"{w}x{h}+{x}+{y}")
+        finally:
+            self._end_bg_drag_suppress()
         self._is_pseudo_maximized = True
 
     def _build_menu(self):
@@ -1030,26 +1040,39 @@ class DSToolsApp:
         img = self._get_bg_slice_image(widget, w, h)
         return ImageTk.PhotoImage(img) if img is not None else None
 
-    def _for_each_alive_bg_surface(self, fn) -> None:
+    def _for_each_alive_bg_surface(self, fn, visible_only: bool = False) -> None:
         """遍历 self._bg_surfaces（弱引用列表），对每个还活着的表面调用
         fn(surf)，顺带把已经被销毁的控件对应的弱引用摘掉。
         _refresh_all_bg_surfaces()/_begin_bg_drag_suppress() 共用这段清
-        理逻辑，避免两处各自维护一份一样的存活性判断。"""
+        理逻辑，避免两处各自维护一份一样的存活性判断。
+
+        visible_only=True 时在遍历层就滤掉不可见（未映射）的表面——
+        render_now() 内部本来也会 skip，但这里提前滤掉省掉逐个
+        winfo_ismapped()+early return 的无谓调用；隐藏页签（grid_remove/
+        Notebook.hide）的表面刷了也没人看得到。"""
         alive = []
         for ref in self._bg_surfaces:
             surf = ref()
             if surf is None:
                 continue
             try:
-                if surf.winfo_exists():
-                    alive.append(ref)
-                    fn(surf)
+                if not surf.winfo_exists():
+                    continue
+                alive.append(ref)
+                if visible_only and not surf.winfo_ismapped():
+                    continue
+                fn(surf)
             except tk.TclError:
                 pass
         self._bg_surfaces = alive
 
-    def _refresh_all_bg_surfaces(self) -> None:
-        self._for_each_alive_bg_surface(lambda surf: surf.render_now())
+    def _refresh_all_bg_surfaces(self, throttle: bool = False) -> None:
+        """刷新所有可见背景表面。throttle=True 时走 16ms 节流路径（_request_
+        render），供"背景图弹窗拖不透明度滑块"这种高频调用——每 60ms 触发
+        一次全量同步 render_now（250ms+）是拖滑块卡顿的瓶颈，改成节流让主
+        线程不阻塞，预览依旧流畅。"""
+        fn = (lambda surf: surf._request_render()) if throttle else (lambda surf: surf.render_now())
+        self._for_each_alive_bg_surface(fn, visible_only=True)
 
     def refresh_bg_surface(self, surface) -> None:
         """重建共享背景后只刷新指定的可见页面。"""
@@ -1062,12 +1085,13 @@ class DSToolsApp:
         except tk.TclError:
             pass
 
-    def _force_refresh_bg_now(self) -> None:
+    def _force_refresh_bg_now(self, throttle: bool = False) -> None:
         """自定义背景图弹窗（选文件/调不透明度/清除）改完设置后调用——
-        跟"窗口停顿后"是两回事，这里要立刻生效，不等 150ms。"""
+        跟"窗口停顿后"是两回事，这里要立刻生效，不等 150ms。throttle=True
+        时表面刷新走 16ms 节流（拖滑块这种高频场景用），重建共享图仍是同步。"""
         self._shared_bg_key = None  # 强制下一次 _rebuild_shared_bg_image() 真的重算
         self._rebuild_shared_bg_image()
-        self._refresh_all_bg_surfaces()
+        self._refresh_all_bg_surfaces(throttle=throttle)
 
     def _show_about(self) -> None:
         """自己搭一个卡片样式的"关于"弹窗，而不是直接复用

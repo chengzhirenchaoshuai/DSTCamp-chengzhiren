@@ -137,11 +137,12 @@ class BackgroundImageDialog:
         value = self._opacity_pending
         self._opacity_pending = None
         self._set_custom_bg_opacity(value)
-        self._refresh_custom_bg_surfaces()
+        self._refresh_custom_bg_surfaces(throttle=True)
 
-    def _refresh_custom_bg_surfaces(self) -> None:
+    def _refresh_custom_bg_surfaces(self, throttle: bool = False) -> None:
         """选完图/调完不透明度/清除背景图，都要立刻生效——跟"窗口停顿
         后"是两回事（那是给拖拽缩放用的节流），这里调 app 的
         _force_refresh_bg_now() 立刻重新生成共享大图并通知所有登记过的
-        BgFrame（见 gui/bg_frame.py）重画，不等 150ms。"""
-        self.app._force_refresh_bg_now()
+        BgFrame（见 gui/bg_frame.py）重画，不等 150ms。throttle=True 时
+        表面刷新走 16ms 节流，供拖不透明度滑块这种高频调用。"""
+        self.app._force_refresh_bg_now(throttle=throttle)
