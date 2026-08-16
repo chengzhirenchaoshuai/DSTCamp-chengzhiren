@@ -211,6 +211,7 @@ STRINGS = {
         "dlg.remove_confirm": "确认从配置中移除 {mod_id} ?",
         "dlg.confirm_btn": "确认",
         "dlg.cancel_btn": "取消",
+        "dlg.close_btn": "关闭",
         "dlg.yes_btn": "是",
         "dlg.no_btn": "否",
 
@@ -883,6 +884,7 @@ STRINGS = {
         "dlg.remove_confirm": "Remove {mod_id} from configuration?",
         "dlg.confirm_btn": "Confirm",
         "dlg.cancel_btn": "Cancel",
+        "dlg.close_btn": "Close",
         "dlg.yes_btn": "Yes",
         "dlg.no_btn": "No",
 

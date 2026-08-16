@@ -1047,7 +1047,7 @@ class ModManagerTab:
         # 滚动主体：内容放 canvas，右侧垂直滚动条
         body = tk.Frame(win, bg=theme.CARD_BG)
         body.pack(fill=tk.BOTH, expand=True)
-        canvas = tk.Canvas(body, width=520, height=420, highlightthickness=0,
+        canvas = tk.Canvas(body, width=520, height=520, highlightthickness=0,
                            bd=0, bg=theme.CARD_BG)
         vbar = ttk.Scrollbar(body, orient=tk.VERTICAL, command=canvas.yview)
         canvas.configure(yscrollcommand=vbar.set)
@@ -1068,14 +1068,27 @@ class ModManagerTab:
         content.bind("<Configure>", _sync_scrollregion)
         canvas.bind("<Configure>", _sync_content_width)
 
-        # Windows 滚轮 delta 是 ±120 的倍数、向上为正。绑定到顶层窗口，事件
-        # 沿 bindtags 冒泡，鼠标停在内容里任意子控件上也能滚动。
-        def _on_wheel(e):
-            canvas.yview_scroll(int(-e.delta / 120), "units")
+        # 滚轮：显式 yscrollincrement 定步长（默认一个 unit 约 1px，几乎感
+        # 觉不到在动）；内容不满一屏（bbox 高度 <= canvas 高度）时 return
+        # "break" 锁定顶部不滚动，否则内容较少时滚轮会把列表顶出空白。只
+        # 绑 canvas/content 自己不够——鼠标停在某个 mod 行的 Label/按钮上
+        # 时事件目标是那个子控件、不会冒泡，所以递归绑到每个子控件。
+        canvas.configure(yscrollincrement=24)
 
-        win.bind("<MouseWheel>", _on_wheel)
-        win.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
-        win.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
+        def _on_wheel(e):
+            bbox = canvas.bbox("all")
+            if not bbox or bbox[3] - bbox[1] <= canvas.winfo_height():
+                return "break"
+            canvas.yview_scroll(int(-3 * (e.delta / 120)), "units")
+            return "break"
+
+        def _bind_wheel(widget):
+            widget.bind("<MouseWheel>", _on_wheel)
+            for child in widget.winfo_children():
+                _bind_wheel(child)
+
+        _bind_wheel(content)
+        canvas.bind("<MouseWheel>", _on_wheel)
 
         icon_dir = bundled_resource_dir() / "icons" / "recommended"
         icon_size = 48
@@ -1115,7 +1128,7 @@ class ModManagerTab:
             tk.Label(text_col, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=400,
                      bg=theme.CARD_BG, fg=theme.TEXT_MUTED).pack(fill=tk.X, pady=(3, 0))
 
-        ttk.Button(win, text=t("dlg.close"), command=win.destroy).pack(pady=16)
+        ttk.Button(win, text=t("dlg.close_btn"), command=win.destroy).pack(pady=16)
         center_over_parent(win, self.frame.winfo_toplevel())
 
     def _on_copy_id(self, workshop_id):
