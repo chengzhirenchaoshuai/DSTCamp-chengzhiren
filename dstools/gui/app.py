@@ -735,6 +735,9 @@ class DSToolsApp:
         # 的 path 直接匹配回同一个存档，同时把菜单文字刷新成新语言。
         self._populate_global_cluster_combo(preserve=True)
         for tab in self._tabs: tab.refresh_language(); tab.refresh()
+        entry = getattr(self.save_tab, "_creation_entry", None)
+        if entry is not None:
+            entry.refresh_language()
 
     def _switch_theme(self, name: str) -> None:
         """颜色主题切换立即生效、不需要重启——具体的"重新套用样式+逐 tab
@@ -811,6 +814,11 @@ class DSToolsApp:
                 tab.refresh()
             else:
                 self._stale_cluster_tabs.add(key)
+        # 已打开的"创建服务器存档"向导是独立 Toplevel，不在 6 个主页签里，
+        # 单独通知它跟随主题（否则向导内 BgFrame 停在旧主题色）。
+        entry = getattr(self.save_tab, "_creation_entry", None)
+        if entry is not None:
+            entry.retheme()
 
     def _finish_visual_refresh(self) -> None:
         """颜色主题/字体字重切换共用的收尾——整个切换过程用
@@ -930,6 +938,11 @@ class DSToolsApp:
         （按最终尺寸整体重算一次共享大图 + 刷新所有表面），只是不必再
         等 150ms，拖拽一结束立刻结算。"""
         self._bg_drag_suppressed = False
+        # root.geometry() 之后 winfo_width/winfo_rootx 可能还是旧值，不先
+        # update_idletasks() 强制几何排布，会拿旧尺寸重建共享图、按旧坐
+        # 标裁每个表面，产生一帧错位/割裂（跟 _finish_visual_refresh 里
+        # 先 update_idletasks 再刷是同一个原因）。
+        self.root.update_idletasks()
         self._rebuild_shared_bg_image()
         self._refresh_all_bg_surfaces()
 

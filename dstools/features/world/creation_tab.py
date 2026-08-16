@@ -103,16 +103,18 @@ class WorldCreationTab:
 
     def _build(self):
         top = BgFrame(self.frame, self.app, bg=theme.BG_SOFT); top.pack(fill=tk.X, padx=12, pady=8)
-        make_toolbar_label(
-            top, self.app, lambda: "存档名称", bg=theme.BG_SOFT,
-        ).pack(side=tk.LEFT)
+        self._name_label = make_toolbar_label(
+            top, self.app, lambda: t("world.creation_name_label"), bg=theme.BG_SOFT,
+        )
+        self._name_label.pack(side=tk.LEFT)
         self.name_var = tk.StringVar(value="Cluster_New")
         ttk.Entry(top, textvariable=self.name_var, width=18).pack(side=tk.LEFT, padx=(5, 14))
         # 使用自绘页签和 BgFrame 内容区，避免 ttk.Notebook 的不透明主题背景遮住窗口背景图。
         self._sub_tab_key = "server"
         self._sub_tab_bar = PillTabBar(
             self.frame,
-            tabs=[("server", "服务器配置"), ("world", "世界设置"), ("mod", "Mod 管理")],
+            tabs=[("server", t("world.creation_server_tab")), ("world", t("world.creation_world_tab")),
+                  ("mod", t("world.creation_mod_tab"))],
             on_select=self._on_creation_sub_tab_select,
             app=self.app,
             bg=theme.BG_SOFT,
@@ -130,7 +132,7 @@ class WorldCreationTab:
         bottom = BgFrame(self.frame, self.app, bg=theme.BG_SOFT); bottom.pack(fill=tk.X, padx=12, pady=8)
         self.status_var = tk.StringVar(value="")
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT)
-        self._create_btn = ttk.Button(bottom, text="创建存档", command=self._create)
+        self._create_btn = ttk.Button(bottom, text=t("world.creation_create_btn"), command=self._create)
         self._create_btn.pack(side=tk.RIGHT)
         # 默认页签是服务器配置，只初始化当前页；Mod 扫描和世界模板在
         # 用户真正切过去时再加载，避免打开向导也一次性执行全部重活。
@@ -195,14 +197,14 @@ class WorldCreationTab:
         """构造与外层“世界设置”一致的世界选择、说明和双子页签。"""
         toolbar = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
         toolbar.pack(fill=tk.X, padx=12, pady=(10, 6))
-        make_toolbar_label(toolbar, self.app, lambda: "世界").pack(side=tk.LEFT)
+        make_toolbar_label(toolbar, self.app, lambda: t("world.creation_world_label")).pack(side=tk.LEFT)
         self.shard_var = tk.StringVar(value=MASTER_SHARD)
         self.shard_combo = MenuCombo(toolbar, textvariable=self.shard_var, width=14)
         self.shard_combo["values"] = (MASTER_SHARD, CAVES_SHARD)
         self.shard_combo.current(0)
         self.shard_combo.pack(side=tk.LEFT, padx=(5, 16))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_changed)
-        make_toolbar_label(toolbar, self.app, lambda: "选择世界").pack(side=tk.LEFT)
+        make_toolbar_label(toolbar, self.app, lambda: t("world.creation_select_world")).pack(side=tk.LEFT)
         self.location_var = tk.StringVar()
         self.location_combo = MenuCombo(toolbar, textvariable=self.location_var, width=16)
         self.location_combo.pack(side=tk.LEFT, padx=5)
@@ -219,7 +221,7 @@ class WorldCreationTab:
         self._world_sub_tab_key = "rules"
         self._world_sub_tab_bar = PillTabBar(
             self._world_frame,
-            tabs=[("rules", "世界规则"), ("generation", "世界生成")],
+            tabs=[("rules", t("world.creation_rules_tab")), ("generation", t("world.creation_generation_tab"))],
             on_select=self._on_world_sub_tab_select,
             app=self.app,
             bg=theme.CARD_BG,
@@ -274,7 +276,7 @@ class WorldCreationTab:
     def _build_mod_panel(self):
         filter_row = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         filter_row.pack(fill=tk.X, padx=12, pady=(10, 4))
-        make_toolbar_label(filter_row, self.app, lambda: "搜索 Mod").pack(side=tk.LEFT)
+        make_toolbar_label(filter_row, self.app, lambda: t("world.creation_search_mod")).pack(side=tk.LEFT)
         self._mod_filter_var = tk.StringVar()
         self._mod_filter_var.trace_add("write", self._on_mod_filter_changed)
         ttk.Entry(filter_row, textvariable=self._mod_filter_var, width=30).pack(side=tk.LEFT, padx=(5, 10))
@@ -288,7 +290,7 @@ class WorldCreationTab:
             self._mod_show_var,
             self._render_list,
         )
-        self._mod_scan_btn = ttk.Button(filter_row, text="重新扫描", command=self._scan_installed_mods)
+        self._mod_scan_btn = ttk.Button(filter_row, text=t("world.creation_rescan"), command=self._scan_installed_mods)
         self._mod_scan_btn.pack(side=tk.RIGHT, padx=(6, 0))
         self._mod_scan_status = tk.StringVar(value="正在读取已安装 Mod…")
         make_transparent_status(filter_row, self.app, self._mod_scan_status, width=220)
@@ -301,8 +303,8 @@ class WorldCreationTab:
         # 已删掉，这两个按钮挪到 mod 列表下方靠右）。
         preset_row = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         preset_row.pack(fill=tk.X, padx=12, pady=(4, 10))
-        ttk.Button(preset_row, text="保存为配置集", command=self._save_creation_preset).pack(side=tk.RIGHT)
-        ttk.Button(preset_row, text="载入配置集", command=self._open_creation_preset_dialog).pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(preset_row, text=t("world.creation_save_preset"), command=self._save_creation_preset).pack(side=tk.RIGHT)
+        ttk.Button(preset_row, text=t("world.creation_load_preset"), command=self._open_creation_preset_dialog).pack(side=tk.RIGHT, padx=(0, 6))
         self._build_mod_list()
 
     def _reload_template(self, apply_profile_defaults: bool = False):
@@ -941,8 +943,36 @@ class WorldCreationTab:
 
     def refresh(self): pass
     def on_cluster_changed(self, *_args): pass
-    def refresh_language(self): pass
-    def retheme(self): pass
+
+    def retheme(self):
+        """主题切换时调用——向导内所有 BgFrame 的 bg 是构造时焊死的，需要
+        递归重刷（BgFrame.apply_theme 不递归）。无参 apply_theme 会按构造
+        时记录的主题色键取新值（见 bg_frame.py 的 _bg_key 机制）。"""
+        def _retheme_recursive(widget):
+            if isinstance(widget, BgFrame):
+                widget.apply_theme()
+            for child in widget.winfo_children():
+                _retheme_recursive(child)
+        _retheme_recursive(self.frame)
+        self._sub_tab_bar.apply_theme()
+
+    def refresh_language(self):
+        """语言切换时调用——更新构造时建一次的药丸/按钮文字。持久文案已改
+        走 t()，这里逐个重取；懒建面板里的文字在首次切入时用新语言生成。"""
+        self._sub_tab_bar.relabel({
+            "server": t("world.creation_server_tab"),
+            "world": t("world.creation_world_tab"),
+            "mod": t("world.creation_mod_tab"),
+        })
+        self._name_label.redraw()
+        self._create_btn.configure(text=t("world.creation_create_btn"))
+        if getattr(self, "_world_sub_tab_bar", None) is not None:
+            self._world_sub_tab_bar.relabel({
+                "rules": t("world.creation_rules_tab"),
+                "generation": t("world.creation_generation_tab"),
+            })
+        if self._mod_scan_btn is not None:
+            self._mod_scan_btn.configure(text=t("world.creation_rescan"))
 
     def dispose(self) -> None:
         """关闭独立向导时取消过期回调并清理临时服务器配置草稿。"""

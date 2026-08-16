@@ -202,7 +202,11 @@ class SakuraTab:
         label = BgFrame(parent, self.app, bg=theme.CARD_BG)
         label.configure(height=label_h, width=f.measure(text) + 4)
 
-        def _redraw():
+        def _redraw(new_text=None):
+            nonlocal text
+            if new_text is not None:
+                text = new_text
+                label.configure(width=f.measure(text) + 4)
             label.delete("label_text")
             label.create_text(2, label_h / 2, text=text, anchor=tk.W,
                                fill=fg or theme.TEXT, font=f, tags="label_text")
@@ -278,9 +282,11 @@ class SakuraTab:
                                        highlightbackground=theme.CARD_BORDER, highlightcolor=theme.ACCENT)
         self._token_display.pack(side=tk.LEFT, padx=8)
         self._token_display.configure(state=tk.DISABLED)
-        ttk.Button(row1, text=t("token.change"), command=self._change_token).pack(side=tk.LEFT, padx=2)
-        ttk.Button(row1, text=t("sakura.open_dashboard_btn"),
-                   command=lambda: webbrowser.open("https://www.natfrp.com/user/")).pack(side=tk.LEFT, padx=2)
+        self._token_change_btn = ttk.Button(row1, text=t("token.change"), command=self._change_token)
+        self._token_change_btn.pack(side=tk.LEFT, padx=2)
+        self._open_dashboard_btn = ttk.Button(row1, text=t("sakura.open_dashboard_btn"),
+                   command=lambda: webbrowser.open("https://www.natfrp.com/user/"))
+        self._open_dashboard_btn.pack(side=tk.LEFT, padx=2)
 
         # 节点行——节点数量多（几十上百个），下拉框展开会长得很难用，改
         # 成一个按钮，点击弹一个多列网格的选择窗口（_NodeSelectDialog）。
@@ -290,7 +296,8 @@ class SakuraTab:
         self._node_display_var = tk.StringVar(value=t("sakura.node_none_selected"))
         ttk.Button(row2, textvariable=self._node_display_var, command=self._open_node_picker).pack(
             side=tk.LEFT, padx=8)
-        ttk.Button(row2, text=t("sakura.node_refresh_btn"), command=self._reload_async).pack(side=tk.LEFT, padx=2)
+        self._node_refresh_btn = ttk.Button(row2, text=t("sakura.node_refresh_btn"), command=self._reload_async)
+        self._node_refresh_btn.pack(side=tk.LEFT, padx=2)
 
         # 账号信息卡片——照樱花官网"账号信息"卡片的样式：每列上面一行小
         # 字标题、下面一行大字数值。"隧道上限"跟"已用隧道"应用户要求拆
@@ -498,6 +505,29 @@ class SakuraTab:
 
     def refresh(self):
         self.on_cluster_changed()
+
+    def refresh_language(self):
+        """语言切换时调用——只更新构造时建一次、不会被 refresh() 重建的
+        常驻标签/按钮文字；动态内容（世界行、账号数值、frpc 状态）交给
+        紧随的 refresh() 或切页签时的 on_cluster_changed()。"""
+        self._sub_tab_bar.relabel({
+            "sakura": t("selfhost.tab_sakura"),
+            "selfhost": t("selfhost.tab_selfhost"),
+        })
+        self._token_label.redraw(t("sakura.token_label"))
+        self._token_change_btn.configure(text=t("token.change"))
+        self._open_dashboard_btn.configure(text=t("sakura.open_dashboard_btn"))
+        self._node_label.redraw(t("sakura.node_label"))
+        # 节点下拉是 textvariable，选中真实节点时文字是节点名；只有还停
+        # 在默认"未选节点"才需要跟着语言换。
+        if not self._selected_node_id:
+            self._node_display_var.set(t("sakura.node_none_selected"))
+        self._node_refresh_btn.configure(text=t("sakura.node_refresh_btn"))
+        for header_lbl, key in zip(self._account_header_labels,
+                                   ("sakura.account_group", "sakura.account_speed",
+                                    "sakura.account_traffic", "sakura.account_tunnels",
+                                    "sakura.account_tunnels_used")):
+            header_lbl.redraw(t(key))
 
     def retheme(self):
         """主题切换时调用——**这个方法之前完全不存在**：gui/app.py 逐 tab

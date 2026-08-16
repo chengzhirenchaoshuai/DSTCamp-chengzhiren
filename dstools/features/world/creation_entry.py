@@ -481,7 +481,9 @@ class WorldCreationEntryTab:
         self._status_var.set("创建向导已关闭，可再次打开")
 
     def refresh_language(self) -> None:
-        """主窗口切换语言时保留入口；完整向导独立维护自己的文案。"""
+        """主窗口切换语言时同步已打开的向导（入口页本身已不显示）。"""
+        if self._wizard is not None:
+            self._wizard.refresh_language()
 
     def refresh(self) -> None:
         """创建入口不依赖当前存档。"""
@@ -519,5 +521,7 @@ class WorldCreationEntryTab:
                         bold=True,
                     ),
                 )
+        if self._wizard is not None:
+            self._wizard.retheme()
         if self._window is not None and self._window.winfo_exists():
             custom_titlebar.apply_window_border(self._window)

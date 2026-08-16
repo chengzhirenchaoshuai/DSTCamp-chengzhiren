@@ -36,6 +36,9 @@ class BgFrame(tk.Canvas):
     def __init__(self, parent, app, bg: str | None = None, **kw):
         self._app = app
         self._bg_color_override = bg
+        # 记录 bg 对应的主题色键（如 "CARD_BG"），切主题后 apply_theme()
+        # 无参时按键重新取新值，而不是焊死构造那一刻的旧颜色字符串。
+        self._bg_key = theme.resolve_color_key(bg) if bg is not None else None
         super().__init__(parent, highlightthickness=0, bd=0,
                           background=self._resolve_color(), **kw)
         self._photo = None
@@ -55,9 +58,14 @@ class BgFrame(tk.Canvas):
 
     def apply_theme(self, bg: str | None = None) -> None:
         """主题切换时调用——background 色是构造时焊死的，需要显式重新
-        configure 一次（跟 CardFrame/PillTabBar 是同一条既有规则）。"""
+        configure 一次（跟 CardFrame/PillTabBar 是同一条既有规则）。无参
+        调用时按构造时记录的主题色键（_bg_key）重新取当前主题的新值，避免
+        一直停在构造那一刻的旧颜色（纯色主题下背景不跟随切换）。"""
         if bg is not None:
             self._bg_color_override = bg
+            self._bg_key = theme.resolve_color_key(bg)
+        elif self._bg_key is not None:
+            self._bg_color_override = getattr(theme, self._bg_key, None)
         self.configure(background=self._resolve_color())
         self.render_now()
 

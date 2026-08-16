@@ -399,5 +399,11 @@ class WorldSettingsTab:
         self._wl_desc_font.configure(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
         self._redraw_wl_info()
         self._sub_tab_bar.apply_theme()
+        # 已加载世界时，rules/gen 两张 PIL 位图是 theme.CARD_BG/CATEGORY_
+        # COLORS 画死的，切主题不会自己变——这里重新渲染一遍（_render_* 只
+        # 依赖 self 上已加载的状态，且内部有空 cats 兜底，安全）。
+        if self._wl_preset is not None:
+            self._render_rules()
+            self._render_gen()
 
     def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())

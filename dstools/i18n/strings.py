@@ -454,6 +454,21 @@ STRINGS = {
         "world.saved": "世界规则已保存",
         "world.local_view_only_banner": "⚠ 当前选中的是本地存档，世界设置仅支持查看，不支持修改。",
 
+        # 创建服务器存档向导
+        "world.creation_name_label": "存档名称",
+        "world.creation_server_tab": "服务器配置",
+        "world.creation_world_tab": "世界设置",
+        "world.creation_mod_tab": "Mod 管理",
+        "world.creation_create_btn": "创建存档",
+        "world.creation_world_label": "世界",
+        "world.creation_select_world": "选择世界",
+        "world.creation_rules_tab": "世界规则",
+        "world.creation_generation_tab": "世界生成",
+        "world.creation_search_mod": "搜索 Mod",
+        "world.creation_rescan": "重新扫描",
+        "world.creation_save_preset": "保存为配置集",
+        "world.creation_load_preset": "载入配置集",
+
         # Mod 信息
         "modinfo.name": "名称",
         "modinfo.author": "作者",
@@ -1129,6 +1144,21 @@ STRINGS = {
         "world.no_preset": "No world settings file found",
         "world.saved": "World rules saved",
         "world.local_view_only_banner": "⚠ The selected save is a local one -- World Settings is view-only here, editing isn't supported.",
+
+        # 创建服务器存档向导
+        "world.creation_name_label": "Save Name",
+        "world.creation_server_tab": "Server Config",
+        "world.creation_world_tab": "World Settings",
+        "world.creation_mod_tab": "Mods",
+        "world.creation_create_btn": "Create Save",
+        "world.creation_world_label": "World",
+        "world.creation_select_world": "Select World",
+        "world.creation_rules_tab": "World Rules",
+        "world.creation_generation_tab": "World Generation",
+        "world.creation_search_mod": "Search Mods",
+        "world.creation_rescan": "Rescan",
+        "world.creation_save_preset": "Save as Preset",
+        "world.creation_load_preset": "Load Preset",
 
         # Mod 信息
         "modinfo.name": "Name",

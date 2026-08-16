@@ -271,6 +271,19 @@ def set_theme(name: str) -> None:
     BANNER_TEXT = _active["BANNER_TEXT"]
     _recompute_font_sizes()
 
+
+def resolve_color_key(color: str) -> str | None:
+    """反向查一个颜色字符串是当前主题的哪个键（如 "CARD_BG"）——供 BgFrame
+    构造时记录"这个 bg 是哪个主题色键"，切主题后按键重新取新值，而不是焊死
+    构造那一刻的旧颜色字符串（否则 retheme 里的无参 apply_theme() 会一直用
+    旧主题色，导致纯色主题下背景不跟随切换）。查不到（自定义颜色/非主题色）
+    返回 None。"""
+    for key, val in _active.items():
+        if isinstance(val, str) and val == color:
+            return key
+    return None
+
+
 # 语义化（数据）颜色——local_service_tab.py 里"运行中"状态用的颜色。跟
 # 可切换调色板分开放，因为不管当前激活哪套主题，这个颜色都保持不变。
 SERVER_COLOR = "#2e7d32"

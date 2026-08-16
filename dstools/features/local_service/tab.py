@@ -2025,6 +2025,19 @@ class LocalServiceTab:
         for row in self._shard_rows.values():
             row.frame.apply_theme()
             row._redraw_text()
+        # 直连代码两行（局域网/内网穿透）也是 __init__ 建一次、refresh 不
+        # 重建的长期控件，切主题要跟着换背景色——之前漏了这两行，真机反馈
+        # 过"局域网/内网穿透直连代码"停在旧背景色。_make_connect_label 返回
+        # 的 container 内部 title/value/status 三个 BgFrame 没单独存引用，
+        # 用 winfo_children() 逐个补（BgFrame.apply_theme 不递归）。
+        self._connect_row.apply_theme(bg=theme.CARD_BG)
+        for row in (self._lan_row, self._nat_row):
+            row.apply_theme(bg=theme.CARD_BG)
+        for container in (self._lan_label, self._nat_label):
+            container.apply_theme(bg=theme.CARD_BG)
+            for child in container.winfo_children():
+                if isinstance(child, BgFrame):
+                    child.apply_theme(bg=theme.CARD_BG)
 
     def refresh(self):
         self.on_cluster_changed(self.app.get_selected_cluster())
