@@ -905,10 +905,24 @@ class DSToolsApp:
         self._bg_drag_suppressed = False  # ResizeGrips 拖拽期间为 True，见下
         self._theme_switch_suppressed = False  # _switch_theme() 执行期间为 True，见下
         self.root.bind("<Configure>", self._on_root_configure_for_bg)
+        # 从任务栏恢复窗口时 Tk 会分层 expose 重绘（父容器先、子控件后），
+        # 中间未绘制的区域透明露出桌面背景。绑定 <Map>，恢复时强制一次同
+        # 步绘制，让所有内容一次性出现，避免"分层加载"的观感。
+        self.root.bind("<Map>", self._on_root_map)
 
     def _register_bg_surface(self, surface) -> None:
         """BgFrame 构造时调用，登记进来以便窗口停顿后统一收到重画通知。"""
         self._bg_surfaces.append(weakref.ref(surface))
+
+    def _on_root_map(self, event) -> None:
+        """窗口从 Unmap 变 Map（从任务栏恢复/首次显示）时，强制一次同步
+        绘制所有内容——Tk 对 overrideredirect 窗口的恢复是分层 expose 重
+        绘（父容器先、子控件后），中间未绘制的区域会短暂透明露出桌面背
+        景。这里 update 一次让所有层一次性出现，消除"分层加载"观感。"""
+        if event.widget is not self.root:
+            return
+        self.root.update_idletasks()
+        self.root.update()
 
     def _on_root_configure_for_bg(self, event) -> None:
         # <Configure> 只在事件的 widget 就是 root 自己时才处理——子控件
