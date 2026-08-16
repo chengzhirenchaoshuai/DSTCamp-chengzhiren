@@ -1090,6 +1090,7 @@ class SakuraTab:
             dlg.show_info(self.app.root, t("sakura.setup_done_title"),
                            t("sakura.setup_done_msg_restart", shards="、".join(running)))
         self._reload_async()
+        self.app.local_tab._refresh_connect_labels()
 
     def _on_enable_error(self, progress, e):
         progress.append(t("sakura.api_error", detail=str(e)))
@@ -1100,6 +1101,7 @@ class SakuraTab:
         # mapping() 本身对每个世界都会先查有没有现成隧道再决定建/复用，
         # 重新点一次"开启樱花映射"是安全的，不会把已经建好的世界重复建。
         self._reload_async()
+        self.app.local_tab._refresh_connect_labels()
 
     def _disable_mapping(self):
         cluster = self._current_cluster
@@ -1119,5 +1121,6 @@ class SakuraTab:
             for shard in cluster.shards:
                 self._frpc_pointer_path(cluster.path, shard.name).unlink(missing_ok=True)
             self.frame.after(0, self._reload_async)
+            self.frame.after(0, self.app.local_tab._refresh_connect_labels)
 
         threading.Thread(target=_worker, daemon=True).start()

@@ -1032,6 +1032,9 @@ class SelfHostFrpPage:
             dlg.show_info(self.app.root, t("selfhost.setup_done_title"),
                            t("sakura.setup_done_msg_restart", shards="、".join(running)))
         self._render_shard_rows()
+        # 直连代码在本地服务器页签左下角，映射开启后要通知它重查一次，否则
+        # 状态停在「未就绪」直到手动刷新存档。
+        self.app.local_tab._refresh_connect_labels()
 
     def _disable_mapping(self):
         cluster = self._current_cluster
@@ -1048,3 +1051,4 @@ class SelfHostFrpPage:
         # 还亮着）。这里无条件刷新，frpc 进程在后台异步停掉即可。
         self.frpc.stop(cluster.path)
         self._render_shard_rows()
+        self.app.local_tab._refresh_connect_labels()
