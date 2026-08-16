@@ -428,6 +428,12 @@ class ClusterConfigTab:
                 if width <= 4:
                     state["after_id"] = c.after(120, _settle_width)
                     return
+                # 宽度没变就跳过——否则从任务栏恢复窗口时 <Configure> 触发
+                # 这里，itemconfig+frm.configure 会连带 20~40 个字段做一次完
+                # 整 grid 重新布局，表现为"房间设置页刷新一下"。
+                if width == state.get("last_width"):
+                    return
+                state["last_width"] = width
                 c.itemconfig(wid, width=width)
                 # Canvas window 的 width 在部分 Tk 版本上不会反向更新子
                 # Canvas/Frame 的几何尺寸，显式同步控件本身才能让三列真正
