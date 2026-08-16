@@ -305,7 +305,6 @@ class ClusterConfigTab:
         # 图），5 个页面各自的内容/滚动逻辑不变，父容器换成下面的
         # self._sub_content。
         self.app = app; self.frame = BgFrame(parent, app, bg=theme.BG_SOFT); self._entries = {}
-        self._creation_transparent = bool(getattr(app, "_creation_window_mode", False))
         # "存档"选择器在顶部全局选择栏，这里不重复一份。
 
         self._sub_tabs = [

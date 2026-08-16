@@ -13,10 +13,8 @@ from dstools.shared.custom_background import get_custom_bg_path, render_backgrou
 from dstools.shared.gui import theme
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui import custom_titlebar
-from dstools.shared.gui.card_frame import CardFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.resource_paths import bundled_resource_dir
-from dstools.shared.gui.transparent_widgets import TransparentLabel
 
 
 class _CreationWindowChrome:
@@ -93,42 +91,6 @@ class _CreationWindowChrome:
             surface.render_now()
         self._bg_surfaces = alive
 
-    def refresh_bg_surfaces(self) -> None:
-        """窗口真正显示后，补刷一次所有背景表面。
-
-        创建向导是在 ``Toplevel.withdraw()`` 状态下先搭建控件的。此时
-        ``BgFrame`` 收到的首次 ``<Configure>`` 会因为窗口尚未映射而跳过
-        渲染，窗口显示后不一定还会产生第二次尺寸事件，结果就是只有
-        后续动态创建的卡片有背景图，宿主区域却退回纯色。这里在
-        ``deiconify`` 之后补刷直接挂在顶层的标题栏、宿主和缩放手柄；
-        子级表面则通过 ``BgFrame`` 自己的 ``<Map>`` 事件按需刷新。
-        """
-        try:
-            if not self.window.winfo_exists():
-                return
-        except tk.TclError:
-            # 用户可能在延迟补刷前关闭了向导；Toplevel 销毁后，
-            # Tk 仍可能把已经排队的 after 回调投递回来。
-            return
-        self.window.update_idletasks()
-        alive = []
-        for ref in self._bg_surfaces:
-            surface = ref()
-            if surface is None:
-                continue
-            try:
-                if not surface.winfo_exists():
-                    continue
-            except tk.TclError:
-                continue
-            alive.append(ref)
-            # 子级表面会在自己的 <Map>/<Configure> 中按最终尺寸节流
-            # 刷新；这里仅补刷直接挂在 Toplevel 上的宿主、标题栏和缩放
-            # 手柄，避免一次性裁剪几十张大图造成卡顿。
-            if surface.master is self.window and surface.winfo_ismapped():
-                surface.render_now()
-        self._bg_surfaces = alive
-
     def refresh_bg_surfaces_deep(self) -> None:
         """创建向导完成动态布局后，递归刷新一次所有背景切片。"""
         # 只从窗口直属的 BgFrame 开始递归，避免对每个已注册子表面重复
@@ -143,16 +105,6 @@ class _CreationWindowChrome:
                     surface.refresh_descendants()
             except tk.TclError:
                 continue
-
-    def refresh_bg_surface(self, surface) -> None:
-        """清除创建窗口自己的背景缓存后，只刷新指定页签。"""
-        try:
-            self._bg_image = None
-            self._bg_image_key = None
-            if surface is not None and surface.winfo_exists():
-                surface.refresh_descendants()
-        except tk.TclError:
-            pass
 
     def _queue_geometry_refresh(self) -> None:
         """伪最大化/还原后，在最终客户区尺寸确定时刷新一次背景切片。"""
@@ -223,116 +175,6 @@ class WorldCreationEntryTab:
         self._wizard_host = None
         self._window_chrome = None
         self._titlebar = None
-        self._open_btn = None
-        self._status_var = tk.StringVar(value="创建向导按需加载，不影响软件启动速度")
-        self._entry_cards: list[CardFrame] = []
-        self._entry_labels: list[TransparentLabel] = []
-        self._entry_heading_labels: list[TransparentLabel] = []
-        self._feature_row = None
-        self._build()
-
-    def _build(self) -> None:
-        page = BgFrame(self.frame, self.app, bg=theme.BG_SOFT)
-        page.pack(fill=tk.BOTH, expand=True, padx=24, pady=24)
-
-        # 顶部采用“说明 + 主操作”的双列布局，避免入口页只有几行散落文字。
-        hero = CardFrame(
-            page, self.app, padding=22, bg=theme.CARD_BG,
-            border=theme.CARD_BORDER, height=154,
-        )
-        hero.pack(fill=tk.X, pady=(0, 16))
-        hero.pack_propagate(False)
-        self._entry_cards.append(hero)
-        hero.body.grid_columnconfigure(0, weight=1)
-        hero.body.grid_columnconfigure(1, weight=0)
-
-        kicker = TransparentLabel(
-            hero.body, self.app, text="服务器存档向导",
-            font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
-            foreground=theme.PRIMARY, bg=theme.CARD_BG, padx=0, pady=0,
-        )
-        kicker.grid(row=0, column=0, sticky=tk.W, pady=(2, 4))
-        self._entry_labels.append(kicker)
-        title = TransparentLabel(
-            hero.body, self.app, text="创建一个全新的服务器存档",
-            font=theme.font_tuple(theme.FONT_SIZE_XL, bold=True),
-            foreground=theme.HEADING, bg=theme.CARD_BG, padx=0, pady=0,
-        )
-        title.grid(row=1, column=0, sticky=tk.W, pady=(0, 6))
-        self._entry_labels.append(title)
-        self._entry_heading_labels.append(title)
-        description = TransparentLabel(
-            hero.body, self.app,
-            text="服务器配置、Mod 管理和世界设置将在独立窗口中完成，主页启动不会提前扫描。",
-            font=theme.font_tuple(theme.FONT_SIZE_SM),
-            foreground=theme.TEXT_MUTED, bg=theme.CARD_BG, padx=0, pady=0,
-        )
-        description.grid(row=2, column=0, sticky=tk.W)
-        self._entry_labels.append(description)
-
-        action = BgFrame(hero.body, self.app, bg=theme.CARD_BG)
-        action.grid(row=0, column=1, rowspan=3, sticky=tk.E, padx=(24, 0))
-        self._open_btn = ttk.Button(action, text="打开创建向导", command=self.open_wizard, width=16)
-        self._open_btn.pack(anchor=tk.E, pady=(8, 6))
-        self._status_label = TransparentLabel(
-            action, self.app, text=self._status_var.get(),
-            font=theme.font_tuple(theme.FONT_SIZE_XS),
-            foreground=theme.TEXT_MUTED, bg=theme.CARD_BG, padx=0, pady=0,
-            anchor=tk.E,
-        )
-        # TransparentLabel 不直接接收 textvariable，使用 trace 保持入口状态同步。
-        self._status_var.trace_add("write", lambda *_: self._status_label.configure(text=self._status_var.get()))
-        self._status_label.pack(anchor=tk.E)
-        self._entry_labels.append(self._status_label)
-
-        # 普通 Frame 作为三列卡片的几何容器；CardFrame 在 Canvas 直接子级
-        # 下无法可靠获得 place/pack 的最终宽度，嵌一层后首次显示也能均分。
-        # 三个功能卡片之间的间隙必须由 BgFrame 绘制，才能透出主窗口背景图。
-        # 普通 tk.Frame 会始终填充固定的 BG_SOFT，使用自定义背景时就会形成一小块不透明区域。
-        feature_row = BgFrame(page, self.app, bg=theme.BG_SOFT, height=104)
-        self._feature_row = feature_row
-        feature_row.pack(fill=tk.X)
-        feature_row.pack_propagate(False)
-        features = (
-            ("服务器配置", "房间设置、网络参数、管理员与令牌"),
-            ("Mod 管理", "搜索、启用/禁用、配置集与图形化选项"),
-            ("世界设置", "分别调整地上与洞穴的规则和世界生成"),
-        )
-        for column, (heading, detail) in enumerate(features):
-            card = CardFrame(
-                feature_row, self.app, padding=14, bg=theme.CARD_BG,
-                border=theme.CARD_BORDER, height=104,
-            )
-            card.pack(
-                side=tk.LEFT, fill=tk.BOTH, expand=True,
-                padx=(0 if column == 0 else 6, 6 if column < 2 else 0),
-            )
-            self._entry_cards.append(card)
-            card.body.grid_columnconfigure(0, weight=1)
-            heading_label = TransparentLabel(
-                card.body, self.app, text=heading,
-                font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
-                foreground=theme.HEADING, bg=theme.CARD_BG, padx=0, pady=0,
-            )
-            heading_label.grid(row=0, column=0, sticky=tk.W, pady=(4, 8))
-            detail_label = TransparentLabel(
-                card.body, self.app, text=detail,
-                font=theme.font_tuple(theme.FONT_SIZE_SM),
-                foreground=theme.TEXT_MUTED, bg=theme.CARD_BG, padx=0, pady=0,
-            )
-            detail_label.grid(row=1, column=0, sticky=tk.W)
-            self._entry_labels.extend((heading_label, detail_label))
-            self._entry_heading_labels.append(heading_label)
-        self._feature_row.after_idle(self._layout_feature_cards)
-        self._feature_row.after(120, self._layout_feature_cards)
-
-    def _layout_feature_cards(self) -> None:
-        """在父级 Canvas 完成首次尺寸计算后重新确认三列宽度。"""
-        if self._feature_row is None or not self._feature_row.winfo_exists():
-            return
-        for card in self._entry_cards[1:]:
-            if card.winfo_exists():
-                card.pack_configure(fill=tk.BOTH, expand=True)
 
     def open_wizard(self) -> None:
         """打开或提已有创建向导窗口。"""
@@ -406,7 +248,6 @@ class WorldCreationEntryTab:
         )
         win.deiconify()
         win.focus_force()
-        self._status_var.set("创建向导已打开")
         # 独立顶层窗口要等真正显示后再改 Win32 样式，确保始终拥有任务栏按钮。
         win.after_idle(lambda w=win: self._ensure_wizard_taskbar(w))
         win.after(120, lambda w=win: self._ensure_wizard_taskbar(w))
@@ -419,11 +260,6 @@ class WorldCreationEntryTab:
         if self._window is not win or not win.winfo_exists():
             return
         custom_titlebar.ensure_taskbar_visible(win, refresh_shell=True)
-
-    def _toggle_maximize(self) -> None:
-        """保留旧调用入口，实际转发给主窗口同款的伪最大化逻辑。"""
-        if self._window_chrome is not None:
-            self._window_chrome._toggle_pseudo_maximize()
 
     def _load_wizard(self, win: tk.Toplevel, loading: ttk.Frame) -> None:
         if self._window is not win or not win.winfo_exists():
@@ -460,7 +296,6 @@ class WorldCreationEntryTab:
                     win.deiconify()
                 except tk.TclError:
                     pass
-            self._status_var.set("创建向导加载失败")
             error = BgFrame(win, self._window_chrome, bg=theme.BG_SOFT)
             error.pack(fill=tk.BOTH, expand=True, padx=32, pady=32)
             ttk.Label(error, text=f"创建向导加载失败：{exc}", wraplength=720).pack(expand=True)
@@ -478,7 +313,6 @@ class WorldCreationEntryTab:
         self._titlebar = None
         if win.winfo_exists():
             win.destroy()
-        self._status_var.set("创建向导已关闭，可再次打开")
 
     def refresh_language(self) -> None:
         """主窗口切换语言时同步已打开的向导（入口页本身已不显示）。"""
@@ -492,35 +326,9 @@ class WorldCreationEntryTab:
         """创建入口不跟随主页当前存档变化。"""
 
     def retheme(self) -> None:
-        """入口页跟随主题刷新卡片、文字和独立窗口边框。"""
+        """主题切换时同步已打开的向导（入口页本身已不再显示，只保留
+        frame 兜底上色 + 向导边框）。"""
         self.frame.apply_theme(bg=theme.BG_SOFT)
-        if self._feature_row is not None and self._feature_row.winfo_exists():
-            self._feature_row.apply_theme(bg=theme.BG_SOFT)
-        for card in self._entry_cards:
-            if card.winfo_exists():
-                card.apply_theme()
-        for label in self._entry_labels:
-            if label.winfo_exists():
-                label.apply_theme(bg=theme.CARD_BG)
-        if self._entry_labels:
-            self._entry_labels[0].configure(
-                foreground=theme.PRIMARY,
-                font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
-            )
-            for label in self._entry_labels[2:]:
-                label.configure(
-                    foreground=theme.TEXT_MUTED,
-                    font=theme.font_tuple(theme.FONT_SIZE_SM),
-                )
-            for label in self._entry_heading_labels:
-                label.configure(
-                    foreground=theme.HEADING,
-                    font=theme.font_tuple(
-                        theme.FONT_SIZE_XL if label is self._entry_heading_labels[0]
-                        else theme.FONT_SIZE_MD,
-                        bold=True,
-                    ),
-                )
         if self._wizard is not None:
             self._wizard.retheme()
         if self._window is not None and self._window.winfo_exists():

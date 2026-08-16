@@ -138,10 +138,6 @@ class WorldCreationTab:
         # 用户真正切过去时再加载，避免打开向导也一次性执行全部重活。
         self._ensure_page("server")
 
-    def _on_page_changed(self, _event=None) -> None:
-        # 兼容旧调用方；实际页签由 PillTabBar 通过 _on_creation_sub_tab_select 驱动。
-        self._ensure_page(getattr(self, "_sub_tab_key", "server"))
-
     def _on_creation_sub_tab_select(self, key: str) -> None:
         current = getattr(self, "_sub_tab_key", "server")
         if current == key:
