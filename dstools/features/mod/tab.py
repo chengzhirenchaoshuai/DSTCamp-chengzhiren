@@ -214,7 +214,15 @@ class ModManagerTab:
         # refresh_sync_button_state() 探测实际联接状态后维护，初始值只是
         # 占位，构造完成后第一次刷新之前不代表任何真实状态。
         self._sync_already_linked = False
-        self._md_sync = ttk.Button(sf, text=t("local.sync_mods_btn"), command=self._sync_mods_to_server)
+        # 固定按钮宽度：文字会在"软链接mods文件夹到服务器"和"删除mod软连接"
+        # 之间切换，前者比后者长很多，不固定宽度的话文字一变、按钮跟着变
+        # 窄，后面的"订阅常用模组"按钮和"世界:"标签会左移，观感差。按最长
+        # 文案的像素宽度换算成字符宽度固定住（中文字符约 2 个平均字符宽）。
+        _f = tkfont.nametofont("TkDefaultFont")
+        _sync_px = max(_f.measure(t("local.sync_mods_btn")), _f.measure(t("local.remove_junction_btn")))
+        _char_px = max(1, _f.measure("0"))
+        self._md_sync = ttk.Button(sf, text=t("local.sync_mods_btn"), command=self._sync_mods_to_server,
+                                   width=int(_sync_px / _char_px) + 2)
         self._md_sync.pack(side=tk.LEFT, padx=(0,10))
         self._md_recommend = ttk.Button(sf, text=t("mod.recommend_btn"), command=self._open_recommend_mods)
         self._md_recommend.pack(side=tk.LEFT, padx=(0,10))
