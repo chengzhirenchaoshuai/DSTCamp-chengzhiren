@@ -972,16 +972,22 @@ class LocalServiceTab:
         self._nat_set_status("")
         threading.Thread(target=self._fetch_nat_connect_async, daemon=True).start()
 
+    def _master_running(self) -> bool:
+        """主世界服务器进程是否在跑——局域网和内网穿透就绪都依赖它（世界
+        没跑，就算 frpc 在转发、本地也没服务监听，直连一样连不进）。"""
+        cluster = self._get_cluster()
+        if not cluster:
+            return False
+        master = self._master_shard(cluster)
+        if not master:
+            return False
+        proc = self.manager.get(cluster.path, master.name)
+        return proc is not None and proc.status in _RUNNING_LIKE
+
     def _refresh_lan_status(self):
         """局域网直连状态：主世界在跑就「已就绪」，否则「未就绪」+ 原因。
         状态没变就跳过（_poll 每 150ms 调一次，重复重画会闪）。"""
-        cluster = self._get_cluster()
-        ready = False
-        if cluster:
-            master = self._master_shard(cluster)
-            if master:
-                proc = self.manager.get(cluster.path, master.name)
-                ready = proc is not None and proc.status in _RUNNING_LIKE
+        ready = self._master_running()
         key = "ready" if ready else "not_ready"
         if key == self._lan_status_key:
             return
@@ -1004,38 +1010,49 @@ class LocalServiceTab:
         self.frame.after(0, lambda: self._apply_nat_result(text, code is not None))
 
     def _apply_nat_result(self, text, mapped):
-        # 映射成功只是樱花后台有隧道记录；要 frpc 本地客户端也在跑才算真正
-        # 就绪（frpc 被隔离/删除时，映射在但流量不通）。未就绪分两种原因，
-        # 悬停状态列能看到具体是哪种。
+        # 内网穿透要真正能连，三个条件缺一不可：映射建立、世界在跑、frpc
+        # 在转发。未就绪按这个顺序提示最缺的那个环节，悬停状态列能看到。
         self._nat_set_text(text)
-        if mapped and self._nat_frpc_ready():
-            self._nat_status_key = "ready"
-            self._nat_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
-        elif not mapped:
+        if not mapped:
             self._nat_status_key = "nomap"
             self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
                                  t("local.nat_not_mapped"))
-        else:
+        elif not self._master_running():
+            self._nat_status_key = "nostart"
+            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
+                                 t("local.lan_not_ready_reason"))
+        elif not self._nat_frpc_ready():
             self._nat_status_key = "nofrpc"
             self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
                                  t("local.nat_frpc_not_ready_reason"))
+        else:
+            self._nat_status_key = "ready"
+            self._nat_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
 
     def _refresh_nat_status(self):
-        """轮询时刷新内网穿透状态——只重算 frpc 是否就绪（本地进程，同步快），
-        不重新查映射（查樱花 API 走网络，放切页签/切存档那次异步刷新里）。
-        映射还没查到（_nat_code 仍为 None）时不动作，等异步结果回填。状态
-        没变就跳过，避免 poll 每 150ms 重复重画。"""
+        """轮询时刷新内网穿透状态——只重算世界/frpc 是否就绪（本地进程，同步
+        快），不重新查映射（查樱花 API 走网络，放切页签/切存档那次异步刷新
+        里）。映射还没查到（_nat_code 仍为 None）时不动作，等异步结果回填。
+        状态没变就跳过，避免 poll 每 150ms 重复重画。"""
         if self._nat_code is None:
             return
-        key = "ready" if self._nat_frpc_ready() else "nofrpc"
+        if not self._master_running():
+            key = "nostart"
+        elif not self._nat_frpc_ready():
+            key = "nofrpc"
+        else:
+            key = "ready"
         if key == self._nat_status_key:
             return
         self._nat_status_key = key
-        if key == "ready":
-            self._nat_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
-        else:
+        if key == "nostart":
+            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
+                                 t("local.lan_not_ready_reason"))
+        elif key == "nofrpc":
             self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
                                  t("local.nat_frpc_not_ready_reason"))
+        else:
+            self._nat_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
 
     def _nat_frpc_ready(self) -> bool:
         """内网穿透的 frpc 客户端是否在跑（樱花映射或自建 frps 任一）。"""
