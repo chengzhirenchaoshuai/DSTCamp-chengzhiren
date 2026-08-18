@@ -3,7 +3,7 @@
 两者需要的目录性质完全不同：
 - 只读素材（世界设置图标、UI 箭头图标、官方 ktech.exe 转换工具）源码
   运行时就在仓库里，PyInstaller 打包后（--onedir）落在 exe 旁边的
-  `_internal/`（即 `sys._MEIPASS`），只读用途完全够用。
+  `data/`（即 `sys._MEIPASS`，见 scripts/build_exe.py），只读用途完全够用。
 - 运行时缓存（mod 图标、角色头像，见 features/mod/icons.py、
   features/save_browser/character_icons.py）如果也放进 `sys._MEIPASS`，写下去的文件会
   跟分发目录混在一起，且 exe 目录可能只读——缓存应该放在一个跟程序目录
@@ -26,10 +26,9 @@ def bundled_resource_dir() -> Path:
 
 def exe_dir() -> Path:
     """当前 exe 所在目录——打包后是 exe 文件本身所在的目录（跟
-    bundled_resource_dir() 的 sys._MEIPASS 不一样，那是每次启动都会
-    换掉的临时解压目录，这里是 exe 文件真正落盘的位置，可以放持久化
-    数据）；源码直跑时退回项目根目录，跟 bundled_resource_dir() 的
-    开发态分支保持一致。给"缓存目录改到 exe 所在目录"这个可选设置用。
+    bundled_resource_dir() 的 sys._MEIPASS 不一样，那是 exe 旁边的 data/
+    资源目录，这里是 exe 文件真正落盘的位置，可以放持久化数据）；源码直
+    跑时退回项目根目录。给"缓存目录改到 exe 所在目录"这个可选设置用。
     """
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
