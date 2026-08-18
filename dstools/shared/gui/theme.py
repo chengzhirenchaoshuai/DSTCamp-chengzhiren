@@ -41,7 +41,7 @@ from dstools.shared.gui import custom_font_loader, fonts as _fonts
 from dstools.shared.gui.font_styles import (
     FONT_FAMILY_BY_STYLE, FONT_SIZE_SCALE_BY_STYLE, FONT_STYLES, FONT_STYLE_NAMES,
 )
-from dstools.shared.resource_paths import bundled_resource_dir
+from dstools.shared.resource_paths import tool_binary_dir
 
 # ── Named palettes ───────────────────────────────────────────────────────
 # "gray"（灰色，默认）+ 四套纯色主题：mint（薄荷绿）/twilight（暮色蓝）/
@@ -156,7 +156,7 @@ THEME_NAMES = ["gray", "mint", "twilight", "campfire", "sakura"]  # 菜单里出
 for _style_def in FONT_STYLES:
     if _style_def.filename:
         custom_font_loader.load_private_font(
-            bundled_resource_dir() / "tools" / "fonts" / _style_def.filename)
+            tool_binary_dir() / "fonts" / _style_def.filename)
 
 _DEFAULT_FONT_STYLE_CHOICE = "default"
 

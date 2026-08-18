@@ -19,9 +19,11 @@ from dstools.shared.app_settings import get_settings_dir
 
 
 def bundled_resource_dir() -> Path:
-    """只读素材的根目录——源码直跑时是仓库根目录，打包后是 sys._MEIPASS。"""
+    """只读素材的根目录——源码直跑时是仓库根目录，打包后是
+    DSTCampData/data/（icons、i18n 等 --add-data 的资源都放这个子目录，见
+    scripts/build_exe.py）。"""
     if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS)
+        return Path(sys._MEIPASS) / "data"
     return Path(__file__).parent.parent.parent
 
 

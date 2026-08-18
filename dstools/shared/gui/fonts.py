@@ -13,7 +13,7 @@ from pathlib import Path
 from PIL import ImageFont
 
 from dstools.shared.gui.font_styles import FONT_STYLES
-from dstools.shared.resource_paths import bundled_resource_dir
+from dstools.shared.resource_paths import tool_binary_dir
 
 _DEFAULT_STYLE = "default"
 
@@ -29,7 +29,7 @@ _DEFAULT_CANDIDATES = [
 # None）直接用雅黑兜底链；其它样式优先用打包的对应字体，找不到（打包
 # 遗漏、文件被误删）才退回同一份雅黑兜底链，不会整个崩掉。
 _CANDIDATES_BY_STYLE: dict[str, list[str]] = {
-    d.key: ([str(bundled_resource_dir() / "tools" / "fonts" / d.filename), *_DEFAULT_CANDIDATES]
+    d.key: ([str(tool_binary_dir() / "fonts" / d.filename), *_DEFAULT_CANDIDATES]
             if d.filename else _DEFAULT_CANDIDATES)
     for d in FONT_STYLES
 }
