@@ -43,7 +43,7 @@ _NODE_GRID_COLS = 3
 
 
 def _frpc_exe_path():
-    return tool_binary_dir() / "sakura" / "sakura-frpc.exe"
+    return tool_binary_dir() / "frpc-sakura" / "sakura-frpc.exe"
 
 
 def _format_bytes_adaptive(num_bytes: float) -> str:

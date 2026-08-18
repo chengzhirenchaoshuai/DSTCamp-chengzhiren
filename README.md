@@ -8,7 +8,7 @@
 [![Downloads](https://img.shields.io/github/downloads/chengzhirenchaoshuai/DSTCamp-chengzhiren/total)](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases)
 
 **一站式的 Don't Starve Together 本地专用服务器管理工具。**
-启动/停止服务器、存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、内网穿透联机（樱花 or 自建服务器二选一）、LuaJIT 性能补丁一键安装，覆盖开服/维护的日常操作。同时支持 **Steam 版和 WeGame 版**存档，基于 Tkinter 打造的图形界面，打包成单文件 `DSTCamp-<版本号>.exe`，下载即用、免安装。
+启动/停止服务器、存档浏览与备份/回档、Mod 配置与同步、世界/服务器配置可视化编辑、内网穿透联机（樱花 or 自建服务器二选一）、LuaJIT 性能补丁一键安装，覆盖开服/维护的日常操作。同时支持 **Steam 版和 WeGame 版**存档，基于 Tkinter 打造的图形界面，以 zip 压缩包分发（解压即用、免安装）。
 
 ---
 
@@ -28,11 +28,11 @@
 pip install -e .
 ```
 
-打包成单文件 exe（可选，需要先 `pip install -e ".[build]"`）：
+打包成 zip 压缩包（可选，需要先 `pip install -e ".[build]"`）：
 
 ```bash
 python scripts/build_exe.py
-# 产物：dist/DSTCamp-<版本号>.exe
+# 产物：dist/DSTCamp-<版本号>.zip（解压后运行里面的 exe）
 ```
 
 ## 使用
@@ -85,7 +85,7 @@ tests/            # 自动化测试脚本
 icons/            # 只读素材：世界设置图标、UI 图标、app 图标、推荐模组图标
 reference/        # 开发时人工核对用的参考资料，不是运行时依赖
 tools/ktools/     # 第三方 ktech.exe（纹理转换工具）
-tools/sakura/     # 第三方 sakura-frpc.exe（樱花内网穿透客户端）
+tools/frpc-sakura/ # 第三方 sakura-frpc.exe（樱花内网穿透客户端）
 tools/frp_selfhost/ # 自建 frps 用的 frpc.exe + Linux 服务端二进制（amd64/arm64，gzip 压缩）
 tools/vcredist/   # 微软官方 VC++ 2013 运行库安装包（内置，图标转换功能依赖）
 tools/fonts/      # 内置字体样式的字体文件（OFL/MIT 协议开源字体）

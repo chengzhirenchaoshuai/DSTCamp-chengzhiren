@@ -2,14 +2,12 @@
 
 两者需要的目录性质完全不同：
 - 只读素材（世界设置图标、UI 箭头图标、官方 ktech.exe 转换工具）源码
-  运行时就在仓库里，PyInstaller `--onefile` 打包后会解压到
-  `sys._MEIPASS`——每次启动都重新解压、退出后就清掉的临时目录，只读
-  用途完全够用。
+  运行时就在仓库里，PyInstaller 打包后（--onedir）落在 exe 旁边的
+  `_internal/`（即 `sys._MEIPASS`），只读用途完全够用。
 - 运行时缓存（mod 图标、角色头像，见 features/mod/icons.py、
-  features/save_browser/character_icons.py）如果也放进 `sys._MEIPASS`，写下去的文件在
-  下次启动、_MEIPASS 换成新的临时目录后就会消失——缓存等于每次启动都
-  失效，白白重新跑一遍 ktech.exe。这类数据必须放在一个跟 exe 生命周期
-  无关、持久存在的位置，复用 app_settings.py 已经在用的
+  features/save_browser/character_icons.py）如果也放进 `sys._MEIPASS`，写下去的文件会
+  跟分发目录混在一起，且 exe 目录可能只读——缓存应该放在一个跟程序目录
+  无关、持久可写的位置，复用 app_settings.py 已经在用的
   `%APPDATA%/DSTCamp/` 这棵目录树。
 """
 
@@ -73,15 +71,14 @@ def _sync_tool_binaries(src: Path, dst: Path) -> bool:
 def tool_binary_dir() -> Path:
     """第三方工具二进制（frpc/ktech/vcredist 等）所在目录。
 
-    打包后这些二进制仍随 exe 一起分发（PyInstaller --add-data），运行时先
-    把 _MEI 临时解压目录里的 tools/ 复制到 %APPDATA%/DSTCamp/tools/ 再返
-    回——避免 Windows Defender 对"从 PyInstaller 的 _MEI 临时目录运行 exe"
-    误报（Defender 的 Wacatac.B!ml 触发点是"运行"动作，不是"复制"动作；
-    复制到固定目录再运行就不带"_MEI 里跑 exe"这个特征）。放
-    %APPDATA%/DSTCamp/tools/ 而不是 exe 旁边，是因为 %APPDATA% 一定可写
-    （exe 可能装在 Program Files 这类只读目录），且不受"缓存存放在 exe 目
-    录"那个设置开关影响。复制失败时退回 _MEI，保证功能可用。源码直跑时用
-    仓库的 tools/ 目录。
+    打包后这些二进制仍随程序一起分发（PyInstaller --add-data，--onedir 下
+    落在 exe 旁边的 _internal/tools/，不经过 %TEMP% 临时目录——这正是避免
+    frpc.exe 被 Windows Defender 按 Wacatac.B!ml 误报隔离的关键，见
+    scripts/build_exe.py 顶部说明）。运行时再把它们复制到
+    %APPDATA%/DSTCamp/tools/ 再返回：一是 %APPDATA% 一定可写（exe 可能装
+    在 Program Files 这类只读目录），二是落点统一、跟"缓存存 exe 目录"那
+    个设置开关解耦。复制失败退回 _MEIPASS 保证功能可用。源码直跑时用仓库
+    的 tools/ 目录。
     """
     if getattr(sys, "frozen", False):
         src = Path(sys._MEIPASS) / "tools"

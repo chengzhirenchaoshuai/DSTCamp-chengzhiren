@@ -1,15 +1,21 @@
-"""Build standalone Windows EXE for DSTCamp using PyInstaller.
+"""Build DSTCamp into a distributable ZIP using PyInstaller (--onedir).
+
+用 --onedir 而不是 --onefile：onefile 运行时会把整个程序（含 frpc.exe）
+解压到 %TEMP%/_MEI 临时目录，Windows Defender 会把"出现在临时目录的可执
+行文件"误报成 Wacatac.B!ml 并隔离 frpc.exe。onedir 的产物是 exe + _internal
+目录（都在 exe 旁边、不经过临时目录），再打成 zip 分发。
 
 Usage (run from the project root):
     pip install -e ".[build]"         # First time only (installs pyinstaller)
-    python scripts/build_exe.py       # Build the EXE
+    python scripts/build_exe.py       # Build the ZIP
 
 Output:
-    dist/DSTCamp-<version>.exe   # Standalone executable (no Python required)
+    dist/DSTCamp-<version>.zip  # 解压后运行里面的 DSTCamp-<version>.exe
 """
 
 import os
 import sys
+import zipfile
 from pathlib import Path
 
 
@@ -58,7 +64,7 @@ def build():
     args = [
         str(project_root / "scripts" / "run_gui.py"),  # Entry point
         f"--name={exe_name}",                     # EXE filename, e.g. DSTCamp-<version>.exe
-        "--onefile",                             # Single EXE file
+        "--onedir",                              # 目录打包（frpc 不经过 %TEMP%）
         "--windowed",                            # No console window
         "--clean",                               # Clean cache
         f"--icon={app_ico}",                     # EXE file icon (Explorer/taskbar)
@@ -95,11 +101,12 @@ def build():
         # 推荐订阅 mod 的图标（icons/recommended/），订阅引导弹窗里直接显示，
         # 随程序打包，未订阅时也能看到图标。
         f"--add-data={recommended_icons_src}{sep}icons{os.sep}recommended",
-        # 整个 tools/（含 ktools/frp_selfhost/sakura/vcredist 的 exe 二进制
-        # 和 fonts 字体）都打包进 exe。运行时 tool_binary_dir() 会先把这些
-        # 二进制从 _MEI 临时目录复制到 exe 旁边的 tools/ 再运行——避免
-        # Windows Defender 对"从 PyInstaller 的 _MEI 临时目录运行 exe"误报
-        # （误报触发点是"运行"动作，不是"复制"动作）。
+        # 整个 tools/（含 ktools/frp_selfhost/frpc-sakura/vcredist 的 exe 二
+        # 进制和 fonts 字体）都随程序打包。--onedir 下这些落在 exe 旁边的
+        # _internal/tools/，不再经过 %TEMP% 临时目录，也就不会触发 Defender
+        # 对"临时目录里的可执行文件"的 Wacatac.B!ml 误报。运行时
+        # tool_binary_dir() 仍会把它们复制到 %APPDATA%/DSTCamp/tools/（那
+        # 里一定可写），frpc.exe 最终从那运行。
         f"--add-data={tools_src}{sep}tools",
         # lupa ships several compiled Lua-version backends as separate
         # .pyd submodules (lua51/52/53/.../luajit); only lua51 is ever
@@ -111,16 +118,38 @@ def build():
         "--hidden-import=lupa.lua51",
     ]
 
-    print(f"Building {exe_name}.exe...")
+    print(f"Building {exe_name}...")
     print("  Entry: run_gui.py")
-    print(f"  Output: dist/{exe_name}.exe")
+    print(f"  Output: dist/{exe_name}.zip")
     print()
 
     PyInstaller.__main__.run(args)
 
+    # --onedir 产物是一个目录（dist/<name>/，含 exe + _internal/）。打包成
+    # zip 分发，并在 zip 里放一个置顶的"先解压再运行"说明，防止小白在压缩
+    # 包里直接双击 exe（那样 exe 找不到旁边的 _internal 会启动失败）。
+    dist_dir = project_root / "dist" / exe_name
+    zip_path = project_root / "dist" / f"{exe_name}.zip"
+    hint = (
+        "【请先解压再运行】\n\n"
+        "这是一个 zip 压缩包，里面的 DSTCamp 需要和 _internal 文件夹放在一起才能启动。\n\n"
+        "1. 右键这个 zip → 全部解压缩，解压到一个文件夹\n"
+        "2. 进入解压出来的文件夹\n"
+        f"3. 双击 {exe_name}.exe 启动\n\n"
+        "不要在压缩包里直接双击 exe（会找不到依赖文件、无法启动）。\n"
+    )
+    if zip_path.exists():
+        zip_path.unlink()
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        # 说明文件用 "0-" 前缀确保它在多数文件管理器里排在最前面
+        zf.writestr("0-先解压再运行.txt", hint)
+        for p in sorted(dist_dir.rglob("*")):
+            if p.is_file():
+                zf.write(p, p.relative_to(dist_dir))
+
     print()
-    print(f"Build complete! Find the EXE at: dist/{exe_name}.exe")
-    print("You can double-click it to launch the GUI.")
+    print(f"Build complete! Find the ZIP at: dist/{exe_name}.zip")
+    print("Extract the ZIP first, then run the EXE inside.")
 
 
 if __name__ == "__main__":
