@@ -2,9 +2,9 @@
 
 用 --onedir 而不是 --onefile：onefile 运行时会把整个程序（含 frpc.exe）
 解压到 %TEMP%/_MEI 临时目录，Windows Defender 会把"出现在临时目录的可执
-行文件"误报成 Wacatac.B!ml 并隔离 frpc.exe。onedir 的产物是 exe +
-DSTCampData 目录（都在 exe 旁边、不经过临时目录），其中 tools/ 放第三方
-二进制、data/ 放其余资源（图标/i18n），再打成 zip 分发。
+行文件"误报成 Wacatac.B!ml 并隔离 frpc.exe。onedir 的产物是 exe + data/
+（PyInstaller 资源目录）+ tools/（第三方二进制，放外层、不经过临时目录），
+再打成 zip 分发。
 
 Usage (run from the project root):
     pip install -e ".[build]"         # First time only (installs pyinstaller)
@@ -15,6 +15,7 @@ Output:
 """
 
 import os
+import shutil
 import sys
 import zipfile
 from pathlib import Path
@@ -54,7 +55,7 @@ def build():
     # On Windows, --add-data uses ; as separator, on Linux/Mac it uses :
     sep = ";" if sys.platform == "win32" else ":"
     i18n_src = project_root / "dstools" / "i18n"
-    i18n_dst = f"data{os.sep}dstools{os.sep}i18n"
+    i18n_dst = f"dstools{os.sep}i18n"
     world_icons_src = project_root / "icons" / "world"
     ui_icons_src = project_root / "icons" / "ui"
     app_icons_src = project_root / "icons" / "app"
@@ -66,7 +67,7 @@ def build():
         str(project_root / "scripts" / "run_gui.py"),  # Entry point
         f"--name={exe_name}",                     # EXE filename, e.g. DSTCamp-<version>.exe
         "--onedir",                              # 目录打包（frpc 不经过 %TEMP%）
-        "--contents-directory=DSTCampData",      # 依赖目录名（默认 _internal）
+        "--contents-directory=data",             # 资源目录名 _internal -> data
         "--windowed",                            # No console window
         "--clean",                               # Clean cache
         f"--icon={app_ico}",                     # EXE file icon (Explorer/taskbar)
@@ -97,19 +98,16 @@ def build():
         # icons/app/ ships only icon.ico + icon.png -- the source PNG used
         # to regenerate them lives in reference/ instead (dev-only asset,
         # never read at runtime, would otherwise be dead weight in the exe).
-        f"--add-data={world_icons_src}{sep}data{os.sep}icons{os.sep}world",
-        f"--add-data={ui_icons_src}{sep}data{os.sep}icons{os.sep}ui",
-        f"--add-data={app_icons_src}{sep}data{os.sep}icons{os.sep}app",
+        f"--add-data={world_icons_src}{sep}icons{os.sep}world",
+        f"--add-data={ui_icons_src}{sep}icons{os.sep}ui",
+        f"--add-data={app_icons_src}{sep}icons{os.sep}app",
         # 推荐订阅 mod 的图标（icons/recommended/），订阅引导弹窗里直接显示，
         # 随程序打包，未订阅时也能看到图标。
-        f"--add-data={recommended_icons_src}{sep}data{os.sep}icons{os.sep}recommended",
-        # 整个 tools/（含 ktools/frp_selfhost/frpc-sakura/vcredist 的 exe 二
-        # 进制和 fonts 字体）都随程序打包。--onedir 下这些落在 exe 旁边的
-        # DSTCampData/tools/（不放进 data/），不再经过 %TEMP% 临时目录，也就
-        # 不会触发 Defender 对"临时目录里的可执行文件"的 Wacatac.B!ml 误报。
-        # 运行时 tool_binary_dir() 仍会把它们复制到 %APPDATA%/DSTCamp/tools/
-        # （那里一定可写），frpc.exe 最终从那运行。
-        f"--add-data={tools_src}{sep}tools",
+        f"--add-data={recommended_icons_src}{sep}icons{os.sep}recommended",
+        # tools/（ktools/frp_selfhost/frpc-sakura/vcredist 的 exe 二进制和
+        # fonts 字体）不打进 data，而是打包后复制到 exe 旁边、和 data 同级
+        # ——路径浅、frpc.exe 直接可见，也不经过 %TEMP%（避免 Defender 按
+        # Wacatac.B!ml 误报隔离）。见 build() 尾部。
         # lupa ships several compiled Lua-version backends as separate
         # .pyd submodules (lua51/52/53/.../luajit); only lua51 is ever
         # actually imported (dstools/features/mod/_sandbox_worker.py, to
@@ -127,14 +125,22 @@ def build():
 
     PyInstaller.__main__.run(args)
 
-    # --onedir 产物是一个目录（dist/<name>/，含 exe + _internal/）。打包成
-    # zip 分发，并在 zip 里放一个置顶的"先解压再运行"说明，防止小白在压缩
-    # 包里直接双击 exe（那样 exe 找不到旁边的 _internal 会启动失败）。
+    # tools/ 不进 data，而是复制到 exe 旁边、和 data 同级——frpc.exe 路径
+    # 浅、直接可见，也不经过 %TEMP%。直接从仓库 tools/ 复制（内容不变，比
+    # 让 PyInstaller 塞进 data 再挪出来更直接）。
     dist_dir = project_root / "dist" / exe_name
+    tools_dst = dist_dir / "tools"
+    if tools_dst.exists():
+        shutil.rmtree(tools_dst)
+    shutil.copytree(tools_src, tools_dst)
+
+    # --onedir 产物是一个目录（dist/<name>/，含 exe + data/ + tools/）。打
+    # 包成 zip 分发，并在 zip 里放一个置顶的"先解压再运行"说明，防止小白
+    # 在压缩包里直接双击 exe（那样 exe 找不到旁边的 data 会启动失败）。
     zip_path = project_root / "dist" / f"{exe_name}.zip"
     hint = (
         "【请先解压再运行】\n\n"
-        "这是一个 zip 压缩包，里面的 DSTCamp 需要和 DSTCampData 文件夹放在一起才能启动。\n\n"
+        "这是一个 zip 压缩包，里面的 DSTCamp 需要和 data、tools 文件夹放在一起才能启动。\n\n"
         "1. 右键这个 zip → 全部解压缩，解压到一个文件夹\n"
         "2. 进入解压出来的文件夹\n"
         f"3. 双击 {exe_name}.exe 启动\n\n"

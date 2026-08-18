@@ -11,7 +11,6 @@
   `%APPDATA%/DSTCamp/` 这棵目录树。
 """
 
-import shutil
 import sys
 from pathlib import Path
 
@@ -19,11 +18,9 @@ from dstools.shared.app_settings import get_settings_dir
 
 
 def bundled_resource_dir() -> Path:
-    """只读素材的根目录——源码直跑时是仓库根目录，打包后是
-    DSTCampData/data/（icons、i18n 等 --add-data 的资源都放这个子目录，见
-    scripts/build_exe.py）。"""
+    """只读素材的根目录——源码直跑时是仓库根目录，打包后是 sys._MEIPASS。"""
     if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS) / "data"
+        return Path(sys._MEIPASS)
     return Path(__file__).parent.parent.parent
 
 
@@ -39,53 +36,16 @@ def exe_dir() -> Path:
     return Path(__file__).parent.parent.parent
 
 
-def _sync_tool_binaries(src: Path, dst: Path) -> bool:
-    """把打包进 exe（_MEI）的 tools/ 二进制同步到目标目录 dst。
-
-    幂等：目标已存在且每个文件大小都跟源一致就直接复用，不重复复制，避
-    免每次启动都白拷一遍。返回 True 表示目标已就绪可用；False 表示复制
-    失败，调用方据此退回 _MEI 里的原始位置，至少保证功能还能用。
-    """
-    if not src.is_dir():
-        return False
-    try:
-        src_files = {p.relative_to(src): p.stat().st_size
-                     for p in src.rglob("*") if p.is_file()}
-    except OSError:
-        return False
-    if dst.is_dir():
-        try:
-            dst_files = {p.relative_to(dst): p.stat().st_size
-                         for p in dst.rglob("*") if p.is_file()}
-        except OSError:
-            dst_files = {}
-        if dst_files == src_files:
-            return True
-    try:
-        if dst.exists():
-            shutil.rmtree(dst)
-        shutil.copytree(src, dst)
-        return True
-    except OSError:
-        return False
-
-
 def tool_binary_dir() -> Path:
-    """第三方工具二进制（frpc/ktech/vcredist 等）所在目录。
+    """第三方工具二进制（frpc/ktech/vcredist/fonts 等）所在目录。
 
-    打包后这些二进制仍随程序一起分发（PyInstaller --add-data，--onedir 下
-    落在 exe 旁边的 _internal/tools/，不经过 %TEMP% 临时目录——这正是避免
-    frpc.exe 被 Windows Defender 按 Wacatac.B!ml 误报隔离的关键，见
-    scripts/build_exe.py 顶部说明）。运行时再把它们复制到
-    %APPDATA%/DSTCamp/tools/ 再返回：一是 %APPDATA% 一定可写（exe 可能装
-    在 Program Files 这类只读目录），二是落点统一、跟"缓存存 exe 目录"那
-    个设置开关解耦。复制失败退回 _MEIPASS 保证功能可用。源码直跑时用仓库
-    的 tools/ 目录。
+    打包后（--onedir）这些二进制直接放在 exe 旁边的 tools/（和 data/、exe
+    同级，不经过 %TEMP% 临时目录——避免 frpc.exe 被 Windows Defender 按
+    Wacatac.B!ml 误报隔离，见 scripts/build_exe.py）。源码直跑时用仓库的
+    tools/ 目录。
     """
     if getattr(sys, "frozen", False):
-        src = Path(sys._MEIPASS) / "tools"
-        dst = get_settings_dir() / "tools"
-        return dst if _sync_tool_binaries(src, dst) else src
+        return exe_dir() / "tools"
     return Path(__file__).parent.parent.parent / "tools"
 
 
