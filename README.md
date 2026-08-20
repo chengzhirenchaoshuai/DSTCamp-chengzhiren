@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-1.0.0-orange)
+![Version](https://img.shields.io/badge/version-1.0.1-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -28,12 +28,17 @@
 pip install -e .
 ```
 
-打包成 zip 压缩包（可选，需要先 `pip install -e ".[build]"`）：
+打包成 ZIP 和单文件 EXE（可选，需要先 `pip install -e ".[build]"`）：
 
 ```bash
 python scripts/build_exe.py
-# 产物：dist/DSTCamp-<版本号>.zip（解压后运行里面的 exe）
+# 产物：
+#   dist/DSTCamp-<版本号>.zip（推荐，解压后运行，杀毒软件兼容性更好）
+#   dist/DSTCamp-<版本号>-单文件.exe（完整依赖均嵌入，一个文件即可运行）
 ```
+
+单文件 EXE 将全部依赖嵌入，双击即可运行；ZIP 版则是一个 EXE 加外置 tools/，
+可减少第三方二进制被解压到临时目录而触发杀毒软件误报的概率。
 
 ## 使用
 

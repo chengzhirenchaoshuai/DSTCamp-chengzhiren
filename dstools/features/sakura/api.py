@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 
 from dstools import __version__
+from dstools.shared.ssl_context import default_ssl_context
 
 _API_BASE = "https://api.natfrp.com/v4"
 _USER_AGENT = f"DSTCamp/{__version__} (+https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren)"
@@ -57,7 +58,8 @@ def _request(token: str, method: str, path: str, params: dict | None = None, tim
     if data is not None:
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.urlopen(req, timeout=timeout,
+                                    context=default_ssl_context()) as resp:
             body = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace") if e.fp else ""

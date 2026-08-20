@@ -158,6 +158,7 @@ STRINGS = {
 
         # 服务器配置页签
         "cluster.cluster": "服务器:",
+        "cluster.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再管理服务器配置。",
         "cluster.save_btn": "保存",
         "cluster.shard_config": "世界设置(server.ini)",
         "cluster.tab_cluster_ini": "房间设置(cluster.ini)",
@@ -453,6 +454,7 @@ STRINGS = {
         "world.no_preset": "未找到世界设置文件",
         "world.saved": "世界规则已保存",
         "world.local_view_only_banner": "⚠ 当前选中的是本地存档，世界设置仅支持查看，不支持修改。",
+        "world.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再查看世界设置。",
 
         # 创建服务器存档向导
         "world.creation_name_label": "存档名称",
@@ -491,6 +493,7 @@ STRINGS = {
         "mod.read_only_local": "该模组为本地模组（client_only），不需要在存档中配置，此处仅供查看，不可编辑。",
         "mod.read_only_local_save": "当前选中的是本地存档：本地存档的 Mod 启用/配置状态实际由游戏客户端自己的账号级模组索引决定，直接修改这里的 modoverrides.lua 不保证生效，此处仅供查看，不可编辑。如需修改请在游戏内的 Mods 菜单操作。",
         "mod.local_view_only_banner": "⚠ 当前选中的是本地存档，Mod 管理仅支持查看，不支持修改。",
+        "mod.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再管理 Mod。",
         "mod.wegame_root_needed_banner": "⚠ 还没设置 WeGame 安装目录，Mod 名称/图标解析不出来，未启用的已装 Mod 也不会显示——点这里选择一次（rail_apps 文件夹）。",
         "mod.ktech_runtime_missing_banner": "⚠ 系统缺少 Mod 图标转换需要的运行库（Visual C++ 2013），图标会显示为空——点这里本地安装（内置安装包，无需联网），装完重启软件生效。",
         "mod.vcredist_installer_launched": "已拉起安装程序，请按向导完成安装，然后重启 DSTCamp。",
@@ -542,6 +545,7 @@ STRINGS = {
         # 本地服务器页签
         "local.select_cluster_first": "请先选择一个服务器存档",
         "local.select_server_hint": "当前选中的是本地存档，无需在这里管理服务器进程。请在上方切换到一个服务器存档。",
+        "local.no_save_hint": "未检测到任何存档，请先创建或导入一个服务器存档。",
         "local.wegame_manual_start_hint": "该存档是 WeGame 版专用服务器：启动/停止/公告/回档暂不支持在这里操作，请通过 WeGame 客户端点击「开始游戏」启动（这是平台限制，WeGame 要求专用服务器必须经客户端启动）。存档浏览、配置编辑、Mod 管理、备份、内网穿透等其它功能不受影响。",
         "local.wegame_detect_btn": "检测服务器状态",
         "local.wegame_detect_placeholder": "点击上方按钮，检测这个存档的世界进程是否真的在跑。",
@@ -641,8 +645,10 @@ STRINGS = {
         "local.confirm_close_title": "有服务器正在运行",
         "local.confirm_close_msg": "有{cluster_count}个存档、{world_count}个世界正在运行，\n是否关闭所有世界并退出软件？",
         "local.lan_connect_label": "局域网直连代码",
+        "local.public_connect_label": "公网直连代码",
         "local.nat_connect_label": "内网穿透直连代码",
         "local.lan_connect_hint": "同一局域网内的玩家用这个代码直连进服务器。复制后发给朋友，在游戏控制台（按 ~ 键）粘贴即可。",
+        "local.public_connect_hint": "有公网 IPv4 的电脑或云服务器使用这个代码直连。复制后发给朋友，在游戏控制台（按 ~ 键）粘贴即可。IPv6 不受游戏支持。",
         "local.nat_connect_hint": "通过内网穿透（樱花映射 / 自建 frps）连进来的公网玩家用这个代码。复制后发给朋友，在游戏控制台（按 ~ 键）粘贴即可。",
         "local.connect_copied": "直连代码已复制到剪贴板",
         "local.nat_not_mapped": "这个存档还没有内网穿透映射（樱花 / 自建 frps），请先在「内网穿透」页签开启映射后再复制。",
@@ -651,6 +657,7 @@ STRINGS = {
         "local.connect_ready": "已就绪",
         "local.connect_not_ready": "未就绪",
         "local.lan_not_ready_reason": "主世界服务器尚未启动，启动后即可用此代码直连。",
+        "local.public_ip_unavailable_reason": "暂时获取不到公网 IPv4，请检查网络后重试。IPv6 不受游戏支持。",
         "local.nat_frpc_not_ready_reason": "映射已建立，但 frpc 客户端未启动。",
         "local.nat_not_mapped_short": "未映射",
 
@@ -849,6 +856,7 @@ STRINGS = {
 
         # 服务器配置页签
         "cluster.cluster": "Cluster:",
+        "cluster.no_save_banner": "No saves were detected. Create or import a save before managing server configuration.",
         "cluster.save_btn": "Save",
         "cluster.shard_config": "Shard Config (server.ini)",
         "cluster.tab_cluster_ini": "Server Config (cluster.ini)",
@@ -1144,6 +1152,7 @@ STRINGS = {
         "world.no_preset": "No world settings file found",
         "world.saved": "World rules saved",
         "world.local_view_only_banner": "⚠ The selected save is a local one -- World Settings is view-only here, editing isn't supported.",
+        "world.no_save_banner": "No saves were detected. Create or import a save before viewing world settings.",
 
         # 创建服务器存档向导
         "world.creation_name_label": "Save Name",
@@ -1182,6 +1191,7 @@ STRINGS = {
         "mod.read_only_local": "This is a local (client_only) mod -- it doesn't need a save-file entry to work. Shown here for reference only, not editable.",
         "mod.read_only_local_save": "The selected save is a local one: which mods are actually enabled is determined by the game client's own account-level mod index, so editing modoverrides.lua here isn't guaranteed to take effect. Shown here for reference only -- to change this, use the in-game Mods menu.",
         "mod.local_view_only_banner": "⚠ The selected save is a local one -- Mod management is view-only here, editing isn't supported.",
+        "mod.no_save_banner": "No saves were detected. Create or import a save before managing Mods.",
         "mod.wegame_root_needed_banner": "⚠ WeGame install directory not set yet -- mod names/icons can't be resolved, and installed-but-not-yet-enabled mods won't show either. Click here to select it once (the rail_apps folder).",
         "mod.ktech_runtime_missing_banner": "⚠ Missing runtime library needed for mod icon conversion (Visual C++ 2013) -- icons will show blank. Click here to install locally (bundled installer, no internet needed); restart the app after installing.",
         "mod.vcredist_installer_launched": "Installer launched -- follow the wizard to finish, then restart DSTCamp.",
@@ -1233,6 +1243,7 @@ STRINGS = {
         # 本地服务器页签
         "local.select_cluster_first": "Select a server save first",
         "local.select_server_hint": "The selected save is a local one -- there's no server process to manage here. Switch to a server save above.",
+        "local.no_save_hint": "No saves were detected. Create or import a server save first.",
         "local.wegame_manual_start_hint": "This save is a WeGame dedicated server: start/stop/announce/rollback aren't available here -- launch it via the WeGame client's \"Start Game\" button instead (a platform requirement; WeGame dedicated servers must be launched through the client). Save browsing, config editing, mod management, backups, and NAT traversal still work normally.",
         "local.wegame_detect_btn": "Detect Server Status",
         "local.wegame_detect_placeholder": "Click the button above to check whether this save's shard processes are actually running.",
@@ -1332,8 +1343,10 @@ STRINGS = {
         "local.confirm_close_title": "Servers Still Running",
         "local.confirm_close_msg": "{cluster_count} save(s) and {world_count} shard(s) are still running,\nclose all shards and exit?",
         "local.lan_connect_label": "LAN Connect Code",
+        "local.public_connect_label": "Public IP Connect Code",
         "local.nat_connect_label": "NAT Traversal Connect Code",
         "local.lan_connect_hint": "Players on the same LAN use this code to connect directly. Copy it and send to friends; paste it in the game console (press ~).",
+        "local.public_connect_hint": "Computers or cloud servers with a public IPv4 address use this code for direct connection. IPv6 is not supported by the game.",
         "local.nat_connect_hint": "Public players connecting via NAT traversal (SakuraFrp / self-hosted frps) use this code. Copy it and send to friends; paste it in the game console (press ~).",
         "local.connect_copied": "Connect code copied to clipboard",
         "local.nat_not_mapped": "This save has no NAT traversal mapping (SakuraFrp / self-hosted frps) yet. Enable mapping on the \"NAT Traversal\" tab first.",
@@ -1342,6 +1355,7 @@ STRINGS = {
         "local.connect_ready": "Ready",
         "local.connect_not_ready": "Not ready",
         "local.lan_not_ready_reason": "The master shard is not running yet. Start it to enable this direct connection.",
+        "local.public_ip_unavailable_reason": "Couldn't obtain a public IPv4 address. Check the network and try again. IPv6 is not supported by the game.",
         "local.nat_frpc_not_ready_reason": "The mapping exists, but the frpc client is not running.",
         "local.nat_not_mapped_short": "Not mapped",
 

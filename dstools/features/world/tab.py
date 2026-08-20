@@ -190,6 +190,8 @@ class WorldSettingsTab:
         if is_server:
             self._wl_local_banner.hide()
         else:
+            self._wl_local_banner.set_text(
+                t("world.no_save_banner") if c is None else t("world.local_view_only_banner"))
             self._wl_local_banner.show()
         if not c:
             self._wl_title_var.set(""); self._wl_desc_var.set("")
@@ -395,7 +397,9 @@ class WorldSettingsTab:
         self._wl_lbl2.redraw()
         self._wl_bs.configure(text=t("world.save_rules"))
         self._sub_tab_bar.relabel({"rules": self._rules_tab_label(), "gen": t("world.generation")})
-        self._wl_local_banner.set_text(t("world.local_view_only_banner"))
+        c = self._get_cluster()
+        self._wl_local_banner.set_text(
+            t("world.no_save_banner") if c is None else t("world.local_view_only_banner"))
 
     def retheme(self):
         """主题切换时调用——这个横幅、以及 make_toolbar_label() 画的说明

@@ -305,17 +305,32 @@ class WorldCreationTab:
 
     def _reload_template(self, apply_profile_defaults: bool = False):
         try:
+            from dstools.features.local_service.dedicated_server import get_documents_dir
             from dstools.shared.discovery import find_klei_root
             root = find_klei_root()
             if root is None:
-                raise FileNotFoundError("未找到 Klei 存档目录")
-            template_root = find_verified_template(root, "forest")
+                # 新电脑可能还没有启动过 DST，Klei 根目录尚未生成。创建
+                # 存档不应依赖已有存档；先采用官方默认的服务器存档根路径，
+                # 由 create_world() 在真正写入时创建目录。
+                root = get_documents_dir() / "Klei" / "DoNotStarveTogether"
             # 模板可以来自用户级本地存档，但新建的集群必须始终落在
             # DoNotStarveTogether 根目录下，避免误写进 Steam 用户 ID 目录。
             self._server_root = root
-            self._template_root = template_root
+            # 新电脑可能还没有任何游戏存档，不能把已有存档当成创建功能
+            # 的前置条件。优先复用真实存档核对出的完整模板；找不到时使
+            # 用项目内已从官方数据核对过的森林/洞穴默认计划。
+            try:
+                template_root = find_verified_template(root, "forest")
+                template_plans = default_plans_from_cluster(template_root)
+                self._template_root = template_root
+            except FileNotFoundError:
+                template_plans = (
+                    default_plan_for_location("forest"),
+                    default_plan_for_location("cave"),
+                )
+                self._template_root = None
             if self._plan_master is None or self._plan_caves is None:
-                master, caves = default_plans_from_cluster(template_root)
+                master, caves = template_plans
                 self._plan_master, self._plan_caves = master, caves
                 self._location_drafts[(MASTER_SHARD, master.location)] = master
                 self._location_drafts[(CAVES_SHARD, caves.location)] = caves
@@ -880,10 +895,13 @@ class WorldCreationTab:
         if not self._plan_master or not self._plan_caves:
             dlg.show_error(self.frame.winfo_toplevel(), "创建存档", "请先选择默认模板")
             return
+        # 兼容尚未完成初始化的旧调用方/测试探针；正常流程即使没有 Klei
+        # 目录也会在 _reload_template() 中设置候选服务器根路径。
+        if not getattr(self, "_server_root", None) and getattr(self, "_template_root", None) is None:
+            dlg.show_error(self.frame.winfo_toplevel(), "创建存档", "未找到默认世界模板")
+            return
         try:
             name = self.name_var.get().strip()
-            if self._template_root is None:
-                raise FileNotFoundError("未找到默认世界模板")
             root = self._server_root
             if root is None:
                 raise FileNotFoundError("未找到服务器存档目录")

@@ -44,6 +44,11 @@ def tool_binary_dir() -> Path:
     tools/ 目录。
     """
     if getattr(sys, "frozen", False):
+        # --onedir 版把 tools 放在 exe 同级；--onefile 版则随资源一起
+        # 解压到 _MEIPASS/tools。两种发布形态都要优先使用实际存在的目录。
+        bundled_tools = Path(sys._MEIPASS) / "tools"
+        if bundled_tools.is_dir():
+            return bundled_tools
         return exe_dir() / "tools"
     return Path(__file__).parent.parent.parent / "tools"
 

@@ -372,6 +372,8 @@ class ModManagerTab:
         if is_server:
             self._md_local_banner.hide()
         else:
+            self._md_local_banner.set_text(
+                t("mod.no_save_banner") if c is None else t("mod.local_view_only_banner"))
             self._md_local_banner.show()
         if self._wegame_root_missing(c):
             self._md_wegame_banner.show()
@@ -1412,7 +1414,9 @@ class ModManagerTab:
         self._md_filt.redraw()
         self._md_filter_chips.redraw()
         self._md_rl.configure(text=t("mod.back_to_list") if self.show_local_var.get() else t("mod.show_local"))
-        self._md_local_banner.set_text(t("mod.local_view_only_banner"))
+        c = self._get_cluster()
+        self._md_local_banner.set_text(
+            t("mod.no_save_banner") if c is None else t("mod.local_view_only_banner"))
         self._md_wegame_banner.set_text(t("mod.wegame_root_needed_banner"))
         self._md_runtime_banner.set_text(t("mod.ktech_runtime_missing_banner"))
         self._mod_location_recheck_btn.configure(text=t("local.install_recheck_btn"))

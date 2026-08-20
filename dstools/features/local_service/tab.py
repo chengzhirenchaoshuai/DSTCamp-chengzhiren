@@ -6,11 +6,15 @@
 （ttk.Notebook 动态 add，日志/命令都通过管道，不弹出真实控制台窗口）。
 """
 
+import ipaddress
 import queue
+import re
 import socket
 import threading
 import time
 import tkinter as tk
+import urllib.error
+import urllib.request
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
@@ -48,6 +52,11 @@ from dstools.models import Platform, SaveSource
 
 _POLL_MS = 150
 _LUAJIT_VCREDIST_DOWNLOAD_URL = "https://wwwu.lanzoub.com/b0nyns22d"
+_PUBLIC_IP_URLS = (
+    "https://myip.ipip.net",
+    "https://cdid.c-ctrip.com/model-poc2/h",
+)
+from dstools.shared.ssl_context import default_ssl_context
 
 _STATUS_KEYS = {
     ServerStatus.STARTING: "local.status_starting",
@@ -738,7 +747,7 @@ class LocalServiceTab:
         self._shard_list = BgFrame(left, app, bg=theme.CARD_BG)
         self._shard_list.pack(fill=tk.BOTH, expand=True)
 
-        # 左下角"直连代码"两行——局域网 + 内网穿透，各配一个复制按钮。
+        # 左下角"直连代码"三行——局域网、公网、内网穿透，各配一个复制按钮。
         # side=tk.BOTTOM 放在世界列表下面；标签用 BgFrame+create_text 画字
         # （不透明的 ttk.Label 会挡背景图），按钮是常驻控件。只在服务器存
         # 档里显示（本地存档没有专用服务器进程，见 on_cluster_changed 里
@@ -746,17 +755,19 @@ class LocalServiceTab:
         self._connect_row = connect_row = BgFrame(left, app, bg=theme.CARD_BG)
         connect_row.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
 
-        # 两行标题长短不一（"局域网直连代码" 8 字、"内网穿透直连代码" 9
-        # 字），标题宽度统一成最长标题 + 冒号 + 空格，值才能左对齐。
+        # 三行标题长短不一，标题宽度统一成最长标题 + 冒号 + 空格，值才能左对齐。
         _label_f = tkfont.nametofont("TkDefaultFont")
         connect_title_w = max(
             _label_f.measure(t("local.lan_connect_label") + ":"),
+            _label_f.measure(t("local.public_connect_label") + ":"),
             _label_f.measure(t("local.nat_connect_label") + ":"),
         ) + _label_f.measure(" ")
 
         self._lan_code = None
+        self._public_code = None
         self._nat_code = None
         self._lan_status_key = None  # 状态缓存，避免 poll 每 150ms 重复重画
+        self._public_status_key = None
         self._nat_status_key = None
 
         self._lan_row = lan_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
@@ -765,6 +776,13 @@ class LocalServiceTab:
             lan_row, t("local.lan_connect_label"), t("local.lan_connect_hint"),
             connect_title_w, self._copy_lan_connect)
         self._lan_label.pack(fill=tk.X)
+
+        self._public_row = public_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
+        public_row.pack(fill=tk.X, pady=(3, 0))
+        self._public_label, self._public_set_text, self._public_set_status = self._make_connect_label(
+            public_row, t("local.public_connect_label"), t("local.public_connect_hint"),
+            connect_title_w, self._copy_public_connect)
+        self._public_label.pack(fill=tk.X)
 
         self._nat_row = nat_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
         nat_row.pack(fill=tk.X, pady=(3, 0))
@@ -844,6 +862,32 @@ class LocalServiceTab:
     def _copy_lan_connect(self, event=None):
         if self._lan_code:
             self._copy_to_clipboard(self._lan_code)
+
+    @staticmethod
+    def _fetch_public_ipv4() -> str | None:
+        """依次查询公网 IPv4 地址；严格拒绝 IPv6 和无效响应。"""
+        for url in _PUBLIC_IP_URLS:
+            try:
+                request = urllib.request.Request(
+                    url, headers={"User-Agent": "DSTCamp/1.0"})
+                with urllib.request.urlopen(request, timeout=4,
+                                            context=default_ssl_context()) as response:
+                    body = response.read(256).decode("ascii", errors="ignore")
+                # 两个接口目前返回纯文本；正则同时兼容包裹在 JSON/提示
+                # 文字中的 IPv4，再交给 ipaddress 做严格校验。
+                for candidate in re.findall(
+                        r"(?<![\da-fA-F:])(?:\d{1,3}\.){3}\d{1,3}(?![\da-fA-F:])",
+                        body):
+                    address = ipaddress.ip_address(candidate)
+                    if address.version == 4:
+                        return str(address)
+            except (OSError, ValueError, urllib.error.URLError):
+                continue
+        return None
+
+    def _copy_public_connect(self, event=None):
+        if self._public_code:
+            self._copy_to_clipboard(self._public_code)
 
     def _nat_connect_info(self):
         """自动判断内网穿透方式，返回 (host, port) 或 (None, None)。优先樱花
@@ -960,17 +1004,49 @@ class LocalServiceTab:
         return container, set_text, set_status
 
     def _refresh_connect_labels(self):
-        """刷新两行直连代码标签：局域网同步算，内网穿透后台查映射后异步回填。"""
+        """刷新三行直连代码；网络查询全部放后台线程，避免卡住界面。"""
         self._lan_status_key = None  # 重置缓存强制整行重画（含语言切换场景）
+        self._public_status_key = None
         self._nat_status_key = None
         lan_code = self._lan_connect_code()
         self._lan_code = lan_code
         self._lan_set_text(lan_code or t("local.connect_unavailable"))
         self._refresh_lan_status()
+        self._public_code = None
+        self._public_set_text(t("local.connect_loading"))
+        self._public_set_status("")
         self._nat_code = None
         self._nat_set_text(t("local.connect_loading"))
         self._nat_set_status("")
+        threading.Thread(target=self._fetch_public_connect_async, daemon=True).start()
         threading.Thread(target=self._fetch_nat_connect_async, daemon=True).start()
+
+    def _fetch_public_connect_async(self):
+        cluster = self._get_cluster()
+        cluster_key = str(cluster.path) if cluster else None
+        public_ip = self._fetch_public_ipv4()
+        code = None
+        if cluster and public_ip:
+            master = self._master_shard(cluster)
+            if master:
+                port = get_shard_option(load_shard_config(master.path), "NETWORK", "server_port")
+                if port:
+                    code = self._build_connect_string(public_ip, port, cluster)
+        try:
+            self.frame.after(0, lambda: self._apply_public_result(
+                code, cluster_key, public_ip is not None))
+        except tk.TclError:
+            # 软件关闭后网络线程可能才返回，窗口已销毁时直接丢弃结果。
+            pass
+
+    def _apply_public_result(self, code, cluster_key, ip_available):
+        cluster = self._get_cluster()
+        if (cluster_key != (str(cluster.path) if cluster else None)
+                or not self._connect_row.winfo_ismapped()):
+            return
+        self._public_code = code
+        self._public_set_text(code or t("local.connect_unavailable"))
+        self._refresh_public_status(ip_available)
 
     def _master_running(self) -> bool:
         """主世界服务器进程是否在跑——局域网和内网穿透就绪都依赖它（世界
@@ -997,6 +1073,28 @@ class LocalServiceTab:
         else:
             self._lan_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
                                  t("local.lan_not_ready_reason"))
+
+    def _refresh_public_status(self, ip_available=None):
+        """公网代码状态：公网 IPv4、端口和主世界进程都满足才算就绪。"""
+        if ip_available is None:
+            ip_available = self._public_code is not None
+        if not ip_available or self._public_code is None:
+            key = "noip"
+        elif not self._master_running():
+            key = "nostart"
+        else:
+            key = "ready"
+        if key == self._public_status_key:
+            return
+        self._public_status_key = key
+        if key == "ready":
+            self._public_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
+        elif key == "nostart":
+            self._public_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
+                                     t("local.lan_not_ready_reason"))
+        else:
+            self._public_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
+                                     t("local.public_ip_unavailable_reason"))
 
     def _fetch_nat_connect_async(self):
         """后台线程查内网穿透映射，拿到后回主线程更新标签。"""
@@ -1114,6 +1212,8 @@ class LocalServiceTab:
                 self._connect_row.pack_forget()
             self._rollback_btn.configure(state=tk.DISABLED)
             self._refresh_shard_rows(None)
+            self._local_banner.set_text(
+                t("local.no_save_hint") if c is None else t("local.select_server_hint"))
             self._local_banner.show()
         self._sync_console_tabs_visibility(c if is_server else None)
         self._update_start_lock_state(c)
@@ -1943,6 +2043,7 @@ class LocalServiceTab:
         # 存档不显示这块，省掉无谓重画）。
         if self._connect_row.winfo_ismapped():
             self._refresh_lan_status()
+            self._refresh_public_status()
             self._refresh_nat_status()
         self._maybe_periodic_backup()
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
@@ -2003,7 +2104,9 @@ class LocalServiceTab:
             # StringVar 没变但"专用服务器工具:"这段标签文字要跟着切语言
             # ——trace 只在 set() 真的改变值时触发，这里手动补一次重画。
             self._redraw_install_row_text()
-        self._local_banner.set_text(t("local.select_server_hint"))
+        c = self._get_cluster()
+        self._local_banner.set_text(
+            t("local.no_save_hint") if c is None else t("local.select_server_hint"))
 
     def retheme(self):
         """主题切换时调用——这些容器/横幅都是在 __init__ 里建一次就不再
@@ -2025,15 +2128,15 @@ class LocalServiceTab:
         for row in self._shard_rows.values():
             row.frame.apply_theme()
             row._redraw_text()
-        # 直连代码两行（局域网/内网穿透）也是 __init__ 建一次、refresh 不
+        # 直连代码三行（局域网/公网/内网穿透）也是 __init__ 建一次、refresh 不
         # 重建的长期控件，切主题要跟着换背景色——之前漏了这两行，真机反馈
         # 过"局域网/内网穿透直连代码"停在旧背景色。_make_connect_label 返回
         # 的 container 内部 title/value/status 三个 BgFrame 没单独存引用，
         # 用 winfo_children() 逐个补（BgFrame.apply_theme 不递归）。
         self._connect_row.apply_theme(bg=theme.CARD_BG)
-        for row in (self._lan_row, self._nat_row):
+        for row in (self._lan_row, self._public_row, self._nat_row):
             row.apply_theme(bg=theme.CARD_BG)
-        for container in (self._lan_label, self._nat_label):
+        for container in (self._lan_label, self._public_label, self._nat_label):
             container.apply_theme(bg=theme.CARD_BG)
             for child in container.winfo_children():
                 if isinstance(child, BgFrame):

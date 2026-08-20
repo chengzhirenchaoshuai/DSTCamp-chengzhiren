@@ -1,17 +1,17 @@
-"""Build DSTCamp into a distributable ZIP using PyInstaller (--onedir).
+"""Build DSTCamp into a standalone EXE and a tools+EXE ZIP.
 
-用 --onedir 而不是 --onefile：onefile 运行时会把整个程序（含 frpc.exe）
-解压到 %TEMP%/_MEI 临时目录，Windows Defender 会把"出现在临时目录的可执
-行文件"误报成 Wacatac.B!ml 并隔离 frpc.exe。onedir 的产物是 exe + data/
-（PyInstaller 资源目录）+ tools/（第三方二进制，放外层、不经过临时目录），
-再打成 zip 分发。
+发布两种形态：
+1. 单文件 EXE：程序和 tools/ 全部嵌入，拿到一个文件即可运行。
+2. ZIP：程序本体仍是一个 EXE，tools/ 单独放在旁边，避免第三方二进制
+   被 PyInstaller 解压到临时目录，压缩包内不再出现 data/ 等大量散文件。
 
 Usage (run from the project root):
     pip install -e ".[build]"         # First time only (installs pyinstaller)
     python scripts/build_exe.py       # Build the ZIP
 
 Output:
-    dist/DSTCamp-<version>.zip  # 解压后运行里面的 DSTCamp-<version>.exe
+    dist/DSTCamp-<version>.zip
+    dist/DSTCamp-<version>-单文件.exe
 """
 
 import os
@@ -19,7 +19,6 @@ import shutil
 import sys
 import zipfile
 from pathlib import Path
-
 
 def build():
     """Run PyInstaller to create a standalone executable."""
@@ -50,6 +49,12 @@ def build():
 
     from dstools import __version__
     exe_name = f"DSTCamp-{__version__}"
+    dist_root = project_root / "dist"
+    # 清理旧版本脚本留下的 onedir/外置单文件目录，避免发布目录同时出现
+    # 已废弃的 data/目录版和新的两个 onefile 产物。
+    for stale_dir in (dist_root / exe_name, dist_root / f"{exe_name}-单文件"):
+        if stale_dir.exists():
+            shutil.rmtree(stale_dir)
 
     # Build arguments
     # On Windows, --add-data uses ; as separator, on Linux/Mac it uses :
@@ -63,12 +68,10 @@ def build():
     tools_src = project_root / "tools"
     app_ico = app_icons_src / "icon.ico"
 
-    args = [
+    common_args = [
         str(project_root / "scripts" / "run_gui.py"),  # Entry point
-        f"--name={exe_name}",                     # EXE filename, e.g. DSTCamp-<version>.exe
-        "--onedir",                              # 目录打包（frpc 不经过 %TEMP%）
-        "--contents-directory=data",             # 资源目录名 _internal -> data
         "--windowed",                            # No console window
+        "--noconfirm",                            # 覆盖同名旧产物时不询问
         "--clean",                               # Clean cache
         f"--icon={app_ico}",                     # EXE file icon (Explorer/taskbar)
         # PyInstaller defaults to putting build/, dist/, and the .spec file
@@ -78,12 +81,7 @@ def build():
         # caller happened to `cd` from. Pin all three explicitly to the real
         # project root so `python scripts/build_exe.py` always produces the
         # same dist/DSTCamp-<version>.exe regardless of the caller's cwd.
-        f"--distpath={project_root / 'dist'}",
-        # workpath 是打包中间产物(依赖分析/临时文件)、specpath 是打包配置，
-        # 都放到项目内 reference/_cache/ 下，跟 __pycache__ 一样可随时整删；
-        # dist/(最终 exe) 仍留在项目根。
-        f"--workpath={project_root / 'reference' / '_cache' / 'build'}",
-        f"--specpath={project_root / 'reference' / '_cache'}",
+        f"--distpath={dist_root}",
         f"--add-data={i18n_src}{sep}{i18n_dst}",
         # Read-only bundled assets only -- world-setting icons (icons/world/),
         # UI icons (icons/ui/), and the app icon (icons/app/, used at runtime
@@ -104,10 +102,6 @@ def build():
         # 推荐订阅 mod 的图标（icons/recommended/），订阅引导弹窗里直接显示，
         # 随程序打包，未订阅时也能看到图标。
         f"--add-data={recommended_icons_src}{sep}icons{os.sep}recommended",
-        # tools/（ktools/frp_selfhost/frpc-sakura/vcredist 的 exe 二进制和
-        # fonts 字体）不打进 data，而是打包后复制到 exe 旁边、和 data 同级
-        # ——路径浅、frpc.exe 直接可见，也不经过 %TEMP%（避免 Defender 按
-        # Wacatac.B!ml 误报隔离）。见 build() 尾部。
         # lupa ships several compiled Lua-version backends as separate
         # .pyd submodules (lua51/52/53/.../luajit); only lua51 is ever
         # actually imported (dstools/features/mod/_sandbox_worker.py, to
@@ -116,31 +110,47 @@ def build():
         # extension package's internal submodule layout, so it's named
         # explicitly rather than relying on being auto-discovered.
         "--hidden-import=lupa.lua51",
+        "--collect-data=certifi",
     ]
 
-    print(f"Building {exe_name}...")
-    print("  Entry: run_gui.py")
-    print(f"  Output: dist/{exe_name}.zip")
-    print()
+    def run_pyinstaller(name: str, *, embed_tools: bool) -> None:
+        """构建 onefile；两种形态使用独立缓存，避免 spec 相互污染。"""
+        args = [*common_args, f"--name={name}"]
+        args.append("--onefile")
+        if embed_tools:
+            # 完全单文件版：tools 也进入 _MEIPASS/tools，运行时无需旁边
+            # 的目录；外置依赖版不带此参数，resource_paths 会回退到
+            # exe 同级的 tools/。
+            args.append(f"--add-data={tools_src}{sep}tools")
+        args.extend([
+            f"--workpath={project_root / 'reference' / '_cache' / ('build_' + name)}",
+            f"--specpath={project_root / 'reference' / '_cache' / ('spec_' + name)}",
+        ])
+        print(f"Building {name} (onefile, {'embedded tools' if embed_tools else 'external tools'})...")
+        PyInstaller.__main__.run(args)
 
-    PyInstaller.__main__.run(args)
+    # 先构建真正的独立单文件版。它的最终目录中只保留一个 EXE。
+    onefile_name = f"{exe_name}-单文件"
+    run_pyinstaller(onefile_name, embed_tools=True)
+    onefile_exe = project_root / "dist" / f"{onefile_name}.exe"
 
-    # tools/ 不进 data，而是复制到 exe 旁边、和 data 同级——frpc.exe 路径
-    # 浅、直接可见，也不经过 %TEMP%。直接从仓库 tools/ 复制（内容不变，比
-    # 让 PyInstaller 塞进 data 再挪出来更直接）。
-    dist_dir = project_root / "dist" / exe_name
-    tools_dst = dist_dir / "tools"
-    if tools_dst.exists():
-        shutil.rmtree(tools_dst)
-    shutil.copytree(tools_src, tools_dst)
+    # 再构建 ZIP 用的 onefile 版。它只把真正需要被单独调用的第三方工具
+    # 放在 EXE 旁边，避免 frpc/ktech/运行库进入 PyInstaller 临时目录。
+    zip_exe_name = exe_name
+    run_pyinstaller(zip_exe_name, embed_tools=False)
+    zip_exe = project_root / "dist" / f"{zip_exe_name}.exe"
+    zip_stage = project_root / "reference" / "_cache" / "package_zip"
+    if zip_stage.exists():
+        shutil.rmtree(zip_stage)
+    zip_stage.mkdir(parents=True)
+    shutil.move(str(zip_exe), str(zip_stage / zip_exe.name))
+    shutil.copytree(tools_src, zip_stage / "tools")
 
-    # --onedir 产物是一个目录（dist/<name>/，含 exe + data/ + tools/）。打
-    # 包成 zip 分发，并在 zip 里放一个置顶的"先解压再运行"说明，防止小白
-    # 在压缩包里直接双击 exe（那样 exe 找不到旁边的 data 会启动失败）。
+    # ZIP 内只有一个 EXE、tools/ 和说明文件，不再包含 onedir 的 data/。
     zip_path = project_root / "dist" / f"{exe_name}.zip"
     hint = (
         "【请先解压再运行】\n\n"
-        "这是一个 zip 压缩包，里面的 DSTCamp 需要和 data、tools 文件夹放在一起才能启动。\n\n"
+        "这是一个 zip 压缩包，里面的 DSTCamp 需要和 tools 文件夹放在一起才能启动。\n\n"
         "1. 右键这个 zip → 全部解压缩，解压到一个文件夹\n"
         "2. 进入解压出来的文件夹\n"
         f"3. 双击 {exe_name}.exe 启动\n\n"
@@ -151,14 +161,13 @@ def build():
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         # 说明文件用 "0-" 前缀确保它在多数文件管理器里排在最前面
         zf.writestr("0-先解压再运行.txt", hint)
-        for p in sorted(dist_dir.rglob("*")):
+        for p in sorted(zip_stage.rglob("*")):
             if p.is_file():
-                zf.write(p, p.relative_to(dist_dir))
+                zf.write(p, p.relative_to(zip_stage))
 
     print()
-    print(f"Build complete! Find the ZIP at: dist/{exe_name}.zip")
-    print("Extract the ZIP first, then run the EXE inside.")
-
+    print(f"Build complete! ZIP: dist/{exe_name}.zip")
+    print(f"Build complete! Single-file EXE: dist/{onefile_exe.name}")
 
 if __name__ == "__main__":
     build()

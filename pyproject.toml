@@ -4,10 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dstools"
-version = "1.0.0"
+version = "1.0.1"
 description = "DSTCamp - Don't Starve Together local server manager (saves, mods, world & server config)"
 requires-python = ">=3.10"
 dependencies = [
+    "certifi>=2024.0",
     "lupa>=2.0",
     "Pillow>=10.0",
     "pystray>=0.19",

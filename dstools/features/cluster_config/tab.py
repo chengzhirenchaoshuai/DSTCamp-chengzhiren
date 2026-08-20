@@ -24,6 +24,7 @@ from dstools.shared.gui.transparent_widgets import TransparentLabel, Transparent
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.pill_tabs import PillTabBar
+from dstools.shared.gui.toolbar_widgets import ReadonlyBanner
 from dstools.shared.server_ports import collect_cluster_port_claims, find_port_conflicts
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
@@ -317,6 +318,7 @@ class ClusterConfigTab:
         self._sub_tab_bar.pack(fill=tk.X, padx=5, pady=(5,0))
         self._sub_content = BgFrame(self.frame, app, bg=theme.BG_SOFT)
         self._sub_content.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self._empty_banner = ReadonlyBanner(self.frame, text=t("cluster.no_save_banner"))
         self._sub_pages = {}  # key -> page frame，_on_sub_tab_select 用来 pack()/pack_forget()
         self._sub_tab_key = "cluster"
         # 切换子页签时把键盘焦点转移到 self._sub_content——不然焦点会停
@@ -870,7 +872,11 @@ class ClusterConfigTab:
     def _load_config_impl(self):
         self._clear_form()
         c = self._get_cluster()
-        if not c: return
+        if not c:
+            self._empty_banner.set_text(t("cluster.no_save_banner"))
+            self._empty_banner.show()
+            return
+        self._empty_banner.hide()
         is_server = (c.source == SaveSource.SERVER)
         config = load_cluster_config(c.path)
         for section, key in self._REMOVED_CLUSTER_FIELDS:
@@ -1530,6 +1536,7 @@ class ClusterConfigTab:
         self._token_apply_btn.configure(text=t("token.apply"))
         self._global_tokens_btn.configure(text=t("token.set_global_btn"))
         self._global_tokens_hint_lbl.configure(text=t("token.global_hint"))
+        self._empty_banner.set_text(t("cluster.no_save_banner"))
         for key in ("Cluster", "Shard Config"):
             button = self._section_save_btns.get(key)
             if button is not None and button.winfo_exists():
@@ -1553,6 +1560,7 @@ class ClusterConfigTab:
         覆盖不到这些地方，必须在这里显式重新 configure 一次字体（真机
         反馈过：切到荆南麦圆体后这三个页签的标题文字纹丝不动）。"""
         self._sub_tab_bar.apply_theme()
+        self._empty_banner.apply_theme()
         self._admin_title_lbl.configure(font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True))
         self._admin_listbox.configure(font=self._ROW_VALUE_FONT)
         self._admin_status.configure(font=self._ROW_VALUE_FONT)

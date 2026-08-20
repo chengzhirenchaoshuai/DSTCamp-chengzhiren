@@ -8,6 +8,8 @@ import json
 import urllib.error
 import urllib.request
 
+from dstools.shared.ssl_context import default_ssl_context
+
 _API_URL = "https://api.github.com/repos/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases/latest"
 _TIMEOUT = 5
 
@@ -22,7 +24,8 @@ def check_latest_version() -> tuple[str, str] | None:
         headers={"User-Agent": "DSTCamp-UpdateCheck", "Accept": "application/vnd.github+json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=_TIMEOUT,
+                                    context=default_ssl_context()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return None
