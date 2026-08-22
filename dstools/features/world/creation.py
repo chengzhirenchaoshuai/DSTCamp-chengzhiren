@@ -10,8 +10,8 @@ import copy
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
+import secrets
 import shutil
-import tempfile
 
 from dstools.features.world.location_profiles import (
     get_verified_creation_level_data,
@@ -54,6 +54,9 @@ class WorldCreationPlan:
     cluster_token: str = ""
     admin_ids: tuple[str, ...] = ()
     block_ids: tuple[str, ...] = ()
+    # 额外世界目录名 -> 世界计划。Master/Caves 保持独立字段以兼容现有调用方；
+    # 新增的多层世界统一放在这里，目录名同时也是 server.ini 的分片名称。
+    extra_shards: dict[str, WorldShardPlan] = field(default_factory=dict)
 
 
 def _selected_mod_ids(plan: WorldCreationPlan) -> frozenset[str]:
@@ -99,9 +102,20 @@ def validate_creation_plan(plan: WorldCreationPlan) -> None:
     if profile.warnings:
         raise ValueError(profile.warnings[0])
 
-    for shard_name, shard_plan in (("Master", plan.master), ("Caves", plan.caves)):
+    all_locations = set(profile.master_locations) | set(profile.caves_locations)
+    shards = [("Master", plan.master), ("Caves", plan.caves), *plan.extra_shards.items()]
+    seen_names: set[str] = set()
+    for shard_name, shard_plan in shards:
+        if (not shard_name or shard_name in seen_names
+                or any(ch in shard_name for ch in '\\/:*?"<>|')):
+            raise ValueError(f"非法世界分片名称: {shard_name}")
+        seen_names.add(shard_name)
         get_location_definition(shard_plan.location)
-        if shard_plan.location not in profile.available_locations(shard_name):
+        available = (
+            profile.available_locations(shard_name)
+            if shard_name in ("Master", "Caves") else all_locations
+        )
+        if shard_plan.location not in available:
             raise ValueError(
                 f"{shard_name} 当前不能使用 {shard_plan.location} 世界"
             )
@@ -143,13 +157,25 @@ def default_cluster_config(cluster_name: str = "Cluster_New") -> ClusterConfig:
     )
 
 
-def default_shard_config(is_master: bool) -> ShardConfig:
-    """Return the verified fresh Master/Caves ``server.ini`` defaults."""
+def default_shard_config(
+    is_master: bool, shard_name: str = "Caves", shard_index: int = 1,
+) -> ShardConfig:
+    """Return the verified fresh shard ``server.ini`` defaults."""
+    server_port = 10999 if is_master else (10998 if shard_index == 1 else 10998 + shard_index)
     return ShardConfig(
-        network={"server_port": 10999 if is_master else 10998},
-        shard={"is_master": is_master} if is_master else {"is_master": False, "name": "Caves"},
+        network={"server_port": server_port},
+        shard={"is_master": is_master} if is_master else {
+            "is_master": False,
+            "name": shard_name,
+            # Klei 的从世界必须有集群内唯一编号；真实 Caves 配置和现有
+            # 配置编辑器的补全逻辑都从 2 开始分配。
+            "id": shard_index + 1,
+        },
         account={"encode_user_path": True},
-        steam={} if is_master else {"master_server_port": 27017, "authentication_port": 8767},
+        steam={} if is_master else {
+            "master_server_port": 27016 + shard_index,
+            "authentication_port": 8766 + shard_index,
+        },
     )
 
 
@@ -161,7 +187,10 @@ def _write_default_server_ini(root: Path) -> None:
     to exist before that first launch.  These values match a fresh DST
     two-shard cluster observed in the user's verified saves.
     """
-    write_server_ini(default_shard_config(root.name.casefold() == "master"), root / "server.ini")
+    write_server_ini(
+        default_shard_config(root.name.casefold() == "master", root.name),
+        root / "server.ini",
+    )
 
 
 def _write_shard(
@@ -216,7 +245,18 @@ def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
     if destination.exists():
         raise FileExistsError(destination)
     destination_root.mkdir(parents=True, exist_ok=True)
-    temp_dir = Path(tempfile.mkdtemp(prefix=f".{plan.cluster_name}.", dir=destination_root))
+    # tempfile.mkdtemp() 按“私有临时目录”的语义创建目录；较新的 Python
+    # 在 Windows 上会为它设置仅当前用户和管理员可访问的 ACL。管理员运行
+    # DSTCamp 时，这套 ACL 会在下面的 os.replace() 后原样留给正式存档，
+    # 导致普通用户无法打开。这里仍在目标根目录内随机建暂存目录以保留原子
+    # 改名，但使用普通 mkdir，让目录继承 Klei 根目录的正常访问权限。
+    while True:
+        temp_dir = destination_root / f".{plan.cluster_name}.{secrets.token_hex(8)}"
+        try:
+            temp_dir.mkdir()
+            break
+        except FileExistsError:
+            continue
     try:
         cluster_ini = plan.cluster_ini
         if not any((cluster_ini.gameplay, cluster_ini.network, cluster_ini.misc,
@@ -238,6 +278,15 @@ def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
             temp_dir / "Caves", plan.caves, effective_mod_ids, effective_mod_overrides,
             plan.shard_configs.get("Caves"),
         )
+        for shard_index, (shard_name, shard_plan) in enumerate(plan.extra_shards.items(), start=2):
+            _write_shard(
+                temp_dir / shard_name,
+                shard_plan,
+                effective_mod_ids,
+                effective_mod_overrides,
+                plan.shard_configs.get(shard_name)
+                or default_shard_config(False, shard_name, shard_index),
+            )
         os.replace(temp_dir, destination)
         return destination
     except Exception:

@@ -49,14 +49,19 @@ from dstools.features.world.location_profiles import (  # noqa: E402
 )
 from dstools.features.world.mod_settings import get_mod_world_settings  # noqa: E402
 from dstools.features.world.icons import get_pil_icon  # noqa: E402
-from dstools.features.world.render import render_world_panel  # noqa: E402
+from dstools.features.world.render import (  # noqa: E402
+    _wrap_text_to_width,
+    render_world_panel,
+)
 from dstools.features.world.value_sets import get_value_set  # noqa: E402
 from dstools.features.world.reader import WorldOverride  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
 from dstools.features.mod.tab import ModManagerTab  # noqa: E402
 from dstools.features.world.creation_tab import WorldCreationTab  # noqa: E402
+from dstools.features.cluster_config.config_manager import load_shard_config  # noqa: E402
 from dstools.models import ModEntry, SaveSource  # noqa: E402
-from PIL import Image  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
+from dstools.shared.gui.fonts import get_font  # noqa: E402
 from dstools.shared.lua_parser import (  # noqa: E402
     parse_lua_file,
     parse_lua_table,
@@ -294,6 +299,26 @@ def test_world_setting_icon_rendering() -> None:
     assert (255, 0, 255) in set(panel.getdata())
 
 
+def test_world_setting_name_wrap_keeps_full_text() -> None:
+    image = Image.new("RGB", (300, 120), "white")
+    draw = ImageDraw.Draw(image)
+    font = get_font(18)
+    original = "超长的世界设置名称"
+    wrapped = _wrap_text_to_width(draw, original, font, 72)
+    lines = wrapped.splitlines()
+    assert len(lines) > 1
+    assert "".join(lines) == original
+    assert all(draw.textlength(line, font=font) <= 72 for line in lines)
+
+    value_font = get_font(16)
+    four_char_width = draw.textlength("汉字汉字", font=value_font)
+    wrapped_value = _wrap_text_to_width(
+        draw, "五个汉字取值", value_font, four_char_width,
+    )
+    assert len(wrapped_value.splitlines()) > 1
+    assert "".join(wrapped_value.splitlines()) == "五个汉字取值"
+
+
 class _StatusProbe:
     def __init__(self):
         self.value = ""
@@ -434,6 +459,32 @@ def test_pending_mod_world_preview() -> None:
     assert tab.get_pending_enabled_mod_ids(other) is None
 
 
+def test_creation_mod_list_uses_native_canvas_width() -> None:
+    captured = {}
+    panel = SimpleNamespace(
+        current_width=lambda _default: 777,
+        set_image=lambda *_args, **_kwargs: None,
+    )
+    tab = WorldCreationTab.__new__(WorldCreationTab)
+    tab._mod_panel = panel
+    tab._mod_filter_var = None
+    tab._mod_show_var = None
+    tab._mod_data = {
+        "workshop-1": ModEntry(workshop_id="workshop-1", name="清晰名称", enabled=True),
+    }
+    tab._mod_infos = {}
+    tab._icon_imgs = {}
+    tab._icon_thumb_cache = {}
+
+    def render_probe(*_args, **kwargs):
+        captured.update(kwargs)
+        return Image.new("RGB", (kwargs["ref_width"], 60)), [], []
+
+    with patch("dstools.features.world.creation_tab.render_mod_list", side_effect=render_probe):
+        tab._render_list()
+    assert captured["ref_width"] == 777
+
+
 def test_creation_matrix() -> None:
     with TemporaryDirectory() as directory:
         root = Path(directory)
@@ -526,6 +577,62 @@ def test_porkland_creation() -> None:
         assert (caves["location"], caves["id"]) == (CAVE_LOCATION, "DST_CAVE")
 
 
+def test_multi_shard_creation() -> None:
+    """原版模板可重复添加多层世界，并为每层写出独立配置。"""
+    with TemporaryDirectory() as directory:
+        plan = WorldCreationPlan(
+            "multi_vanilla",
+            default_plan_for_location(FOREST_LOCATION),
+            default_plan_for_location(CAVE_LOCATION),
+            extra_shards={
+                "Forest": default_plan_for_location(FOREST_LOCATION),
+                "Caves_2": default_plan_for_location(CAVE_LOCATION),
+            },
+        )
+        output = create_world(plan, Path(directory))
+        assert parse_lua_file(output / "Forest" / "leveldataoverride.lua")["location"] == FOREST_LOCATION
+        assert parse_lua_file(output / "Caves_2" / "leveldataoverride.lua")["location"] == CAVE_LOCATION
+        configs = {
+            name: load_shard_config(output / name)
+            for name in ("Master", "Caves", "Forest", "Caves_2")
+        }
+        assert configs["Master"].shard["is_master"] is True
+        assert all(configs[name].shard["is_master"] is False for name in ("Caves", "Forest", "Caves_2"))
+        assert configs["Forest"].shard["name"] == "Forest"
+        assert configs["Caves_2"].shard["name"] == "Caves_2"
+        assert {configs[name].shard["id"] for name in ("Caves", "Forest", "Caves_2")} == {2, 3, 4}
+        assert len({config.network["server_port"] for config in configs.values()}) == 4
+
+
+def test_multi_shard_mod_templates_require_enabled_mods() -> None:
+    extras = {
+        "Shipwrecked": default_plan_for_location(SHIPWRECKED_LOCATION),
+        "Volcano": default_plan_for_location(VOLCANO_LOCATION),
+    }
+    invalid = WorldCreationPlan(
+        "multi_islands_invalid",
+        default_plan_for_location(FOREST_LOCATION),
+        default_plan_for_location(CAVE_LOCATION),
+        extra_shards=extras,
+    )
+    _expect_value_error(
+        lambda: validate_creation_plan(invalid),
+        "未启用岛屿 Mod 时不应允许添加海难/火山额外世界",
+    )
+
+    with TemporaryDirectory() as directory:
+        valid = WorldCreationPlan(
+            "multi_islands",
+            default_plan_for_location(SHIPWRECKED_LOCATION),
+            default_plan_for_location(VOLCANO_LOCATION),
+            mod_ids=frozenset({IA_SHIPWRECKED_MOD_ID}),
+            extra_shards=extras,
+        )
+        output = create_world(valid, Path(directory))
+        assert parse_lua_file(output / "Shipwrecked" / "leveldataoverride.lua")["location"] == SHIPWRECKED_LOCATION
+        assert parse_lua_file(output / "Volcano" / "leveldataoverride.lua")["location"] == VOLCANO_LOCATION
+
+
 def main() -> None:
     tests = (
         test_location_profiles,
@@ -537,13 +644,17 @@ def main() -> None:
         test_lua_multiline_roundtrip,
         test_en_zh_mod_metadata,
         test_world_setting_icon_rendering,
+        test_world_setting_name_wrap_keeps_full_text,
         test_creation_dependency_confirmation,
         test_main_mod_dependency_confirmation,
         test_creation_error_dialog_uses_wizard_parent,
         test_pending_mod_world_preview,
+        test_creation_mod_list_uses_native_canvas_width,
         test_creation_matrix,
         test_creation_rejects_invalid_combinations,
         test_porkland_creation,
+        test_multi_shard_creation,
+        test_multi_shard_mod_templates_require_enabled_mods,
     )
     for test in tests:
         test()

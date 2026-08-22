@@ -23,6 +23,8 @@ def _run_process(lines: list[str], *, is_master: bool = True) -> ServerProcess:
     process.world_ready = False
     process.mods_enabled = set()
     process.mods_loaded = set()
+    process.mods_failed = set()
+    process._mod_context = None
     process.missing_mods = None
     process.is_master = is_master
 
@@ -96,10 +98,29 @@ def test_presentation_waits_until_ready_line_is_consumed() -> None:
     assert secondary_ready is True
 
 
+def test_mod_syntax_error_is_failed_but_world_can_be_ready() -> None:
+    process = _run_process([
+        "modoverrides.lua enabling CommonModSets",
+        "Registering Mods:",
+        "    Registering Mod CommonModSets",
+        "Mod: CommonModSets (常用mod集合)\tLoading modmain.lua",
+        "Mod: CommonModSets (常用mod集合)\t  Error loading mod!",
+        "[string \"../mods/CommonModSets/modmain.lua\"]:7: unfinished string near '''",
+        "Disabling CommonModSets (常用mod集合) because it had an error.",
+        "About to start a shard with these settings:",
+        "Reset() returning",
+        "Sim paused",
+    ])
+    assert process.world_ready is True
+    assert process.mods_failed == {"CommonModSets"}
+    assert process.missing_mods == ["CommonModSets"]
+
+
 def main() -> None:
     tests = (
         test_luajit_companion_is_checked_but_not_counted,
         test_presentation_waits_until_ready_line_is_consumed,
+        test_mod_syntax_error_is_failed_but_world_can_be_ready,
     )
     for test in tests:
         test()

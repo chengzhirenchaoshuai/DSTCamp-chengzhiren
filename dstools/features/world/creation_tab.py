@@ -68,6 +68,7 @@ class WorldCreationTab:
         self.app = app
         self.frame = BgFrame(parent, app, bg=theme.BG_SOFT)
         self._plan_master = self._plan_caves = None
+        self._extra_plans = {}
         self._location_drafts = {}
         self._user_selected_location_shards: set[str] = set()
         self._world_profile = resolve_world_location_profile(set())
@@ -187,6 +188,97 @@ class WorldCreationTab:
 
     def _on_shard_changed(self, _event=None) -> None:
         self._refresh_location_combo()
+        self._refresh_world_action_buttons()
+        self._render()
+
+    def _available_locations_for_shard(self, shard: str) -> tuple[str, ...]:
+        if shard in (MASTER_SHARD, CAVES_SHARD):
+            return self._world_profile.available_locations(shard)
+        # 额外分片不是官方 Master/Caves 固定槽位，可使用当前已启用 Mod
+        # 实际注册到任一槽位的所有已核对 location。
+        return tuple(dict.fromkeys(
+            self._world_profile.master_locations + self._world_profile.caves_locations
+        ))
+
+    def _refresh_shard_combo(self, selected: str | None = None) -> None:
+        if not hasattr(self, "shard_combo"):
+            return
+        values = (MASTER_SHARD, CAVES_SHARD, *self._extra_plans)
+        self.shard_combo["values"] = values
+        target = selected or self.shard_var.get()
+        self.shard_var.set(target if target in values else MASTER_SHARD)
+        self._refresh_world_action_buttons()
+
+    def _refresh_world_action_buttons(self) -> None:
+        button = getattr(self, "_remove_world_btn", None)
+        if button is not None:
+            state = tk.NORMAL if self.shard_var.get() in self._extra_plans else tk.DISABLED
+            button.configure(state=state)
+
+    def _next_extra_shard_name(self, location: str) -> str:
+        base = {
+            "forest": "Forest", "cave": "Caves", "porkland": "Porkland",
+            "shipwrecked": "Shipwrecked", "volcanoworld": "Volcano",
+        }.get(location, "World")
+        occupied = {MASTER_SHARD, CAVES_SHARD, *self._extra_plans}
+        if base not in occupied:
+            return base
+        index = 2
+        while f"{base}_{index}" in occupied:
+            index += 1
+        return f"{base}_{index}"
+
+    def _add_world(self) -> None:
+        locations = tuple(dict.fromkeys(
+            self._world_profile.master_locations + self._world_profile.caves_locations
+        ))
+        choices = [
+            (
+                t("world.creation_surface_world")
+                if location == "forest" else get_location_definition(location).name_zh,
+                location,
+            )
+            for location in locations
+        ]
+        location = dlg.ask_choice(
+            self.frame.winfo_toplevel(),
+            t("world.creation_add_world_title"),
+            t("world.creation_add_world_prompt"),
+            choices,
+            default=locations[0] if locations else None,
+            min_width=520,
+            layout="vertical",
+        )
+        if not location:
+            return
+        shard_name = self._next_extra_shard_name(location)
+        plan = copy.deepcopy(default_plan_for_location(location))
+        self._extra_plans[shard_name] = plan
+        self._location_drafts[(shard_name, location)] = plan
+        if self._server_config is not None:
+            self._server_config.add_shard(shard_name)
+        self._refresh_shard_combo(shard_name)
+        self._refresh_location_combo()
+        self._render()
+
+    def _remove_world(self) -> None:
+        shard_name = self.shard_var.get()
+        if shard_name not in self._extra_plans:
+            return
+        if not dlg.ask_yes_no(
+            self.frame.winfo_toplevel(),
+            t("world.creation_remove_world"),
+            t("world.creation_remove_world_confirm", name=shard_name),
+        ):
+            return
+        self._extra_plans.pop(shard_name, None)
+        for key in [key for key in self._location_drafts if key[0] == shard_name]:
+            self._location_drafts.pop(key, None)
+        self._user_selected_location_shards.discard(shard_name)
+        if self._server_config is not None:
+            self._server_config.remove_shard(shard_name)
+        self._refresh_shard_combo(MASTER_SHARD)
+        self._refresh_location_combo()
         self._render()
 
     def _build_world_panel(self) -> None:
@@ -205,6 +297,15 @@ class WorldCreationTab:
         self.location_combo = MenuCombo(toolbar, textvariable=self.location_var, width=16)
         self.location_combo.pack(side=tk.LEFT, padx=5)
         self.location_combo.bind("<<ComboboxSelected>>", self._on_location_changed)
+        self._add_world_btn = ttk.Button(
+            toolbar, text=t("world.creation_add_world"), command=self._add_world,
+        )
+        self._add_world_btn.pack(side=tk.LEFT, padx=(8, 4))
+        self._remove_world_btn = ttk.Button(
+            toolbar, text=t("world.creation_remove_world"), command=self._remove_world,
+            state=tk.DISABLED,
+        )
+        self._remove_world_btn.pack(side=tk.LEFT, padx=(4, 0))
 
         self._world_info_frame = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
         self._world_info_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
@@ -295,6 +396,10 @@ class WorldCreationTab:
         from dstools.shared.gui.image_scroll import ImageScrollPanel
         self._mod_panel = ImageScrollPanel(self._mod_list_frame, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app)
         self._mod_panel.frame.pack(fill=tk.BOTH, expand=True)
+        # Mod 名称由 PIL 画进整张列表图。必须在窗口尺寸稳定后按 Canvas
+        # 的真实像素宽度重新渲染；否则固定 1300px 图片经 BILINEAR 缩放后，
+        # 文字边缘会发虚。与主页 Mod 管理使用同一套高清重渲染策略。
+        self._mod_panel.on_settle = lambda width, _height: self._render_list(ref_width=width)
         # 右下角：保存/载入配置集按钮（原来的 header 和"创建存档 Mod"标题
         # 已删掉，这两个按钮挪到 mod 列表下方靠右）。
         preset_row = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
@@ -360,16 +465,22 @@ class WorldCreationTab:
             self.status_var.set(str(exc))
 
     def _plan_for_shard(self, shard: str):
-        return self._plan_caves if shard == CAVES_SHARD else self._plan_master
+        if shard == CAVES_SHARD:
+            return self._plan_caves
+        if shard == MASTER_SHARD:
+            return self._plan_master
+        return self._extra_plans.get(shard)
 
     def _set_plan_for_shard(self, shard: str, plan) -> None:
         if shard == CAVES_SHARD:
             self._plan_caves = plan
-        else:
+        elif shard == MASTER_SHARD:
             self._plan_master = plan
+        else:
+            self._extra_plans[shard] = plan
 
     def _switch_shard_location(self, shard: str, location: str, render: bool = True) -> None:
-        if location not in self._world_profile.available_locations(shard):
+        if location not in self._available_locations_for_shard(shard):
             raise ValueError(f"{shard} 当前不能选择 {location}")
         current = self._plan_for_shard(shard)
         if current is not None:
@@ -379,8 +490,11 @@ class WorldCreationTab:
             # 岛屿冒险允许两个槽位任选四种世界。森林/洞穴的完整默认数据
             # 来自真实官方模板；跨槽位选择时复用另一槽位已加载的模板，不能
             # 退回只有 id/location 的残缺计划。
-            other_shard = CAVES_SHARD if shard == MASTER_SHARD else MASTER_SHARD
-            other_plan = self._location_drafts.get((other_shard, location))
+            other_plan = next(
+                (draft for (draft_shard, draft_location), draft in self._location_drafts.items()
+                 if draft_shard != shard and draft_location == location),
+                None,
+            )
             plan = copy.deepcopy(other_plan) if other_plan is not None else None
         if plan is None:
             plan = default_plan_for_location(location)
@@ -394,7 +508,7 @@ class WorldCreationTab:
         if not hasattr(self, "location_combo"):
             return
         shard = self.shard_var.get() or MASTER_SHARD
-        locations = self._world_profile.available_locations(shard)
+        locations = self._available_locations_for_shard(shard)
         self._location_display_to_id = {
             get_location_definition(location).name_zh: location for location in locations
         }
@@ -528,10 +642,12 @@ class WorldCreationTab:
             self._mod_scan_status.set(f"已发现 {len(records)} 个 Mod")
         self._render_list()
 
-    def _render_list(self):
+    def _render_list(self, ref_width=None):
         if self._mod_panel is None:
             return
         from dstools.features.mod.render import REF_WIDTH
+        if ref_width is None:
+            ref_width = self._mod_panel.current_width(REF_WIDTH)
         query = (self._mod_filter_var.get() if self._mod_filter_var is not None else "").strip().casefold()
         show = self._mod_show_var.get() if self._mod_show_var is not None else "all"
         rows = []
@@ -556,7 +672,7 @@ class WorldCreationTab:
         if not rows:
             from PIL import Image as _Image, ImageDraw as _ImageDraw
             from dstools.shared.gui.fonts import get_font
-            width = self._mod_panel.current_width(REF_WIDTH)
+            width = ref_width
             img = _Image.new("RGB", (width, 60), theme.CARD_BG)
             if query or show != "all":
                 _ImageDraw.Draw(img).text(
@@ -572,7 +688,7 @@ class WorldCreationTab:
             on_config=self._open_mod_config,
             on_link=self._open_mod_link,
             on_copy_id=self._on_copy_id,
-            ref_width=REF_WIDTH,
+            ref_width=ref_width,
             icon_thumb_cache=self._icon_thumb_cache,
         )
         self._mod_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
@@ -822,14 +938,21 @@ class WorldCreationTab:
 
     def _prepare_unique_creation_ports(self, name, destination, cluster_ini, shard_configs) -> bool:
         """新存档端口与现有配置冲突时，经确认后分配一整组新端口。"""
-        for shard_name, is_master in (("Master", True), ("Caves", False)):
-            shard_configs.setdefault(shard_name, default_shard_config(is_master))
+        extra_plans = getattr(self, "_extra_plans", {})
+        shard_names = ("Master", "Caves", *extra_plans)
+        for shard_index, shard_name in enumerate(shard_names):
+            shard_configs.setdefault(
+                shard_name,
+                default_shard_config(
+                    shard_name == "Master", shard_name, max(1, shard_index),
+                ),
+            )
         planned = Cluster(
             name, destination, source=SaveSource.SERVER, platform=Platform.STEAM,
             config=cluster_ini,
             shards=[
                 Shard(shard_name, destination / shard_name, config=shard_configs[shard_name])
-                for shard_name in ("Master", "Caves")
+                for shard_name in shard_names
             ],
         )
         planned_claims, issues = collect_cluster_port_claims(planned)
@@ -876,7 +999,7 @@ class WorldCreationTab:
         scan = scan_udp_ports()
         if scan.ok:
             used.update(port for ports_for_pid in scan.ports_by_pid.values() for port in ports_for_pid)
-        master_port, values = allocate_cluster_port_values(("Master", "Caves"), used)
+        master_port, values = allocate_cluster_port_values(shard_names, used)
         cluster_ini.shard["master_port"] = master_port
         for shard_name, ports_for_shard in values.items():
             config = shard_configs[shard_name]
@@ -941,6 +1064,7 @@ class WorldCreationTab:
                     cluster_token=server_settings.get("cluster_token", ""),
                     admin_ids=server_settings.get("admin_ids", ()),
                     block_ids=server_settings.get("block_ids", ()),
+                    extra_shards=copy.deepcopy(self._extra_plans),
                 ),
                 root,
             )

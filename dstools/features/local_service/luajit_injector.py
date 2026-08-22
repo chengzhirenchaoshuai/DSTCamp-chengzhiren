@@ -253,14 +253,19 @@ class InstallResult:
 
 
 def _copy_injector_files_into(source_dir: Path, dest_dir: Path, on_log=None) -> int:
-    """把 source_dir（订阅内容里的 bin64/windows/）下的全部文件覆盖式复
-    制到 dest_dir（隔离副本目录），返回复制的文件数。不维护一份"9 个文
-    件"清单去挑着复制——Steam 那边随时可能增删变体 DLL，整体镜像天然对
-    内容变化免疫。"""
+    """把订阅内容 ``bin64/windows/`` 下的全部文件递归覆盖到副本。
+
+    注入包除了顶层 DLL 外还可能带 ``deps/`` 等子目录；必须保留相对路径，
+    不能只遍历 ``source_dir.iterdir()``，否则新版本新增的依赖 DLL 会被漏掉。
+    不维护一份固定文件清单，Steam 那边增删文件和目录都能自然兼容。
+    """
     n = 0
-    for f in source_dir.iterdir():
+    for f in source_dir.rglob("*"):
         if f.is_file():
-            shutil.copy2(f, dest_dir / f.name)
+            relative = f.relative_to(source_dir)
+            target = dest_dir / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, target)
             n += 1
     if on_log:
         on_log(t("local.luajit_log_copied", n=n, dir=str(dest_dir)))

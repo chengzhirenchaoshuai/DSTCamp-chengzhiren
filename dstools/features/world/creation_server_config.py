@@ -73,6 +73,42 @@ class CreationServerConfigTab(ClusterConfigTab):
         if entry and not entry[1]:
             entry[0].set(name)
 
+    def add_shard(self, shard_name: str) -> None:
+        """把世界设置页新增的分片同步到服务器配置草稿。"""
+        if any(shard.name == shard_name for shard in self._draft_cluster.shards):
+            return
+        self._sync_pending_cluster()
+        self._sync_pending_shard()
+        path = self._draft_cluster.path / shard_name
+        path.mkdir()
+        shard_index = len(self._draft_cluster.shards)
+        write_server_ini(
+            default_shard_config(False, shard_name, shard_index),
+            path / "server.ini",
+        )
+        self._draft_cluster.shards.append(Shard(name=shard_name, path=path))
+        self._load_config()
+        if hasattr(self, "_shard_sel_var"):
+            self._shard_sel_var.set(shard_name)
+            self._load_shard_config()
+
+    def remove_shard(self, shard_name: str) -> None:
+        """只删除创建向导私有草稿中的额外分片。"""
+        target = next(
+            (shard for shard in self._draft_cluster.shards if shard.name == shard_name),
+            None,
+        )
+        if target is None or shard_name in ("Master", "Caves"):
+            return
+        self._sync_pending_cluster()
+        if getattr(self, "_shard_sel_var", None) is not None:
+            if self._shard_sel_var.get() != shard_name:
+                self._sync_pending_shard()
+        (target.path / "server.ini").unlink(missing_ok=True)
+        target.path.rmdir()
+        self._draft_cluster.shards.remove(target)
+        self._load_config()
+
     def _save_cluster_ini(self):
         super()._save_cluster_ini()
 

@@ -13,11 +13,14 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from enum import Enum
 from pathlib import Path
 
 from dstools.shared import app_settings
 from dstools.features.cluster_config.config_manager import get_shard_option, load_shard_config
+from dstools.features.mod.manager import load_mod_overrides
+from dstools.features.local_service.server_diagnostics import analyze_mod_loading
 from dstools.shared.steam_discovery import find_all_steam_libraries
 
 IS_WINDOWS = sys.platform == "win32"
@@ -226,6 +229,9 @@ def advance_world_ready_marker(
 # （那种文案没有在真机日志里见到过，没法核实，不敢假设）。
 _MOD_ENABLING_RE = re.compile(r"modoverrides\.lua enabling (\S+)", re.IGNORECASE)
 _MOD_LOADING_RE = re.compile(r"loading mod:\s*(\S+)\s*\(", re.IGNORECASE)
+_MOD_REGISTER_RE = re.compile(r"Registering Mod\s+(\S+)", re.IGNORECASE)
+_MOD_CONTEXT_RE = re.compile(r"Mod:\s+(\S+)\s+\(", re.IGNORECASE)
+_MOD_DISABLED_RE = re.compile(r"Disabling\s+(\S+)(?:\s+\([^)]*\))?\s+because it had an error", re.IGNORECASE)
 
 
 class ServerProcess:
@@ -251,11 +257,16 @@ class ServerProcess:
         self.world_ready = False
         self.proc: subprocess.Popen | None = None
         self._out_queue: "queue.Queue[str]" = queue.Queue()
+        # 只保留最近一段日志供异常退出诊断使用，避免长时间运行的世界
+        # 无限增长内存；完整日志仍然照常显示在控制台文本框里。
+        self._recent_log_lines = deque(maxlen=500)
         # Mod 加载完整性检查用，见 _MOD_ENABLING_RE/_MOD_LOADING_RE 顶部
         # 说明。missing_mods 在 world_ready 变 True 那一刻算一次定型，
         # None 表示"世界还没就绪，还没到算的时候"。
         self.mods_enabled: set[str] = set()
         self.mods_loaded: set[str] = set()
+        self.mods_failed: set[str] = set()
+        self._mod_context: str | None = None
         self.missing_mods: list[str] | None = None
 
     @property
@@ -264,6 +275,20 @@ class ServerProcess:
         return len(self.mods_enabled - _INTERNAL_MOD_KEYS)
 
     def start(self) -> None:
+        # 服务器对“完全不存在的 Mod”可能连
+        # ``modoverrides.lua enabling ...`` 都不打印，只显示
+        # ``No mods registered``。启动前先读取配置中的启用集合，才能在
+        # world_ready 时准确识别“配置启用但实际没有加载”的 Mod。
+        overrides_path = self.cluster_path / self.shard_name / "modoverrides.lua"
+        try:
+            overrides = load_mod_overrides(overrides_path)
+            self.mods_enabled.update(
+                key for key, entry in overrides.mods.items() if entry.enabled
+            )
+        except (OSError, ValueError, TypeError):
+            # 日志读取和服务器启动不能因为诊断预读失败而被阻断；后续仍
+            # 可使用服务器实际打印的 modoverrides enabling 行继续判断。
+            pass
         bitness = pick_bitness(self.install_dir)  # 位数判断始终用真实安装目录
         bin64_dir = self.bin64_override if self.bin64_override is not None \
             else self.install_dir / _BIN_DIRS[bitness]
@@ -282,9 +307,17 @@ class ServerProcess:
 
     def _read_loop(self) -> None:
         real_start_seen = False
+        if not hasattr(self, "mods_failed"):
+            self.mods_failed = set()
+        if not hasattr(self, "_mod_context"):
+            self._mod_context = None
         try:
             for line in self.proc.stdout:
                 line = line.rstrip("\n")
+                recent_lines = getattr(self, "_recent_log_lines", None)
+                if recent_lines is None:
+                    recent_lines = self._recent_log_lines = deque(maxlen=500)
+                recent_lines.append(line)
                 if not self.world_ready:
                     m = _MOD_ENABLING_RE.search(line)
                     if m:
@@ -293,15 +326,38 @@ class ServerProcess:
                         m = _MOD_LOADING_RE.search(line)
                         if m:
                             self.mods_loaded.add(m.group(1))
+                        else:
+                            m = _MOD_REGISTER_RE.search(line)
+                            if m:
+                                self.mods_loaded.add(m.group(1))
+
+                    context = _MOD_CONTEXT_RE.search(line)
+                    if context:
+                        self._mod_context = context.group(1)
+                    if "error loading mod!" in line.lower() and self._mod_context:
+                        self.mods_failed.add(self._mod_context)
+                    disabled = _MOD_DISABLED_RE.search(line)
+                    if disabled:
+                        self.mods_failed.add(disabled.group(1))
                     real_start_seen, ready_now = advance_world_ready_marker(
                         line, self.is_master, real_start_seen,
                     )
                     if ready_now:
                         self.world_ready = True
-                        self.missing_mods = sorted(self.mods_enabled - self.mods_loaded)
+                        self.missing_mods = list(analyze_mod_loading(
+                            enabled_mods=self.mods_enabled,
+                            loaded_mods=self.mods_loaded,
+                            failed_mods=self.mods_failed,
+                            visible_mod_count=self.visible_mod_count,
+                        ).failed_mods)
                 self._out_queue.put(line)
         except (OSError, ValueError):
             pass
+
+    @property
+    def recent_log_lines(self) -> tuple[str, ...]:
+        """返回进程退出前的有限日志快照，供诊断模块只读使用。"""
+        return tuple(getattr(self, "_recent_log_lines", ()))
 
     def read_available_lines(self) -> list[str]:
         """非阻塞取出目前已经读到的全部行，供 GUI 轮询时调用。"""

@@ -300,6 +300,28 @@ def _value_color(raw_value: str) -> str:
     return table.get(raw_value, theme.TEXT)
 
 
+def _wrap_text_to_width(draw, text: str, font, max_width: float) -> str:
+    """按实际像素宽度换行，完整保留中英文设置名称。"""
+    if not text:
+        return ""
+    lines: list[str] = []
+    current = ""
+    for char in text:
+        if char == "\n":
+            lines.append(current)
+            current = ""
+            continue
+        candidate = current + char
+        if current and draw.textlength(candidate, font=font) > max_width:
+            lines.append(current.rstrip())
+            current = char.lstrip() if char.isspace() else char
+        else:
+            current = candidate
+    if current or not lines:
+        lines.append(current.rstrip())
+    return "\n".join(lines)
+
+
 def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                         ref_width=None, flash=None, location="forest", mod_settings=None,
                         mod_icons=None, is_rule=True):
@@ -366,8 +388,11 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     col_area_x0 = pad_x + content_margin + block_pad_h
     col_w = (rw - 2 * pad_x - 2 * content_margin - block_pad_h - (cols - 1) * col_gutter) / cols
 
-    name_font = get_font(round(18 * s))
-    val_font = get_font(round(18 * s))
+    # 设置名称和取值原来都是 18px，在三列布局下单行只能容纳很少的汉字。
+    # 小幅降到 16px，让名称少换行、选择区域也更紧凑；分类标题维持原尺寸，
+    # 不削弱信息层级。
+    name_font = get_font(round(16 * s))
+    val_font = get_font(round(16 * s))
     hdr_font = get_font(round(22 * s))
     # 只需要补偿下面第一行自己的 block_pad_v（标题条本身不会向下探出任
     # 何 padding），跟 ROW_GAP/col_gutter 是同一个思路，见 CAT_HEADER_
@@ -416,29 +441,25 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             vlbl = get_value_label(ov.key, ov.value)
             vcolor = _value_color(ov.value)
             val_x = cx + col_w - 100 * s
-            arrow_h = 26 * s  # 循环按钮箭头的高度（原来是画的 14px 高三角形）
-            arrow_pad = 14 * s  # 每个箭头周围的留白（原来只有局促的 10px）
-            # 给取值文字预留的固定半宽（够放大约 4 个汉字）。按钮相对
-            # val_x 始终是固定偏移量，不管当前文案多长都不会跟着挪动，
-            # 不同设置/取值之间按钮位置不会跳来跳去。
-            VALUE_HALF_W = 48 * s
+            arrow_h = 22 * s
+            arrow_pad = 12 * s
+            # 取值文字固定只占约 4 个汉字宽；更长的值在这个区域内换行，
+            # 不再继续侵占左侧 key 名称空间。用当前字体实测宽度而不是写死
+            # 像素，缩放和切换字体样式后仍保持“四个汉字左右”的语义。
+            value_text_w = draw.textlength("汉字汉字", font=val_font)
+            value_half_w = value_text_w / 2
+            wrapped_value = _wrap_text_to_width(
+                draw, vlbl, val_font, value_text_w,
+            )
 
             if editable:
-                bx1 = val_x - VALUE_HALF_W - arrow_pad - arrow_h / 2
-                bx2 = val_x + VALUE_HALF_W + arrow_pad + arrow_h / 2
+                bx1 = val_x - value_half_w - arrow_pad - arrow_h / 2
+                bx2 = val_x + value_half_w + arrow_pad + arrow_h / 2
                 text_x_end = bx1 - arrow_pad
             else:
                 bx1 = bx2 = None
-                text_x_end = val_x - VALUE_HALF_W - 10 * s
-                # 只读取值是从 val_x 左对齐画的（anchor="lm"），不像可编
-                # 辑行那样居中——一个异常长/没映射到文案的原始值
-                # （get_value_label 对表里没有的值会退回 str(raw_value)）
-                # 否则可能超出这一列，进而超出这个设置项自己的背景卡片
-                # 和分类外框。截断到实际能放下的长度，跟下面名字标签用
-                # 的是同一套写法。
-                max_val_w = max(10, (cx + col_w) - val_x - 8 * s)
-                while vlbl and draw.textlength(vlbl, font=val_font) > max_val_w:
-                    vlbl = vlbl[:-1]
+                value_center_x = cx + col_w - value_half_w - 8 * s
+                text_x_end = value_center_x - value_half_w - 8 * s
 
             # 每个设置项背后的浅绿色圆角卡片，比列边界和上下行都要缩进
             # 一点（ROW_GAP 专门加宽过就是为了给它留出空间）。先画这个，
@@ -449,13 +470,13 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             # 钮/文字的实际宽度动态外扩——之前是 max(cx+col_w,
             # right_extent+block_pad_h)，可编辑行的循环箭头按钮位置是固
             # 定偏移量算出来的，每次都会让 block_x2 比 cx+col_w 多出一截
-            # （只读行则通常不会，因为多数取值文字本来就短），这就是
+            # （只读行则通常不会），这就是
             # "世界规则"和"世界生成"背景卡片间距看着不一样的根源；而且这
             # 一截会随 s 缩放，窗口拖宽后越界越多，最终吃光 col_gutter 里
             # 留的间隙，两列背景卡片就撞上了。col_w 的计算已经把按钮/文字
             # 会用到的空间都留够了（value_x/箭头偏移量都是相对 col_w 算
-            # 的，只读文字有 _truncate 兜底不会超出 col_w-8*s），直接钉死
-            # 在 cx+col_w 既不会裁到任何内容，又能让间隙精确等于
+            # 的，取值文字也会在固定四字宽度内换行），直接钉死在 cx+col_w
+            # 既不会裁到任何内容，又能让间隙精确等于
             # COL_GAP，不随窗口宽度变化，两种行也完全一致。
             block_x1 = max(0, cx - block_pad_h)
             block_y1 = cy - block_pad_v
@@ -477,13 +498,18 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             text_x_start = cx + icon_size + 8 * s
             slot_w = max(10, text_x_end - text_x_start)
 
-            name_text = ov.name or ov.key
-            while name_text and draw.textlength(name_text, font=name_font) > slot_w:
-                name_text = name_text[:-1]
-            tw = draw.textlength(name_text, font=name_font)
-            draw_x = text_x_start + max(0, (slot_w - tw) / 2)
-            draw.text((draw_x, icon_cy), name_text, font=name_font,
-                      fill=theme.TEXT, anchor="lm")
+            name_text = _wrap_text_to_width(
+                draw, ov.name or ov.key, name_font, slot_w,
+            )
+            draw.multiline_text(
+                (text_x_start + slot_w / 2, icon_cy),
+                name_text,
+                font=name_font,
+                fill=theme.TEXT,
+                anchor="mm",
+                align="center",
+                spacing=max(1, round(2 * s)),
+            )
 
             if editable:
                 # 跟游戏内的循环切换行为保持一致：取值到了某一端时，只
@@ -500,14 +526,22 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                 if on_click and not at_min:
                     hit_regions.append((bx1 - arrow_h / 2, cy, bx1 + arrow_h / 2, cy + icon_size,
                                         _mk_cb(on_click, ov.key, -1)))
-                draw.text((val_x, icon_cy), vlbl, font=val_font, fill=vcolor, anchor="mm")
+                draw.multiline_text(
+                    (val_x, icon_cy), wrapped_value, font=val_font,
+                    fill=vcolor, anchor="mm", align="center",
+                    spacing=max(1, round(2 * s)),
+                )
                 _draw_button(img, draw, bx2, icon_cy, arrow_h, "right",
                             disabled=at_max, pressed=(flash == (ov.key, 1)))
                 if on_click and not at_max:
                     hit_regions.append((bx2 - arrow_h / 2, cy, bx2 + arrow_h / 2, cy + icon_size,
                                         _mk_cb(on_click, ov.key, 1)))
             else:
-                draw.text((val_x, icon_cy), vlbl, font=val_font, fill=vcolor, anchor="lm")
+                draw.multiline_text(
+                    (value_center_x, icon_cy), wrapped_value, font=val_font,
+                    fill=vcolor, anchor="mm", align="center",
+                    spacing=max(1, round(2 * s)),
+                )
 
         y += row_h
         # 只画轮廓线的外框，把标题条 + 这个分类下所有设置项行框成一个视

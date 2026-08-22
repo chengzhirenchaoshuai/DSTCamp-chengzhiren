@@ -47,7 +47,7 @@ else:
 
 
 def _show(parent, title, message, kind, buttons, wraplength=420, min_width=460,
-          auxiliary_button=None):
+          auxiliary_button=None, button_layout="horizontal"):
     """buttons: [(label, value, is_default), ...] 列表。返回被选中的
     value，弹窗没选就关掉则返回 None。
 
@@ -100,7 +100,13 @@ def _show(parent, title, message, kind, buttons, wraplength=420, min_width=460,
         ttk.Button(btn_row, text=label, command=command).pack(side=tk.LEFT)
     for label, value, is_default in buttons:
         b = ttk.Button(btn_row, text=label, command=lambda v=value: choose(v))
-        b.pack(side=tk.RIGHT, padx=(8, 0))
+        if button_layout == "vertical":
+            # 选项数量会随已启用 Mod 变化；纵排按钮按文字所需宽度居中，
+            # Toplevel 的请求高度按按钮数量自然增长，center_over_parent()
+            # 再按新尺寸居中，无需写死任何窗口宽高。
+            b.pack(side=tk.TOP, pady=(0, 8))
+        else:
+            b.pack(side=tk.RIGHT, padx=(8, 0))
         if is_default:
             default_btn = b
     win.protocol("WM_DELETE_WINDOW", lambda: choose(None))
@@ -190,11 +196,12 @@ def ask_yes_no(parent, title, message, wraplength=420, min_width=460) -> bool:
 
 
 def ask_choice(parent, title, message, choices, default=None,
-               wraplength=420, min_width=460):
+               wraplength=420, min_width=460, layout="horizontal"):
     """显示多选项确认框，返回被选中的值；关闭窗口或按 Esc 返回 None。"""
     buttons = [(label, value, value == default) for label, value in choices]
     return _show(parent, title, message, "question", buttons,
-                 wraplength=wraplength, min_width=min_width)
+                 wraplength=wraplength, min_width=min_width,
+                 button_layout=layout)
 
 
 def ask_yes_no_with_auxiliary(parent, title, message, auxiliary_label, auxiliary_command,

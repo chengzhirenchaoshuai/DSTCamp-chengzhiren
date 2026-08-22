@@ -1551,6 +1551,9 @@ def _fake_workshop_dir(root: Path, subscribed_ids: list[str], with_injector_file
             bin64_win.mkdir(parents=True, exist_ok=True)
             (bin64_win / "Winmm.dll").write_bytes(b"fake winmm")
             (bin64_win / "Injector.dll").write_bytes(b"fake injector")
+            deps = bin64_win / "deps"
+            deps.mkdir(parents=True, exist_ok=True)
+            (deps / "lua_helper.dll").write_bytes(b"fake nested dependency")
 
     original = lj.find_workshop_dir
     lj.find_workshop_dir = lambda: workshop_dir
@@ -1669,6 +1672,8 @@ def test_luajit_injector():
                     "重新生成应该带上真实 bin64 里当前的游戏文件"
                 assert (luajit_dir / "Winmm.dll").read_bytes() == b"fake winmm", \
                     "注入文件应该直接取自订阅内容，不是重新联网下载"
+                assert (luajit_dir / "deps" / "lua_helper.dll").read_bytes() == b"fake nested dependency", \
+                    "注入包里的 deps 子目录和 DLL 也必须递归复制"
                 new_marker = read_marker(luajit_dir)
                 assert new_marker.DST_version == "222", "标记里的 DST_version 应该更新成当前真实值"
                 assert new_marker.luajit_version == "1.10.1", "luajit_version 也应该更新成当前配套 Mod 的版本"

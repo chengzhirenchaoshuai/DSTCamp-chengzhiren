@@ -20,6 +20,9 @@ from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.features.local_service import luajit_injector
+from dstools.features.local_service.server_diagnostics import (
+    analyze_mod_loading, contains_startup_failure, diagnose_server_failure,
+)
 from dstools.shared.app_settings import (
     get_backup_auto_enabled, get_backup_interval_minutes, set_dedicated_server_path,
     get_sakura_token, get_selfhost_frp_mapping, get_selfhost_frp_server,
@@ -35,7 +38,9 @@ from dstools.features.local_service.dedicated_server import (
     detect_external_shard_processes, find_bin64_dir, find_dedicated_server_dir,
     is_valid_install_dir, resolve_conf_dir_arg,
 )
-from dstools.features.mod.parser import find_shared_ugc_directory
+from dstools.features.mod.parser import (
+    find_game_mods_dir, find_shared_ugc_directory, find_workshop_dir, parse_modinfo,
+)
 from dstools.shared.token_manager import is_valid_token, read_token
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
@@ -77,6 +82,42 @@ def _status_color(status) -> str:
         ServerStatus.CRASHED: theme.ERROR,
     }
     return colors[status]
+
+
+def _mod_display_names(proc, mod_ids: tuple[str, ...]) -> tuple[str, ...]:
+    """把诊断中的 Mod ID 尽力解析成“ID（名称）”，失败时保留 ID。"""
+    roots: list[Path] = []
+    if getattr(proc, "ugc_directory", None):
+        roots.append(Path(proc.ugc_directory) / "content" / "322330")
+    workshop = find_workshop_dir()
+    if workshop:
+        roots.append(workshop)
+    game_mods = find_game_mods_dir()
+    if game_mods:
+        roots.append(game_mods)
+
+    result = []
+    for mod_id in mod_ids:
+        name = ""
+        folder_names = [mod_id]
+        if mod_id.lower().startswith("workshop-"):
+            folder_names.append(mod_id[9:])
+        for root in roots:
+            for folder_name in folder_names:
+                folder = root / folder_name
+                if not (folder / "modinfo.lua").is_file():
+                    continue
+                try:
+                    info = parse_modinfo(folder)
+                    name = (info.name or "").strip() if info else ""
+                except (OSError, ValueError, TypeError):
+                    name = ""
+                if name:
+                    break
+            if name:
+                break
+        result.append(f"{mod_id}（{name}）" if name else mod_id)
+    return tuple(result)
 _RUNNING_LIKE = (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING)
 
 
@@ -388,6 +429,7 @@ class _ConsolePane:
         # 等当前控制台自己消费到就绪行，不能抢在日志画面前出现。
         self._mod_check_real_start_seen = False
         self._mod_check_ready_seen = False
+        self._diagnostic_reported = False
 
         body = ttk.Frame(self.frame)
         body.pack(fill=tk.BOTH, expand=True)
@@ -458,6 +500,9 @@ class _ConsolePane:
         self._mod_status_label = tk.Label(body, text="", anchor=tk.W, padx=10, pady=0,
                                            borderwidth=0, highlightthickness=0,
                                            font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
+        self._diagnostic_label = tk.Label(body, text="", anchor=tk.W, padx=10, pady=2,
+                                          borderwidth=0, highlightthickness=0,
+                                          font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
 
         self.pump()
 
@@ -525,6 +570,25 @@ class _ConsolePane:
         self.search_count_var.set(t("local.console_search_count",
                                      current=self._search_index + 1, total=len(self._search_matches)))
 
+    def _diagnostic_log_lines(self) -> tuple[str, ...]:
+        """合并管道日志和 server_log.txt，覆盖专服 stdout 缓冲导致的漏行。
+
+        某些启动失败只完整写入世界目录下的 server_log.txt，GUI 管道在
+        进程退出前可能只收到前半段输出；诊断不能因此漏掉真正的错误行。
+        当前运行管道优先，日志文件作为补充，重复行只保留一份。
+        """
+        lines = list(self.proc.recent_log_lines)
+        try:
+            log_path = Path(self.proc.cluster_path) / self.proc.shard_name / "server_log.txt"
+            if log_path.is_file():
+                file_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
+                for line in file_lines:
+                    if line not in lines:
+                        lines.append(line)
+        except (OSError, UnicodeError):
+            pass
+        return tuple(lines[-700:])
+
     def _send(self, event=None):
         cmd = self.cmd_var.get().strip()
         if cmd and self.proc.send_command(cmd):
@@ -570,6 +634,8 @@ class _ConsolePane:
         self._mod_check_reported = False
         self._mod_check_real_start_seen = False
         self._mod_check_ready_seen = False
+        self._diagnostic_reported = False
+        self._diagnostic_label.pack_forget()
         self.pump()
 
     def pump(self):
@@ -581,7 +647,12 @@ class _ConsolePane:
                     line, self.proc.is_master, self._mod_check_real_start_seen,
                 )
                 self._mod_check_ready_seen |= ready_now
-            at_bottom = self.text.yview()[1] >= 0.999
+            # 未选中的 Notebook 页没有有效的可视滚动视口，yview() 经常
+            # 返回顶部位置；这会让后台追加日志时误以为用户正在查看旧
+            # 内容。隐藏页始终跟随末尾，用户切过去时直接看到最新日志；
+            # 当前可见页仍保留“用户手动向上滚动后不强行拉回”的行为。
+            at_bottom = (self.text.yview()[1] >= 0.999
+                         or not self.frame.winfo_ismapped())
             self.text.configure(state=tk.NORMAL)
             # 每行都跟一个"\n"插入会在最后一行后面多留一个真实存在的空
             # 行（Tk Text 固定带隐式换行，"line\n"+"line\n" 变成两个连
@@ -594,10 +665,49 @@ class _ConsolePane:
                 self.text.see(tk.END)
             self.text.configure(state=tk.DISABLED)
 
+        startup_failed_now = (
+            not self.proc.world_ready
+            and not self._diagnostic_reported
+            and contains_startup_failure(lines)
+        )
         status = self.proc.status
+        crashed_now = False
         if status in (ServerStatus.STARTING, ServerStatus.RUNNING) and self.proc.poll_exit_code() is not None:
             self.proc.status = ServerStatus.CRASHED
             status = ServerStatus.CRASHED
+            crashed_now = True
+        if (crashed_now or startup_failed_now) and not self._diagnostic_reported:
+            self._diagnostic_reported = True
+            report = diagnose_server_failure(
+                shard_name=getattr(self.proc, "shard_name", "当前世界"),
+                exit_code=self.proc.poll_exit_code(),
+                world_ready=self.proc.world_ready,
+                log_lines=self._diagnostic_log_lines(),
+                enabled_mods=self.proc.mods_enabled,
+                loaded_mods=self.proc.mods_loaded,
+            )
+            if report is not None:
+                self._diagnostic_label.configure(
+                    text=f"⚠ {report.banner_text} 建议：{report.suggestions[0]}",
+                    bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
+                )
+                self._diagnostic_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
+                detail = report.summary + "\n\n建议：\n" + "\n".join(
+                    # 编号后的不换行空格保证 Tk 自动折行时不会把“2.”
+                    # 单独留在上一行，正文从下一行才开始。
+                    f"{index}.\u00a0{suggestion}"
+                    for index, suggestion in enumerate(report.suggestions, 1)
+                )
+                if report.related_mods:
+                    detail += "\n\n疑似相关 Mod：\n" + "\n".join(
+                        _mod_display_names(self.proc, report.related_mods)
+                    )
+                if report.evidence:
+                    detail += "\n\n日志证据：\n" + "\n".join(report.evidence)
+                dlg.show_warning(
+                    self.frame.winfo_toplevel(), report.title, detail,
+                    wraplength=520, min_width=560,
+                )
         self.status_var.set(t(_STATUS_KEYS[status]))
         self.status_lbl.configure(fg=_status_color(status))
         can_send = status == ServerStatus.RUNNING
@@ -615,17 +725,21 @@ class _ConsolePane:
         if (world_ready and self._mod_check_ready_seen and not self._mod_check_reported
                 and self.proc.missing_mods is not None):
             self._mod_check_reported = True
-            if self.proc.missing_mods:
+            mod_status = analyze_mod_loading(
+                enabled_mods=self.proc.mods_enabled,
+                loaded_mods=self.proc.mods_loaded,
+                failed_mods=getattr(self.proc, "mods_failed", ()),
+                visible_mod_count=self.proc.visible_mod_count,
+            )
+            if mod_status.failed_mods:
                 self._mod_status_label.configure(
-                    text=t("local.mods_missing_warning", count=len(self.proc.missing_mods),
-                            ids=", ".join(self.proc.missing_mods)),
+                    text=t("local.mods_check_failed", failed_count=len(mod_status.failed_mods),
+                            ids=", ".join(mod_status.failed_mods)),
                     bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
                 self._mod_status_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
-            elif self.proc.visible_mod_count:
-                # 一个 mod 都没启用的存档不需要报"全部正常加载"，没什么
-                # 信息量；只有真的启用了 mod 又全部加载成功才提示。
+            elif mod_status.visible_mod_count:
                 self._mod_status_label.configure(
-                    text=t("local.mods_check_ok", count=self.proc.visible_mod_count),
+                    text=t("local.mods_check_ok", count=mod_status.visible_mod_count),
                     bg=theme.BG_SOFT, fg=theme.SERVER_COLOR)
                 self._mod_status_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
 
