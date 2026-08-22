@@ -23,6 +23,7 @@ from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.server_diagnostics import (
     analyze_mod_loading, contains_startup_failure, diagnose_server_failure,
 )
+from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.shared.app_settings import (
     get_backup_auto_enabled, get_backup_interval_minutes, set_dedicated_server_path,
     get_sakura_token, get_selfhost_frp_mapping, get_selfhost_frp_server,
@@ -46,6 +47,7 @@ from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
+from dstools.shared.clipboard import copy_file_to_clipboard
 from dstools.shared.gui.toolbar_widgets import ReadonlyBanner
 from dstools.shared.gui.tooltip import Tooltip
 from dstools.shared.server_ports import (
@@ -837,6 +839,8 @@ class LocalServiceTab:
         # 发指令），不挂在某一个世界自己的行上——见 _RollbackDialog 的说明。
         self._rollback_btn = ttk.Button(btn_row, text=t("local.rollback_btn"), command=self._open_rollback_dialog)
         self._rollback_btn.pack(side=tk.LEFT, padx=(5, 0))
+        self._logs_btn = ttk.Button(btn_row, text=t("local.get_logs_btn"), command=self._get_logs)
+        self._logs_btn.pack(side=tk.LEFT, padx=(5, 0))
 
         # WeGame 版世界不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
         # 客户端才能签发的一次性会话令牌，DSTCamp 拼不出来）——选中一个
@@ -1294,6 +1298,7 @@ class LocalServiceTab:
         self._install_change_btn.configure(state=install_btn_state)
         self._install_recheck_btn.configure(state=install_btn_state)
         self._update_stop_all_btn_state(c)
+        self._update_logs_btn_state(c)
         if is_server:
             self._local_banner.hide()
             if not self._connect_row.winfo_ismapped():
@@ -1398,6 +1403,49 @@ class LocalServiceTab:
             return
         any_running = any(p.cluster_path == cluster.path for p in self.manager.running())
         self._stop_all_btn.configure(state=tk.NORMAL if any_running else tk.DISABLED)
+
+    def _update_logs_btn_state(self, cluster):
+        """只要当前是服务器存档且已有日志，就允许在运行中或停止后收集。"""
+        if not cluster or cluster.source != SaveSource.SERVER:
+            self._logs_btn.configure(state=tk.DISABLED)
+            return
+        # 当前日志文件通常在进程创建世界目录后立即出现；运行状态作为
+        # 兜底，避免每 150ms 扫描 backup 目录造成额外磁盘开销。
+        has_logs = any((Path(shard.path) / "server_log.txt").is_file()
+                       for shard in cluster.shards)
+        has_logs = has_logs or any(p.cluster_path == cluster.path for p in self.manager.running())
+        self._logs_btn.configure(state=tk.NORMAL if has_logs else tk.DISABLED)
+
+    def _get_logs(self):
+        """后台收集日志，避免压缩较大的 server_log 时冻结界面。"""
+        cluster = self._get_cluster()
+        if not cluster or cluster.source != SaveSource.SERVER:
+            return
+        self._logs_btn.configure(state=tk.DISABLED)
+
+        def worker():
+            try:
+                zip_path = create_log_bundle(cluster.path, [s.name for s in cluster.shards])
+                copied = copy_file_to_clipboard(zip_path)
+                self.frame.after(0, lambda: self._on_logs_ready(zip_path, copied))
+            except Exception as exc:  # noqa: BLE001 - 将具体原因显示给用户
+                self.frame.after(0, lambda: self._on_logs_failed(exc))
+
+        threading.Thread(target=worker, name="dstcamp-log-bundle", daemon=True).start()
+
+    def _on_logs_ready(self, zip_path: Path, copied: bool):
+        self._update_logs_btn_state(self._get_cluster())
+        if copied:
+            dlg.show_file_location(self.app.root, t("local.logs_bundle_title"), zip_path)
+        else:
+            self._copy_to_clipboard(str(zip_path))
+            dlg.show_warning(self.app.root, t("local.logs_bundle_title"),
+                             t("local.logs_bundle_path_copied", path=str(zip_path)))
+
+    def _on_logs_failed(self, exc: Exception):
+        self._update_logs_btn_state(self._get_cluster())
+        dlg.show_error(self.app.root, t("local.logs_bundle_title"),
+                       t("local.logs_bundle_failed", error=str(exc)))
 
     def _refresh_shard_rows(self, cluster):
         if cluster is None:
@@ -2151,6 +2199,7 @@ class LocalServiceTab:
         self._update_rollback_btn_state(self._get_cluster())
         self._update_start_lock_state(self._get_cluster())
         self._update_stop_all_btn_state(self._get_cluster())
+        self._update_logs_btn_state(self._get_cluster())
         self._update_luajit_row(self._get_cluster())
         # 直连代码状态随服务器/frpc 进程启停实时刷新——局域网查主世界进程、
         # 内网穿透查 frpc，都是本地同步判断；只在服务器存档可见时刷新（本地
@@ -2212,6 +2261,7 @@ class LocalServiceTab:
         self._start_all_btn.configure(text=t("local.start_all_btn"))
         self._stop_all_btn.configure(text=t("local.stop_all_btn"))
         self._rollback_btn.configure(text=t("local.rollback_btn"))
+        self._logs_btn.configure(text=t("local.get_logs_btn"))
         if self._install_dir is None:
             self._install_path_var.set(t("local.install_not_found"))
         else:

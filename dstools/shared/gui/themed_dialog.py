@@ -6,8 +6,10 @@
 """
 
 import sys
+import subprocess
 import tkinter as tk
-from tkinter import ttk
+from tkinter import font as tkfont, ttk
+from pathlib import Path
 
 from dstools.shared.gui import theme
 from dstools.shared.gui.dialog_geometry import center_over_parent
@@ -136,6 +138,59 @@ def show_warning(parent, title, message, wraplength=420, min_width=460):
 def show_error(parent, title, message, wraplength=420, min_width=460):
     _show(parent, title, message, "error", [(t("dlg.confirm_btn"), True, True)],
           wraplength=wraplength, min_width=min_width)
+
+
+def show_file_location(parent, title, path):
+    """显示可点击的文件位置，并保留统一的主题弹窗样式。"""
+    path = Path(path).resolve()
+    win = tk.Toplevel(parent)
+    win.withdraw()
+    win.title(title or "")
+    win.transient(parent)
+    win.resizable(False, False)
+    win.configure(background=theme.CARD_BORDER)
+    card = tk.Frame(win, background=theme.CARD_BG)
+    card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+    row = tk.Frame(card, background=theme.CARD_BG)
+    row.pack(fill=tk.X, padx=20, pady=(20, 0))
+    icon_char, icon_color = _icon_for("info")
+    tk.Label(row, text=icon_char, font=theme.font_tuple(22, bold=True), fg=icon_color,
+             bg=theme.CARD_BG).pack(side=tk.LEFT, padx=(0, 14), anchor="n")
+    body = tk.Frame(row, background=theme.CARD_BG)
+    body.pack(side=tk.LEFT, fill=tk.X, expand=True)
+    tk.Label(body, text="日志位置：", font=theme.font_tuple(theme.FONT_SIZE_BASE),
+             fg=theme.TEXT, bg=theme.CARD_BG, anchor="w").pack(anchor="w")
+    link_font = tkfont.Font(root=win, font=theme.font_tuple(theme.FONT_SIZE_BASE))
+    link_font.configure(underline=True)
+
+    def open_location(_event=None):
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer.exe", "/select,", str(path)])
+            else:
+                import webbrowser
+                webbrowser.open(path.parent.as_uri())
+        except OSError:
+            pass
+
+    link = tk.Label(body, text="点我打开", font=link_font, fg=theme.PRIMARY,
+                    bg=theme.CARD_BG, cursor="hand2", anchor="w")
+    link.pack(anchor="w")
+    link.bind("<Button-1>", open_location)
+    tk.Label(body, text="\n文件复制到剪贴板，可直接粘贴到聊天窗。",
+             font=theme.font_tuple(theme.FONT_SIZE_BASE), fg=theme.TEXT,
+             bg=theme.CARD_BG, justify=tk.LEFT, anchor="w").pack(anchor="w")
+    btn_row = tk.Frame(card, background=theme.CARD_BG)
+    btn_row.pack(fill=tk.X, pady=(18, 20), padx=20)
+    ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=win.destroy).pack(side=tk.RIGHT)
+    win.protocol("WM_DELETE_WINDOW", win.destroy)
+    win.bind("<Return>", lambda _event: win.destroy())
+    win.bind("<Escape>", lambda _event: win.destroy())
+    center_over_parent(win, parent, min_width=460)
+    win.deiconify()
+    _play_beep("info")
+    win.grab_set()
+    win.wait_window()
 
 
 def show_toast(parent, message, duration_ms=2400):
