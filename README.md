@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-1.0.2-orange)
+![Version](https://img.shields.io/badge/version-1.0.1-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -108,7 +108,7 @@ python tests/test_e2e_phase2.py   # i18n、exe/gui 模块可导入性（3 项）
 
 ## 更新日志
 
-### v1.0.2 · 2026-08-22
+### v1.0.1 · 2026-08-22
 
 - 新增服务器日志诊断：覆盖启动失败、运行中异常退出、端口占用、运行库缺失、权限、世界生成和 Lua/Mod 错误。
 - 识别 `LUA ERROR stack traceback`，提取疑似 Mod 的 Workshop ID、调用文件和行号，并尽力显示 Mod 名称。
