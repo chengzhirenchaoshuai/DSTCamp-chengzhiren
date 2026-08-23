@@ -224,10 +224,8 @@ class ModManagerTab:
         # “重新扫描”：跟普通刷新不同，这个按钮总是对每个已安装 mod
         # （名字/配置/图标）重新跑一遍整份文件的 Lua 沙箱解析，而不只是
         # 快速的静态扫描——见 _load_mods_worker 的 `full` 参数。这个页
-        # 签第一次加载某个 shard 的 mod 列表时（见 _refresh_mods）也会
-        # 自动跑一次同样的全量解析——接受这一次性的较长加载时间，换来
-        # 每个 mod 的标题/配置从一开始就是对的，而不是只有单独打开某个
-        # mod 的配置弹窗之后才修正。
+        # 普通进入页签只做快速静态解析；完整沙箱解析按需执行，避免大规模
+        # Mod 库首次进入页面时长时间占用后台线程。
         # "本地模组"（modinfo.lua 里 client_only_mod = true）只影响玩家
         # 自己的客户端——它们不需要 modoverrides.lua 里有一条对应记录才
         # 能生效，所以跟这里其它行不同，本工具没有实质意义上的
@@ -601,13 +599,15 @@ class ModManagerTab:
         遍（慢得多的）整份文件 Lua 沙箱解析，而不只是快速的静态解析器
         ——代价是一次性加载时间更长，换来每个 mod 的标题/配置从一开始
         就是对的（纯静态解析可能漏掉比如一个有条件重新赋值的名字）。为
-        None 时（普通的切换世界/存档），本次会话里第一次加载某个
-        shard 的 mod 时会自动跑一次全量解析，之后就保持快速；
+        None 时（普通的切换世界/存档）只走快速静态解析；
         "重载mod信息"按钮（见 _reload_full）不管什么情况都会显式强制
         跑一遍全量解析。
         """
         if full is None:
-            full = not self._did_initial_full_load
+            # 首次进入和切换世界默认走快速静态解析；完整沙箱解析只在
+            # 用户主动重新扫描或打开具体 Mod 配置时执行，避免大规模
+            # Mod 库首次加载时启动数百个 Lua 沙箱进程。
+            full = False
         c = self._get_cluster()
         shard = None
         if c:
@@ -673,6 +673,8 @@ class ModManagerTab:
         self._mod_data 等属性，这样一次仍在跑的、来自更早的 cluster/
         shard 切换的刷新，绝不会覆盖掉更新的一次（见 gen）。"""
         mod_data, mod_infos, icon_imgs = {}, {}, {}
+        icon_targets = []
+        initial_applied = False
         luajit_active = False
         try:
             overrides = load_mod_overrides(overrides_path)
@@ -757,16 +759,33 @@ class ModManagerTab:
                             self._full_resolved_cache[wid] = mod_info
                     mod_infos[wid] = mod_info
                     if mod_info and mod_folder:
-                        icon_path = get_mod_icon_path(mod_info, mod_folder, platform)
-                        if icon_path:
-                            icon_imgs[wid] = Image.open(icon_path).convert("RGBA")
+                        # 首次快速扫描先把列表和名称交回界面，图标转换单独
+                        # 在后台继续做；否则 500 个 ktech.exe 调用完成前，
+                        # 用户会一直看不到任何列表，也无法判断是否卡死。
+                        icon_targets.append((wid, mod_info, mod_folder))
                 except Exception:
                     mod_infos.setdefault(wid, None)
+            if not full:
+                self.frame.after(0, self._apply_loaded_mods, gen, mod_data,
+                                 mod_infos, {}, luajit_active)
+                initial_applied = True
+            for index, (wid, mod_info, mod_folder) in enumerate(icon_targets, 1):
+                try:
+                    icon_path = get_mod_icon_path(mod_info, mod_folder, platform)
+                    if icon_path:
+                        icon_imgs[wid] = Image.open(icon_path).convert("RGBA")
+                        if not full and (index % 12 == 0 or index == len(icon_targets)):
+                            self.frame.after(0, self._apply_icon_batch, gen,
+                                             dict(icon_imgs))
+                except Exception:
+                    pass
         finally:
             # 不管加载最终跑成什么样（哪怕上面出现了硬失败），主线程都
             # 必须收到通知——否则 _loading 会永远保持 True，页签一直卡
             # 在显示"加载中"，除了重启应用没有别的恢复办法。
-            self.frame.after(0, self._apply_loaded_mods, gen, mod_data, mod_infos, icon_imgs, luajit_active)
+            if not initial_applied:
+                self.frame.after(0, self._apply_loaded_mods, gen, mod_data,
+                                 mod_infos, icon_imgs, luajit_active)
 
     def _apply_loaded_mods(self, gen, mod_data, mod_infos, icon_imgs, luajit_active):
         if gen != self._refresh_gen or not self.frame.winfo_exists():
@@ -801,6 +820,14 @@ class ModManagerTab:
         # 次加载、"重载Mod信息"、切换世界，以及 _save_mods/
         # _apply_current_shard 写盘之后自己触发的重新加载这几种情况）。
         self._clear_dirty()
+        self._render_list()
+
+    def _apply_icon_batch(self, gen, icon_imgs):
+        """把后台已经完成的图标批量补到已显示的 Mod 列表。"""
+        if gen != self._refresh_gen or not self.frame.winfo_exists():
+            return
+        self._icon_imgs.update(icon_imgs)
+        self._icon_thumb_cache.clear()
         self._render_list()
 
     def _mark_dirty(self):

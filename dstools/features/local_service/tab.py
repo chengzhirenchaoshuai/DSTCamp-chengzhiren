@@ -398,6 +398,8 @@ class _ConsolePane:
         self.announce_btn.pack(side=tk.LEFT, padx=(0, 4))
         self.list_players_btn = ttk.Button(quick_row, text=t("local.console_list_players_btn"), command=self._list_players)
         self.list_players_btn.pack(side=tk.LEFT)
+        self.copy_log_btn = ttk.Button(quick_row, text=t("local.console_copy_log_btn"),
+                                       command=self._copy_world_log)
         # 进程起来了(status==RUNNING)不代表世界真的加载完——这两个按钮额
         # 外要求 proc.world_ready（见 dedicated_server.py 对启动日志的检
         # 测），世界没加载完时置灰，鼠标放上去提示原因。
@@ -417,6 +419,8 @@ class _ConsolePane:
                                                command=self._reset_world)
             self.reset_world_btn.pack(side=tk.LEFT, padx=(4, 0))
             Tooltip(self.reset_world_btn, lambda: not_ready_hint() or t("local.console_reset_world_hover"))
+        # 放在“重置世界”右侧；从世界没有重置按钮时则紧跟在玩家列表后面。
+        self.copy_log_btn.pack(side=tk.LEFT, padx=(4, 0))
         # "关闭"跟其它几个不一样，不受 can_send 控制（见 pump()）——世界
         # 已经停了的标签页也要能关掉，不然切换存档、反复开关世界之后这些
         # 标签页只会越攒越多。点击行为交给调用方（LocalServiceTab），因
@@ -610,6 +614,24 @@ class _ConsolePane:
     def _list_players(self):
         self.proc.send_command("c_listallplayers()")
 
+    def _copy_world_log(self):
+        """复制当前控制台对应世界的 server_log.txt 文件。"""
+        log_path = Path(self.proc.cluster_path) / self.proc.shard_name / "server_log.txt"
+        if not log_path.is_file():
+            dlg.show_warning(self.frame.winfo_toplevel(), t("local.console_copy_log_btn"),
+                             t("local.console_log_not_found", path=str(log_path)))
+            return
+        copied = copy_file_to_clipboard(log_path)
+        if not copied:
+            # 非 Windows 或系统剪贴板暂时被占用时，至少复制路径，避免用户
+            # 误以为按钮没有响应；Windows 正常情况下会复制为文件对象。
+            self.frame.clipboard_clear()
+            self.frame.clipboard_append(str(log_path))
+            self.frame.update()
+        dlg.show_toast(self.frame.winfo_toplevel(),
+                       t("local.console_log_copied" if copied
+                         else "local.console_log_path_copied"))
+
     def _reset_world(self):
         """调用官方命令 c_regenerateworld() 重置世界——真正会删除当前世
         界数据、不可撤销的操作，跟"公告"/"玩家列表"这两个纯查询性质的
@@ -701,9 +723,13 @@ class _ConsolePane:
                     for index, suggestion in enumerate(report.suggestions, 1)
                 )
                 if report.related_mods:
+                    related_mods = _mod_display_names(self.proc, report.related_mods)
+                    max_related = 8
                     detail += "\n\n疑似相关 Mod：\n" + "\n".join(
-                        _mod_display_names(self.proc, report.related_mods)
+                        related_mods[:max_related]
                     )
+                    if len(related_mods) > max_related:
+                        detail += f"\n……另有 {len(related_mods) - max_related} 个 Mod 未展开。"
                 if report.evidence:
                     detail += "\n\n日志证据：\n" + "\n".join(report.evidence)
                 dlg.show_warning(
@@ -718,6 +744,10 @@ class _ConsolePane:
         self.send_btn.configure(state=tk.NORMAL if can_send else tk.DISABLED)
         self.announce_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
         self.list_players_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
+        self.copy_log_btn.configure(
+            state=tk.NORMAL if (Path(self.proc.cluster_path) / self.proc.shard_name / "server_log.txt").is_file()
+            else tk.DISABLED
+        )
         if self.reset_world_btn is not None:
             self.reset_world_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
 
@@ -2262,6 +2292,8 @@ class LocalServiceTab:
         self._stop_all_btn.configure(text=t("local.stop_all_btn"))
         self._rollback_btn.configure(text=t("local.rollback_btn"))
         self._logs_btn.configure(text=t("local.get_logs_btn"))
+        for pane in self._console_panes.values():
+            pane.copy_log_btn.configure(text=t("local.console_copy_log_btn"))
         if self._install_dir is None:
             self._install_path_var.set(t("local.install_not_found"))
         else:

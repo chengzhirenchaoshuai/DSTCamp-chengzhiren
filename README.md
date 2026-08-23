@@ -1,6 +1,6 @@
 # DSTCamp · 本地服务器管理 (dstools)
 
-![Version](https://img.shields.io/badge/version-1.0.1-orange)
+![Version](https://img.shields.io/badge/version-1.0.2-orange)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows-informational)
 ![License](https://img.shields.io/badge/license-MIT-green)
@@ -108,7 +108,7 @@ python tests/test_e2e_phase2.py   # i18n、exe/gui 模块可导入性（3 项）
 
 ## 更新日志
 
-### v1.0.1 · 2026-08-22
+### v1.0.2 · 2026-08-23
 
 - 新增服务器日志诊断：覆盖启动失败、运行中异常退出、端口占用、运行库缺失、权限、世界生成和 Lua/Mod 错误。
 - 识别 `LUA ERROR stack traceback`，提取疑似 Mod 的 Workshop ID、调用文件和行号，并尽力显示 Mod 名称。
@@ -116,6 +116,9 @@ python tests/test_e2e_phase2.py   # i18n、exe/gui 模块可导入性（3 项）
 - 优化世界创建向导、服务器配置、Mod 管理和世界设置的独立窗口体验。
 - 完善岛屿冒险等世界配置 Mod 的兼容处理与依赖识别。
 - 保持两种发布方式：完整依赖单文件 EXE，以及 EXE + `tools/` 的 ZIP 包。
+- 优化大规模 Mod 库加载：首次打开采用快速解析，图标后台分批生成，避免数百个 Mod 长时间阻塞页面。
+- 收紧异常诊断中的疑似 Mod 识别，只显示有日志证据且已启用的 Mod；无法归因时展示第一段错误堆栈。
+- 新增服务器日志打包、Mod 列表提取和“复制世界日志”功能，日志文件可直接复制到聊天窗口。
 
 历史版本与打包文件请见 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases)。
 

@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 # 源码运行时，把 Python 字节码缓存(__pycache__)集中到项目内
 # reference/_cache/pycache/，跟打包中间产物 build/ 一样放在 reference/_cache/

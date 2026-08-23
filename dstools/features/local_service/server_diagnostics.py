@@ -73,12 +73,12 @@ def _evidence(lines: list[str], patterns: tuple[str, ...], limit: int = 3) -> tu
 
 
 def _lua_evidence(lines: list[str], limit: int = 14) -> tuple[str, ...]:
-    """截取最后一段 Lua 堆栈，避免把更早的普通 Mod 日志混进来。"""
+    """截取第一段 Lua 堆栈，优先保留最接近根因的错误证据。"""
     markers = [i for i, line in enumerate(lines) if "lua error" in line.lower()
                or "stack traceback" in line.lower()]
     if not markers:
         return _evidence(lines, ("error loading", "../mods/", "attempt to", "wrong number"), limit)
-    marker = markers[-1]
+    marker = markers[0]
     window = lines[max(0, marker - 4): marker + 45]
     result = []
     seen = set()
@@ -94,13 +94,20 @@ def _lua_evidence(lines: list[str], limit: int = 14) -> tuple[str, ...]:
 
 
 def _mods(lines: list[str], enabled: Iterable[str], loaded: Iterable[str]) -> tuple[str, ...]:
-    found = set(enabled) | set(loaded)
+    def normalize(values):
+        return {str(value).lower() for value in values if str(value).strip()}
+
+    # “疑似相关”只能从配置中确认已启用的 Mod 里产生；日志中的 Mod 搜索
+    # 路径会列出大量未启用 Mod，不能把它们当成嫌疑对象。loaded 仅作为
+    # 没有预读到 modoverrides 时的兜底集合。
+    enabled_set = normalize(enabled)
+    loaded_set = normalize(loaded)
+    allowed = enabled_set or loaded_set
     stack_mods = set()
     traceback_indexes = [i for i, line in enumerate(lines)
                          if "lua error" in line.lower() or "stack traceback" in line.lower()]
     for index, line in enumerate(lines):
         ids = {m.group(0) for m in _WORKSHOP_RE.finditer(line)}
-        found.update(ids)
         # 只接受明确的错误归因行；模块搜索失败列表里的路径只是加载器
         # 的尝试顺序，不能把其中列出的所有 Mod 都误报成嫌疑对象。
         lower = line.lower()
@@ -116,8 +123,13 @@ def _mods(lines: list[str], enabled: Iterable[str], loaded: Iterable[str]) -> tu
     # Lua 堆栈里出现的 Mod 路径是最有价值的归因证据；有堆栈证据时不把
     # 整个启用列表都显示成“疑似相关”，避免用户误以为每个 Mod 都有问题。
     if stack_mods:
-        found = stack_mods
-    return tuple(sorted(found, key=str.lower))
+        # 测试样例和极少数旧日志没有可读的启用集合，此时保留明确出现在
+        # 错误堆栈中的 ID；正常运行时则严格限制为当前已启用集合。
+        return tuple(sorted(stack_mods & allowed if allowed else stack_mods,
+                            key=str.lower))
+    # 有 Lua 错误但没有明确 Mod 路径时，不显示整个启用列表，改由 UI 展示
+    # 第一段错误堆栈，避免 Insight 等无关 Mod 被误认为冲突原因。
+    return ()
 
 
 def diagnose_server_failure(

@@ -92,6 +92,21 @@ def main() -> None:
         assert report is not None and report.category == "mod_conflict"
         assert report.related_mods == expected_mods
 
+    # 日志加载器会在 require 失败时列出所有尝试过的 Mod 路径；未启用的
+    # Insight 不应因为出现在搜索路径里就被显示为疑似冲突 Mod。
+    report = diagnose_server_failure(
+        shard_name="Master", exit_code=1, world_ready=False,
+        enabled_mods=["workshop-1207269058"],
+        log_lines=[
+            '[string "scripts/modindex.lua"]:234: attempt to index local \'modname\'',
+            "stack traceback:",
+            "scripts/modindex.lua:234: in function 'IsWorkshopMod'",
+            "no file '../mods/workshop-2189004162/scripts/widgets/foodcrafting.lua'",
+        ],
+    )
+    assert report is not None and report.related_mods == ()
+    assert report.evidence and any("stack traceback" in line for line in report.evidence)
+
     mod_status = analyze_mod_loading(
         enabled_mods=["workshop-123"], loaded_mods=["workshop-123"],
         visible_mod_count=1,
