@@ -11,7 +11,7 @@ Usage (run from the project root):
 
 Output:
     dist/DSTCamp-<version>.zip
-    dist/DSTCamp-<version>-单文件.exe
+    dist/DSTCamp-<version>.exe
 """
 
 import os
@@ -52,7 +52,8 @@ def build():
     dist_root = project_root / "dist"
     # 清理旧版本脚本留下的 onedir/外置单文件目录，避免发布目录同时出现
     # 已废弃的 data/目录版和新的两个 onefile 产物。
-    for stale_dir in (dist_root / exe_name, dist_root / f"{exe_name}-单文件"):
+    for stale_dir in (dist_root / exe_name, dist_root / f"{exe_name}-embedded",
+                      dist_root / f"{exe_name}-单文件"):
         if stale_dir.exists():
             shutil.rmtree(stale_dir)
 
@@ -81,7 +82,6 @@ def build():
         # caller happened to `cd` from. Pin all three explicitly to the real
         # project root so `python scripts/build_exe.py` always produces the
         # same dist/DSTCamp-<version>.exe regardless of the caller's cwd.
-        f"--distpath={dist_root}",
         f"--add-data={i18n_src}{sep}{i18n_dst}",
         # Read-only bundled assets only -- world-setting icons (icons/world/),
         # UI icons (icons/ui/), and the app icon (icons/app/, used at runtime
@@ -113,9 +113,9 @@ def build():
         "--collect-data=certifi",
     ]
 
-    def run_pyinstaller(name: str, *, embed_tools: bool) -> None:
+    def run_pyinstaller(name: str, *, embed_tools: bool, distpath: Path | None = None) -> None:
         """构建 onefile；两种形态使用独立缓存，避免 spec 相互污染。"""
-        args = [*common_args, f"--name={name}"]
+        args = [*common_args, f"--distpath={distpath or dist_root}", f"--name={name}"]
         args.append("--onefile")
         if embed_tools:
             # 完全单文件版：tools 也进入 _MEIPASS/tools，运行时无需旁边
@@ -129,16 +129,26 @@ def build():
         print(f"Building {name} (onefile, {'embedded tools' if embed_tools else 'external tools'})...")
         PyInstaller.__main__.run(args)
 
-    # 先构建真正的独立单文件版。它的最终目录中只保留一个 EXE。
-    onefile_name = f"{exe_name}-单文件"
-    run_pyinstaller(onefile_name, embed_tools=True)
-    onefile_exe = project_root / "dist" / f"{onefile_name}.exe"
+    # 先构建真正的独立单文件版。构建过程使用临时名称，最终统一改成
+    # DSTCamp-<version>.exe，避免把“单文件”字样带给用户。
+    embedded_name = f"{exe_name}-embedded"
+    run_pyinstaller(embedded_name, embed_tools=True)
+    embedded_exe = project_root / "dist" / f"{embedded_name}.exe"
+    single_stage = project_root / "reference" / "_cache" / "package_single"
+    if single_stage.exists():
+        shutil.rmtree(single_stage)
+    single_stage.mkdir(parents=True)
+    shutil.move(str(embedded_exe), str(single_stage / f"{exe_name}.exe"))
 
     # 再构建 ZIP 用的 onefile 版。它只把真正需要被单独调用的第三方工具
     # 放在 EXE 旁边，避免 frpc/ktech/运行库进入 PyInstaller 临时目录。
     zip_exe_name = exe_name
-    run_pyinstaller(zip_exe_name, embed_tools=False)
-    zip_exe = project_root / "dist" / f"{zip_exe_name}.exe"
+    external_dist = project_root / "reference" / "_cache" / "package_external_build"
+    if external_dist.exists():
+        shutil.rmtree(external_dist)
+    external_dist.mkdir(parents=True)
+    run_pyinstaller(zip_exe_name, embed_tools=False, distpath=external_dist)
+    zip_exe = external_dist / f"{zip_exe_name}.exe"
     zip_stage = project_root / "reference" / "_cache" / "package_zip"
     if zip_stage.exists():
         shutil.rmtree(zip_stage)
@@ -164,6 +174,11 @@ def build():
         for p in sorted(zip_stage.rglob("*")):
             if p.is_file():
                 zf.write(p, p.relative_to(zip_stage))
+
+    # 将嵌入 tools 的真正单文件版放回 dist，两个产物最终都使用用户熟悉
+    # 的同一个 EXE 文件名。外置版始终在缓存目录构建，避免覆盖/锁定最终产物。
+    onefile_exe = project_root / "dist" / f"{exe_name}.exe"
+    shutil.copy2(single_stage / onefile_exe.name, onefile_exe)
 
     print()
     print(f"Build complete! ZIP: dist/{exe_name}.zip")

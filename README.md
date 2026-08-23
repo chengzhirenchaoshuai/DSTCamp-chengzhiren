@@ -35,7 +35,7 @@ pip install -e .
 python scripts/build_exe.py
 # 产物：
 #   dist/DSTCamp-<版本号>.zip（推荐，解压后运行，杀毒软件兼容性更好）
-#   dist/DSTCamp-<版本号>-单文件.exe（完整依赖均嵌入，一个文件即可运行）
+#   dist/DSTCamp-<版本号>.exe（完整依赖均嵌入，一个文件即可运行）
 ```
 
 单文件 EXE 将全部依赖嵌入，双击即可运行；ZIP 版则是一个 EXE 加外置 tools/，
