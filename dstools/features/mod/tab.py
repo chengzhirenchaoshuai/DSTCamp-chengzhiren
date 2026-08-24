@@ -33,7 +33,14 @@ from dstools.features.mod.parser import (
     resolve_wegame_client_mods_dir, visible_config_options,
 )
 from dstools.features.mod.sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync, remove_mod_sync_junction
-from dstools.features.mod.workshop_api import get_workshop_item_states, update_workshop_items
+from dstools.features.mod.workshop_api import (
+    query_workshop_item_details,
+    update_workshop_items,
+)
+from dstools.features.mod.workshop_status import (
+    WorkshopModState,
+    inspect_workshop_items,
+)
 from dstools.features.world.location_profiles import (
     IA_CORE_MOD_ID,
     IA_SHIPWRECKED_MOD_ID,
@@ -737,7 +744,7 @@ class ModManagerTab:
         def _name_for(wid: str) -> str:
             key = f"workshop-{wid}"
             info = _info_for(wid)
-            raw_name = (info.name if info else "") or key
+            raw_name = (info.name if info else "") or source_titles.get(wid, "") or key
             return str(_localize_mod_name(key, raw_name) or key)
 
         def _current_version_for(wid: str) -> str:
@@ -752,6 +759,7 @@ class ModManagerTab:
         all_ids = [str(wid) for wid in self._workshop_mod_ids()]
         current_ids = self._current_cluster_workshop_ids()
         latest_states = {}
+        source_titles: dict[str, str] = {}
         latest_state_loading = False
         latest_state_checked = False
 
@@ -791,18 +799,22 @@ class ModManagerTab:
             return result
 
         def _latest_version_for(wid: str) -> str:
-            state = latest_states.get(wid)
-            if state is None:
+            status = latest_states.get(wid)
+            if status is None:
                 return (t("mod.update_latest_checking")
                         if latest_state_loading or not latest_state_checked
                         else t("mod.update_latest_unknown"))
-            if state.installed and state.needs_update:
-                return t("mod.update_latest_available")
-            if state.installed:
-                return t("mod.update_latest_up_to_date")
-            if state.subscribed:
-                return t("mod.update_latest_not_installed")
-            return t("mod.update_latest_unknown")
+            labels = {
+                WorkshopModState.CURRENT: "mod.update_latest_up_to_date",
+                WorkshopModState.UPDATE_AVAILABLE: "mod.update_latest_available",
+                WorkshopModState.MISSING: "mod.update_latest_missing",
+                WorkshopModState.CORRUPT: "mod.update_latest_corrupt",
+                WorkshopModState.NOT_INSTALLED: "mod.update_latest_not_installed",
+                WorkshopModState.DOWNLOADING: "mod.update_latest_downloading",
+                WorkshopModState.DOWNLOAD_PENDING: "mod.update_latest_pending",
+                WorkshopModState.UNKNOWN: "mod.update_latest_unknown",
+            }
+            return t(labels.get(status.state, "mod.update_latest_unknown"))
 
         def render_rows():
             canvas.delete("all")
@@ -943,9 +955,20 @@ class ModManagerTab:
 
             def _worker():
                 try:
-                    states = get_workshop_item_states([int(wid) for wid in all_ids])
+                    states = inspect_workshop_items(
+                        [int(wid) for wid in all_ids], query_source=False)
                 except Exception:
                     states = {}
+                # 状态判定不依赖 Workshop 网页详情。只有本地解析确实没有
+                # 名称的项目才查询源端标题，避免 500+ Mod 时做十几批无用请求。
+                missing_title_ids = [
+                    int(wid) for wid in all_ids
+                    if not ((_info_for(wid).name if _info_for(wid) else "") or "").strip()
+                ]
+                try:
+                    details = query_workshop_item_details(missing_title_ids)
+                except Exception:
+                    details = {}
 
                 def _apply_states():
                     nonlocal latest_state_loading, latest_state_checked
@@ -954,6 +977,8 @@ class ModManagerTab:
                     if not win.winfo_exists():
                         return
                     latest_states.update({str(wid): state for wid, state in states.items()})
+                    source_titles.update({str(wid): item.title for wid, item in details.items()
+                                          if item.title})
                     refresh_states_btn.configure(state=tk.NORMAL)
                     render_rows()
 
