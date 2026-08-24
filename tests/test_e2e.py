@@ -1451,6 +1451,61 @@ def test_workshop_status_evidence_priority():
         print("  PASS: Manifest 文件损坏证据优先判定损坏")
 
 
+def test_dst_mod_manifest_verification():
+    """MNFS 路径哈希必须识别缺失文件，同时允许 Mod 运行时产生额外文件。"""
+    print("\n" + "=" * 60)
+    print("Test 25e: DST Mod Manifest Verification")
+
+    import struct
+    from dstools.features.mod.workshop_manifest import (
+        ManifestFormatError,
+        load_mod_manifest,
+        parse_mod_manifest_bytes,
+        read_cached_manifest_version,
+        sdbm_path_hash,
+        verify_mod_manifest,
+    )
+
+    assert sdbm_path_hash("modinfo.lua") == 0xCD796EDA
+    assert sdbm_path_hash("scripts/components/smart_minisign.lua") == 0x11E699C6
+    print("  PASS: SDBM 结果与真实 workshop-1595631294 Manifest 条目一致")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        mod = root / "workshop-123"
+        scripts = mod / "scripts"
+        scripts.mkdir(parents=True)
+        (mod / "modinfo.lua").write_text('version = "1"', encoding="utf-8")
+        (scripts / "main.lua").write_text("return true", encoding="utf-8")
+        hashes = (sdbm_path_hash("modinfo.lua"), sdbm_path_hash("scripts/main.lua"))
+        (mod / "mod.manifest").write_bytes(
+            struct.pack("<4sII2I", b"MNFS", 1, 2, *hashes))
+        parsed = load_mod_manifest(mod / "mod.manifest")
+        assert parsed.path_hashes == hashes
+        assert verify_mod_manifest(mod).valid is True
+
+        (mod / "runtime-cache.txt").write_text("extra", encoding="utf-8")
+        assert verify_mod_manifest(mod).valid is True
+        (scripts / "main.lua").write_text("return false", encoding="utf-8")
+        assert verify_mod_manifest(mod).valid is True, \
+            "MNFS 只保存路径哈希，不能假装检测内容修改"
+        (scripts / "main.lua").unlink()
+        missing = verify_mod_manifest(mod)
+        assert missing.valid is False and len(missing.missing_hashes) == 1
+        print("  PASS: 额外文件和内容修改不误报，删除声明文件会判定缺失")
+
+        try:
+            parse_mod_manifest_bytes(b"BAD!")
+            raise AssertionError("损坏的 Manifest 不应解析成功")
+        except ManifestFormatError:
+            pass
+        cache = root / "cached_mod_manifests"
+        cache.mkdir()
+        (cache / "workshop-123.manifest.version").write_text(" V1.2 ", encoding="utf-8")
+        assert read_cached_manifest_version(root, 123) == "V1.2"
+        print("  PASS: 损坏格式被拒绝，游戏缓存版本读取正确")
+
+
 def test_backup_manager_restore_clears_stale_slots():
     """restore_backup() 必须先清空会被覆盖的每一项再解压，不能只是在旧
     文件上覆盖解压——不这样做的话，备份之后又产生的新存档槽文件会跟备
@@ -2241,6 +2296,7 @@ def main():
         test_mod_version_resolution,
         test_workshop_source_details_parser,
         test_workshop_status_evidence_priority,
+        test_dst_mod_manifest_verification,
         test_backup_manager_restore_clears_stale_slots,
         test_backup_manager_prune_retention_boundary,
         test_backfill_cluster_defaults_only_fills_missing,

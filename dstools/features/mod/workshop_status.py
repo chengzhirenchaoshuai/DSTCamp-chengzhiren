@@ -20,6 +20,7 @@ from dstools.features.mod.workshop_api import (
     get_workshop_item_states,
     query_workshop_item_details,
 )
+from dstools.features.mod.workshop_manifest import verify_mod_manifest
 
 
 class WorkshopModState(str, Enum):
@@ -156,6 +157,8 @@ def inspect_workshop_items(workshop_ids: list[int] | tuple[int, ...], *,
         source_version = (resolve_local_mod_version(
             str(workshop_id), install.path, f"workshop-{workshop_id}")
             if install is not None and install.path.is_dir() else LocalModVersion())
+        verification = (verify_mod_manifest(install.path)
+                        if install is not None and install.path.is_dir() else None)
         active_path = active_paths.get(workshop_id)
         active_version = None
         if active_path is not None and active_path.is_dir():
@@ -170,6 +173,9 @@ def inspect_workshop_items(workshop_ids: list[int] | tuple[int, ...], *,
             active_version=active_version,
             active_path=active_path,
             cached_manifest_version=cached_manifest_versions.get(workshop_id, ""),
+            manifest_valid=(verification.valid if verification is not None
+                            and verification.available else None),
+            manifest_error=(verification.error if verification is not None else ""),
         )
         statuses[workshop_id] = evaluate_workshop_status(evidence)
     return statuses
