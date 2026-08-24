@@ -15,6 +15,7 @@ import json
 import os
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 
@@ -279,6 +280,10 @@ def probe_game_server(path: Path, seconds: float, depot_id: int | None = None,
 
 
 def main() -> int:
+    # Windows PowerShell 的旧默认编码可能是 GBK；源端详情中允许出现任意
+    # Unicode 标题或替换字符，诊断 JSON 固定用 UTF-8 输出。
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="验证 DST Steam Workshop API 初始化")
     parser.add_argument("dll", type=Path, help="DST bin64\\steam_api64.dll 的路径")
     parser.add_argument("--seconds", type=float, default=1.0,
@@ -287,6 +292,8 @@ def main() -> int:
                         help="可选：读取一个 Workshop 项目的本地 Steam 状态")
     parser.add_argument("--download", action="store_true",
                         help="显式请求 Steam 更新指定 Workshop 项目")
+    parser.add_argument("--details", action="store_true",
+                        help="只读查询指定项目的源端详情、Metadata 和键值标签")
     parser.add_argument("--game-server", action="store_true",
                         help="改为探测 SteamGameServerUGC（可配合 --download 请求下载）")
     parser.add_argument("--workshop-depot-id", type=int,
@@ -303,6 +310,18 @@ def main() -> int:
             )
         else:
             result = probe(args.dll.resolve(), args.seconds, args.workshop_id, args.download)
+            if args.details:
+                if not args.workshop_id:
+                    raise ValueError("--details 必须配合 --workshop-id")
+                repo_root = str(Path(__file__).resolve().parents[1])
+                if repo_root not in sys.path:
+                    sys.path.insert(0, repo_root)
+                from dstools.features.mod.workshop_api import query_workshop_item_details
+
+                details = query_workshop_item_details(
+                    [args.workshop_id], dll_path=args.dll.resolve())
+                item = details.get(args.workshop_id)
+                result["source_details"] = asdict(item) if item is not None else None
     except Exception as exc:  # 探针必须把错误转成可读 JSON，而不是堆栈刷屏。
         result = {"dll": str(args.dll), "initialized": False,
                   "error": f"{type(exc).__name__}: {exc}"}

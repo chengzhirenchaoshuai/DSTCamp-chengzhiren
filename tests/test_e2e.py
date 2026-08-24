@@ -1354,6 +1354,37 @@ def test_mod_version_resolution():
     print("  PASS: 缓存同时校验 SHA-256 与来源路径，不会跨副本串值")
 
 
+def test_workshop_source_details_parser():
+    """源端详情使用宽缓冲区读取，稳定字段偏移必须和 Steam SDK 一致。"""
+    print("\n" + "=" * 60)
+    print("Test 25c: Workshop Source Details Buffer")
+
+    import struct
+    from dstools.features.mod.workshop_api import _parse_ugc_details_buffer
+
+    raw = bytearray(32768)
+    struct.pack_into("<Q", raw, 0, 3485293431)
+    struct.pack_into("<i", raw, 8, 1)
+    struct.pack_into("<I", raw, 16, 245850)
+    struct.pack_into("<I", raw, 20, 322330)
+    raw[24:24 + len("测试 Mod".encode())] = "测试 Mod".encode()
+    struct.pack_into("<I", raw, 8168, 100)
+    struct.pack_into("<I", raw, 8172, 200)
+    raw[8183:8183 + len(b"server_only,gameplay")] = b"server_only,gameplay"
+    struct.pack_into("<Q", raw, 9208, 123456)
+    raw[9224:9224 + len(b"content.zip")] = b"content.zip"
+    struct.pack_into("<i", raw, 9484, 654321)
+    details = _parse_ugc_details_buffer(bytes(raw))
+    assert details.workshop_id == 3485293431
+    assert details.title == "测试 Mod"
+    assert details.creator_app_id == 245850 and details.consumer_app_id == 322330
+    assert details.time_created == 100 and details.time_updated == 200
+    assert details.tags == ("server_only", "gameplay")
+    assert details.content_handle == 123456
+    assert details.filename == "content.zip" and details.file_size == 654321
+    print("  PASS: 源端详情稳定字段从宽缓冲区正确解析")
+
+
 def test_backup_manager_restore_clears_stale_slots():
     """restore_backup() 必须先清空会被覆盖的每一项再解压，不能只是在旧
     文件上覆盖解压——不这样做的话，备份之后又产生的新存档槽文件会跟备
@@ -2142,6 +2173,7 @@ def main():
         test_custom_background,
         test_mod_resolve_cache,
         test_mod_version_resolution,
+        test_workshop_source_details_parser,
         test_backup_manager_restore_clears_stale_slots,
         test_backup_manager_prune_retention_boundary,
         test_backfill_cluster_defaults_only_fills_missing,

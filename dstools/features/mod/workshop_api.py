@@ -93,6 +93,91 @@ class WorkshopItemState:
         }
 
 
+@dataclass(frozen=True)
+class WorkshopPreview:
+    """Workshop 查询返回的一个附加预览。"""
+
+    url: str
+    original_filename: str
+    preview_type: int
+
+
+@dataclass(frozen=True)
+class WorkshopItemDetails:
+    """源端 Workshop 项目的只读详情，不混入本地安装状态。"""
+
+    workshop_id: int
+    result: int
+    title: str = ""
+    creator_app_id: int = 0
+    consumer_app_id: int = 0
+    time_created: int = 0
+    time_updated: int = 0
+    file_size: int = 0
+    content_handle: int = 0
+    filename: str = ""
+    tags: tuple[str, ...] = ()
+    metadata: str = ""
+    key_value_tags: tuple[tuple[str, str], ...] = ()
+    previews: tuple[WorkshopPreview, ...] = ()
+
+
+class _SteamUGCQueryCompleted(ctypes.Structure):
+    """SteamUGCQueryCompleted_t（回调号 3401）。"""
+
+    _fields_ = [
+        ("handle", ctypes.c_uint64),
+        ("result", ctypes.c_int32),
+        ("num_results_returned", ctypes.c_uint32),
+        ("total_matching_results", ctypes.c_uint32),
+        ("cached_data", ctypes.c_bool),
+        ("next_cursor", ctypes.c_char * 256),
+    ]
+
+
+_STEAM_UGC_QUERY_COMPLETED_CALLBACK = 3401
+_STEAM_RESULT_OK = 1
+_UGC_DETAILS_BUFFER_SIZE = 32768
+
+
+def _decode_c_string(data: bytes) -> str:
+    return data.split(b"\0", 1)[0].decode("utf-8", errors="replace")
+
+
+def _parse_ugc_details_buffer(raw: bytes) -> WorkshopItemDetails:
+    """读取 SteamUGCDetails_t 的稳定前缀字段。
+
+    v015 以后结构尾部可能继续扩展，因此原生调用使用宽裕的原始缓冲区，
+    这里只按 Steamworks SDK 长期稳定的字段偏移取值，避免 ctypes 结构尺寸
+    落后于用户机器上的 DLL 时发生越界写入。
+    """
+    import struct
+
+    if len(raw) < 9764:
+        raise ValueError("SteamUGCDetails_t 返回缓冲区过短")
+    tags_text = _decode_c_string(raw[8183:9208])
+    content_handle = struct.unpack_from("<Q", raw, 9208)[0]
+    file_size = (max(0, struct.unpack_from("<i", raw, 9484)[0])
+                 if content_handle else 0)
+    # 现代目录式 ISteamUGC 项目通常不填旧版 RemoteStorage 的主文件句柄、
+    # 文件名和大小，文件名缓冲区也不保证清零；没有句柄/大小时必须忽略，
+    # 不能把未初始化字节显示给用户。
+    filename = _decode_c_string(raw[9224:9484]) if content_handle else ""
+    return WorkshopItemDetails(
+        workshop_id=struct.unpack_from("<Q", raw, 0)[0],
+        result=struct.unpack_from("<i", raw, 8)[0],
+        creator_app_id=struct.unpack_from("<I", raw, 16)[0],
+        consumer_app_id=struct.unpack_from("<I", raw, 20)[0],
+        title=_decode_c_string(raw[24:153]),
+        time_created=struct.unpack_from("<I", raw, 8168)[0],
+        time_updated=struct.unpack_from("<I", raw, 8172)[0],
+        content_handle=content_handle,
+        filename=filename,
+        file_size=file_size,
+        tags=tuple(tag.strip() for tag in tags_text.split(",") if tag.strip()),
+    )
+
+
 @dataclass
 class WorkshopDownloadResult:
     """一次更新请求的可展示结果。"""
@@ -233,6 +318,7 @@ class SteamWorkshopSession:
         self.workshop_folder = Path(workshop_folder) if workshop_folder else None
         self.dll = None
         self.ugc = None
+        self.utils = None
         self.game_server = None
         self._dll_directory_handle = None
         self._started = False
@@ -363,6 +449,180 @@ class SteamWorkshopSession:
         return WorkshopItemState(int(self.dll.SteamAPI_ISteamUGC_GetItemState(
             self.ugc, int(workshop_id))))
 
+    def query_item_details(self, workshop_ids: list[int] | tuple[int, ...], *,
+                           timeout: float = 20.0) -> list[WorkshopItemDetails]:
+        """批量查询最多50个 Workshop 项目的源端详情，不触发下载。"""
+        self._ensure_started()
+        if self.backend is not WorkshopBackend.CLIENT:
+            raise RuntimeError("源端详情查询当前仅支持普通 SteamUGC 客户端上下文")
+        ids = [int(item) for item in workshop_ids if int(item) > 0]
+        if not ids:
+            return []
+        if len(ids) > 50:
+            raise ValueError("单次 Workshop 详情查询不能超过50项")
+        self._configure_query_calls()
+        id_array = (ctypes.c_uint64 * len(ids))(*ids)
+        query_handle = int(self.dll.SteamAPI_ISteamUGC_CreateQueryUGCDetailsRequest(
+            self.ugc, id_array, len(ids)))
+        if query_handle == 0xFFFFFFFFFFFFFFFF:
+            raise RuntimeError("CreateQueryUGCDetailsRequest 返回无效句柄")
+        try:
+            self.dll.SteamAPI_ISteamUGC_SetReturnKeyValueTags(
+                self.ugc, query_handle, True)
+            self.dll.SteamAPI_ISteamUGC_SetReturnMetadata(
+                self.ugc, query_handle, True)
+            self.dll.SteamAPI_ISteamUGC_SetReturnAdditionalPreviews(
+                self.ugc, query_handle, True)
+            api_call = int(self.dll.SteamAPI_ISteamUGC_SendQueryUGCRequest(
+                self.ugc, query_handle))
+            if not api_call:
+                raise RuntimeError("SendQueryUGCRequest 返回无效 API 调用")
+            completed = self._wait_query_call(api_call, timeout)
+            if completed.result != _STEAM_RESULT_OK:
+                raise RuntimeError(f"Workshop 源端查询失败：Steam EResult={completed.result}")
+            details = []
+            for index in range(int(completed.num_results_returned)):
+                raw = ctypes.create_string_buffer(_UGC_DETAILS_BUFFER_SIZE)
+                if not self.dll.SteamAPI_ISteamUGC_GetQueryUGCResult(
+                        self.ugc, query_handle, index, raw):
+                    continue
+                base = _parse_ugc_details_buffer(raw.raw)
+                metadata_buffer = ctypes.create_string_buffer(32768)
+                metadata = ""
+                if self.dll.SteamAPI_ISteamUGC_GetQueryUGCMetadata(
+                        self.ugc, query_handle, index,
+                        metadata_buffer, len(metadata_buffer)):
+                    metadata = _decode_c_string(metadata_buffer.raw)
+                key_values = []
+                count = int(self.dll.SteamAPI_ISteamUGC_GetQueryUGCNumKeyValueTags(
+                    self.ugc, query_handle, index))
+                for tag_index in range(count):
+                    key = ctypes.create_string_buffer(1024)
+                    value = ctypes.create_string_buffer(8192)
+                    if self.dll.SteamAPI_ISteamUGC_GetQueryUGCKeyValueTag(
+                            self.ugc, query_handle, index, tag_index,
+                            key, len(key), value, len(value)):
+                        key_values.append((_decode_c_string(key.raw),
+                                           _decode_c_string(value.raw)))
+                previews = []
+                preview_count = int(
+                    self.dll.SteamAPI_ISteamUGC_GetQueryUGCNumAdditionalPreviews(
+                        self.ugc, query_handle, index))
+                for preview_index in range(preview_count):
+                    url = ctypes.create_string_buffer(4096)
+                    filename = ctypes.create_string_buffer(1024)
+                    preview_type = ctypes.c_int32()
+                    if self.dll.SteamAPI_ISteamUGC_GetQueryUGCAdditionalPreview(
+                            self.ugc, query_handle, index, preview_index,
+                            url, len(url), filename, len(filename),
+                            ctypes.byref(preview_type)):
+                        previews.append(WorkshopPreview(
+                            _decode_c_string(url.raw),
+                            _decode_c_string(filename.raw),
+                            int(preview_type.value),
+                        ))
+                details.append(WorkshopItemDetails(
+                    **{**base.__dict__,
+                       "metadata": metadata,
+                       "key_value_tags": tuple(key_values),
+                       "previews": tuple(previews)}
+                ))
+            return details
+        finally:
+            self.dll.SteamAPI_ISteamUGC_ReleaseQueryUGCRequest(
+                self.ugc, query_handle)
+
+    def _configure_query_calls(self) -> None:
+        """延迟绑定只读查询接口，普通下载路径不强制依赖这些导出。"""
+        names = (
+            "SteamAPI_SteamUtils_v010",
+            "SteamAPI_ISteamUtils_IsAPICallCompleted",
+            "SteamAPI_ISteamUtils_GetAPICallResult",
+            "SteamAPI_ISteamUGC_CreateQueryUGCDetailsRequest",
+            "SteamAPI_ISteamUGC_SetReturnKeyValueTags",
+            "SteamAPI_ISteamUGC_SetReturnMetadata",
+            "SteamAPI_ISteamUGC_SetReturnAdditionalPreviews",
+            "SteamAPI_ISteamUGC_SendQueryUGCRequest",
+            "SteamAPI_ISteamUGC_GetQueryUGCResult",
+            "SteamAPI_ISteamUGC_GetQueryUGCNumKeyValueTags",
+            "SteamAPI_ISteamUGC_GetQueryUGCKeyValueTag",
+            "SteamAPI_ISteamUGC_GetQueryUGCMetadata",
+            "SteamAPI_ISteamUGC_GetQueryUGCNumAdditionalPreviews",
+            "SteamAPI_ISteamUGC_GetQueryUGCAdditionalPreview",
+            "SteamAPI_ISteamUGC_ReleaseQueryUGCRequest",
+        )
+        self._require(*names)
+        d = self.dll
+        d.SteamAPI_SteamUtils_v010.restype = ctypes.c_void_p
+        self.utils = d.SteamAPI_SteamUtils_v010()
+        if not self.utils:
+            raise RuntimeError("SteamAPI_SteamUtils_v010 返回空接口")
+        d.SteamAPI_ISteamUGC_CreateQueryUGCDetailsRequest.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint32]
+        d.SteamAPI_ISteamUGC_CreateQueryUGCDetailsRequest.restype = ctypes.c_uint64
+        for name in ("SteamAPI_ISteamUGC_SetReturnKeyValueTags",
+                     "SteamAPI_ISteamUGC_SetReturnMetadata",
+                     "SteamAPI_ISteamUGC_SetReturnAdditionalPreviews"):
+            fn = getattr(d, name)
+            fn.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_bool]
+            fn.restype = ctypes.c_bool
+        d.SteamAPI_ISteamUGC_SendQueryUGCRequest.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        d.SteamAPI_ISteamUGC_SendQueryUGCRequest.restype = ctypes.c_uint64
+        d.SteamAPI_ISteamUtils_IsAPICallCompleted.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_bool)]
+        d.SteamAPI_ISteamUtils_IsAPICallCompleted.restype = ctypes.c_bool
+        d.SteamAPI_ISteamUtils_GetAPICallResult.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int,
+            ctypes.c_int, ctypes.POINTER(ctypes.c_bool)]
+        d.SteamAPI_ISteamUtils_GetAPICallResult.restype = ctypes.c_bool
+        d.SteamAPI_ISteamUGC_GetQueryUGCResult.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32, ctypes.c_void_p]
+        d.SteamAPI_ISteamUGC_GetQueryUGCResult.restype = ctypes.c_bool
+        d.SteamAPI_ISteamUGC_GetQueryUGCNumKeyValueTags.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32]
+        d.SteamAPI_ISteamUGC_GetQueryUGCNumKeyValueTags.restype = ctypes.c_uint32
+        d.SteamAPI_ISteamUGC_GetQueryUGCKeyValueTag.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32, ctypes.c_uint32,
+            ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint32]
+        d.SteamAPI_ISteamUGC_GetQueryUGCKeyValueTag.restype = ctypes.c_bool
+        d.SteamAPI_ISteamUGC_GetQueryUGCMetadata.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32,
+            ctypes.c_char_p, ctypes.c_uint32]
+        d.SteamAPI_ISteamUGC_GetQueryUGCMetadata.restype = ctypes.c_bool
+        d.SteamAPI_ISteamUGC_GetQueryUGCNumAdditionalPreviews.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32]
+        d.SteamAPI_ISteamUGC_GetQueryUGCNumAdditionalPreviews.restype = ctypes.c_uint32
+        d.SteamAPI_ISteamUGC_GetQueryUGCAdditionalPreview.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32, ctypes.c_uint32,
+            ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_int32)]
+        d.SteamAPI_ISteamUGC_GetQueryUGCAdditionalPreview.restype = ctypes.c_bool
+        d.SteamAPI_ISteamUGC_ReleaseQueryUGCRequest.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64]
+        d.SteamAPI_ISteamUGC_ReleaseQueryUGCRequest.restype = ctypes.c_bool
+
+    def _wait_query_call(self, api_call: int, timeout: float) -> _SteamUGCQueryCompleted:
+        run_callbacks = self.dll.SteamAPI_RunCallbacks
+        run_callbacks.restype = None
+        io_failed = ctypes.c_bool()
+        deadline = time.monotonic() + max(0.1, timeout)
+        while time.monotonic() < deadline:
+            run_callbacks()
+            if self.dll.SteamAPI_ISteamUtils_IsAPICallCompleted(
+                    self.utils, api_call, ctypes.byref(io_failed)):
+                break
+            time.sleep(0.05)
+        else:
+            raise TimeoutError("等待 Workshop 源端查询超时")
+        completed = _SteamUGCQueryCompleted()
+        result_failed = ctypes.c_bool()
+        ok = self.dll.SteamAPI_ISteamUtils_GetAPICallResult(
+            self.utils, api_call, ctypes.byref(completed), ctypes.sizeof(completed),
+            _STEAM_UGC_QUERY_COMPLETED_CALLBACK, ctypes.byref(result_failed))
+        if not ok or io_failed.value or result_failed.value:
+            raise RuntimeError("Workshop 源端查询发生 Steam IO 错误")
+        return completed
+
     def download_item(self, workshop_id: int, *, high_priority: bool = True) -> WorkshopDownloadResult:
         self._ensure_started()
         workshop_id = int(workshop_id)
@@ -475,6 +735,7 @@ class SteamWorkshopSession:
             self._started = False
             self._native_initialized = False
             self.ugc = None
+            self.utils = None
             self.game_server = None
             self.dll = None
             if self._dll_directory_handle is not None:
@@ -624,3 +885,28 @@ def get_workshop_item_states(workshop_ids: list[int] | tuple[int, ...], *,
     with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
         return {workshop_id: session.item_state(workshop_id)
                 for workshop_id in unique_ids}
+
+
+def query_workshop_item_details(workshop_ids: list[int] | tuple[int, ...], *,
+                                dll_path: Path | None = None,
+                                timeout: float = 20.0) -> dict[int, WorkshopItemDetails]:
+    """按游戏相同的50项分页方式查询源端详情，不下载或修改 Mod。"""
+    unique_ids = []
+    seen = set()
+    for raw_id in workshop_ids:
+        workshop_id = int(raw_id)
+        if workshop_id > 0 and workshop_id not in seen:
+            seen.add(workshop_id)
+            unique_ids.append(workshop_id)
+    if not unique_ids:
+        return {}
+    resolved_dll = find_steam_api_dll(dll_path)
+    if resolved_dll is None:
+        raise FileNotFoundError("找不到 DST 或专用服务器的 bin64\\steam_api64.dll")
+    result = {}
+    with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
+        for start in range(0, len(unique_ids), 50):
+            for item in session.query_item_details(
+                    unique_ids[start:start + 50], timeout=timeout):
+                result[item.workshop_id] = item
+    return result
