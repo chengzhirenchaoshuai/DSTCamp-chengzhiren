@@ -1385,6 +1385,72 @@ def test_workshop_source_details_parser():
     print("  PASS: 源端详情稳定字段从宽缓冲区正确解析")
 
 
+def test_workshop_status_evidence_priority():
+    """实际目录、版本和 Manifest 证据必须覆盖 Steam 的陈旧 Installed 位。"""
+    print("\n" + "=" * 60)
+    print("Test 25d: Workshop Status Evidence Priority")
+
+    from dstools.features.mod.local_version import LocalModVersion, VERSION_CONFIRMED
+    from dstools.features.mod.workshop_api import WorkshopInstallInfo, WorkshopItemState
+    from dstools.features.mod.workshop_status import (
+        WorkshopModEvidence,
+        WorkshopModState,
+        evaluate_workshop_status,
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        missing = root / "3485293431"
+        stale = WorkshopModEvidence(
+            workshop_id=3485293431,
+            steam_state=WorkshopItemState(5),
+            install_info=WorkshopInstallInfo(missing, 100, 1),
+        )
+        status = evaluate_workshop_status(stale)
+        assert status.state == WorkshopModState.MISSING
+        assert "Steam 仍标记为已安装" in status.reasons[0]
+        print("  PASS: flags=5 但实际目录不存在时判定文件缺失")
+
+        installed = root / "installed"
+        installed.mkdir()
+        (installed / "modinfo.lua").write_text('version = "V1.2.3"', encoding="utf-8")
+        version = LocalModVersion("V1.2.3", VERSION_CONFIRMED,
+                                  "", "undeclared", "sandbox")
+        current = WorkshopModEvidence(
+            workshop_id=1,
+            steam_state=WorkshopItemState(5),
+            install_info=WorkshopInstallInfo(installed, 100, 1),
+            source_version=version,
+        )
+        assert evaluate_workshop_status(current).state == WorkshopModState.CURRENT
+        print("  PASS: 目录与 modinfo 存在、版本可信且 Steam 无更新时判定最新")
+
+        steam_update = WorkshopModEvidence(
+            **{**current.__dict__, "steam_state": WorkshopItemState(13)})
+        assert evaluate_workshop_status(steam_update).state == \
+            WorkshopModState.UPDATE_AVAILABLE
+        cached_update = WorkshopModEvidence(
+            **{**current.__dict__, "cached_manifest_version": "1.2.2"})
+        assert evaluate_workshop_status(cached_update).state == \
+            WorkshopModState.UPDATE_AVAILABLE
+        active_update = WorkshopModEvidence(
+            **{**current.__dict__,
+               "active_path": installed,
+               "active_version": LocalModVersion(
+                   "1.2.2", VERSION_CONFIRMED, "", "undeclared", "sandbox")})
+        assert evaluate_workshop_status(active_update).state == \
+            WorkshopModState.UPDATE_AVAILABLE
+        print("  PASS: Steam 更新位、游戏缓存版本和服务器实际版本均可触发更新")
+
+        corrupt = WorkshopModEvidence(
+            **{**current.__dict__, "manifest_valid": False,
+               "manifest_error": "缺少 scripts/main.lua"})
+        corrupt_status = evaluate_workshop_status(corrupt)
+        assert corrupt_status.state == WorkshopModState.CORRUPT
+        assert corrupt_status.reasons == ("缺少 scripts/main.lua",)
+        print("  PASS: Manifest 文件损坏证据优先判定损坏")
+
+
 def test_backup_manager_restore_clears_stale_slots():
     """restore_backup() 必须先清空会被覆盖的每一项再解压，不能只是在旧
     文件上覆盖解压——不这样做的话，备份之后又产生的新存档槽文件会跟备
@@ -2174,6 +2240,7 @@ def main():
         test_mod_resolve_cache,
         test_mod_version_resolution,
         test_workshop_source_details_parser,
+        test_workshop_status_evidence_priority,
         test_backup_manager_restore_clears_stale_slots,
         test_backup_manager_prune_retention_boundary,
         test_backfill_cluster_defaults_only_fills_missing,

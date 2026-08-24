@@ -122,6 +122,15 @@ class WorkshopItemDetails:
     previews: tuple[WorkshopPreview, ...] = ()
 
 
+@dataclass(frozen=True)
+class WorkshopInstallInfo:
+    """Steam 客户端记录的本地安装信息；路径仍需额外做物理检查。"""
+
+    path: Path
+    size_on_disk: int
+    timestamp: int
+
+
 class _SteamUGCQueryCompleted(ctypes.Structure):
     """SteamUGCQueryCompleted_t（回调号 3401）。"""
 
@@ -707,6 +716,10 @@ class SteamWorkshopSession:
         return result
 
     def item_install_info(self, workshop_id: int) -> Path | None:
+        details = self.item_install_details(workshop_id)
+        return details.path if details is not None else None
+
+    def item_install_details(self, workshop_id: int) -> WorkshopInstallInfo | None:
         self._ensure_started()
         size = ctypes.c_uint64()
         timestamp = ctypes.c_uint32()
@@ -716,7 +729,8 @@ class SteamWorkshopSession:
         if not ok:
             return None
         raw = buf.value.decode("utf-8", errors="replace").strip()
-        return Path(raw) if raw else None
+        return (WorkshopInstallInfo(Path(raw), int(size.value), int(timestamp.value))
+                if raw else None)
 
     def _ensure_started(self) -> None:
         if not self._started or self.dll is None or not self.ugc:
@@ -885,6 +899,31 @@ def get_workshop_item_states(workshop_ids: list[int] | tuple[int, ...], *,
     with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
         return {workshop_id: session.item_state(workshop_id)
                 for workshop_id in unique_ids}
+
+
+def get_workshop_install_info(workshop_ids: list[int] | tuple[int, ...], *,
+                              dll_path: Path | None = None
+                              ) -> dict[int, WorkshopInstallInfo]:
+    """读取 Steam 安装记录；返回路径不代表目录当前确实存在。"""
+    unique_ids = []
+    seen = set()
+    for raw_id in workshop_ids:
+        workshop_id = int(raw_id)
+        if workshop_id > 0 and workshop_id not in seen:
+            seen.add(workshop_id)
+            unique_ids.append(workshop_id)
+    if not unique_ids:
+        return {}
+    resolved_dll = find_steam_api_dll(dll_path)
+    if resolved_dll is None:
+        raise FileNotFoundError("找不到 DST 或专用服务器的 bin64\\steam_api64.dll")
+    result = {}
+    with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
+        for workshop_id in unique_ids:
+            info = session.item_install_details(workshop_id)
+            if info is not None:
+                result[workshop_id] = info
+    return result
 
 
 def query_workshop_item_details(workshop_ids: list[int] | tuple[int, ...], *,
