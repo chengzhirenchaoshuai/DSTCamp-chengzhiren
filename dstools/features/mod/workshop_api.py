@@ -30,6 +30,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
 
+from dstools.features.mod.workshop_manifest import verify_mod_manifest
+
 
 DST_APP_ID = 322330
 DST_GAME_SERVER_APP_ID = 343050
@@ -202,6 +204,31 @@ class WorkshopDownloadResult:
     total_bytes: int | None = None
     error: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class WorkshopInstallValidation:
+    """Workshop 安装目录的落盘验收结果。"""
+
+    valid: bool
+    path: Path | None = None
+    error: str = ""
+
+
+def validate_workshop_install(path: Path | None) -> WorkshopInstallValidation:
+    """确认 Mod 已真实落盘，并验证游戏 Manifest 声明的文件。"""
+    if path is None:
+        return WorkshopInstallValidation(False, error="Steam 没有返回安装路径")
+    path = Path(path)
+    if not path.is_dir():
+        return WorkshopInstallValidation(False, path, "Steam 返回的安装目录不存在")
+    if not (path / "modinfo.lua").is_file():
+        return WorkshopInstallValidation(False, path, "安装目录缺少 modinfo.lua")
+    manifest = verify_mod_manifest(path)
+    if manifest.available and manifest.valid is False:
+        return WorkshopInstallValidation(
+            False, path, manifest.error or "mod.manifest 完整性校验失败")
+    return WorkshopInstallValidation(True, path)
 
 
 @dataclass
@@ -641,17 +668,22 @@ class SteamWorkshopSession:
             result.error = "SteamGameServer 尚未完成匿名登录"
             return result
         result.state = self.item_state(workshop_id)
-        # Steam 会在 EItemState 中标记本地内容是否需要更新。已经安装、
-        # 且没有下载中/排队/NeedsUpdate 标志时，不再调用 DownloadItem，
-        # 避免把“检查更新”误当成一次实际下载。
+        # Steam 的 Installed 位和 GetItemInstallInfo 可能在文件被手动删除后
+        # 仍保留旧值。只有物理目录、modinfo 和可用 Manifest 都通过验收，
+        # 才能跳过 DownloadItem；否则把本次请求标记为修复。
         if (result.state.installed and not result.state.needs_update
                 and not result.state.downloading
                 and not result.state.download_pending):
-            result.accepted = True
-            result.completed = True
-            result.up_to_date = True
-            result.installed_path = self.item_install_info(workshop_id)
-            return result
+            validation = validate_workshop_install(self.item_install_info(workshop_id))
+            if validation.valid:
+                result.accepted = True
+                result.completed = True
+                result.up_to_date = True
+                result.installed_path = validation.path
+                result.details["validation"] = "passed"
+                return result
+            result.details["repair"] = True
+            result.details["precheck_error"] = validation.error
         result.accepted = bool(self.dll.SteamAPI_ISteamUGC_DownloadItem(
             self.ugc, workshop_id, bool(high_priority)))
         if not result.accepted:
@@ -707,12 +739,19 @@ class SteamWorkshopSession:
             if (stable_installed_polls >= 3
                     and (saw_transfer or time.monotonic() - started_at >= 0.5)):
                 path = self.item_install_info(result.workshop_id)
-                if path is not None:
-                    result.installed_path = path
+                validation = validate_workshop_install(path)
+                if validation.valid:
+                    result.installed_path = validation.path
                     result.completed = True
+                    result.details["validation"] = "passed"
                     return result
+                result.details["postcheck_error"] = validation.error
             time.sleep(max(0.02, poll_interval))
-        result.error = "等待 Workshop 下载完成超时；请检查 Steam 登录状态和网络"
+        validation_error = result.details.get("postcheck_error")
+        if validation_error:
+            result.error = f"Workshop 请求已接受，但文件验收失败：{validation_error}"
+        else:
+            result.error = "等待 Workshop 下载完成超时；请检查 Steam 登录状态和网络"
         return result
 
     def item_install_info(self, workshop_id: int) -> Path | None:

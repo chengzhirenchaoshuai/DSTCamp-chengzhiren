@@ -1506,6 +1506,63 @@ def test_dst_mod_manifest_verification():
         print("  PASS: 损坏格式被拒绝，游戏缓存版本读取正确")
 
 
+def test_workshop_download_precheck_uses_physical_files():
+    """Steam Installed 缓存不能掩盖被删除或损坏的真实 Mod 目录。"""
+    print("\n" + "=" * 60)
+    print("Test 25f: Workshop Download Physical Precheck")
+
+    from dstools.features.mod.workshop_api import (
+        SteamWorkshopSession,
+        WorkshopBackend,
+        WorkshopItemState,
+        validate_workshop_install,
+    )
+
+    class FakeDll:
+        def __init__(self):
+            self.download_calls = []
+
+        def SteamAPI_ISteamUGC_DownloadItem(self, ugc, workshop_id, high_priority):
+            self.download_calls.append((workshop_id, high_priority))
+            return True
+
+    class FakeSession:
+        backend = WorkshopBackend.CLIENT
+        ugc = object()
+
+        def __init__(self, path):
+            self.path = path
+            self.dll = FakeDll()
+
+        def _ensure_started(self):
+            pass
+
+        def item_state(self, workshop_id):
+            return WorkshopItemState(5)
+
+        def item_install_info(self, workshop_id):
+            return self.path
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        valid = root / "valid"
+        valid.mkdir()
+        (valid / "modinfo.lua").write_text('version = "1"', encoding="utf-8")
+        assert validate_workshop_install(valid).valid
+
+        current_session = FakeSession(valid)
+        current = SteamWorkshopSession.download_item(current_session, 123)
+        assert current.completed and current.up_to_date
+        assert not current_session.dll.download_calls
+
+        missing_session = FakeSession(root / "deleted")
+        repair = SteamWorkshopSession.download_item(missing_session, 123)
+        assert repair.accepted and not repair.completed
+        assert repair.details["repair"] is True
+        assert missing_session.dll.download_calls
+        print("  PASS: 文件完整才跳过下载，Installed+目录缺失会强制进入修复")
+
+
 def test_backup_manager_restore_clears_stale_slots():
     """restore_backup() 必须先清空会被覆盖的每一项再解压，不能只是在旧
     文件上覆盖解压——不这样做的话，备份之后又产生的新存档槽文件会跟备
@@ -2297,6 +2354,7 @@ def main():
         test_workshop_source_details_parser,
         test_workshop_status_evidence_priority,
         test_dst_mod_manifest_verification,
+        test_workshop_download_precheck_uses_physical_files,
         test_backup_manager_restore_clears_stale_slots,
         test_backup_manager_prune_retention_boundary,
         test_backfill_cluster_defaults_only_fills_missing,
