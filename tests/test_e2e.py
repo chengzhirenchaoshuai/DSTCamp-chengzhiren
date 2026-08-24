@@ -1257,6 +1257,103 @@ def test_mod_resolve_cache():
             print("  PASS: 没有 _cache_format_version 的旧格式缓存被判定失效，强制重新走一遍 sandbox")
 
 
+def test_mod_version_resolution():
+    """版本号必须来自完整成功执行后的最终值，失败时不采用中间值。"""
+    print("\n" + "=" * 60)
+    print("Test 25b: Trusted Mod Version Resolution")
+
+    from dstools.features.mod.local_version import (
+        VERSION_CONFIRMED,
+        VERSION_UNDECLARED,
+        VERSION_UNRESOLVED,
+        normalize_version_for_compare,
+        normalize_version_result,
+        resolve_local_mod_version,
+    )
+    from dstools.features.mod.sandbox import resolve_mod_version, resolve_mod_versions
+    from dstools.features.mod import version_cache
+
+    result = resolve_mod_versions(
+        'local prefix = "1."\nversion = prefix .. "2.3"\n'
+        'version = version .. "-final"\nversion_compatible = "1.2"',
+        folder_name="workshop-123",
+    )
+    assert result == {
+        "version": {"declared": True, "value": "1.2.3-final"},
+        "version_compatible": {"declared": True, "value": "1.2"},
+    }
+    normalized = normalize_version_result(result, "sandbox")
+    assert normalized.version == "1.2.3-final"
+    assert normalized.status == VERSION_CONFIRMED
+    assert normalized.version_compatible == "1.2"
+    assert normalized.compatible_status == VERSION_CONFIRMED
+    assert normalized.source == "sandbox"
+    print("  PASS: 动态拼接及后续重赋值取完整执行后的最终版本和兼容版本")
+
+    conditional = resolve_mod_version(
+        'version = folder_name == "workshop-123" and "workshop" or "local"',
+        folder_name="workshop-123",
+    )
+    assert conditional == {"declared": True, "value": "workshop"}
+    print("  PASS: folder_name 按真实 Workshop 标识注入")
+
+    assert resolve_mod_versions('version = "temporary"\nmissing_engine_api()') is None
+    assert normalize_version_result(None, "sandbox").status == VERSION_UNRESOLVED
+    print("  PASS: 完整脚本失败时不采用报错前的临时版本")
+
+    undeclared = resolve_mod_versions('name = "No Version"')
+    undeclared_result = normalize_version_result(undeclared, "sandbox")
+    assert undeclared_result.status == VERSION_UNDECLARED
+    assert undeclared_result.compatible_status == VERSION_UNDECLARED
+    invalid = normalize_version_result({
+        "version": {"declared": True, "value": True},
+        "version_compatible": {"declared": False},
+    }, "sandbox")
+    assert invalid.status == VERSION_UNRESOLVED
+    print("  PASS: 未声明与非法类型被明确区分")
+
+    fallback = normalize_version_result({
+        "version": {"declared": True, "value": " V1.2.3 "},
+        "version_compatible": {"declared": False},
+    }, "sandbox")
+    assert fallback.effective_version_compatible == "V1.2.3"
+    assert fallback.compare_version == "v1.2.3"
+    assert fallback.compare_version_compatible == "v1.2.3"
+    assert normalize_version_for_compare(" V1.2.3 ") == "v1.2.3"
+    print("  PASS: 比较值按游戏逻辑去空白并转小写，兼容版本未声明时回退版本")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        old_cache_dir = version_cache._CACHE_DIR
+        version_cache._CACHE_DIR = Path(tmp) / "cache"
+        try:
+            first_dir = Path(tmp) / "source-a"
+            second_dir = Path(tmp) / "source-b"
+            first_dir.mkdir(); second_dir.mkdir()
+            first = first_dir / "modinfo.lua"
+            second = second_dir / "modinfo.lua"
+            first.write_text('version = "1"', encoding="utf-8")
+            second.write_text('version = "1"', encoding="utf-8")
+            cached_result = {
+                "version": {"declared": True, "value": "1"},
+                "version_compatible": {"declared": False},
+            }
+            version_cache.save_version_result("workshop-123", first, "workshop-123", cached_result)
+            assert version_cache.load_version_result(
+                "workshop-123", first, "workshop-123") == cached_result
+            assert version_cache.load_version_result(
+                "workshop-123", second, "workshop-123") is None
+            first.write_text('version = "2"', encoding="utf-8")
+            assert version_cache.load_version_result(
+                "workshop-123", first, "workshop-123") is None
+            first.write_text('version = "2"\nversion_compatible = "1"', encoding="utf-8")
+            local = resolve_local_mod_version("workshop-123", first_dir, "workshop-123")
+            assert local.version == "2" and local.version_compatible == "1"
+            assert local.status == VERSION_CONFIRMED
+        finally:
+            version_cache._CACHE_DIR = old_cache_dir
+    print("  PASS: 缓存同时校验 SHA-256 与来源路径，不会跨副本串值")
+
+
 def test_backup_manager_restore_clears_stale_slots():
     """restore_backup() 必须先清空会被覆盖的每一项再解压，不能只是在旧
     文件上覆盖解压——不这样做的话，备份之后又产生的新存档槽文件会跟备
@@ -2044,6 +2141,7 @@ def main():
         test_world_categories_bilingual,
         test_custom_background,
         test_mod_resolve_cache,
+        test_mod_version_resolution,
         test_backup_manager_restore_clears_stale_slots,
         test_backup_manager_prune_retention_boundary,
         test_backfill_cluster_defaults_only_fills_missing,

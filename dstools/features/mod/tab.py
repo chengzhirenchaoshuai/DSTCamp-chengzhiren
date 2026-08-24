@@ -9,6 +9,7 @@ import functools
 import queue
 import threading
 import tkinter as tk
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 from typing import Any
@@ -25,12 +26,14 @@ from dstools.features.mod import chs_translation, presets
 from dstools.features.mod.icons import get_mod_icon_path
 from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
 from dstools.features.mod.cache import load_cached_result, save_result
+from dstools.features.mod.local_version import resolve_local_version_target
 from dstools.features.mod.parser import (
     ModInfo, find_game_mods_dir, find_mod_folder, find_wegame_client_dir, find_wegame_server_dir,
     list_installed_mod_ids, parse_modinfo, resolve_config_value, resolve_full_modinfo,
     resolve_wegame_client_mods_dir, visible_config_options,
 )
 from dstools.features.mod.sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync, remove_mod_sync_junction
+from dstools.features.mod.workshop_api import get_workshop_item_states, update_workshop_items
 from dstools.features.world.location_profiles import (
     IA_CORE_MOD_ID,
     IA_SHIPWRECKED_MOD_ID,
@@ -56,18 +59,68 @@ def _apply_full_sandbox_result(mod_info, result: dict | None) -> None:
     解析过的 ModInfo 上——由批量的"重载mod信息"全量重载路径
     （ModManagerTab._load_mods_worker）和 ModConfigDialog 自己按 mod
     逐个兜底的路径（_try_full_sandbox_parse）共用，确保两边用完全一样
-    的字段、一样的方式应用。结果为 None/空（沙箱失败或超时）时
-    mod_info 保持不变——静态解析器已经产出的结果继续作为权威结果。
+    的字段、一样的方式应用。结果为 None/空（沙箱失败或超时）时保留
+    其它静态字段，但版本标记为无法确认，避免把中间赋值冒充最终版本。
     """
     if not result:
+        mod_info.version_status = "unresolved"
+        mod_info.version_source = ""
+        mod_info.version_compatible_status = "unresolved"
+        mod_info.full_sandbox_tried = True
         return
     if "config_options" in result:
         mod_info.config_options = result["config_options"]
         mod_info.unsupported_schema = False
-    for key in ("name", "author", "version", "description", "icon", "icon_atlas"):
+    for key in ("name", "author", "version", "version_compatible",
+                "description", "icon", "icon_atlas"):
         if key in result:
             setattr(mod_info, key, result[key])
+    if "version" not in result or result["version"] is None:
+        mod_info.version = ""
+        mod_info.version_status = "undeclared"
+        mod_info.version_source = "sandbox"
+    else:
+        value = result["version"]
+        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+            mod_info.version = ""
+            mod_info.version_status = "unresolved"
+            mod_info.version_source = ""
+        elif str(value).strip():
+            mod_info.version = str(value).strip()
+            mod_info.version_status = "confirmed"
+            mod_info.version_source = "sandbox"
+        else:
+            mod_info.version = ""
+            mod_info.version_status = "undeclared"
+            mod_info.version_source = "sandbox"
     mod_info.full_sandbox_tried = True
+    compatible = result.get("version_compatible")
+    if compatible is None:
+        mod_info.version_compatible = ""
+        mod_info.version_compatible_status = "undeclared"
+    elif isinstance(compatible, bool) or not isinstance(compatible, (str, int, float)):
+        mod_info.version_compatible = ""
+        mod_info.version_compatible_status = "unresolved"
+    elif str(compatible).strip():
+        mod_info.version_compatible = str(compatible).strip()
+        mod_info.version_compatible_status = "confirmed"
+    else:
+        mod_info.version_compatible = ""
+        mod_info.version_compatible_status = "undeclared"
+
+
+def _version_display(mod_info, include_label: bool = True) -> str:
+    if mod_info is None:
+        return t("mod.version_unresolved")
+    status = getattr(mod_info, "version_status", "pending")
+    if status == "confirmed":
+        return (t("mod.version_value", version=mod_info.version)
+                if include_label else mod_info.version)
+    if status == "undeclared":
+        return t("mod.version_undeclared")
+    if status == "unresolved":
+        return t("mod.version_unresolved")
+    return t("mod.version_pending")
 
 
 _strcmplogicalw = None
@@ -262,6 +315,11 @@ class ModManagerTab:
         self._md_br = ttk.Button(ff, text=t("mod.reload_full"), command=self._reload_full)
         self._md_br.pack(side=tk.RIGHT, padx=(6, 0))
         Tooltip(self._md_br, lambda: t("mod.reload_full_hover"))
+        self._workshop_update_running = False
+        self._md_update_workshop = ttk.Button(ff, text=t("mod.workshop_update_btn"),
+                                              command=self._open_workshop_update_dialog)
+        self._md_update_workshop.pack(side=tk.RIGHT, padx=(6, 0))
+        Tooltip(self._md_update_workshop, lambda: t("mod.workshop_update_hover"))
         make_transparent_status(ff, app, self._mod_scan_status_var, width=220)
 
         # 本地存档选中时显示的醒目提示——本地存档的 mod 启用/配置实际由
@@ -583,6 +641,370 @@ class ModManagerTab:
         置弹窗才更新。"""
         self._refresh_mods(full=True)
 
+    def _workshop_mod_ids(self) -> list[int]:
+        """收集当前扫描结果中的 Workshop Mod ID，排除本地 Mod。"""
+        ids: list[int] = []
+        for raw_id in self._mod_data:
+            text_id = str(raw_id).removeprefix("workshop-")
+            if text_id.isdigit() and int(text_id) > 0:
+                ids.append(int(text_id))
+        return ids
+
+    def _current_cluster_workshop_ids(self) -> set[str]:
+        """返回当前存档所有世界中出现过的 Workshop Mod key。"""
+        ids: set[str] = set()
+        cluster = self._get_cluster()
+        if not cluster:
+            return ids
+        for shard in cluster.shards:
+            if not shard.mod_overrides_path:
+                continue
+            try:
+                overrides = load_mod_overrides(shard.mod_overrides_path)
+            except Exception:
+                continue
+            for raw_id in overrides.mods:
+                text_id = str(raw_id).removeprefix("workshop-")
+                if text_id.isdigit():
+                    ids.add(text_id)
+        return ids
+
+    def _open_workshop_update_dialog(self) -> None:
+        """打开 Workshop Mod 选择器，不在点击工具栏时立即更新全部 Mod。"""
+        from PIL import Image, ImageTk
+        from dstools.shared.gui.dialog_geometry import center_over_parent
+        from dstools.features.mod.render import _get_default_icon
+
+        win = tk.Toplevel(self.frame)
+        # 先隐藏窗口，内容和请求尺寸准备完成、居中后再显示，避免 Tk
+        # 先把 Toplevel 放在屏幕左上角再跳到父窗口中央造成闪烁。
+        win.withdraw()
+        win.title(t("mod.update_title"))
+        win.transient(self.frame.winfo_toplevel())
+        win.resizable(True, True)
+        dialog_bg = "#ffffff"
+        win.configure(bg=dialog_bg)
+        count_var = tk.StringVar()
+
+        toolbar = tk.Frame(win, bg=dialog_bg)
+        toolbar.pack(fill=tk.X, padx=12, pady=(12, 6))
+        tk.Label(toolbar, text=t("mod.filter"), bg=dialog_bg, fg=theme.TEXT,
+                 font=theme.font_tuple(theme.FONT_SIZE_BASE)).pack(side=tk.LEFT, padx=(0, 6))
+        search_var = tk.StringVar()
+        search = ttk.Entry(toolbar, textvariable=search_var, width=28)
+        search.pack(side=tk.LEFT, padx=(0, 8))
+        filter_var = tk.StringVar(value="all")
+
+        # 选择器是独立白底窗口，这里使用普通 Label 绘制筛选文字，不使用
+        # 外层页签的 BgFrame 筛选组件，避免自定义背景图在白底窗口中形成
+        # 一块突兀的色块。
+        filter_bar = tk.Frame(toolbar, bg=dialog_bg)
+        filter_bar.pack(side=tk.LEFT, padx=(0, 6))
+        filter_labels = []
+        filter_options = [
+            ("all", lambda: t("mod.show_all")),
+            ("current", lambda: t("mod.update_filter_current")),
+        ]
+
+        def _redraw_filter_labels():
+            for label, value, text_getter in filter_labels:
+                label.configure(
+                    text=text_getter(),
+                    fg=theme.PRIMARY if filter_var.get() == value else theme.TEXT_MUTED,
+                    font=theme.font_tuple(theme.FONT_SIZE_BASE,
+                                          bold=filter_var.get() == value),
+                )
+
+        for value, text_getter in filter_options:
+            label = tk.Label(filter_bar, bg=dialog_bg, cursor="hand2")
+            label.pack(side=tk.LEFT, padx=(0, 16))
+            label.bind("<Button-1>", lambda _e, item=value: filter_var.set(item))
+            filter_labels.append((label, value, text_getter))
+        _redraw_filter_labels()
+        state_toolbar = tk.Frame(toolbar, bg=dialog_bg)
+        state_toolbar.pack(side=tk.RIGHT)
+        tk.Label(state_toolbar, textvariable=count_var, bg=dialog_bg, fg=theme.TEXT_MUTED,
+                 font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(side=tk.LEFT)
+        refresh_states_btn = ttk.Button(
+            state_toolbar, text=t("mod.update_refresh_states"),
+            command=lambda: _refresh_latest_states())
+        refresh_states_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        def _info_for(wid: str):
+            key = f"workshop-{wid}"
+            return self._mod_infos.get(key) or self._mod_infos.get(wid)
+
+        def _name_for(wid: str) -> str:
+            key = f"workshop-{wid}"
+            info = _info_for(wid)
+            raw_name = (info.name if info else "") or key
+            return str(_localize_mod_name(key, raw_name) or key)
+
+        def _current_version_for(wid: str) -> str:
+            info = _info_for(wid)
+            return _version_display(info, include_label=False)
+
+        # 默认只展示全部 Mod，不预先勾选，避免用户误触“更新所选 Mod”时
+        # 一次更新整个 Workshop 库；需要批量更新时可使用“全选当前筛选”。
+        selected: set[str] = set()
+        # _mod_data 在外层加载完成时已经按照同一套名称清洗、自然排序、
+        # 启用项优先规则排好；这里保留这个顺序，确保两个窗口完全一致。
+        all_ids = [str(wid) for wid in self._workshop_mod_ids()]
+        current_ids = self._current_cluster_workshop_ids()
+        latest_states = {}
+        latest_state_loading = False
+        latest_state_checked = False
+
+        # 列表和滚动条必须在同一个中间容器内；如果直接 side=LEFT/RIGHT
+        # pack 到 Toplevel，会横向切走整个窗口的剩余区域，后创建的底部
+        # 操作栏只能被挤到右上方。
+        list_frame = tk.Frame(win, bg=dialog_bg)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 6))
+        vbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
+        vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas = tk.Canvas(list_frame, width=980, height=500, highlightthickness=0, bd=0,
+                           bg=dialog_bg,
+                           yscrollcommand=vbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vbar.configure(command=canvas.yview)
+        canvas.configure(yscrollincrement=76)
+        photo_refs = []
+        visible_ids: list[str] = []
+
+        def _on_wheel(event):
+            canvas.yview_scroll(int(-3 * (event.delta / 120)), "units")
+            return "break"
+
+        canvas.bind("<MouseWheel>", _on_wheel)
+
+        def _filtered_ids() -> list[str]:
+            needle = search_var.get().strip().casefold()
+            mode = filter_var.get()
+            result = []
+            for wid in all_ids:
+                if mode == "current" and wid not in current_ids:
+                    continue
+                name = _name_for(wid)
+                if needle and needle not in f"{name} {wid}".casefold():
+                    continue
+                result.append(wid)
+            return result
+
+        def _latest_version_for(wid: str) -> str:
+            state = latest_states.get(wid)
+            if state is None:
+                return (t("mod.update_latest_checking")
+                        if latest_state_loading or not latest_state_checked
+                        else t("mod.update_latest_unknown"))
+            if state.installed and state.needs_update:
+                return t("mod.update_latest_available")
+            if state.installed:
+                return t("mod.update_latest_up_to_date")
+            if state.subscribed:
+                return t("mod.update_latest_not_installed")
+            return t("mod.update_latest_unknown")
+
+        def render_rows():
+            canvas.delete("all")
+            photo_refs.clear()
+            visible_ids[:] = _filtered_ids()
+            row_h = 78
+            header_h = 36
+            width = max(canvas.winfo_width(), 760)
+            current_x = width - 250
+            latest_x = width - 120
+            name_font = tkfont.Font(font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True))
+
+            def _fit_name(text: str) -> str:
+                max_width = max(120, current_x - 145)
+                if name_font.measure(text) <= max_width:
+                    return text
+                while text and name_font.measure(text + "…") > max_width:
+                    text = text[:-1]
+                return (text + "…") if text else "…"
+
+            canvas.create_rectangle(4, 4, width - 8, header_h,
+                                    fill=dialog_bg, outline="", tags=("select_all",))
+            header_checked = bool(visible_ids) and all(item in selected for item in visible_ids)
+            canvas.create_rectangle(16, 10, 36, 30,
+                                    fill=theme.PRIMARY if header_checked else dialog_bg,
+                                    outline=theme.PRIMARY if header_checked else theme.CARD_BORDER,
+                                    width=2, tags=("select_all",))
+            if header_checked:
+                canvas.create_text(26, 20, text="✓", fill=dialog_bg,
+                                   font=theme.font_tuple(14, bold=True), tags=("select_all",))
+            canvas.create_text(
+                48, 20,
+                text=(t("mod.update_deselect_all") if header_checked
+                      else t("mod.update_select_all")),
+                anchor=tk.W,
+                fill=theme.TEXT, font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+                tags=("select_all",))
+            canvas.create_text(current_x, 20, text=t("mod.update_current_version"), anchor=tk.W,
+                               fill=theme.TEXT_MUTED, font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
+            canvas.create_text(latest_x, 20, text=t("mod.update_latest_version"), anchor=tk.W,
+                               fill=theme.TEXT_MUTED, font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
+            if not visible_ids:
+                canvas.create_text(width / 2, header_h + 48, text=t("mod.no_filtered"),
+                                   fill=theme.TEXT_MUTED,
+                                   font=theme.font_tuple(theme.FONT_SIZE_BASE))
+            for index, wid in enumerate(visible_ids):
+                y = header_h + index * row_h + 6
+                bg = "#f7f7f7" if index % 2 == 0 else dialog_bg
+                canvas.create_rectangle(4, y, width - 8, y + row_h - 5,
+                                        fill=bg, outline=theme.CARD_BORDER,
+                                        tags=(f"row:{wid}",))
+                checked = wid in selected
+                box_x, box_y = 16, y + 27
+                canvas.create_rectangle(box_x, box_y, box_x + 24, box_y + 24,
+                                        fill=theme.PRIMARY if checked else dialog_bg,
+                                        outline=theme.PRIMARY if checked else theme.CARD_BORDER,
+                                        width=2, tags=(f"row:{wid}",))
+                if checked:
+                    canvas.create_text(box_x + 12, box_y + 12, text="✓",
+                                       fill=dialog_bg, font=theme.font_tuple(16, bold=True),
+                                       tags=(f"row:{wid}",))
+                img = self._icon_imgs.get(f"workshop-{wid}") or self._icon_imgs.get(wid)
+                if img is None:
+                    img = _get_default_icon(58)
+                if img:
+                    try:
+                        photo = ImageTk.PhotoImage(img.convert("RGBA").resize((58, 58), Image.LANCZOS))
+                        photo_refs.append(photo)
+                        canvas.create_image(54, y + 7, image=photo, anchor=tk.NW,
+                                            tags=(f"row:{wid}",))
+                    except Exception:
+                        pass
+                else:
+                    canvas.create_rectangle(54, y + 7, 112, y + 65,
+                                            fill=dialog_bg, outline=theme.CARD_BORDER,
+                                            tags=(f"row:{wid}",))
+                canvas.create_text(126, y + 26, text=_fit_name(_name_for(wid)), anchor=tk.W,
+                                   fill=theme.TEXT, font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
+                                   tags=(f"row:{wid}",))
+                canvas.create_text(126, y + 51, text=f"workshop-{wid}", anchor=tk.W,
+                                   fill=theme.TEXT_MUTED, font=theme.font_tuple(theme.FONT_SIZE_SM),
+                                   tags=(f"row:{wid}",))
+                canvas.create_text(current_x, y + 26, text=_current_version_for(wid), anchor=tk.W,
+                                   fill=theme.TEXT, font=theme.font_tuple(theme.FONT_SIZE_SM),
+                                   tags=(f"row:{wid}",))
+                canvas.create_text(latest_x, y + 26, text=_latest_version_for(wid), anchor=tk.W,
+                                   fill=theme.TEXT, font=theme.font_tuple(theme.FONT_SIZE_SM),
+                                   tags=(f"row:{wid}",))
+                canvas.tag_bind(f"row:{wid}", "<Button-1>",
+                                lambda _e, item=wid: toggle_one(item))
+            canvas.tag_bind("select_all", "<Button-1>", lambda _e: select_visible())
+            canvas.configure(scrollregion=(0, 0, width,
+                                           max(header_h + 1, header_h + len(visible_ids) * row_h + 8)))
+            count_var.set(t("mod.update_selected_count", selected=len(selected), total=len(all_ids)))
+
+        def toggle_one(wid: str):
+            if wid in selected:
+                selected.remove(wid)
+            else:
+                selected.add(wid)
+            render_rows()
+
+        def select_visible():
+            if visible_ids and all(item in selected for item in visible_ids):
+                selected.difference_update(visible_ids)
+            else:
+                selected.update(visible_ids)
+            render_rows()
+
+        def update_selected():
+            if not selected:
+                dlg.show_info(win, t("mod.update_title"), t("mod.update_none_selected"))
+                return
+            ids = sorted(int(wid) for wid in selected)
+            win.destroy()
+            self._update_workshop_mods(ids)
+
+        search_var.trace_add("write", lambda *_: render_rows())
+        filter_var.trace_add("write", lambda *_: (_redraw_filter_labels(), render_rows()))
+        canvas.bind("<Configure>", lambda _e: render_rows(), add="+")
+
+        footer = tk.Frame(win, bg=dialog_bg)
+        footer.pack(fill=tk.X, padx=12, pady=(0, 12))
+        ttk.Button(footer, text=t("mod.update_selected_btn"), command=update_selected).pack(side=tk.RIGHT)
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        center_over_parent(win, self.frame.winfo_toplevel())
+        render_rows()
+
+        def _refresh_latest_states():
+            nonlocal latest_state_loading, latest_state_checked
+            if latest_state_loading:
+                return
+            latest_state_loading = True
+            latest_state_checked = False
+            latest_states.clear()
+            refresh_states_btn.configure(state=tk.DISABLED)
+            render_rows()
+
+            def _worker():
+                try:
+                    states = get_workshop_item_states([int(wid) for wid in all_ids])
+                except Exception:
+                    states = {}
+
+                def _apply_states():
+                    nonlocal latest_state_loading, latest_state_checked
+                    latest_state_loading = False
+                    latest_state_checked = True
+                    if not win.winfo_exists():
+                        return
+                    latest_states.update({str(wid): state for wid, state in states.items()})
+                    refresh_states_btn.configure(state=tk.NORMAL)
+                    render_rows()
+
+                self.frame.after(0, _apply_states)
+
+            threading.Thread(target=_worker, name="dstcamp-workshop-state-check",
+                             daemon=True).start()
+
+        _refresh_latest_states()
+        win.deiconify()
+        win.lift()
+        search.focus_set()
+
+    def _update_workshop_mods(self, ids: list[int] | None = None) -> None:
+        """后台调用普通 SteamUGC 更新已发现的 Workshop Mod。"""
+        if self._workshop_update_running:
+            return
+        ids = ids if ids is not None else self._workshop_mod_ids()
+        if not ids:
+            dlg.show_info(self.app.root, t("mod.workshop_update_btn"),
+                          t("mod.workshop_update_empty"))
+            return
+        self._workshop_update_running = True
+        self._md_update_workshop.configure(state=tk.DISABLED)
+        self._mod_scan_status_var.set(t("mod.workshop_update_running", current=0, total=len(ids)))
+
+        def progress(current, total, _downloaded, _size):
+            self.frame.after(
+                0, lambda: self._mod_scan_status_var.set(
+                    t("mod.workshop_update_running", current=current, total=total)))
+
+        def worker():
+            try:
+                batch = update_workshop_items(ids, on_progress=progress)
+                updated, up_to_date, failed = batch.updated, batch.up_to_date, batch.failed
+            except Exception:
+                # 后台更新失败也必须恢复按钮状态，避免一次异常让页面永久卡在“更新中”。
+                updated, up_to_date, failed = 0, 0, len(ids)
+            self.frame.after(0, self._finish_workshop_update, updated, up_to_date, failed)
+
+        threading.Thread(target=worker, name="dstcamp-workshop-update", daemon=True).start()
+
+    def _finish_workshop_update(self, updated: int, up_to_date: int, failed: int) -> None:
+        self._workshop_update_running = False
+        self._md_update_workshop.configure(state=tk.NORMAL)
+        self._mod_scan_status_var.set(
+            t("mod.workshop_update_done", updated=updated, up_to_date=up_to_date, failed=failed))
+        # 没有实际更新时不重新扫描 500+ Mod，避免“已是最新”又触发一次重型解析。
+        if updated:
+            self._refresh_mods(full=False)
+
     def _refresh_mods(self, full=None):
         """重新加载 modoverrides.lua，为每个 mod 解析 modinfo/图标。
 
@@ -674,6 +1096,7 @@ class ModManagerTab:
         shard 切换的刷新，绝不会覆盖掉更新的一次（见 gen）。"""
         mod_data, mod_infos, icon_imgs = {}, {}, {}
         icon_targets = []
+        version_targets = []
         initial_applied = False
         luajit_active = False
         try:
@@ -759,6 +1182,8 @@ class ModManagerTab:
                             self._full_resolved_cache[wid] = mod_info
                     mod_infos[wid] = mod_info
                     if mod_info and mod_folder:
+                        if not full and mod_info.version_status == "pending":
+                            version_targets.append((wid, mod_folder, mod_info.workshop_id))
                         # 首次快速扫描先把列表和名称交回界面，图标转换单独
                         # 在后台继续做；否则 500 个 ktech.exe 调用完成前，
                         # 用户会一直看不到任何列表，也无法判断是否卡死。
@@ -768,6 +1193,12 @@ class ModManagerTab:
             if not full:
                 self.frame.after(0, self._apply_loaded_mods, gen, mod_data,
                                  mod_infos, {}, luajit_active)
+                if version_targets:
+                    threading.Thread(
+                        target=self._load_versions_worker,
+                        args=(gen, version_targets),
+                        name="dstcamp-mod-version-scan", daemon=True,
+                    ).start()
                 initial_applied = True
             for index, (wid, mod_info, mod_folder) in enumerate(icon_targets, 1):
                 try:
@@ -786,6 +1217,40 @@ class ModManagerTab:
             if not initial_applied:
                 self.frame.after(0, self._apply_loaded_mods, gen, mod_data,
                                  mod_infos, icon_imgs, luajit_active)
+
+    def _load_versions_worker(self, gen, targets):
+        """限流并行解析版本，并按批次交回 Tk 主线程。"""
+        batch = {}
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="dstcamp-version") as pool:
+            futures = [pool.submit(resolve_local_version_target, target) for target in targets]
+            for future in as_completed(futures):
+                try:
+                    wid, normalized = future.result()
+                except Exception:
+                    continue
+                batch[wid] = normalized
+                if len(batch) >= 12:
+                    self.frame.after(0, self._apply_version_batch, gen, dict(batch))
+                    batch.clear()
+        if batch:
+            self.frame.after(0, self._apply_version_batch, gen, dict(batch))
+
+    def _apply_version_batch(self, gen, results):
+        if gen != self._refresh_gen or not self.frame.winfo_exists():
+            return
+        changed = False
+        for wid, result in results.items():
+            info = self._mod_infos.get(wid)
+            if info is None:
+                continue
+            info.version = result.version
+            info.version_status = result.status
+            info.version_source = result.source
+            info.version_compatible = result.version_compatible
+            info.version_compatible_status = result.compatible_status
+            changed = True
+        if changed:
+            self._render_list()
 
     def _apply_loaded_mods(self, gen, mod_data, mod_infos, icon_imgs, luajit_active):
         if gen != self._refresh_gen or not self.frame.winfo_exists():
@@ -895,6 +1360,7 @@ class ModManagerTab:
             rows.append({
                 "workshop_id": wid,
                 "name": name,
+                "version_text": _version_display(info),
                 "enabled": mod.enabled,
                 "is_local": is_local,
                 "locked": locked,
@@ -1433,6 +1899,7 @@ class ModManagerTab:
     def refresh_language(self):
         self._md_lbl2.redraw()
         self._md_br.configure(text=t("mod.reload_full")); self._md_bs.configure(text=t("mod.save_btn"))
+        self._md_update_workshop.configure(text=t("mod.workshop_update_btn"))
         self._md_ba.configure(text=t("mod.apply_current"))
         self._md_sync.configure(
             text=t("local.remove_junction_btn") if self._sync_already_linked else t("local.sync_mods_btn"))

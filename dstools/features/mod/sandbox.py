@@ -205,9 +205,50 @@ def run_lua_snippet(lua_code: str, timeout: float = DEFAULT_TIMEOUT) -> Any:
 
 FULL_FILE_TIMEOUT = 3.0
 
+# 单独的版本读取协议。只有整份 modinfo.lua 无错误执行完毕，追加在末尾的
+# return 才会运行，因此不会把“脚本中途报错前临时赋过的 version”误当最终值。
+# v2 同一次执行读回 version_compatible，供后续还原游戏的兼容版本判断。
+VERSION_CONTRACT_VERSION = 2
+
+
+def resolve_mod_versions(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
+                         folder_name: str | None = None) -> dict[str, Any] | None:
+    """完整执行 ``modinfo.lua`` 并返回版本与兼容版本的声明结果。"""
+    preamble = ""
+    if folder_name is not None:
+        escaped = folder_name.replace("\\", "\\\\").replace('"', '\\"')
+        preamble = f'folder_name = "{escaped}"\n'
+    code = (
+        f"{preamble}{file_text}\n"
+        "return {\n"
+        "  version = {declared = version ~= nil, value = version},\n"
+        "  version_compatible = {declared = version_compatible ~= nil, "
+        "value = version_compatible},\n"
+        "}\n"
+    )
+    result = run_lua_snippet(code, timeout=timeout)
+    if not isinstance(result, dict):
+        return None
+    for field in ("version", "version_compatible"):
+        item = result.get(field)
+        if not isinstance(item, dict) or not isinstance(item.get("declared"), bool):
+            return None
+    return result
+
+
+def resolve_mod_version(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
+                        folder_name: str | None = None) -> dict[str, Any] | None:
+    """完整执行 modinfo.lua，只返回作者最终声明的 version。
+
+    返回 ``{"declared": bool, "value": scalar}``；执行失败/超时或结果形状
+    异常返回 None。调用方负责只接受字符串和数字，绝不猜测其它 Lua 类型。
+    """
+    result = resolve_mod_versions(file_text, timeout=timeout, folder_name=folder_name)
+    return result.get("version") if result is not None else None
+
 
 _FIELDS_TO_READ_BACK = (
-    "name", "author", "version", "description", "icon", "icon_atlas",
+    "name", "author", "version", "version_compatible", "description", "icon", "icon_atlas",
     "configuration_options",
 )
 
@@ -215,7 +256,7 @@ _FIELDS_TO_READ_BACK = (
 def resolve_full_config_options(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
                                  folder_name: str | None = None) -> Any:
     """把整份 modinfo.lua 的文本丢进沙箱跑一遍，一次执行读回本项目关心
-    的全部顶层字段（name、author、version、description、icon、
+    的全部顶层字段（name、author、version、version_compatible、description、icon、
     icon_atlas、configuration_options），打包成一个 dict。
 
     folder_name：真实游戏引擎会把这个全局变量原样注入每份 modinfo.lua

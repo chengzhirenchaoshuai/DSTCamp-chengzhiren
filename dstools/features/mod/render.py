@@ -60,7 +60,7 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
 
     Args:
         rows: 字典列表，每个字典含以下键：
-            workshop_id、name、enabled（bool）、has_config（bool）、
+            workshop_id、name、version_text、enabled（bool）、has_config（bool）、
             has_link（bool），以及可选的 is_local（bool）/locked（bool）
             ——locked 会强制开关显示成灰色、不可点击的"开"状态（目前只有
             LuaJIT 补丁生效期间的配套 mod 行会用到），而不是正常的开/关
@@ -146,23 +146,40 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
         switch_x = cfg_x - col_gap - switch_w
         name_col_w = max(30, switch_x - col_gap - x)
 
-        # ── 第 2 列：名字（上）+ workshop id（下）────────────────────
+        # ── 第 2 列：名字（上）+ workshop id（中）+ 版本（下）────────
         # mod 名是不受信任的第三方文本，可能带 emoji（微软雅黑等 CJK 字体
         # 没有对应字形，直接画会得到 .notdef 方块）——用
         # draw_mixed_text()/measure_mixed() 而不是 draw.text()/
         # draw.textlength()，遇到 emoji 字符会自动切到 get_emoji_font()。
-        name_text = row["name"] or wid
-        while name_text and measure_mixed(name_text, name_size) > name_col_w:
+        full_name_text = row["name"] or wid
+        name_text = full_name_text
+        while name_text and measure_mixed(name_text + "…", name_size) > name_col_w:
             name_text = name_text[:-1]
-        draw_mixed_text(draw, x, y + row_h * 0.34, name_text, name_size, theme.TEXT, anchor="lm")
-        draw.text((x, y + row_h * 0.68), wid, font=id_font, fill=theme.TEXT_MUTED, anchor="lm")
+        if name_text != full_name_text:
+            name_text = name_text + "…" if name_text else "…"
+            hover_regions.append((x, y, x + name_col_w, y + row_h * 0.5,
+                                  full_name_text))
+        draw_mixed_text(draw, x, y + row_h * 0.25, name_text, name_size, theme.TEXT, anchor="lm")
+        draw.text((x, y + row_h * 0.53), wid, font=id_font,
+                  fill=theme.TEXT_MUTED, anchor="lm")
+        full_version_text = row.get("version_text", "")
+        version_text = full_version_text
+        while version_text and draw.textlength(version_text + "…", font=id_font) > name_col_w:
+            version_text = version_text[:-1]
+        if version_text != full_version_text:
+            version_text = version_text + "…" if version_text else "…"
+            hover_regions.append((x, y + row_h * 0.64, x + name_col_w, y + row_h,
+                                  full_version_text))
+        draw.text((x, y + row_h * 0.79), version_text, font=id_font,
+                  fill=theme.TEXT_MUTED, anchor="lm")
         if on_copy_id:
             # 点击区域用这一行下半部分的整个高度（不是紧贴文字的窄条），
             # 好点一些，跟其它列的点击区域一样宽容；横向宽度按实际文字
             # 量出来，不覆盖到第 3 列的开关。不注册 hover 提示——点击后
             # 已经有"已复制: xxx"的反馈，悬停再额外提示一遍是多余的。
             id_w = draw.textlength(wid, font=id_font)
-            hit_regions.append((x, y + row_h * 0.5, x + id_w + 10 * s, y + row_h,
+            hit_regions.append((x, y + row_h * 0.39, x + id_w + 10 * s,
+                                y + row_h * 0.66,
                                 _mk_cb(on_copy_id, wid)))
 
         # ── 第 3 列：开/关开关（client_only/"本地" mod 没有实质意义上的

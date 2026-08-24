@@ -204,6 +204,14 @@ class ModInfo:
     name: str = ""
     author: str = ""
     version: str = ""
+    # Mod 管理列表展示版本时只信任完整 Lua 沙箱成功执行后的最终值。
+    # pending/confirmed/undeclared/unresolved 分别表示等待解析、已确认、
+    # 作者未声明、无法在当前沙箱环境确认；静态解析到的 version 不会因此
+    # 丢失，但不能冒充 confirmed。
+    version_status: str = "pending"
+    version_source: str = ""
+    version_compatible: str = ""
+    version_compatible_status: str = "pending"
     description: str = ""
     workshop_id: str = ""  # 从文件夹名派生
     icon: str = ""         # 例如 "modicon.tex"，相对于 icon_atlas 所在文件夹
@@ -1438,8 +1446,8 @@ def resolve_full_modinfo(mod_folder: Path, timeout: float | None = None) -> dict
     件地重新赋值成中文变体的情况，这是只抓文件里*第一个*
     `name = "..."` 的静态解析器跟不上的。
 
-    返回一个 dict，含 "name"/"author"/"version"/"description"/
-    "icon"/"icon_atlas" 中的任意几个（只有 mod 实际设置过的字段才会出
+    返回一个 dict，含 "name"/"author"/"version"/"version_compatible"/
+    "description"/"icon"/"icon_atlas" 中的任意几个（只有 mod 实际设置过的字段才会出
     现，且已经本地化成纯字符串）和 "config_options"（一个
     list[ModConfigOption]，只有 configuration_options 解析出可识别的
     形状时才会出现）——如果文件读取失败，或者执行整体失败/超时，则返
@@ -1461,7 +1469,8 @@ def resolve_full_modinfo(mod_folder: Path, timeout: float | None = None) -> dict
         return None
 
     out = {}
-    for key in ("name", "author", "version", "description", "icon", "icon_atlas"):
+    for key in ("name", "author", "version", "version_compatible",
+                "description", "icon", "icon_atlas"):
         val = result.get(key)
         if val is not None:
             out[key] = val if isinstance(val, str) else _resolve_localized_value(val)

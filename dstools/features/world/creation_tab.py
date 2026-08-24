@@ -5,6 +5,7 @@ import functools
 import threading
 import tkinter as tk
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from tkinter import ttk
 
 from PIL import Image
@@ -42,7 +43,14 @@ from dstools.features.mod.parser import (
     resolve_wegame_client_mods_dir,
 )
 from dstools.features.mod.render import render_mod_list
-from dstools.features.mod.tab import ModConfigDialog, _SavePresetDialog, _localize_mod_name, _mod_name_cmp
+from dstools.features.mod.tab import (
+    ModConfigDialog,
+    ModManagerTab,
+    _SavePresetDialog,
+    _localize_mod_name,
+    _mod_name_cmp,
+    _version_display,
+)
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.fonts import strip_unrenderable
 from dstools.shared.gui import theme, themed_dialog as dlg
@@ -568,7 +576,7 @@ class WorldCreationTab:
                                 icon = source.convert("RGBA")
                     except Exception:
                         pass
-                records.append((mod_id, info, icon))
+                records.append((mod_id, info, icon, folder))
             # 世界设置图标跟普通 Mod 列表图标一样在扫描线程解析，避免
             # 第一次进入“世界设置”时同步调用 ktech.exe 卡住界面。
             from dstools.features.world.mod_icons import resolve_mod_setting_icons
@@ -615,7 +623,8 @@ class WorldCreationTab:
         self._icon_imgs.clear()
         self._icon_thumb_cache.clear()
         self._mod_world_icons = world_icons
-        for mod_id, info, icon in records:
+        version_targets = []
+        for mod_id, info, icon, folder in records:
             self._mod_infos[mod_id] = info
             configured = self._mod_overrides.get(mod_id, {})
             self._mod_data[mod_id] = ModEntry(
@@ -627,6 +636,8 @@ class WorldCreationTab:
             )
             if icon is not None:
                 self._icon_imgs[mod_id] = icon
+            if info is not None and folder is not None and info.version_status == "pending":
+                version_targets.append((mod_id, folder, info.workshop_id))
         self._ensure_island_adventures_dependency(show_dialog=False)
         # 排序只在这里（真正扫描完数据时）做一次，跟「Mod 管理」主页签一致：
         # 点开关（_toggle_mod）不再重新排序，避免那一行立刻跳到顶部/底部。
@@ -641,6 +652,56 @@ class WorldCreationTab:
         if self._mod_scan_status is not None:
             self._mod_scan_status.set(f"已发现 {len(records)} 个 Mod")
         self._render_list()
+        if version_targets:
+            threading.Thread(
+                target=self._load_versions_worker,
+                args=(generation, version_targets),
+                name="dstcamp-creation-mod-version-scan",
+                daemon=True,
+            ).start()
+
+    def _load_versions_worker(self, generation, targets):
+        """复用主页可信版本解析，并按批次交回创建向导的 Tk 主线程。"""
+        batch = {}
+        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="dstcamp-create-version") as pool:
+            from dstools.features.mod.local_version import resolve_local_version_target
+            futures = [pool.submit(resolve_local_version_target, target)
+                       for target in targets]
+            for future in as_completed(futures):
+                try:
+                    mod_id, normalized = future.result()
+                except Exception:
+                    continue
+                batch[mod_id] = normalized
+                if len(batch) >= 12:
+                    self._post_version_batch(generation, dict(batch))
+                    batch.clear()
+        if batch:
+            self._post_version_batch(generation, dict(batch))
+
+    def _post_version_batch(self, generation, results):
+        try:
+            self.frame.after(0, self._apply_version_batch, generation, results)
+        except (RuntimeError, tk.TclError):
+            # 用户可能在版本沙箱仍运行时关闭创建向导。
+            return
+
+    def _apply_version_batch(self, generation, results):
+        if generation != self._mod_scan_generation or not self.frame.winfo_exists():
+            return
+        changed = False
+        for mod_id, result in results.items():
+            info = self._mod_infos.get(mod_id)
+            if info is None:
+                continue
+            info.version = result.version
+            info.version_status = result.status
+            info.version_source = result.source
+            info.version_compatible = result.version_compatible
+            info.version_compatible_status = result.compatible_status
+            changed = True
+        if changed:
+            self._render_list()
 
     def _render_list(self, ref_width=None):
         if self._mod_panel is None:
@@ -665,6 +726,7 @@ class WorldCreationTab:
             rows.append({
                 "workshop_id": mod_id,
                 "name": name,
+                "version_text": _version_display(info),
                 "enabled": bool(mod.enabled),
                 "has_config": bool(info and (info.config_options or info.unsupported_schema)),
                 "has_link": mod_id.removeprefix("workshop-").isdigit(),
