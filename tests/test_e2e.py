@@ -11,7 +11,6 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from test_multi_cluster_ports import main as test_multi_cluster_ports
 
 from dstools.shared.lua_parser import (
     LuaTableParser,
@@ -34,39 +33,92 @@ from dstools.features.mod.manager import (
     sync_mods,
 )
 from dstools.shared.discovery import find_klei_root, discover_environment
-from dstools.features.save_browser.reader import list_save_sessions, get_save_summary, list_session_players
+from dstools.features.save_browser.reader import (
+    list_save_sessions,
+    get_save_summary,
+    list_session_players,
+)
 from dstools.features.cluster_config.config_manager import (
-    set_cluster_option, backfill_cluster_defaults,
-    load_shard_config, save_shard_config, set_shard_option, get_shard_option,
+    set_cluster_option,
+    backfill_cluster_defaults,
+    load_shard_config,
+    save_shard_config,
+    set_shard_option,
+    get_shard_option,
 )
 from dstools.features.save_browser.character_names import get_character_display_name
-from dstools.features.save_browser.character_icons import find_mod_character_name, resolve_character
-from dstools.shared.app_settings import (
-    load_settings, get_player_note, set_player_note,
-    get_minimize_on_close, set_minimize_on_close,
-    get_cache_use_exe_dir, set_cache_use_exe_dir,
-    get_backup_auto_enabled, set_backup_auto_enabled,
-    set_backup_retention,
-    get_global_tokens, set_global_tokens,
+from dstools.features.save_browser.character_icons import (
+    find_mod_character_name,
+    resolve_character,
 )
-from dstools.features.local_service.backup_manager import backup_dir, create_backup, restore_backup, list_backups
+from dstools.shared.app_settings import (
+    load_settings,
+    get_player_note,
+    set_player_note,
+    get_minimize_on_close,
+    set_minimize_on_close,
+    get_cache_use_exe_dir,
+    set_cache_use_exe_dir,
+    get_backup_auto_enabled,
+    set_backup_auto_enabled,
+    set_backup_retention,
+    get_global_tokens,
+    set_global_tokens,
+)
+from dstools.features.local_service.backup_manager import (
+    backup_dir,
+    create_backup,
+    restore_backup,
+    list_backups,
+)
 from dstools.models import SaveSession, SaveSource
-from dstools.features.mod.parser import parse_modinfo, visible_config_options
-from dstools.features.cluster_config.admin_manager import read_adminlist, add_admin, remove_admin
-from dstools.shared.token_manager import read_token, write_token, mask_token, is_valid_token
+from dstools.features.mod.parser import (
+    find_game_mods_dir,
+    find_mod_folder,
+    is_dedicated_server_mods_dir,
+    is_custom_steam_mod_id,
+    is_workshop_content_id,
+    list_installed_mod_ids,
+    parse_modinfo,
+    split_installed_mod_counts,
+    visible_config_options,
+)
+from dstools.features.cluster_config.admin_manager import (
+    read_adminlist,
+    add_admin,
+    remove_admin,
+)
+from dstools.shared.token_manager import (
+    read_token,
+    write_token,
+    mask_token,
+    is_valid_token,
+)
 from dstools.features.sakura.api import find_dstcamp_tunnel, sanitize_tunnel_name
 from dstools.features.sakura.frpc import FrpcManager
 from dstools.shared.app_settings import get_sakura_token, set_sakura_token
 from dstools.shared.app_settings import get_luajit_enabled, set_luajit_enabled
 from dstools.features.save_browser.cluster_copy import (
-    validate_cluster_folder_name, suggest_new_cluster_name, copy_local_cluster_to_server,
+    validate_cluster_folder_name,
+    suggest_new_cluster_name,
+    copy_local_cluster_to_server,
 )
 from dstools.features.local_service.dedicated_server import find_bin64_dir
 from dstools.features.local_service.luajit_injector import (
-    WORKSHOP_ID, InjectorState, LuajitMarker, apply_uninstall,
-    cleanup_legacy_local_mod_entry, detect_state, get_luajit_dir,
-    is_workshop_subscribed, needs_regeneration, plan_install, read_marker, regenerate,
-    resolve_launch_bin64_dir, write_marker,
+    WORKSHOP_ID,
+    InjectorState,
+    LuajitMarker,
+    apply_uninstall,
+    cleanup_legacy_local_mod_entry,
+    detect_state,
+    get_luajit_dir,
+    is_workshop_subscribed,
+    needs_regeneration,
+    plan_install,
+    read_marker,
+    regenerate,
+    resolve_launch_bin64_dir,
+    write_marker,
 )
 from dstools.shared.steam_discovery import parse_library_folders, read_game_version_file
 from dstools.shared.tex_convert import _has_vc2013_x86_runtime
@@ -94,7 +146,9 @@ def _isolated_settings_dir():
     original_in_app_settings = app_settings.get_settings_dir
     original_in_resource_paths = resource_paths.get_settings_dir
     with tempfile.TemporaryDirectory() as tmpdir:
-        patched = lambda: Path(tmpdir)
+        def patched():
+            return Path(tmpdir)
+
         app_settings.get_settings_dir = patched
         resource_paths.get_settings_dir = patched
         try:
@@ -116,7 +170,7 @@ def test_lua_parser_basic():
 def test_lua_parser_nested():
     """测试嵌套表解析。"""
     print("Test 2: Lua Parser - Nested Tables")
-    result = parse_lua_table('return {a={b={c=42}}, d={1, 2, 3}}')
+    result = parse_lua_table("return {a={b={c=42}}, d={1, 2, 3}}")
     assert "a" in result
     assert result["a"]["b"]["c"] == 42
     assert "1" in result["d"]
@@ -127,26 +181,28 @@ def test_lua_parser_roundtrip():
     """测试 Lua 表往返：解析 -> 序列化 -> 再解析。"""
     print("Test 3: Lua Parser - Round-trip")
     original = (
-        'return {\n'
+        "return {\n"
         '    ["workshop-123"]={\n'
-        '        configuration_options={\n'
-        '            audio=false,\n'
+        "        configuration_options={\n"
+        "            audio=false,\n"
         '            language="ch",\n'
-        '            volume=0.75,\n'
-        '            count=42\n'
-        '        },\n'
-        '        enabled=true\n'
-        '    },\n'
+        "            volume=0.75,\n"
+        "            count=42\n"
+        "        },\n"
+        "        enabled=true\n"
+        "    },\n"
         '    ["workshop-456"]={\n'
-        '        configuration_options={},\n'
-        '        enabled=false\n'
-        '    }\n'
-        '}'
+        "        configuration_options={},\n"
+        "        enabled=false\n"
+        "    }\n"
+        "}"
     )
     parsed = parse_lua_table(original)
     serialized = serialize_lua_table(parsed)
     re_parsed = parse_lua_table(serialized)
-    assert parsed == re_parsed, f"Round-trip failed!\nOriginal parsed: {parsed}\nRe-parsed: {re_parsed}"
+    assert parsed == re_parsed, (
+        f"Round-trip failed!\nOriginal parsed: {parsed}\nRe-parsed: {re_parsed}"
+    )
     print("  PASS: Round-trip preserves all data")
 
 
@@ -175,12 +231,16 @@ def test_lua_parser_real_data():
     # 校验 key 集合一致
     original_keys = set(data.keys())
     re_keys = set(re_parsed.keys())
-    assert original_keys == re_keys, f"Key mismatch: {original_keys - re_keys}, {re_keys - original_keys}"
+    assert original_keys == re_keys, (
+        f"Key mismatch: {original_keys - re_keys}, {re_keys - original_keys}"
+    )
 
     # 校验每个 mod 都有 enabled 和 configuration_options 字段
     for wid, entry in data.items():
         assert "enabled" in entry, f"Missing 'enabled' in {wid}"
-        assert "configuration_options" in entry, f"Missing 'configuration_options' in {wid}"
+        assert "configuration_options" in entry, (
+            f"Missing 'configuration_options' in {wid}"
+        )
 
     print(f"  PASS: Round-trip verified ({len(data)} mods)")
     print("  PASS: All mods have required fields")
@@ -204,8 +264,10 @@ def test_ini_parser():
         assert "max_players" in config.gameplay
         assert "cluster_name" in config.network
         assert "shard_enabled" in config.shard
-        print(f"  PASS: cluster.ini parsed - mode={config.gameplay['game_mode']}, "
-              f"players={config.gameplay['max_players']}")
+        print(
+            f"  PASS: cluster.ini parsed - mode={config.gameplay['game_mode']}, "
+            f"players={config.gameplay['max_players']}"
+        )
 
         # 测试 INI 往返
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -221,9 +283,11 @@ def test_ini_parser():
     if server_ini.exists():
         config = parse_server_ini(server_ini)
         assert "server_port" in config.network
-        assert config.shard.get("is_master") == True
-        print(f"  PASS: server.ini parsed - port={config.network['server_port']}, "
-              f"is_master={config.shard['is_master']}")
+        assert config.shard.get("is_master") is True
+        print(
+            f"  PASS: server.ini parsed - port={config.network['server_port']}, "
+            f"is_master={config.shard['is_master']}"
+        )
 
 
 def test_discovery():
@@ -248,8 +312,10 @@ def test_discovery():
     for c in env.clusters:
         assert len(c.shards) >= 1
         assert c.source in (SaveSource.SERVER, SaveSource.LOCAL)
-        print(f"  PASS: {c.name} has {len(c.shards)} shard(s), source={c.source.value}: "
-              f"{[s.name for s in c.shards]}")
+        print(
+            f"  PASS: {c.name} has {len(c.shards)} shard(s), source={c.source.value}: "
+            f"{[s.name for s in c.shards]}"
+        )
 
     # 按 SaveSource 分类计数上报——不硬性要求两边都非空（这台机器目前
     # 两种都有，但换一台只装了专用服务器/只有本地存档的机器完全可能只
@@ -285,15 +351,21 @@ def test_save_reader():
                     summary = get_save_summary(session)
                     assert session.session_id
                     assert session.slots
-                    assert session.source == c.source, "会话的 source 标记应该跟它所属 cluster 的一致"
-                    print(f"    Session {session.session_id}: {summary} (source={session.source.value})")
+                    assert session.source == c.source, (
+                        "会话的 source 标记应该跟它所属 cluster 的一致"
+                    )
+                    print(
+                        f"    Session {session.session_id}: {summary} (source={session.source.value})"
+                    )
 
                     if session.metadata:
                         assert session.metadata.day >= 0
                         assert session.metadata.season
-                        print(f"    Metadata: day={session.metadata.day}, "
-                              f"season={session.metadata.season}, "
-                              f"phase={session.metadata.phase}")
+                        print(
+                            f"    Metadata: day={session.metadata.day}, "
+                            f"season={session.metadata.season}, "
+                            f"phase={session.metadata.phase}"
+                        )
                 break  # 只测第一个有会话的 shard
         break  # 只测第一个 cluster
 
@@ -387,11 +459,13 @@ def test_list_session_players():
         good_dir = session_dir / "A7GOODPLAYER"
         good_dir.mkdir()
         table_text = (
-            'return {x=100.5,z=-50.25,data={health={health=120},'
-            'sanity={current=150,sane=true},hunger={hunger=100},'
+            "return {x=100.5,z=-50.25,data={health={health=120},"
+            "sanity={current=150,sane=true},hunger={hunger=100},"
             'age={age=42}},age=0,prefab="wilson"}'
         )
-        (good_dir / "0000000007").write_bytes(b"\x03\x11\x22" + table_text.encode("utf-8") + b"\x01")
+        (good_dir / "0000000007").write_bytes(
+            b"\x03\x11\x22" + table_text.encode("utf-8") + b"\x01"
+        )
         (good_dir / "0000000007.meta").write_bytes(b'return {character="wilson"}\x00')
 
         # 一个损坏玩家：主文件里完全没有 return，模拟解析失败——验证
@@ -407,7 +481,9 @@ def test_list_session_players():
 
         by_id = {p.player_id: p for p in players}
         good = by_id["A7GOODPLAYER"]
-        assert not good.parse_error, f"Good player should parse cleanly, got: {good.parse_error}"
+        assert not good.parse_error, (
+            f"Good player should parse cleanly, got: {good.parse_error}"
+        )
         assert good.character == "wilson"
         assert good.health == 120
         assert good.sanity == 150 and good.sanity_sane is True
@@ -419,7 +495,9 @@ def test_list_session_players():
         bad = by_id["A7BADPLAYER0"]
         assert bad.parse_error, "Corrupt player should have parse_error set"
         assert bad.player_id == "A7BADPLAYER0"
-        print("  PASS: Corrupt player entry isolated (parse_error set, other player unaffected)")
+        print(
+            "  PASS: Corrupt player entry isolated (parse_error set, other player unaffected)"
+        )
 
         # 真机在本地存档上复现过的情况：跨世界传送/进程被打断时，DST 会把
         # 编号最新的槽位写成 0 字节占位文件，真正数据还在上一个槽位里——
@@ -427,18 +505,28 @@ def test_list_session_players():
         empty_latest_dir = session_dir / "A7EMPTYLATEST"
         empty_latest_dir.mkdir()
         (empty_latest_dir / "0000000010").write_bytes(
-            b"\x03\x11\x22" + 'return {data={health={health=88}},prefab="willow"}'.encode("utf-8") + b"\x01"
+            b"\x03\x11\x22"
+            + 'return {data={health={health=88}},prefab="willow"}'.encode("utf-8")
+            + b"\x01"
         )
-        (empty_latest_dir / "0000000010.meta").write_bytes(b'return {character="willow"}\x00')
+        (empty_latest_dir / "0000000010.meta").write_bytes(
+            b'return {character="willow"}\x00'
+        )
         (empty_latest_dir / "0000000011").write_bytes(b"")  # 0 字节占位文件
-        (empty_latest_dir / "0000000011.meta").write_bytes(b'return {character="willow"}\x00')
+        (empty_latest_dir / "0000000011.meta").write_bytes(
+            b'return {character="willow"}\x00'
+        )
 
         players = list_session_players(session)
         empty_latest = next(p for p in players if p.player_id == "A7EMPTYLATEST")
-        assert not empty_latest.parse_error, f"Should fall back to slot 10, got: {empty_latest.parse_error}"
+        assert not empty_latest.parse_error, (
+            f"Should fall back to slot 10, got: {empty_latest.parse_error}"
+        )
         assert empty_latest.slot_number == 10
         assert empty_latest.health == 88
-        print("  PASS: Falls back to the newest non-empty slot when the latest one is a 0-byte placeholder")
+        print(
+            "  PASS: Falls back to the newest non-empty slot when the latest one is a 0-byte placeholder"
+        )
 
 
 def test_character_names():
@@ -452,7 +540,9 @@ def test_character_names():
     print("  PASS: Known vanilla characters resolve to verified display names")
 
     # 模组自定义角色查不到，原样返回，不猜测拼凑
-    assert get_character_display_name("some_modded_character") == "some_modded_character"
+    assert (
+        get_character_display_name("some_modded_character") == "some_modded_character"
+    )
     print("  PASS: Unknown/modded prefab falls back to raw name unchanged")
 
 
@@ -475,7 +565,9 @@ def test_character_icons():
         )
 
         assert find_mod_character_name(mod_folder, "testchar") == "测试角色"
-        print("  PASS: Mod-declared STRINGS.CHARACTER_NAMES.<prefab> found via regex scan")
+        print(
+            "  PASS: Mod-declared STRINGS.CHARACTER_NAMES.<prefab> found via regex scan"
+        )
 
         assert find_mod_character_name(mod_folder, "no_such_prefab") is None
         print("  PASS: Prefab not declared by this mod returns None (no guessing)")
@@ -483,11 +575,15 @@ def test_character_icons():
     # 官方角色表命中：不需要 mod_overrides_path，直接走官方分支。
     name, _icon = resolve_character("wilson", None)
     assert name == "威尔逊.P.希格斯伯里"
-    print("  PASS: resolve_character resolves known vanilla prefab without touching mods")
+    print(
+        "  PASS: resolve_character resolves known vanilla prefab without touching mods"
+    )
 
     # 哪里都找不到（未知 prefab + 不存在的 modoverrides 路径）：原样回退，
     # 不抛异常、不给头像。
-    name, icon = resolve_character("totally_unknown_prefab", Path(tmp) / "does_not_exist.lua")
+    name, icon = resolve_character(
+        "totally_unknown_prefab", Path(tmp) / "does_not_exist.lua"
+    )
     assert name == "totally_unknown_prefab" and icon is None
     print("  PASS: Unresolvable prefab falls back to raw name with no icon")
 
@@ -502,7 +598,7 @@ def test_modinfo_reader():
         mod_folder = Path(tmp) / "123456"
         mod_folder.mkdir()
         (mod_folder / "modinfo.lua").write_text(
-            '''
+            """
             name = "Test Mod"
             author = "Tester"
             version = "1.0.0"
@@ -522,15 +618,21 @@ def test_modinfo_reader():
                     default = "easy",
                 },
             }
-            ''',
+            """,
             encoding="utf-8",
         )
 
         info = parse_modinfo(mod_folder)
         assert info is not None
-        assert info.name == "Test Mod" and info.author == "Tester" and info.version == "1.0.0"
+        assert (
+            info.name == "Test Mod"
+            and info.author == "Tester"
+            and info.version == "1.0.0"
+        )
         assert info.workshop_id == "workshop-123456"
-        print("  PASS: Top-level fields (name/author/version/workshop_id) parsed correctly")
+        print(
+            "  PASS: Top-level fields (name/author/version/workshop_id) parsed correctly"
+        )
 
         assert len(info.config_options) == 1
         opt = info.config_options[0]
@@ -549,17 +651,23 @@ def test_modinfo_reader():
         local_folder = Path(tmp) / "654321"
         local_folder.mkdir()
         (local_folder / "modinfo.lua").write_text(
-            'name = "Local Only Mod"\nclient_only_mod = true\n', encoding="utf-8")
+            'name = "Local Only Mod"\nclient_only_mod = true\n', encoding="utf-8"
+        )
         assert parse_modinfo(local_folder).client_only is True
-        print("  PASS: plain client_only_mod=true (no server_only_mod) stays client_only")
+        print(
+            "  PASS: plain client_only_mod=true (no server_only_mod) stays client_only"
+        )
 
         server_folder = Path(tmp) / "654322"
         server_folder.mkdir()
         (server_folder / "modinfo.lua").write_text(
             'name = "LuaJIT-style Mod"\nclient_only_mod = true\nserver_only_mod = true\n',
-            encoding="utf-8")
+            encoding="utf-8",
+        )
         assert parse_modinfo(server_folder).client_only is False
-        print("  PASS: server_only_mod=true overrides client_only_mod, treated as a server mod")
+        print(
+            "  PASS: server_only_mod=true overrides client_only_mod, treated as a server mod"
+        )
 
         # 单个配置项自己标 client = true（真实案例：某模组把"服务端设置"/
         # "客户端设置"分成两组，后者的每个选项都带这个字段）——不是引擎
@@ -571,7 +679,7 @@ def test_modinfo_reader():
         client_folder = Path(tmp) / "654323"
         client_folder.mkdir()
         (client_folder / "modinfo.lua").write_text(
-            '''
+            """
             name = "Mixed Config Mod"
             configuration_options = {
                 { name = "", label = "Server Settings", options = {{description = "", data = false}}, default = false },
@@ -579,7 +687,7 @@ def test_modinfo_reader():
                 { name = "", label = "Client Settings", options = {{description = "", data = false}}, default = false },
                 { name = "client_opt", label = "Client Opt", options = {{description = "On", data = true}}, default = true, client = true },
             }
-            ''',
+            """,
             encoding="utf-8",
         )
         info = parse_modinfo(client_folder)
@@ -590,9 +698,12 @@ def test_modinfo_reader():
 
         visible = visible_config_options(info.config_options)
         visible_names = [o.name for o in visible]
-        assert visible_names == ["", "server_opt"], \
+        assert visible_names == ["", "server_opt"], (
             f"应该只剩服务端标题+选项，客户端标题和选项整组一起隐藏: {visible_names}"
-        print("  PASS: visible_config_options() 过滤纯客户端选项，且连带隐藏底下选项全被过滤的分组标题")
+        )
+        print(
+            "  PASS: visible_config_options() 过滤纯客户端选项，且连带隐藏底下选项全被过滤的分组标题"
+        )
 
         # 共享库 mod "Configs Extended"（创意工坊 3317960157）的约定字段
         # ——真机读过它的源码确认最终仍然写回同一份 modoverrides.lua，只
@@ -603,7 +714,7 @@ def test_modinfo_reader():
         configs_extended_folder = Path(tmp) / "654324"
         configs_extended_folder.mkdir()
         (configs_extended_folder / "modinfo.lua").write_text(
-            '''
+            """
             name = "Configs Extended Style Mod"
             configuration_options = {
                 { name = "ban_recipe_list", label = "Ban List", is_set_config = true,
@@ -615,7 +726,7 @@ def test_modinfo_reader():
                 { name = "starting_items", label = "Starting Items", is_dictionary_config = true,
                   options = {{description = "请启用配置扩展模组！", data = {}}}, default = {} },
             }
-            ''',
+            """,
             encoding="utf-8",
         )
         info = parse_modinfo(configs_extended_folder)
@@ -625,7 +736,9 @@ def test_modinfo_reader():
         assert by_name["priority_list"].is_array_config is True
         assert by_name["welcome_msg"].is_text_config is True
         assert by_name["starting_items"].is_dictionary_config is True
-        print("  PASS: Configs Extended 风格的 is_set_config/is_array_config/is_text_config/is_dictionary_config 解析正确")
+        print(
+            "  PASS: Configs Extended 风格的 is_set_config/is_array_config/is_text_config/is_dictionary_config 解析正确"
+        )
 
         # is_dictionary_config 的真实存储形状是普通 Lua 表、键值都是字符
         # 串（跟 is_set_config 值固定为 true 不同）——之前 ModConfigOption
@@ -637,14 +750,20 @@ def test_modinfo_reader():
         overrides_path = Path(tmp) / "modoverrides.lua"
         mod_overrides = ModOverrides(path=overrides_path)
         mod_overrides.mods["workshop-654324"] = ModEntry(
-            workshop_id="workshop-654324", enabled=True,
-            configuration_options={"starting_items": {"草": "6个", "树枝": "6个", "燧石": "2个"}},
+            workshop_id="workshop-654324",
+            enabled=True,
+            configuration_options={
+                "starting_items": {"草": "6个", "树枝": "6个", "燧石": "2个"}
+            },
         )
         save_mod_overrides(mod_overrides)
         reloaded = load_mod_overrides(overrides_path)
-        assert reloaded.mods["workshop-654324"].configuration_options["starting_items"] == \
-            {"草": "6个", "树枝": "6个", "燧石": "2个"}
-        print("  PASS: is_dictionary_config 的字符串键值对配置项能正确写入/读回 modoverrides.lua")
+        assert reloaded.mods["workshop-654324"].configuration_options[
+            "starting_items"
+        ] == {"草": "6个", "树枝": "6个", "燧石": "2个"}
+        print(
+            "  PASS: is_dictionary_config 的字符串键值对配置项能正确写入/读回 modoverrides.lua"
+        )
 
         # 真机复现过的坑（数据丢失）：is_array_config 的值不管是来自
         # modinfo.lua 的 default 还是游戏已经存进 modoverrides.lua 的存
@@ -655,11 +774,129 @@ def test_modinfo_reader():
         # 会被当成"形状不对"兜底成空列表，编辑器显示成空的，点应用还会
         # 把这份假的空列表覆盖写回文件，真正清空原有数据。
         from dstools.features.mod.tab import ModConfigDialog
-        parsed_array_shape = {"1": "torch", "2": "backpack", "3": "axe"}  # parse_lua_table() 对数组字面量的真实产出形状
-        assert ModConfigDialog._raw_value_to_lines("array", parsed_array_shape) == ["torch", "backpack", "axe"]
+
+        parsed_array_shape = {
+            "1": "torch",
+            "2": "backpack",
+            "3": "axe",
+        }  # parse_lua_table() 对数组字面量的真实产出形状
+        assert ModConfigDialog._raw_value_to_lines("array", parsed_array_shape) == [
+            "torch",
+            "backpack",
+            "axe",
+        ]
         assert ModConfigDialog._raw_value_to_lines("array", {}) == []
-        assert ModConfigDialog._raw_value_to_lines("array", ["torch", "backpack"]) == ["torch", "backpack"]
-        print("  PASS: is_array_config 识别 Lua 解析器实际产出的\"数组形状 dict\"，不再把存量数据当成空列表")
+        assert ModConfigDialog._raw_value_to_lines("array", ["torch", "backpack"]) == [
+            "torch",
+            "backpack",
+        ]
+        print(
+            '  PASS: is_array_config 识别 Lua 解析器实际产出的"数组形状 dict"，不再把存量数据当成空列表'
+        )
+
+
+def test_workshop_content_directory_filter():
+    """Steam UGC 内容目录只接受标准 PublishedFileId_t 文件夹名。"""
+    print("\n" + "=" * 60)
+    print("Test 14b: Workshop Content Directory Filter")
+
+    assert is_workshop_content_id("3485293431")
+    assert is_workshop_content_id("18446744073709551615")
+    for invalid in (
+        "",
+        "0",
+        "00123",
+        "3485293431_bak",
+        "workshop-3485293431",
+        "１２３",
+        "18446744073709551616",
+    ):
+        assert not is_workshop_content_id(invalid), invalid
+    print("  PASS: 仅接受非零 uint64 的规范 ASCII 十进制目录名，不限制十位")
+
+    assert not is_custom_steam_mod_id("workshop-3485293431")
+    assert not is_custom_steam_mod_id("workshop-18446744073709551615")
+    for custom in ("CommonModSets", "my_local_mod", "workshop-demo", "workshop-00123"):
+        assert is_custom_steam_mod_id(custom), custom
+    print("  PASS: 自定义筛选只排除标准 workshop-<PublishedFileId_t> 标识")
+
+    from dstools.models import Platform
+
+    sample_ids = ["workshop-1", "workshop-2", "CommonModSets"]
+    assert split_installed_mod_counts(sample_ids, Platform.STEAM) == (2, 1)
+    assert split_installed_mod_counts(sample_ids, Platform.WEGAME) == (3, 0)
+    print("  PASS: Steam 拆分普通/自定义计数，WeGame 不误判无前缀 ID")
+
+    import dstools.features.mod.parser as mod_parser
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        workshop = root / "content" / "322330"
+        local_mods = root / "mods"
+        workshop.mkdir(parents=True)
+        local_mods.mkdir()
+        for folder_name in ("3485293431", "3485293431_bak", "00123", "１２３"):
+            folder = workshop / folder_name
+            folder.mkdir()
+            (folder / "modinfo.lua").write_text(
+                f'name = "{folder_name}"\n', encoding="utf-8"
+            )
+        local = local_mods / "my_local_mod_bak"
+        local.mkdir()
+        (local / "modinfo.lua").write_text('name = "Local"\n', encoding="utf-8")
+        legacy = local_mods / "workshop-463952377"
+        legacy.mkdir()
+        (legacy / "modinfo.lua").write_text('name = "Legacy"\n', encoding="utf-8")
+
+        original_workshop = mod_parser.find_workshop_dir
+        original_game_mods = mod_parser.find_game_mods_dir
+        try:
+            mod_parser.find_workshop_dir = lambda: workshop
+            mod_parser.find_game_mods_dir = lambda: local_mods
+            ids = list_installed_mod_ids()
+            assert ids == [
+                "workshop-3485293431",
+                "my_local_mod_bak",
+                "workshop-463952377",
+            ]
+            assert find_mod_folder("workshop-3485293431") == workshop / "3485293431"
+            assert find_mod_folder("463952377") == legacy
+            assert find_mod_folder("workshop-3485293431_bak") is None
+        finally:
+            mod_parser.find_workshop_dir = original_workshop
+            mod_parser.find_game_mods_dir = original_game_mods
+    print(
+        "  PASS: content/322330 过滤备份目录，纯数字 V1 ID 能定位到 workshop-ID 运行目录"
+    )
+
+    # 没安装客户端时，专服自己的 mods 绝不能回退成客户端源目录，否则
+    # “创建软连接”会得到源=目标的古怪提示，甚至存在误操作风险。
+    from dstools.shared import app_settings
+
+    with tempfile.TemporaryDirectory() as tmp:
+        library = Path(tmp)
+        server_mods = (
+            library
+            / "steamapps"
+            / "common"
+            / "Don't Starve Together Dedicated Server"
+            / "mods"
+        )
+        server_mods.mkdir(parents=True)
+        original_libraries = mod_parser.find_all_steam_libraries
+        original_override = app_settings.get_steam_mods_path
+        original_server_path = app_settings.get_dedicated_server_path
+        try:
+            mod_parser.find_all_steam_libraries = lambda: [library]
+            app_settings.get_steam_mods_path = lambda: server_mods
+            app_settings.get_dedicated_server_path = lambda: server_mods.parent
+            assert is_dedicated_server_mods_dir(server_mods)
+            assert find_game_mods_dir() is None
+        finally:
+            mod_parser.find_all_steam_libraries = original_libraries
+            app_settings.get_steam_mods_path = original_override
+            app_settings.get_dedicated_server_path = original_server_path
+    print("  PASS: 未安装客户端时不把专服 mods 误识别为软连接源目录")
 
 
 def test_admin_manager():
@@ -675,12 +912,16 @@ def test_admin_manager():
 
         assert add_admin(path, "KU_aaaaaaaa") is True
         assert add_admin(path, "KU_bbbbbbbb") is True
-        assert add_admin(path, "KU_aaaaaaaa") is False, "Adding an existing admin should be a no-op"
+        assert add_admin(path, "KU_aaaaaaaa") is False, (
+            "Adding an existing admin should be a no-op"
+        )
         assert read_adminlist(path) == ["KU_aaaaaaaa", "KU_bbbbbbbb"]
         print("  PASS: add_admin appends new IDs and rejects duplicates")
 
         assert remove_admin(path, "KU_aaaaaaaa") is True
-        assert remove_admin(path, "KU_aaaaaaaa") is False, "Removing an absent admin should be a no-op"
+        assert remove_admin(path, "KU_aaaaaaaa") is False, (
+            "Removing an absent admin should be a no-op"
+        )
         assert read_adminlist(path) == ["KU_bbbbbbbb"]
         print("  PASS: remove_admin removes an entry and is idempotent")
 
@@ -703,12 +944,20 @@ def test_token_manager():
 
         assert is_valid_token(token) is True
         assert is_valid_token("") is False and is_valid_token("short") is False
-        print("  PASS: is_valid_token distinguishes real tokens from empty/short strings")
+        print(
+            "  PASS: is_valid_token distinguishes real tokens from empty/short strings"
+        )
 
         masked = mask_token(token)
-        assert masked.startswith(token[:8]) and masked.endswith(token[-8:]) and "..." in masked
+        assert (
+            masked.startswith(token[:8])
+            and masked.endswith(token[-8:])
+            and "..." in masked
+        )
         assert mask_token("short") == "*" * len("short")
-        print("  PASS: mask_token shows only the ends of a real token, fully masks short ones")
+        print(
+            "  PASS: mask_token shows only the ends of a real token, fully masks short ones"
+        )
 
 
 def test_cluster_copy():
@@ -730,8 +979,10 @@ def test_cluster_copy():
     assert validate_cluster_folder_name("我的存档") == "invalid_chars"
     assert validate_cluster_folder_name("my server") == "invalid_chars"
     assert validate_cluster_folder_name("my-server") == "invalid_chars"
-    print("  PASS: validate_cluster_folder_name only accepts English letters/digits/underscore, "
-          "rejects Chinese/spaces/hyphens/other punctuation (no Cluster_<N> format required)")
+    print(
+        "  PASS: validate_cluster_folder_name only accepts English letters/digits/underscore, "
+        "rejects Chinese/spaces/hyphens/other punctuation (no Cluster_<N> format required)"
+    )
 
     with tempfile.TemporaryDirectory() as tmp:
         klei_root = Path(tmp) / "klei_root"
@@ -740,31 +991,47 @@ def test_cluster_copy():
 
         assert suggest_new_cluster_name(klei_root, "Cluster_1") == "Cluster_2"
         assert suggest_new_cluster_name(klei_root, "MyLocalSave") == "MyLocalSave"
-        print("  PASS: suggest_new_cluster_name falls back to Cluster_N only when the "
-          "preferred (source) name is already taken")
+        print(
+            "  PASS: suggest_new_cluster_name falls back to Cluster_N only when the "
+            "preferred (source) name is already taken"
+        )
 
         # 造一个假的本地 cluster 文件夹（cluster.ini + 一个假世界子目录），
         # 复制到 klei_root 下一个新名字。
         local_cluster = Path(tmp) / "local_user" / "Cluster_1"
         (local_cluster / "Master").mkdir(parents=True)
-        (local_cluster / "cluster.ini").write_text("[GAMEPLAY]\nmax_players=6\n", encoding="utf-8")
-        (local_cluster / "Master" / "server.ini").write_text("[NETWORK]\n", encoding="utf-8")
+        (local_cluster / "cluster.ini").write_text(
+            "[GAMEPLAY]\nmax_players=6\n", encoding="utf-8"
+        )
+        (local_cluster / "Master" / "server.ini").write_text(
+            "[NETWORK]\n", encoding="utf-8"
+        )
 
         logs = []
-        dest = copy_local_cluster_to_server(local_cluster, klei_root, "Cluster_2", on_log=logs.append)
+        dest = copy_local_cluster_to_server(
+            local_cluster, klei_root, "Cluster_2", on_log=logs.append
+        )
         assert dest == klei_root / "Cluster_2"
-        assert (dest / "cluster.ini").read_text(encoding="utf-8") == (local_cluster / "cluster.ini").read_text(encoding="utf-8")
+        assert (dest / "cluster.ini").read_text(encoding="utf-8") == (
+            local_cluster / "cluster.ini"
+        ).read_text(encoding="utf-8")
         assert (dest / "Master" / "server.ini").exists()
-        assert local_cluster.exists() and (local_cluster / "cluster.ini").exists(), "源文件夹必须保持不变"
+        assert local_cluster.exists() and (local_cluster / "cluster.ini").exists(), (
+            "源文件夹必须保持不变"
+        )
         assert len(logs) > 0
-        print("  PASS: copy_local_cluster_to_server copies the whole folder (files + shard "
-              "subfolders) and leaves the source untouched")
+        print(
+            "  PASS: copy_local_cluster_to_server copies the whole folder (files + shard "
+            "subfolders) and leaves the source untouched"
+        )
 
         try:
             copy_local_cluster_to_server(local_cluster, klei_root, "Cluster_2")
             assert False, "Copying onto an already-existing destination must raise"
         except FileExistsError:
-            print("  PASS: copying onto an existing destination raises instead of overwriting")
+            print(
+                "  PASS: copying onto an existing destination raises instead of overwriting"
+            )
 
         # 真机反馈过的真实 bug：源本地存档偶尔会带一个已经存在、但内容
         # 是空的 cluster_token.txt（比如以前手动建过又清空过）——旧逻辑
@@ -779,10 +1046,13 @@ def test_cluster_copy():
             set_global_tokens([fake_token])
             (local_cluster / "cluster_token.txt").write_text("", encoding="utf-8")
             dest3 = copy_local_cluster_to_server(local_cluster, klei_root, "Cluster_3")
-            assert read_token(dest3 / "cluster_token.txt") == fake_token, \
+            assert read_token(dest3 / "cluster_token.txt") == fake_token, (
                 "源存档带的是空 cluster_token.txt，应该被判定为无效并从全局令牌池自动补上"
-            print("  PASS: copy_local_cluster_to_server treats an existing-but-empty "
-                  "cluster_token.txt as invalid and still auto-fills from the global token pool")
+            )
+            print(
+                "  PASS: copy_local_cluster_to_server treats an existing-but-empty "
+                "cluster_token.txt as invalid and still auto-fills from the global token pool"
+            )
         finally:
             set_global_tokens(original_pool)
 
@@ -793,7 +1063,9 @@ def test_player_notes():
     print("Test 19: Player Notes")
 
     with _isolated_settings_dir():
-        assert get_player_note("TEST_NONEXISTENT_ID") == "", "Unset note should be empty string"
+        assert get_player_note("TEST_NONEXISTENT_ID") == "", (
+            "Unset note should be empty string"
+        )
         print("  PASS: Unset player note defaults to empty string")
 
         set_player_note("TEST_PLAYER_A", "老王的存档")
@@ -801,15 +1073,17 @@ def test_player_notes():
         print("  PASS: Set/get player note round-trips")
 
         set_player_note("TEST_PLAYER_A", "")
-        assert get_player_note("TEST_PLAYER_A") == "", "Clearing a note should remove it, not leave an empty entry"
+        assert get_player_note("TEST_PLAYER_A") == "", (
+            "Clearing a note should remove it, not leave an empty entry"
+        )
         assert "TEST_PLAYER_A" not in load_settings().get("player_notes", {})
-        print("  PASS: Clearing a note removes the entry instead of leaving a blank one")
+        print(
+            "  PASS: Clearing a note removes the entry instead of leaving a blank one"
+        )
 
 
 def test_app_settings_toggles():
-    """测试为托盘+设置弹窗功能新增的持久化开关（app_settings.py）：关闭
-    最小化、缓存存放到 exe 目录、自动备份。三个开关的 get/set 实现模式
-    完全一致，合并成一次循环验证，不逐个重复相同的断言。"""
+    """验证持久化开关，以及缓存、数据和安全目录的边界。"""
     print("\n" + "=" * 60)
     print("Test 20: App Settings Toggles")
 
@@ -824,17 +1098,54 @@ def test_app_settings_toggles():
             assert get_fn() is not default
             set_fn(default)
             assert get_fn() is default
-        print("  PASS: minimize_on_close/cache_use_exe_dir/backup_auto_enabled 默认值+读写往返都正常")
+        print(
+            "  PASS: minimize_on_close/cache_use_exe_dir/backup_auto_enabled 默认值+读写往返都正常"
+        )
+
+        from dstools.shared.app_settings import get_settings_dir
+        from unittest.mock import patch
+
+        from dstools.shared.resource_paths import (
+            cache_dir,
+            data_dir,
+            runtime_tool_path,
+            security_dir,
+        )
+
+        root = get_settings_dir()
+        legacy_background = cache_dir("background")
+        legacy_background.mkdir(parents=True)
+        (legacy_background / "custom.png").write_bytes(b"image")
+        migrated = data_dir("background", legacy_cache_name="background")
+        assert migrated == root / "data" / "background"
+        assert (migrated / "custom.png").read_bytes() == b"image"
+        assert security_dir("frp_selfhost") == root / "security" / "frp_selfhost"
+
+        bundled_tool = root / "bundle" / "tools" / "frpc" / "frpc.exe"
+        bundled_tool.parent.mkdir(parents=True)
+        bundled_tool.write_bytes(b"frpc")
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "_MEIPASS", str(root / "bundle"), create=True),
+        ):
+            stable_tool = runtime_tool_path("frpc/frpc.exe")
+        assert stable_tool.parent.parent.parent == root / "data" / "runtime_tools"
+        assert stable_tool.read_bytes() == b"frpc"
+        print("  PASS: 缓存、持久数据、安全材料和长驻工具使用独立目录")
 
 
 def test_mod_sync_junction():
-    """验证 Mod 目录联接的幂等、备份、回滚和源目标保护。"""
+    """验证 Mod 目录联接的直接替换、解除复制和源目标保护。"""
     print("\n" + "=" * 60)
     print("Test 21: Mod Sync Junction")
 
     from unittest.mock import patch
 
-    from dstools.features.mod.sync import _ensure_junction, plan_mod_sync
+    from dstools.features.mod.sync import (
+        _ensure_junction,
+        detach_mod_sync_junction,
+        plan_mod_sync,
+    )
 
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "client_mods" / "workshop-123"
@@ -844,16 +1155,16 @@ def test_mod_sync_junction():
 
         _ensure_junction(target, src)
         assert os.path.isjunction(target), "target 应该变成指向 src 的目录联接"
-        assert (target / "modinfo.lua").read_text() == "name = 'test'", \
+        assert (target / "modinfo.lua").read_text() == "name = 'test'", (
             "透过联接应该能读到 src 里的真实内容"
+        )
         print("  PASS: first call creates a junction pointing at the client mod folder")
 
         _ensure_junction(target, src)
         assert os.path.isjunction(target), "重复调用应该保持联接，不报错"
         print("  PASS: calling again on an already-correct junction is a no-op")
 
-        # 模拟旧版本"复制方式"留下的真实文件夹——_ensure_junction 必须能
-        # 安全地把它换成联接，且不能牵连删除 src 的内容。
+        # 已有真实文件夹按新规则直接删除，不再保留长期备份。
         real_target = Path(tmp) / "server_mods" / "workshop-456"
         real_src = Path(tmp) / "client_mods" / "workshop-456"
         real_src.mkdir(parents=True)
@@ -861,17 +1172,24 @@ def test_mod_sync_junction():
         real_target.mkdir(parents=True)
         (real_target / "modinfo.lua").write_text("stale copied content")
 
-        backup = _ensure_junction(real_target, real_src)
+        replaced = _ensure_junction(real_target, real_src, allow_replace=True)
         assert os.path.isjunction(real_target), "已存在的真实文件夹应该被替换成联接"
-        assert (real_target / "modinfo.lua").read_text() == "name = 'legacy copy source'", \
+        assert (
+            real_target / "modinfo.lua"
+        ).read_text() == "name = 'legacy copy source'", (
             "替换后应该读到 src 的内容，不是残留的旧复制内容"
-        assert real_src.exists() and (real_src / "modinfo.lua").exists(), \
+        )
+        assert real_src.exists() and (real_src / "modinfo.lua").exists(), (
             "删除 target 这个联接本身，绝不能牵连删除它指向的 src 真实内容"
-        assert backup is not None and backup.exists(), "旧目录应该保留为同目录备份"
-        assert (backup / "modinfo.lua").read_text() == "stale copied content"
-        print("  PASS: an existing real folder is backed up and replaced by a junction")
+        )
+        assert replaced is True
+        assert not list(real_target.parent.glob("mods.dstcamp-backup-*"))
+        print(
+            "  PASS: an existing real folder is deleted without backup and replaced by a junction"
+        )
 
-        # 模拟 mklink 失败，确认原目录会被恢复，不会停在半删除状态。
+        # 用户确认的是永久删除；因此 mklink 后续失败时不会偷偷恢复或创建
+        # 长期备份，但客户端源目录始终不得受影响。
         rollback_target = Path(tmp) / "server_mods" / "rollback"
         rollback_src = Path(tmp) / "client_mods" / "rollback"
         rollback_target.mkdir(parents=True)
@@ -883,16 +1201,20 @@ def test_mod_sync_junction():
             stderr = "forced failure"
             stdout = ""
 
-        with patch("dstools.features.mod.sync.subprocess.run", return_value=FailedMklink()):
+        with patch(
+            "dstools.features.mod.sync.subprocess.run", return_value=FailedMklink()
+        ):
             try:
-                _ensure_junction(rollback_target, rollback_src)
+                _ensure_junction(rollback_target, rollback_src, allow_replace=True)
             except OSError:
                 pass
             else:
                 raise AssertionError("mklink 失败时应该抛出异常")
-        assert rollback_target.is_dir() and not os.path.isjunction(rollback_target)
-        assert (rollback_target / "old.txt").read_text() == "keep"
-        print("  PASS: failed junction creation restores the original directory")
+        assert not os.path.lexists(rollback_target)
+        assert rollback_src.is_dir()
+        print(
+            "  PASS: failed junction creation does not restore a deleted server folder"
+        )
 
         # 源目录和目标目录相同的场景必须在真正改动前拒绝。
         same_root = Path(tmp) / "same_install"
@@ -901,6 +1223,51 @@ def test_mod_sync_junction():
         plan = plan_mod_sync(same_root, same_target)
         assert plan.invalid_reason and not plan.needs_confirm_delete
         print("  PASS: same source and target are rejected before replacement")
+
+        # 解除整目录联接时要完整复制客户端 mods，而不是恢复历史备份或只
+        # 迁移某一类 V1 目录。
+        install = Path(tmp) / "dedicated"
+        server_mods = install / "mods"
+        client_mods = Path(tmp) / "whole_client_mods"
+        server_mods.mkdir(parents=True)
+        client_mods.mkdir()
+        (server_mods / "stock.txt").write_text("server stock", encoding="utf-8")
+        (client_mods / "client-root.txt").write_text("client copy", encoding="utf-8")
+        client_v1 = client_mods / "workshop-987654321"
+        client_v1.mkdir()
+        (client_v1 / "modinfo.lua").write_text('name = "Client V1"', encoding="utf-8")
+        assert _ensure_junction(server_mods, client_mods, allow_replace=True) is True
+        assert os.path.isjunction(server_mods)
+        with patch(
+            "dstools.features.mod.legacy_v1.running_dst_processes", return_value=()
+        ):
+            detached = detach_mod_sync_junction(install, client_mods)
+        assert detached.removed and detached.copied
+        assert not os.path.isjunction(server_mods)
+        assert not (server_mods / "stock.txt").exists()
+        assert (server_mods / "client-root.txt").read_text(
+            encoding="utf-8"
+        ) == "client copy"
+        assert (server_mods / "workshop-987654321" / "modinfo.lua").is_file()
+        assert set(detached.copied_entries) == {"client-root.txt", "workshop-987654321"}
+        print("  PASS: removing the junction copies the complete client mods folder")
+
+        # 复制阶段失败时不能先删联接；这是解除操作最重要的失败安全边界。
+        failed_install = Path(tmp) / "failed_dedicated"
+        failed_target = failed_install / "mods"
+        _ensure_junction(failed_target, client_mods)
+        with (
+            patch(
+                "dstools.features.mod.legacy_v1.running_dst_processes", return_value=()
+            ),
+            patch(
+                "dstools.features.mod.sync.shutil.copytree",
+                side_effect=OSError("forced copy failure"),
+            ),
+        ):
+            failed = detach_mod_sync_junction(failed_install, client_mods)
+        assert failed.errors and os.path.isjunction(failed_target)
+        print("  PASS: a failed copy leaves the existing junction untouched")
 
 
 def test_theme_set_theme():
@@ -919,8 +1286,12 @@ def test_theme_set_theme():
     try:
         theme.set_theme("gray")
         assert theme.PRIMARY == "#8A97A3"
-        assert not hasattr(theme, "BG_IMAGE_ENABLED"), "背景图已跟主题解耦，theme.py 不应再有这个字段"
-        assert theme.WINDOW_ALPHA == 1.0, "整窗透明效果已经按用户要求去掉，只保留图片自身的透明度"
+        assert not hasattr(theme, "BG_IMAGE_ENABLED"), (
+            "背景图已跟主题解耦，theme.py 不应再有这个字段"
+        )
+        assert theme.WINDOW_ALPHA == 1.0, (
+            "整窗透明效果已经按用户要求去掉，只保留图片自身的透明度"
+        )
         print("  PASS: set_theme() reassigns theme.py's module-level color constants")
 
         theme.set_theme("mint")
@@ -943,9 +1314,15 @@ def test_world_reader_and_view_model():
     print("Test 23: World Reader and View Model")
 
     from dstools.features.world.reader import (
-        LeveldataStatus, WorldPreset, load_leveldata, save_leveldata,
+        LeveldataStatus,
+        WorldPreset,
+        load_leveldata,
+        save_leveldata,
     )
-    from dstools.features.world.view_model import WorldDisplayOverride, build_world_view_model
+    from dstools.features.world.view_model import (
+        WorldDisplayOverride,
+        build_world_view_model,
+    )
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -965,7 +1342,9 @@ def test_world_reader_and_view_model():
         assert reloaded.status == LeveldataStatus.OK and reloaded.preset is not None
         assert reloaded.preset.description == "keep me"
         assert reloaded.preset.raw["custom"]["enabled"] is True
-        assert {item.key: item.value for item in reloaded.preset.overrides}["day"] == "onlyday"
+        assert {item.key: item.value for item in reloaded.preset.overrides}[
+            "day"
+        ] == "onlyday"
         assert not list(root.glob("*.tmp")), "原子写入完成后不应遗留临时文件"
 
         assert load_leveldata(root / "missing.lua").status == LeveldataStatus.MISSING
@@ -977,7 +1356,9 @@ def test_world_reader_and_view_model():
     rows = [row for items in view.rules_by_category.values() for row in items]
     day = next(row for row in rows if row.key == "day")
     assert isinstance(day, WorldDisplayOverride) and day.persisted is False
-    print("  PASS: world I/O preserves metadata, reports errors, and uses explicit display defaults")
+    print(
+        "  PASS: world I/O preserves metadata, reports errors, and uses explicit display defaults"
+    )
 
 
 def test_world_catalog_audit_and_cave_hidden_forest_sections():
@@ -991,23 +1372,34 @@ def test_world_catalog_audit_and_cave_hidden_forest_sections():
     assert get_setting_info("day", "cave")[0] == "other"
     assert get_setting_info("basicresource_regrowth", "cave")[0] == "other"
     assert get_setting_info("roads", "cave")[0] == "other"
-    assert get_setting_info("day", "porkland")[0] == "global", "day 是 world=nil 且未被 delete_items 删除的全局项"
-    assert get_setting_info("butterfly", "porkland")[0] == "creatures", "butterfly 在猪镇白名单里"
-    assert get_setting_info("specialevent", "porkland")[0] == "other", "猪镇 Mod 明确删除了该设置"
-    assert get_setting_info("layout_mode", "porkland")[0] == "other", "地图内部元数据不能伪造为设置"
+    assert get_setting_info("day", "porkland")[0] == "global", (
+        "day 是 world=nil 且未被 delete_items 删除的全局项"
+    )
+    assert get_setting_info("butterfly", "porkland")[0] == "creatures", (
+        "butterfly 在猪镇白名单里"
+    )
+    assert get_setting_info("specialevent", "porkland")[0] == "other", (
+        "猪镇 Mod 明确删除了该设置"
+    )
+    assert get_setting_info("layout_mode", "porkland")[0] == "other", (
+        "地图内部元数据不能伪造为设置"
+    )
 
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "leveldataoverride.lua"
         path.write_text(
             'return { location = "cave", overrides = { day = "default", roads = "default", '
-            'layout_mode = "RestrictNodesByKey" } }', encoding="utf-8",
+            'layout_mode = "RestrictNodesByKey" } }',
+            encoding="utf-8",
         )
         report = audit_leveldata_paths([path])
     cave = report.by_location["cave"]
     assert report.statuses == {"ok": 1}
     assert cave.recognized_overrides == 0
     assert cave.unknown_keys == {"day", "layout_mode", "roads"}
-    print("  PASS: catalog audit separates verified settings from preserved unknown metadata")
+    print(
+        "  PASS: catalog audit separates verified settings from preserved unknown metadata"
+    )
 
 
 def test_world_catalog_layers_are_isolated():
@@ -1027,7 +1419,9 @@ def test_world_catalog_layers_are_isolated():
     assert get_setting_info("butterfly", "porkland")[0] == "creatures"
     assert get_setting_info("season_start", "porkland")[0] == "other"
     assert get_setting_info("regrowth", "porkland")[0] == "other"
-    print("  PASS: vanilla catalog remains unchanged and Porkland uses an isolated whitelist overlay")
+    print(
+        "  PASS: vanilla catalog remains unchanged and Porkland uses an isolated whitelist overlay"
+    )
 
 
 def test_porkland_location_selector():
@@ -1035,7 +1429,8 @@ def test_porkland_location_selector():
     print("\n" + "=" * 60)
     print("Test 27: Porkland World Location Selector")
     from dstools.features.world.location_selector import (
-        available_master_locations, select_master_location,
+        available_master_locations,
+        select_master_location,
     )
     from dstools.features.world.reader import WorldOverride, WorldPreset
 
@@ -1044,7 +1439,9 @@ def test_porkland_location_selector():
     # 明确写成仅 PORKLAND；森林只在开发模式/显式开关下才会加入。
     assert available_master_locations({"workshop-3322803908"}) == ("porkland",)
     preset = WorldPreset(
-        preset_id="SURVIVAL_TOGETHER", name="地上", location="forest",
+        preset_id="SURVIVAL_TOGETHER",
+        name="地上",
+        location="forest",
         overrides=[WorldOverride(key="task_set", value="default")],
         raw={"location": "forest", "overrides": {"task_set": "default"}},
     )
@@ -1063,7 +1460,9 @@ def test_world_creation_plan_and_atomic_writer():
     print("\n" + "=" * 60)
     print("Test 28: World Creation Plan and Writer")
     from dstools.features.world.creation import (
-        WorldCreationPlan, WorldShardPlan, create_world,
+        WorldCreationPlan,
+        WorldShardPlan,
+        create_world,
     )
     from dstools.features.world.reader import load_leveldata
 
@@ -1080,7 +1479,9 @@ def test_world_creation_plan_and_atomic_writer():
         assert master and master.location == "porkland"
         assert caves and caves.location == "cave"
         assert (path / "cluster.ini").exists()
-        mod_overrides = (path / "Master" / "modoverrides.lua").read_text(encoding="utf-8")
+        mod_overrides = (path / "Master" / "modoverrides.lua").read_text(
+            encoding="utf-8"
+        )
         assert "workshop-3322803908" in mod_overrides and "enabled" in mod_overrides
         try:
             create_world(plan, Path(td))
@@ -1120,7 +1521,7 @@ def test_world_categories_bilingual():
         # 未知 key 兜底：分类 "other"，名字原样回退成 key 本身。
         cat, is_rule, name = get_setting_info("totally_unknown_key_xyz", "forest")
         assert (cat, is_rule, name) == ("other", False, "totally_unknown_key_xyz")
-        print("  PASS: unknown key falls back to (\"other\", False, key)")
+        print('  PASS: unknown key falls back to ("other", False, key)')
     finally:
         set_lang(original_lang)
 
@@ -1142,15 +1543,22 @@ def test_world_ocean_frequency_labels():
     from dstools.features.world.render import get_value_label
 
     expected = {
-        "ocean_never": "无", "ocean_rare": "很少", "ocean_uncommon": "较少",
-        "ocean_default": "默认", "ocean_often": "较多", "ocean_mostly": "很多",
-        "ocean_always": "大量", "ocean_insane": "疯狂",
+        "ocean_never": "无",
+        "ocean_rare": "很少",
+        "ocean_uncommon": "较少",
+        "ocean_default": "默认",
+        "ocean_often": "较多",
+        "ocean_mostly": "很多",
+        "ocean_always": "大量",
+        "ocean_insane": "疯狂",
     }
     for raw_value, zh_label in expected.items():
         got = get_value_label("ocean_waterplant", raw_value)
         assert got == zh_label, f"{raw_value} 应该翻译成 {zh_label!r}，实际是 {got!r}"
         assert got != raw_value, f"{raw_value} 不应该原样透出未翻译的原始字符串"
-    print("  PASS: get_value_label() 正确翻译全部 8 档 ocean_ 前缀频率取值，不再原样透出原始字符串")
+    print(
+        "  PASS: get_value_label() 正确翻译全部 8 档 ocean_ 前缀频率取值，不再原样透出原始字符串"
+    )
 
 
 def test_custom_background():
@@ -1162,19 +1570,26 @@ def test_custom_background():
 
     from PIL import Image
 
-    from dstools.shared.custom_background import _center_crop_to_ratio, render_background
+    from dstools.shared.custom_background import (
+        _center_crop_to_ratio,
+        render_background,
+    )
 
     # 宽图裁窄比例：裁掉左右两侧，裁完的宽高比必须刚好等于目标比例
     # （不是拉伸变形出来的），且没有超出原图尺寸。
     wide = Image.new("RGB", (400, 100), "red")
     cropped = _center_crop_to_ratio(wide, 1.0)
-    assert cropped.size == (100, 100), "Wide image cropped to a square must trim the sides, not stretch"
+    assert cropped.size == (100, 100), (
+        "Wide image cropped to a square must trim the sides, not stretch"
+    )
     print("  PASS: wider-than-target image is center-cropped on the sides")
 
     # 高图裁宽比例：裁掉上下两侧。
     tall = Image.new("RGB", (100, 400), "blue")
     cropped2 = _center_crop_to_ratio(tall, 2.0)
-    assert cropped2.size == (100, 50), "Tall image cropped to a wide ratio must trim top/bottom, not stretch"
+    assert cropped2.size == (100, 50), (
+        "Tall image cropped to a wide ratio must trim top/bottom, not stretch"
+    )
     print("  PASS: taller-than-target image is center-cropped on top/bottom")
 
     # 不透明度混合的两个边界：0 = 完全是主题纯色（图片全隐），1 = 完全是原图。
@@ -1183,10 +1598,14 @@ def test_custom_background():
         Image.new("RGB", (50, 50), (255, 0, 0)).save(src)
 
         transparent = render_background(src, 20, 20, 0.0, "#00FF00")
-        assert transparent.getpixel((10, 10)) == (0, 255, 0), "opacity=0 must show only the theme's blend color"
+        assert transparent.getpixel((10, 10)) == (0, 255, 0), (
+            "opacity=0 must show only the theme's blend color"
+        )
 
         opaque = render_background(src, 20, 20, 1.0, "#00FF00")
-        assert opaque.getpixel((10, 10)) == (255, 0, 0), "opacity=1 must show only the original image"
+        assert opaque.getpixel((10, 10)) == (255, 0, 0), (
+            "opacity=1 must show only the original image"
+        )
         print("  PASS: opacity=0/1 blend to pure theme color / pure image respectively")
 
 
@@ -1219,14 +1638,18 @@ def test_mod_resolve_cache():
 
             result = {
                 "name": "测试Mod",
-                "config_options": [ModConfigOption(name="opt1", label="选项1", default="a")],
+                "config_options": [
+                    ModConfigOption(name="opt1", label="选项1", default="a")
+                ],
             }
             save_result(workshop_id, result)
             cached = load_cached_result(workshop_id, modinfo_path)
             assert cached is not None and cached["name"] == "测试Mod"
             assert isinstance(cached["config_options"][0], ModConfigOption)
             assert cached["config_options"][0].name == "opt1"
-            print("  PASS: save/load round-trips config_options as real ModConfigOption objects")
+            print(
+                "  PASS: save/load round-trips config_options as real ModConfigOption objects"
+            )
 
             # modinfo.lua 比缓存新——缓存失效，返回 None，跟 icons.py
             # 图标缓存同一套 mtime 判断逻辑。
@@ -1244,17 +1667,27 @@ def test_mod_resolve_cache():
             # 故意设置得比 modinfo.lua 更新，确保测的是版本号判断本身，
             # 不是又测了一遍上面的 mtime 判断。
             from dstools.features.mod.cache import _cache_path
+
             stale_path = _cache_path(workshop_id)
             stale_path.write_text(
-                json.dumps({"name": "旧格式测试Mod",
-                            "config_options": [{"name": "opt1", "label": "选项1", "default": "a"}]}),
+                json.dumps(
+                    {
+                        "name": "旧格式测试Mod",
+                        "config_options": [
+                            {"name": "opt1", "label": "选项1", "default": "a"}
+                        ],
+                    }
+                ),
                 encoding="utf-8",
             )
             newer = time.time() + 200
             os.utime(stale_path, (newer, newer))
-            assert load_cached_result(workshop_id, modinfo_path) is None, \
+            assert load_cached_result(workshop_id, modinfo_path) is None, (
                 "没有 _cache_format_version 的旧格式缓存应该被当成失效"
-            print("  PASS: 没有 _cache_format_version 的旧格式缓存被判定失效，强制重新走一遍 sandbox")
+            )
+            print(
+                "  PASS: 没有 _cache_format_version 的旧格式缓存被判定失效，强制重新走一遍 sandbox"
+            )
 
 
 def test_mod_version_resolution():
@@ -1274,21 +1707,27 @@ def test_mod_version_resolution():
     from dstools.features.mod import version_cache
 
     result = resolve_mod_versions(
-        'local prefix = "1."\nversion = prefix .. "2.3"\n'
+        'local prefix = "1."\nlocal title = "Dynamic Mod"\nname = title\n'
+        'version = prefix .. "2.3"\n'
         'version = version .. "-final"\nversion_compatible = "1.2"',
         folder_name="workshop-123",
     )
     assert result == {
+        "name": {"declared": True, "value": "Dynamic Mod"},
+        "icon": {"declared": False},
+        "icon_atlas": {"declared": False},
         "version": {"declared": True, "value": "1.2.3-final"},
         "version_compatible": {"declared": True, "value": "1.2"},
     }
     normalized = normalize_version_result(result, "sandbox")
+    assert normalized.name == "Dynamic Mod"
+    assert normalized.name_status == VERSION_CONFIRMED
     assert normalized.version == "1.2.3-final"
     assert normalized.status == VERSION_CONFIRMED
     assert normalized.version_compatible == "1.2"
     assert normalized.compatible_status == VERSION_CONFIRMED
     assert normalized.source == "sandbox"
-    print("  PASS: 动态拼接及后续重赋值取完整执行后的最终版本和兼容版本")
+    print("  PASS: 同一次完整执行取得最终名称、版本和兼容版本")
 
     conditional = resolve_mod_version(
         'version = folder_name == "workshop-123" and "workshop" or "local"',
@@ -1305,21 +1744,35 @@ def test_mod_version_resolution():
     undeclared_result = normalize_version_result(undeclared, "sandbox")
     assert undeclared_result.status == VERSION_UNDECLARED
     assert undeclared_result.compatible_status == VERSION_UNDECLARED
-    invalid = normalize_version_result({
-        "version": {"declared": True, "value": True},
-        "version_compatible": {"declared": False},
-    }, "sandbox")
+    invalid = normalize_version_result(
+        {
+            "version": {"declared": True, "value": True},
+            "version_compatible": {"declared": False},
+        },
+        "sandbox",
+    )
     assert invalid.status == VERSION_UNRESOLVED
     print("  PASS: 未声明与非法类型被明确区分")
 
-    fallback = normalize_version_result({
-        "version": {"declared": True, "value": " V1.2.3 "},
-        "version_compatible": {"declared": False},
-    }, "sandbox")
+    fallback = normalize_version_result(
+        {
+            "version": {"declared": True, "value": " V1.2.3 "},
+            "version_compatible": {"declared": False},
+        },
+        "sandbox",
+    )
     assert fallback.effective_version_compatible == "V1.2.3"
     assert fallback.compare_version == "v1.2.3"
     assert fallback.compare_version_compatible == "v1.2.3"
     assert normalize_version_for_compare(" V1.2.3 ") == "v1.2.3"
+    commented = normalize_version_result(
+        {
+            "version": {"declared": True, "value": "0.0.6  --版本"},
+            "version_compatible": {"declared": False},
+        },
+        "sandbox",
+    )
+    assert commented.version == "0.0.6"
     print("  PASS: 比较值按游戏逻辑去空白并转小写，兼容版本未声明时回退版本")
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -1328,7 +1781,8 @@ def test_mod_version_resolution():
         try:
             first_dir = Path(tmp) / "source-a"
             second_dir = Path(tmp) / "source-b"
-            first_dir.mkdir(); second_dir.mkdir()
+            first_dir.mkdir()
+            second_dir.mkdir()
             first = first_dir / "modinfo.lua"
             second = second_dir / "modinfo.lua"
             first.write_text('version = "1"', encoding="utf-8")
@@ -1337,15 +1791,27 @@ def test_mod_version_resolution():
                 "version": {"declared": True, "value": "1"},
                 "version_compatible": {"declared": False},
             }
-            version_cache.save_version_result("workshop-123", first, "workshop-123", cached_result)
-            assert version_cache.load_version_result(
-                "workshop-123", first, "workshop-123") == cached_result
-            assert version_cache.load_version_result(
-                "workshop-123", second, "workshop-123") is None
+            version_cache.save_version_result(
+                "workshop-123", first, "workshop-123", cached_result
+            )
+            assert (
+                version_cache.load_version_result("workshop-123", first, "workshop-123")
+                == cached_result
+            )
+            assert (
+                version_cache.load_version_result(
+                    "workshop-123", second, "workshop-123"
+                )
+                is None
+            )
             first.write_text('version = "2"', encoding="utf-8")
-            assert version_cache.load_version_result(
-                "workshop-123", first, "workshop-123") is None
-            first.write_text('version = "2"\nversion_compatible = "1"', encoding="utf-8")
+            assert (
+                version_cache.load_version_result("workshop-123", first, "workshop-123")
+                is None
+            )
+            first.write_text(
+                'version = "2"\nversion_compatible = "1"', encoding="utf-8"
+            )
             local = resolve_local_mod_version("workshop-123", first_dir, "workshop-123")
             assert local.version == "2" and local.version_compatible == "1"
             assert local.status == VERSION_CONFIRMED
@@ -1360,26 +1826,31 @@ def test_workshop_source_details_parser():
     print("Test 25c: Workshop Source Details Buffer")
 
     import struct
-    from dstools.features.mod.workshop_api import _parse_ugc_details_buffer
+    from dstools.features.mod.workshop_api import (
+        _parse_ugc_details_buffer,
+        workshop_version_from_details,
+    )
 
     raw = bytearray(32768)
     struct.pack_into("<Q", raw, 0, 3485293431)
     struct.pack_into("<i", raw, 8, 1)
     struct.pack_into("<I", raw, 16, 245850)
     struct.pack_into("<I", raw, 20, 322330)
-    raw[24:24 + len("测试 Mod".encode())] = "测试 Mod".encode()
+    raw[24 : 24 + len("测试 Mod".encode())] = "测试 Mod".encode()
     struct.pack_into("<I", raw, 8168, 100)
     struct.pack_into("<I", raw, 8172, 200)
-    raw[8183:8183 + len(b"server_only,gameplay")] = b"server_only,gameplay"
-    struct.pack_into("<Q", raw, 9208, 123456)
-    raw[9224:9224 + len(b"content.zip")] = b"content.zip"
-    struct.pack_into("<i", raw, 9484, 654321)
+    tags = b"server_only,gameplay,version:1.4.3"
+    raw[8187 : 8187 + len(tags)] = tags
+    struct.pack_into("<Q", raw, 9216, 123456)
+    raw[9232 : 9232 + len(b"content.zip")] = b"content.zip"
+    struct.pack_into("<i", raw, 9492, 654321)
     details = _parse_ugc_details_buffer(bytes(raw))
     assert details.workshop_id == 3485293431
     assert details.title == "测试 Mod"
     assert details.creator_app_id == 245850 and details.consumer_app_id == 322330
     assert details.time_created == 100 and details.time_updated == 200
-    assert details.tags == ("server_only", "gameplay")
+    assert details.tags == ("server_only", "gameplay", "version:1.4.3")
+    assert workshop_version_from_details(details) == "1.4.3"
     assert details.content_handle == 123456
     assert details.filename == "content.zip" and details.file_size == 654321
     print("  PASS: 源端详情稳定字段从宽缓冲区正确解析")
@@ -1391,7 +1862,11 @@ def test_workshop_status_evidence_priority():
     print("Test 25d: Workshop Status Evidence Priority")
 
     from dstools.features.mod.local_version import LocalModVersion, VERSION_CONFIRMED
-    from dstools.features.mod.workshop_api import WorkshopInstallInfo, WorkshopItemState
+    from dstools.features.mod.workshop_api import (
+        WorkshopInstallInfo,
+        WorkshopItemDetails,
+        WorkshopItemState,
+    )
     from dstools.features.mod.workshop_status import (
         WorkshopModEvidence,
         WorkshopModState,
@@ -1414,8 +1889,9 @@ def test_workshop_status_evidence_priority():
         installed = root / "installed"
         installed.mkdir()
         (installed / "modinfo.lua").write_text('version = "V1.2.3"', encoding="utf-8")
-        version = LocalModVersion("V1.2.3", VERSION_CONFIRMED,
-                                  "", "undeclared", "sandbox")
+        version = LocalModVersion(
+            "V1.2.3", VERSION_CONFIRMED, "", "undeclared", "sandbox"
+        )
         current = WorkshopModEvidence(
             workshop_id=1,
             steam_state=WorkshopItemState(5),
@@ -1426,29 +1902,262 @@ def test_workshop_status_evidence_priority():
         print("  PASS: 目录与 modinfo 存在、版本可信且 Steam 无更新时判定最新")
 
         steam_update = WorkshopModEvidence(
-            **{**current.__dict__, "steam_state": WorkshopItemState(13)})
-        assert evaluate_workshop_status(steam_update).state == \
-            WorkshopModState.UPDATE_AVAILABLE
+            **{**current.__dict__, "steam_state": WorkshopItemState(13)}
+        )
+        assert (
+            evaluate_workshop_status(steam_update).state
+            == WorkshopModState.UPDATE_AVAILABLE
+        )
         cached_update = WorkshopModEvidence(
-            **{**current.__dict__, "cached_manifest_version": "1.2.2"})
-        assert evaluate_workshop_status(cached_update).state == \
-            WorkshopModState.UPDATE_AVAILABLE
+            **{**current.__dict__, "cached_manifest_version": "1.2.2"}
+        )
+        cached_status = evaluate_workshop_status(cached_update)
+        assert cached_status.state == WorkshopModState.UPDATE_AVAILABLE
+        assert cached_status.remote_version == "1.2.2"
+        exact_compare = WorkshopModEvidence(
+            **{**current.__dict__, "cached_manifest_version": "1.2.3"}
+        )
+        assert (
+            evaluate_workshop_status(exact_compare).state
+            == WorkshopModState.UPDATE_AVAILABLE
+        ), "不能擅自忽略本地 V 前缀"
+        exact_current = WorkshopModEvidence(
+            **{**current.__dict__, "cached_manifest_version": "V1.2.3"}
+        )
+        assert evaluate_workshop_status(exact_current).state == WorkshopModState.CURRENT
+        case_only = WorkshopModEvidence(
+            **{**current.__dict__, "cached_manifest_version": "v1.2.3"}
+        )
+        assert evaluate_workshop_status(case_only).state == WorkshopModState.CURRENT, (
+            "Steam version 标签会转小写，纯大小写差异不能误报更新"
+        )
+        live_remote = WorkshopModEvidence(
+            **{
+                **current.__dict__,
+                "source_details": WorkshopItemDetails(
+                    1, 1, tags=("all_clients_require_mod", "version:V1.2.3")
+                ),
+                "remote_version": "V1.2.3",
+                "remote_version_source": "steam_workshop_tag",
+                "cached_manifest_version": "0.9",
+            }
+        )
+        live_status = evaluate_workshop_status(live_remote)
+        assert live_status.state == WorkshopModState.CURRENT
+        assert live_status.remote_version == "V1.2.3", (
+            "实时 Steam 标签必须优先于旧 Klei 缓存"
+        )
         active_update = WorkshopModEvidence(
-            **{**current.__dict__,
-               "active_path": installed,
-               "active_version": LocalModVersion(
-                   "1.2.2", VERSION_CONFIRMED, "", "undeclared", "sandbox")})
-        assert evaluate_workshop_status(active_update).state == \
-            WorkshopModState.UPDATE_AVAILABLE
+            **{
+                **current.__dict__,
+                "active_path": installed,
+                "active_version": LocalModVersion(
+                    "1.2.2", VERSION_CONFIRMED, "", "undeclared", "sandbox"
+                ),
+            }
+        )
+        assert (
+            evaluate_workshop_status(active_update).state
+            == WorkshopModState.UPDATE_AVAILABLE
+        )
         print("  PASS: Steam 更新位、游戏缓存版本和服务器实际版本均可触发更新")
 
         corrupt = WorkshopModEvidence(
-            **{**current.__dict__, "manifest_valid": False,
-               "manifest_error": "缺少 scripts/main.lua"})
+            **{
+                **current.__dict__,
+                "manifest_valid": False,
+                "manifest_error": "缺少 scripts/main.lua",
+            }
+        )
         corrupt_status = evaluate_workshop_status(corrupt)
-        assert corrupt_status.state == WorkshopModState.CORRUPT
-        assert corrupt_status.reasons == ("缺少 scripts/main.lua",)
-        print("  PASS: Manifest 文件损坏证据优先判定损坏")
+        assert corrupt_status.state == WorkshopModState.CURRENT
+        assert "缺少 scripts/main.lua" in corrupt_status.reasons
+        print("  PASS: Manifest 弱证据不会覆盖 Steam 的更新状态结论")
+
+        legacy_file = root / "521637598935453868_legacy.bin"
+        legacy_file.write_bytes(b"legacy workshop payload")
+        legacy = WorkshopModEvidence(
+            workshop_id=463952377,
+            steam_state=WorkshopItemState(7),
+            install_info=WorkshopInstallInfo(
+                legacy_file, legacy_file.stat().st_size, 1
+            ),
+        )
+        legacy_status = evaluate_workshop_status(legacy)
+        assert legacy_status.state == WorkshopModState.MISSING
+        assert "尚未解压" in legacy_status.reasons[0]
+        legacy_runtime = root / "workshop-463952377"
+        legacy_runtime.mkdir()
+        (legacy_runtime / "modinfo.lua").write_text('version = "1.0"', encoding="utf-8")
+        legacy_complete = WorkshopModEvidence(
+            **{
+                **legacy.__dict__,
+                "discovered_path": legacy_runtime,
+                "source_version": LocalModVersion(
+                    "1.0", VERSION_CONFIRMED, "", "undeclared", "sandbox"
+                ),
+                "legacy_package_valid": True,
+            }
+        )
+        assert (
+            evaluate_workshop_status(legacy_complete).state == WorkshopModState.CURRENT
+        )
+        legacy_server_missing = WorkshopModEvidence(
+            **{
+                **legacy_complete.__dict__,
+                "active_path": root / "server-mods" / "workshop-463952377",
+                "active_version": LocalModVersion(),
+            }
+        )
+        server_missing_status = evaluate_workshop_status(legacy_server_missing)
+        assert server_missing_status.state == WorkshopModState.MISSING
+        assert "专服缺少" in server_missing_status.reasons[0]
+        legacy_modified = WorkshopModEvidence(
+            **{
+                **legacy_complete.__dict__,
+                "source_version": LocalModVersion(
+                    "1.1", VERSION_CONFIRMED, "", "undeclared", "sandbox"
+                ),
+                "legacy_package_version": LocalModVersion(
+                    "1.0", VERSION_CONFIRMED, "", "undeclared", "legacy_package"
+                ),
+            }
+        )
+        modified_status = evaluate_workshop_status(legacy_modified)
+        assert modified_status.state == WorkshopModState.UPDATE_AVAILABLE
+        assert modified_status.remote_version == "1.0"
+        assert "Legacy 下载包不同" in modified_status.reasons[0]
+        print("  PASS: LegacyItem 必须同时具备有效下载包和已解压运行目录")
+
+        local_only = WorkshopModEvidence(
+            workshop_id=2,
+            steam_state=WorkshopItemState(0),
+            discovered_path=installed,
+            source_version=version,
+        )
+        local_status = evaluate_workshop_status(local_only)
+        assert local_status.state == WorkshopModState.LOCAL_FILES
+        assert local_status.local_path == installed
+        print("  PASS: 发现真实目录但无 Steam 记录时标记仅有本地文件")
+
+        empty_folder = root / "empty-workshop-folder"
+        empty_folder.mkdir()
+        empty_leftover = WorkshopModEvidence(
+            workshop_id=3,
+            steam_state=WorkshopItemState(0),
+            discovered_path=empty_folder,
+        )
+        assert (
+            evaluate_workshop_status(empty_leftover).state
+            == WorkshopModState.NOT_INSTALLED
+        )
+        print("  PASS: 无 Steam 记录的空目录判定为未安装而不是文件缺失")
+
+        unavailable = WorkshopModEvidence(
+            workshop_id=2428854303,
+            steam_state=WorkshopItemState(0),
+            source_details=WorkshopItemDetails(2428854303, 15),
+        )
+        unavailable_status = evaluate_workshop_status(unavailable)
+        assert unavailable_status.state == WorkshopModState.SOURCE_UNAVAILABLE
+        assert "EResult=15" in unavailable_status.reasons[0]
+        print("  PASS: Steam 拒绝访问且无本地文件时判定源端不可用")
+
+
+def test_workshop_snapshot_uses_one_steam_session():
+    """组合刷新必须只初始化一次 SteamAPI，标题失败不能丢本地证据。"""
+    print("\n" + "=" * 60)
+    print("Test 25d2: Workshop Snapshot Single Session")
+
+    import dstools.features.mod.workshop_api as workshop_api
+
+    opened = []
+
+    class FakeSession:
+        def __init__(self, dll_path, backend):
+            opened.append((dll_path, backend))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def item_state(self, workshop_id):
+            return workshop_api.WorkshopItemState(5)
+
+        def subscribed_item_ids(self):
+            return [11, 22, 33]
+
+        def item_install_details(self, workshop_id):
+            return workshop_api.WorkshopInstallInfo(
+                Path(f"C:/workshop/{workshop_id}"), 123, 456
+            )
+
+        def query_item_details(self, workshop_ids, timeout=20.0):
+            return [
+                workshop_api.WorkshopItemDetails(
+                    workshop_id=item, result=1, title=f"Mod {item}"
+                )
+                for item in workshop_ids
+            ]
+
+    original = workshop_api.SteamWorkshopSession
+    with tempfile.TemporaryDirectory() as tmp:
+        dll = Path(tmp) / "steam_api64.dll"
+        dll.write_bytes(b"fake")
+        try:
+            workshop_api.SteamWorkshopSession = FakeSession
+            states, installs, details = (
+                workshop_api._get_workshop_item_snapshot_in_process(
+                    [11, 22], detail_ids=[22], dll_path=dll
+                )
+            )
+        finally:
+            workshop_api.SteamWorkshopSession = original
+    assert len(opened) == 1
+    assert set(states) == {11, 22} and set(installs) == {11, 22}
+    assert set(details) == {22} and details[22].title == "Mod 22"
+    print("  PASS: 状态、安装记录和缺失标题共用一次 Steam 会话")
+
+    opened.clear()
+    with tempfile.TemporaryDirectory() as tmp:
+        dll = Path(tmp) / "steam_api64.dll"
+        dll.write_bytes(b"fake")
+        try:
+            workshop_api.SteamWorkshopSession = FakeSession
+            states, installs, details = (
+                workshop_api._get_workshop_item_snapshot_in_process(
+                    [11, 22], dll_path=dll, include_subscribed=True
+                )
+            )
+        finally:
+            workshop_api.SteamWorkshopSession = original
+    assert len(opened) == 1
+    assert set(states) == {11, 22, 33} and set(installs) == {11, 22, 33}
+    assert set(details) == {33} and details[33].title == "Mod 33"
+    print("  PASS: ACF 与目录均缺失的订阅项目仍由 Steam 账号枚举补回")
+
+    class FailingTitleSession(FakeSession):
+        def query_item_details(self, workshop_ids, timeout=20.0):
+            raise TimeoutError("模拟标题查询超时")
+
+    opened.clear()
+    with tempfile.TemporaryDirectory() as tmp:
+        dll = Path(tmp) / "steam_api64.dll"
+        dll.write_bytes(b"fake")
+        try:
+            workshop_api.SteamWorkshopSession = FailingTitleSession
+            states, installs, details = (
+                workshop_api._get_workshop_item_snapshot_in_process(
+                    [11], detail_ids=[11], dll_path=dll
+                )
+            )
+        finally:
+            workshop_api.SteamWorkshopSession = original
+    assert len(opened) == 1
+    assert set(states) == {11} and set(installs) == {11} and details == {}
+    print("  PASS: 标题查询失败仍保留状态和安装记录")
 
 
 def test_dst_mod_manifest_verification():
@@ -1459,6 +2168,7 @@ def test_dst_mod_manifest_verification():
     import struct
     from dstools.features.mod.workshop_manifest import (
         ManifestFormatError,
+        find_cached_manifest_versions,
         load_mod_manifest,
         parse_mod_manifest_bytes,
         read_cached_manifest_version,
@@ -1468,7 +2178,8 @@ def test_dst_mod_manifest_verification():
 
     assert sdbm_path_hash("modinfo.lua") == 0xCD796EDA
     assert sdbm_path_hash("scripts/components/smart_minisign.lua") == 0x11E699C6
-    print("  PASS: SDBM 结果与真实 workshop-1595631294 Manifest 条目一致")
+    assert sdbm_path_hash("修改者指南.txt") == 0x847C5105
+    print("  PASS: ASCII 与中文路径哈希均和真实 Workshop Manifest 条目一致")
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -1477,9 +2188,14 @@ def test_dst_mod_manifest_verification():
         scripts.mkdir(parents=True)
         (mod / "modinfo.lua").write_text('version = "1"', encoding="utf-8")
         (scripts / "main.lua").write_text("return true", encoding="utf-8")
-        hashes = (sdbm_path_hash("modinfo.lua"), sdbm_path_hash("scripts/main.lua"))
+        hashes = (
+            sdbm_path_hash("modinfo.lua"),
+            sdbm_path_hash("scripts/main.lua"),
+            sdbm_path_hash("mod.manifest"),
+        )
         (mod / "mod.manifest").write_bytes(
-            struct.pack("<4sII2I", b"MNFS", 1, 2, *hashes))
+            struct.pack("<4sII3I", b"MNFS", 1, 3, *hashes)
+        )
         parsed = load_mod_manifest(mod / "mod.manifest")
         assert parsed.path_hashes == hashes
         assert verify_mod_manifest(mod).valid is True
@@ -1487,8 +2203,9 @@ def test_dst_mod_manifest_verification():
         (mod / "runtime-cache.txt").write_text("extra", encoding="utf-8")
         assert verify_mod_manifest(mod).valid is True
         (scripts / "main.lua").write_text("return false", encoding="utf-8")
-        assert verify_mod_manifest(mod).valid is True, \
+        assert verify_mod_manifest(mod).valid is True, (
             "MNFS 只保存路径哈希，不能假装检测内容修改"
+        )
         (scripts / "main.lua").unlink()
         missing = verify_mod_manifest(mod)
         assert missing.valid is False and len(missing.missing_hashes) == 1
@@ -1503,7 +2220,24 @@ def test_dst_mod_manifest_verification():
         cache.mkdir()
         (cache / "workshop-123.manifest.version").write_text(" V1.2 ", encoding="utf-8")
         assert read_cached_manifest_version(root, 123) == "V1.2"
-        print("  PASS: 损坏格式被拒绝，游戏缓存版本读取正确")
+
+        game_root = root / "game"
+        server_root = root / "server"
+        game_cache = game_root / "cached_mod_manifests"
+        server_cache = server_root / "cached_mod_manifests"
+        game_cache.mkdir(parents=True)
+        server_cache.mkdir(parents=True)
+        game_version = game_cache / "workshop-987654321.manifest.version"
+        server_version = server_cache / "workshop-987654321.manifest.version"
+        game_version.write_text("1.0", encoding="utf-8")
+        server_version.write_text("1.1", encoding="utf-8")
+        os.utime(game_version, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(server_version, ns=(2_000_000_000, 2_000_000_000))
+        versions = find_cached_manifest_versions(
+            [987654321, 987654322], extra_install_roots=[game_root, server_root]
+        )
+        assert versions == {987654321: "1.1"}
+        print("  PASS: 损坏格式被拒绝，并从游戏/专服缓存中选择最新远程版本")
 
 
 def test_workshop_download_precheck_uses_physical_files():
@@ -1511,12 +2245,17 @@ def test_workshop_download_precheck_uses_physical_files():
     print("\n" + "=" * 60)
     print("Test 25f: Workshop Download Physical Precheck")
 
+    import struct
     from dstools.features.mod.workshop_api import (
         SteamWorkshopSession,
         WorkshopBackend,
+        WorkshopItemDetails,
         WorkshopItemState,
         validate_workshop_install,
+        workshop_source_error,
     )
+
+    assert "可能已下架" in workshop_source_error(WorkshopItemDetails(2428854303, 15))
 
     class FakeDll:
         def __init__(self):
@@ -1543,12 +2282,31 @@ def test_workshop_download_precheck_uses_physical_files():
         def item_install_info(self, workshop_id):
             return self.path
 
+        def item_install_details(self, workshop_id):
+            from dstools.features.mod.workshop_api import WorkshopInstallInfo
+
+            return WorkshopInstallInfo(self.path, 0, 0)
+
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         valid = root / "valid"
         valid.mkdir()
         (valid / "modinfo.lua").write_text('version = "1"', encoding="utf-8")
         assert validate_workshop_install(valid).valid
+
+        (valid / "mod.manifest").write_bytes(
+            struct.pack("<4sIII", b"MNFS", 1, 1, 0x12345678)
+        )
+        manifest_warning = validate_workshop_install(valid)
+        assert manifest_warning.valid and manifest_warning.warning
+
+        legacy = root / "123_legacy.bin"
+        import zipfile
+
+        with zipfile.ZipFile(legacy, "w") as package:
+            package.writestr("modinfo.lua", 'version = "1"')
+        assert validate_workshop_install(legacy, legacy_item=True).valid
+        assert not validate_workshop_install(legacy).valid
 
         current_session = FakeSession(valid)
         current = SteamWorkshopSession.download_item(current_session, 123)
@@ -1560,6 +2318,21 @@ def test_workshop_download_precheck_uses_physical_files():
         assert repair.accepted and not repair.completed
         assert repair.details["repair"] is True
         assert missing_session.dll.download_calls
+
+        force_path = root / "123"
+        force_path.mkdir()
+        force_modinfo = force_path / "modinfo.lua"
+        force_modinfo.write_text('version = "modified"', encoding="utf-8")
+        force_session = FakeSession(force_path)
+        forced = SteamWorkshopSession.download_item(
+            force_session, 123, expected_version="official"
+        )
+        assert forced.accepted and forced.details["version_repair"] is True
+        backup = Path(forced.details["forced_modinfo_backup"])
+        assert backup.is_file() and not force_modinfo.exists()
+        SteamWorkshopSession._finish_forced_version_repair(forced, success=False)
+        assert force_modinfo.read_text(encoding="utf-8") == 'version = "modified"'
+        assert not backup.exists()
         print("  PASS: 文件完整才跳过下载，Installed+目录缺失会强制进入修复")
 
 
@@ -1589,10 +2362,14 @@ def test_backup_manager_restore_clears_stale_slots():
 
         restore_backup(cluster, backup_zip)
         remaining = sorted(p.name for p in sess.iterdir())
-        assert remaining == ["0000000001"], f"应该只剩备份里的旧槽位，实际是 {remaining}"
+        assert remaining == ["0000000001"], (
+            f"应该只剩备份里的旧槽位，实际是 {remaining}"
+        )
         print("  PASS: restore_backup() removes slots created after the backup")
 
-        assert (cluster / "Master" / "server.ini").read_text() == "[NETWORK]\nserver_port=1\n"
+        assert (
+            cluster / "Master" / "server.ini"
+        ).read_text() == "[NETWORK]\nserver_port=1\n"
         print("  PASS: restored config files match the backed-up content")
 
 
@@ -1637,10 +2414,14 @@ def test_backfill_cluster_defaults_only_fills_missing():
     print("\n" + "=" * 60)
     print("Test 28: Cluster Defaults Backfill Only Fills Missing")
 
-    config = ClusterConfig(gameplay={"vote_enabled": False}, network={}, misc={}, shard={}, steam={})
+    config = ClusterConfig(
+        gameplay={"vote_enabled": False}, network={}, misc={}, shard={}, steam={}
+    )
     backfill_cluster_defaults(config)
 
-    assert config.gameplay["vote_enabled"] is False, "已经显式设置的值不应该被默认值覆盖"
+    assert config.gameplay["vote_enabled"] is False, (
+        "已经显式设置的值不应该被默认值覆盖"
+    )
     print("  PASS: explicitly-set values are not overwritten")
 
     assert config.network["tick_rate"] == 15, "缺失的字段应该被补上官方默认值"
@@ -1658,7 +2439,9 @@ def test_backfill_cluster_defaults_only_fills_missing():
     assert config.misc["console_enabled"] is True
     assert config.steam["steam_group_only"] is False
     assert config.steam["steam_group_admins"] is False
-    print("  PASS: newly-verified defaults (incl. the new STEAM section) are backfilled too")
+    print(
+        "  PASS: newly-verified defaults (incl. the new STEAM section) are backfilled too"
+    )
 
     # bind_ip/master_ip/master_port/cluster_key 是游戏在 shard_enabled=
     # true 时自己生成写入的——应用户明确要求（"清空 cluster.ini 也要全
@@ -1668,7 +2451,9 @@ def test_backfill_cluster_defaults_only_fills_missing():
     assert config.shard["master_ip"] == "127.0.0.1"
     assert config.shard["master_port"] == 10888
     assert config.shard["cluster_key"] == "defaultPass"
-    print("  PASS: game-generated SHARD fields (bind_ip/master_ip/master_port/cluster_key) are now backfilled too")
+    print(
+        "  PASS: game-generated SHARD fields (bind_ip/master_ip/master_port/cluster_key) are now backfilled too"
+    )
 
     # game_mode/max_players/cluster_cloud_id 没有一个"确认过"的官方默认
     # 值——但用户明确要求"删除任意设置都不能导致配置页面缺少这一项"，
@@ -1677,14 +2462,20 @@ def test_backfill_cluster_defaults_only_fills_missing():
     assert config.gameplay["game_mode"] == ""
     assert config.gameplay["max_players"] == ""
     assert config.network["cluster_cloud_id"] == ""
-    print("  PASS: fields with no confirmed official default (game_mode/max_players/cluster_cloud_id) "
-          "still show up (blank), instead of disappearing or being faked")
+    print(
+        "  PASS: fields with no confirmed official default (game_mode/max_players/cluster_cloud_id) "
+        "still show up (blank), instead of disappearing or being faked"
+    )
 
     # 空字符串等同于"没有"，也要被当成缺失补上默认值——用户明确要求"值
     # 为空也用默认值"，不是只处理 key 整个不存在的情况。
-    config2 = ClusterConfig(gameplay={}, network={"cluster_name": ""}, misc={}, shard={}, steam={})
+    config2 = ClusterConfig(
+        gameplay={}, network={"cluster_name": ""}, misc={}, shard={}, steam={}
+    )
     backfill_cluster_defaults(config2)
-    assert config2.network["cluster_name"] == "[Host]'s World", "空字符串也应该被当成缺失，补上默认值"
+    assert config2.network["cluster_name"] == "[Host]'s World", (
+        "空字符串也应该被当成缺失，补上默认值"
+    )
     print("  PASS: an explicit empty string is treated the same as a missing key")
 
 
@@ -1716,8 +2507,12 @@ def test_cluster_ini_steam_section_roundtrip():
         reloaded = parse_cluster_ini(path)
         assert reloaded.steam.get("steam_group_only") is True
         assert reloaded.steam.get("steam_group_id") == 123456
-        assert reloaded.gameplay.get("max_players") == 8, "保存 [STEAM] 的同时不能弄丢其它分区"
-        print("  PASS: write_cluster_ini() keeps the [STEAM] section instead of silently dropping it")
+        assert reloaded.gameplay.get("max_players") == 8, (
+            "保存 [STEAM] 的同时不能弄丢其它分区"
+        )
+        print(
+            "  PASS: write_cluster_ini() keeps the [STEAM] section instead of silently dropping it"
+        )
 
 
 def test_sakura_frp_tunnel_matching():
@@ -1735,18 +2530,28 @@ def test_sakura_frp_tunnel_matching():
 
     name = sanitize_tunnel_name("Cluster_1", "Master", "server", "steam")
     assert 3 <= len(name) <= 20, f"隧道名长度必须在 3-20 之间: {name}"
-    assert all(c.isalnum() or c == "_" for c in name), f"隧道名只能是字母数字和下划线: {name}"
+    assert all(c.isalnum() or c == "_" for c in name), (
+        f"隧道名只能是字母数字和下划线: {name}"
+    )
     print("  PASS: sanitize_tunnel_name() 输出符合樱花的命名规则")
 
-    assert sanitize_tunnel_name("Cluster_1", "Master", "server", "steam") == name, "同样的输入应该每次都算出同一个名字"
-    assert sanitize_tunnel_name("Cluster_1", "Caves", "server", "steam") != name, "不同世界应该算出不同的名字"
+    assert sanitize_tunnel_name("Cluster_1", "Master", "server", "steam") == name, (
+        "同样的输入应该每次都算出同一个名字"
+    )
+    assert sanitize_tunnel_name("Cluster_1", "Caves", "server", "steam") != name, (
+        "不同世界应该算出不同的名字"
+    )
     print("  PASS: 同一世界确定性可复现，不同世界不会撞名")
 
-    assert sanitize_tunnel_name("Cluster_1", "Master", "local", "steam") != name, \
+    assert sanitize_tunnel_name("Cluster_1", "Master", "local", "steam") != name, (
         "同名存档不同来源（本地 vs 服务器）不应该撞名"
-    assert sanitize_tunnel_name("Cluster_1", "Master", "server", "wegame") != name, \
+    )
+    assert sanitize_tunnel_name("Cluster_1", "Master", "server", "wegame") != name, (
         "同名存档不同平台（Steam vs WeGame）不应该撞名"
-    print("  PASS: source/platform 不同时不会撞名（本地/服务器存档同名、Steam/WeGame 同名两种场景）")
+    )
+    print(
+        "  PASS: source/platform 不同时不会撞名（本地/服务器存档同名、Steam/WeGame 同名两种场景）"
+    )
 
     caves_name = sanitize_tunnel_name("Cluster_1", "Caves", "server", "steam")
     tunnels = [
@@ -1758,15 +2563,19 @@ def test_sakura_frp_tunnel_matching():
     assert found is not None and found["id"] == 1, "应该按名字匹配到对应世界的隧道"
     print("  PASS: find_dstcamp_tunnel() matches the right shard")
 
-    assert find_dstcamp_tunnel(tunnels, "Cluster_1", "Cave2", "server", "steam") is None, \
-        "不存在的世界不应该匹配到任何隧道"
-    assert find_dstcamp_tunnel(tunnels, "Cluster_1", "Master", "local", "steam") is None, \
-        "同名本地存档不应该匹配到服务器存档的隧道"
-    print("  PASS: no false match for a shard with no tunnel, nor for a same-named save of a different source")
+    assert (
+        find_dstcamp_tunnel(tunnels, "Cluster_1", "Cave2", "server", "steam") is None
+    ), "不存在的世界不应该匹配到任何隧道"
+    assert (
+        find_dstcamp_tunnel(tunnels, "Cluster_1", "Master", "local", "steam") is None
+    ), "同名本地存档不应该匹配到服务器存档的隧道"
+    print(
+        "  PASS: no false match for a shard with no tunnel, nor for a same-named save of a different source"
+    )
 
 
 def test_sakura_server_port_rewrite():
-    """"开启樱花映射"最关键的一步：把樱花分配的远程端口回写进这个世界自
+    """ "开启樱花映射"最关键的一步：把樱花分配的远程端口回写进这个世界自
     己的 server.ini。这里只测这一步的读-改-写本身，不牵扯真实网络调用。"""
     print("\n" + "=" * 60)
     print("Test 30: Sakura Server Port Rewrite")
@@ -1784,7 +2593,9 @@ def test_sakura_server_port_rewrite():
         save_shard_config(config, shard_dir)
 
         reloaded = load_shard_config(shard_dir)
-        assert get_shard_option(reloaded, "NETWORK", "server_port") == 23456, "回写的端口应该能重新读回来"
+        assert get_shard_option(reloaded, "NETWORK", "server_port") == 23456, (
+            "回写的端口应该能重新读回来"
+        )
         print("  PASS: rewritten server_port persists after save+reload")
 
 
@@ -1802,7 +2613,9 @@ def test_sakura_token_settings_roundtrip():
 
         set_sakura_token(None)
         assert get_sakura_token() is None, "清空之后应该重新变回 None，而不是空字符串"
-        print("  PASS: clearing the token removes the key instead of storing an empty string")
+        print(
+            "  PASS: clearing the token removes the key instead of storing an empty string"
+        )
 
 
 def test_frpc_manager_key_convention():
@@ -1817,13 +2630,19 @@ def test_frpc_manager_key_convention():
     key_c = mgr._key(Path("C:/saves/Cluster_1"), "Caves")
     assert key_a == key_b, "同一个 (cluster_path, shard_name) 应该算出相同的 key"
     assert key_a != key_c, "不同世界应该算出不同的 key"
-    assert mgr.get(Path("C:/saves/Cluster_1"), "Master") is None, "没启动过的世界应该查不到进程"
+    assert mgr.get(Path("C:/saves/Cluster_1"), "Master") is None, (
+        "没启动过的世界应该查不到进程"
+    )
     print("  PASS: FrpcManager._key() matches ServerManager's convention")
 
 
 @contextlib.contextmanager
-def _fake_workshop_dir(root: Path, subscribed_ids: list[str], with_injector_files: bool = False,
-                       mod_version: str | None = None):
+def _fake_workshop_dir(
+    root: Path,
+    subscribed_ids: list[str],
+    with_injector_files: bool = False,
+    mod_version: str | None = None,
+):
     """猴子补丁 luajit_injector.find_workshop_dir()（这里也是 "from ...
     import" 抄过去的独立引用，同 _isolated_settings_dir() 的道理，只补
     find_workshop_dir 原本定义所在的 parser 模块自己那份不生效），指向
@@ -1847,7 +2666,9 @@ def _fake_workshop_dir(root: Path, subscribed_ids: list[str], with_injector_file
     workshop_dir = root / "steamapps" / "workshop" / "content" / "322330"
     for wid in subscribed_ids:
         d = workshop_dir / wid
-        d.mkdir(parents=True, exist_ok=True)  # 允许同一个 root 反复调用，模拟 Steam 原地更新订阅内容
+        d.mkdir(
+            parents=True, exist_ok=True
+        )  # 允许同一个 root 反复调用，模拟 Steam 原地更新订阅内容
         lines = ["name = 'test'"]
         if wid == WORKSHOP_ID and mod_version is not None:
             lines.append(f'version = "{mod_version}"')
@@ -1873,7 +2694,9 @@ def _make_fake_install_dir(root: Path, build_id: str | None = None) -> Path:
     """现造一份 <root>/steamapps/common/<产品名>/ 目录结构（安装目录），
     可选带上 version.txt（游戏自己写的内部版本号），模拟"这是某个 Steam
     库里的专用服务器安装目录"这个前提，不需要真的装 Steam。"""
-    install_dir = root / "steamapps" / "common" / "Don't Starve Together Dedicated Server"
+    install_dir = (
+        root / "steamapps" / "common" / "Don't Starve Together Dedicated Server"
+    )
     install_dir.mkdir(parents=True)
     if build_id is not None:
         (install_dir / "version.txt").write_text(f"{build_id}\n", encoding="utf-8")
@@ -1891,7 +2714,9 @@ def test_luajit_injector():
     with tempfile.TemporaryDirectory() as tmp:
         install_dir = _make_fake_install_dir(Path(tmp), build_id="111")
         assert read_game_version_file(install_dir) == "111"
-        assert read_game_version_file(install_dir.parent) is None, "没有 version.txt 应该返回 None"
+        assert read_game_version_file(install_dir.parent) is None, (
+            "没有 version.txt 应该返回 None"
+        )
     print("  PASS: steam_discovery.read_game_version_file() 正确读取 version.txt")
 
     with _isolated_settings_dir():
@@ -1904,8 +2729,9 @@ def test_luajit_injector():
             assert detect_state(bin64) is InjectorState.NOT_INSTALLED
             luajit_dir.mkdir(parents=True)
             (luajit_dir / "Injector.dll").write_bytes(b"x")
-            assert detect_state(bin64) is InjectorState.DISABLED_LEFTOVER, \
+            assert detect_state(bin64) is InjectorState.DISABLED_LEFTOVER, (
                 "副本存在但还没启用，应该是已关闭残留"
+            )
             set_luajit_enabled(True)
             assert detect_state(bin64) is InjectorState.ACTIVE
             set_luajit_enabled(False)
@@ -1916,13 +2742,15 @@ def test_luajit_injector():
             install_dir = _make_fake_install_dir(Path(tmp))
             assert resolve_launch_bin64_dir(install_dir) is None, "未启用应该返回 None"
             set_luajit_enabled(True)
-            assert resolve_launch_bin64_dir(install_dir) is None, \
+            assert resolve_launch_bin64_dir(install_dir) is None, (
                 "已启用但副本还没装过（缺锚点文件）应该返回 None"
+            )
             luajit_dir = get_luajit_dir(install_dir)
             luajit_dir.mkdir(parents=True)
             (luajit_dir / "Injector.dll").write_bytes(b"x")
-            assert resolve_launch_bin64_dir(install_dir) == luajit_dir, \
+            assert resolve_launch_bin64_dir(install_dir) == luajit_dir, (
                 "已启用且副本有效应该返回副本目录，给 ServerProcess 用来覆盖启动目录"
+            )
         print("  PASS: resolve_launch_bin64_dir() 按启用状态 + 副本有效性判定正确")
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -1934,9 +2762,12 @@ def test_luajit_injector():
             # 落盘的 version.json 里 DST_version 应该是不带引号的数字（用户
             # 指定的格式），luajit_version 是语义化版本号字符串。
             raw = json.loads((d / "version.json").read_text(encoding="utf-8"))
-            assert raw == {"DST_version": 123, "luajit_version": "1.0.0"}, \
+            assert raw == {"DST_version": 123, "luajit_version": "1.0.0"}, (
                 f"version.json 落盘格式不对: {raw}"
-        print("  PASS: read_marker()/write_marker() 往返正确，version.json 字段名/格式符合预期")
+            )
+        print(
+            "  PASS: read_marker()/write_marker() 往返正确，version.json 字段名/格式符合预期"
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1945,60 +2776,101 @@ def test_luajit_injector():
             with _fake_workshop_dir(root, [WORKSHOP_ID], mod_version="1.10.1"):
                 assert needs_regeneration(install_dir) is False, "未启用应该是 False"
                 set_luajit_enabled(True)
-                assert needs_regeneration(install_dir) is False, "没有标记（还没成功装过）应该是 False"
+                assert needs_regeneration(install_dir) is False, (
+                    "没有标记（还没成功装过）应该是 False"
+                )
 
                 luajit_dir = get_luajit_dir(install_dir)
                 luajit_dir.mkdir(parents=True)
-                write_marker(luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.1"))
-                assert needs_regeneration(install_dir) is False, "游戏版本、配套 Mod 版本都一致，不需要重新生成"
+                write_marker(
+                    luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.1")
+                )
+                assert needs_regeneration(install_dir) is False, (
+                    "游戏版本、配套 Mod 版本都一致，不需要重新生成"
+                )
 
-                write_marker(luajit_dir, LuajitMarker(DST_version="000", luajit_version="1.10.1"))
-                assert needs_regeneration(install_dir) is True, "游戏版本不一致（被更新过），需要重新生成"
+                write_marker(
+                    luajit_dir, LuajitMarker(DST_version="000", luajit_version="1.10.1")
+                )
+                assert needs_regeneration(install_dir) is True, (
+                    "游戏版本不一致（被更新过），需要重新生成"
+                )
 
-                write_marker(luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.0"))
-                assert needs_regeneration(install_dir) is True, \
+                write_marker(
+                    luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.0")
+                )
+                assert needs_regeneration(install_dir) is True, (
                     "配套 Mod 版本不一致（作者发布了新版本），也需要重新生成"
-        print("  PASS: needs_regeneration() 按 DST_version/luajit_version 是否过期判定正确")
+                )
+        print(
+            "  PASS: needs_regeneration() 按 DST_version/luajit_version 是否过期判定正确"
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             install_dir = _make_fake_install_dir(root, build_id="222")
             bin64 = install_dir / "bin64"
             bin64.mkdir()
-            (bin64 / "game.exe").write_bytes(b"fake game exe")  # 模拟真实 bin64 里的游戏文件
+            (bin64 / "game.exe").write_bytes(
+                b"fake game exe"
+            )  # 模拟真实 bin64 里的游戏文件
 
-            with _fake_workshop_dir(root, [WORKSHOP_ID], with_injector_files=True, mod_version="1.10.1"):
+            with _fake_workshop_dir(
+                root, [WORKSHOP_ID], with_injector_files=True, mod_version="1.10.1"
+            ):
                 luajit_dir = get_luajit_dir(install_dir)
                 luajit_dir.mkdir(parents=True)
-                write_marker(luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.0"))
+                write_marker(
+                    luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.0")
+                )
 
                 result = regenerate(bin64)
                 assert result.ok is True, f"应该成功: {result.errors}"
-                assert (luajit_dir / "game.exe").read_bytes() == b"fake game exe", \
+                assert (luajit_dir / "game.exe").read_bytes() == b"fake game exe", (
                     "重新生成应该带上真实 bin64 里当前的游戏文件"
-                assert (luajit_dir / "Winmm.dll").read_bytes() == b"fake winmm", \
+                )
+                assert (luajit_dir / "Winmm.dll").read_bytes() == b"fake winmm", (
                     "注入文件应该直接取自订阅内容，不是重新联网下载"
-                assert (luajit_dir / "deps" / "lua_helper.dll").read_bytes() == b"fake nested dependency", \
+                )
+                assert (
+                    luajit_dir / "deps" / "lua_helper.dll"
+                ).read_bytes() == b"fake nested dependency", (
                     "注入包里的 deps 子目录和 DLL 也必须递归复制"
+                )
                 new_marker = read_marker(luajit_dir)
-                assert new_marker.DST_version == "222", "标记里的 DST_version 应该更新成当前真实值"
-                assert new_marker.luajit_version == "1.10.1", "luajit_version 也应该更新成当前配套 Mod 的版本"
-                print("  PASS: regenerate() 用当前配套 Mod 内容重新生成副本，标记同步更新")
+                assert new_marker.DST_version == "222", (
+                    "标记里的 DST_version 应该更新成当前真实值"
+                )
+                assert new_marker.luajit_version == "1.10.1", (
+                    "luajit_version 也应该更新成当前配套 Mod 的版本"
+                )
+                print(
+                    "  PASS: regenerate() 用当前配套 Mod 内容重新生成副本，标记同步更新"
+                )
 
                 # 只有配套 Mod 版本变了、游戏本体没变时，选择性更新不应该
                 # 碰 bin64 部分——放一个不在真实 bin64 里的哨兵文件，只有
                 # "整个重新 copytree"才会让它消失，用它反向验证没有做没
                 # 必要的整份重建。
-                (luajit_dir / "existing_bin64_marker.txt").write_text("untouched", encoding="utf-8")
-                with _fake_workshop_dir(root, [WORKSHOP_ID], with_injector_files=True, mod_version="1.10.2"):
+                (luajit_dir / "existing_bin64_marker.txt").write_text(
+                    "untouched", encoding="utf-8"
+                )
+                with _fake_workshop_dir(
+                    root, [WORKSHOP_ID], with_injector_files=True, mod_version="1.10.2"
+                ):
                     result2 = regenerate(bin64)
                     assert result2.ok is True, f"应该成功: {result2.errors}"
-                    assert (luajit_dir / "existing_bin64_marker.txt").exists(), \
+                    assert (luajit_dir / "existing_bin64_marker.txt").exists(), (
                         "只有 luajit_version 变了，DST_version 没变，不应该整个重新复制 bin64"
+                    )
                     marker2 = read_marker(luajit_dir)
                     assert marker2.DST_version == "222", "DST_version 应该保持不变"
-                    assert marker2.luajit_version == "1.10.2", "luajit_version 应该更新成新的配套 Mod 版本"
-                    print("  PASS: regenerate() 只有配套 Mod 版本变了时选择性更新，不重新复制 bin64")
+                    assert marker2.luajit_version == "1.10.2", (
+                        "luajit_version 应该更新成新的配套 Mod 版本"
+                    )
+                    print(
+                        "  PASS: regenerate() 只有配套 Mod 版本变了时选择性更新，不重新复制 bin64"
+                    )
 
             # 没有订阅内容时应该优雅失败，不联网、不崩溃——必须用全新的
             # workshop 根目录，不能复用上面那个 root：_fake_workshop_dir()
@@ -2025,11 +2897,13 @@ def test_luajit_injector():
         with tempfile.TemporaryDirectory() as tmp_mo:
             mo = load_mod_overrides(Path(tmp_mo) / "modoverrides.lua")
             enable_mod(mo, "dstcamp_luajit_mod")  # 早前版本遗留的旧 key
-            enable_mod(mo, "workshop-123456")     # 无关的其它 mod，不该被动到
+            enable_mod(mo, "workshop-123456")  # 无关的其它 mod，不该被动到
             assert cleanup_legacy_local_mod_entry(mo) is True
             assert "dstcamp_luajit_mod" not in mo.mods
             assert "workshop-123456" in mo.mods
-            assert cleanup_legacy_local_mod_entry(mo) is False, "已经清过一次，重复调用应该是无操作"
+            assert cleanup_legacy_local_mod_entry(mo) is False, (
+                "已经清过一次，重复调用应该是无操作"
+            )
         print("  PASS: cleanup_legacy_local_mod_entry() 只清掉旧 key，不动其它 mod")
 
         plan_missing = plan_install(None, server_running=False)
@@ -2046,7 +2920,9 @@ def test_luajit_injector():
             with _fake_workshop_dir(Path(tmp2), []):
                 plan_not_subscribed = plan_install(real_bin64, server_running=False)
                 assert plan_not_subscribed.blocked_reason == "workshop_not_subscribed"
-            print("  PASS: plan_install() 未订阅创意工坊配套 Mod 时判定 workshop_not_subscribed")
+            print(
+                "  PASS: plan_install() 未订阅创意工坊配套 Mod 时判定 workshop_not_subscribed"
+            )
 
             with _fake_workshop_dir(Path(tmp2), [WORKSHOP_ID]):
                 plan_ok = plan_install(real_bin64, server_running=False)
@@ -2057,14 +2933,20 @@ def test_luajit_injector():
             set_luajit_enabled(True)
             assert apply_uninstall(real_bin64) is True
             assert get_luajit_enabled() is False, "关闭应该只是把开关关掉"
-            assert apply_uninstall(real_bin64) is False, "已经关闭时重复调用应该幂等，不报错"
-            print("  PASS: apply_uninstall() 只关闭 app_settings 开关（不删除任何文件），且重复调用是幂等的")
+            assert apply_uninstall(real_bin64) is False, (
+                "已经关闭时重复调用应该幂等，不报错"
+            )
+            print(
+                "  PASS: apply_uninstall() 只关闭 app_settings 开关（不删除任何文件），且重复调用是幂等的"
+            )
 
     with tempfile.TemporaryDirectory() as tmp3:
         install_dir = Path(tmp3)
         assert find_bin64_dir(install_dir) is None, "空目录应该返回 None"
         (install_dir / "bin64").mkdir()
-        (install_dir / "bin64" / "dontstarve_dedicated_server_nullrenderer_x64.exe").write_bytes(b"x")
+        (
+            install_dir / "bin64" / "dontstarve_dedicated_server_nullrenderer_x64.exe"
+        ).write_bytes(b"x")
         assert find_bin64_dir(install_dir) == install_dir / "bin64"
         print("  PASS: dedicated_server.find_bin64_dir() 找到/找不到都符合预期")
 
@@ -2090,7 +2972,9 @@ def test_steam_library_folder_casing():
             f'\t"0"\n\t{{\n\t\t"path"\t\t"{str(real_dir).replace(chr(92), chr(92) * 2)}"\n\t}}\n'
             "}\n"
         )
-        (real_dir / "steamapps" / "libraryfolders.vdf").write_text(vdf_text, encoding="utf-8")
+        (real_dir / "steamapps" / "libraryfolders.vdf").write_text(
+            vdf_text, encoding="utf-8"
+        )
 
         # 模拟注册表返回的大小写跟磁盘真实大小写不一致（Windows 文件系统
         # 不区分大小写，这个路径本身照样能正常访问/exists() 判断为真）。
@@ -2098,9 +2982,12 @@ def test_steam_library_folder_casing():
         assert steam_root_wrong_case.exists(), "Windows 上大小写不影响路径是否存在"
 
         libraries = parse_library_folders(steam_root_wrong_case)
-        assert str(libraries[0]) == str(real_dir), \
+        assert str(libraries[0]) == str(real_dir), (
             f"应该优先用 libraryfolders.vdf 里 Steam 自己记录的正确大小写，结果是 {libraries[0]}"
-        print("  PASS: parse_library_folders() 优先采用 vdf 里的正确大小写，不被注册表的错误大小写覆盖")
+        )
+        print(
+            "  PASS: parse_library_folders() 优先采用 vdf 里的正确大小写，不被注册表的错误大小写覆盖"
+        )
 
 
 def test_font_style_switch():
@@ -2123,7 +3010,12 @@ def test_font_style_switch():
     from dstools.shared.gui import fonts, theme
     from dstools.shared import app_settings
 
-    cute_font_path = Path(__file__).resolve().parent.parent / "tools" / "fonts" / "KNMaiyuan-Regular.ttf"
+    cute_font_path = (
+        Path(__file__).resolve().parent.parent
+        / "tools"
+        / "fonts"
+        / "KNMaiyuan-Regular.ttf"
+    )
     assert cute_font_path.exists(), f"可爱风字体文件缺失: {cute_font_path}"
     print("  PASS: tools/fonts/KNMaiyuan-Regular.ttf 确实打包在仓库里")
 
@@ -2137,20 +3029,32 @@ def test_font_style_switch():
         theme.set_font_style_choice("cute")
         assert theme.FONT_STYLE_CHOICE == "cute"
         assert theme.FONT_FAMILY == "KN Maiyuan"
-        assert fonts.get_font_style() == "cute", "theme.set_font_style_choice() 必须同步联动 fonts.py 那一侧"
-        print("  PASS: theme.set_font_style_choice() 联动 Tk 侧(FONT_FAMILY)与 PIL 侧(fonts.py)")
+        assert fonts.get_font_style() == "cute", (
+            "theme.set_font_style_choice() 必须同步联动 fonts.py 那一侧"
+        )
+        print(
+            "  PASS: theme.set_font_style_choice() 联动 Tk 侧(FONT_FAMILY)与 PIL 侧(fonts.py)"
+        )
 
         theme.set_font_style_choice("default")
         assert theme.FONT_FAMILY == "Microsoft YaHei UI Light"
-        assert theme.font_tuple(12) == ("Microsoft YaHei UI Light", 12), \
+        assert theme.font_tuple(12) == ("Microsoft YaHei UI Light", 12), (
             "没有显式 bold 参数时不应该额外带 bold 样式串"
-        assert theme.font_tuple(12, bold=True) == ("Microsoft YaHei UI Light", 12, "bold"), \
-            "显式 bold=True 是控件自身的强调，必须始终生效"
-        print("  PASS: font_tuple() 正确反映当前字体样式，且 bold=True 显式覆盖始终生效")
+        )
+        assert theme.font_tuple(12, bold=True) == (
+            "Microsoft YaHei UI Light",
+            12,
+            "bold",
+        ), "显式 bold=True 是控件自身的强调，必须始终生效"
+        print(
+            "  PASS: font_tuple() 正确反映当前字体样式，且 bold=True 显式覆盖始终生效"
+        )
 
         theme.set_font_style_choice("cute")
         theme.set_theme("mint")
-        assert theme.FONT_STYLE_CHOICE == "cute", "字体样式是独立于颜色主题的设置，切主题不应该改动它"
+        assert theme.FONT_STYLE_CHOICE == "cute", (
+            "字体样式是独立于颜色主题的设置，切主题不应该改动它"
+        )
         theme.set_theme("gray")
         assert theme.FONT_STYLE_CHOICE == "cute"
         print("  PASS: 切换颜色主题(set_theme())不会连带改动已选好的字体样式")
@@ -2162,12 +3066,16 @@ def test_font_style_switch():
         default_base = theme.FONT_SIZE_BASE
         theme.set_font_style_choice("cute")
         cute_scale = theme.FONT_SIZE_SCALE_BY_STYLE["cute"]
-        assert theme.FONT_SIZE_BASE == round(default_base * cute_scale), \
+        assert theme.FONT_SIZE_BASE == round(default_base * cute_scale), (
             "字体样式切到 cute 后，全局字号阶梯必须按 FONT_SIZE_SCALE_BY_STYLE 整体放大"
-        assert theme.FONT_SIZE_BASE > default_base, "cute 的缩放系数应该让字号变大，不是不变或变小"
+        )
+        assert theme.FONT_SIZE_BASE > default_base, (
+            "cute 的缩放系数应该让字号变大，不是不变或变小"
+        )
         theme.set_theme("mint")
-        assert theme.FONT_SIZE_BASE == round(default_base * cute_scale), \
+        assert theme.FONT_SIZE_BASE == round(default_base * cute_scale), (
             "切换颜色主题不应该打乱已经生效的字体样式缩放倍数"
+        )
         theme.set_theme("gray")
         print("  PASS: 字体样式切换会按比例放大全局字号阶梯，且不受颜色主题切换影响")
 
@@ -2206,23 +3114,36 @@ def test_frp_selfhost_port_conflict_detection():
     assert status.used_ports == frozenset({22, 2323, 7000, 6010})
     assert status.frps_bind_port == 7000
     assert status.service_active is True
-    print("  PASS: _parse_probe_output() 正确解析 FRPSPORT 字段(frps 当前实际绑定的端口)")
+    print(
+        "  PASS: _parse_probe_output() 正确解析 FRPSPORT 字段(frps 当前实际绑定的端口)"
+    )
 
     def is_conflict(target_port: int) -> bool:
-        return status.reachable and target_port in status.used_ports and target_port != status.frps_bind_port
+        return (
+            status.reachable
+            and target_port in status.used_ports
+            and target_port != status.frps_bind_port
+        )
 
-    assert is_conflict(2323) is True, "2323 被 sshd 占用、不是 frps 自己绑定的端口，必须判定为冲突"
-    assert is_conflict(7000) is False, "7000 就是 frps 自己当前绑定的端口，复用现有安装场景不能误判为冲突"
+    assert is_conflict(2323) is True, (
+        "2323 被 sshd 占用、不是 frps 自己绑定的端口，必须判定为冲突"
+    )
+    assert is_conflict(7000) is False, (
+        "7000 就是 frps 自己当前绑定的端口，复用现有安装场景不能误判为冲突"
+    )
     assert is_conflict(9999) is False, "9999 完全没被占用，不该判定为冲突"
-    print("  PASS: 冲突判断改用 frps_bind_port 比对后，服务在跑但改用新端口的真冲突不再被放过")
+    print(
+        "  PASS: 冲突判断改用 frps_bind_port 比对后，服务在跑但改用新端口的真冲突不再被放过"
+    )
 
     # 服务从没装过时 FRPSPORT 字段为空，frps_bind_port 应该是 None，
     # 不能被误判等于任何整数端口。
     output_never_deployed = "UID:1000\nSUDO:ok\nSERVICE:inactive\nCPU:2\nMEM:1024,512\nPORTS:22\nFRPSPORT:\n"
     status2 = _parse_probe_output(output_never_deployed)
     assert status2.frps_bind_port is None
-    assert (status2.reachable and 22 in status2.used_ports and 22 != status2.frps_bind_port) is True, \
-        "从没部署过 frps 时，端口被其它服务占用也应该判定为冲突"
+    assert (
+        status2.reachable and 22 in status2.used_ports and 22 != status2.frps_bind_port
+    ) is True, "从没部署过 frps 时，端口被其它服务占用也应该判定为冲突"
     print("  PASS: 从没部署过 frps 时 frps_bind_port 为 None，不会跟任何端口误判相等")
 
 
@@ -2240,78 +3161,6 @@ def test_ktech_runtime_detector():
         (runtime_dir / "VCOMP120.dll").unlink()
         assert _has_vc2013_x86_runtime(runtime_dir) is False
     print("  PASS: VCOMP120.dll 缺失会被无弹窗地识别为缺 VC++ 2013 x86 运行库")
-
-
-def test_server_mod_completeness_check():
-    """真实需求：服务器启动完毕之后，检查 modoverrides.lua 里启用的 Mod
-    是不是真的全部加载成功了（比如某个订阅的 Workshop mod 在这台机器上
-    还没下载完，服务器会直接跳过、不会报错，玩家进去发现内容对不上）。
-
-    用真机 server_log.txt 核对过（3 份不同存档的真实日志）：服务器解析
-    modoverrides.lua 时，每个启用的 mod 都会先打一行 "modoverrides.lua
-    enabling <id>"——这一行只反映"配置里启用了"，folder 缺失/损坏时也
-    照样会打；真正找到文件夹、成功解析 modinfo.lua 之后才会另外打一行
-    "Loading mod: <id> (<name>) Version:<version>"。两个集合一减，剩
-    下的就是"配置里启用了但没真的加载成功"的 mod。这里用真实日志里摘
-    出来的行构造测试数据（不是编出来的格式），覆盖"全部正常加载"和
-    "人为去掉其中一个 Loading mod 行模拟真实缺失场景"两种情况。"""
-    print("\n" + "=" * 60)
-    print("Test 39: Server Mod Completeness Check")
-
-    import queue
-    from dstools.features.local_service.dedicated_server import ServerProcess
-
-    # 摘自真实 aaaddd66/Master/server_log.txt（隐去时间戳前缀，格式跟
-    # _read_loop() 实际读到的 subprocess stdout 行一致）。
-    healthy_lines = [
-        "modoverrides.lua enabling workshop-3511498282\t",
-        "modoverrides.lua enabling workshop-2797939615\t",
-        "modoverrides.lua enabling workshop-949808360\t",
-        "Loading mod: workshop-3511498282 ( 饥饥事件计时器) Version:ju 1.3.99999\t",
-        "Loading mod: workshop-2797939615 (常用mod集合) Version:2.0.9\t",
-        "Loading mod: workshop-949808360 ( 卡尼猫) Version:2.2.8\t",
-        "About to start a server with the following settings:",
-        "Reset() returning",
-        "Sim paused",
-    ]
-
-    def run(lines: list[str]) -> ServerProcess:
-        sp = ServerProcess.__new__(ServerProcess)
-        sp.world_ready = False
-        sp.mods_enabled = set()
-        sp.mods_loaded = set()
-        sp.missing_mods = None
-        sp.is_master = True
-
-        class _FakeProc:
-            stdout = [line + "\n" for line in lines]
-
-        sp.proc = _FakeProc()
-        sp._out_queue = queue.Queue()
-        sp._read_loop()
-        return sp
-
-    sp_ok = run(healthy_lines)
-    assert sp_ok.world_ready is True
-    assert sp_ok.missing_mods == [], "三个 mod 都正常打了 Loading mod 行，不应该判定为缺失"
-    print("  PASS: 全部 Mod 正常加载时 missing_mods 为空")
-
-    # 人为去掉 workshop-2797939615 的 "Loading mod:" 行，模拟这个 mod
-    # 在服务器这台机器上没下载完/加载失败的真实场景，其它两个 mod 不受
-    # 影响照样正常加载。
-    broken_lines = [line for line in healthy_lines if "Loading mod: workshop-2797939615" not in line]
-    sp_broken = run(broken_lines)
-    assert sp_broken.world_ready is True
-    assert sp_broken.missing_mods == ["workshop-2797939615"], \
-        "去掉了 workshop-2797939615 的 Loading mod 行，应该被判定为缺失，且不能误伤其它正常加载的 mod"
-    print("  PASS: 人为制造的缺失场景（去掉一个 mod 的 Loading mod 行）被正确识别，且不误伤其它 mod")
-
-    # world_ready 变 True 之前，missing_mods 应该保持 None（还没到算的
-    # 时候），不能提前算出一个"暂时性但看起来正常"的空列表误导调用方。
-    sp_not_ready = run(healthy_lines[:3])  # 只喂 enabling 行，没有 ready 标记
-    assert sp_not_ready.world_ready is False
-    assert sp_not_ready.missing_mods is None, "世界还没就绪时不应该算出 missing_mods"
-    print("  PASS: 世界还没就绪时 missing_mods 保持 None，不会提前给出误导性的空结果")
 
 
 def main():
@@ -2335,6 +3184,7 @@ def main():
         test_character_names,
         test_character_icons,
         test_modinfo_reader,
+        test_workshop_content_directory_filter,
         test_admin_manager,
         test_token_manager,
         test_cluster_copy,
@@ -2353,6 +3203,7 @@ def main():
         test_mod_version_resolution,
         test_workshop_source_details_parser,
         test_workshop_status_evidence_priority,
+        test_workshop_snapshot_uses_one_steam_session,
         test_dst_mod_manifest_verification,
         test_workshop_download_precheck_uses_physical_files,
         test_backup_manager_restore_clears_stale_slots,
@@ -2369,8 +3220,6 @@ def main():
         test_frp_selfhost_port_conflict_detection,
         test_ktech_runtime_detector,
         test_world_ocean_frequency_labels,
-        test_server_mod_completeness_check,
-        test_multi_cluster_ports,
     ]
 
     for test in tests:
@@ -2379,6 +3228,7 @@ def main():
         except Exception as e:
             print(f"\n  FAIL: {e}")
             import traceback
+
             traceback.print_exc()
             all_passed = False
 

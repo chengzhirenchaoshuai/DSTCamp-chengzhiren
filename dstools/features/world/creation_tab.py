@@ -1,7 +1,6 @@
 """Standalone create-world tab reusing the existing world renderer."""
 
 import copy
-import functools
 import threading
 import tkinter as tk
 import webbrowser
@@ -11,7 +10,10 @@ from tkinter import ttk
 from PIL import Image
 
 from dstools.features.world.creation import (
-    WorldCreationPlan, create_world, default_cluster_config, default_shard_config,
+    WorldCreationPlan,
+    create_world,
+    default_cluster_config,
+    default_shard_config,
 )
 from dstools.features.world.creation_server_config import CreationServerConfigTab
 from dstools.features.world.defaults import (
@@ -41,18 +43,15 @@ from dstools.features.mod.parser import (
     list_installed_mod_ids,
     parse_modinfo,
     resolve_wegame_client_mods_dir,
+    split_installed_mod_counts,
 )
 from dstools.features.mod.render import render_mod_list
+from dstools.features.mod.list_model import build_mod_rows, sort_mod_data
 from dstools.features.mod.tab import (
     ModConfigDialog,
-    ModManagerTab,
     _SavePresetDialog,
-    _localize_mod_name,
-    _mod_name_cmp,
-    _version_display,
 )
 from dstools.shared.gui.bg_frame import BgFrame
-from dstools.shared.gui.fonts import strip_unrenderable
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.cluster_names import validate_cluster_folder_name
 from dstools.shared.gui.dialog_geometry import center_over_parent
@@ -64,8 +63,10 @@ from dstools.shared.gui.toolbar_widgets import (
     make_transparent_status,
 )
 from dstools.shared.server_ports import (
-    allocate_cluster_port_values, collect_cluster_port_claims,
-    find_port_conflicts, scan_udp_ports,
+    allocate_cluster_port_values,
+    collect_cluster_port_claims,
+    find_port_conflicts,
+    scan_udp_ports,
 )
 from dstools.i18n import t
 from dstools.models import Cluster, ModEntry, Platform, SaveSource, Shard
@@ -81,8 +82,10 @@ class WorldCreationTab:
         self._user_selected_location_shards: set[str] = set()
         self._world_profile = resolve_world_location_profile(set())
         self._location_display_to_id = {}
-        self._rules_by_cat = {}; self._gen_by_cat = {}
-        self._rules_cats = []; self._gen_cats = []
+        self._rules_by_cat = {}
+        self._gen_by_cat = {}
+        self._rules_cats = []
+        self._gen_cats = []
         self._mod_settings = {}
         self._active_mod_settings = {}
         self._mod_world_icons = {}
@@ -101,9 +104,13 @@ class WorldCreationTab:
         self._mod_scan_btn = None
         self._mod_scan_generation = 0
         self._mod_scan_running = False
+        self._mod_scan_platform = Platform.STEAM
+        self._mod_scan_client_mods_dir = None
+        self._mod_paths = {}
         self._mod_filter_var = None
         self._mod_show_var = None
         self._mod_filter_after_id = None
+        self._mod_async_render_after_id = None
         self._server_config = None
         self._initialized_pages: set[str] = set()
         self._world_stale = False
@@ -111,19 +118,28 @@ class WorldCreationTab:
         self._build()
 
     def _build(self):
-        top = BgFrame(self.frame, self.app, bg=theme.BG_SOFT); top.pack(fill=tk.X, padx=12, pady=8)
+        top = BgFrame(self.frame, self.app, bg=theme.BG_SOFT)
+        top.pack(fill=tk.X, padx=12, pady=8)
         self._name_label = make_toolbar_label(
-            top, self.app, lambda: t("world.creation_name_label"), bg=theme.BG_SOFT,
+            top,
+            self.app,
+            lambda: t("world.creation_name_label"),
+            bg=theme.BG_SOFT,
         )
         self._name_label.pack(side=tk.LEFT)
         self.name_var = tk.StringVar(value="Cluster_New")
-        ttk.Entry(top, textvariable=self.name_var, width=18).pack(side=tk.LEFT, padx=(5, 14))
+        ttk.Entry(top, textvariable=self.name_var, width=18).pack(
+            side=tk.LEFT, padx=(5, 14)
+        )
         # 使用自绘页签和 BgFrame 内容区，避免 ttk.Notebook 的不透明主题背景遮住窗口背景图。
         self._sub_tab_key = "server"
         self._sub_tab_bar = PillTabBar(
             self.frame,
-            tabs=[("server", t("world.creation_server_tab")), ("world", t("world.creation_world_tab")),
-                  ("mod", t("world.creation_mod_tab"))],
+            tabs=[
+                ("server", t("world.creation_server_tab")),
+                ("world", t("world.creation_world_tab")),
+                ("mod", t("world.creation_mod_tab")),
+            ],
             on_select=self._on_creation_sub_tab_select,
             app=self.app,
             bg=theme.BG_SOFT,
@@ -138,10 +154,13 @@ class WorldCreationTab:
         self._mod_frame = BgFrame(self._sub_content, self.app, bg=theme.BG_SOFT)
         self._world_frame = BgFrame(self._sub_content, self.app, bg=theme.BG_SOFT)
         self._server_frame.pack(fill=tk.BOTH, expand=True)
-        bottom = BgFrame(self.frame, self.app, bg=theme.BG_SOFT); bottom.pack(fill=tk.X, padx=12, pady=8)
+        bottom = BgFrame(self.frame, self.app, bg=theme.BG_SOFT)
+        bottom.pack(fill=tk.X, padx=12, pady=8)
         self.status_var = tk.StringVar(value="")
         ttk.Label(bottom, textvariable=self.status_var).pack(side=tk.LEFT)
-        self._create_btn = ttk.Button(bottom, text=t("world.creation_create_btn"), command=self._create)
+        self._create_btn = ttk.Button(
+            bottom, text=t("world.creation_create_btn"), command=self._create
+        )
         self._create_btn.pack(side=tk.RIGHT)
         # 默认页签是服务器配置，只初始化当前页；Mod 扫描和世界模板在
         # 用户真正切过去时再加载，避免打开向导也一次性执行全部重活。
@@ -153,7 +172,11 @@ class WorldCreationTab:
             self._ensure_page(key)
             self._maybe_reload_world_if_stale(key)
             return
-        pages = {"server": self._server_frame, "mod": self._mod_frame, "world": self._world_frame}
+        pages = {
+            "server": self._server_frame,
+            "mod": self._mod_frame,
+            "world": self._world_frame,
+        }
         pages[current].pack_forget()
         self._sub_tab_key = key
         pages[key].pack(fill=tk.BOTH, expand=True)
@@ -204,9 +227,12 @@ class WorldCreationTab:
             return self._world_profile.available_locations(shard)
         # 额外分片不是官方 Master/Caves 固定槽位，可使用当前已启用 Mod
         # 实际注册到任一槽位的所有已核对 location。
-        return tuple(dict.fromkeys(
-            self._world_profile.master_locations + self._world_profile.caves_locations
-        ))
+        return tuple(
+            dict.fromkeys(
+                self._world_profile.master_locations
+                + self._world_profile.caves_locations
+            )
+        )
 
     def _refresh_shard_combo(self, selected: str | None = None) -> None:
         if not hasattr(self, "shard_combo"):
@@ -220,13 +246,18 @@ class WorldCreationTab:
     def _refresh_world_action_buttons(self) -> None:
         button = getattr(self, "_remove_world_btn", None)
         if button is not None:
-            state = tk.NORMAL if self.shard_var.get() in self._extra_plans else tk.DISABLED
+            state = (
+                tk.NORMAL if self.shard_var.get() in self._extra_plans else tk.DISABLED
+            )
             button.configure(state=state)
 
     def _next_extra_shard_name(self, location: str) -> str:
         base = {
-            "forest": "Forest", "cave": "Caves", "porkland": "Porkland",
-            "shipwrecked": "Shipwrecked", "volcanoworld": "Volcano",
+            "forest": "Forest",
+            "cave": "Caves",
+            "porkland": "Porkland",
+            "shipwrecked": "Shipwrecked",
+            "volcanoworld": "Volcano",
         }.get(location, "World")
         occupied = {MASTER_SHARD, CAVES_SHARD, *self._extra_plans}
         if base not in occupied:
@@ -237,13 +268,17 @@ class WorldCreationTab:
         return f"{base}_{index}"
 
     def _add_world(self) -> None:
-        locations = tuple(dict.fromkeys(
-            self._world_profile.master_locations + self._world_profile.caves_locations
-        ))
+        locations = tuple(
+            dict.fromkeys(
+                self._world_profile.master_locations
+                + self._world_profile.caves_locations
+            )
+        )
         choices = [
             (
                 t("world.creation_surface_world")
-                if location == "forest" else get_location_definition(location).name_zh,
+                if location == "forest"
+                else get_location_definition(location).name_zh,
                 location,
             )
             for location in locations
@@ -293,24 +328,34 @@ class WorldCreationTab:
         """构造与外层“世界设置”一致的世界选择、说明和双子页签。"""
         toolbar = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
         toolbar.pack(fill=tk.X, padx=12, pady=(10, 6))
-        make_toolbar_label(toolbar, self.app, lambda: t("world.creation_world_label")).pack(side=tk.LEFT)
+        make_toolbar_label(
+            toolbar, self.app, lambda: t("world.creation_world_label")
+        ).pack(side=tk.LEFT)
         self.shard_var = tk.StringVar(value=MASTER_SHARD)
         self.shard_combo = MenuCombo(toolbar, textvariable=self.shard_var, width=14)
         self.shard_combo["values"] = (MASTER_SHARD, CAVES_SHARD)
         self.shard_combo.current(0)
         self.shard_combo.pack(side=tk.LEFT, padx=(5, 16))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_changed)
-        make_toolbar_label(toolbar, self.app, lambda: t("world.creation_select_world")).pack(side=tk.LEFT)
+        make_toolbar_label(
+            toolbar, self.app, lambda: t("world.creation_select_world")
+        ).pack(side=tk.LEFT)
         self.location_var = tk.StringVar()
-        self.location_combo = MenuCombo(toolbar, textvariable=self.location_var, width=16)
+        self.location_combo = MenuCombo(
+            toolbar, textvariable=self.location_var, width=16
+        )
         self.location_combo.pack(side=tk.LEFT, padx=5)
         self.location_combo.bind("<<ComboboxSelected>>", self._on_location_changed)
         self._add_world_btn = ttk.Button(
-            toolbar, text=t("world.creation_add_world"), command=self._add_world,
+            toolbar,
+            text=t("world.creation_add_world"),
+            command=self._add_world,
         )
         self._add_world_btn.pack(side=tk.LEFT, padx=(8, 4))
         self._remove_world_btn = ttk.Button(
-            toolbar, text=t("world.creation_remove_world"), command=self._remove_world,
+            toolbar,
+            text=t("world.creation_remove_world"),
+            command=self._remove_world,
             state=tk.DISABLED,
         )
         self._remove_world_btn.pack(side=tk.LEFT, padx=(4, 0))
@@ -319,14 +364,19 @@ class WorldCreationTab:
         self._world_info_frame.pack(fill=tk.X, padx=12, pady=(0, 6))
         self._world_title_var = tk.StringVar()
         self._world_desc_var = tk.StringVar()
-        self._world_info_frame.bind("<Configure>", lambda _e: self._redraw_world_info(), add="+")
+        self._world_info_frame.bind(
+            "<Configure>", lambda _e: self._redraw_world_info(), add="+"
+        )
         self._world_title_var.trace_add("write", lambda *_: self._redraw_world_info())
         self._world_desc_var.trace_add("write", lambda *_: self._redraw_world_info())
 
         self._world_sub_tab_key = "rules"
         self._world_sub_tab_bar = PillTabBar(
             self._world_frame,
-            tabs=[("rules", t("world.creation_rules_tab")), ("generation", t("world.creation_generation_tab"))],
+            tabs=[
+                ("rules", t("world.creation_rules_tab")),
+                ("generation", t("world.creation_generation_tab")),
+            ],
             on_select=self._on_world_sub_tab_select,
             app=self.app,
             bg=theme.CARD_BG,
@@ -338,12 +388,19 @@ class WorldCreationTab:
         self._world_content = BgFrame(self._world_frame, self.app, bg=theme.CARD_BG)
         self._world_content.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 8))
         from dstools.shared.gui.image_scroll import ImageScrollPanel
-        self._rules_panel = ImageScrollPanel(self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app)
-        self._gen_panel = ImageScrollPanel(self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app)
+
+        self._rules_panel = ImageScrollPanel(
+            self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app
+        )
+        self._gen_panel = ImageScrollPanel(
+            self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app
+        )
         self._rules_panel.frame.pack(fill=tk.BOTH, expand=True)
 
     def _on_world_sub_tab_select(self, key: str) -> None:
-        current = self._rules_panel if self._world_sub_tab_key == "rules" else self._gen_panel
+        current = (
+            self._rules_panel if self._world_sub_tab_key == "rules" else self._gen_panel
+        )
         current.frame.pack_forget()
         self._world_sub_tab_key = key
         target = self._rules_panel if key == "rules" else self._gen_panel
@@ -357,69 +414,113 @@ class WorldCreationTab:
         y = 6
         title = self._world_title_var.get()
         if title:
-            frame.create_text(10, y, text=title, anchor=tk.NW, fill=theme.TEXT,
-                              font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
-                              tags="world_info_text")
+            frame.create_text(
+                10,
+                y,
+                text=title,
+                anchor=tk.NW,
+                fill=theme.TEXT,
+                font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
+                tags="world_info_text",
+            )
             y += 22
         desc = self._world_desc_var.get()
         if desc:
-            frame.create_text(10, y, text=desc, anchor=tk.NW, fill=theme.TEXT_MUTED,
-                              width=max(200, frame.winfo_width() - 20),
-                              font=theme.font_tuple(theme.FONT_SIZE_XS),
-                              tags="world_info_text")
+            frame.create_text(
+                10,
+                y,
+                text=desc,
+                anchor=tk.NW,
+                fill=theme.TEXT_MUTED,
+                width=max(200, frame.winfo_width() - 20),
+                font=theme.font_tuple(theme.FONT_SIZE_XS),
+                tags="world_info_text",
+            )
         bbox = frame.bbox("world_info_text")
         frame.configure(height=(bbox[3] + 8) if bbox else 20)
 
     def _build_server_panel(self):
-        self._server_config = CreationServerConfigTab(self._server_frame, self.app, self.name_var.get())
+        self._server_config = CreationServerConfigTab(
+            self._server_frame, self.app, self.name_var.get()
+        )
         # ClusterConfigTab 自身会创建一个根 frame；主页由 DSToolsApp
         # 统一 pack，这里嵌在创建页的 Notebook 中，需要显式挂载，否则
         # 配置数据虽已加载，服务器配置页仍只显示空白容器。
         self._server_config.frame.pack(fill=tk.BOTH, expand=True)
-        self.name_var.trace_add("write", lambda *_: self._server_config.set_cluster_name(self.name_var.get()))
+        self.name_var.trace_add(
+            "write",
+            lambda *_: self._server_config.set_cluster_name(self.name_var.get()),
+        )
 
     def _build_mod_panel(self):
         filter_row = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         filter_row.pack(fill=tk.X, padx=12, pady=(10, 4))
-        make_toolbar_label(filter_row, self.app, lambda: t("world.creation_search_mod")).pack(side=tk.LEFT)
+        make_toolbar_label(
+            filter_row, self.app, lambda: t("world.creation_search_mod")
+        ).pack(side=tk.LEFT)
         self._mod_filter_var = tk.StringVar()
         self._mod_filter_var.trace_add("write", self._on_mod_filter_changed)
-        ttk.Entry(filter_row, textvariable=self._mod_filter_var, width=30).pack(side=tk.LEFT, padx=(5, 10))
+        ttk.Entry(filter_row, textvariable=self._mod_filter_var, width=30).pack(
+            side=tk.LEFT, padx=(5, 10)
+        )
         self._mod_show_var = tk.StringVar(value="all")
         make_filter_chips(
             filter_row,
             self.app,
-            [("all", lambda: t("mod.show_all")),
-             ("enabled", lambda: t("mod.show_enabled")),
-             ("disabled", lambda: t("mod.show_disabled"))],
+            [
+                ("all", lambda: t("mod.show_all")),
+                ("enabled", lambda: t("mod.show_enabled")),
+                ("disabled", lambda: t("mod.show_disabled")),
+                ("custom", lambda: t("mod.show_custom")),
+            ],
             self._mod_show_var,
             self._render_list,
         )
-        self._mod_scan_btn = ttk.Button(filter_row, text=t("world.creation_rescan"), command=self._scan_installed_mods)
+        self._mod_scan_btn = ttk.Button(
+            filter_row,
+            text=t("world.creation_rescan"),
+            command=lambda: self._scan_installed_mods(force=True),
+        )
         self._mod_scan_btn.pack(side=tk.RIGHT, padx=(6, 0))
         self._mod_scan_status = tk.StringVar(value="正在读取已安装 Mod…")
-        make_transparent_status(filter_row, self.app, self._mod_scan_status, width=220)
+        make_transparent_status(filter_row, self.app, self._mod_scan_status, width=310)
         self._mod_list_frame = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         self._mod_list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
         from dstools.shared.gui.image_scroll import ImageScrollPanel
-        self._mod_panel = ImageScrollPanel(self._mod_list_frame, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app)
+
+        self._mod_panel = ImageScrollPanel(
+            self._mod_list_frame, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app
+        )
         self._mod_panel.frame.pack(fill=tk.BOTH, expand=True)
         # Mod 名称由 PIL 画进整张列表图。必须在窗口尺寸稳定后按 Canvas
         # 的真实像素宽度重新渲染；否则固定 1300px 图片经 BILINEAR 缩放后，
         # 文字边缘会发虚。与主页 Mod 管理使用同一套高清重渲染策略。
-        self._mod_panel.on_settle = lambda width, _height: self._render_list(ref_width=width)
-        # 右下角：保存/载入配置集按钮（原来的 header 和"创建存档 Mod"标题
-        # 已删掉，这两个按钮挪到 mod 列表下方靠右）。
+        self._mod_panel.on_settle = lambda width, _height: self._render_list(
+            ref_width=width
+        )
+        # 左下角：保存/载入配置集，与主页 Mod 管理保持一致；创建窗口暂不
+        # 提供 Mod 更新入口，因此右侧继续留空。
         preset_row = BgFrame(self._mod_frame, self.app, bg=theme.CARD_BG)
         preset_row.pack(fill=tk.X, padx=12, pady=(4, 10))
-        ttk.Button(preset_row, text=t("world.creation_save_preset"), command=self._save_creation_preset).pack(side=tk.RIGHT)
-        ttk.Button(preset_row, text=t("world.creation_load_preset"), command=self._open_creation_preset_dialog).pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(
+            preset_row,
+            text=t("world.creation_save_preset"),
+            command=self._save_creation_preset,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            preset_row,
+            text=t("world.creation_load_preset"),
+            command=self._open_creation_preset_dialog,
+        ).pack(side=tk.LEFT, padx=(6, 0))
         self._build_mod_list()
 
     def _reload_template(self, apply_profile_defaults: bool = False):
         try:
-            from dstools.features.local_service.dedicated_server import get_documents_dir
+            from dstools.features.local_service.dedicated_server import (
+                get_documents_dir,
+            )
             from dstools.shared.discovery import find_klei_root
+
             root = find_klei_root()
             if root is None:
                 # 新电脑可能还没有启动过 DST，Klei 根目录尚未生成。创建
@@ -450,19 +551,25 @@ class WorldCreationTab:
                 apply_profile_defaults = True
 
             profile = resolve_world_location_profile(self._enabled_mod_ids())
-            profile_changed = profile.effective_mod_ids != self._world_profile.effective_mod_ids
+            profile_changed = (
+                profile.effective_mod_ids != self._world_profile.effective_mod_ids
+            )
             self._world_profile = profile
             if apply_profile_defaults and profile_changed:
                 for shard in (MASTER_SHARD, CAVES_SHARD):
                     if shard not in self._user_selected_location_shards:
                         self._switch_shard_location(
-                            shard, profile.default_location(shard), render=False,
+                            shard,
+                            profile.default_location(shard),
+                            render=False,
                         )
             for shard in (MASTER_SHARD, CAVES_SHARD):
                 plan = self._plan_for_shard(shard)
                 if plan and plan.location not in profile.available_locations(shard):
                     self._switch_shard_location(
-                        shard, profile.default_location(shard), render=False,
+                        shard,
+                        profile.default_location(shard),
+                        render=False,
                     )
 
             self._mod_settings = get_mod_world_settings(profile.effective_mod_ids)
@@ -487,7 +594,9 @@ class WorldCreationTab:
         else:
             self._extra_plans[shard] = plan
 
-    def _switch_shard_location(self, shard: str, location: str, render: bool = True) -> None:
+    def _switch_shard_location(
+        self, shard: str, location: str, render: bool = True
+    ) -> None:
         if location not in self._available_locations_for_shard(shard):
             raise ValueError(f"{shard} 当前不能选择 {location}")
         current = self._plan_for_shard(shard)
@@ -499,8 +608,14 @@ class WorldCreationTab:
             # 来自真实官方模板；跨槽位选择时复用另一槽位已加载的模板，不能
             # 退回只有 id/location 的残缺计划。
             other_plan = next(
-                (draft for (draft_shard, draft_location), draft in self._location_drafts.items()
-                 if draft_shard != shard and draft_location == location),
+                (
+                    draft
+                    for (
+                        draft_shard,
+                        draft_location,
+                    ), draft in self._location_drafts.items()
+                    if draft_shard != shard and draft_location == location
+                ),
                 None,
             )
             plan = copy.deepcopy(other_plan) if other_plan is not None else None
@@ -518,11 +633,14 @@ class WorldCreationTab:
         shard = self.shard_var.get() or MASTER_SHARD
         locations = self._available_locations_for_shard(shard)
         self._location_display_to_id = {
-            get_location_definition(location).name_zh: location for location in locations
+            get_location_definition(location).name_zh: location
+            for location in locations
         }
         self.location_combo["values"] = tuple(self._location_display_to_id)
         plan = self._plan_for_shard(shard)
-        location = plan.location if plan else self._world_profile.default_location(shard)
+        location = (
+            plan.location if plan else self._world_profile.default_location(shard)
+        )
         self.location_var.set(get_location_definition(location).name_zh)
 
     def _enabled_mod_ids(self):
@@ -532,13 +650,41 @@ class WorldCreationTab:
         """扫描并渲染已安装 Mod，使用主页 Mod 管理的同一套图形列表。"""
         self._scan_installed_mods()
 
-    def _scan_installed_mods(self):
+    def _scan_installed_mods(self, force=False):
         """后台读取本机 Mod 元数据；创建页不读取或修改主页当前存档。"""
         if self._mod_scan_running:
             return
         platform, client_mods_dir = self._resolve_mod_folder_args(None)
+        self._mod_scan_platform = platform
+        self._mod_scan_client_mods_dir = client_mods_dir
         self._mod_scan_generation += 1
         generation = self._mod_scan_generation
+        if force:
+            self.app.mod_catalog.invalidate(platform)
+        else:
+            snapshot = self.app.mod_catalog.get(platform, client_mods_dir)
+            if snapshot is not None:
+                records = [
+                    (
+                        mod_id,
+                        snapshot.infos.get(mod_id),
+                        snapshot.icons.get(mod_id),
+                        snapshot.paths.get(mod_id),
+                    )
+                    for mod_id in snapshot.mod_ids
+                ]
+                self._apply_mod_scan_result(generation, records, {}, None)
+                threading.Thread(
+                    target=self._scan_world_icons_worker,
+                    args=(
+                        generation,
+                        tuple(snapshot.mod_ids),
+                        platform,
+                        client_mods_dir,
+                    ),
+                    daemon=True,
+                ).start()
+                return
         self._mod_scan_running = True
         if self._mod_scan_status is not None:
             self._mod_scan_status.set("正在后台扫描 Mod…")
@@ -577,13 +723,27 @@ class WorldCreationTab:
                     except Exception:
                         pass
                 records.append((mod_id, info, icon, folder))
+            self.app.mod_catalog.publish(
+                platform,
+                {mod_id: info for mod_id, info, _icon, _folder in records},
+                {mod_id: folder for mod_id, _info, _icon, folder in records if folder},
+                {
+                    mod_id: icon
+                    for mod_id, _info, icon, _folder in records
+                    if icon is not None
+                },
+                client_mods_dir,
+            )
             # 世界设置图标跟普通 Mod 列表图标一样在扫描线程解析，避免
             # 第一次进入“世界设置”时同步调用 ktech.exe 卡住界面。
             from dstools.features.world.mod_icons import resolve_mod_setting_icons
+
             installed_settings = get_mod_world_settings(ids)
             try:
                 world_icons = resolve_mod_setting_icons(
-                    installed_settings, platform, client_mods_dir,
+                    installed_settings,
+                    platform,
+                    client_mods_dir,
                 )
             except Exception:
                 # 单个 Mod 图集损坏不能拖垮整个 Mod 列表；渲染层会对
@@ -593,12 +753,34 @@ class WorldCreationTab:
         except Exception as exc:
             self._post_mod_scan_result(generation, [], {}, exc)
 
+    def _scan_world_icons_worker(self, generation, mod_ids, platform, client_mods_dir):
+        """共享目录命中后只补世界设置图标，不重复解析 Mod 元数据。"""
+        try:
+            from dstools.features.world.mod_icons import resolve_mod_setting_icons
+
+            settings = get_mod_world_settings(mod_ids)
+            icons = resolve_mod_setting_icons(settings, platform, client_mods_dir)
+        except Exception:
+            icons = {}
+        try:
+            self.frame.after(0, self._apply_world_icons, generation, icons)
+        except (RuntimeError, tk.TclError):
+            return
+
+    def _apply_world_icons(self, generation, icons):
+        if generation != self._mod_scan_generation or not self.frame.winfo_exists():
+            return
+        self._mod_world_icons = icons
+
     def _post_mod_scan_result(self, generation, records, world_icons, error):
         try:
             self.frame.after(
                 0,
                 lambda: self._apply_mod_scan_result(
-                    generation, records, world_icons, error,
+                    generation,
+                    records,
+                    world_icons,
+                    error,
                 ),
             )
         except (RuntimeError, tk.TclError):
@@ -620,37 +802,44 @@ class WorldCreationTab:
 
         self._mod_data.clear()
         self._mod_infos.clear()
+        self._mod_paths.clear()
         self._icon_imgs.clear()
         self._icon_thumb_cache.clear()
         self._mod_world_icons = world_icons
         version_targets = []
         for mod_id, info, icon, folder in records:
             self._mod_infos[mod_id] = info
+            if folder is not None:
+                self._mod_paths[mod_id] = folder
             configured = self._mod_overrides.get(mod_id, {})
             self._mod_data[mod_id] = ModEntry(
                 workshop_id=mod_id,
                 enabled=mod_id in self._selected_mod_ids,
-                configuration_options=copy.deepcopy(configured.get("configuration_options", {})),
+                configuration_options=copy.deepcopy(
+                    configured.get("configuration_options", {})
+                ),
                 name=info.name if info else "",
                 description=info.description if info else "",
             )
             if icon is not None:
                 self._icon_imgs[mod_id] = icon
-            if info is not None and folder is not None and info.version_status == "pending":
+            if (
+                info is not None
+                and folder is not None
+                and info.version_status == "pending"
+            ):
                 version_targets.append((mod_id, folder, info.workshop_id))
         self._ensure_island_adventures_dependency(show_dialog=False)
-        # 排序只在这里（真正扫描完数据时）做一次，跟「Mod 管理」主页签一致：
-        # 点开关（_toggle_mod）不再重新排序，避免那一行立刻跳到顶部/底部。
-        def _name_of(wid):
-            info = self._mod_infos.get(wid)
-            raw = (info.name if info else "") or wid
-            return strip_unrenderable(raw) or raw
-        ordered_ids = sorted(self._mod_data.keys(), key=functools.cmp_to_key(
-            lambda a, b: _mod_name_cmp(_name_of(a), _name_of(b))))
-        ordered_ids.sort(key=lambda wid: not self._mod_data[wid].enabled)
-        self._mod_data = {wid: self._mod_data[wid] for wid in ordered_ids}
+        # 启用状态仍来自创建向导自己的选择集，仅复用名称和排序规则。
+        self._mod_data = sort_mod_data(self._mod_data, self._mod_infos)
         if self._mod_scan_status is not None:
-            self._mod_scan_status.set(f"已发现 {len(records)} 个 Mod")
+            regular, custom = split_installed_mod_counts(
+                (mod_id for mod_id, _info, _icon, _folder in records),
+                self._mod_scan_platform,
+            )
+            self._mod_scan_status.set(
+                t("mod.scan_found_breakdown", regular=regular, custom=custom)
+            )
         self._render_list()
         if version_targets:
             threading.Thread(
@@ -663,10 +852,14 @@ class WorldCreationTab:
     def _load_versions_worker(self, generation, targets):
         """复用主页可信版本解析，并按批次交回创建向导的 Tk 主线程。"""
         batch = {}
-        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="dstcamp-create-version") as pool:
+        with ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="dstcamp-create-version"
+        ) as pool:
             from dstools.features.mod.local_version import resolve_local_version_target
-            futures = [pool.submit(resolve_local_version_target, target)
-                       for target in targets]
+
+            futures = [
+                pool.submit(resolve_local_version_target, target) for target in targets
+            ]
             for future in as_completed(futures):
                 try:
                     mod_id, normalized = future.result()
@@ -690,10 +883,29 @@ class WorldCreationTab:
         if generation != self._mod_scan_generation or not self.frame.winfo_exists():
             return
         changed = False
+        icon_targets = []
         for mod_id, result in results.items():
             info = self._mod_infos.get(mod_id)
             if info is None:
                 continue
+            if result.name_status == "confirmed":
+                info.name = result.name
+            icon_changed = False
+            if result.icon_status == "confirmed" and info.icon != result.icon:
+                info.icon = result.icon
+                icon_changed = True
+            if (
+                result.icon_atlas_status == "confirmed"
+                and info.icon_atlas != result.icon_atlas
+            ):
+                info.icon_atlas = result.icon_atlas
+                icon_changed = True
+            if (
+                icon_changed
+                and mod_id not in self._icon_imgs
+                and mod_id in self._mod_paths
+            ):
+                icon_targets.append((mod_id, info, self._mod_paths[mod_id]))
             info.version = result.version
             info.version_status = result.status
             info.version_source = result.source
@@ -701,45 +913,101 @@ class WorldCreationTab:
             info.version_compatible_status = result.compatible_status
             changed = True
         if changed:
+            self.app.mod_catalog.publish(
+                self._mod_scan_platform,
+                self._mod_infos,
+                self._mod_paths,
+                self._icon_imgs,
+                self._mod_scan_client_mods_dir,
+            )
+            self._schedule_mod_async_render(generation)
+        if icon_targets:
+            threading.Thread(
+                target=self._load_recovered_icons_worker,
+                args=(generation, icon_targets),
+                name="dstcamp-creation-recovered-icons",
+                daemon=True,
+            ).start()
+
+    def _load_recovered_icons_worker(self, generation, targets):
+        icons = {}
+        for mod_id, info, folder in targets:
+            try:
+                icon_path = get_mod_icon_path(info, folder, self._mod_scan_platform)
+                if icon_path:
+                    icons[mod_id] = Image.open(icon_path).convert("RGBA")
+            except Exception:
+                continue
+        if not icons:
+            return
+        try:
+            self.frame.after(0, self._apply_recovered_icons, generation, icons)
+        except (RuntimeError, tk.TclError):
+            return
+
+    def _apply_recovered_icons(self, generation, icons):
+        if generation != self._mod_scan_generation or not self.frame.winfo_exists():
+            return
+        self._icon_imgs.update(icons)
+        self.app.mod_catalog.update_icons(
+            self._mod_scan_platform, icons, self._mod_scan_client_mods_dir
+        )
+        changed_ids = set(icons)
+        self._icon_thumb_cache = {
+            key: value
+            for key, value in self._icon_thumb_cache.items()
+            if key[0] not in changed_ids
+        }
+        self._schedule_mod_async_render(generation)
+
+    def _schedule_mod_async_render(self, generation, delay_ms=250):
+        if generation != self._mod_scan_generation or not self.frame.winfo_exists():
+            return
+        if self._mod_async_render_after_id is not None:
+            try:
+                self.frame.after_cancel(self._mod_async_render_after_id)
+            except tk.TclError:
+                pass
+        self._mod_async_render_after_id = self.frame.after(
+            delay_ms, self._flush_mod_async_render, generation
+        )
+
+    def _flush_mod_async_render(self, generation):
+        self._mod_async_render_after_id = None
+        if generation == self._mod_scan_generation and self.frame.winfo_exists():
             self._render_list()
 
     def _render_list(self, ref_width=None):
         if self._mod_panel is None:
             return
         from dstools.features.mod.render import REF_WIDTH
+
         if ref_width is None:
             ref_width = self._mod_panel.current_width(REF_WIDTH)
-        query = (self._mod_filter_var.get() if self._mod_filter_var is not None else "").strip().casefold()
+        query = self._mod_filter_var.get() if self._mod_filter_var is not None else ""
         show = self._mod_show_var.get() if self._mod_show_var is not None else "all"
-        rows = []
-        for mod_id, mod in self._mod_data.items():
-            info = self._mod_infos.get(mod_id)
-            name = _localize_mod_name(mod_id, info.name if info else mod.name)
-            if show == "enabled" and not mod.enabled:
-                continue
-            if show == "disabled" and mod.enabled:
-                continue
-            # 与主页保持一致：搜索只匹配 Mod 名称和 workshop ID，描述文本
-            # 不参与匹配，避免“相关描述”把用户未查找的 Mod 过滤进来。
-            if query and query not in (name or "").casefold() and query not in mod_id.casefold():
-                continue
-            rows.append({
-                "workshop_id": mod_id,
-                "name": name,
-                "version_text": _version_display(info),
-                "enabled": bool(mod.enabled),
-                "has_config": bool(info and (info.config_options or info.unsupported_schema)),
-                "has_link": mod_id.removeprefix("workshop-").isdigit(),
-            })
+        rows = build_mod_rows(
+            self._mod_data,
+            self._mod_infos,
+            query,
+            show,
+            getattr(self, "_mod_scan_platform", Platform.STEAM),
+            show_local=False,
+            separate_client_mods=True,
+        )
         if not rows:
             from PIL import Image as _Image, ImageDraw as _ImageDraw
             from dstools.shared.gui.fonts import get_font
+
             width = ref_width
             img = _Image.new("RGB", (width, 60), theme.CARD_BG)
             if query or show != "all":
                 _ImageDraw.Draw(img).text(
-                    (width / 2, 30), t("mod.no_filtered"),
-                    font=get_font(16), fill=theme.TEXT_MUTED, anchor="mm",
+                    (width / 2, 30),
+                    t("mod.no_filtered"),
+                    font=get_font(16),
+                    fill=theme.TEXT_MUTED,
+                    anchor="mm",
                 )
             self._mod_panel.set_image(img, [], keep_scroll=True)
             return
@@ -797,10 +1065,16 @@ class WorldCreationTab:
     def _save_creation_preset(self):
         """打开主页同款配置集保存窗口，配置仍只保存到用户配置集。"""
         if self._mod_scan_running:
-            dlg.show_info(self.frame.winfo_toplevel(), "保存为配置集", "Mod 仍在扫描，请稍候再保存。")
+            dlg.show_info(
+                self.frame.winfo_toplevel(),
+                "保存为配置集",
+                "Mod 仍在扫描，请稍候再保存。",
+            )
             return
         if not self._mod_data:
-            dlg.show_info(self.frame.winfo_toplevel(), "保存为配置集", "当前没有可保存的 Mod。")
+            dlg.show_info(
+                self.frame.winfo_toplevel(), "保存为配置集", "当前没有可保存的 Mod。"
+            )
             return
         platform, _ = self._resolve_mod_folder_args(None)
         self._preset_source_platform = platform.value
@@ -808,7 +1082,11 @@ class WorldCreationTab:
 
     def _open_creation_preset_dialog(self):
         if self._mod_scan_running:
-            dlg.show_info(self.frame.winfo_toplevel(), "载入配置集", "Mod 仍在扫描，请稍候再载入。")
+            dlg.show_info(
+                self.frame.winfo_toplevel(),
+                "载入配置集",
+                "Mod 仍在扫描，请稍候再载入。",
+            )
             return
         _CreationPresetDialog(self)
 
@@ -816,13 +1094,16 @@ class WorldCreationTab:
         """只把配置集写入创建会话内存，不写主页存档或磁盘存档。"""
         self._mod_overrides = copy.deepcopy(preset.mods)
         self._selected_mod_ids = {
-            wid for wid, saved in preset.mods.items()
+            wid
+            for wid, saved in preset.mods.items()
             if isinstance(saved, dict) and bool(saved.get("enabled", True))
         }
         for mod_id, mod in self._mod_data.items():
             saved = preset.mods.get(mod_id, {})
             mod.enabled = bool(saved.get("enabled", False)) if saved else False
-            mod.configuration_options = copy.deepcopy(saved.get("configuration_options", {})) if saved else {}
+            mod.configuration_options = (
+                copy.deepcopy(saved.get("configuration_options", {})) if saved else {}
+            )
         self._ensure_island_adventures_dependency(show_dialog=True)
         if "world" in self._initialized_pages:
             self._reload_template(apply_profile_defaults=True)
@@ -906,9 +1187,13 @@ class WorldCreationTab:
             return
         platform, _ = self._resolve_mod_folder_args(None)
         if platform == Platform.WEGAME:
-            webbrowser.open(f"https://www.wegame.com.cn/pc_game/assistant.html#/2000004/newMod/{numeric_id}")
+            webbrowser.open(
+                f"https://www.wegame.com.cn/pc_game/assistant.html#/2000004/newMod/{numeric_id}"
+            )
         else:
-            webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
+            webbrowser.open(
+                f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}"
+            )
 
     def _sync_mod_overrides(self):
         self._mod_overrides = {}
@@ -917,7 +1202,9 @@ class WorldCreationTab:
                 continue
             entry = {"enabled": True}
             if mod.configuration_options:
-                entry["configuration_options"] = copy.deepcopy(mod.configuration_options)
+                entry["configuration_options"] = copy.deepcopy(
+                    mod.configuration_options
+                )
             self._mod_overrides[mod_id] = entry
 
     # ModConfigDialog is shared with the home tab.  These small adapter
@@ -933,7 +1220,11 @@ class WorldCreationTab:
         return None
 
     def _resolve_mod_folder_args(self, _cluster):
-        platform = self.app._get_platform_filter() if hasattr(self.app, "_get_platform_filter") else Platform.STEAM
+        platform = (
+            self.app._get_platform_filter()
+            if hasattr(self.app, "_get_platform_filter")
+            else Platform.STEAM
+        )
         return platform, resolve_wegame_client_mods_dir(platform)
 
     def _render(self):
@@ -943,14 +1234,19 @@ class WorldCreationTab:
         if not plan:
             return
         preset = WorldPreset(
-            preset_id=plan.preset_id, name=plan.name,
-            description=plan.description, location=plan.location,
-            overrides=[WorldOverride(key, value) for key, value in plan.overrides.items()],
+            preset_id=plan.preset_id,
+            name=plan.name,
+            description=plan.description,
+            location=plan.location,
+            overrides=[
+                WorldOverride(key, value) for key, value in plan.overrides.items()
+            ],
         )
         from dstools.features.world.mod_settings import (
             filter_mod_world_settings,
             get_mod_categories,
         )
+
         self._active_mod_settings = filter_mod_world_settings(
             self._mod_settings,
             preset.location,
@@ -963,16 +1259,40 @@ class WorldCreationTab:
             mod_categories,
             is_master_world=self.shard_var.get() == MASTER_SHARD,
         )
-        self._rules_by_cat, self._rules_cats = view.rules_by_category, view.rule_categories
-        self._gen_by_cat, self._gen_cats = view.generation_by_category, view.generation_categories
+        self._rules_by_cat, self._rules_cats = (
+            view.rules_by_category,
+            view.rule_categories,
+        )
+        self._gen_by_cat, self._gen_cats = (
+            view.generation_by_category,
+            view.generation_categories,
+        )
         self._world_title_var.set(f"{plan.name} ({plan.preset_id})")
         self._world_desc_var.set(plan.description or "")
         for panel, cats, rows, callback, is_rule in (
-                (self._rules_panel, self._rules_cats, self._rules_by_cat, self._on_click, True),
-                (self._gen_panel, self._gen_cats, self._gen_by_cat, self._on_gen_click, False)):
+            (
+                self._rules_panel,
+                self._rules_cats,
+                self._rules_by_cat,
+                self._on_click,
+                True,
+            ),
+            (
+                self._gen_panel,
+                self._gen_cats,
+                self._gen_by_cat,
+                self._on_gen_click,
+                False,
+            ),
+        ):
             img, hits = render_world_panel(
-                cats, rows, CATEGORY_COLORS, editable=True, on_click=callback,
-                ref_width=REF_WIDTH, location=preset.location,
+                cats,
+                rows,
+                CATEGORY_COLORS,
+                editable=True,
+                on_click=callback,
+                ref_width=REF_WIDTH,
+                location=preset.location,
                 mod_settings=self._active_mod_settings,
                 mod_icons=self._mod_world_icons,
                 is_rule=is_rule,
@@ -987,8 +1307,11 @@ class WorldCreationTab:
 
     def _change_value(self, key, delta, is_rule):
         preset = self._active_preset()
-        if not preset: return
-        values = get_value_set(key, self._active_mod_settings, location=preset.location, is_rule=is_rule)
+        if not preset:
+            return
+        values = get_value_set(
+            key, self._active_mod_settings, location=preset.location, is_rule=is_rule
+        )
         current = preset.overrides.get(key, "default")
         idx = values.index(current) if current in values else 0
         new = values[max(0, min(len(values) - 1, idx + delta))]
@@ -998,7 +1321,9 @@ class WorldCreationTab:
     def _active_preset(self):
         return self._plan_for_shard(self.shard_var.get())
 
-    def _prepare_unique_creation_ports(self, name, destination, cluster_ini, shard_configs) -> bool:
+    def _prepare_unique_creation_ports(
+        self, name, destination, cluster_ini, shard_configs
+    ) -> bool:
         """新存档端口与现有配置冲突时，经确认后分配一整组新端口。"""
         extra_plans = getattr(self, "_extra_plans", {})
         shard_names = ("Master", "Caves", *extra_plans)
@@ -1006,14 +1331,23 @@ class WorldCreationTab:
             shard_configs.setdefault(
                 shard_name,
                 default_shard_config(
-                    shard_name == "Master", shard_name, max(1, shard_index),
+                    shard_name == "Master",
+                    shard_name,
+                    max(1, shard_index),
                 ),
             )
         planned = Cluster(
-            name, destination, source=SaveSource.SERVER, platform=Platform.STEAM,
+            name,
+            destination,
+            source=SaveSource.SERVER,
+            platform=Platform.STEAM,
             config=cluster_ini,
             shards=[
-                Shard(shard_name, destination / shard_name, config=shard_configs[shard_name])
+                Shard(
+                    shard_name,
+                    destination / shard_name,
+                    config=shard_configs[shard_name],
+                )
                 for shard_name in shard_names
             ],
         )
@@ -1025,13 +1359,17 @@ class WorldCreationTab:
 
         existing_claims = []
         for cluster in self.app.env.clusters:
-            if cluster.source != SaveSource.SERVER or cluster.platform != Platform.STEAM:
+            if (
+                cluster.source != SaveSource.SERVER
+                or cluster.platform != Platform.STEAM
+            ):
                 continue
             claims, _ = collect_cluster_port_claims(cluster)
             existing_claims.extend(claims)
         planned_keys = {claim.owner_key for claim in planned_claims}
         conflicts = [
-            conflict for conflict in find_port_conflicts(existing_claims + planned_claims)
+            conflict
+            for conflict in find_port_conflicts(existing_claims + planned_claims)
             if any(claim.owner_key in planned_keys for claim in conflict.claims)
         ]
         if not conflicts:
@@ -1060,7 +1398,11 @@ class WorldCreationTab:
         used = {claim.port for claim in existing_claims}
         scan = scan_udp_ports()
         if scan.ok:
-            used.update(port for ports_for_pid in scan.ports_by_pid.values() for port in ports_for_pid)
+            used.update(
+                port
+                for ports_for_pid in scan.ports_by_pid.values()
+                for port in ports_for_pid
+            )
         master_port, values = allocate_cluster_port_values(shard_names, used)
         cluster_ini.shard["master_port"] = master_port
         for shard_name, ports_for_shard in values.items():
@@ -1082,8 +1424,13 @@ class WorldCreationTab:
             return
         # 兼容尚未完成初始化的旧调用方/测试探针；正常流程即使没有 Klei
         # 目录也会在 _reload_template() 中设置候选服务器根路径。
-        if not getattr(self, "_server_root", None) and getattr(self, "_template_root", None) is None:
-            dlg.show_error(self.frame.winfo_toplevel(), "创建存档", "未找到默认世界模板")
+        if (
+            not getattr(self, "_server_root", None)
+            and getattr(self, "_template_root", None) is None
+        ):
+            dlg.show_error(
+                self.frame.winfo_toplevel(), "创建存档", "未找到默认世界模板"
+            )
             return
         try:
             name = self.name_var.get().strip()
@@ -1092,10 +1439,16 @@ class WorldCreationTab:
                 raise FileNotFoundError("未找到服务器存档目录")
             name_error = validate_cluster_folder_name(name)
             if name_error == "empty":
-                dlg.show_error(self.frame.winfo_toplevel(), "创建存档", "存档名称不能为空")
+                dlg.show_error(
+                    self.frame.winfo_toplevel(), "创建存档", "存档名称不能为空"
+                )
                 return
             if name_error == "invalid_chars":
-                dlg.show_error(self.frame.winfo_toplevel(), "创建存档", "存档名称只能包含英文、数字和下划线")
+                dlg.show_error(
+                    self.frame.winfo_toplevel(),
+                    "创建存档",
+                    "存档名称只能包含英文、数字和下划线",
+                )
                 return
             destination = root / name
             if destination.exists():
@@ -1106,13 +1459,18 @@ class WorldCreationTab:
                 )
                 return
             self._sync_mod_overrides()
-            server_settings = self._server_config.read_creation_settings() if self._server_config else {}
+            server_settings = (
+                self._server_config.read_creation_settings()
+                if self._server_config
+                else {}
+            )
             cluster_ini = copy.deepcopy(
                 server_settings.get("cluster_ini") or default_cluster_config(name)
             )
             shard_configs = copy.deepcopy(server_settings.get("shard_configs", {}))
             if not self._prepare_unique_creation_ports(
-                    name, destination, cluster_ini, shard_configs):
+                name, destination, cluster_ini, shard_configs
+            ):
                 return
             out = create_world(
                 WorldCreationPlan(
@@ -1141,36 +1499,45 @@ class WorldCreationTab:
         except Exception as exc:
             dlg.show_error(self.frame.winfo_toplevel(), "创建存档失败", str(exc))
 
-    def refresh(self): pass
-    def on_cluster_changed(self, *_args): pass
+    def refresh(self):
+        pass
+
+    def on_cluster_changed(self, *_args):
+        pass
 
     def retheme(self):
         """主题切换时调用——向导内所有 BgFrame 的 bg 是构造时焊死的，需要
         递归重刷（BgFrame.apply_theme 不递归）。无参 apply_theme 会按构造
         时记录的主题色键取新值（见 bg_frame.py 的 _bg_key 机制）。"""
+
         def _retheme_recursive(widget):
             if isinstance(widget, BgFrame):
                 widget.apply_theme()
             for child in widget.winfo_children():
                 _retheme_recursive(child)
+
         _retheme_recursive(self.frame)
         self._sub_tab_bar.apply_theme()
 
     def refresh_language(self):
         """语言切换时调用——更新构造时建一次的药丸/按钮文字。持久文案已改
         走 t()，这里逐个重取；懒建面板里的文字在首次切入时用新语言生成。"""
-        self._sub_tab_bar.relabel({
-            "server": t("world.creation_server_tab"),
-            "world": t("world.creation_world_tab"),
-            "mod": t("world.creation_mod_tab"),
-        })
+        self._sub_tab_bar.relabel(
+            {
+                "server": t("world.creation_server_tab"),
+                "world": t("world.creation_world_tab"),
+                "mod": t("world.creation_mod_tab"),
+            }
+        )
         self._name_label.redraw()
         self._create_btn.configure(text=t("world.creation_create_btn"))
         if getattr(self, "_world_sub_tab_bar", None) is not None:
-            self._world_sub_tab_bar.relabel({
-                "rules": t("world.creation_rules_tab"),
-                "generation": t("world.creation_generation_tab"),
-            })
+            self._world_sub_tab_bar.relabel(
+                {
+                    "rules": t("world.creation_rules_tab"),
+                    "generation": t("world.creation_generation_tab"),
+                }
+            )
         if self._mod_scan_btn is not None:
             self._mod_scan_btn.configure(text=t("world.creation_rescan"))
 
@@ -1203,12 +1570,18 @@ class _CreationPresetDialog:
 
         body = BgFrame(self.win, self.tab.app, bg=theme.BG_SOFT)
         body.pack(fill=tk.BOTH, expand=True, padx=20, pady=16)
-        ttk.Label(body, text="选择要载入当前创建会话的 Mod 配置集：").pack(anchor=tk.W, pady=(0, 8))
+        ttk.Label(body, text="选择要载入当前创建会话的 Mod 配置集：").pack(
+            anchor=tk.W, pady=(0, 8)
+        )
         self._list = tk.Listbox(
-            body, height=min(12, max(4, len(self._presets))),
-            font=theme.font_tuple(theme.FONT_SIZE_SM), bg=theme.CARD_BG,
-            fg=theme.TEXT, selectbackground=theme.PRIMARY,
-            selectforeground=theme.CARD_BG, relief=tk.FLAT,
+            body,
+            height=min(12, max(4, len(self._presets))),
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            bg=theme.CARD_BG,
+            fg=theme.TEXT,
+            selectbackground=theme.PRIMARY,
+            selectforeground=theme.CARD_BG,
+            relief=tk.FLAT,
         )
         self._list.pack(fill=tk.BOTH, expand=True)
         for item in self._presets:
@@ -1222,7 +1595,9 @@ class _CreationPresetDialog:
         buttons.pack(fill=tk.X, pady=(12, 0))
         ttk.Button(buttons, text="删除", command=self._delete).pack(side=tk.LEFT)
         ttk.Button(buttons, text="取消", command=self.win.destroy).pack(side=tk.RIGHT)
-        ttk.Button(buttons, text="载入", command=self._apply).pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(buttons, text="载入", command=self._apply).pack(
+            side=tk.RIGHT, padx=(0, 6)
+        )
         self.win.bind("<Escape>", lambda _e: self.win.destroy())
         self.win.protocol("WM_DELETE_WINDOW", self.win.destroy)
         self.win.update_idletasks()
@@ -1249,7 +1624,9 @@ class _CreationPresetDialog:
         preset = self._selected()
         if preset is None:
             return
-        if not dlg.ask_yes_no(self.win, "删除配置集", f"确定删除配置集“{preset.name}”吗？"):
+        if not dlg.ask_yes_no(
+            self.win, "删除配置集", f"确定删除配置集“{preset.name}”吗？"
+        ):
             return
         presets.delete_preset(preset.name)
         self._presets = presets.list_presets()

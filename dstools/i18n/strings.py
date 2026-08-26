@@ -11,7 +11,6 @@ STRINGS = {
         "app.install_vcredist": "安装运行库",
         "app.install_vcredist_hint": "Mod 图标加载所需",
         "app.update_available": "发现新版本 v{version}，点击查看 →",
-
         # 菜单
         "menu.file": "文件",
         "menu.lang_zh": "中文",
@@ -19,7 +18,6 @@ STRINGS = {
         "menu.theme": "主题",
         "menu.settings": "设置",
         "menu.about": "关于",
-
         # Themes -- switching takes effect immediately, no restart needed
         "theme.gray": "灰色",
         "theme.custom_bg_settings": "背景图设置…",
@@ -28,7 +26,6 @@ STRINGS = {
         "theme.twilight": "暮色蓝",
         "theme.campfire": "篝火橙",
         "theme.sakura": "樱花粉",
-
         # 设置菜单
         "settings.title": "设置",
         "settings.language_label": "语言",
@@ -46,7 +43,6 @@ STRINGS = {
         "settings.font_style_cute": "荆南麦圆体",
         "settings.font_style_pixel": "缝合像素字体",
         "settings.font_preview_text": "字体预览 Aa 123 饥荒联机版本地服务器管理",
-
         # 关于
         "about.message": "DSTCamp {version}\n\nDon't Starve Together 本地服务器管理工具\n\n作者：橙之刃\n交流群：463227692",
         "about.repo_label": "项目地址：",
@@ -62,14 +58,12 @@ STRINGS = {
         "about.manual_update_quark": "夸克网盘",
         "about.manual_update_lanzou": "蓝奏云（提取码：45w9）",
         "about.manual_update_code_copied": "提取码已复制到剪贴板",
-
         # 页签
         "tab.local": "  本地服务器  ",
         "tab.saves": "  存档信息  ",
         "tab.mods": "  Mod管理  ",
         "tab.server": "  服务器配置  ",
         "tab.sakura": "  内网穿透  ",
-
         # 存档信息页签
         "save.cluster": "服务器:",
         "save.shard": "世界:",
@@ -104,7 +98,7 @@ STRINGS = {
         "save.backup_policy_title": "备份策略",
         "save.backup_auto_enabled_label": "启用自动备份：",
         "save.backup_auto_enabled_hint": "关闭后服务器停止/运行期间都不会自动备份，"
-            "但「立即备份」按钮和恢复前的保险备份不受影响。",
+        "但「立即备份」按钮和恢复前的保险备份不受影响。",
         "save.backup_retention_label": "备份保留份数：",
         "save.backup_retention_hint": "超过这个数量时自动删除最旧的备份，范围 5~99。",
         "save.backup_interval_label": "自动备份间隔（分钟）：",
@@ -113,7 +107,6 @@ STRINGS = {
         "save.backup_retention_range_error": "备份保留份数需在 5~99 之间。",
         "save.backup_interval_range_error": "自动备份间隔需在 2~30 分钟之间。",
         "save.storage_location": "存档位置",
-
         # Per-player character status (in the selected session's detail area)
         "save.players_section": "每个玩家角色状态",
         "save.no_players": "该存档暂无玩家角色数据",
@@ -127,7 +120,6 @@ STRINGS = {
         "save.stat_hunger": "饥饿",
         "save.stat_temperature": "体温",
         "save.stat_age": "存活时长",
-
         # Mod 管理页签
         "mod.cluster": "服务器:",
         "mod.shard": "世界:",
@@ -135,28 +127,51 @@ STRINGS = {
         "mod.show_all": "全部",
         "mod.show_enabled": "已启用",
         "mod.show_disabled": "已禁用",
+        "mod.show_custom": "自定义",
+        "mod.scan_found_breakdown": "已发现{regular}个模组，{custom}个自定义模组",
         "mod.show_local": "查看客户端模组",
         "mod.show_local_hover": "查看已订阅的本地mod",
         "mod.back_to_list": "返回Mod列表",
         "mod.reload_full": "重新扫描",
         "mod.reload_full_hover": "重新扫描已订阅的所有mod",
         "mod.workshop_update_btn": "更新 Mod",
-        "mod.workshop_update_hover": "通过 Steam 更新已发现的 Workshop Mod，不修改存档配置",
         "mod.workshop_update_empty": "当前没有可更新的 Workshop Mod。",
-        "mod.workshop_update_running": "正在更新 Workshop Mod（{current}/{total}）…",
-        "mod.workshop_update_done": "Workshop 检查完成：实际更新 {updated} 个，已是最新 {up_to_date} 个，失败 {failed} 个。",
+        "mod.workshop_update_running": "更新mod({current}/{total})...",
+        "mod.workshop_update_done": "更新完成：更新 {updated}，最新 {up_to_date}，失败 {failed}",
         "mod.update_title": "更新 Mod",
         "mod.update_filter_current": "当前存档",
         "mod.update_select_all": "全选",
         "mod.update_deselect_all": "取消全选",
         "mod.update_selected_count": "已选 {selected}/{total} 个 Mod",
         "mod.update_selected_btn": "更新所选 Mod",
+        "mod.update_one_btn": "更新",
+        "mod.update_action": "操作",
+        "mod.update_confirm_title": "确认更新 Mod",
+        "mod.update_confirm_message": "确定检查并更新所选的 {count} 个 Mod 吗？",
+        "mod.update_log_title": "Mod 更新日志",
+        "mod.update_log_start": "开始检查 {count} 个 Mod。",
+        "mod.update_log_item_start": "[{current}/{total}] {name}：开始检查",
+        "mod.update_log_item_current": "[{current}/{total}] {name}：已是最新",
+        "mod.update_log_item_updated": "[{current}/{total}] {name}：更新完成",
+        "mod.update_log_item_repaired": "[{current}/{total}] {name}：修复完成",
+        "mod.update_log_legacy_deployed": "    V1 Mod 已校验并部署到：{targets}",
+        "mod.update_log_item_failed": "[{current}/{total}] {name}：失败 - {error}",
+        "mod.update_log_summary": "完成：更新 {updated} 个，已是最新 {up_to_date} 个，失败 {failed} 个。",
         "mod.update_none_selected": "请先勾选要更新的 Mod。",
         "mod.update_current_version": "当前版本",
         "mod.update_latest_version": "状态",
+        "mod.update_workshop_column": "创意工坊",
         "mod.update_refresh_states": "刷新",
+        "mod.update_filter_needs_update": "待更新",
+        "mod.update_pending_hint": "{count} 个 Mod 待更新",
+        "mod.update_all_current_hint": "所有 Mod 都是最新",
+        "mod.update_status_checking_hint": "正在检查 Mod 更新…",
+        "mod.update_status_unavailable_hint": "Mod 更新状态不可用",
+        "mod.update_steam_unavailable": "无法连接 Steam，暂时不能检测或更新 Mod。请启动 Steam 客户端并登录；如果已经启动，请确保 Steam 与 DSTCamp 使用相同权限运行，然后点击“刷新”重试。",
+        "mod.update_status_check_failed": "Mod 状态检测失败：{error}\n请检查 Steam 客户端和网络状态，然后点击“刷新”重试。",
         "mod.update_version_unreported": "未声明",
         "mod.version_value": "版本 {version}",
+        "mod.update_version_with_remote": "{local} · 远程 {remote}",
         "mod.version_pending": "版本检查中…",
         "mod.version_undeclared": "未声明版本",
         "mod.version_unresolved": "版本无法确认",
@@ -166,7 +181,9 @@ STRINGS = {
         "mod.update_latest_available": "有更新",
         "mod.update_latest_not_installed": "未安装",
         "mod.update_latest_missing": "文件缺失",
-        "mod.update_latest_corrupt": "文件损坏",
+        "mod.update_latest_source_unavailable": "源端不可用",
+        "mod.update_latest_integrity_unconfirmed": "完整性未确认",
+        "mod.update_latest_local_files": "仅有本地文件",
         "mod.update_latest_downloading": "下载中",
         "mod.update_latest_pending": "等待下载",
         "mod.no_filtered": "未过滤出mod",
@@ -191,7 +208,6 @@ STRINGS = {
         "mod.recommend_title": "订阅推荐模组",
         "mod.recommend_subscribed": "已订阅",
         "mod.recommend_subscribe": "订阅",
-
         # 服务器配置页签
         "cluster.cluster": "服务器:",
         "cluster.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再管理服务器配置。",
@@ -214,13 +230,11 @@ STRINGS = {
         "cluster.server_port_sakura_locked": "该端口已被樱花映射接管，不能手动修改（改了会跟隧道对不上）。如需更改，请先去「内网穿透」页签关闭映射。",
         "cluster.server_port_selfhost_locked": "该端口已被自建frps接管，不能手动修改（改了会跟隧道对不上）。如需更改，请先去「内网穿透」页签关闭映射。",
         "cluster.range_error": "「{field}」需要在 {min}~{max} 之间，请修改后再保存。",
-
         # 状态栏
         "status.klei": "Klei",
         "status.user": "用户",
         "status.clusters": "服务器",
         "status.local_saves": "本地存档",
-
         # 环境信息页签
         "env.title": "DST 环境信息",
         "env.klei_root": "Klei 根目录",
@@ -233,7 +247,6 @@ STRINGS = {
         "env.not_found": "未找到",
         "env.env_info": "环境信息",
         "env.open_location": "打开位置",
-
         # 弹窗
         "dlg.save_ok": "保存成功",
         "dlg.save_fail": "保存失败",
@@ -251,7 +264,6 @@ STRINGS = {
         "dlg.close_btn": "关闭",
         "dlg.yes_btn": "是",
         "dlg.no_btn": "否",
-
         # 世界设置页签
         "tab.world": "  世界设置  ",
         "world.create_port_conflict_title": "新存档端口冲突",
@@ -272,7 +284,6 @@ STRINGS = {
         "world.key": "设置项",
         "world.value": "值",
         "world.desc": "说明",
-
         # 管理员名单
         "admin.title": "管理员",
         "admin.add": "添加",
@@ -285,11 +296,9 @@ STRINGS = {
         "admin.already_exists": "该 ID 已在列表中",
         "admin.not_found": "未找到该管理员",
         "admin.invalid_format": "格式不正确，Klei 用户 ID 应形如 KU_XXXXXXXX。",
-
         # Blocklist / 黑名单 (NEW)
         "blocklist.title": "黑名单",
         "blocklist.empty": "(无黑名单人员)",
-
         # 令牌
         "token.title": "服务器令牌",
         "token.show": "显示",
@@ -308,7 +317,6 @@ STRINGS = {
         "token.global_add_title": "添加全局令牌",
         "token.global_empty": "暂无全局令牌",
         "token.global_duplicate": "这个令牌已经在列表里了。",
-
         # 樱花映射
         "sakura.token_label": "API Token:",
         "sakura.token_prompt": "输入樱花内网穿透 API Token:",
@@ -360,7 +368,6 @@ STRINGS = {
         "sakura.token_not_configured": "待配置 API",
         "sakura.token_missing": "请先设置樱花 API Token",
         "sakura.select_node_first": "请先选择一个节点",
-
         # 自建 frps 服务器（"樱花映射"页签下的子页签）
         "selfhost.tab_sakura": "樱花映射",
         "selfhost.tab_selfhost": "自建frps",
@@ -412,8 +419,8 @@ STRINGS = {
         "selfhost.ssh_progress_title": "正在远程部署",
         "selfhost.ssh_username_missing": "请填写用户名",
         "selfhost.host_key_confirm_title": "确认服务器密钥",
-        "selfhost.host_key_confirm_msg": "首次连接到 {host}，服务器密钥指纹：\n{fingerprint}\n\n请自行核实这确实是你的服务器（比如登录云服务商控制台核对指纹），确认无误后点\"是\"信任并继续连接。",
-        "selfhost.ssh_deploy_done": "远程部署完成，可以点击上方\"开启自建映射\"了",
+        "selfhost.host_key_confirm_msg": '首次连接到 {host}，服务器密钥指纹：\n{fingerprint}\n\n请自行核实这确实是你的服务器（比如登录云服务商控制台核对指纹），确认无误后点"是"信任并继续连接。',
+        "selfhost.ssh_deploy_done": '远程部署完成，可以点击上方"开启自建映射"了',
         "selfhost.ssh_deploy_cancelled": "已取消部署",
         "selfhost.ssh_deploy_failed": "远程部署失败: {detail}",
         "selfhost.ssh_auth_btn": "初次鉴权",
@@ -441,11 +448,9 @@ STRINGS = {
         "selfhost.never_checked": "尚未检测",
         "selfhost.last_checked": "上次检测: {time}",
         "selfhost.check_failed": "检测失败",
-
         # 存档来源标签
         "save.server_clusters": "服务器存档",
         "save.local_clusters": "本地存档",
-
         # 复制本地存档为服务器存档
         "save.copy_to_server": "复制为服务器存档",
         "save.copy_dialog_title": "复制为服务器存档",
@@ -456,7 +461,6 @@ STRINGS = {
         "save.copy_name_hint": "只能使用英文字母、数字、下划线，例如 Cluster_1",
         "save.copy_name_exists": "该服务器目录已存在，请更换名称。",
         "save.copy_result_title": "复制存档",
-
         # 复制存档进度日志（features/save_browser/cluster_copy.py 的 on_log 文案）
         "copy.dest_exists": "{dest} 已存在",
         "copy.created_dest": "已创建目标目录 {dest}",
@@ -464,7 +468,6 @@ STRINGS = {
         "copy.copying_file": "正在复制 {name} ...",
         "copy.token_assigned": "已从全局令牌池分配第一个令牌。",
         "copy.done": "复制完成。",
-
         # 配置编辑器
         "mod.add_config": "添加配置项",
         "mod.edit_value": "编辑值",
@@ -472,12 +475,10 @@ STRINGS = {
         "mod.config_value": "配置值",
         "mod.config_add_prompt": "输入新配置项名称:",
         "mod.config_edit_prompt": "编辑 {key} 的值:",
-
         # 更新过的标签
         "selector.archive": "存档:",
         "selector.save_type": "存档类型:",
         "selector.running_suffix": "  [运行中]",
-
         # 世界设置改进
         "world.rules": "世界规则",
         "world.rules_editable_tag": "(可修改)",
@@ -491,7 +492,6 @@ STRINGS = {
         "world.saved": "世界规则已保存",
         "world.local_view_only_banner": "⚠ 当前选中的是本地存档，世界设置仅支持查看，不支持修改。",
         "world.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再查看世界设置。",
-
         # 创建服务器存档向导
         "world.creation_name_label": "存档名称",
         "world.creation_server_tab": "服务器配置",
@@ -512,14 +512,12 @@ STRINGS = {
         "world.creation_rescan": "重新扫描",
         "world.creation_save_preset": "保存为配置集",
         "world.creation_load_preset": "载入配置集",
-
         # Mod 信息
         "modinfo.name": "名称",
         "modinfo.author": "作者",
         "modinfo.version": "版本",
         "modinfo.desc": "描述",
         "modinfo.no_info": "未找到 modinfo.lua，使用自由输入模式",
-
         # Mod 配置弹窗
         "mod.apply": "应用",
         "mod.reset": "重置",
@@ -549,7 +547,6 @@ STRINGS = {
         "mod.dependency_required_confirm": "“{mod}”必须同时启用“{dependency}”才能正常运行。是否同时启用？",
         "mod.dependency_enabled": "已同时启用依赖 Mod：{dependency}",
         "mod.dependency_enable_cancelled": "已取消启用：未启用所需的依赖 Mod",
-
         # Mod 配置集
         "mod.preset_save_btn": "保存为配置集",
         "mod.preset_apply_btn": "载入配置集",
@@ -583,7 +580,6 @@ STRINGS = {
         "preset.report_confirm_btn": "确认应用",
         "preset.applied_done": "已套用到 {count} 个世界。",
         "preset.no_mods_selected_in_tab": "当前没有已启用的 Mod 可以打包，请先勾选至少一个。",
-
         # 本地服务器页签
         "local.select_cluster_first": "请先选择一个服务器存档",
         "local.select_server_hint": "当前选中的是本地存档，无需在这里管理服务器进程。请在上方切换到一个服务器存档。",
@@ -608,6 +604,7 @@ STRINGS = {
         "local.port_repair_failed": "端口配置更新失败，原文件已恢复。\n\n详细信息：{detail}",
         "local.no_shards": "该存档下未找到任何世界",
         "local.start_failed": "世界“{shard}”启动失败：{detail}",
+        "local.legacy_prepare_failed": "旧式 Mod 无法准备到专服运行目录：\n{detail}",
         "local.install_status_label": "专用服务器工具:",
         "local.install_not_found": "未检测到",
         "local.install_change_btn": "更换路径",
@@ -711,43 +708,47 @@ STRINGS = {
         "local.public_ip_unavailable_reason": "暂时获取不到公网 IPv4，请检查网络后重试。IPv6 不受游戏支持。",
         "local.nat_frpc_not_ready_reason": "映射已建立，但 frpc 客户端未启动。",
         "local.nat_not_mapped_short": "未映射",
-
         # 系统托盘
         "tray.show": "显示主窗口",
         "tray.exit": "退出",
-
         # Mod 同步
         "local.sync_mods_btn": "软链接mods文件夹到服务器",
         "local.sync_running_btn": "同步中...",
-        "local.sync_hover": "先备份专用服务器的 mods 文件夹，再创建指向饥荒客户端 mods 目录的目录联接",
+        "local.sync_hover": "删除专用服务器原 mods 文件夹，再创建指向饥荒客户端 mods 目录的目录联接",
         "local.sync_running_hover": "请停止服务器后再进行操作",
         "local.sync_no_mods": "该存档没有启用的 Mod，无需同步。",
-        "local.sync_no_client_mods_dir": "未找到客户端的 mods/ 文件夹，无法建立联接。",
-        "local.sync_replace_confirm_msg": "服务器 mods/ 目录会先移动到同目录备份，再整体替换成指向客户端 mods/ 文件夹的目录联接。\n\n{detail}\n\n确认备份并建立联接吗？",
-        "local.sync_replace_lost_detail": "原服务器 mods/ 中以下独有子项会被放入备份（客户端没有）：{items}",
-        "local.sync_replace_nothing_lost": "服务器这边没有客户端没有的独有内容，原目录会完整备份后再建立联接。",
-        "local.sync_replace_file_detail": "服务器目标是一个文件而不是文件夹，建立联接前会先备份它。",
-        "local.sync_replace_link_detail": "服务器目标是指向其他位置的目录联接，建立新联接前会先备份这个联接。",
-        "local.sync_backup_detail": "原目录备份位置：{path}",
+        "local.sync_no_client_mods_dir": "未检测到《饥荒：联机版》客户端，无法创建 Mods 软连接。Workshop Mod 不受影响。",
+        "local.sync_no_client_hover": "未检测到《饥荒：联机版》客户端，无需创建 Mods 软连接",
+        "local.sync_replace_confirm_msg": "即将永久删除以下目标（不会自动备份）：\n{path}\n\n{detail}\n\n请先自行备份需要保留的内容。确认删除并建立软连接吗？",
+        "local.sync_replace_lost_detail": "其中以下内容仅存在于服务器目录，删除后客户端中没有对应副本：{items}",
+        "local.sync_replace_nothing_lost": "原服务器 mods/ 目录及其中内容将被删除。",
+        "local.sync_replace_file_detail": "目标当前是一个文件，建立联接前会永久删除该文件。",
+        "local.sync_replace_link_detail": "目标当前是指向其他位置的链接，建立新联接前会删除该链接本身。",
         "local.sync_result_title": "Mod 同步日志",
         "local.remove_junction_btn": "删除mod软连接",
-        "local.remove_junction_hover": "服务器mods文件夹已经是指向客户端mods文件夹的软链接，这是整台机器一次性生效的设置（不分具体哪个存档）——点这里可以撤销。",
-        "local.remove_junction_confirm_msg": "确定要删除专用服务器mods目录指向饥荒联机版mods文件夹的软链接吗？删除后专用服务器将无法加载Steam下载的2021年3月16日之前更新的Mod，直到重新建立软链接。",
+        "local.remove_junction_hover": "解除软连接，并把《饥荒：联机版》的 mods 文件夹完整复制到专用服务器。",
+        "local.remove_junction_no_client_hover": "未检测到《饥荒：联机版》的客户端 mods 文件夹，暂时无法复制并解除软连接。",
+        "local.remove_junction_confirm_msg": "确定要解除专用服务器 mods 目录的软连接吗？工具会先完整复制《饥荒：联机版》的 mods 文件夹，复制成功后再替换软连接。之后客户端和专服将各自占用一份 Mod 空间。",
         "local.remove_junction_done": "已删除软链接。",
+        "local.remove_junction_done_detail": "软连接已解除，客户端 mods 文件夹已完整复制到专服，共 {count} 个顶层项目。",
         "local.wegame_root_picker_prompt": "WeGame 的安装位置没有办法自动找到，需要手动选择一次。\n\n是否现在选择 WeGame 的安装目录（rail_apps 那一层文件夹）？",
         "local.wegame_root_picker_title": "选择 WeGame 安装目录（rail_apps 文件夹）",
         "local.wegame_root_picker_invalid": "在选择的目录下没有找到「饥荒：联机版」和「饥荒联机版专用服务器」这两个文件夹，请确认选择的是 rail_apps 这一层。",
-
         # Mod 同步进度日志（features/mod/sync.py 的 on_log 文案）
         "sync.no_client_mods_dir": "未找到客户端的 mods/ 文件夹，跳过。",
         "sync.mods_dir_already_linked": "服务器 mods/ 已经是指向客户端 mods/ 的目录联接，无需处理。",
         "sync.mods_dir_linked": "已将服务器 mods/ 目录整体替换为指向 {path} 的目录联接。",
-        "sync.backup_created": "原服务器 mods/ 已安全备份到：{path}",
+        "sync.mods_dir_deleted": "已删除原服务器 mods/ 目标：{path}",
+        "sync.no_client_mods_copy_source": "未找到《饥荒：联机版》的客户端 mods 文件夹，无法复制；软连接保持不变。",
+        "sync.copy_client_mods_start": "正在复制客户端 mods 文件夹：{path}",
+        "sync.copy_client_mods_ready": "客户端 mods 已复制到临时目录，共 {count} 个顶层项目；准备替换软连接。",
+        "sync.copy_client_mods_done": "客户端 mods 已完整复制到专服目录：{path}",
+        "sync.copy_client_mods_staging_kept": "无法把完整副本放到目标位置，临时副本保留在：{path}（{error}）",
         "sync.permission_denied": "无法操作 {path}：Windows 拒绝访问。请停止占用它的服务器/Steam 进程，并确认当前用户拥有修改和删除权限。",
-        "sync.same_directory": "客户端 mods/ 与服务器目标 mods/ 是同一个目录，已停止操作以避免误删源文件。目标：{path}",
+        "sync.same_directory": "选择的是专服自己的 mods 文件夹，不能把它软连接到自身。请改选《饥荒：联机版》客户端的 mods 文件夹。目标：{path}",
+        "mod.location_server_mods_invalid": "选择的是专服自己的 mods 文件夹。请改选《饥荒：联机版》客户端安装目录中的 mods 文件夹。",
         "sync.link_verify_failed": "目录联接创建后验证失败：{path}",
-        "sync.rollback_restored": "建立联接失败，原 mods/ 目录已自动恢复。",
-        "sync.rollback_failed": "建立联接失败，自动恢复失败；原目录备份仍在：{path}",
+        "sync.target_changed": "确认后服务器 mods 目标发生了变化，已停止操作以免删除未经确认的内容：{path}",
         "sync.error_prefix": "[错误] {detail}",
     },
     "en": {
@@ -760,7 +761,6 @@ STRINGS = {
         "app.install_vcredist": "Install Runtime Library",
         "app.install_vcredist_hint": "Needed for mod icon loading",
         "app.update_available": "New version v{version} available, click to view →",
-
         # 菜单
         "menu.file": "File",
         "menu.lang_zh": "中文",
@@ -768,7 +768,6 @@ STRINGS = {
         "menu.theme": "Theme",
         "menu.settings": "Settings",
         "menu.about": "About",
-
         # Themes -- switching takes effect immediately, no restart needed
         "theme.gray": "Gray",
         "theme.custom_bg_settings": "Background Settings...",
@@ -777,7 +776,6 @@ STRINGS = {
         "theme.twilight": "Twilight",
         "theme.campfire": "Campfire",
         "theme.sakura": "Sakura",
-
         # 设置菜单
         "settings.title": "Settings",
         "settings.language_label": "Language",
@@ -795,7 +793,6 @@ STRINGS = {
         "settings.font_style_cute": "KN Maiyuan",
         "settings.font_style_pixel": "Fusion Pixel",
         "settings.font_preview_text": "Font Preview Aa 123 Don't Starve Together Server Manager",
-
         # 关于
         "about.message": "DSTCamp {version}\n\nDon't Starve Together local server manager\n\nAuthor：橙之刃\nQQ group：463227692",
         "about.repo_label": "Project: ",
@@ -811,14 +808,12 @@ STRINGS = {
         "about.manual_update_quark": "Quark Drive",
         "about.manual_update_lanzou": "Lanzou (code: 45w9)",
         "about.manual_update_code_copied": "Extraction code copied to clipboard",
-
         # 页签
         "tab.local": "  Local Server  ",
         "tab.saves": "  Save Info  ",
         "tab.mods": "  Mods  ",
         "tab.server": "  Server Config  ",
         "tab.sakura": "  NAT Traversal  ",
-
         # 存档信息页签
         "save.cluster": "Cluster:",
         "save.shard": "Shard:",
@@ -853,7 +848,7 @@ STRINGS = {
         "save.backup_policy_title": "Backup Policy",
         "save.backup_auto_enabled_label": "Enable auto-backup:",
         "save.backup_auto_enabled_hint": "When off, backups won't happen automatically on server stop or "
-            "while running, but the \"Backup Now\" button and the safety backup before a restore are unaffected.",
+        'while running, but the "Backup Now" button and the safety backup before a restore are unaffected.',
         "save.backup_retention_label": "Backups to keep:",
         "save.backup_retention_hint": "The oldest backups are auto-deleted past this count. Range: 5-99.",
         "save.backup_interval_label": "Auto-backup interval (minutes):",
@@ -862,7 +857,6 @@ STRINGS = {
         "save.backup_retention_range_error": "Backups to keep must be between 5 and 99.",
         "save.backup_interval_range_error": "Auto-backup interval must be between 2 and 30 minutes.",
         "save.storage_location": "Save Location",
-
         # Per-player character status (in the selected session's detail area)
         "save.players_section": "Player Character Status",
         "save.no_players": "No player data found for this session",
@@ -876,7 +870,6 @@ STRINGS = {
         "save.stat_hunger": "Hunger",
         "save.stat_temperature": "Temperature",
         "save.stat_age": "Playtime",
-
         # Mod 管理页签
         "mod.cluster": "Cluster:",
         "mod.shard": "Shard:",
@@ -884,28 +877,51 @@ STRINGS = {
         "mod.show_all": "All",
         "mod.show_enabled": "Enabled",
         "mod.show_disabled": "Disabled",
+        "mod.show_custom": "Custom",
+        "mod.scan_found_breakdown": "Found {regular} mods and {custom} custom mods",
         "mod.show_local": "View Local Mods",
         "mod.show_local_hover": "View subscribed local mods",
         "mod.back_to_list": "Back to Mod List",
         "mod.reload_full": "Rescan Mods",
         "mod.reload_full_hover": "Rescan all subscribed mods",
         "mod.workshop_update_btn": "Update Mods",
-        "mod.workshop_update_hover": "Update discovered Workshop Mods through Steam without changing save configuration",
         "mod.workshop_update_empty": "There are no Workshop Mods available to update.",
-        "mod.workshop_update_running": "Updating Workshop Mods ({current}/{total})…",
-        "mod.workshop_update_done": "Workshop check finished: {updated} updated, {up_to_date} already up to date, {failed} failed.",
+        "mod.workshop_update_running": "Updating Mods ({current}/{total})...",
+        "mod.workshop_update_done": "Done: {updated} updated, {up_to_date} current, {failed} failed",
         "mod.update_title": "Update Mods",
         "mod.update_filter_current": "Current Save",
         "mod.update_select_all": "Select All",
         "mod.update_deselect_all": "Clear Selection",
         "mod.update_selected_count": "Selected {selected}/{total} mods",
         "mod.update_selected_btn": "Update Selected Mods",
+        "mod.update_one_btn": "Update",
+        "mod.update_action": "Action",
+        "mod.update_confirm_title": "Confirm Mod Update",
+        "mod.update_confirm_message": "Check and update the selected {count} Mods?",
+        "mod.update_log_title": "Mod Update Log",
+        "mod.update_log_start": "Checking {count} Mods.",
+        "mod.update_log_item_start": "[{current}/{total}] {name}: checking",
+        "mod.update_log_item_current": "[{current}/{total}] {name}: up to date",
+        "mod.update_log_item_updated": "[{current}/{total}] {name}: updated",
+        "mod.update_log_item_repaired": "[{current}/{total}] {name}: repaired",
+        "mod.update_log_legacy_deployed": "    V1 Mod verified and deployed to: {targets}",
+        "mod.update_log_item_failed": "[{current}/{total}] {name}: failed - {error}",
+        "mod.update_log_summary": "Done: {updated} updated, {up_to_date} up to date, {failed} failed.",
         "mod.update_none_selected": "Select at least one Mod to update.",
         "mod.update_current_version": "Current Version",
         "mod.update_latest_version": "Status",
+        "mod.update_workshop_column": "Workshop",
         "mod.update_refresh_states": "Refresh",
+        "mod.update_filter_needs_update": "Updates",
+        "mod.update_pending_hint": "{count} Mods need updates",
+        "mod.update_all_current_hint": "All Mods are up to date",
+        "mod.update_status_checking_hint": "Checking Mod updates…",
+        "mod.update_status_unavailable_hint": "Mod update status unavailable",
+        "mod.update_steam_unavailable": "Steam is unavailable, so Mod status cannot be checked or updated. Start Steam and sign in. If Steam is already running, run Steam and DSTCamp with the same permission level, then click Refresh.",
+        "mod.update_status_check_failed": "Failed to check Mod status: {error}\nCheck Steam and your network, then click Refresh.",
         "mod.update_version_unreported": "Not declared",
         "mod.version_value": "Version {version}",
+        "mod.update_version_with_remote": "{local} · Remote {remote}",
         "mod.version_pending": "Checking version…",
         "mod.version_undeclared": "Version not declared",
         "mod.version_unresolved": "Version unavailable",
@@ -915,7 +931,9 @@ STRINGS = {
         "mod.update_latest_available": "Update available",
         "mod.update_latest_not_installed": "Not installed",
         "mod.update_latest_missing": "Files missing",
-        "mod.update_latest_corrupt": "Files corrupted",
+        "mod.update_latest_source_unavailable": "Source unavailable",
+        "mod.update_latest_integrity_unconfirmed": "Integrity unconfirmed",
+        "mod.update_latest_local_files": "Local files only",
         "mod.update_latest_downloading": "Downloading",
         "mod.update_latest_pending": "Pending",
         "mod.no_filtered": "No mods match the filter",
@@ -940,7 +958,6 @@ STRINGS = {
         "mod.recommend_title": "Subscribe Recommended Mods",
         "mod.recommend_subscribed": "Subscribed",
         "mod.recommend_subscribe": "Subscribe",
-
         # 服务器配置页签
         "cluster.cluster": "Cluster:",
         "cluster.no_save_banner": "No saves were detected. Create or import a save before managing server configuration.",
@@ -960,16 +977,14 @@ STRINGS = {
         "cluster.cross_cluster_port_title": "Port Also Used by Another Save",
         "cluster.cross_cluster_port_confirm": "This configuration shares ports with another server save. It may be saved, but the saves cannot run together with their current settings:\n\n{details}\n\nSave anyway?",
         "cluster.range_hint": "Valid range: {min}-{max}",
-        "cluster.server_port_sakura_locked": "This port is managed by Sakura Mapping and can't be edited manually (would break the tunnel). Disable mapping on the \"NAT Traversal\" tab first if you need to change it.",
-        "cluster.server_port_selfhost_locked": "This port is managed by self-hosted frps and can't be edited manually (would break the tunnel). Disable mapping on the \"NAT Traversal\" tab first if you need to change it.",
+        "cluster.server_port_sakura_locked": 'This port is managed by Sakura Mapping and can\'t be edited manually (would break the tunnel). Disable mapping on the "NAT Traversal" tab first if you need to change it.',
+        "cluster.server_port_selfhost_locked": 'This port is managed by self-hosted frps and can\'t be edited manually (would break the tunnel). Disable mapping on the "NAT Traversal" tab first if you need to change it.',
         "cluster.range_error": "“{field}” must be between {min} and {max}. Fix it and save again.",
-
         # 状态栏
         "status.klei": "Klei",
         "status.user": "User",
         "status.clusters": "Clusters",
         "status.local_saves": "Local Saves",
-
         # 环境信息页签
         "env.title": "DST Environment",
         "env.klei_root": "Klei Root",
@@ -982,7 +997,6 @@ STRINGS = {
         "env.not_found": "Not found",
         "env.env_info": "Environment",
         "env.open_location": "Open Location",
-
         # 弹窗
         "dlg.save_ok": "Save successful",
         "dlg.save_fail": "Save failed",
@@ -1000,7 +1014,6 @@ STRINGS = {
         "dlg.close_btn": "Close",
         "dlg.yes_btn": "Yes",
         "dlg.no_btn": "No",
-
         # 世界设置页签
         "tab.world": "  World Settings  ",
         "world.create_port_conflict_title": "New Save Port Conflict",
@@ -1021,7 +1034,6 @@ STRINGS = {
         "world.key": "Setting",
         "world.value": "Value",
         "world.desc": "Description",
-
         # 管理员名单
         "admin.title": "Admin",
         "admin.add": "Add",
@@ -1034,11 +1046,9 @@ STRINGS = {
         "admin.already_exists": "This ID is already in the list",
         "admin.not_found": "Admin not found",
         "admin.invalid_format": "Invalid format -- a Klei user ID should look like KU_XXXXXXXX.",
-
         # 黑名单
         "blocklist.title": "Blocklist",
         "blocklist.empty": "(No blocked players)",
-
         # 令牌
         "token.title": "Server Token",
         "token.show": "Show",
@@ -1057,7 +1067,6 @@ STRINGS = {
         "token.global_add_title": "Add Global Token",
         "token.global_empty": "No global tokens yet",
         "token.global_duplicate": "This token is already in the list.",
-
         # 樱花映射
         "sakura.token_label": "API Token:",
         "sakura.token_prompt": "Enter your SakuraFrp API Token:",
@@ -1109,24 +1118,23 @@ STRINGS = {
         "sakura.token_not_configured": "API not set",
         "sakura.token_missing": "Set a SakuraFrp API Token first",
         "sakura.select_node_first": "Select a node first",
-
         # 自建 frps 服务器（"樱花映射"页签下的子页签）
         "selfhost.tab_sakura": "Sakura Mapping",
         "selfhost.tab_selfhost": "Self-Hosted frps",
         "selfhost.host_label": "Server address:",
         "selfhost.bind_port_label": "frps service port:",
-        "selfhost.bind_port_hint": "The public port frps listens on on the server -- not the in-game server_port world setting. frpc connects to this port, and it needs to be opened in your cloud provider's security group/firewall. Changing it takes effect the next time you click \"Deploy\"/\"Redeploy\".",
+        "selfhost.bind_port_hint": 'The public port frps listens on on the server -- not the in-game server_port world setting. frpc connects to this port, and it needs to be opened in your cloud provider\'s security group/firewall. Changing it takes effect the next time you click "Deploy"/"Redeploy".',
         "selfhost.token_label": "Auth token:",
-        "selfhost.token_hint": "The shared secret frps and frpc use to authenticate each other -- both sides must match exactly, preventing anyone else from using your public server address to set up their own tunnel. Don't hand-edit it to something memorable/weak; use the \"Regenerate Token\" button next to it if you need a new one. Click it to copy to clipboard.",
+        "selfhost.token_hint": 'The shared secret frps and frpc use to authenticate each other -- both sides must match exactly, preventing anyone else from using your public server address to set up their own tunnel. Don\'t hand-edit it to something memorable/weak; use the "Regenerate Token" button next to it if you need a new one. Click it to copy to clipboard.',
         "selfhost.regen_token_btn": "Regenerate Token",
-        "selfhost.regen_token_hint": "Generates a new random token to replace the current one. Remember to click \"Deploy\"/\"Redeploy\" afterwards to sync the new token to the server -- otherwise the server and local token won't match and frpc will fail to connect.",
+        "selfhost.regen_token_hint": 'Generates a new random token to replace the current one. Remember to click "Deploy"/"Redeploy" afterwards to sync the new token to the server -- otherwise the server and local token won\'t match and frpc will fail to connect.',
         "selfhost.regen_token_disabled_hint": "Can't regenerate the token while mapping is on -- changing the local token while the server still uses the old one would immediately break the active mapping. Turn off mapping first.",
-        "selfhost.regen_token_confirm_msg": "Generate a new token? You'll need to click \"Deploy\"/\"Redeploy\" afterwards to sync it to the server -- existing world mappings will fail to connect until that's done.",
+        "selfhost.regen_token_confirm_msg": 'Generate a new token? You\'ll need to click "Deploy"/"Redeploy" afterwards to sync it to the server -- existing world mappings will fail to connect until that\'s done.',
         "selfhost.host_missing": "Enter the server address",
         "selfhost.invalid_port": "Invalid port -- enter a number between 1 and 65535",
         "selfhost.checking_port_conflict": "Checking whether the target port conflicts...",
         "selfhost.bind_port_conflict_msg": "Port {port} is already in use by another service on the target server (not dstcamp-frps itself) -- deployment would be skipped. Pick a different port, or stop the service using it on the server first.",
-        "selfhost.server_not_configured": "Finish \"Initial Authentication\" first, then click \"Deploy\" to set up the server",
+        "selfhost.server_not_configured": 'Finish "Initial Authentication" first, then click "Deploy" to set up the server',
         "selfhost.enable_btn": "Enable self-hosted mapping",
         "selfhost.disable_btn": "Disable mapping",
         "selfhost.disable_confirm_title": "Confirm disabling mapping",
@@ -1154,7 +1162,7 @@ STRINGS = {
         "selfhost.ssh_redeploy_btn": "Redeploy",
         "selfhost.deploy_confirm_msg": "This will connect to {host} and deploy frps, set up to auto-start on boot and keep running. Continue?",
         "selfhost.redeploy_confirm_msg": "The service is already running -- redeploying restarts frps and briefly interrupts any active tunnels. Continue?",
-        "selfhost.deploy_needs_auth_hint": "Click \"Initial Authentication\" first -- one-click deploy is enabled after that",
+        "selfhost.deploy_needs_auth_hint": 'Click "Initial Authentication" first -- one-click deploy is enabled after that',
         "selfhost.ssh_port_label": "SSH port:",
         "selfhost.ssh_username_label": "Username:",
         "selfhost.ssh_password_label": "Password:",
@@ -1162,7 +1170,7 @@ STRINGS = {
         "selfhost.ssh_username_missing": "Enter a username",
         "selfhost.host_key_confirm_title": "Confirm server key",
         "selfhost.host_key_confirm_msg": "Connecting to {host} for the first time. Server key fingerprint:\n{fingerprint}\n\nVerify this really is your server (e.g. check the fingerprint in your cloud provider's console) before trusting it. Click Yes to trust and continue.",
-        "selfhost.ssh_deploy_done": "Remote deploy done -- you can click \"Enable self-hosted mapping\" above now",
+        "selfhost.ssh_deploy_done": 'Remote deploy done -- you can click "Enable self-hosted mapping" above now',
         "selfhost.ssh_deploy_cancelled": "Deploy cancelled",
         "selfhost.status_running": "Server frps status: ● Running",
         "selfhost.status_stopped": "Server frps status: ● Stopped",
@@ -1190,22 +1198,19 @@ STRINGS = {
         "selfhost.ssh_auth_done": "Authentication complete -- future connections to this server won't need a password.",
         "selfhost.ssh_auth_failed": "Authentication failed: {detail}",
         "selfhost.ssh_password_missing": "Enter the password",
-
         # 存档来源标签
         "save.server_clusters": "Server Saves",
         "save.local_clusters": "Local Saves",
-
         # 复制本地存档为服务器存档
         "save.copy_to_server": "Copy as Server Save",
         "save.copy_dialog_title": "Copy as Server Save",
-        "save.copy_dialog_prompt": "This will copy local save \"{name}\" to the server. Please specify a destination folder name:",
+        "save.copy_dialog_prompt": 'This will copy local save "{name}" to the server. Please specify a destination folder name:',
         "save.copy_name_label": "Destination folder name:",
         "save.copy_name_empty": "Folder name cannot be empty.",
         "save.copy_name_invalid_chars": "Folder name can only contain English letters, digits, and underscores -- no Chinese characters, spaces, or punctuation.",
         "save.copy_name_hint": "Only English letters, digits, and underscores are allowed, e.g. Cluster_1",
         "save.copy_name_exists": "This server directory already exists, please choose another name.",
         "save.copy_result_title": "Copy Save",
-
         # 复制存档进度日志（features/save_browser/cluster_copy.py 的 on_log 文案）
         "copy.dest_exists": "{dest} already exists",
         "copy.created_dest": "Created destination directory {dest}",
@@ -1213,7 +1218,6 @@ STRINGS = {
         "copy.copying_file": "Copying {name} ...",
         "copy.token_assigned": "Assigned the first token from the global pool.",
         "copy.done": "Copy complete.",
-
         # 配置编辑器
         "mod.add_config": "Add Config",
         "mod.edit_value": "Edit Value",
@@ -1221,12 +1225,10 @@ STRINGS = {
         "mod.config_value": "Config Value",
         "mod.config_add_prompt": "Enter new config key name:",
         "mod.config_edit_prompt": "Edit value for {key}:",
-
         # 更新过的标签
         "selector.archive": "Archive:",
         "selector.save_type": "Save Type:",
         "selector.running_suffix": "  [Running]",
-
         # 世界设置改进
         "world.rules": "World Rules",
         "world.rules_editable_tag": "(Editable)",
@@ -1240,7 +1242,6 @@ STRINGS = {
         "world.saved": "World rules saved",
         "world.local_view_only_banner": "⚠ The selected save is a local one -- World Settings is view-only here, editing isn't supported.",
         "world.no_save_banner": "No saves were detected. Create or import a save before viewing world settings.",
-
         # 创建服务器存档向导
         "world.creation_name_label": "Save Name",
         "world.creation_server_tab": "Server Config",
@@ -1254,21 +1255,19 @@ STRINGS = {
         "world.creation_add_world_title": "Add New World",
         "world.creation_add_world_prompt": "Choose a world template. Worlds supplied by enabled mods also appear here.",
         "world.creation_surface_world": "Surface (Forest)",
-        "world.creation_remove_world_confirm": "Remove the extra world \"{name}\"? Its unsaved settings will also be removed.",
+        "world.creation_remove_world_confirm": 'Remove the extra world "{name}"? Its unsaved settings will also be removed.',
         "world.creation_rules_tab": "World Rules",
         "world.creation_generation_tab": "World Generation",
         "world.creation_search_mod": "Search Mods",
         "world.creation_rescan": "Rescan",
         "world.creation_save_preset": "Save as Preset",
         "world.creation_load_preset": "Load Preset",
-
         # Mod 信息
         "modinfo.name": "Name",
         "modinfo.author": "Author",
         "modinfo.version": "Version",
         "modinfo.desc": "Description",
         "modinfo.no_info": "No modinfo.lua found, using free-form input",
-
         # Mod 配置弹窗
         "mod.apply": "Apply",
         "mod.reset": "Reset",
@@ -1292,27 +1291,26 @@ STRINGS = {
         "mod.location_label": "Mod Location:",
         "mod.location_not_found": "Not found",
         "mod.location_picker_title": "Select the Steam client's mods folder",
-        "mod.location_recheck_not_found": "Couldn't re-detect the mod location -- click \"Change Path\" to set it manually.",
+        "mod.location_recheck_not_found": 'Couldn\'t re-detect the mod location -- click "Change Path" to set it manually.',
         "mod.id_copied_toast": "Copied: {id}",
         "mod.dependency_required_title": "Required Dependency",
         "mod.dependency_required_confirm": "{mod} requires {dependency} to work. Enable the dependency too?",
         "mod.dependency_enabled": "Also enabled required dependency: {dependency}",
         "mod.dependency_enable_cancelled": "Enable cancelled because the required dependency was not enabled",
-
         # Mod presets
         "mod.preset_save_btn": "Save as Preset",
         "mod.preset_apply_btn": "Apply Preset",
         "preset.issue_missing": "This mod wasn't found on this machine (may have been unsubscribed/uninstalled)",
-        "preset.issue_stale_option": "Option \"{option}\" is no longer declared by this mod (may have been removed in an update)",
-        "preset.issue_invalid_value": "The saved value for option \"{option}\" is no longer among this mod's current choices (may have changed in an update)",
+        "preset.issue_stale_option": 'Option "{option}" is no longer declared by this mod (may have been removed in an update)',
+        "preset.issue_invalid_value": 'The saved value for option "{option}" is no longer among this mod\'s current choices (may have changed in an update)',
         "preset.save_dialog_title": "Save as Preset",
         "preset.save_name_label": "Preset name:",
         "preset.save_select_hint": "Check the mods to include in this preset (currently-enabled ones are pre-checked):",
         "preset.expand_disabled_btn": "Show disabled mods ({count})",
         "preset.save_name_empty": "Please enter a preset name",
         "preset.save_none_selected": "Please check at least one mod",
-        "preset.save_overwrite_confirm": "A preset named \"{name}\" already exists. Overwrite it?",
-        "preset.save_done": "Preset \"{name}\" saved ({count} mods)",
+        "preset.save_overwrite_confirm": 'A preset named "{name}" already exists. Overwrite it?',
+        "preset.save_done": 'Preset "{name}" saved ({count} mods)',
         "preset.apply_dialog_title": "Apply Preset",
         "preset.apply_pick_hint": "Choose a preset to apply:",
         "preset.apply_none": "No presets saved yet",
@@ -1321,18 +1319,17 @@ STRINGS = {
         "preset.rename_btn": "Rename",
         "preset.rename_prompt": "Enter a new name:",
         "preset.rename_conflict": "A preset with that name already exists -- pick a different one.",
-        "preset.delete_confirm": "Delete preset \"{name}\"? This can't be undone.",
+        "preset.delete_confirm": 'Delete preset "{name}"? This can\'t be undone.',
         "preset.clear_first_label": "Clear all current mod state before applying (full replace instead of merge)",
-        "preset.report_title": "Preview: applying preset \"{name}\"",
+        "preset.report_title": 'Preview: applying preset "{name}"',
         "preset.report_ok_count": "{count} mod(s) will be written normally.",
         "preset.report_issue_missing_title": "These mods weren't found on this machine (may have been unsubscribed/uninstalled) -- their settings will still be written but won't actually take effect:",
         "preset.report_issue_stale_title": "These options are no longer declared by their mod (may have been removed in an update) and will be skipped:",
         "preset.report_issue_invalid_title": "The saved values for these options are no longer among their mod's current choices (may have changed in an update) -- please check them manually after applying:",
-        "preset.report_needs_configs_extended": "⚠ Some mods rely on the \"Configs Extended\" shared library (3317960157) for their free-text config to take effect, but it wasn't found on this machine -- those settings may not actually apply.",
+        "preset.report_needs_configs_extended": '⚠ Some mods rely on the "Configs Extended" shared library (3317960157) for their free-text config to take effect, but it wasn\'t found on this machine -- those settings may not actually apply.',
         "preset.report_confirm_btn": "Confirm & Apply",
         "preset.applied_done": "Applied to {count} world(s).",
         "preset.no_mods_selected_in_tab": "No enabled mods to pack right now -- check at least one first.",
-
         # 本地服务器页签
         "local.select_cluster_first": "Select a server save first",
         "local.select_server_hint": "The selected save is a local one -- there's no server process to manage here. Switch to a server save above.",
@@ -1356,7 +1353,8 @@ STRINGS = {
         "local.port_repair_done": "Port settings were updated; the originals were saved under port_backups in the DSTCamp cache. The launch check will run again:\n\n{details}",
         "local.port_repair_failed": "Port settings could not be updated; the original files were restored.\n\nDetails: {detail}",
         "local.no_shards": "No shards found for this save",
-        "local.start_failed": "Failed to start shard \"{shard}\": {detail}",
+        "local.start_failed": 'Failed to start shard "{shard}": {detail}',
+        "local.legacy_prepare_failed": "Failed to prepare a Legacy Mod for the dedicated server:\n{detail}",
         "local.install_status_label": "Dedicated Server Tool:",
         "local.install_not_found": "Not found",
         "local.install_change_btn": "Change Path",
@@ -1375,12 +1373,12 @@ STRINGS = {
         "local.luajit_bin64_not_found": "Dedicated server install directory not detected -- detect/set it above first",
         "local.luajit_blocked_running": "Shards are running under this install directory -- stop them first",
         "local.luajit_confirm_install_title": "Install LuaJIT Speed Patch",
-        "local.luajit_confirm_install_msg": "LuaJIT performance patch from the third-party project DontStarveLuaJIT2 (unofficial, compatibility not guaranteed). This copies your bin64 folder and installs the injector files plus the Workshop companion mod from your subscribed content into that copy -- your real install is untouched. You'll be prompted to regenerate the copy automatically after a game or patch update. \"Uninstall\" just disables it -- the copy is kept, not deleted.\n\nIf the server cannot start after installing or updating, install the VC++ 2023 x64 runtime. Use the lower-left button to open the download page (extraction code: bzuu). Continue?",
+        "local.luajit_confirm_install_msg": 'LuaJIT performance patch from the third-party project DontStarveLuaJIT2 (unofficial, compatibility not guaranteed). This copies your bin64 folder and installs the injector files plus the Workshop companion mod from your subscribed content into that copy -- your real install is untouched. You\'ll be prompted to regenerate the copy automatically after a game or patch update. "Uninstall" just disables it -- the copy is kept, not deleted.\n\nIf the server cannot start after installing or updating, install the VC++ 2023 x64 runtime. Use the lower-left button to open the download page (extraction code: bzuu). Continue?',
         "local.luajit_workshop_not_subscribed_msg": "Adjusting LuaJIT settings requires a Steam Workshop companion mod, and this machine's Steam account doesn't seem to be subscribed to it yet. Open the Workshop page to subscribe now? Come back and click \"Install\" again once you're subscribed.",
         "local.luajit_confirm_uninstall_title": "Disable LuaJIT Patch",
         "local.luajit_confirm_uninstall_msg": "Disable the LuaJIT patch? (The next server start will use the real install instead; the generated copy is kept, not deleted, so you can re-enable anytime.)",
         "local.luajit_regenerate_title": "Update LuaJIT Copy",
-        "local.luajit_regenerate_confirm_msg": "The game or the subscribed companion mod content appears to have been updated by Steam, so the current LuaJIT copy is out of date and needs to be regenerated before you can start in LuaJIT mode (this re-copies bin64 and may take a moment). Regenerate now? Choosing \"No\" will start without LuaJIT this time.",
+        "local.luajit_regenerate_confirm_msg": 'The game or the subscribed companion mod content appears to have been updated by Steam, so the current LuaJIT copy is out of date and needs to be regenerated before you can start in LuaJIT mode (this re-copies bin64 and may take a moment). Regenerate now? Choosing "No" will start without LuaJIT this time.',
         "local.luajit_error_no_injector_source": "Couldn't find the injector files in the subscribed Workshop content (expected a bin64/windows folder under the subscription directory) -- make sure you're subscribed and Steam has finished downloading it",
         "local.luajit_error_copy_incomplete": "LuaJIT copy validation failed; missing: {files}. The previous copy was kept. Check the dedicated server installation, free disk space, and file locks.",
         "local.luajit_error_operation_failed": "Failed to build the LuaJIT copy: {detail}",
@@ -1451,7 +1449,7 @@ STRINGS = {
         "local.public_connect_hint": "Computers or cloud servers with a public IPv4 address use this code for direct connection. IPv6 is not supported by the game.",
         "local.nat_connect_hint": "Public players connecting via NAT traversal (SakuraFrp / self-hosted frps) use this code. Copy it and send to friends; paste it in the game console (press ~).",
         "local.connect_copied": "Connect code copied to clipboard",
-        "local.nat_not_mapped": "This save has no NAT traversal mapping (SakuraFrp / self-hosted frps) yet. Enable mapping on the \"NAT Traversal\" tab first.",
+        "local.nat_not_mapped": 'This save has no NAT traversal mapping (SakuraFrp / self-hosted frps) yet. Enable mapping on the "NAT Traversal" tab first.',
         "local.connect_unavailable": "Not configured",
         "local.connect_loading": "Loading…",
         "local.connect_ready": "Ready",
@@ -1460,43 +1458,47 @@ STRINGS = {
         "local.public_ip_unavailable_reason": "Couldn't obtain a public IPv4 address. Check the network and try again. IPv6 is not supported by the game.",
         "local.nat_frpc_not_ready_reason": "The mapping exists, but the frpc client is not running.",
         "local.nat_not_mapped_short": "Not mapped",
-
         # 系统托盘
         "tray.show": "Show Main Window",
         "tray.exit": "Exit",
-
         # Mod 同步
         "local.sync_mods_btn": "Sync Mod Files to Server",
         "local.sync_running_btn": "Syncing...",
-        "local.sync_hover": "Back up the server's whole mods folder, then create a directory junction pointing at the client's mods folder",
+        "local.sync_hover": "Delete the server's existing mods folder, then create a directory junction pointing at the client's mods folder",
         "local.sync_running_hover": "Stop the server before doing this",
         "local.sync_no_mods": "This save has no enabled mods -- nothing to sync.",
-        "local.sync_no_client_mods_dir": "The client's mods/ folder wasn't found, can't create the junction.",
-        "local.sync_replace_confirm_msg": "The server's mods/ folder will first be moved to a backup beside it, then replaced with a directory junction pointing at the client's mods/ folder.\n\n{detail}\n\nCreate the backup and junction?",
-        "local.sync_replace_lost_detail": "The following server-only items (not present on the client) will be included in the backup: {items}",
-        "local.sync_replace_nothing_lost": "The server side has no unique content the client lacks; the original folder will be backed up before linking.",
-        "local.sync_replace_file_detail": "The server target is a file, not a folder. It will be backed up before creating the junction.",
-        "local.sync_replace_link_detail": "The server target is a junction pointing elsewhere. It will be backed up before creating the new junction.",
-        "local.sync_backup_detail": "Original folder backup: {path}",
+        "local.sync_no_client_mods_dir": "The Don't Starve Together client was not detected, so a Mods junction cannot be created. Workshop Mods are unaffected.",
+        "local.sync_no_client_hover": "The Don't Starve Together client was not detected; no Mods junction is needed",
+        "local.sync_replace_confirm_msg": "The following target will be permanently deleted without an automatic backup:\n{path}\n\n{detail}\n\nBack up anything you need first. Delete it and create the junction?",
+        "local.sync_replace_lost_detail": "These entries exist only in the server folder and have no client copy: {items}",
+        "local.sync_replace_nothing_lost": "The original server mods folder and its contents will be deleted.",
+        "local.sync_replace_file_detail": "The target is currently a file and will be permanently deleted before linking.",
+        "local.sync_replace_link_detail": "The target points elsewhere; that link itself will be removed before the new junction is created.",
         "local.sync_result_title": "Mod Sync Log",
         "local.remove_junction_btn": "Remove Mod Junction",
-        "local.remove_junction_hover": "The server's mods folder is already a junction pointing at the client's mods folder -- this is a one-time, machine-wide setting (not tied to a specific save). Click here to undo it.",
-        "local.remove_junction_confirm_msg": "Remove the junction that points the dedicated server's mods folder at the Don't Starve Together mods folder? After removal, the dedicated server won't be able to load Steam-downloaded mods that haven't been updated since before March 16, 2021, until the junction is recreated.",
+        "local.remove_junction_hover": "Detach the junction and copy the Don't Starve Together client's entire mods folder to the dedicated server.",
+        "local.remove_junction_no_client_hover": "The Don't Starve Together client mods folder was not detected, so the junction cannot currently be detached and copied.",
+        "local.remove_junction_confirm_msg": "Detach the dedicated server mods junction? DSTCamp will first copy the Don't Starve Together client's entire mods folder, then replace the junction only after the copy succeeds. Client and server Mods will then use separate disk space.",
         "local.remove_junction_done": "Junction removed.",
+        "local.remove_junction_done_detail": "The junction was detached and the client mods folder was copied to the server with {count} top-level entries.",
         "local.wegame_root_picker_prompt": "WeGame's install location can't be found automatically -- it needs to be selected manually once.\n\nSelect the WeGame install directory now (the rail_apps folder)?",
         "local.wegame_root_picker_title": "Select the WeGame install directory (rail_apps folder)",
-        "local.wegame_root_picker_invalid": "Couldn't find \"Don't Starve Together\" and \"Don't Starve Together Dedicated Server\" folders under the selected directory -- make sure you picked the rail_apps folder itself.",
-
+        "local.wegame_root_picker_invalid": 'Couldn\'t find "Don\'t Starve Together" and "Don\'t Starve Together Dedicated Server" folders under the selected directory -- make sure you picked the rail_apps folder itself.',
         # Mod 同步进度日志（features/mod/sync.py 的 on_log 文案）
         "sync.no_client_mods_dir": "Client mods/ folder not found, skipping.",
         "sync.mods_dir_already_linked": "The server's mods/ is already a junction pointing at the client's mods/ -- nothing to do.",
         "sync.mods_dir_linked": "Replaced the server's mods/ folder with a junction pointing at {path}.",
-        "sync.backup_created": "Backed up the original server mods/ folder to: {path}",
+        "sync.mods_dir_deleted": "Deleted the original server mods target: {path}",
+        "sync.no_client_mods_copy_source": "The Don't Starve Together client mods folder was not found, so it cannot be copied; the junction was left unchanged.",
+        "sync.copy_client_mods_start": "Copying the client mods folder: {path}",
+        "sync.copy_client_mods_ready": "Copied the client mods to a temporary folder ({count} top-level entries); preparing to replace the junction.",
+        "sync.copy_client_mods_done": "Copied the client mods folder to the dedicated server: {path}",
+        "sync.copy_client_mods_staging_kept": "Could not place the complete copy at the target; the temporary copy remains at {path} ({error})",
         "sync.permission_denied": "Windows denied access to {path}. Stop any server/Steam process using it and ensure this user has modify and delete permission.",
-        "sync.same_directory": "The client mods/ and server target mods/ resolve to the same directory. Aborted to avoid deleting the source: {path}",
+        "sync.same_directory": "The selected folder is the dedicated server's own mods folder and cannot be linked to itself. Select the Don't Starve Together client's mods folder instead: {path}",
+        "mod.location_server_mods_invalid": "This is the dedicated server's own mods folder. Select the mods folder inside the Don't Starve Together client installation instead.",
         "sync.link_verify_failed": "The directory junction failed verification after creation: {path}",
-        "sync.rollback_restored": "Junction creation failed; the original mods/ folder was restored automatically.",
-        "sync.rollback_failed": "Junction creation failed and automatic restore failed. The original backup is still at: {path}",
+        "sync.target_changed": "The server mods target changed after confirmation. The operation was stopped to avoid deleting unconfirmed content: {path}",
         "sync.error_prefix": "[Error] {detail}",
-    }
+    },
 }

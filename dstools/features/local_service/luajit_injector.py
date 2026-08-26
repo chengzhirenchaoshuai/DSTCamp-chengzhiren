@@ -1,46 +1,8 @@
-"""为 Steam 版专用服务器安装/管理第三方开源项目 DontStarveLuaJIT2
-(github.com/fesily/DontStarveLuaJIT2, Apache-2.0) 提供的 LuaJIT 性能补丁。
+"""管理 Steam 专服的 DontStarveLuaJIT2 隔离副本。
 
-**隔离副本模式**（作者建议，2026-08-01 沟通，替换掉这个模块早前"直接把
-注入文件复制进真实 bin64/"的做法）：真实的 `bin64/` 从头到尾不被触碰，
-而是整个复制一份到同级的 `luajit/` 目录，注入文件装进这份副本；
-"启用/关闭"变成"专用服务器启动时从哪个文件夹起 exe"这一个选择（见
-`resolve_launch_bin64_dir()`），不再需要任何"删除触发文件"这种破坏性操
-作。机制本身（已实测下载解压官方 release 包、读过其 install.bat 源码验
-证过）：纯 DLL 搜索顺序劫持——`Winmm.dll` 是触发文件，跟游戏 exe 放在同
-一个目录时会被 Windows 优先于系统版本加载，从而拉起 `Injector.dll`（真
-正的 hook 逻辑）；`lua51*.dll` 是几种 Lua 运行时变体；
-`signatures_client.json`/`signatures_server.json` 是按精确游戏版本绑定
-的内存特征码——这也是为什么游戏版本一变，副本里的这套文件就可能过期，
-需要整个重新生成（见 `needs_regeneration()`/`regenerate()`）。
-
-只服务 Steam 版专用服务器，不碰 WeGame（WeGame 专用服务器永远是玩家自己
-在 WeGame 客户端启动的，DSTCamp 看不到它是否在跑，范围上直接排除这个检
-测盲区）。
-
-**注入文件（连同配套 Mod）统一从 Steam 创意工坊订阅内容里取，不再从
-GitHub 下载**——作者直接确认过（2026-08-01 沟通，纠正了这个模块更早前
-"联网查 GitHub Release、下载 windows_Mod.zip"的做法）：GitHub 那边更新
-太频繁，可能不稳定，应该以订阅内容里的稳定版为准。这是发在创意工坊
-WORKSHOP_ID 这个物品的正牌 Workshop mod，只要这台机器的 Steam 账号订阅
-过，内容（含配套 Mod 本体 + `bin64/windows/` 下的全部注入文件）就已经在
-`<steam>/steamapps/workshop/content/322330/<WORKSHOP_ID>/` 里，Steam 自
-己负责保持更新，DSTCamp 不需要、也不应该自己维护一份下载/缓存逻辑：
-- 配套 Mod 的启用走标准 Workshop 命名（key 是 "workshop-<id>"），
-  `core/modinfo_reader.find_mod_folder()` 已有的 Workshop 路径查找逻辑
-  天然能找到它，不需要任何特判代码。
-- bin64 注入文件直接从 `<订阅内容>/bin64/windows/` 复制进隔离副本，见
-  `apply_install()`/`regenerate()`。
-- "配套 Mod 是不是被作者发布了新版本"看订阅内容自己的 `modinfo.lua` 里
-  作者自己写的 `version` 字段（`current_injector_version()`，真机验证过
-  是 "1.10.1" 这种语义化版本号，不是 Steam 内部的 manifest 哈希）——比
-  appworkshop_322330.acf 的 manifest 字段更直接：manifest 只反映"Steam
-  有没有同步过新内容"，version 才是"作者自己声明的版本号"，跟"游戏本体
-  是不是被更新过"（`current_game_build_id()`）是分开互相独立的两个信
-  号，任一变了都需要重新生成副本（见 `needs_regeneration()`）。
-
-订阅本身是 Steam 账号操作，DSTCamp 没有 API/权限代劳，`plan_install()`
-发现没订阅时直接拦截，只能引导用户去创意工坊页面手动订阅一次再重试。
+真实 ``bin64`` 永不修改；补丁装入同级 ``luajit`` 副本，启停只切换启动
+目录。注入文件与配套 Mod 只取自用户已订阅的 Workshop 内容，不联网下载。
+游戏版本或 Mod 声明版本变化时重建副本。WeGame 不在支持范围内。
 """
 
 import json

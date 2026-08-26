@@ -1,47 +1,9 @@
-"""已知 mod 通过 `AddCustomizeItem()` + `worldsettings_overrides.lua` 的
-`Pre`/`Post` 表往游戏"自定义世界"界面（世界设置/世界生成）里注册的自定
-义条目——不是自动扫描任意 mod 源码得出的（那样解析不出来的情况下很容
-易演变成"猜一个像样的答案"，跟本项目一贯"绝不猜测"的原则冲突），而是
-逐个 mod 手工核对过真实源码的登记表：只登记验证过的 mod，没登记的 mod
-一律走 categories.py 原有的 ("other", False, key) 兜底（不显示，但也
-不影响 leveldataoverride.lua 的读写——那条路径本来就是无差别全量透传）。
+"""登记从真实 Mod 源码核验过的世界设置。
 
-机制说明（真机读 mod 源码 + 官方 worldsettings_overrides.lua 源码验证
-过，不是猜测）：
-1) mod 的 `modworldgenmain.lua`（游戏在"生成世界"阶段专门加载的约定文
-   件名）调用 `AddCustomizeItem(category, group, name, {...})`，
-   category 是 `LEVELCATEGORY.SETTINGS`（对应"世界设置"，可随时编辑）
-   或 `LEVELCATEGORY.WORLDGEN`（对应"世界生成"，只在生成世界那一刻生
-   效，游戏内该界面本身就是只读展示，DSTCamp 现有架构对应 is_rule=False
-   分支）。`name` 就是最终写进 leveldataoverride.lua 的 `overrides` 表
-   的 key；同一次调用的 `image`/`atlas` 字段指向这个设置项在 mod 自己
-   图集里的图标（见 features/world/mod_icons.py）。
-2) 具体某一档（比如 "never"/"rare"/"often"/"always"，或 "enabled"）会
-   把哪些数值改成什么，由官方模块 `worldsettings_overrides.lua`（游戏
-   本体自带，mod 用 `require("worldsettings_overrides")` 拿到）的
-   `Pre`/`Post` 表决定——mod 直接往同一张表里追加自己的条目
-   `WSO.Pre.<name> = function(difficulty) local tuning_vars = {...} end`。
-   **注意**：一个设置项"UI 上真实显示、用户能选哪些档"由它的 `desc`
-   （`AddCustomizeItem` 里显式写的 `desc`，没写则继承它所属组的默认
-   `desc`——游戏本体 customize.lua 里 animals/monsters/giants 三个组的
-   默认 desc 都是 frequency_descriptions 5 档）决定，`tuning_vars` 的
-   key 只是"选了某一档后实际改哪个数值"的实现细节。两者正常情况下一致，
-   但岛屿 mod 有少数 key 不一致（tuning_vars 用 few/many 或 9 档倍率表，
-   desc 却仍是 5 档 frequency），此时**取值列表以 desc 为准**（见
-   _IA_NRDOA 的注释），不能照抄 tuning_vars 的 key。
-3) 只有真的在 `AddCustomizeItem` 里注册过的 name，才是界面上真实存在、
-   用户能调的设置——mod 源码里孤立的 `WSO.Pre.X` 定义（没有对应
-   `AddCustomizeItem` 注册）是死代码，不能收进来（真机确认过 Cherry
-   Forest 自己的源码里就有这种情况：`cherrysetpieces`/`cherryforest_size`
-   两个 Pre 定义存在，但从来没有被 AddCustomizeItem 注册过）。
-
-新增一个 mod 的支持时必须重新走一遍这个人工核对流程（读该 mod 真实的
-`modworldgenmain.lua` 及其 `require`/`modimport` 的文件，以及图标图集
-的 .xml），不能照抄其它 mod 的 group/取值列表/图标命名模式去猜。
-
-界面上每个贡献过世界设置的 mod 各自占一个分类（标题用 mod 本身的名字，
-不是笼统的"来自 Mod"）——category key 统一是 `f"mod_{workshop_id}"`，
-见 get_mod_categories()。
+信任边界是 ``AddCustomizeItem``、``worldsettings_overrides.lua`` 和图集 XML；
+不自动猜测任意 Mod。只有实际注册的 ``name`` 才能展示，孤立的 ``WSO.Pre``
+定义不算可用设置。可选值以 UI 的 ``desc`` 为准，而不是实现细节
+``tuning_vars``。未登记 key 继续透传 Lua，但不在界面中伪造配置。
 """
 
 from dataclasses import dataclass

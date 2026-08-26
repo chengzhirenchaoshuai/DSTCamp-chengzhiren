@@ -5,6 +5,8 @@ model 字段的默认值本身不需要单独测——那是 dataclass 声明上
 
 import os
 import sys
+from string import Formatter
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.i18n import t, set_lang, get_lang
@@ -15,26 +17,17 @@ def test_i18n_basic():
     print("=" * 60)
     print("Test P2-1: i18n Basic")
 
-    # Default is Chinese
-    assert get_lang() == "zh"
-    assert "DSTCamp" in t("app.title")
-    print(f"  PASS: Default language is zh, title='{t('app.title')[:30]}...'")
-
-    # Switch to English
-    set_lang("en")
-    assert get_lang() == "en"
-    assert t("app.title") == "DSTCamp · Local Server Manager"
-    print(f"  PASS: English switch, title='{t('app.title')}'")
-
-    # Switch back
-    set_lang("zh")
-    assert get_lang() == "zh"
-    print("  PASS: Switch back to zh")
-
-    # Invalid language doesn't crash
-    set_lang("fr")
-    assert get_lang() == "zh"  # Unchanged
-    print("  PASS: Invalid language ignored")
+    original = get_lang()
+    try:
+        set_lang("zh")
+        assert "DSTCamp" in t("app.title")
+        set_lang("en")
+        assert t("app.title") == "DSTCamp · Local Server Manager"
+        set_lang("fr")
+        assert get_lang() == "en"
+        print("  PASS: 中英文切换及非法语言保护正常")
+    finally:
+        set_lang(original)
 
     # All keys exist in both languages
     zh_keys = set()
@@ -47,6 +40,14 @@ def test_i18n_basic():
     assert zh_keys == en_keys, f"Key mismatch: zh-only={zh_keys-en_keys}, en-only={en_keys-zh_keys}"
     print(f"  PASS: {len(zh_keys)} keys match in both languages")
 
+    def fields(value):
+        return {name for _, name, _, _ in Formatter().parse(value) if name}
+
+    mismatched = [
+        key for key in zh_keys if fields(STRINGS["zh"][key]) != fields(STRINGS["en"][key])
+    ]
+    assert not mismatched, f"Placeholder mismatch: {mismatched}"
+
     # Format strings work
     set_lang("zh")
     result = t("dlg.saved_mods", count=34, shard="Master")
@@ -54,6 +55,7 @@ def test_i18n_basic():
     set_lang("en")
     result = t("dlg.saved_mods", count=34, shard="Master")
     assert "34" in result and "Master" in result
+    set_lang(original)
     print("  PASS: Format strings work in both languages")
 
 
@@ -70,13 +72,11 @@ def test_exe_entry_imports():
         sys.path.insert(0, scripts_dir)
 
     # Test run_gui.py imports
-    import run_gui
-    assert run_gui is not None
+    import run_gui  # noqa: F401
     print("  PASS: scripts/run_gui.py imports successfully")
 
     # Test build_exe.py can be imported
-    import build_exe
-    assert build_exe is not None
+    import build_exe  # noqa: F401
     print("  PASS: scripts/build_exe.py imports successfully")
 
 
@@ -90,12 +90,9 @@ def test_gui_imports():
     # app.py 重新导出的副作用，这样才是真的在测这几个模块自己能不能
     # 正常导入。
     from dstools.gui.app import DSToolsApp
-    from dstools.features.save_browser.tab import SaveBrowserTab
     from dstools.features.mod.tab import ModManagerTab
     from dstools.features.cluster_config.tab import ClusterConfigTab
     assert DSToolsApp and ModManagerTab and ClusterConfigTab
-    from dstools.shared.gui.theme import SERVER_COLOR
-    assert SERVER_COLOR == "#2e7d32"
     print("  PASS: GUI imports OK")
 
     # custom_titlebar.py 只在 DSToolsApp.__init__ 里延迟 import（避免非
@@ -108,11 +105,6 @@ def test_gui_imports():
     assert hasattr(custom_titlebar, "CustomTitleBar")
     print("  PASS: custom_titlebar imports OK")
 
-    # 每个玩家角色状态面板——import 级别检查方法存在即可，这个项目对 GUI
-    # 测试一贯只做到这一层，不真的实例化 tk.Tk() 构造控件树。
-    assert hasattr(SaveBrowserTab, "_build_player_row")
-    assert hasattr(SaveBrowserTab, "_refresh_players")
-    print("  PASS: SaveBrowserTab has per-player status methods")
 
 
 def main():

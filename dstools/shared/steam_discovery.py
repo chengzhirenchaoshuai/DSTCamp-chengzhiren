@@ -113,7 +113,7 @@ def read_game_version_file(install_dir: Path) -> str | None:
     """读 install_dir 下游戏自己写的 version.txt——Klei 自己维护的内部版
     本号（真机验证过，跟 Steam appmanifest 的 buildid 是两个独立编号：
     同一台机器上 version.txt 是 "740477"，buildid 是 "24080846"），用来
-    判断"这个游戏是不是被更新过"（见 core/luajit_injector.py 的
+    判断"这个游戏是不是被更新过"（见 features/local_service/luajit_injector.py 的
     needs_regeneration()）。选它而不是 appmanifest buildid：不需要知道
     app_id、不需要跳两级目录去找 acf、不需要解析 Steam 特有格式，就是安
     装目录下一个文件，游戏自己写的版本号跟 LuaJIT 补丁按精确游戏版本绑

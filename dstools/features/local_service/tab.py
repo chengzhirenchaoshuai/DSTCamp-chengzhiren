@@ -1,4 +1,4 @@
-""""本地服务"标签页：一键启动/管理饥荒专用服务器（Dedicated Server）。
+""" "本地服务"标签页：一键启动/管理饥荒专用服务器（Dedicated Server）。
 
 只针对 SaveSource.SERVER 类型的 Cluster；一个 Cluster 下有几个世界
 （Master/Caves/其他世界）完全来自 Cluster.shards（discovery.py 已经自动
@@ -21,27 +21,45 @@ from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.server_diagnostics import (
-    analyze_mod_loading, contains_startup_failure, diagnose_server_failure,
+    analyze_mod_loading,
+    contains_startup_failure,
+    diagnose_server_failure,
 )
 from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.shared.app_settings import (
-    get_backup_auto_enabled, get_backup_interval_minutes, set_dedicated_server_path,
-    get_sakura_token, get_selfhost_frp_mapping, get_selfhost_frp_server,
+    get_backup_auto_enabled,
+    get_backup_interval_minutes,
+    set_dedicated_server_path,
+    get_sakura_token,
+    get_selfhost_frp_mapping,
+    get_selfhost_frp_server,
 )
 from dstools.features.local_service.backup_manager import create_backup
 from dstools.features.cluster_config.config_manager import (
-    get_cluster_option, get_shard_option, load_cluster_config, load_shard_config,
+    get_cluster_option,
+    get_shard_option,
+    load_cluster_config,
+    load_shard_config,
 )
 from dstools.features.sakura import api as sakura_frp
 from dstools.features.local_service.dedicated_server import (
-    ConfDirCrossDriveError, ServerManager, ServerStatus,
+    ConfDirCrossDriveError,
+    ServerManager,
+    ServerStatus,
     advance_world_ready_marker,
-    detect_external_shard_processes, find_bin64_dir, find_dedicated_server_dir,
-    is_valid_install_dir, resolve_conf_dir_arg,
+    detect_external_shard_processes,
+    find_bin64_dir,
+    find_dedicated_server_dir,
+    is_valid_install_dir,
+    resolve_conf_dir_arg,
 )
 from dstools.features.mod.parser import (
-    find_game_mods_dir, find_shared_ugc_directory, find_workshop_dir, parse_modinfo,
+    find_game_mods_dir,
+    find_shared_ugc_directory,
+    find_workshop_dir,
+    parse_modinfo,
 )
+from dstools.features.mod.sync import get_enabled_mod_ids
 from dstools.shared.token_manager import is_valid_token, read_token
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
@@ -51,9 +69,14 @@ from dstools.shared.clipboard import copy_file_to_clipboard
 from dstools.shared.gui.toolbar_widgets import ReadonlyBanner
 from dstools.shared.gui.tooltip import Tooltip
 from dstools.shared.server_ports import (
-    collect_cluster_port_claims, find_port_conflicts, scan_udp_ports,
-    stable_path_key, system_port_claims, rewrite_cluster_ports_atomic,
+    collect_cluster_port_claims,
+    find_port_conflicts,
+    scan_udp_ports,
+    stable_path_key,
+    system_port_claims,
+    rewrite_cluster_ports_atomic,
 )
+from dstools.shared.ssl_context import default_ssl_context
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
@@ -63,7 +86,6 @@ _PUBLIC_IP_URLS = (
     "https://myip.ipip.net",
     "https://cdid.c-ctrip.com/model-poc2/h",
 )
-from dstools.shared.ssl_context import default_ssl_context
 
 _STATUS_KEYS = {
     ServerStatus.STARTING: "local.status_starting",
@@ -72,6 +94,8 @@ _STATUS_KEYS = {
     ServerStatus.STOPPED: "local.status_stopped",
     ServerStatus.CRASHED: "local.status_crashed",
 }
+
+
 def _status_color(status) -> str:
     """现建现查而不是模块级 dict 缓存——每 150ms 轮询一次的 _ShardRow.
     update()/_ConsolePane.pump() 本来就会频繁重新调用这个函数，主题切换
@@ -120,6 +144,8 @@ def _mod_display_names(proc, mod_ids: tuple[str, ...]) -> tuple[str, ...]:
                 break
         result.append(f"{mod_id}（{name}）" if name else mod_id)
     return tuple(result)
+
+
 _RUNNING_LIKE = (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING)
 
 
@@ -144,7 +170,7 @@ def _max_rollback_days(cluster) -> int:
 
 
 class _RollbackDialog:
-    """"回档"窗口：下拉选择回退天数，点"回退"只往这个 cluster 的主世界
+    """ "回档"窗口：下拉选择回退天数，点"回退"只往这个 cluster 的主世界
     (Master) 控制台发一次对应的 c_rollback(n)——按用户要求只发主世界，
     不广播给 Caves 等从世界（Klei 社区文档一般建议世界式集群两边都发一
     遍，否则天数可能不同步，这里是用户自己验证过取舍后的明确要求）。
@@ -155,6 +181,7 @@ class _RollbackDialog:
 
     def __init__(self, parent_widget, tab, cluster, max_days):
         from dstools.shared.gui.menu_combo import MenuCombo
+
         self.tab = tab
         self.cluster = cluster
         self._parent = parent_widget
@@ -166,12 +193,21 @@ class _RollbackDialog:
         win.configure(background=theme.BG_SOFT)
         WIN_W = 380
 
-        ttk.Label(win, text=t("local.rollback_prompt"), font=theme.font_tuple(theme.FONT_SIZE_MD),
-                  wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 10))
+        ttk.Label(
+            win,
+            text=t("local.rollback_prompt"),
+            font=theme.font_tuple(theme.FONT_SIZE_MD),
+            wraplength=WIN_W - 40,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=20, pady=(20, 10))
 
         row = ttk.Frame(win)
         row.pack(fill=tk.X, padx=20, pady=(0, 10))
-        ttk.Label(row, text=t("local.rollback_days_label"), font=theme.font_tuple(theme.FONT_SIZE_BASE)).pack(side=tk.LEFT)
+        ttk.Label(
+            row,
+            text=t("local.rollback_days_label"),
+            font=theme.font_tuple(theme.FONT_SIZE_BASE),
+        ).pack(side=tk.LEFT)
         self._days_var = tk.StringVar()
         combo = MenuCombo(row, textvariable=self._days_var, width=10)
         combo["values"] = [str(i) for i in range(1, max_days + 1)]
@@ -180,8 +216,12 @@ class _RollbackDialog:
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 20))
-        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text=t("local.rollback_confirm_btn"), command=self._do_rollback).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(
+            side=tk.LEFT
+        )
+        ttk.Button(
+            btn_frame, text=t("local.rollback_confirm_btn"), command=self._do_rollback
+        ).pack(side=tk.RIGHT)
 
         win.bind("<Escape>", lambda e: self._cancel())
         win.protocol("WM_DELETE_WINDOW", self._cancel)
@@ -202,7 +242,9 @@ class _RollbackDialog:
             n = int(self._days_var.get())
         except (TypeError, ValueError):
             return
-        if not dlg.ask_yes_no(self.win, t("local.rollback_title"), t("local.rollback_confirm", n=n)):
+        if not dlg.ask_yes_no(
+            self.win, t("local.rollback_title"), t("local.rollback_confirm", n=n)
+        ):
             return
         # 按用户明确要求只发给主世界，不再广播给 Caves 等从世界——虽然
         # Klei 社区文档一般建议世界式集群两边都发一遍（否则天数可能不同
@@ -213,13 +255,25 @@ class _RollbackDialog:
         self.win.destroy()
         root = self._parent.winfo_toplevel()
         if not target:
-            dlg.show_warning(root, t("local.rollback_title"), t("local.rollback_none_running"))
+            dlg.show_warning(
+                root, t("local.rollback_title"), t("local.rollback_none_running")
+            )
             return
         proc = self.tab.manager.get(self.cluster.path, target.name)
-        if proc and proc.status == ServerStatus.RUNNING and proc.send_command(f"c_rollback({n})"):
-            dlg.show_info(root, t("local.rollback_title"), t("local.rollback_sent", n=n, shards=target.name))
+        if (
+            proc
+            and proc.status == ServerStatus.RUNNING
+            and proc.send_command(f"c_rollback({n})")
+        ):
+            dlg.show_info(
+                root,
+                t("local.rollback_title"),
+                t("local.rollback_sent", n=n, shards=target.name),
+            )
         else:
-            dlg.show_warning(root, t("local.rollback_title"), t("local.rollback_none_running"))
+            dlg.show_warning(
+                root, t("local.rollback_title"), t("local.rollback_none_running")
+            )
 
 
 def _show_not_found_warning(parent) -> None:
@@ -235,11 +289,18 @@ def _show_not_found_warning(parent) -> None:
     5 步说明文字比普通提示长得多，默认的窄弹窗（wraplength=320）会把它
     挤成很多行、显得又瘦又长，这里按用户要求加长一倍（宽度、换行宽度都
     翻倍）。"""
-    dlg.show_warning(parent, t("local.install_title"), t("local.install_body"),
-                      wraplength=640, min_width=720)
+    dlg.show_warning(
+        parent,
+        t("local.install_title"),
+        t("local.install_body"),
+        wraplength=640,
+        min_width=720,
+    )
 
 
-_NAME_COL_W = 110   # "世界名字"这一列的固定像素宽度，大致对应原来 ttk.Label(width=14) 的观感
+_NAME_COL_W = (
+    110  # "世界名字"这一列的固定像素宽度，大致对应原来 ttk.Label(width=14) 的观感
+)
 _STATUS_COL_W = 70  # "状态"这一列，大致对应原来 ttk.Label(width=8) 的观感
 
 
@@ -267,11 +328,19 @@ class _ShardRow:
         # 现查 tab._get_cluster()——这一行对象只在世界集合/存档路径变化
         # 时才重建，路径没变就一直复用旧对象；构造时闭包存的 cluster 引
         # 用会在"刷新"后变成过期对象（token_path 等字段还是旧值）。
-        self.start_btn = ttk.Button(self.frame, text=t("local.start_btn"), width=8,
-                                     command=lambda: tab.start_shard(tab._get_cluster(), shard))
+        self.start_btn = ttk.Button(
+            self.frame,
+            text=t("local.start_btn"),
+            width=8,
+            command=lambda: tab.start_shard(tab._get_cluster(), shard),
+        )
         self.start_btn.pack(side=tk.LEFT, padx=(_NAME_COL_W + _STATUS_COL_W, 4))
-        self.stop_btn = ttk.Button(self.frame, text=t("local.stop_btn"), width=8,
-                                    command=lambda: tab.stop_shard(tab._get_cluster(), shard))
+        self.stop_btn = ttk.Button(
+            self.frame,
+            text=t("local.stop_btn"),
+            width=8,
+            command=lambda: tab.stop_shard(tab._get_cluster(), shard),
+        )
         self.stop_btn.pack(side=tk.LEFT)
         self.update()
 
@@ -283,16 +352,36 @@ class _ShardRow:
             return
         cy = h / 2
         font = tkfont.nametofont("TkDefaultFont")
-        c.create_text(4, cy, text=self._shard_name, anchor=tk.W, fill=theme.TEXT,
-                       font=font, tags="row_text")
-        c.create_text(_NAME_COL_W, cy, text=self.status_var.get(), anchor=tk.W,
-                       fill=self._status_fg, font=font, tags="row_text")
+        c.create_text(
+            4,
+            cy,
+            text=self._shard_name,
+            anchor=tk.W,
+            fill=theme.TEXT,
+            font=font,
+            tags="row_text",
+        )
+        c.create_text(
+            _NAME_COL_W,
+            cy,
+            text=self.status_var.get(),
+            anchor=tk.W,
+            fill=self._status_fg,
+            font=font,
+            tags="row_text",
+        )
 
     def update(self):
         proc = self.tab.manager.get(self.cluster.path, self.shard.name)
         key = (str(self.cluster.path), self.shard.name)
-        status = proc.status if proc else (
-            ServerStatus.STARTING if key in self.tab._launching_keys else ServerStatus.STOPPED
+        status = (
+            proc.status
+            if proc
+            else (
+                ServerStatus.STARTING
+                if key in self.tab._launching_keys
+                else ServerStatus.STOPPED
+            )
         )
         self.status_var.set(t(_STATUS_KEYS[status]))
         self._status_fg = _status_color(status)
@@ -302,7 +391,9 @@ class _ShardRow:
         # 按钮一刀切锁住。WeGame 世界仍然不能从这里启动。
         is_wegame = self.cluster.platform == Platform.WEGAME
         locked = (not running) and is_wegame
-        self.start_btn.configure(state=tk.DISABLED if (running or locked) else tk.NORMAL)
+        self.start_btn.configure(
+            state=tk.DISABLED if (running or locked) else tk.NORMAL
+        )
         self.stop_btn.configure(state=tk.NORMAL if running else tk.DISABLED)
 
     def destroy(self):
@@ -310,7 +401,7 @@ class _ShardRow:
 
 
 class _AnnounceDialog:
-    """"公告"输入框——不用 tkinter.simpledialog.askstring()：那是原生系
+    """ "公告"输入框——不用 tkinter.simpledialog.askstring()：那是原生系
     统弹窗，窗口偏小，也不跟着当前主题走（永远是系统默认灰白配色）。
     跟 _RollbackDialog、features/cluster_config/tab.py 的 _TokenInputDialog 同一
     套自绘 Toplevel 做法，配色套 theme.BG_SOFT，跟当前皮肤保持一致。"""
@@ -325,16 +416,27 @@ class _AnnounceDialog:
         win.configure(background=theme.BG_SOFT)
         WIN_W = 480
 
-        ttk.Label(win, text=t("local.console_announce_prompt"), font=theme.font_tuple(theme.FONT_SIZE_BASE),
-                  wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
+        ttk.Label(
+            win,
+            text=t("local.console_announce_prompt"),
+            font=theme.font_tuple(theme.FONT_SIZE_BASE),
+            wraplength=WIN_W - 40,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=20, pady=(20, 8))
         self.var = tk.StringVar()
-        entry = ttk.Entry(win, textvariable=self.var, font=theme.font_tuple(theme.FONT_SIZE_BASE))
+        entry = ttk.Entry(
+            win, textvariable=self.var, font=theme.font_tuple(theme.FONT_SIZE_BASE)
+        )
         entry.pack(fill=tk.X, padx=20, pady=(0, 20))
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 20))
-        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
-        ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
+        ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._cancel).pack(
+            side=tk.LEFT
+        )
+        ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=self._confirm).pack(
+            side=tk.RIGHT
+        )
 
         entry.focus_set()
         win.bind("<Return>", lambda e: self._confirm())
@@ -377,14 +479,18 @@ class _ConsolePane:
         bottom = ttk.Frame(self.frame)
         bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 4))
         self.status_var = tk.StringVar()
-        self.status_lbl = tk.Label(bottom, textvariable=self.status_var, bg=theme.BG_SOFT)
+        self.status_lbl = tk.Label(
+            bottom, textvariable=self.status_var, bg=theme.BG_SOFT
+        )
         self.status_lbl.pack(side=tk.LEFT, padx=(2, 8))
         self.cmd_var = tk.StringVar()
         self.cmd_entry = ttk.Entry(bottom, textvariable=self.cmd_var)
         self.cmd_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
         self.cmd_entry.bind("<Return>", self._send)
         Tooltip(self.cmd_entry, t("local.console_placeholder"))
-        self.send_btn = ttk.Button(bottom, text=t("local.console_send_btn"), command=self._send)
+        self.send_btn = ttk.Button(
+            bottom, text=t("local.console_send_btn"), command=self._send
+        )
         self.send_btn.pack(side=tk.LEFT)
 
         # 常用指令快捷按钮——省得每次都要记 c_announce()/c_listallplayers()
@@ -394,18 +500,26 @@ class _ConsolePane:
         # 用户明确要求才加，点击前必须弹窗二次确认（见 _reset_world()）。
         quick_row = ttk.Frame(self.frame)
         quick_row.pack(side=tk.BOTTOM, fill=tk.X, padx=2)
-        self.announce_btn = ttk.Button(quick_row, text=t("local.console_announce_btn"), command=self._announce)
+        self.announce_btn = ttk.Button(
+            quick_row, text=t("local.console_announce_btn"), command=self._announce
+        )
         self.announce_btn.pack(side=tk.LEFT, padx=(0, 4))
-        self.list_players_btn = ttk.Button(quick_row, text=t("local.console_list_players_btn"), command=self._list_players)
+        self.list_players_btn = ttk.Button(
+            quick_row,
+            text=t("local.console_list_players_btn"),
+            command=self._list_players,
+        )
         self.list_players_btn.pack(side=tk.LEFT)
-        self.copy_log_btn = ttk.Button(quick_row, text=t("local.console_copy_log_btn"),
-                                       command=self._copy_world_log)
-        # 进程起来了(status==RUNNING)不代表世界真的加载完——这两个按钮额
-        # 外要求 proc.world_ready（见 dedicated_server.py 对启动日志的检
-        # 测），世界没加载完时置灰，鼠标放上去提示原因。
-        not_ready_hint = lambda: (t("local.world_not_ready_hint")
-                                   if self.proc.status == ServerStatus.RUNNING and not self.proc.world_ready
-                                   else "")
+        self.copy_log_btn = ttk.Button(
+            quick_row,
+            text=t("local.console_copy_log_btn"),
+            command=self._copy_world_log,
+        )
+        # RUNNING 只代表进程存活；交互命令必须等到世界加载完成。
+        def not_ready_hint():
+            if self.proc.status == ServerStatus.RUNNING and not self.proc.world_ready:
+                return t("local.world_not_ready_hint")
+            return ""
         Tooltip(self.announce_btn, not_ready_hint)
         Tooltip(self.list_players_btn, not_ready_hint)
 
@@ -415,10 +529,16 @@ class _ConsolePane:
         # 没用"的陷阱，而不是画出来再禁用+解释。
         self.reset_world_btn = None
         if getattr(proc, "is_master", True):
-            self.reset_world_btn = ttk.Button(quick_row, text=t("local.console_reset_world_btn"),
-                                               command=self._reset_world)
+            self.reset_world_btn = ttk.Button(
+                quick_row,
+                text=t("local.console_reset_world_btn"),
+                command=self._reset_world,
+            )
             self.reset_world_btn.pack(side=tk.LEFT, padx=(4, 0))
-            Tooltip(self.reset_world_btn, lambda: not_ready_hint() or t("local.console_reset_world_hover"))
+            Tooltip(
+                self.reset_world_btn,
+                lambda: not_ready_hint() or t("local.console_reset_world_hover"),
+            )
         # 放在“重置世界”右侧；从世界没有重置按钮时则紧跟在玩家列表后面。
         self.copy_log_btn.pack(side=tk.LEFT, padx=(4, 0))
         # "关闭"跟其它几个不一样，不受 can_send 控制（见 pump()）——世界
@@ -426,7 +546,9 @@ class _ConsolePane:
         # 标签页只会越攒越多。点击行为交给调用方（LocalServiceTab），因
         # 为这里需要停止进程 + 从 Notebook/_console_panes 里摘掉这个标签
         # 页，这个 pane 自己不知道也不该知道 Notebook/字典这些外部状态。
-        self.close_btn = ttk.Button(quick_row, text=t("local.console_close_btn"), command=self._on_close)
+        self.close_btn = ttk.Button(
+            quick_row, text=t("local.console_close_btn"), command=self._on_close
+        )
         self.close_btn.pack(side=tk.RIGHT)
 
         self._mod_check_reported = False
@@ -447,21 +569,31 @@ class _ConsolePane:
         # 硬性规则冲突（那条规则针对的是 BgFrame 场景）。
         self._search_bar = ttk.Frame(body)
         self.search_var = tk.StringVar()
-        search_entry = ttk.Entry(self._search_bar, textvariable=self.search_var,
-                                  font=theme.font_tuple(theme.FONT_SIZE_SM))
+        search_entry = ttk.Entry(
+            self._search_bar,
+            textvariable=self.search_var,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        )
         self._search_entry = search_entry
         search_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 4), pady=3)
         Tooltip(search_entry, t("local.console_search_placeholder"))
         self.search_count_var = tk.StringVar()
-        tk.Label(self._search_bar, textvariable=self.search_count_var,
-                 font=theme.font_tuple(theme.FONT_SIZE_SM),
-                 bg=theme.BG_SOFT, fg=theme.TEXT_MUTED).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(self._search_bar, text="↑", width=3,
-                   command=lambda: self._search_step(-1)).pack(side=tk.LEFT)
-        ttk.Button(self._search_bar, text="↓", width=3,
-                   command=lambda: self._search_step(1)).pack(side=tk.LEFT)
-        ttk.Button(self._search_bar, text="×", width=3,
-                   command=self._close_search).pack(side=tk.LEFT, padx=(0, 4))
+        tk.Label(
+            self._search_bar,
+            textvariable=self.search_count_var,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            bg=theme.BG_SOFT,
+            fg=theme.TEXT_MUTED,
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(
+            self._search_bar, text="↑", width=3, command=lambda: self._search_step(-1)
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            self._search_bar, text="↓", width=3, command=lambda: self._search_step(1)
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            self._search_bar, text="×", width=3, command=self._close_search
+        ).pack(side=tk.LEFT, padx=(0, 4))
         search_entry.bind("<Return>", lambda e: self._search_step(1))
         search_entry.bind("<Shift-Return>", lambda e: self._search_step(-1))
         search_entry.bind("<Escape>", lambda e: self._close_search())
@@ -478,15 +610,27 @@ class _ConsolePane:
         # wrap=WORD（原来是 NONE）：日志经常出现很长的一整行，NONE 只能
         # 靠横向滚动条看完整内容，真机反馈过看不到完整日志、只能拖大主窗
         # 口——改自动换行后不再需要横向滚动，也不用额外加横向滚动条。
-        self.text = tk.Text(body, wrap=tk.WORD, state=tk.DISABLED,
-                             font=theme.font_tuple(theme.FONT_SIZE_SM),
-                             bg=theme.CARD_BG, fg=theme.TEXT, yscrollcommand=vsb.set)
+        self.text = tk.Text(
+            body,
+            wrap=tk.WORD,
+            state=tk.DISABLED,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            bg=theme.CARD_BG,
+            fg=theme.TEXT,
+            yscrollcommand=vsb.set,
+        )
         self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.configure(command=self.text.yview)
-        self.text.tag_configure("search_hit", background=theme.SEARCH_HIGHLIGHT,
-                                 foreground=theme.SEARCH_HIGHLIGHT_FG)
-        self.text.tag_configure("search_hit_current", background=theme.SEARCH_HIGHLIGHT_CURRENT,
-                                 foreground=theme.SEARCH_HIGHLIGHT_FG)
+        self.text.tag_configure(
+            "search_hit",
+            background=theme.SEARCH_HIGHLIGHT,
+            foreground=theme.SEARCH_HIGHLIGHT_FG,
+        )
+        self.text.tag_configure(
+            "search_hit_current",
+            background=theme.SEARCH_HIGHLIGHT_CURRENT,
+            foreground=theme.SEARCH_HIGHLIGHT_FG,
+        )
 
         # Ctrl+F 绑定在日志区和命令输入框上——这两个是用户实际会聚焦的控
         # 件，不用 bind_all（会导致切到其它页签时也被这个控制台的搜索拦
@@ -503,12 +647,26 @@ class _ConsolePane:
         # before=self.text 插入能正常触发收缩，不需要手动强制重新布局。
         # 缺失/正常两种状态共用同一个 Label，颜色配置在 pump() 里按状态
         # 切换。
-        self._mod_status_label = tk.Label(body, text="", anchor=tk.W, padx=10, pady=0,
-                                           borderwidth=0, highlightthickness=0,
-                                           font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
-        self._diagnostic_label = tk.Label(body, text="", anchor=tk.W, padx=10, pady=2,
-                                          borderwidth=0, highlightthickness=0,
-                                          font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
+        self._mod_status_label = tk.Label(
+            body,
+            text="",
+            anchor=tk.W,
+            padx=10,
+            pady=0,
+            borderwidth=0,
+            highlightthickness=0,
+            font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+        )
+        self._diagnostic_label = tk.Label(
+            body,
+            text="",
+            anchor=tk.W,
+            padx=10,
+            pady=2,
+            borderwidth=0,
+            highlightthickness=0,
+            font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+        )
 
         self.pump()
 
@@ -562,7 +720,9 @@ class _ConsolePane:
         不重新扫描全文（扫描交给 _run_search()，只在搜索词变化时做一次）。"""
         if not self._search_matches:
             return "break"
-        self._search_index = (self._search_index + direction) % len(self._search_matches)
+        self._search_index = (self._search_index + direction) % len(
+            self._search_matches
+        )
         self._show_current_match()
         return "break"
 
@@ -573,8 +733,13 @@ class _ConsolePane:
         pos, end = self._search_matches[self._search_index]
         self.text.tag_add("search_hit_current", pos, end)
         self.text.see(pos)
-        self.search_count_var.set(t("local.console_search_count",
-                                     current=self._search_index + 1, total=len(self._search_matches)))
+        self.search_count_var.set(
+            t(
+                "local.console_search_count",
+                current=self._search_index + 1,
+                total=len(self._search_matches),
+            )
+        )
 
     def _diagnostic_log_lines(self) -> tuple[str, ...]:
         """合并管道日志和 server_log.txt，覆盖专服 stdout 缓冲导致的漏行。
@@ -585,9 +750,13 @@ class _ConsolePane:
         """
         lines = list(self.proc.recent_log_lines)
         try:
-            log_path = Path(self.proc.cluster_path) / self.proc.shard_name / "server_log.txt"
+            log_path = (
+                Path(self.proc.cluster_path) / self.proc.shard_name / "server_log.txt"
+            )
             if log_path.is_file():
-                file_lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
+                file_lines = log_path.read_text(
+                    encoding="utf-8", errors="replace"
+                ).splitlines()[-500:]
                 for line in file_lines:
                     if line not in lines:
                         lines.append(line)
@@ -616,10 +785,15 @@ class _ConsolePane:
 
     def _copy_world_log(self):
         """复制当前控制台对应世界的 server_log.txt 文件。"""
-        log_path = Path(self.proc.cluster_path) / self.proc.shard_name / "server_log.txt"
+        log_path = (
+            Path(self.proc.cluster_path) / self.proc.shard_name / "server_log.txt"
+        )
         if not log_path.is_file():
-            dlg.show_warning(self.frame.winfo_toplevel(), t("local.console_copy_log_btn"),
-                             t("local.console_log_not_found", path=str(log_path)))
+            dlg.show_warning(
+                self.frame.winfo_toplevel(),
+                t("local.console_copy_log_btn"),
+                t("local.console_log_not_found", path=str(log_path)),
+            )
             return
         copied = copy_file_to_clipboard(log_path)
         if not copied:
@@ -628,9 +802,14 @@ class _ConsolePane:
             self.frame.clipboard_clear()
             self.frame.clipboard_append(str(log_path))
             self.frame.update()
-        dlg.show_toast(self.frame.winfo_toplevel(),
-                       t("local.console_log_copied" if copied
-                         else "local.console_log_path_copied"))
+        dlg.show_toast(
+            self.frame.winfo_toplevel(),
+            t(
+                "local.console_log_copied"
+                if copied
+                else "local.console_log_path_copied"
+            ),
+        )
 
     def _reset_world(self):
         """调用官方命令 c_regenerateworld() 重置世界——真正会删除当前世
@@ -640,9 +819,13 @@ class _ConsolePane:
         ask_yes_no() 默认给短提示留的宽度（320px）长得多，跟 LuaJIT 安
         装确认框（同一个文件里 _on_luajit_install()）同样的坑同样的
         解法：用默认宽度会挤成很多行、窗口又高又窄，加宽减少行数。"""
-        if not dlg.ask_yes_no(self.frame, t("local.console_reset_world_confirm_title"),
-                               t("local.console_reset_world_confirm_msg"),
-                               wraplength=520, min_width=560):
+        if not dlg.ask_yes_no(
+            self.frame,
+            t("local.console_reset_world_confirm_title"),
+            t("local.console_reset_world_confirm_msg"),
+            wraplength=520,
+            min_width=560,
+        ):
             return
         self.proc.send_command("c_regenerateworld()")
 
@@ -668,15 +851,16 @@ class _ConsolePane:
         if lines:
             for line in lines:
                 self._mod_check_real_start_seen, ready_now = advance_world_ready_marker(
-                    line, self.proc.is_master, self._mod_check_real_start_seen,
+                    line,
+                    self.proc.is_master,
+                    self._mod_check_real_start_seen,
                 )
                 self._mod_check_ready_seen |= ready_now
             # 未选中的 Notebook 页没有有效的可视滚动视口，yview() 经常
             # 返回顶部位置；这会让后台追加日志时误以为用户正在查看旧
             # 内容。隐藏页始终跟随末尾，用户切过去时直接看到最新日志；
             # 当前可见页仍保留“用户手动向上滚动后不强行拉回”的行为。
-            at_bottom = (self.text.yview()[1] >= 0.999
-                         or not self.frame.winfo_ismapped())
+            at_bottom = self.text.yview()[1] >= 0.999 or not self.frame.winfo_ismapped()
             self.text.configure(state=tk.NORMAL)
             # 每行都跟一个"\n"插入会在最后一行后面多留一个真实存在的空
             # 行（Tk Text 固定带隐式换行，"line\n"+"line\n" 变成两个连
@@ -696,7 +880,10 @@ class _ConsolePane:
         )
         status = self.proc.status
         crashed_now = False
-        if status in (ServerStatus.STARTING, ServerStatus.RUNNING) and self.proc.poll_exit_code() is not None:
+        if (
+            status in (ServerStatus.STARTING, ServerStatus.RUNNING)
+            and self.proc.poll_exit_code() is not None
+        ):
             self.proc.status = ServerStatus.CRASHED
             status = ServerStatus.CRASHED
             crashed_now = True
@@ -713,14 +900,19 @@ class _ConsolePane:
             if report is not None:
                 self._diagnostic_label.configure(
                     text=f"⚠ {report.banner_text} 建议：{report.suggestions[0]}",
-                    bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
+                    bg=theme.BANNER_BG,
+                    fg=theme.BANNER_TEXT,
                 )
                 self._diagnostic_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
-                detail = report.summary + "\n\n建议：\n" + "\n".join(
-                    # 编号后的不换行空格保证 Tk 自动折行时不会把“2.”
-                    # 单独留在上一行，正文从下一行才开始。
-                    f"{index}.\u00a0{suggestion}"
-                    for index, suggestion in enumerate(report.suggestions, 1)
+                detail = (
+                    report.summary
+                    + "\n\n建议：\n"
+                    + "\n".join(
+                        # 编号后的不换行空格保证 Tk 自动折行时不会把“2.”
+                        # 单独留在上一行，正文从下一行才开始。
+                        f"{index}.\u00a0{suggestion}"
+                        for index, suggestion in enumerate(report.suggestions, 1)
+                    )
                 )
                 if report.related_mods:
                     related_mods = _mod_display_names(self.proc, report.related_mods)
@@ -733,8 +925,12 @@ class _ConsolePane:
                 if report.evidence:
                     detail += "\n\n日志证据：\n" + "\n".join(report.evidence)
                 dlg.show_warning(
-                    self.frame.winfo_toplevel(), report.title, detail,
-                    wraplength=520, min_width=560,
+                    self.frame.winfo_toplevel(),
+                    report.title,
+                    detail,
+                    # 异常诊断通常包含建议、Mod 列表和日志证据；使用更宽
+                    # 的消息区域，避免长文本被挤成窄长条。
+                    wraplength=1200,
                 )
         self.status_var.set(t(_STATUS_KEYS[status]))
         self.status_lbl.configure(fg=_status_color(status))
@@ -745,17 +941,26 @@ class _ConsolePane:
         self.announce_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
         self.list_players_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
         self.copy_log_btn.configure(
-            state=tk.NORMAL if (Path(self.proc.cluster_path) / self.proc.shard_name / "server_log.txt").is_file()
+            state=tk.NORMAL
+            if (
+                Path(self.proc.cluster_path) / self.proc.shard_name / "server_log.txt"
+            ).is_file()
             else tk.DISABLED
         )
         if self.reset_world_btn is not None:
-            self.reset_world_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
+            self.reset_world_btn.configure(
+                state=tk.NORMAL if world_ready else tk.DISABLED
+            )
 
         # missing_mods 只在 world_ready 那一刻算一次（见 dedicated_
         # server.py），非 None 之后才是"真的算完了"；每个进程只报一次，
         # 不然每次 pump() 轮询都重新 pack() 一遍没意义。
-        if (world_ready and self._mod_check_ready_seen and not self._mod_check_reported
-                and self.proc.missing_mods is not None):
+        if (
+            world_ready
+            and self._mod_check_ready_seen
+            and not self._mod_check_reported
+            and self.proc.missing_mods is not None
+        ):
             self._mod_check_reported = True
             mod_status = analyze_mod_loading(
                 enabled_mods=self.proc.mods_enabled,
@@ -765,14 +970,21 @@ class _ConsolePane:
             )
             if mod_status.failed_mods:
                 self._mod_status_label.configure(
-                    text=t("local.mods_check_failed", failed_count=len(mod_status.failed_mods),
-                            ids=", ".join(mod_status.failed_mods)),
-                    bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
+                    text=t(
+                        "local.mods_check_failed",
+                        failed_count=len(mod_status.failed_mods),
+                        ids=", ".join(mod_status.failed_mods),
+                    ),
+                    bg=theme.BANNER_BG,
+                    fg=theme.BANNER_TEXT,
+                )
                 self._mod_status_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
             elif mod_status.visible_mod_count:
                 self._mod_status_label.configure(
                     text=t("local.mods_check_ok", count=mod_status.visible_mod_count),
-                    bg=theme.BG_SOFT, fg=theme.SERVER_COLOR)
+                    bg=theme.BG_SOFT,
+                    fg=theme.SERVER_COLOR,
+                )
                 self._mod_status_label.pack(side=tk.TOP, fill=tk.X, before=self.text)
 
 
@@ -806,17 +1018,27 @@ class LocalServiceTab:
         self._install_row = install_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
         install_row.pack(fill=tk.X, padx=5, pady=(0, 5))
         self._install_path_var = tk.StringVar()
-        self._install_path_var.trace_add("write", lambda *a: self._redraw_install_row_text())
-        install_row.bind("<Configure>", lambda e: self._redraw_install_row_text(), add="+")
+        self._install_path_var.trace_add(
+            "write", lambda *a: self._redraw_install_row_text()
+        )
+        install_row.bind(
+            "<Configure>", lambda e: self._redraw_install_row_text(), add="+"
+        )
 
-        self._install_recheck_btn = ttk.Button(install_row, text=t("local.install_recheck_btn"),
-                                                command=self._recheck_install_dir)
+        self._install_recheck_btn = ttk.Button(
+            install_row,
+            text=t("local.install_recheck_btn"),
+            command=self._recheck_install_dir,
+        )
         self._install_recheck_btn.pack(side=tk.RIGHT)
-        self._install_change_btn = ttk.Button(install_row, text=t("local.install_change_btn"),
-                                               command=self._change_install_dir)
+        self._install_change_btn = ttk.Button(
+            install_row,
+            text=t("local.install_change_btn"),
+            command=self._change_install_dir,
+        )
         self._install_change_btn.pack(side=tk.RIGHT, padx=(0, 5))
 
-        # LuaJIT 性能补丁行——只服务 Steam 版专用服务器（core/luajit_
+        # LuaJIT 性能补丁行——只服务 Steam 版专用服务器（luajit_
         # injector.py 顶部说明：WeGame 专用服务器永远是玩家自己在 WeGame
         # 客户端启动的，DSTCamp 看不到它是否在跑，范围上直接排除，不在
         # 这里出现任何 WeGame 分支）。文字画法照抄上面 install_row 的
@@ -824,28 +1046,44 @@ class LocalServiceTab:
         self._luajit_row = luajit_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
         luajit_row.pack(fill=tk.X, padx=5, pady=(0, 5))
         self._luajit_status_var = tk.StringVar()
-        self._luajit_status_var.trace_add("write", lambda *a: self._redraw_luajit_row_text())
-        luajit_row.bind("<Configure>", lambda e: self._redraw_luajit_row_text(), add="+")
+        self._luajit_status_var.trace_add(
+            "write", lambda *a: self._redraw_luajit_row_text()
+        )
+        luajit_row.bind(
+            "<Configure>", lambda e: self._redraw_luajit_row_text(), add="+"
+        )
         self._luajit_bin64_dir: Path | None = None
 
-        self._luajit_uninstall_btn = ttk.Button(luajit_row, text=t("local.luajit_uninstall_btn"),
-                                                 command=self._on_luajit_uninstall_clicked)
+        self._luajit_uninstall_btn = ttk.Button(
+            luajit_row,
+            text=t("local.luajit_uninstall_btn"),
+            command=self._on_luajit_uninstall_clicked,
+        )
         self._luajit_uninstall_btn.pack(side=tk.RIGHT)
-        self._luajit_install_btn = ttk.Button(luajit_row, text=t("local.luajit_install_btn"),
-                                               command=self._on_luajit_install_clicked)
+        self._luajit_install_btn = ttk.Button(
+            luajit_row,
+            text=t("local.luajit_install_btn"),
+            command=self._on_luajit_install_clicked,
+        )
         self._luajit_install_btn.pack(side=tk.RIGHT, padx=(0, 5))
         # "说明"按钮跟安装/卸载按钮是同一批 side=tk.RIGHT 控件、最后 pack
         # ——同一批 side=RIGHT 控件里最后 pack 的离右边缘最远，正好排在
         # 安装/卸载左边、紧挨着状态文字，不需要单独占一行。
-        ttk.Button(luajit_row, text=t("local.luajit_help_btn"),
-                   command=lambda: webbrowser.open("https://github.com/fesily/dontstarveluajit2")
-                   ).pack(side=tk.RIGHT, padx=(0, 5))
+        ttk.Button(
+            luajit_row,
+            text=t("local.luajit_help_btn"),
+            command=lambda: webbrowser.open(
+                "https://github.com/fesily/dontstarveluajit2"
+            ),
+        ).pack(side=tk.RIGHT, padx=(0, 5))
 
         # 选中本地存档时显示的醒目提示——风格和"Mod管理"/"世界设置"的
         # 本地存档提示条保持一致（黄底加粗，ReadonlyBanner 统一封装），
         # 跨整个页签宽度，而不是像之前那样塞在左侧世界列表那个窄栏里、
         # 字又小又不显眼。默认不 show()。
-        self._local_banner = ReadonlyBanner(self.frame, text=t("local.select_server_hint"))
+        self._local_banner = ReadonlyBanner(
+            self.frame, text=t("local.select_server_hint")
+        )
 
         # 其它存档仍在运行时显示信息提示；是否能启动由端口预检决定，不再
         # 一刀切禁用多存档并行。
@@ -861,15 +1099,23 @@ class LocalServiceTab:
         body.add(left, weight=1)
         self._btn_row = btn_row = BgFrame(left, app, bg=theme.CARD_BG)
         btn_row.pack(fill=tk.X, pady=(0, 5))
-        self._start_all_btn = ttk.Button(btn_row, text=t("local.start_all_btn"), command=self._start_all)
+        self._start_all_btn = ttk.Button(
+            btn_row, text=t("local.start_all_btn"), command=self._start_all
+        )
         self._start_all_btn.pack(side=tk.LEFT, padx=(0, 5))
-        self._stop_all_btn = ttk.Button(btn_row, text=t("local.stop_all_btn"), command=self._stop_all)
+        self._stop_all_btn = ttk.Button(
+            btn_row, text=t("local.stop_all_btn"), command=self._stop_all
+        )
         self._stop_all_btn.pack(side=tk.LEFT)
         # "回档"是整个 cluster 级别的操作（世界式集群要同时对 Master+Caves
         # 发指令），不挂在某一个世界自己的行上——见 _RollbackDialog 的说明。
-        self._rollback_btn = ttk.Button(btn_row, text=t("local.rollback_btn"), command=self._open_rollback_dialog)
+        self._rollback_btn = ttk.Button(
+            btn_row, text=t("local.rollback_btn"), command=self._open_rollback_dialog
+        )
         self._rollback_btn.pack(side=tk.LEFT, padx=(5, 0))
-        self._logs_btn = ttk.Button(btn_row, text=t("local.get_logs_btn"), command=self._get_logs)
+        self._logs_btn = ttk.Button(
+            btn_row, text=t("local.get_logs_btn"), command=self._get_logs
+        )
         self._logs_btn.pack(side=tk.LEFT, padx=(5, 0))
 
         # WeGame 版世界不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
@@ -878,18 +1124,29 @@ class LocalServiceTab:
         # 列表下面的空白，启动类按钮全部禁用。三个都用 side=tk.BOTTOM 从
         # 下往上占，注册顺序 检测结果->按钮->提示文字，视觉上从上到下
         # 才是 提示->按钮->结果。
-        self._wegame_detect_text = tk.Text(left, height=6, wrap=tk.WORD, state=tk.DISABLED,
-                                            font=theme.font_tuple(theme.FONT_SIZE_XS),
-                                            bg=theme.CARD_BG, fg=theme.TEXT_MUTED, relief=tk.FLAT,
-                                            highlightthickness=1, highlightbackground=theme.CARD_BORDER)
+        self._wegame_detect_text = tk.Text(
+            left,
+            height=6,
+            wrap=tk.WORD,
+            state=tk.DISABLED,
+            font=theme.font_tuple(theme.FONT_SIZE_XS),
+            bg=theme.CARD_BG,
+            fg=theme.TEXT_MUTED,
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=theme.CARD_BORDER,
+        )
         self._wegame_detect_text.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
-        self._wegame_detect_btn = ttk.Button(left, text=t("local.wegame_detect_btn"),
-                                              command=self._on_wegame_detect)
+        self._wegame_detect_btn = ttk.Button(
+            left, text=t("local.wegame_detect_btn"), command=self._on_wegame_detect
+        )
         self._wegame_detect_btn.pack(side=tk.BOTTOM, anchor=tk.W, padx=5, pady=(0, 5))
         # wraplength 写死会在正常窗口宽度下把这段较长的说明文字挤成好几
         # 行——改成跟着 left 面板的实际宽度动态调整（<Configure> 触发，
         # 拖动 PanedWindow 分隔条也会触发），面板多宽就用多宽。
-        self._wegame_banner = ReadonlyBanner(left, text=t("local.wegame_manual_start_hint"))
+        self._wegame_banner = ReadonlyBanner(
+            left, text=t("local.wegame_manual_start_hint")
+        )
         left.bind("<Configure>", lambda e: self._resize_wegame_banner(), add="+")
 
         self._shard_list = BgFrame(left, app, bg=theme.CARD_BG)
@@ -920,23 +1177,41 @@ class LocalServiceTab:
 
         self._lan_row = lan_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
         lan_row.pack(fill=tk.X)
-        self._lan_label, self._lan_set_text, self._lan_set_status = self._make_connect_label(
-            lan_row, t("local.lan_connect_label"), t("local.lan_connect_hint"),
-            connect_title_w, self._copy_lan_connect)
+        self._lan_label, self._lan_set_text, self._lan_set_status = (
+            self._make_connect_label(
+                lan_row,
+                t("local.lan_connect_label"),
+                t("local.lan_connect_hint"),
+                connect_title_w,
+                self._copy_lan_connect,
+            )
+        )
         self._lan_label.pack(fill=tk.X)
 
         self._public_row = public_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
         public_row.pack(fill=tk.X, pady=(3, 0))
-        self._public_label, self._public_set_text, self._public_set_status = self._make_connect_label(
-            public_row, t("local.public_connect_label"), t("local.public_connect_hint"),
-            connect_title_w, self._copy_public_connect)
+        self._public_label, self._public_set_text, self._public_set_status = (
+            self._make_connect_label(
+                public_row,
+                t("local.public_connect_label"),
+                t("local.public_connect_hint"),
+                connect_title_w,
+                self._copy_public_connect,
+            )
+        )
         self._public_label.pack(fill=tk.X)
 
         self._nat_row = nat_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
         nat_row.pack(fill=tk.X, pady=(3, 0))
-        self._nat_label, self._nat_set_text, self._nat_set_status = self._make_connect_label(
-            nat_row, t("local.nat_connect_label"), t("local.nat_connect_hint"),
-            connect_title_w, self._copy_nat_connect)
+        self._nat_label, self._nat_set_text, self._nat_set_status = (
+            self._make_connect_label(
+                nat_row,
+                t("local.nat_connect_label"),
+                t("local.nat_connect_hint"),
+                connect_title_w,
+                self._copy_nat_connect,
+            )
+        )
         self._nat_label.pack(fill=tk.X)
 
         # ttk.Notebook 同理保留原生（标签切换这个交互重写代价太高）——
@@ -988,7 +1263,9 @@ class LocalServiceTab:
 
     def _build_connect_string(self, host, port, cluster) -> str:
         """拼 c_connect() 直连代码；房间有密码时带第三个可选参数。"""
-        password = get_cluster_option(load_cluster_config(cluster.path), "NETWORK", "cluster_password")
+        password = get_cluster_option(
+            load_cluster_config(cluster.path), "NETWORK", "cluster_password"
+        )
         if password:
             return f'c_connect("{host}", {port}, "{password}")'
         return f'c_connect("{host}", {port})'
@@ -1002,7 +1279,9 @@ class LocalServiceTab:
         master = self._master_shard(cluster)
         if not master:
             return None
-        port = get_shard_option(load_shard_config(master.path), "NETWORK", "server_port")
+        port = get_shard_option(
+            load_shard_config(master.path), "NETWORK", "server_port"
+        )
         if not port:
             return None
         return self._build_connect_string(self._get_lan_ip(), port, cluster)
@@ -1017,15 +1296,17 @@ class LocalServiceTab:
         for url in _PUBLIC_IP_URLS:
             try:
                 request = urllib.request.Request(
-                    url, headers={"User-Agent": "DSTCamp/1.0"})
-                with urllib.request.urlopen(request, timeout=4,
-                                            context=default_ssl_context()) as response:
+                    url, headers={"User-Agent": "DSTCamp/1.0"}
+                )
+                with urllib.request.urlopen(
+                    request, timeout=4, context=default_ssl_context()
+                ) as response:
                     body = response.read(256).decode("ascii", errors="ignore")
                 # 两个接口目前返回纯文本；正则同时兼容包裹在 JSON/提示
                 # 文字中的 IPv4，再交给 ipaddress 做严格校验。
                 for candidate in re.findall(
-                        r"(?<![\da-fA-F:])(?:\d{1,3}\.){3}\d{1,3}(?![\da-fA-F:])",
-                        body):
+                    r"(?<![\da-fA-F:])(?:\d{1,3}\.){3}\d{1,3}(?![\da-fA-F:])", body
+                ):
                     address = ipaddress.ip_address(candidate)
                     if address.version == 4:
                         return str(address)
@@ -1052,8 +1333,11 @@ class LocalServiceTab:
                 tunnels = sakura_frp.list_tunnels(token)
                 nodes = sakura_frp.list_nodes(token)
                 tunnel = sakura_frp.find_dstcamp_tunnel(
-                    tunnels, cluster.path.name, master.name,
-                    cluster.source.value, cluster.platform.value,
+                    tunnels,
+                    cluster.path.name,
+                    master.name,
+                    cluster.source.value,
+                    cluster.platform.value,
                     cluster_identity=stable_path_key(cluster.path),
                 )
                 if tunnel:
@@ -1091,8 +1375,15 @@ class LocalServiceTab:
             tip.attributes("-topmost", True)
         except Exception:
             pass
-        tk.Label(tip, text=text, justify=tk.LEFT, background="#323232",
-                 foreground="#ffffff", font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=8, ipady=4)
+        tk.Label(
+            tip,
+            text=text,
+            justify=tk.LEFT,
+            background="#323232",
+            foreground="#ffffff",
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        ).pack(ipadx=8, ipady=4)
+
         # 停留 700ms 后开始淡出（逐步降 alpha 到 0）再销毁，比直接消失柔和。
         def _fade_out(step: int = 0, total: int = 8, interval: int = 40):
             if step >= total:
@@ -1105,6 +1396,7 @@ class LocalServiceTab:
                 tip.destroy()
                 return
             tip.after(interval, lambda: _fade_out(step + 1))
+
         tip.after(700, lambda: _fade_out())
 
     def _make_connect_label(self, parent, title, hint, title_w, on_click):
@@ -1118,8 +1410,15 @@ class LocalServiceTab:
 
         title_label = BgFrame(container, self.app, bg=theme.CARD_BG)
         title_label.configure(height=label_h, width=title_w)
-        title_label.create_text(2, label_h / 2, text=title + ":", anchor=tk.W,
-                                fill=theme.TEXT_MUTED, font=f, tags="connect_title")
+        title_label.create_text(
+            2,
+            label_h / 2,
+            text=title + ":",
+            anchor=tk.W,
+            fill=theme.TEXT_MUTED,
+            font=f,
+            tags="connect_title",
+        )
         Tooltip(title_label, hint)
         title_label.pack(side=tk.LEFT)
         title_label.bind("<Button-1>", on_click)
@@ -1139,15 +1438,29 @@ class LocalServiceTab:
         def set_text(value):
             value_label.configure(width=f.measure(value) + 4)
             value_label.delete("connect_value")
-            value_label.create_text(2, label_h / 2, text=value, anchor=tk.W,
-                                    fill=theme.TEXT, font=f, tags="connect_value")
+            value_label.create_text(
+                2,
+                label_h / 2,
+                text=value,
+                anchor=tk.W,
+                fill=theme.TEXT,
+                font=f,
+                tags="connect_value",
+            )
 
         def set_status(text, color=None, reason=""):
             status_reason["text"] = reason
             status_label.delete("connect_status")
             status_label.configure(width=f.measure(text) + 4)
-            status_label.create_text(2, label_h / 2, text=text, anchor=tk.W,
-                                    fill=color or theme.TEXT_MUTED, font=f, tags="connect_status")
+            status_label.create_text(
+                2,
+                label_h / 2,
+                text=text,
+                anchor=tk.W,
+                fill=color or theme.TEXT_MUTED,
+                font=f,
+                tags="connect_status",
+            )
 
         return container, set_text, set_status
 
@@ -1177,20 +1490,28 @@ class LocalServiceTab:
         if cluster and public_ip:
             master = self._master_shard(cluster)
             if master:
-                port = get_shard_option(load_shard_config(master.path), "NETWORK", "server_port")
+                port = get_shard_option(
+                    load_shard_config(master.path), "NETWORK", "server_port"
+                )
                 if port:
                     code = self._build_connect_string(public_ip, port, cluster)
         try:
-            self.frame.after(0, lambda: self._apply_public_result(
-                code, cluster_key, public_ip is not None))
+            self.frame.after(
+                0,
+                lambda: self._apply_public_result(
+                    code, cluster_key, public_ip is not None
+                ),
+            )
         except tk.TclError:
             # 软件关闭后网络线程可能才返回，窗口已销毁时直接丢弃结果。
             pass
 
     def _apply_public_result(self, code, cluster_key, ip_available):
         cluster = self._get_cluster()
-        if (cluster_key != (str(cluster.path) if cluster else None)
-                or not self._connect_row.winfo_ismapped()):
+        if (
+            cluster_key != (str(cluster.path) if cluster else None)
+            or not self._connect_row.winfo_ismapped()
+        ):
             return
         self._public_code = code
         self._public_set_text(code or t("local.connect_unavailable"))
@@ -1219,8 +1540,11 @@ class LocalServiceTab:
         if ready:
             self._lan_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
         else:
-            self._lan_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
-                                 t("local.lan_not_ready_reason"))
+            self._lan_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.lan_not_ready_reason"),
+            )
 
     def _refresh_public_status(self, ip_available=None):
         """公网代码状态：公网 IPv4、端口和主世界进程都满足才算就绪。"""
@@ -1238,11 +1562,17 @@ class LocalServiceTab:
         if key == "ready":
             self._public_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
         elif key == "nostart":
-            self._public_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
-                                     t("local.lan_not_ready_reason"))
+            self._public_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.lan_not_ready_reason"),
+            )
         else:
-            self._public_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
-                                     t("local.public_ip_unavailable_reason"))
+            self._public_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.public_ip_unavailable_reason"),
+            )
 
     def _fetch_nat_connect_async(self):
         """后台线程查内网穿透映射，拿到后回主线程更新标签。"""
@@ -1261,16 +1591,25 @@ class LocalServiceTab:
         self._nat_set_text(text)
         if not mapped:
             self._nat_status_key = "nomap"
-            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
-                                 t("local.nat_not_mapped"))
+            self._nat_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.nat_not_mapped"),
+            )
         elif not self._master_running():
             self._nat_status_key = "nostart"
-            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
-                                 t("local.lan_not_ready_reason"))
+            self._nat_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.lan_not_ready_reason"),
+            )
         elif not self._nat_frpc_ready():
             self._nat_status_key = "nofrpc"
-            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
-                                 t("local.nat_frpc_not_ready_reason"))
+            self._nat_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.nat_frpc_not_ready_reason"),
+            )
         else:
             self._nat_status_key = "ready"
             self._nat_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
@@ -1292,11 +1631,17 @@ class LocalServiceTab:
             return
         self._nat_status_key = key
         if key == "nostart":
-            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
-                                 t("local.lan_not_ready_reason"))
+            self._nat_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.lan_not_ready_reason"),
+            )
         elif key == "nofrpc":
-            self._nat_set_status(f"● {t('local.connect_not_ready')}", theme.TEXT_MUTED,
-                                 t("local.nat_frpc_not_ready_reason"))
+            self._nat_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.nat_frpc_not_ready_reason"),
+            )
         else:
             self._nat_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
 
@@ -1305,8 +1650,9 @@ class LocalServiceTab:
         try:
             cluster = self._get_cluster()
             sakura = self.app.sakura_tab
-            return (sakura._frpc_all_running(cluster)
-                    or sakura.selfhost_page._frpc_running(cluster))
+            return sakura._frpc_all_running(
+                cluster
+            ) or sakura.selfhost_page._frpc_running(cluster)
         except Exception:
             return False
 
@@ -1341,8 +1687,12 @@ class LocalServiceTab:
                 # 检测结果"这个视觉顺序对应的代码顺序写，不能按直觉写反
                 # 了（第一版真机截图跑出来是反的，改成这个顺序后重新截
                 # 图确认过是对的）。
-                self._wegame_detect_text.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5))
-                self._wegame_detect_btn.pack(side=tk.BOTTOM, anchor=tk.W, padx=5, pady=(0, 5))
+                self._wegame_detect_text.pack(
+                    side=tk.BOTTOM, fill=tk.X, padx=5, pady=(0, 5)
+                )
+                self._wegame_detect_btn.pack(
+                    side=tk.BOTTOM, anchor=tk.W, padx=5, pady=(0, 5)
+                )
                 self._wegame_banner.show()
                 # 换了一个 WeGame 存档（或者从别的存档切过来）——上一个
                 # 存档检测出来的结果不该留着接着显示，误导成"这是当前存
@@ -1362,7 +1712,8 @@ class LocalServiceTab:
             self._rollback_btn.configure(state=tk.DISABLED)
             self._refresh_shard_rows(None)
             self._local_banner.set_text(
-                t("local.no_save_hint") if c is None else t("local.select_server_hint"))
+                t("local.no_save_hint") if c is None else t("local.select_server_hint")
+            )
             self._local_banner.show()
         self._sync_console_tabs_visibility(c if is_server else None)
         self._update_start_lock_state(c)
@@ -1404,19 +1755,27 @@ class LocalServiceTab:
             return
         other = self._other_cluster_running(cluster)
         if other:
-            running_names = sorted({p.cluster_name for p in self.manager.running()
-                                     if p.cluster_path != cluster.path})
+            running_names = sorted(
+                {
+                    p.cluster_name
+                    for p in self.manager.running()
+                    if p.cluster_path != cluster.path
+                }
+            )
             self._other_running_banner.set_text(
-                t("local.other_cluster_running_hint", clusters="、".join(running_names)))
+                t("local.other_cluster_running_hint", clusters="、".join(running_names))
+            )
             self._other_running_banner.show()
         else:
             self._other_running_banner.hide()
+
         # 这个存档自己的世界已经全部在跑（含正在启动/停止的过渡态）时，
         # "全部启动"再点一遍没有意义——_do_start_shard() 虽然会挡住重复
         # 启动单个世界，但按钮本身留着能点会让人以为还需要再点一次。
         def _shard_running(s):
             proc = self.manager.get(cluster.path, s.name)
             return proc is not None and proc.status in _RUNNING_LIKE
+
         all_running = bool(cluster.shards) and all(
             _shard_running(s) or (str(cluster.path), s.name) in self._launching_keys
             for s in cluster.shards
@@ -1431,7 +1790,9 @@ class LocalServiceTab:
         if not cluster or cluster.source != SaveSource.SERVER:
             self._stop_all_btn.configure(state=tk.DISABLED)
             return
-        any_running = any(p.cluster_path == cluster.path for p in self.manager.running())
+        any_running = any(
+            p.cluster_path == cluster.path for p in self.manager.running()
+        )
         self._stop_all_btn.configure(state=tk.NORMAL if any_running else tk.DISABLED)
 
     def _update_logs_btn_state(self, cluster):
@@ -1441,9 +1802,12 @@ class LocalServiceTab:
             return
         # 当前日志文件通常在进程创建世界目录后立即出现；运行状态作为
         # 兜底，避免每 150ms 扫描 backup 目录造成额外磁盘开销。
-        has_logs = any((Path(shard.path) / "server_log.txt").is_file()
-                       for shard in cluster.shards)
-        has_logs = has_logs or any(p.cluster_path == cluster.path for p in self.manager.running())
+        has_logs = any(
+            (Path(shard.path) / "server_log.txt").is_file() for shard in cluster.shards
+        )
+        has_logs = has_logs or any(
+            p.cluster_path == cluster.path for p in self.manager.running()
+        )
         self._logs_btn.configure(state=tk.NORMAL if has_logs else tk.DISABLED)
 
     def _get_logs(self):
@@ -1455,27 +1819,37 @@ class LocalServiceTab:
 
         def worker():
             try:
-                zip_path = create_log_bundle(cluster.path, [s.name for s in cluster.shards])
+                zip_path = create_log_bundle(
+                    cluster.path, [s.name for s in cluster.shards]
+                )
                 copied = copy_file_to_clipboard(zip_path)
                 self.frame.after(0, lambda: self._on_logs_ready(zip_path, copied))
-            except Exception as exc:  # noqa: BLE001 - 将具体原因显示给用户
-                self.frame.after(0, lambda: self._on_logs_failed(exc))
+            except Exception as exc:  # noqa: BLE001 - 错误需回传界面
+                self.frame.after(0, lambda error=exc: self._on_logs_failed(error))
 
         threading.Thread(target=worker, name="dstcamp-log-bundle", daemon=True).start()
 
     def _on_logs_ready(self, zip_path: Path, copied: bool):
         self._update_logs_btn_state(self._get_cluster())
         if copied:
-            dlg.show_file_location(self.app.root, t("local.logs_bundle_title"), zip_path)
+            dlg.show_file_location(
+                self.app.root, t("local.logs_bundle_title"), zip_path
+            )
         else:
             self._copy_to_clipboard(str(zip_path))
-            dlg.show_warning(self.app.root, t("local.logs_bundle_title"),
-                             t("local.logs_bundle_path_copied", path=str(zip_path)))
+            dlg.show_warning(
+                self.app.root,
+                t("local.logs_bundle_title"),
+                t("local.logs_bundle_path_copied", path=str(zip_path)),
+            )
 
     def _on_logs_failed(self, exc: Exception):
         self._update_logs_btn_state(self._get_cluster())
-        dlg.show_error(self.app.root, t("local.logs_bundle_title"),
-                       t("local.logs_bundle_failed", error=str(exc)))
+        dlg.show_error(
+            self.app.root,
+            t("local.logs_bundle_title"),
+            t("local.logs_bundle_failed", error=str(exc)),
+        )
 
     def _refresh_shard_rows(self, cluster):
         if cluster is None:
@@ -1485,11 +1859,15 @@ class LocalServiceTab:
             self._shard_rows_cluster_path = None
             return
         names = {s.name for s in cluster.shards}
-        if set(self._shard_rows) != names or self._shard_rows_cluster_path != str(cluster.path):
+        if set(self._shard_rows) != names or self._shard_rows_cluster_path != str(
+            cluster.path
+        ):
             for row in self._shard_rows.values():
                 row.destroy()
-            self._shard_rows = {s.name: _ShardRow(self._shard_list, self, cluster, s)
-                                 for s in _ordered_shards(cluster)}
+            self._shard_rows = {
+                s.name: _ShardRow(self._shard_list, self, cluster, s)
+                for s in _ordered_shards(cluster)
+            }
             self._shard_rows_cluster_path = str(cluster.path)
         else:
             for row in self._shard_rows.values():
@@ -1497,7 +1875,7 @@ class LocalServiceTab:
         self._update_rollback_btn_state(cluster)
 
     def _update_rollback_btn_state(self, cluster):
-        """"回档"要等主世界真正加载完(world_ready)才有意义——主世界进程
+        """ "回档"要等主世界真正加载完(world_ready)才有意义——主世界进程
         起来了(RUNNING)但世界还没加载完时发 c_rollback() 大概率没用，跟
         "公告"/"玩家列表"要求 world_ready 是同一个道理（见 dedicated_
         server.py 的就绪判断）。"""
@@ -1506,7 +1884,11 @@ class LocalServiceTab:
             for s in cluster.shards:
                 if load_shard_config(s.path).shard.get("is_master", True):
                     proc = self.manager.get(cluster.path, s.name)
-                    ready = bool(proc and proc.status == ServerStatus.RUNNING and proc.world_ready)
+                    ready = bool(
+                        proc
+                        and proc.status == ServerStatus.RUNNING
+                        and proc.world_ready
+                    )
                     break
         self._rollback_btn.configure(state=tk.NORMAL if ready else tk.DISABLED)
 
@@ -1531,11 +1913,25 @@ class LocalServiceTab:
         cy = h / 2
         font = tkfont.nametofont("TkDefaultFont")
         label_text = t("local.install_status_label")
-        c.create_text(4, cy, text=label_text, anchor=tk.W, fill=theme.TEXT,
-                       font=font, tags="install_text")
+        c.create_text(
+            4,
+            cy,
+            text=label_text,
+            anchor=tk.W,
+            fill=theme.TEXT,
+            font=font,
+            tags="install_text",
+        )
         label_w = font.measure(label_text)
-        c.create_text(4 + label_w + 6, cy, text=self._install_path_var.get(), anchor=tk.W,
-                       fill=theme.TEXT_MUTED, font=font, tags="install_text")
+        c.create_text(
+            4 + label_w + 6,
+            cy,
+            text=self._install_path_var.get(),
+            anchor=tk.W,
+            fill=theme.TEXT_MUTED,
+            font=font,
+            tags="install_text",
+        )
 
     def _redraw_luajit_row_text(self) -> None:
         c = self._luajit_row
@@ -1546,11 +1942,25 @@ class LocalServiceTab:
         cy = h / 2
         font = tkfont.nametofont("TkDefaultFont")
         label_text = t("local.luajit_state_label")
-        c.create_text(4, cy, text=label_text, anchor=tk.W, fill=theme.TEXT,
-                       font=font, tags="luajit_text")
+        c.create_text(
+            4,
+            cy,
+            text=label_text,
+            anchor=tk.W,
+            fill=theme.TEXT,
+            font=font,
+            tags="luajit_text",
+        )
         label_w = font.measure(label_text)
-        c.create_text(4 + label_w + 6, cy, text=self._luajit_status_var.get(), anchor=tk.W,
-                       fill=theme.TEXT_MUTED, font=font, tags="luajit_text")
+        c.create_text(
+            4 + label_w + 6,
+            cy,
+            text=self._luajit_status_var.get(),
+            anchor=tk.W,
+            fill=theme.TEXT_MUTED,
+            font=font,
+            tags="luajit_text",
+        )
 
     def _resize_wegame_banner(self) -> None:
         """WeGame 提示条现在挪到世界列表下面、跟 left 这个窄栏同宽（应
@@ -1588,17 +1998,36 @@ class LocalServiceTab:
         for shard in _ordered_shards(cluster):
             info = result.get(shard.name, {})
             port = info.get("configured_port")
-            port_display = port if port is not None else t("local.wegame_detect_unknown_port")
+            port_display = (
+                port if port is not None else t("local.wegame_detect_unknown_port")
+            )
             if info.get("running"):
-                lines.append(t("local.wegame_detect_running", shard=shard.name,
-                                pid=info["pid"], mem=info["mem_mb"], port=port_display))
+                lines.append(
+                    t(
+                        "local.wegame_detect_running",
+                        shard=shard.name,
+                        pid=info["pid"],
+                        mem=info["mem_mb"],
+                        port=port_display,
+                    )
+                )
             else:
-                lines.append(t("local.wegame_detect_not_running", shard=shard.name, port=port_display))
+                lines.append(
+                    t(
+                        "local.wegame_detect_not_running",
+                        shard=shard.name,
+                        port=port_display,
+                    )
+                )
         self._set_wegame_detect_text("\n".join(lines))
 
     def _detect_install_dir(self):
         self._install_dir = find_dedicated_server_dir()
-        self._install_path_var.set(str(self._install_dir) if self._install_dir else t("local.install_not_found"))
+        self._install_path_var.set(
+            str(self._install_dir)
+            if self._install_dir
+            else t("local.install_not_found")
+        )
 
     def _change_install_dir(self):
         """直接弹系统的目录选择框——不再先套一层"未检测到"警告，那层
@@ -1608,7 +2037,9 @@ class LocalServiceTab:
             return
         path = Path(picked)
         if not is_valid_install_dir(path):
-            dlg.show_warning(self.app.root, t("local.install_title"), t("local.install_invalid_dir"))
+            dlg.show_warning(
+                self.app.root, t("local.install_title"), t("local.install_invalid_dir")
+            )
             return
         set_dedicated_server_path(path)
         self._install_dir = path
@@ -1647,12 +2078,17 @@ class LocalServiceTab:
         # 总高度，连带把 self._body 整体挤上下移位，跟它内部 BgFrame 裁
         # 的那块共享背景图对不上。跟 install_row 对 WeGame 存档的处理方
         # 式一致（整行常驻，只禁用按钮），不是本页签里第一次这么做。
-        is_steam_server = bool(cluster and cluster.source == SaveSource.SERVER
-                                and cluster.platform == Platform.STEAM)
+        is_steam_server = bool(
+            cluster
+            and cluster.source == SaveSource.SERVER
+            and cluster.platform == Platform.STEAM
+        )
         if not is_steam_server:
             self._luajit_bin64_dir = None
             self._luajit_status_var.set(t("local.luajit_steam_only_hint"))
-            self._luajit_install_btn.configure(state=tk.DISABLED, text=t("local.luajit_install_btn"))
+            self._luajit_install_btn.configure(
+                state=tk.DISABLED, text=t("local.luajit_install_btn")
+            )
             self._luajit_uninstall_btn.configure(state=tk.DISABLED)
             return
 
@@ -1673,28 +2109,42 @@ class LocalServiceTab:
         state = luajit_injector.detect_state(bin64_dir)
         if state is luajit_injector.InjectorState.ACTIVE:
             self._luajit_status_var.set(t("local.luajit_state_active"))
-            self._luajit_install_btn.configure(state=tk.NORMAL, text=t("local.luajit_reinstall_btn"))
+            self._luajit_install_btn.configure(
+                state=tk.NORMAL, text=t("local.luajit_reinstall_btn")
+            )
             self._luajit_uninstall_btn.configure(state=tk.NORMAL)
         elif state is luajit_injector.InjectorState.DISABLED_LEFTOVER:
             self._luajit_status_var.set(t("local.luajit_state_leftover"))
-            self._luajit_install_btn.configure(state=tk.NORMAL, text=t("local.luajit_reinstall_btn"))
+            self._luajit_install_btn.configure(
+                state=tk.NORMAL, text=t("local.luajit_reinstall_btn")
+            )
             self._luajit_uninstall_btn.configure(state=tk.DISABLED)
         else:
             self._luajit_status_var.set(t("local.luajit_state_not_installed"))
-            self._luajit_install_btn.configure(state=tk.NORMAL, text=t("local.luajit_install_btn"))
+            self._luajit_install_btn.configure(
+                state=tk.NORMAL, text=t("local.luajit_install_btn")
+            )
             self._luajit_uninstall_btn.configure(state=tk.DISABLED)
 
     def _on_luajit_install_clicked(self) -> None:
         bin64_dir = self._luajit_bin64_dir
-        server_running = bin64_dir is not None and self._any_running_for_bin64(bin64_dir)
+        server_running = bin64_dir is not None and self._any_running_for_bin64(
+            bin64_dir
+        )
         plan = luajit_injector.plan_install(bin64_dir, server_running)
         if plan.blocked_reason == "bin64_not_found":
-            dlg.show_warning(self.app.root, t("local.luajit_confirm_install_title"),
-                              t("local.luajit_bin64_not_found"))
+            dlg.show_warning(
+                self.app.root,
+                t("local.luajit_confirm_install_title"),
+                t("local.luajit_bin64_not_found"),
+            )
             return
         if plan.blocked_reason == "server_running":
-            dlg.show_warning(self.app.root, t("local.luajit_confirm_install_title"),
-                              t("local.luajit_blocked_running"))
+            dlg.show_warning(
+                self.app.root,
+                t("local.luajit_confirm_install_title"),
+                t("local.luajit_blocked_running"),
+            )
             return
         if plan.blocked_reason == "workshop_not_subscribed":
             # 引导手动订阅，不假装能代劳——订阅是 Steam 账号操作，这个项
@@ -1702,36 +2152,48 @@ class LocalServiceTab:
             # 法真正完成订阅这个动作（见 _show_not_found_warning() 的说
             # 明，同一个教训），这里直接用同款思路：只负责把创意工坊页面
             # 打开，订阅这一步用户自己在 Steam 里点。
-            if dlg.ask_yes_no(self.app.root, t("local.luajit_confirm_install_title"),
-                               t("local.luajit_workshop_not_subscribed_msg")):
+            if dlg.ask_yes_no(
+                self.app.root,
+                t("local.luajit_confirm_install_title"),
+                t("local.luajit_workshop_not_subscribed_msg"),
+            ):
                 webbrowser.open(luajit_injector.WORKSHOP_PAGE_URL)
             return
 
         cluster = self._get_cluster()
-        mod_overrides_paths = [s.mod_overrides_path for s in cluster.shards if s.mod_overrides_path] \
-            if cluster else []
+        mod_overrides_paths = (
+            [s.mod_overrides_path for s in cluster.shards if s.mod_overrides_path]
+            if cluster
+            else []
+        )
 
         # 这段风险声明比 ask_yes_no() 默认给短提示留的宽度（320px）长得
         # 多，用默认宽度会挤成很多行、窗口又高又窄；加宽显著减少行数。
         if not dlg.ask_yes_no_with_auxiliary(
-                self.app.root, t("local.luajit_confirm_install_title"),
-                t("local.luajit_confirm_install_msg"),
-                t("local.luajit_runtime_btn"),
-                self._open_luajit_runtime_download,
-                wraplength=520, min_width=560):
+            self.app.root,
+            t("local.luajit_confirm_install_title"),
+            t("local.luajit_confirm_install_msg"),
+            t("local.luajit_runtime_btn"),
+            self._open_luajit_runtime_download,
+            wraplength=520,
+            min_width=560,
+        ):
             return
 
         self._luajit_install_btn.configure(state=tk.DISABLED)
         self._luajit_uninstall_btn.configure(state=tk.DISABLED)
-        log_dialog = ModSyncLogDialog(self.app.root, title=t("local.luajit_confirm_install_title"))
+        log_dialog = ModSyncLogDialog(
+            self.app.root, title=t("local.luajit_confirm_install_title")
+        )
         log_dialog.append(t("local.luajit_log_preparing"))
         log_q: "queue.Queue" = queue.Queue()
 
         def _worker():
             result = None
             try:
-                result = luajit_injector.apply_install(plan.bin64_dir, mod_overrides_paths,
-                                                       on_log=log_q.put)
+                result = luajit_injector.apply_install(
+                    plan.bin64_dir, mod_overrides_paths, on_log=log_q.put
+                )
             except Exception as exc:
                 # 业务层已经把常见文件错误转换成 InstallResult；这里再兜
                 # 一层，防止未来新增代码抛出未预期异常时没有哨兵，日志
@@ -1745,7 +2207,12 @@ class LocalServiceTab:
                 if result is None:
                     result = luajit_injector.InstallResult(
                         ok=False,
-                        errors=[t("local.luajit_error_operation_failed", detail="后台线程未返回结果")],
+                        errors=[
+                            t(
+                                "local.luajit_error_operation_failed",
+                                detail="后台线程未返回结果",
+                            )
+                        ],
                     )
                 log_q.put(result)
 
@@ -1763,8 +2230,11 @@ class LocalServiceTab:
             if result is not None:
                 log_dialog.finish()
                 if not result.ok:
-                    dlg.show_error(self.app.root, t("local.luajit_confirm_install_title"),
-                                    "\n".join(result.errors))
+                    dlg.show_error(
+                        self.app.root,
+                        t("local.luajit_confirm_install_title"),
+                        "\n".join(result.errors),
+                    )
                 self._update_luajit_row(self._get_cluster())
                 return
             self.frame.after(100, _poll_log)
@@ -1785,15 +2255,23 @@ class LocalServiceTab:
         if bin64_dir is None:
             return
         if self._any_running_for_bin64(bin64_dir):
-            dlg.show_warning(self.app.root, t("local.luajit_confirm_uninstall_title"),
-                              t("local.luajit_blocked_running"))
+            dlg.show_warning(
+                self.app.root,
+                t("local.luajit_confirm_uninstall_title"),
+                t("local.luajit_blocked_running"),
+            )
             return
-        if not dlg.ask_yes_no(self.app.root, t("local.luajit_confirm_uninstall_title"),
-                               t("local.luajit_confirm_uninstall_msg")):
+        if not dlg.ask_yes_no(
+            self.app.root,
+            t("local.luajit_confirm_uninstall_title"),
+            t("local.luajit_confirm_uninstall_msg"),
+        ):
             return
         lines: list[str] = []
         luajit_injector.apply_uninstall(bin64_dir, on_log=lines.append)
-        dlg.show_info(self.app.root, t("local.luajit_confirm_uninstall_title"), "\n".join(lines))
+        dlg.show_info(
+            self.app.root, t("local.luajit_confirm_uninstall_title"), "\n".join(lines)
+        )
         self._update_luajit_row(self._get_cluster())
 
     # ── 启动/停止 ────────────────────────────────────────────────────
@@ -1814,7 +2292,11 @@ class LocalServiceTab:
         token = read_token(cluster.token_path) if cluster.token_path else ""
         if is_valid_token(token):
             return True
-        return dlg.ask_yes_no(self.app.root, t("local.token_missing_title"), t("local.token_missing_confirm"))
+        return dlg.ask_yes_no(
+            self.app.root,
+            t("local.token_missing_title"),
+            t("local.token_missing_confirm"),
+        )
 
     def _cluster_for_running_process(self, proc, current_cluster):
         """把 ServerProcess 的路径重新映射到当前 discovery 得到的 Cluster。"""
@@ -1833,15 +2315,41 @@ class LocalServiceTab:
         """
         target_names = {shard.name for shard in shards}
         duplicate = sorted(
-            name for name in target_names
+            name
+            for name in target_names
             if (str(cluster.path), name) in self._launching_keys
         )
         if duplicate:
             dlg.show_info(
-                self.app.root, t("local.port_preflight_title"),
+                self.app.root,
+                t("local.port_preflight_title"),
                 t("local.launch_already_pending", shards="、".join(duplicate)),
             )
             return False
+
+        # V2 由 -ugc_directory 直接映射 Workshop 完整目录；V1 LegacyItem
+        # 则必须先展开成专服 mods/workshop-<id>。官方专服只有在
+        # dedicated_server_mods_setup.lua 列出 ID 时才会自动解包，而
+        # DSTCamp 不依赖那条旧下载链路：这里从已下载的有效 Legacy 包做
+        # 内容级核对，必要时本地原子部署。全部启动时此处只执行一次。
+        if cluster.platform == Platform.STEAM:
+            server_dir = find_dedicated_server_dir()
+            if server_dir is not None:
+                from dstools.features.mod.legacy_v1 import prepare_enabled_legacy_mods
+
+                prepared = prepare_enabled_legacy_mods(
+                    get_enabled_mod_ids(cluster), Path(server_dir) / "mods"
+                )
+                if not prepared.completed:
+                    dlg.show_error(
+                        self.app.root,
+                        t("local.install_title"),
+                        t(
+                            "local.legacy_prepare_failed",
+                            detail="\n".join(prepared.errors),
+                        ),
+                    )
+                    return False
         candidate_claims, issues = collect_cluster_port_claims(cluster, target_names)
         if issues:
             lines = [
@@ -1850,7 +2358,8 @@ class LocalServiceTab:
                 for issue in issues
             ]
             dlg.show_error(
-                self.app.root, t("local.port_preflight_title"),
+                self.app.root,
+                t("local.port_preflight_title"),
                 t("local.port_preflight_invalid", details="\n".join(lines)),
             )
             return False
@@ -1859,7 +2368,10 @@ class LocalServiceTab:
         managed_bindings: set[tuple[int, int]] = set()
         other_cluster_running = False
         for proc in self.manager.running():
-            if str(proc.cluster_path) == str(cluster.path) and proc.shard_name in target_names:
+            if (
+                str(proc.cluster_path) == str(cluster.path)
+                and proc.shard_name in target_names
+            ):
                 continue
             other_cluster_running |= str(proc.cluster_path) != str(cluster.path)
             model = self._cluster_for_running_process(proc, cluster)
@@ -1874,17 +2386,21 @@ class LocalServiceTab:
         scan = scan_udp_ports()
         if not scan.ok and other_cluster_running:
             dlg.show_error(
-                self.app.root, t("local.port_preflight_title"),
+                self.app.root,
+                t("local.port_preflight_title"),
                 t("local.port_preflight_scan_failed", detail=scan.error),
             )
             return False
 
         all_claims = candidate_claims + running_claims
         if scan.ok:
-            all_claims.extend(system_port_claims(scan, exclude_bindings=managed_bindings))
+            all_claims.extend(
+                system_port_claims(scan, exclude_bindings=managed_bindings)
+            )
         candidate_keys = {claim.owner_key for claim in candidate_claims}
         conflicts = [
-            conflict for conflict in find_port_conflicts(all_claims)
+            conflict
+            for conflict in find_port_conflicts(all_claims)
             if any(claim.owner_key in candidate_keys for claim in conflict.claims)
         ]
         if conflicts:
@@ -1893,10 +2409,13 @@ class LocalServiceTab:
                 owners = "; ".join(claim.display_owner() for claim in conflict.claims)
                 details.append(f"{conflict.port}: {owners}")
             if len(conflicts) > 12:
-                details.append(t("local.port_preflight_more", count=len(conflicts) - 12))
+                details.append(
+                    t("local.port_preflight_more", count=len(conflicts) - 12)
+                )
             detail_text = "\n".join(details)
             target_running = any(
-                str(proc.cluster_path) == str(cluster.path) for proc in self.manager.running()
+                str(proc.cluster_path) == str(cluster.path)
+                for proc in self.manager.running()
             )
             has_mapping = any(
                 self.app.sakura_tab.has_active_mapping(cluster, shard)
@@ -1910,17 +2429,23 @@ class LocalServiceTab:
             if can_repair:
                 choices.append((t("local.allocate_ports_btn"), "allocate"))
             choice = dlg.ask_choice(
-                self.app.root, t("local.port_conflict_title"),
+                self.app.root,
+                t("local.port_conflict_title"),
                 t("local.port_conflict_confirm", details=detail_text),
-                choices, default="cancel",
-                wraplength=780, min_width=840,
+                choices,
+                default="cancel",
+                wraplength=780,
+                min_width=840,
             )
             if choice == "continue":
                 return True
             if choice == "allocate" and can_repair:
                 used = {claim.port for claim in running_claims}
                 for other in self.app.env.clusters:
-                    if other.source != SaveSource.SERVER or other.platform != Platform.STEAM:
+                    if (
+                        other.source != SaveSource.SERVER
+                        or other.platform != Platform.STEAM
+                    ):
                         continue
                     if str(other.path) == str(cluster.path):
                         continue
@@ -1928,15 +2453,20 @@ class LocalServiceTab:
                     used.update(claim.port for claim in claims)
                 if scan.ok:
                     used.update(
-                        port for ports_for_pid in scan.ports_by_pid.values()
+                        port
+                        for ports_for_pid in scan.ports_by_pid.values()
                         for port in ports_for_pid
                     )
                 try:
                     master_port, allocated = rewrite_cluster_ports_atomic(cluster, used)
                 except OSError as exc:
                     dlg.show_error(
-                        self.app.root, t("local.port_repair_title"),
-                        t("local.port_repair_failed", detail=f"{type(exc).__name__}: {exc}"),
+                        self.app.root,
+                        t("local.port_repair_title"),
+                        t(
+                            "local.port_repair_failed",
+                            detail=f"{type(exc).__name__}: {exc}",
+                        ),
                     )
                     return False
                 summary = [f"master_port={master_port}"]
@@ -1946,7 +2476,8 @@ class LocalServiceTab:
                         f"steam={ports['master_server_port']}, auth={ports['authentication_port']}"
                     )
                 dlg.show_info(
-                    self.app.root, t("local.port_repair_title"),
+                    self.app.root,
+                    t("local.port_repair_title"),
                     t("local.port_repair_done", details="\n".join(summary)),
                 )
                 return self._preflight_start(cluster, shards, allow_repair=False)
@@ -1984,7 +2515,11 @@ class LocalServiceTab:
         try:
             conf_dir_arg = resolve_conf_dir_arg(self.app.env.klei_root)
         except ConfDirCrossDriveError:
-            dlg.show_error(self.app.root, t("local.install_title"), t("local.confdir_cross_drive_error"))
+            dlg.show_error(
+                self.app.root,
+                t("local.install_title"),
+                t("local.confdir_cross_drive_error"),
+            )
             return
 
         # LuaJIT 隔离副本（features/local_service/luajit_injector.py）：已启用但游戏被 Steam
@@ -1993,8 +2528,11 @@ class LocalServiceTab:
         # 复制一遍 bin64（真机验证过这台机器上约 4.2GB），不能在这里同步
         # 静默做，弹确认框+进度条，用户确认、后台复制完成后才继续启动。
         if luajit_injector.needs_regeneration(self._install_dir):
-            if not dlg.ask_yes_no(self.app.root, t("local.luajit_regenerate_title"),
-                                   t("local.luajit_regenerate_confirm_msg")):
+            if not dlg.ask_yes_no(
+                self.app.root,
+                t("local.luajit_regenerate_title"),
+                t("local.luajit_regenerate_confirm_msg"),
+            ):
                 return
             self._launching_keys.add((str(cluster.path), shard.name))
             self._regenerate_luajit_then_start(cluster, shard, conf_dir_arg)
@@ -2004,7 +2542,9 @@ class LocalServiceTab:
     def _regenerate_luajit_then_start(self, cluster, shard, conf_dir_arg):
         shards = list(shard) if isinstance(shard, (list, tuple)) else [shard]
         bin64_dir = find_bin64_dir(self._install_dir)
-        log_dialog = ModSyncLogDialog(self.app.root, title=t("local.luajit_regenerate_title"))
+        log_dialog = ModSyncLogDialog(
+            self.app.root, title=t("local.luajit_regenerate_title")
+        )
         log_dialog.append(t("local.luajit_log_preparing"))
         log_q: "queue.Queue" = queue.Queue()
 
@@ -2021,7 +2561,12 @@ class LocalServiceTab:
                 if result is None:
                     result = luajit_injector.InstallResult(
                         ok=False,
-                        errors=[t("local.luajit_error_operation_failed", detail="后台线程未返回结果")],
+                        errors=[
+                            t(
+                                "local.luajit_error_operation_failed",
+                                detail="后台线程未返回结果",
+                            )
+                        ],
                     )
                 log_q.put(result)
 
@@ -2045,7 +2590,11 @@ class LocalServiceTab:
                         if len(shards) > 1:
                             self._select_master_console_tab(cluster)
                     else:
-                        dlg.show_error(self.app.root, t("local.luajit_regenerate_title"), "\n".join(result.errors))
+                        dlg.show_error(
+                            self.app.root,
+                            t("local.luajit_regenerate_title"),
+                            "\n".join(result.errors),
+                        )
                 finally:
                     for target in shards:
                         self._launching_keys.discard((str(cluster.path), target.name))
@@ -2073,15 +2622,25 @@ class LocalServiceTab:
         # 先重新生成"这件事。
         bin64_override = luajit_injector.resolve_launch_bin64_dir(self._install_dir)
         try:
-            proc = self.manager.start(cluster.name, cluster.path, shard.name, self._install_dir,
-                                      conf_dir_arg, is_master,
-                                      str(ugc_directory) if ugc_directory else None,
-                                      bin64_override=bin64_override)
+            proc = self.manager.start(
+                cluster.name,
+                cluster.path,
+                shard.name,
+                self._install_dir,
+                conf_dir_arg,
+                is_master,
+                str(ugc_directory) if ugc_directory else None,
+                bin64_override=bin64_override,
+            )
         except OSError as exc:
             dlg.show_error(
-                self.app.root, t("local.install_title"),
-                t("local.start_failed", shard=shard.name,
-                  detail=f"{type(exc).__name__}: {exc}"),
+                self.app.root,
+                t("local.install_title"),
+                t(
+                    "local.start_failed",
+                    shard=shard.name,
+                    detail=f"{type(exc).__name__}: {exc}",
+                ),
             )
             return
         self.app.sakura_tab.maybe_start_frpc(cluster, shard)
@@ -2093,7 +2652,11 @@ class LocalServiceTab:
             existing.rebind(proc)
             self._console_nb.select(existing.frame)
         else:
-            pane = _ConsolePane(self._console_nb, proc, on_close=lambda: self._close_console_pane(key, cluster, shard))
+            pane = _ConsolePane(
+                self._console_nb,
+                proc,
+                on_close=lambda: self._close_console_pane(key, cluster, shard),
+            )
             self._console_panes[key] = pane
             self._console_nb.add(pane.frame, text=shard.name)
             self._console_nb.select(pane.frame)
@@ -2111,11 +2674,20 @@ class LocalServiceTab:
         纯"关个标签页"重得多，误触代价是把正在跑的世界关掉）；已经停
         了的标签页直接关，不弹确认——本来就没什么可损失的。"""
         proc = self.manager.get(cluster.path, shard.name)
-        if proc and proc.status in (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING):
-            if not dlg.ask_yes_no(self.app.root, t("local.console_close_btn"),
-                                   t("local.console_close_confirm", shard=shard.name)):
+        if proc and proc.status in (
+            ServerStatus.STARTING,
+            ServerStatus.RUNNING,
+            ServerStatus.STOPPING,
+        ):
+            if not dlg.ask_yes_no(
+                self.app.root,
+                t("local.console_close_btn"),
+                t("local.console_close_confirm", shard=shard.name),
+            ):
                 return
-            self._stop_and_then(cluster, shard, lambda: self._on_pane_close_stopped(key, cluster))
+            self._stop_and_then(
+                cluster, shard, lambda: self._on_pane_close_stopped(key, cluster)
+            )
         else:
             self._remove_console_pane(key)
 
@@ -2139,9 +2711,12 @@ class LocalServiceTab:
         隧道本身不删，只是本地客户端进程跟着不需要再转发了；stop_frpc_
         for_shard() 内部自己另起线程，这里统一用它的 on_done 转回主线程，
         不管这个世界有没有配置过映射都只转一次。"""
+
         def _dst_stopped(p):
             self.app.sakura_tab.stop_frpc_for_shard(
-                cluster, shard, on_done=lambda: self.frame.after(0, on_done))
+                cluster, shard, on_done=lambda: self.frame.after(0, on_done)
+            )
+
         self.manager.stop(cluster.path, shard.name, on_done=_dst_stopped)
 
     def stop_shard(self, cluster, shard):
@@ -2153,7 +2728,9 @@ class LocalServiceTab:
         # 联动），只有这个 cluster 名下所有世界都真正停下来之后备份才是一
         # 个一致的快照——不是每停一个世界就各自备份一次。
         running = self.manager.running()
-        if get_backup_auto_enabled() and not any(str(p.cluster_path) == str(cluster.path) for p in running):
+        if get_backup_auto_enabled() and not any(
+            str(p.cluster_path) == str(cluster.path) for p in running
+        ):
             try:
                 create_backup(cluster.path)
             except OSError:
@@ -2162,10 +2739,14 @@ class LocalServiceTab:
     def _start_all(self):
         c = self._get_cluster()
         if not c or c.source != SaveSource.SERVER:
-            dlg.show_warning(self.app.root, t("local.install_title"), t("local.select_cluster_first"))
+            dlg.show_warning(
+                self.app.root, t("local.install_title"), t("local.select_cluster_first")
+            )
             return
         if not c.shards:
-            dlg.show_warning(self.app.root, t("local.install_title"), t("local.no_shards"))
+            dlg.show_warning(
+                self.app.root, t("local.install_title"), t("local.no_shards")
+            )
             return
         # 令牌检查只在这里做一次，不是对每个世界各调一次 start_shard()
         # ——同一个存档下所有世界共用同一个 cluster_token.txt，"全部启
@@ -2185,13 +2766,20 @@ class LocalServiceTab:
         try:
             conf_dir_arg = resolve_conf_dir_arg(self.app.env.klei_root)
         except ConfDirCrossDriveError:
-            dlg.show_error(self.app.root, t("local.install_title"), t("local.confdir_cross_drive_error"))
+            dlg.show_error(
+                self.app.root,
+                t("local.install_title"),
+                t("local.confdir_cross_drive_error"),
+            )
             return
         # LuaJIT 副本体积很大；批量启动只允许触发一次重新生成，完成后再
         # 启动这个批次的全部世界，不能每个 shard 各开一个复制线程。
         if luajit_injector.needs_regeneration(self._install_dir):
-            if not dlg.ask_yes_no(self.app.root, t("local.luajit_regenerate_title"),
-                                  t("local.luajit_regenerate_confirm_msg")):
+            if not dlg.ask_yes_no(
+                self.app.root,
+                t("local.luajit_regenerate_title"),
+                t("local.luajit_regenerate_confirm_msg"),
+            ):
                 return
             self._launching_keys.update((str(c.path), s.name) for s in targets)
             self._regenerate_luajit_then_start(c, targets, conf_dir_arg)
@@ -2242,7 +2830,7 @@ class LocalServiceTab:
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 
     def _maybe_periodic_backup(self):
-        """"设置备份策略"里配的自动备份周期——只要某个 cluster 名下还有
+        """ "设置备份策略"里配的自动备份周期——只要某个 cluster 名下还有
         世界在跑，每隔这么多分钟就给它整体备份一次，跟当前 UI 上选中哪
         个存档无关（用户可能切到别的存档在看，后台那个仍然按周期备份）。
         不是"每次轮询都检查一遍间隔"里带着误差累积的计时——每个 cluster
@@ -2258,8 +2846,11 @@ class LocalServiceTab:
             return
         interval_s = get_backup_interval_minutes() * 60
         now = time.monotonic()
-        running_paths = {str(p.cluster_path) for p in self.manager.running()
-                          if p.status == ServerStatus.RUNNING}
+        running_paths = {
+            str(p.cluster_path)
+            for p in self.manager.running()
+            if p.status == ServerStatus.RUNNING
+        }
         for key in list(self._last_auto_backup_ts):
             if key not in running_paths:
                 del self._last_auto_backup_ts[key]
@@ -2302,7 +2893,8 @@ class LocalServiceTab:
             self._redraw_install_row_text()
         c = self._get_cluster()
         self._local_banner.set_text(
-            t("local.no_save_hint") if c is None else t("local.select_server_hint"))
+            t("local.no_save_hint") if c is None else t("local.select_server_hint")
+        )
 
     def retheme(self):
         """主题切换时调用——这些容器/横幅都是在 __init__ 里建一次就不再

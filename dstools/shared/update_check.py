@@ -1,5 +1,5 @@
 """检查 GitHub Releases 上是否有新版本——纯 `urllib`，不引入新依赖，跟
-`core/sakura_frp.py` 是同一个风格。只打算给 GUI 启动时的后台线程调一次，
+`features/sakura/api.py` 风格一致。只供 GUI 启动时的后台线程调用一次，
 失败/超时一律静默返回 None（网络不通、GitHub 限流都不该妨碍正常使用），
 不重试、不弹窗、调用方也不应该把 None 当错误处理，只是"这次没查到"。
 """

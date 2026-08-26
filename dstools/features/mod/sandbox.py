@@ -1,30 +1,8 @@
-"""当 mod 用代码动态拼出配置项（一个 for 循环、一个小的局部辅助函数）而
-不是直接写一张字面量表时，解析出它的可选项——这是纯文本模式匹配做不到
-的事，因为这些值只有真正跑一遍代码才存在。
+"""解析静态分析无法展开的动态 ``modinfo.lua`` 配置。
 
-这是对项目"不用 Lua 运行时"这条一般规则（见 CLAUDE.md 的"无运行时 Lua
-解析"一节，以及 modinfo_reader.py 的静态解析器，它不依赖本模块就能处理
-绝大多数 mod）刻意开的一个小口子：
-
-- 只在用户打开某个具体 mod 的配置弹窗、且这个 mod 有静态解析器解不出来
-  的选项时才会被调用——mod 列表批量扫描阶段绝不会用到（parse_modinfo()
-  本身从不 import 本模块），不会拖慢常规场景。
-- 只会喂给它 modinfo.lua 里 configuration_options 被赋值*之前*出现的文
-  本——考察过的每个 mod 在写构建选项列表的辅助函数/局部表/for 循环时都
-  遵循这个惯例——外加一句 `return <expr>`，对应那个没解析出来的
-  `options = ...` 引用的具体表达式。绝不会跑 configuration_options 表
-  本身，绝不会跑 modmain.lua，绝不会跑任何在真实游戏里执行的代码。
-- 运行 Lua 5.1——跟 DST 引擎自身版本精确对应（通过 `lupa` 包的 lua51
-  后端，不是 LuaJIT 或更新的 Lua 版本）——放在一个*独立的子进程*里跑，
-  带硬性挂钟超时。进程内嵌入式解释器一旦 mod 代码卡死（死循环、无界的
-  表）没法安全杀掉；子进程直接 terminate 就行。
-- 任何失败——mod 的辅助函数引用了未定义的 DST 引擎全局变量（GLOBAL、
-  STRINGS 等）、真实的 Lua 运行时错误、超时，或者结果形状跟预期不符
-  ——都跟"静态解析不出来"一视同仁：返回 None，调用方继续显示诚实的
-  "这个选项在这里不能编辑"兜底提示。这里绝不猜测，这也正好天然区分开
-  "只是个局部 for 循环"（能正常解析出来）和"需要真实游戏引擎"（立刻、
-  低代价地失败——引用未定义全局变量在 Lua 尝试调用/取下标的那一刻就报
-  错，不会卡住）两种情况。
+只执行配置赋值前的最小前导代码和目标表达式，不运行 ``modmain.lua``。
+Lua 5.1 在带硬超时的独立子进程中运行；未定义游戏全局、超时、执行错误或
+结果形状不符都返回 ``None``，调用方不得猜测缺失配置。
 """
 
 import re
@@ -41,9 +19,9 @@ DEFAULT_TIMEOUT = 1.5
 # 这个标志，每次调用都会在 GUI 上方一闪而过一个黑色控制台窗口。
 _CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 
-_BLOCK_OPENERS = re.compile(r'\b(?:if|for|while|function)\b')
-_BLOCK_CLOSERS = re.compile(r'\bend\b')
-_LONG_BRACKET_OPEN = re.compile(r'\[(=*)\[')
+_BLOCK_OPENERS = re.compile(r"\b(?:if|for|while|function)\b")
+_BLOCK_CLOSERS = re.compile(r"\bend\b")
+_LONG_BRACKET_OPEN = re.compile(r"\[(=*)\[")
 
 
 def _blank_strings(text: str) -> str:
@@ -68,34 +46,38 @@ def _blank_strings(text: str) -> str:
             i += 1
             while i < n:
                 c = text[i]
-                if c == '\\' and i + 1 < n:
-                    out.append('  ')
+                if c == "\\" and i + 1 < n:
+                    out.append("  ")
                     i += 2
                     continue
                 if c == quote:
                     out.append(c)
                     i += 1
                     break
-                out.append(c if c == '\n' else ' ')
+                out.append(c if c == "\n" else " ")
                 i += 1
             continue
-        if ch == '[':
+        if ch == "[":
             lm = _LONG_BRACKET_OPEN.match(text, i)
             if lm:
-                closer = ']' + lm.group(1) + ']'
+                closer = "]" + lm.group(1) + "]"
                 close_idx = text.find(closer, lm.end())
                 if close_idx == -1:
-                    inner_end, end, closer_text = n, n, ''
+                    inner_end, end, closer_text = n, n, ""
                 else:
-                    inner_end, end, closer_text = close_idx, close_idx + len(closer), closer
-                out.append(text[i:lm.end()])  # 保留开括号本身，例如 "[["
-                out.extend(c if c == '\n' else ' ' for c in text[lm.end():inner_end])
+                    inner_end, end, closer_text = (
+                        close_idx,
+                        close_idx + len(closer),
+                        closer,
+                    )
+                out.append(text[i : lm.end()])  # 保留开括号本身，例如 "[["
+                out.extend(c if c == "\n" else " " for c in text[lm.end() : inner_end])
                 out.append(closer_text)
                 i = end
                 continue
         out.append(ch)
         i += 1
-    return ''.join(out)
+    return "".join(out)
 
 
 def _looks_balanced(text: str) -> bool:
@@ -113,7 +95,7 @@ def _looks_balanced(text: str) -> bool:
     诚实的兜底提示。
     """
     text = _blank_strings(text)
-    if text.count('{') != text.count('}'):
+    if text.count("{") != text.count("}"):
         return False
     return len(_BLOCK_OPENERS.findall(text)) == len(_BLOCK_CLOSERS.findall(text))
 
@@ -145,15 +127,15 @@ def _largest_balanced_prefix(text: str) -> str:
     block_depth = 0
     brace_depth = 0
     last_safe = 0
-    for m in re.finditer(r'\b(?:if|for|while|function|end)\b|[{}]', blanked):
+    for m in re.finditer(r"\b(?:if|for|while|function|end)\b|[{}]", blanked):
         tok = m.group(0)
-        if tok == 'end':
+        if tok == "end":
             block_depth -= 1
-        elif tok in ('if', 'for', 'while', 'function'):
+        elif tok in ("if", "for", "while", "function"):
             block_depth += 1
-        elif tok == '{':
+        elif tok == "{":
             brace_depth += 1
-        elif tok == '}':
+        elif tok == "}":
             brace_depth -= 1
         if block_depth == 0 and brace_depth == 0:
             last_safe = m.end()
@@ -189,8 +171,12 @@ def run_lua_snippet(lua_code: str, timeout: float = DEFAULT_TIMEOUT) -> Any:
     try:
         proc = subprocess.run(
             _worker_command(),
-            input=lua_code, capture_output=True, text=True,
-            timeout=timeout, encoding="utf-8", errors="replace",
+            input=lua_code,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            encoding="utf-8",
+            errors="replace",
             creationflags=_CREATIONFLAGS,
         )
     except (subprocess.TimeoutExpired, OSError, ValueError):
@@ -207,13 +193,15 @@ FULL_FILE_TIMEOUT = 3.0
 
 # 单独的版本读取协议。只有整份 modinfo.lua 无错误执行完毕，追加在末尾的
 # return 才会运行，因此不会把“脚本中途报错前临时赋过的 version”误当最终值。
-# v2 同一次执行读回 version_compatible，供后续还原游戏的兼容版本判断。
-VERSION_CONTRACT_VERSION = 2
+# v2 读回 version_compatible；v3 读回最终 name；v4 同时读回图标声明。
+# 这些都是同一次完整执行已经得到的结果，不能再退回不可靠的静态字段。
+VERSION_CONTRACT_VERSION = 4
 
 
-def resolve_mod_versions(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
-                         folder_name: str | None = None) -> dict[str, Any] | None:
-    """完整执行 ``modinfo.lua`` 并返回版本与兼容版本的声明结果。"""
+def resolve_mod_versions(
+    file_text: str, timeout: float = FULL_FILE_TIMEOUT, folder_name: str | None = None
+) -> dict[str, Any] | None:
+    """完整执行 ``modinfo.lua`` 并返回列表所需的可信简单元数据。"""
     preamble = ""
     if folder_name is not None:
         escaped = folder_name.replace("\\", "\\\\").replace('"', '\\"')
@@ -221,6 +209,9 @@ def resolve_mod_versions(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
     code = (
         f"{preamble}{file_text}\n"
         "return {\n"
+        "  name = {declared = name ~= nil, value = name},\n"
+        "  icon = {declared = icon ~= nil, value = icon},\n"
+        "  icon_atlas = {declared = icon_atlas ~= nil, value = icon_atlas},\n"
         "  version = {declared = version ~= nil, value = version},\n"
         "  version_compatible = {declared = version_compatible ~= nil, "
         "value = version_compatible},\n"
@@ -229,15 +220,16 @@ def resolve_mod_versions(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
     result = run_lua_snippet(code, timeout=timeout)
     if not isinstance(result, dict):
         return None
-    for field in ("version", "version_compatible"):
+    for field in ("name", "icon", "icon_atlas", "version", "version_compatible"):
         item = result.get(field)
         if not isinstance(item, dict) or not isinstance(item.get("declared"), bool):
             return None
     return result
 
 
-def resolve_mod_version(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
-                        folder_name: str | None = None) -> dict[str, Any] | None:
+def resolve_mod_version(
+    file_text: str, timeout: float = FULL_FILE_TIMEOUT, folder_name: str | None = None
+) -> dict[str, Any] | None:
     """完整执行 modinfo.lua，只返回作者最终声明的 version。
 
     返回 ``{"declared": bool, "value": scalar}``；执行失败/超时或结果形状
@@ -248,13 +240,20 @@ def resolve_mod_version(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
 
 
 _FIELDS_TO_READ_BACK = (
-    "name", "author", "version", "version_compatible", "description", "icon", "icon_atlas",
+    "name",
+    "author",
+    "version",
+    "version_compatible",
+    "description",
+    "icon",
+    "icon_atlas",
     "configuration_options",
 )
 
 
-def resolve_full_config_options(file_text: str, timeout: float = FULL_FILE_TIMEOUT,
-                                 folder_name: str | None = None) -> Any:
+def resolve_full_config_options(
+    file_text: str, timeout: float = FULL_FILE_TIMEOUT, folder_name: str | None = None
+) -> Any:
     """把整份 modinfo.lua 的文本丢进沙箱跑一遍，一次执行读回本项目关心
     的全部顶层字段（name、author、version、version_compatible、description、icon、
     icon_atlas、configuration_options），打包成一个 dict。
@@ -299,11 +298,14 @@ def resolve_full_config_options(file_text: str, timeout: float = FULL_FILE_TIMEO
     if folder_name is not None:
         escaped = folder_name.replace("\\", "\\\\").replace('"', '\\"')
         preamble = f'folder_name = "{escaped}"\n'
-    return run_lua_snippet(f"{preamble}{file_text}\nreturn {{{fields}}}\n", timeout=timeout)
+    return run_lua_snippet(
+        f"{preamble}{file_text}\nreturn {{{fields}}}\n", timeout=timeout
+    )
 
 
-def resolve_dynamic_option(preamble: str, raw_options_expr: str,
-                           timeout: float = DEFAULT_TIMEOUT) -> list[dict] | None:
+def resolve_dynamic_option(
+    preamble: str, raw_options_expr: str, timeout: float = DEFAULT_TIMEOUT
+) -> list[dict] | None:
     """尝试通过真正运行 mod 自己构建选项的代码来解析出可选项，而不是把
     它当文本解析。
 
@@ -327,16 +329,20 @@ def resolve_dynamic_option(preamble: str, raw_options_expr: str,
         preamble = _largest_balanced_prefix(preamble)
         if not preamble:
             return None
-    result = run_lua_snippet(f"{preamble}\nreturn ({raw_options_expr})\n", timeout=timeout)
+    result = run_lua_snippet(
+        f"{preamble}\nreturn ({raw_options_expr})\n", timeout=timeout
+    )
     if not isinstance(result, list) or not result:
         return None
     choices = []
     for item in result:
         if not isinstance(item, dict) or "description" not in item:
             return None  # 形状不对——不对部分结果做猜测
-        choices.append({
-            "description": str(item["description"]),
-            "data": item.get("data", item["description"]),
-            "hover": item.get("hover") or "",
-        })
+        choices.append(
+            {
+                "description": str(item["description"]),
+                "data": item.get("data", item["description"]),
+                "hover": item.get("hover") or "",
+            }
+        )
     return choices

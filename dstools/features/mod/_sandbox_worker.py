@@ -1,26 +1,12 @@
-"""sandbox.run_lua_snippet 用的子进程 worker。
+"""在独立 Lua 5.1 子进程中执行片段并通过 JSON 返回结果。
 
-从 stdin 读一段 Lua 代码，在一个精简过全局环境的 Lua 5.1 解释器（跟饥荒
-联机版自己的引擎版本一致——见 sandbox.py）里运行，把结果以 JSON 形式打
-印到 stdout。
-
-从不被 import 或直接运行——总是由 sandbox.run_lua_snippet() 作为子进程
-启动，超时/杀进程这部分沙箱逻辑由它负责。跑在*独立进程*里（而不是把
-lupa 的解释器直接嵌进主程序）才让卡死的代码片段（比如某个 mod 写挂了
-的死循环）真正可恢复：父进程直接把这个进程整个杀掉就行，这对在某个
-Python 线程里原地失控的调用是做不到的。
+独立进程是超时边界：父进程可以终止死循环，而线程内嵌解释器无法可靠恢复。
 """
 
 import json
 import sys
 
-# 父进程（sandbox.run_lua_snippet）显式按 UTF-8 编解码这条管道，但这个
-# 子进程自己的 sys.stdin/stdout/stderr 默认编码取决于操作系统区域设置
-# （中文 Windows 上确认是 cp936/GBK）——不强制改成一致的话，mod 源码里
-# 的非 ASCII 文本（非常常见：dynamic_preamble 里的中文标签/悬浮提示/局
-# 部变量内容）在读入时会被悄悄解码错。往好里说只是 Lua 源码在执行前就
-# 已经被静默破坏；往坏里说一个解码错的字符往回写时会撞上严格 UTF-8 写
-# 不出来的东西，直接让这个进程崩掉。
+# 中文 Windows 默认使用 GBK；子进程管道必须与父进程统一为 UTF-8。
 sys.stdin.reconfigure(encoding="utf-8", errors="replace")
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")

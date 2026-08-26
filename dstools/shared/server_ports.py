@@ -22,7 +22,7 @@ from dstools.models import Cluster, ClusterConfig, Shard, ShardConfig
 from dstools.shared.ini_parser import (
     parse_cluster_ini, parse_server_ini, write_cluster_ini, write_server_ini,
 )
-from dstools.shared.resource_paths import cache_dir
+from dstools.shared.resource_paths import data_dir
 
 
 DEFAULT_MASTER_PORT = 10888
@@ -309,7 +309,8 @@ def rewrite_cluster_ports_atomic(cluster: Cluster, used: Iterable[int], *,
     originals = {path: path.read_bytes() if path.exists() else None for path, _, _ in targets}
     if create_backup:
         backup_root = (
-            cache_dir("port_backups") / stable_path_key(cluster.path)
+            data_dir("port_backups", legacy_cache_name="port_backups")
+            / stable_path_key(cluster.path)
             / datetime.now().strftime("%Y%m%d-%H%M%S-%f")
         )
         for target, content in originals.items():

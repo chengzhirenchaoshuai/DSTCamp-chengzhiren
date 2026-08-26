@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ VERSION_PENDING = "pending"
 VERSION_CONFIRMED = "confirmed"
 VERSION_UNDECLARED = "undeclared"
 VERSION_UNRESOLVED = "unresolved"
+
+_TRAILING_LUA_COMMENT_RE = re.compile(r"\s+--.*$")
 
 
 def normalize_version_for_compare(value: str) -> str:
@@ -34,8 +37,11 @@ def _normalize_field(result: Any) -> tuple[str, str]:
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         return "", VERSION_UNRESOLVED
     value = str(value).strip()
-    return ((value, VERSION_CONFIRMED) if value
-            else ("", VERSION_UNDECLARED))
+    # 少数作者把说明文字也写进版本字符串，例如
+    # ``version = "0.0.6  --版本"``。这不是 Lua 语法注释，但也不属于
+    # 版本号；仅清理“空白 + --”形式，避免影响正常的连字符版本。
+    value = _TRAILING_LUA_COMMENT_RE.sub("", value).rstrip()
+    return (value, VERSION_CONFIRMED) if value else ("", VERSION_UNDECLARED)
 
 
 @dataclass(frozen=True)
@@ -47,18 +53,31 @@ class LocalModVersion:
     version_compatible: str = ""
     compatible_status: str = VERSION_UNRESOLVED
     source: str = ""
+    # 追加在既有字段之后，保持历史代码按位置构造 LocalModVersion 的兼容性。
+    name: str = ""
+    name_status: str = VERSION_UNRESOLVED
+    icon: str = ""
+    icon_status: str = VERSION_UNRESOLVED
+    icon_atlas: str = ""
+    icon_atlas_status: str = VERSION_UNRESOLVED
 
     @property
     def compare_version(self) -> str:
-        return (normalize_version_for_compare(self.version)
-                if self.status == VERSION_CONFIRMED else "")
+        return (
+            normalize_version_for_compare(self.version)
+            if self.status == VERSION_CONFIRMED
+            else ""
+        )
 
     @property
     def effective_version_compatible(self) -> str:
         """游戏在未声明 ``version_compatible`` 时回退到 ``version``。"""
         if self.compatible_status == VERSION_CONFIRMED:
             return self.version_compatible
-        if self.compatible_status == VERSION_UNDECLARED and self.status == VERSION_CONFIRMED:
+        if (
+            self.compatible_status == VERSION_UNDECLARED
+            and self.status == VERSION_CONFIRMED
+        ):
             return self.version
         return ""
 
@@ -67,15 +86,25 @@ class LocalModVersion:
         return normalize_version_for_compare(self.effective_version_compatible)
 
 
-def normalize_version_result(result: dict[str, Any] | None,
-                             source: str) -> LocalModVersion:
+def normalize_version_result(
+    result: dict[str, Any] | None, source: str
+) -> LocalModVersion:
     """把双字段沙箱协议转换成稳定的领域对象。"""
     if not isinstance(result, dict):
         return LocalModVersion()
+    name, name_status = _normalize_field(result.get("name"))
+    icon, icon_status = _normalize_field(result.get("icon"))
+    icon_atlas, icon_atlas_status = _normalize_field(result.get("icon_atlas"))
     version, status = _normalize_field(result.get("version"))
     compatible, compatible_status = _normalize_field(result.get("version_compatible"))
     trusted_source = source if status in (VERSION_CONFIRMED, VERSION_UNDECLARED) else ""
     return LocalModVersion(
+        name=name,
+        name_status=name_status,
+        icon=icon,
+        icon_status=icon_status,
+        icon_atlas=icon_atlas,
+        icon_atlas_status=icon_atlas_status,
         version=version,
         status=status,
         version_compatible=compatible,
@@ -84,8 +113,9 @@ def normalize_version_result(result: dict[str, Any] | None,
     )
 
 
-def resolve_local_mod_version(workshop_id: str, mod_folder: Path,
-                              folder_name: str | None = None) -> LocalModVersion:
+def resolve_local_mod_version(
+    workshop_id: str, mod_folder: Path, folder_name: str | None = None
+) -> LocalModVersion:
     """读取一个本地 Mod 的最终版本，优先使用内容指纹完全匹配的缓存。"""
     mod_folder = Path(mod_folder)
     folder_name = folder_name or mod_folder.name
@@ -109,4 +139,5 @@ def resolve_local_version_target(target) -> tuple[str, LocalModVersion]:
     """线程池使用的轻量适配器，保留调用方传入的 Mod ID。"""
     workshop_id, mod_folder, folder_name = target
     return workshop_id, resolve_local_mod_version(
-        str(workshop_id), Path(mod_folder), str(folder_name))
+        str(workshop_id), Path(mod_folder), str(folder_name)
+    )

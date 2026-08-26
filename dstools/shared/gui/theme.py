@@ -1,33 +1,8 @@
-"""可切换的调色板 + 全局 ttk.Style 配置。
+"""可热切换的调色板、字体尺寸与全局 ``ttk.Style``。
 
-启动时应用一次（见 DSToolsApp.__init__ -> apply_theme()），让整个应用有
-统一观感，不需要一个个改散落各处的约 20 处 ttk.Button/Entry/Combobox/
-Treeview/Scrollbar 调用点；`set_theme()` 支持运行时按需重新应用，切主题
-立即生效，不需要重启。
-
-调色板本身放在一批**模块级常量**（PRIMARY、BG_SOFT、TEXT……）里，而不是
-每次都查一个 dict——这样调用方永远写 `theme.PRIMARY`，不用写
-`theme.palette()["PRIMARY"]`。这带来一条对其它所有 gui/ 文件都成立的硬
-性规则：颜色必须在*使用*的那一刻（函数/方法体内部）现查 `theme.PRIMARY`，
-绝不能在 import 时或模块作用域里缓存成另一个名字
-（`from dstools.shared.gui.theme import PRIMARY` 或模块顶层
-`_MY_COLOR = theme.PRIMARY`）——普通的 Python 名字绑定会把
-`theme.PRIMARY` 那一刻的值冻结住，之后 `set_theme()` 重新赋值 theme.py
-自己的模块级变量时，没法波及某个其它模块里已经绑定好的本地名字。
-违反这条规则的模块级颜色缓存，切主题后不会跟着变。
-
-**每次页签刷新都会重建**的控件（PIL 面板、逐行 destroy() 再重建的 ttk
-控件）下次重建时自然会用上新调色板，不需要额外处理。**只构造一次、不会
-重建**的控件（CardFrame、PillTabBar、存档选择器卡片条、各页签"本地存档
-只读"提示条）需要一个显式的 `apply_theme()`/`retheme()` 方法重新
-`configure()` 一遍自己冻结住的颜色——完整列表见 DSToolsApp._switch_theme()
-切主题后要挨个通知的那一批。
-
-加新主题：往 `_THEMES` 加一个 dict（"gray" 里的每个键都要有）+ 把主题名
-追加到 `THEME_NAMES`——只需要这一步，菜单和 app_settings 持久化都是通
-用逻辑。自定义背景图片*不属于*这套调色板——它是独立于当前激活哪套主题
-的功能（见 custom_background.py / bg_frame.py），叠加在任意一套主题
-上面。
+颜色必须在使用时读取 ``theme.X``，禁止跨模块缓存；否则切换主题后仍保留
+旧值。长期存活控件实现 ``apply_theme``/``retheme``，刷新时重建的控件无需
+额外处理。新增主题需补齐默认主题的全部键。自定义背景独立于调色板。
 """
 
 import tkinter as tk
@@ -49,7 +24,7 @@ from dstools.shared.resource_paths import tool_binary_dir
 # 梯/字体/圆角/边距各套主题保持一致（这些是布局常量，不是配色，没有理
 # 由随主题变化，只有下面这批调色板相关的键才按主题各自取值）。
 #
-# 自定义背景图片（core/custom_background.py）跟主题**完全解耦**——任选
+# 自定义背景图片（shared/custom_background.py）跟主题**完全解耦**——任选
 # 一套主题，只要设置过背景图就会叠加显示（见
 # gui/app.py._rebuild_shared_bg_image()，不看任何 theme.X 开关）。
 #

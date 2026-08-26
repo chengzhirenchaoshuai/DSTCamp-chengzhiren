@@ -1,24 +1,8 @@
-"""自定义标题栏——弃用 Windows 原生标题栏，改用自己画的一条 BgFrame +
-手写拖拽移动/缩放。
+"""无边框窗口的标题栏、拖拽和缩放手柄。
 
-**跟 win_aspect_lock.py 刻意分开成两个文件**：那边是"替换窗口过程
-(WNDPROC) + 拦截 WM_SIZING 消息"的危险区，已经踩出过一次真实的解释器级
-崩溃（"PyEval_RestoreThread: GIL not held"，见 win_aspect_lock.py 顶部注
-释）。这个文件里的代码全程只做**一次性设置窗口样式位**的 Win32 调用
-（`SetWindowLongW` 改样式），不替换任何窗口过程、不拦截任何消息——风险级
-别完全不同：这些函数只在启动时调用一次，之后全部靠
-`root.overrideredirect(True)` 之后的普通 Tk 事件
-（`<ButtonPress-1>`/`<B1-Motion>`）驱动拖拽，从 Tk 事件回调里操作
-Tk/Python 状态是这个项目里到处都在用、已经证明安全的模式（跟"从替换过
-的 WNDPROC 里回调 Python"——那次真崩溃的根因——是完全不同的两件事）。
-
-原生标题栏没了之后，Windows 不会再对这个窗口发 WM_SIZING（没有原生边框
-可拖了），`win_aspect_lock.py` 的 `AspectLock` 从此不再对 root 生效——宽
-高比锁定改成在 `ResizeGrips` 的拖拽回调里，照抄
-`AspectLock._enforce()` 的数学，只是从"改一个 ctypes RECT 结构体"变成
-"算出新的 (x, y, w, h) 后调用一次 root.geometry()"。代价：失去原生
-WM_SIZING 那种"重绘前拦截"的零闪烁效果，拖拽时可能比原来略有一点点视觉
-延迟——这是弃用原生标题栏/边框后不可避免的取舍。
+Win32 仅用于一次性设置样式，不替换 WNDPROC：历史上从 WNDPROC 回调 Python
+曾触发 GIL 崩溃。宽高比由 Tk 拖拽回调计算，可能有轻微视觉延迟，但不跨越
+解释器安全边界。
 """
 
 import sys
@@ -453,8 +437,10 @@ class ResizeGrips:
         self._drag_after_id = None
         if self._pending_rect is None:
             return
-        l, t, r, b = self._pending_rect
-        self.root.geometry(f"{r - l}x{b - t}+{l}+{t}")
+        left, top, right, bottom = self._pending_rect
+        self.root.geometry(
+            f"{right - left}x{bottom - top}+{left}+{top}"
+        )
 
     def _on_release(self, event):
         # 松手前先把还没应用的最后一帧矩形立刻应用掉（不能留给节流定时

@@ -1,6 +1,10 @@
 """饥荒存档管理工具的 GUI。页签：存档信息 | Mod | 世界 | 配置 | 环境。"""
 
-import sys, threading, time, tkinter as tk, weakref
+import sys
+import threading
+import time
+import tkinter as tk
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 from tkinter import font as tkfont, ttk
@@ -9,14 +13,20 @@ from PIL import ImageTk
 
 from dstools import __version__
 from dstools.shared.app_settings import (
-    get_theme_name, set_theme_name,
+    get_theme_name,
+    set_theme_name,
     set_font_style_choice,
-    get_minimize_on_close, set_minimize_on_close,
-    get_cache_use_exe_dir, set_cache_use_exe_dir,
+    get_minimize_on_close,
+    set_minimize_on_close,
+    get_cache_use_exe_dir,
+    set_cache_use_exe_dir,
     get_custom_bg_opacity,
-    get_window_position, set_window_position,
-    get_last_platform, set_last_platform,
-    get_last_cluster_path, set_last_cluster_path,
+    get_window_position,
+    set_window_position,
+    get_last_platform,
+    set_last_platform,
+    get_last_cluster_path,
+    set_last_cluster_path,
 )
 from dstools.shared.custom_background import get_custom_bg_path, render_background
 from dstools.shared.discovery import discover_environment
@@ -54,11 +64,13 @@ class DSToolsApp:
         # "DPI 不感知"，整个窗口按显示器缩放比例做位图拉伸，画面全局发
         # 虚（不只是 PIL 渲染的面板）。
         from dstools.shared.gui.win_aspect_lock import set_process_dpi_aware
+
         set_process_dpi_aware()
 
         self.root = tk.Tk()
         self.root.title(t("app.title"))
         from dstools.shared.resource_paths import bundled_resource_dir
+
         _icon_dir = bundled_resource_dir() / "icons" / "app"
         try:
             self.root.iconbitmap(default=str(_icon_dir / "icon.ico"))
@@ -82,9 +94,11 @@ class DSToolsApp:
         # （见 custom_titlebar.py）。原生标题栏没了之后 Windows 不会再发
         # WM_SIZING，宽高比锁定改成 ResizeGrips 里的数学重新算。
         from dstools.shared.gui import custom_titlebar
+
         custom_titlebar.apply_borderless_style(self.root)
 
-        self.style = ttk.Style(); self.style.theme_use("clam")
+        self.style = ttk.Style()
+        self.style.theme_use("clam")
         theme.apply_theme(self.root, self.style)
         custom_titlebar.apply_window_border(self.root)
         # theme.apply_theme() 会调 root.attributes("-alpha", ...)，这在
@@ -101,7 +115,9 @@ class DSToolsApp:
         # 露出来的就是背景图本身。
         self._root_bg = BgFrame(self.root, self)
         self._root_bg.place(relx=0, rely=0, relwidth=1, relheight=1)
-        self._titlebar = custom_titlebar.CustomTitleBar(self.root, self, icon_path=_icon_dir / "icon.png")
+        self._titlebar = custom_titlebar.CustomTitleBar(
+            self.root, self, icon_path=_icon_dir / "icon.png"
+        )
         self._titlebar.pack(fill=tk.X, side=tk.TOP)
         self._build_menu()
 
@@ -130,8 +146,13 @@ class DSToolsApp:
 
         def _make_card():
             card = CardFrame(self._tab_area, self)
-            card.grid(row=0, column=0, sticky="nsew",
-                      padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
+            card.grid(
+                row=0,
+                column=0,
+                sticky="nsew",
+                padx=theme.CARD_MARGIN,
+                pady=theme.CARD_MARGIN,
+            )
             return card
 
         self._tab_cards = {k: _make_card() for k in self._tab_keys}
@@ -142,7 +163,9 @@ class DSToolsApp:
         # _cluster_bar_inner 是 CARD_BG 内层，四周露 1px 边框，做成"浮起
         # 来的卡片"的观感。都用 BgFrame 以便透出自定义背景图。
         self._cluster_bar = BgFrame(self.root, self, bg=theme.CARD_BORDER)
-        cluster_bar_inner = self._cluster_bar_inner = BgFrame(self._cluster_bar, self, bg=theme.CARD_BG)
+        cluster_bar_inner = self._cluster_bar_inner = BgFrame(
+            self._cluster_bar, self, bg=theme.CARD_BG
+        )
         cluster_bar_inner.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
         # "存档:"文字直接在 Canvas 上 create_text 画（不用 tk.Label，会挡
         # 住背景图），字号比其它选择器大一号、加粗+强调色，突出这是最重
@@ -155,40 +178,63 @@ class DSToolsApp:
         # 同理要重新算一遍，不能只改字体族）。
         self._archive_label_font = tkfont.Font(
             family=theme.FONT_FAMILY,
-            size=round(12 * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)),
-            weight="bold")
+            size=round(
+                12 * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)
+            ),
+            weight="bold",
+        )
         self._archive_label_w = self._archive_label_font.measure(t("selector.archive"))
         # "存档类型:"(Steam/WeGame 筛选器) 画在最左边，"存档:"标签的 x 坐
         # 标要等它真正 pack 布局完才能现查右边缘（两个 Menubutton 靠
         # pack() 自动排列，只有画在 Canvas 上的文字坐标需要手动跟着算）。
-        self._platform_label_w = self._archive_label_font.measure(t("selector.save_type"))
+        self._platform_label_w = self._archive_label_font.measure(
+            t("selector.save_type")
+        )
 
         def _redraw_platform_label():
             cluster_bar_inner.delete("platform_label")
             h = cluster_bar_inner.winfo_height()
             if h < 4:
                 return
-            cluster_bar_inner.create_text(12, h / 2, text=t("selector.save_type"), anchor=tk.W,
-                                           fill=theme.PRIMARY, font=self._archive_label_font,
-                                           tags="platform_label")
+            cluster_bar_inner.create_text(
+                12,
+                h / 2,
+                text=t("selector.save_type"),
+                anchor=tk.W,
+                fill=theme.PRIMARY,
+                font=self._archive_label_font,
+                tags="platform_label",
+            )
 
         def _redraw_archive_label():
             cluster_bar_inner.delete("archive_label")
             h = cluster_bar_inner.winfo_height()
             if h < 4:
                 return
-            platform_right = self._platform_menu_btn.winfo_x() + self._platform_menu_btn.winfo_width()
+            platform_right = (
+                self._platform_menu_btn.winfo_x()
+                + self._platform_menu_btn.winfo_width()
+            )
             if platform_right <= 1:
                 return  # "存档类型"这个 Menubutton 还没被 pack 布局完，先不画，等下一次 <Configure>
             x = platform_right + 12
-            cluster_bar_inner.create_text(x, h / 2, text=t("selector.archive"), anchor=tk.W,
-                                           fill=theme.PRIMARY, font=self._archive_label_font,
-                                           tags="archive_label")
+            cluster_bar_inner.create_text(
+                x,
+                h / 2,
+                text=t("selector.archive"),
+                anchor=tk.W,
+                fill=theme.PRIMARY,
+                font=self._archive_label_font,
+                tags="archive_label",
+            )
 
         self._redraw_platform_label = _redraw_platform_label
         self._redraw_archive_label = _redraw_archive_label
-        cluster_bar_inner.bind("<Configure>", lambda e: (self._redraw_platform_label(),
-                                                          self._redraw_archive_label()), add="+")
+        cluster_bar_inner.bind(
+            "<Configure>",
+            lambda e: (self._redraw_platform_label(), self._redraw_archive_label()),
+            add="+",
+        )
         # 不用 ttk.Combobox：readonly Combobox 背后是个真 Entry，实测选
         # 中一项后有时会卡住不画新文字（底层值是对的，只有画面不对，点
         # "刷新"按钮才恢复）。换成 Menubutton+Menu 彻底绕开——没有 Entry，
@@ -197,16 +243,26 @@ class DSToolsApp:
         # "存档类型:"筛选器：Steam/WeGame 两棵目录树按平台先筛一遍，
         # "存档:"下拉框只列筛选后的部分，默认 Steam。
         self._platform_var = tk.StringVar(value=get_last_platform() or "Steam")
-        self._platform_menu = MenuCombo(cluster_bar_inner, textvariable=self._platform_var,
-                                         width=8, style="Archive.TMenubutton")
+        self._platform_menu = MenuCombo(
+            cluster_bar_inner,
+            textvariable=self._platform_var,
+            width=8,
+            style="Archive.TMenubutton",
+        )
         self._platform_menu["values"] = ["Steam", "WeGame"]
-        self._platform_menu.bind("<<ComboboxSelected>>", lambda e: self._on_platform_change())
-        self._platform_menu.pack(side=tk.LEFT, padx=(12 + self._platform_label_w + 6, 10), ipady=3)
+        self._platform_menu.bind(
+            "<<ComboboxSelected>>", lambda e: self._on_platform_change()
+        )
+        self._platform_menu.pack(
+            side=tk.LEFT, padx=(12 + self._platform_label_w + 6, 10), ipady=3
+        )
         self._platform_menu_btn = self._platform_menu.widget
         # cluster_bar_inner 自己的 <Configure> 可能在这个 Menubutton 还
         # 没真正落位时就先触发过一次、之后不再触发，"存档:"就画不出来
         # ——额外在 Menubutton 自己身上也绑一次 <Configure> 兜底。
-        self._platform_menu_btn.bind("<Configure>", lambda e: self._redraw_archive_label(), add="+")
+        self._platform_menu_btn.bind(
+            "<Configure>", lambda e: self._redraw_archive_label(), add="+"
+        )
         cluster_bar_inner.update_idletasks()
         self._redraw_platform_label()
         self._redraw_archive_label()
@@ -216,22 +272,43 @@ class DSToolsApp:
         # 的 preserve=True 分支只看 .path，SimpleNamespace 撑一下就够，
         # 调用完即被换成现查出来的真实 Cluster 对象。
         last_path = get_last_cluster_path()
-        self._global_selected_cluster = SimpleNamespace(path=Path(last_path)) if last_path else None
+        self._global_selected_cluster = (
+            SimpleNamespace(path=Path(last_path)) if last_path else None
+        )
         self._global_cluster_menu_btn = ttk.Menubutton(
-            cluster_bar_inner, textvariable=self._global_cluster_var,
-            width=38, style="Archive.TMenubutton")
+            cluster_bar_inner,
+            textvariable=self._global_cluster_var,
+            width=38,
+            style="Archive.TMenubutton",
+        )
         self._global_cluster_menu = tk.Menu(self._global_cluster_menu_btn, tearoff=0)
         self._global_cluster_menu_btn.configure(menu=self._global_cluster_menu)
         # postcommand：只在真的点开菜单时才重新算每个存档"是不是在运
         # 行"，不用额外轮询定时器维护这份下拉列表。
-        self._global_cluster_menu.configure(postcommand=lambda: self._populate_global_cluster_combo(preserve=True))
+        self._global_cluster_menu.configure(
+            postcommand=lambda: self._populate_global_cluster_combo(preserve=True)
+        )
         # "存档:"是画在 Canvas 上的文字，不是 pack() 进来的 Label，左边距
         # 手动算：12（左内边距）+ 文字宽度 + 6（对齐用）。
-        self._global_cluster_menu_btn.pack(side=tk.LEFT, padx=(12 + self._archive_label_w + 6, 10), ipady=3)
-        ttk.Button(cluster_bar_inner, text=t("save.refresh"), command=self._refresh,
-                   style="Big.TButton").pack(side=tk.LEFT, padx=(0, 10))
-        self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
+        self._global_cluster_menu_btn.pack(
+            side=tk.LEFT, padx=(12 + self._archive_label_w + 6, 10), ipady=3
+        )
+        ttk.Button(
+            cluster_bar_inner,
+            text=t("save.refresh"),
+            command=self._refresh,
+            style="Big.TButton",
+        ).pack(side=tk.LEFT, padx=(0, 10))
+        self._cluster_bar.pack(
+            fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6)
+        )
         self._populate_global_cluster_combo(preserve=True)
+
+        # 已安装 Mod 的元数据与图标不依赖具体存档，主页和创建向导共享
+        # 同一份应用级快照；各页面仍分别持有自己的启用/配置状态。
+        from dstools.features.mod.catalog import ModCatalogStore
+
+        self.mod_catalog = ModCatalogStore()
 
         self.local_tab = LocalServiceTab(self._tab_cards["local"].body, self)
         self.save_tab = SaveBrowserTab(self._tab_cards["saves"].body, self)
@@ -247,13 +324,25 @@ class DSToolsApp:
         # （_stale_cluster_tabs），真正切过去的时候（_on_tab_select）才
         # 补一次——反正 on_cluster_changed() 不传 cluster 参数时会自己从
         # get_selected_cluster() 现查，不会读到过期的存档。
-        self._cluster_tab_map = {"local": self.local_tab, "mods": self.mod_tab,
-                                 "world": self.world_tab, "server": self.cluster_tab,
-                                  "saves": self.save_tab, "sakura": self.sakura_tab}
+        self._cluster_tab_map = {
+            "local": self.local_tab,
+            "mods": self.mod_tab,
+            "world": self.world_tab,
+            "server": self.cluster_tab,
+            "saves": self.save_tab,
+            "sakura": self.sakura_tab,
+        }
         self._stale_cluster_tabs: set[str] = set()
         self._current_tab_key = "local"
 
-        self._tabs = [self.local_tab, self.world_tab, self.mod_tab, self.cluster_tab, self.save_tab, self.sakura_tab]
+        self._tabs = [
+            self.local_tab,
+            self.world_tab,
+            self.mod_tab,
+            self.cluster_tab,
+            self.save_tab,
+            self.sakura_tab,
+        ]
         for key, tab in zip(self._tab_keys, self._tabs):
             tab.frame.pack(fill=tk.BOTH, expand=True)
         # 只留 "local" 参与布局，其余 5 个先 grid_remove() 掉——之前是全部
@@ -276,11 +365,16 @@ class DSToolsApp:
         # 都要按当前字体样式的缩放倍数从这份基准重新算，不能在已经放大
         # 过的当前字号上再乘一次，否则反复切换字体样式会越滚越大），字
         # 体族跟主题走，_redraw_status_bar() 每次重画都会重新同步一次。
-        self._status_font_base_size = tkfont.nametofont("TkDefaultFont").actual()["size"]
+        self._status_font_base_size = tkfont.nametofont("TkDefaultFont").actual()[
+            "size"
+        ]
         self._status_font = tkfont.Font(
             family=theme.FONT_FAMILY,
-            size=round(self._status_font_base_size
-                       * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)))
+            size=round(
+                self._status_font_base_size
+                * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)
+            ),
+        )
         # 高度=行高+6，文字垂直居中上下各留 3px，缩放手柄（bottom_grip）
         # 就塞在这个留白里，不需要状态栏额外让出空间。
         self._status_text_h = self._status_font.metrics("linespace") + 6
@@ -301,26 +395,48 @@ class DSToolsApp:
         def _redraw_status_bar():
             self._status_font.configure(
                 family=theme.FONT_FAMILY,
-                size=round(self._status_font_base_size
-                           * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)))
+                size=round(
+                    self._status_font_base_size
+                    * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)
+                ),
+            )
             self._status_text_h = self._status_font.metrics("linespace") + 6
             self._status_bar.configure(height=self._status_text_h)
             self._status_bar.delete("status_text", "update_notice")
-            self._status_bar.create_text(6, self._status_text_h / 2, text=self.status_var.get(), anchor=tk.W,
-                                          fill=theme.TEXT, font=self._status_font, tags="status_text")
+            self._status_bar.create_text(
+                6,
+                self._status_text_h / 2,
+                text=self.status_var.get(),
+                anchor=tk.W,
+                fill=theme.TEXT,
+                font=self._status_font,
+                tags="status_text",
+            )
             if self._update_notice is not None:
                 version, _url = self._update_notice
                 w = self._status_bar.winfo_width()
                 self._status_bar.create_text(
-                    w - 8, self._status_text_h / 2, text=t("app.update_available", version=version),
-                    anchor=tk.E, fill=theme.PRIMARY, font=self._status_font,
+                    w - 8,
+                    self._status_text_h / 2,
+                    text=t("app.update_available", version=version),
+                    anchor=tk.E,
+                    fill=theme.PRIMARY,
+                    font=self._status_font,
                     tags=("update_notice",),
                 )
-                self._status_bar.tag_bind("update_notice", "<Enter>",
-                                           lambda e: self._status_bar.configure(cursor="hand2"))
-                self._status_bar.tag_bind("update_notice", "<Leave>",
-                                           lambda e: self._status_bar.configure(cursor=""))
-                self._status_bar.tag_bind("update_notice", "<Button-1>", self._open_update_url)
+                self._status_bar.tag_bind(
+                    "update_notice",
+                    "<Enter>",
+                    lambda e: self._status_bar.configure(cursor="hand2"),
+                )
+                self._status_bar.tag_bind(
+                    "update_notice",
+                    "<Leave>",
+                    lambda e: self._status_bar.configure(cursor=""),
+                )
+                self._status_bar.tag_bind(
+                    "update_notice", "<Button-1>", self._open_update_url
+                )
 
         self._redraw_status_bar = _redraw_status_bar
         self.status_var.trace_add("write", lambda *a: _redraw_status_bar())
@@ -332,6 +448,7 @@ class DSToolsApp:
         # 转回主线程。标题栏"最小化"按钮跟托盘图标是否常驻是两件独立的
         # 事，不要在 <Unmap> 上接"最小化=进托盘"的分支。
         from dstools.shared.gui.tray_icon import TrayIcon
+
         self._tray = TrayIcon(
             icon_image_path=str(_icon_dir / "icon.png"),
             tooltip=t("app.title"),
@@ -351,7 +468,8 @@ class DSToolsApp:
         # _BG_SETTLE_MS 才会有图，会有一瞬间的纯色闪一下。
         self._rebuild_shared_bg_image()
         self._refresh_all_bg_surfaces()
-        self._update_status(); self._refresh()
+        self._update_status()
+        self._refresh()
         self._start_update_check()
 
         # 缩放手柄放在 __init__ 最后——直接 place() 在 root 上，同一父容
@@ -367,15 +485,24 @@ class DSToolsApp:
         # 字，同时缩放热区仍然覆盖到窗口最底边。
         self.root.update_idletasks()
         top_reserve = self._titlebar.winfo_height() + self._menu_strip.winfo_height()
-        custom_titlebar.ResizeGrips(self.root, self, self.WINDOW_BASE_W, self.WINDOW_BASE_H,
-                                     bottom_reserve=0, top_reserve=top_reserve,
-                                     bottom_grip=3, top_grip=2)
+        custom_titlebar.ResizeGrips(
+            self.root,
+            self,
+            self.WINDOW_BASE_W,
+            self.WINDOW_BASE_H,
+            bottom_reserve=0,
+            top_reserve=top_reserve,
+            bottom_grip=3,
+            top_grip=2,
+        )
 
     def _on_tab_select(self, key: str) -> None:
         # 全局存档选择栏对全部页签都常驻显示。这里保留"若之前被临时隐藏
         # 就恢复"的兜底，防止以后某个页签隐藏它之后忘了恢复。
         if not self._cluster_bar.winfo_ismapped():
-            self._cluster_bar.pack(fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6))
+            self._cluster_bar.pack(
+                fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6)
+            )
         for k, card in self._tab_cards.items():
             if k == key:
                 card.grid()
@@ -465,6 +592,7 @@ class DSToolsApp:
         # 是原生 ShowWindow(SW_MINIMIZE)，deiconify() 对这种情况不起作
         # 用。custom_titlebar.restore_window() 两条路径都处理。
         from dstools.shared.gui import custom_titlebar
+
         custom_titlebar.restore_window(self.root)
 
     def _do_exit(self):
@@ -476,10 +604,15 @@ class DSToolsApp:
             running = self.local_tab.manager.running()
             world_count = len(running)
             cluster_count = len({str(proc.cluster_path) for proc in running})
-            if not dlg.ask_yes_no(self.root, t("local.confirm_close_title"),
-                                   t("local.confirm_close_msg",
-                                     cluster_count=cluster_count,
-                                     world_count=world_count)):
+            if not dlg.ask_yes_no(
+                self.root,
+                t("local.confirm_close_title"),
+                t(
+                    "local.confirm_close_msg",
+                    cluster_count=cluster_count,
+                    world_count=world_count,
+                ),
+            ):
                 return
             self.local_tab.confirm_and_shutdown_all(on_done=self._quit_app)
             return
@@ -505,6 +638,7 @@ class DSToolsApp:
         if sys.platform == "win32":
             try:
                 import ctypes
+
                 user32 = ctypes.windll.user32
                 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
                 SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
@@ -533,11 +667,15 @@ class DSToolsApp:
             # 边缘摆），只要标题栏这一段还有个至少 100px 能看见、点得
             # 到，就采信保存的坐标。
             MIN_VISIBLE = 100
-            if (vx - self.WINDOW_BASE_W + MIN_VISIBLE <= x <= vx + vw - MIN_VISIBLE
-                    and vy <= y <= vy + vh - MIN_VISIBLE):
+            if (
+                vx - self.WINDOW_BASE_W + MIN_VISIBLE <= x <= vx + vw - MIN_VISIBLE
+                and vy <= y <= vy + vh - MIN_VISIBLE
+            ):
                 return x, y
-        return (vx + max(0, (vw - self.WINDOW_BASE_W) // 2),
-                vy + max(0, (vh - self.WINDOW_BASE_H) // 2))
+        return (
+            vx + max(0, (vw - self.WINDOW_BASE_W) // 2),
+            vy + max(0, (vh - self.WINDOW_BASE_H) // 2),
+        )
 
     def _toggle_pseudo_maximize(self) -> None:
         """标题栏"伪最大化"按钮——不是原生真最大化（会撑破锁死的
@@ -563,8 +701,12 @@ class DSToolsApp:
             return
 
         self.root.update_idletasks()
-        self._pre_maximize_geom = (self.root.winfo_x(), self.root.winfo_y(),
-                                    self.root.winfo_width(), self.root.winfo_height())
+        self._pre_maximize_geom = (
+            self.root.winfo_x(),
+            self.root.winfo_y(),
+            self.root.winfo_width(),
+            self.root.winfo_height(),
+        )
 
         aspect = self.WINDOW_BASE_W / self.WINDOW_BASE_H
         left, top, right, bottom = custom_titlebar.get_monitor_work_area(self.root)
@@ -618,14 +760,22 @@ class DSToolsApp:
         self._theme_menu_var = tk.StringVar(value=get_theme_name())
         tm = tk.Menu(self.root, tearoff=0)
         for name in theme.THEME_NAMES:
-            tm.add_radiobutton(label=t(f"theme.{name}"), variable=self._theme_menu_var, value=name,
-                                command=lambda n=name: self._switch_theme(n))
+            tm.add_radiobutton(
+                label=t(f"theme.{name}"),
+                variable=self._theme_menu_var,
+                value=name,
+                command=lambda n=name: self._switch_theme(n),
+            )
         tm.add_separator()
-        tm.add_command(label=t("theme.custom_bg_settings"), command=self._show_custom_bg_dialog)
+        tm.add_command(
+            label=t("theme.custom_bg_settings"), command=self._show_custom_bg_dialog
+        )
         # 字体设置也是独立命令，跟颜色主题/背景图一样解耦——见
         # _switch_font_style() 顶部说明，字体样式是跟颜色主题平级的独
         # 立设置，不绑定在某一套颜色主题下面。
-        tm.add_command(label=t("theme.font_settings"), command=self._show_font_settings_dialog)
+        tm.add_command(
+            label=t("theme.font_settings"), command=self._show_font_settings_dialog
+        )
         self.root.bind("<F5>", self._on_f5_key)
 
         # "设置"菜单：语言是二级级联子菜单（两态互斥）；"关闭时最小化到
@@ -635,18 +785,32 @@ class DSToolsApp:
         sm = tk.Menu(self.root, tearoff=0)
         lang_menu = tk.Menu(sm, tearoff=0)
         self._settings_lang_var = tk.StringVar(value=get_lang())
-        lang_menu.add_radiobutton(label=t("menu.lang_zh"), variable=self._settings_lang_var, value="zh",
-                            command=lambda: self._switch_language("zh"))
-        lang_menu.add_radiobutton(label=t("menu.lang_en"), variable=self._settings_lang_var, value="en",
-                            command=lambda: self._switch_language("en"))
+        lang_menu.add_radiobutton(
+            label=t("menu.lang_zh"),
+            variable=self._settings_lang_var,
+            value="zh",
+            command=lambda: self._switch_language("zh"),
+        )
+        lang_menu.add_radiobutton(
+            label=t("menu.lang_en"),
+            variable=self._settings_lang_var,
+            value="en",
+            command=lambda: self._switch_language("en"),
+        )
         sm.add_cascade(label=t("settings.language_label"), menu=lang_menu)
         sm.add_separator()
         self._settings_minimize_var = tk.BooleanVar(value=get_minimize_on_close())
-        sm.add_checkbutton(label=t("settings.minimize_on_close_label"), variable=self._settings_minimize_var,
-                            command=lambda: set_minimize_on_close(self._settings_minimize_var.get()))
+        sm.add_checkbutton(
+            label=t("settings.minimize_on_close_label"),
+            variable=self._settings_minimize_var,
+            command=lambda: set_minimize_on_close(self._settings_minimize_var.get()),
+        )
         self._settings_cache_var = tk.BooleanVar(value=get_cache_use_exe_dir())
-        sm.add_checkbutton(label=t("settings.cache_use_exe_dir_label"), variable=self._settings_cache_var,
-                            command=self._on_cache_setting_toggle)
+        sm.add_checkbutton(
+            label=t("settings.cache_use_exe_dir_label"),
+            variable=self._settings_cache_var,
+            command=self._on_cache_setting_toggle,
+        )
 
         # 语言/主题切换都会重新调一次这个方法，旧的触发条要先拆掉再重
         # 建，不然会在 root 里留一条重复的。
@@ -678,18 +842,36 @@ class DSToolsApp:
             (t("menu.about"), None, self._show_about),  # "关于"不需要子菜单，直接绑命令
         ):
             item_w = menu_font.measure(text) + 2 * PADX
-            rect_id = strip.create_rectangle(x, 0, x + item_w, strip_h, fill="", outline="", tags="menu_hit")
-            strip.create_text(x + PADX, strip_h / 2, text=text, anchor=tk.W,
-                               fill=theme.TEXT, font=menu_font, tags="menu_text")
-            self._menu_strip_items.append({"x1": x, "x2": x + item_w, "menu": menu,
-                                            "command": command, "rect_id": rect_id})
+            rect_id = strip.create_rectangle(
+                x, 0, x + item_w, strip_h, fill="", outline="", tags="menu_hit"
+            )
+            strip.create_text(
+                x + PADX,
+                strip_h / 2,
+                text=text,
+                anchor=tk.W,
+                fill=theme.TEXT,
+                font=menu_font,
+                tags="menu_text",
+            )
+            self._menu_strip_items.append(
+                {
+                    "x1": x,
+                    "x2": x + item_w,
+                    "menu": menu,
+                    "command": command,
+                    "rect_id": rect_id,
+                }
+            )
             x += item_w
 
         def _on_motion(event):
             hit = False
             for item in self._menu_strip_items:
                 hovering = item["x1"] <= event.x < item["x2"]
-                strip.itemconfigure(item["rect_id"], fill=theme.BG_SOFT if hovering else "")
+                strip.itemconfigure(
+                    item["rect_id"], fill=theme.BG_SOFT if hovering else ""
+                )
                 hit = hit or hovering
             strip.configure(cursor="hand2" if hit else "")
 
@@ -701,8 +883,11 @@ class DSToolsApp:
             for item in self._menu_strip_items:
                 if item["x1"] <= event.x < item["x2"]:
                     if item["menu"] is not None:
-                        self._popup_menu_at(item["menu"], strip.winfo_rootx() + item["x1"],
-                                             strip.winfo_rooty() + strip_h)
+                        self._popup_menu_at(
+                            item["menu"],
+                            strip.winfo_rootx() + item["x1"],
+                            strip.winfo_rooty() + strip_h,
+                        )
                     else:
                         item["command"]()
                     return
@@ -732,14 +917,18 @@ class DSToolsApp:
             menu.grab_release()
 
     def _switch_language(self, lang):
-        if get_lang() == lang: return
+        if get_lang() == lang:
+            return
         set_lang(lang)
         # root.title() 本身现在不会显示在任何地方了（原生标题栏已经弃用，
         # 见 gui/custom_titlebar.py）——保留这一行只是让底层窗口标题字符
         # 串（任务栏悬浮提示等系统层面还会用到）跟着语言同步，真正显示
         # 给用户看的是 self._titlebar._redraw()。
-        self.root.title(t("app.title")); self._titlebar._redraw(); self._build_menu()
-        self._refresh_tab_labels(); self._update_status()
+        self.root.title(t("app.title"))
+        self._titlebar._redraw()
+        self._build_menu()
+        self._refresh_tab_labels()
+        self._update_status()
         # get_selected_cluster() 现在直接存的是 Cluster 对象引用（见
         # __init__ 里 self._global_selected_cluster 的注释），不再靠反解析
         # 下拉框显示的 [服务器]/[本地] 文字，所以这里不需要像以前那样在切
@@ -767,7 +956,8 @@ class DSToolsApp:
         retheme()+只重载当前页签"骨架跟字体字重切换（_switch_font_
         weight()）完全共用，见 _apply_visual_refresh()/_finish_visual_
         refresh() 的说明。"""
-        if name == get_theme_name(): return
+        if name == get_theme_name():
+            return
         self._theme_switch_suppressed = True
         try:
             set_theme_name(name)
@@ -784,7 +974,8 @@ class DSToolsApp:
         套用样式+逐 tab retheme()+只重载当前页签+防闪烁"流程跟
         _switch_theme() 完全一样，见 _apply_visual_refresh()/
         _finish_visual_refresh()。"""
-        if choice == theme.FONT_STYLE_CHOICE: return
+        if choice == theme.FONT_STYLE_CHOICE:
+            return
         self._theme_switch_suppressed = True
         try:
             set_font_style_choice(choice)
@@ -806,6 +997,7 @@ class DSToolsApp:
         # EX_APPWINDOW，见 custom_titlebar.ensure_taskbar_visible() 的说
         # 明，这里切换后也要重新找补一遍。
         from dstools.shared.gui import custom_titlebar
+
         custom_titlebar.ensure_taskbar_visible(self.root)
         custom_titlebar.apply_window_border(self.root)
         self._titlebar.apply_theme(bg=theme.CARD_BG)
@@ -879,7 +1071,10 @@ class DSToolsApp:
         self._cluster_bar_inner.apply_theme(bg=theme.CARD_BG)
         self._archive_label_font.configure(
             family=theme.FONT_FAMILY,
-            size=round(12 * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)))
+            size=round(
+                12 * theme.FONT_SIZE_SCALE_BY_STYLE.get(theme.FONT_STYLE_CHOICE, 1.0)
+            ),
+        )
         self._redraw_platform_label()
         self._redraw_archive_label()
 
@@ -942,7 +1137,9 @@ class DSToolsApp:
             return
         if self._bg_settle_after_id is not None:
             self.root.after_cancel(self._bg_settle_after_id)
-        self._bg_settle_after_id = self.root.after(self._BG_SETTLE_MS, self._on_bg_settle)
+        self._bg_settle_after_id = self.root.after(
+            self._BG_SETTLE_MS, self._on_bg_settle
+        )
 
     def _on_bg_settle(self) -> None:
         self._bg_settle_after_id = None
@@ -1093,7 +1290,11 @@ class DSToolsApp:
         render），供"背景图弹窗拖不透明度滑块"这种高频调用——每 60ms 触发
         一次全量同步 render_now（250ms+）是拖滑块卡顿的瓶颈，改成节流让主
         线程不阻塞，预览依旧流畅。"""
-        fn = (lambda surf: surf._request_render()) if throttle else (lambda surf: surf.render_now())
+        fn = (
+            (lambda surf: surf._request_render())
+            if throttle
+            else (lambda surf: surf.render_now())
+        )
         self._for_each_alive_bg_surface(fn, visible_only=True)
 
     def refresh_bg_surface(self, surface) -> None:
@@ -1115,6 +1316,79 @@ class DSToolsApp:
         self._rebuild_shared_bg_image()
         self._refresh_all_bg_surfaces(throttle=throttle)
 
+    def _show_manual_update(self) -> None:
+        """显示手动更新下载地址；蓝奏云先复制提取码再打开网页。"""
+        links = (
+            (
+                t("about.manual_update_baidu"),
+                "https://pan.baidu.com/s/1hnyarybAGHjOsCCyUNlsmw?pwd=6666",
+                None,
+            ),
+            (
+                t("about.manual_update_quark"),
+                "https://pan.quark.cn/s/80446b171dc7?pwd=SmW6",
+                None,
+            ),
+            (
+                t("about.manual_update_lanzou"),
+                "https://wwblt.lanzout.com/b01euospla",
+                "45w9",
+            ),
+        )
+        win = tk.Toplevel(self.root)
+        win.withdraw()
+        win.title(t("about.manual_update_title"))
+        win.resizable(False, False)
+        win.configure(background=theme.CARD_BORDER)
+
+        card = tk.Frame(win, background=theme.CARD_BG)
+        card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        tk.Label(
+            card,
+            text=t("about.manual_update_hint"),
+            font=theme.font_tuple(theme.FONT_SIZE_BASE),
+            fg=theme.TEXT,
+            bg=theme.CARD_BG,
+            anchor="w",
+        ).pack(fill=tk.X, padx=24, pady=(24, 12))
+
+        def open_link(url, code=None):
+            if code:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(code)
+                self.root.update()
+                dlg.show_toast(self.root, t("about.manual_update_code_copied"))
+            import webbrowser
+
+            webbrowser.open(url)
+
+        for label, url, code in links:
+            link = tk.Label(
+                card,
+                text=label,
+                font=theme.font_tuple(theme.FONT_SIZE_BASE),
+                fg=theme.PRIMARY,
+                bg=theme.CARD_BG,
+                cursor="hand2",
+                anchor="w",
+            )
+            link.pack(fill=tk.X, padx=24, pady=4)
+            link.bind("<Button-1>", lambda _event, u=url, c=code: open_link(u, c))
+
+        btn_row = tk.Frame(card, background=theme.CARD_BG)
+        btn_row.pack(fill=tk.X, padx=24, pady=(18, 24))
+        ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=win.destroy).pack(
+            side=tk.RIGHT
+        )
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        win.bind("<Escape>", lambda _event: win.destroy())
+        win.bind("<Return>", lambda _event: win.destroy())
+        center_over_parent(win, self.root, min_width=520)
+        win.transient(self.root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
     def _show_about(self) -> None:
         """自己搭一个卡片样式的"关于"弹窗，而不是直接复用
         themed_dialog.show_info()——那是给"保存成功"这类一行提示准备的
@@ -1135,17 +1409,31 @@ class DSToolsApp:
         win.withdraw()  # 跟其它自定义弹窗一样：先藏起来，建完内容/定位好才显示，避免一闪而过
         win.title(t("menu.about"))
         win.resizable(False, False)
-        win.configure(background=theme.CARD_BORDER)  # 露出 1px 边框，跟 themed_dialog._show() 的卡片样式一致
+        win.configure(
+            background=theme.CARD_BORDER
+        )  # 露出 1px 边框，跟 themed_dialog._show() 的卡片样式一致
 
         card = tk.Frame(win, background=theme.CARD_BG)
         card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
 
-        tk.Label(card, text=header_text, font=theme.font_tuple(theme.FONT_SIZE_XL, bold=True), fg=theme.PRIMARY,
-                bg=theme.CARD_BG).pack(anchor=tk.W, padx=24, pady=(24, 4))
+        tk.Label(
+            card,
+            text=header_text,
+            font=theme.font_tuple(theme.FONT_SIZE_XL, bold=True),
+            fg=theme.PRIMARY,
+            bg=theme.CARD_BG,
+        ).pack(anchor=tk.W, padx=24, pady=(24, 4))
         ttk.Separator(card, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=24, pady=(0, 14))
         if desc_text:
-            tk.Label(card, text=desc_text, font=theme.font_tuple(theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
-                    justify=tk.LEFT, anchor=tk.W).pack(fill=tk.X, padx=24)
+            tk.Label(
+                card,
+                text=desc_text,
+                font=theme.font_tuple(theme.FONT_SIZE_BASE),
+                fg=theme.TEXT,
+                bg=theme.CARD_BG,
+                justify=tk.LEFT,
+                anchor=tk.W,
+            ).pack(fill=tk.X, padx=24)
 
         # 项目地址——"项目地址："是纯说明文字，只有"Github"这几个字是超
         # 链接，两段分开放才能只给后半段配 accent 色/hand2 光标/点击事
@@ -1154,34 +1442,61 @@ class DSToolsApp:
         repo_url = "https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren"
         repo_row = tk.Frame(card, background=theme.CARD_BG)
         repo_row.pack(fill=tk.X, padx=24, pady=(10, 0))
-        tk.Label(repo_row, text=t("about.repo_label"), font=theme.font_tuple(theme.FONT_SIZE_SM),
-                fg=theme.TEXT, bg=theme.CARD_BG).pack(side=tk.LEFT)
-        repo_link = tk.Label(repo_row, text=t("about.repo_link_text"), font=theme.font_tuple(theme.FONT_SIZE_SM),
-                             fg=theme.PRIMARY, bg=theme.CARD_BG, cursor="hand2")
+        tk.Label(
+            repo_row,
+            text=t("about.repo_label"),
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            fg=theme.TEXT,
+            bg=theme.CARD_BG,
+        ).pack(side=tk.LEFT)
+        repo_link = tk.Label(
+            repo_row,
+            text=t("about.repo_link_text"),
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            fg=theme.PRIMARY,
+            bg=theme.CARD_BG,
+            cursor="hand2",
+        )
         repo_link.pack(side=tk.LEFT)
 
         def _open_repo_url(_event=None):
             import webbrowser
+
             webbrowser.open(repo_url)
 
         repo_link.bind("<Button-1>", _open_repo_url)
 
         if contact_text:
-            tk.Label(card, text=contact_text, font=theme.font_tuple(theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
-                    justify=tk.LEFT, anchor=tk.W).pack(fill=tk.X, padx=24, pady=(10, 0))
+            tk.Label(
+                card,
+                text=contact_text,
+                font=theme.font_tuple(theme.FONT_SIZE_BASE),
+                fg=theme.TEXT,
+                bg=theme.CARD_BG,
+                justify=tk.LEFT,
+                anchor=tk.W,
+            ).pack(fill=tk.X, padx=24, pady=(10, 0))
 
         # "检查更新"结果展示行——初始为空，点了按钮才有内容。found_url 用
         # 一个可变容器装"这次查到的 release 网页地址"，只有查到确实更新
         # 时才非 None，点这行文字直接跳转（跟状态栏那条提示同样的交互）。
         found = {"url": None}
         update_var = tk.StringVar(value="")
-        update_label = tk.Label(card, textvariable=update_var, font=theme.font_tuple(theme.FONT_SIZE_SM),
-                                fg=theme.TEXT_MUTED, bg=theme.CARD_BG, justify=tk.LEFT, anchor=tk.W)
+        update_label = tk.Label(
+            card,
+            textvariable=update_var,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            fg=theme.TEXT_MUTED,
+            bg=theme.CARD_BG,
+            justify=tk.LEFT,
+            anchor=tk.W,
+        )
         update_label.pack(fill=tk.X, padx=24, pady=(10, 0))
 
         def _open_found_url(_event=None):
             if found["url"]:
                 import webbrowser
+
                 webbrowser.open(found["url"])
 
         update_label.bind("<Button-1>", _open_found_url)
@@ -1204,7 +1519,9 @@ class DSToolsApp:
                     latest_version, url = result
                     if is_newer_version(__version__, latest_version):
                         found["url"] = url
-                        update_var.set(t("app.update_available", version=latest_version))
+                        update_var.set(
+                            t("app.update_available", version=latest_version)
+                        )
                         update_label.configure(fg=theme.PRIMARY, cursor="hand2")
                         self._show_update_notice(latest_version, url)
                     else:
@@ -1216,15 +1533,24 @@ class DSToolsApp:
 
         btn_row = tk.Frame(card, background=theme.CARD_BG)
         btn_row.pack(fill=tk.X, padx=24, pady=(18, 24))
-        check_btn = ttk.Button(btn_row, text=t("about.check_update_btn"), command=_do_check_update)
+        check_btn = ttk.Button(
+            btn_row, text=t("about.check_update_btn"), command=_do_check_update
+        )
         check_btn.pack(side=tk.LEFT)
-        ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(
+            btn_row, text=t("about.manual_update_btn"), command=self._show_manual_update
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=win.destroy).pack(
+            side=tk.RIGHT
+        )
 
         win.protocol("WM_DELETE_WINDOW", win.destroy)
         win.bind("<Return>", lambda e: win.destroy())
         win.bind("<Escape>", lambda e: win.destroy())
 
-        center_over_parent(win, self.root, min_width=360)
+        # 关于页包含项目地址、交流群和更新状态，给内容留出更舒适的横向
+        # 空间；仍按内容自然高度/宽度计算，不写死窗口的完整尺寸。
+        center_over_parent(win, self.root, min_width=520)
 
         win.transient(self.root)
         win.deiconify()
@@ -1240,15 +1566,16 @@ class DSToolsApp:
         dlg.show_info(self.root, t("settings.title"), t("settings.restart_required"))
 
     def _show_custom_bg_dialog(self) -> None:
-        """"主题"菜单里的"背景图设置…"——背景图是跟主题解耦的全局功能，
+        """ "主题"菜单里的"背景图设置…"——背景图是跟主题解耦的全局功能，
         点开只弹设置窗口，不切主题，选完之后不管当前是哪套颜色主题都会
         叠加显示。"""
         BackgroundImageDialog(self.root, self)
 
     def _show_font_settings_dialog(self) -> None:
-        """"主题"菜单里的"字体设置…"——字体样式（默认/可爱风）是跟颜色
+        """ "主题"菜单里的"字体设置…"——字体样式（默认/可爱风）是跟颜色
         主题解耦的全局功能，点开只弹设置窗口，不切颜色主题。"""
         from dstools.shared.gui.font_settings_dialog import FontSettingsDialog
+
         FontSettingsDialog(self.root, self)
 
     def _refresh_tab_labels(self):
@@ -1259,6 +1586,7 @@ class DSToolsApp:
         号信息是同一个道理——网络请求没有上限延迟，不能在 Tk 主线程同步
         跑；查不到/没有更新就什么都不做，不弹窗、不重试，只在确实有更新
         时通过 root.after(0, ...) 回到主线程点亮状态栏右侧那行提示。"""
+
         def _worker():
             result = check_latest_version()
             if result is None:
@@ -1277,6 +1605,7 @@ class DSToolsApp:
         if self._update_notice is None:
             return
         import webbrowser
+
         webbrowser.open(self._update_notice[1])
 
     def _update_status(self):
@@ -1294,7 +1623,9 @@ class DSToolsApp:
         clusters = self.get_clusters()
         sv = sum(1 for c in clusters if c.source == SaveSource.SERVER)
         lc = sum(1 for c in clusters if c.source == SaveSource.LOCAL)
-        self.status_var.set(f"{t('status.klei')}: {klei}  |  {t('status.user')}: {user_id or '?'}  |  {t('status.clusters')}: {sv}  |  {t('status.local_saves')}: {lc}")
+        self.status_var.set(
+            f"{t('status.klei')}: {klei}  |  {t('status.user')}: {user_id or '?'}  |  {t('status.clusters')}: {sv}  |  {t('status.local_saves')}: {lc}"
+        )
 
     def _on_f5_key(self, _event):
         """真机反馈过的 bug：中文输入法组词时，Windows 上 Tk 有几率把
@@ -1355,31 +1686,38 @@ class DSToolsApp:
         self.root.after(1500, self._update_status)
 
     def _open_cache_dir(self) -> None:
-        """"文件"菜单"打开缓存目录"——跟 save_browser_tab.py"一键打开存
+        """ "文件"菜单"打开缓存目录"——跟 save_browser_tab.py"一键打开存
         档文件夹"同一个模式（os.startfile()）。缓存目录不保证已经存在
         （全新安装、还没触发过任何一次 mod 图标/角色头像/mod 完整解析，
         目录可能还没创建过），先建好再打开，不让用户对着一个"找不到该
         文件"的系统错误弹窗摸不着头脑。"""
         import os
         from dstools.shared.resource_paths import cache_root_dir
+
         d = cache_root_dir()
         d.mkdir(parents=True, exist_ok=True)
         os.startfile(str(d))
 
     def _install_vcredist(self) -> None:
-        """"文件"菜单"安装运行库"——跟 Mod 管理页签"缺少运行库"横幅点击
+        """ "文件"菜单"安装运行库"——跟 Mod 管理页签"缺少运行库"横幅点击
         后走的是同一个 launch_vcredist_installer()，但这个入口不依赖任何
         自动探测：探测逻辑本身可能有覆盖不到的场景（真机已经复现过一次
         判断遗漏，见 shared/tex_convert.py 顶部说明），用户在没看到横幅、
         但怀疑是这个原因导致图标/其它功能异常时，也能自己主动装一遍，
         不用等我们把每一种报错都枚举全。"""
         if not launch_vcredist_installer():
-            dlg.show_error(self.root, t("app.install_vcredist"), t("mod.vcredist_installer_missing"))
+            dlg.show_error(
+                self.root,
+                t("app.install_vcredist"),
+                t("mod.vcredist_installer_missing"),
+            )
             return
-        dlg.show_info(self.root, t("app.install_vcredist"), t("mod.vcredist_installer_launched"))
+        dlg.show_info(
+            self.root, t("app.install_vcredist"), t("mod.vcredist_installer_launched")
+        )
 
     def _on_file_menu_select(self, menu) -> None:
-        """"文件"菜单的 <<MenuSelect>>——鼠标/键盘移到任意一项都会触发，
+        """ "文件"菜单的 <<MenuSelect>>——鼠标/键盘移到任意一项都会触发，
         只在当前悬停的正好是"安装运行库"这一项时才弹提示气泡，移开或者
         悬停到别的项上要马上收起来。"""
         try:
@@ -1419,9 +1757,15 @@ class DSToolsApp:
             tip.attributes("-topmost", True)
         except Exception:
             pass
-        tk.Label(tip, text=text, justify=tk.LEFT, background="#ffffe0",
-                 relief=tk.SOLID, borderwidth=1,
-                 font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=4, ipady=2)
+        tk.Label(
+            tip,
+            text=text,
+            justify=tk.LEFT,
+            background="#ffffe0",
+            relief=tk.SOLID,
+            borderwidth=1,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        ).pack(ipadx=4, ipady=2)
 
     def _hide_menu_hint(self) -> None:
         tip = getattr(self, "_menu_hint_tip", None)
@@ -1430,14 +1774,16 @@ class DSToolsApp:
             self._menu_hint_tip = None
 
     def _get_platform_filter(self) -> Platform:
-        return Platform.WEGAME if self._platform_var.get() == "WeGame" else Platform.STEAM
+        return (
+            Platform.WEGAME if self._platform_var.get() == "WeGame" else Platform.STEAM
+        )
 
     def get_clusters(self):
         platform = self._get_platform_filter()
         return [c for c in self.env.clusters if c.platform == platform]
 
     def _on_platform_change(self):
-        """"存档类型"筛选器切换 Steam/WeGame 时调用——重建"存档:"下拉框
+        """ "存档类型"筛选器切换 Steam/WeGame 时调用——重建"存档:"下拉框
         （旧的选中项大概率不在筛选后的新列表里，_populate_global_cluster_
         combo() 的按 path 匹配逻辑本来就处理了"找不到就退回第一项"，不需
         要在这里特殊判断），然后跟"选中了某个存档"一样广播给当前页签。"""
@@ -1464,7 +1810,9 @@ class DSToolsApp:
         下拉框晚创建，第一次调用时可能还不存在，要用 getattr 兜底。"""
         label = _cluster_label(c)
         local_tab = getattr(self, "local_tab", None)
-        if local_tab and any(p.cluster_path == c.path for p in local_tab.manager.running()):
+        if local_tab and any(
+            p.cluster_path == c.path for p in local_tab.manager.running()
+        ):
             label += t("selector.running_suffix")
         return label
 
@@ -1479,15 +1827,21 @@ class DSToolsApp:
         menu = self._global_cluster_menu
         menu.delete(0, tk.END)
         for c in clusters:
-            menu.add_command(label=self._cluster_label_with_status(c),
-                              command=lambda c=c: self._on_global_cluster_pick(c))
+            menu.add_command(
+                label=self._cluster_label_with_status(c),
+                command=lambda c=c: self._on_global_cluster_pick(c),
+            )
         if not clusters:
             self._global_selected_cluster = None
             self._global_cluster_var.set("")
             return
-        matched = next((c for c in clusters if prev is not None and c.path == prev.path), None)
+        matched = next(
+            (c for c in clusters if prev is not None and c.path == prev.path), None
+        )
         self._global_selected_cluster = matched or clusters[0]
-        self._global_cluster_var.set(self._cluster_label_with_status(self._global_selected_cluster))
+        self._global_cluster_var.set(
+            self._cluster_label_with_status(self._global_selected_cluster)
+        )
         set_last_cluster_path(str(self._global_selected_cluster.path))
 
     def _on_global_cluster_pick(self, cluster):
@@ -1511,13 +1865,16 @@ class DSToolsApp:
             else:
                 self._stale_cluster_tabs.add(key)
 
-    def run(self): self.root.mainloop()
+    def run(self):
+        self.root.mainloop()
 
 
 def main():
     klei_path = None
-    if len(sys.argv) > 1: klei_path = Path(sys.argv[1])
+    if len(sys.argv) > 1:
+        klei_path = Path(sys.argv[1])
     DSToolsApp(klei_path).run()
+
 
 if __name__ == "__main__":
     main()

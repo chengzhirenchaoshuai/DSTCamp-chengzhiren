@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class ReadonlyBanner:
-    """"当前存档只读/需要额外设置"这类醒目提示条（黄底加粗），供各页签
+    """ "当前存档只读/需要额外设置"这类醒目提示条（黄底加粗），供各页签
     共享——local_service_tab.py（本地存档/WeGame 手动启动提示/别的存档
     还在跑）、mod_manager_tab.py（本地存档/WeGame 未设置目录）、
     world_settings_tab.py（本地存档）原来各自手写了一份几乎逐字相同的
@@ -37,9 +37,18 @@ class ReadonlyBanner:
 
     def __init__(self, parent, text: str = "", on_click=None, justify=tk.LEFT):
         kwargs = {"cursor": "hand2"} if on_click is not None else {}
-        self.label = tk.Label(parent, text=text, bg=theme.BANNER_BG, fg=theme.BANNER_TEXT,
-                               font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
-                               anchor=tk.W, padx=10, pady=6, justify=justify, **kwargs)
+        self.label = tk.Label(
+            parent,
+            text=text,
+            bg=theme.BANNER_BG,
+            fg=theme.BANNER_TEXT,
+            font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+            anchor=tk.W,
+            padx=10,
+            pady=6,
+            justify=justify,
+            **kwargs,
+        )
         if on_click is not None:
             self.label.bind("<Button-1>", lambda e: on_click())
 
@@ -66,8 +75,16 @@ class ReadonlyBanner:
         self.label.configure(bg=theme.BANNER_BG, fg=theme.BANNER_TEXT)
 
 
-def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None, bold=False,
-                        side=tk.LEFT, anchor=tk.W, bg: str | None = None) -> BgFrame:
+def make_toolbar_label(
+    row: BgFrame,
+    app: "DSToolsApp",
+    text_getter,
+    font=None,
+    bold=False,
+    side=tk.LEFT,
+    anchor=tk.W,
+    bg: str | None = None,
+) -> BgFrame:
     """在工具栏行(BgFrame)里插入一小块只画一行说明文字的子画布，跟其它
     ttk 控件一起 pack()——ttk.Label/tk.Label 绘制区域永远不透明，会挡住
     背景图（跟 local_service_tab.py 里"专用服务器工具:"那段文字是同一个
@@ -90,8 +107,11 @@ def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None, 
         font_obj = tkfont.Font(font=font)
     else:
         base_size = tkfont.nametofont("TkDefaultFont").actual()["size"]
-        font_obj = tkfont.Font(family=theme.FONT_FAMILY, size=base_size,
-                               weight="bold" if bold else "normal")
+        font_obj = tkfont.Font(
+            family=theme.FONT_FAMILY,
+            size=base_size,
+            weight="bold" if bold else "normal",
+        )
     label_h = font_obj.metrics("linespace") + 4
     label = BgFrame(row, app, bg=bg or theme.CARD_BG)
     label.configure(height=label_h)
@@ -113,8 +133,15 @@ def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None, 
         label.delete("label_text")
         text = text_getter()
         label.configure(width=font_obj.measure(text) + 6)
-        label.create_text(2, label_h / 2, text=text, anchor=tk.W,
-                           fill=theme.TEXT, font=font_obj, tags="label_text")
+        label.create_text(
+            2,
+            label_h / 2,
+            text=text,
+            anchor=tk.W,
+            fill=theme.TEXT,
+            font=font_obj,
+            tags="label_text",
+        )
 
     label.redraw = _redraw
     label.pack(side=side, anchor=anchor, padx=(0, 5))
@@ -122,8 +149,17 @@ def make_toolbar_label(row: BgFrame, app: "DSToolsApp", text_getter, font=None, 
     return label
 
 
-def make_transparent_status(row: BgFrame, app: "DSToolsApp", variable: tk.Variable,
-                            width: int = 220, side=tk.RIGHT, padx=(8, 0)) -> BgFrame:
+def make_transparent_status(
+    row: BgFrame,
+    app: "DSToolsApp",
+    variable: tk.Variable,
+    width: int = 220,
+    side=tk.RIGHT,
+    padx=(8, 0),
+    command=None,
+    command_enabled=None,
+    color_getter=None,
+) -> BgFrame:
     """在工具栏中显示一行随变量更新的透明状态文字。
 
     直接使用 ``ttk.Label`` 会绘制不透明主题背景，遮住自定义背景图；这里用
@@ -132,22 +168,43 @@ def make_transparent_status(row: BgFrame, app: "DSToolsApp", variable: tk.Variab
     status = BgFrame(row, app, bg=theme.CARD_BG)
     status.configure(width=max(80, width), height=24)
 
+    def _is_clickable() -> bool:
+        return bool(
+            command is not None and (command_enabled is None or command_enabled())
+        )
+
     def _redraw(*_args):
         if not status.winfo_exists():
             return
+        # Canvas 的 tag_bind 绑定在标签名上，而不是绑定在某个文字 item
+        # 上；仅删除旧的 status_text 后，新建的同名文字仍会继承旧点击
+        # 事件。因此每次重绘先清掉绑定，再按当前状态决定是否重新绑定。
+        # 否则“待更新/更新中”切换成“所有 Mod 都是最新”后仍然可点击。
+        status.tag_unbind("status_text", "<Button-1>")
+        status.configure(cursor="")
         status.delete("status_text")
         text = str(variable.get() or "")
         if not text or status.winfo_width() < 4 or status.winfo_height() < 4:
             return
+        clickable = _is_clickable()
         status.create_text(
             status.winfo_width() - 2,
             status.winfo_height() / 2,
             text=text,
             anchor=tk.E,
-            fill=theme.TEXT_MUTED,
+            fill=(
+                color_getter()
+                if color_getter is not None
+                else theme.ACCENT
+                if clickable
+                else theme.TEXT_MUTED
+            ),
             font=theme.font_tuple(theme.FONT_SIZE_SM),
             tags="status_text",
         )
+        status.configure(cursor="hand2" if clickable else "")
+        if clickable:
+            status.tag_bind("status_text", "<Button-1>", lambda _event: command())
 
     status.bind("<Configure>", _redraw, add="+")
     variable.trace_add("write", _redraw)
@@ -157,8 +214,9 @@ def make_transparent_status(row: BgFrame, app: "DSToolsApp", variable: tk.Variab
     return status
 
 
-def make_filter_chips(row: BgFrame, app: "DSToolsApp", options, variable: tk.StringVar,
-                       command, font=None) -> BgFrame:
+def make_filter_chips(
+    row: BgFrame, app: "DSToolsApp", options, variable: tk.StringVar, command, font=None
+) -> BgFrame:
     """在工具栏行(BgFrame)里嵌一组互斥的纯文字筛选项（"全部/已启用/已禁
     用"这种），取代 ttk.Radiobutton——ttk 主题给它上了不透明背景
     （style.configure("TRadiobutton", background=BG_SOFT)），会挡住背景
@@ -182,8 +240,9 @@ def make_filter_chips(row: BgFrame, app: "DSToolsApp", options, variable: tk.Str
     else:
         base_size = tkfont.nametofont("TkDefaultFont").actual()["size"]
         base_font = tkfont.Font(family=theme.FONT_FAMILY, size=base_size)
-    bold_font = tkfont.Font(family=base_font.actual("family"), size=base_font.actual("size"),
-                             weight="bold")
+    bold_font = tkfont.Font(
+        family=base_font.actual("family"), size=base_font.actual("size"), weight="bold"
+    )
     gap = 16
     chip_h = base_font.metrics("linespace") + 4
     chip = BgFrame(row, app, bg=theme.CARD_BG)
@@ -211,8 +270,15 @@ def make_filter_chips(row: BgFrame, app: "DSToolsApp", options, variable: tk.Str
             selected = variable.get() == value
             f = bold_font if selected else base_font
             fill = theme.PRIMARY if selected else theme.TEXT_MUTED
-            chip.create_text(x, chip_h / 2, text=text, anchor=tk.W, fill=fill, font=f,
-                              tags="chip_text")
+            chip.create_text(
+                x,
+                chip_h / 2,
+                text=text,
+                anchor=tk.W,
+                fill=fill,
+                font=f,
+                tags="chip_text",
+            )
             w = f.measure(text)
             regions.append((x, x + w, value))
             x += w + gap

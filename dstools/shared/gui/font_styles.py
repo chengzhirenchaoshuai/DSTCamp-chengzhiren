@@ -1,30 +1,8 @@
-"""字体样式的集中注册表——theme.py 的 FONT_FAMILY_BY_STYLE/
-FONT_STYLE_NAMES/FONT_SIZE_SCALE_BY_STYLE、fonts.py 的 PIL 候选路径
-表、私有字体加载列表，全部从下面 FONT_STYLES 这一份列表派生，新增/
-删除样式只改这一处。漏改某处不会报错，只会静默 fallback 回默认字
-体，所以要单一数据源。
+"""Tk/PIL 共用的字体样式注册表。
 
-纯数据模块，不 import tkinter/PIL/theme.py/fonts.py——theme.py 已经
-import fonts.py，两边都从这个模块读配置，不会产生循环依赖。
-
-新增一款字体样式的步骤：
-1. 把字体文件（+ 许可证文件，走 OFL/MIT 这类允许打包的开源协议）放进
-   tools/fonts/。
-2. 在下面 FONT_STYLES 列表末尾加一个 FontStyleDef——family 必须是从
-   字体文件 name table 里*真机核对*出来的准确族名（很多字体，尤其点
-   阵/像素类小厂字体的 nameID 记录编码有问题，猜测/想当然拼一个族名
-   字符串大概率会让 Tk 私有加载后仍然找不到，静默 fallback 回系统默
-   认字体，不会报错，容易被忽略），核对方法见 custom_font_loader.py
-   顶部说明——私有加载后用 tkfont.Font(family=候选名).actual() 反查，
-   如果 actual()['family'] 原样等于候选名才说明真的找到了，不是巧合
-   撞上某个系统字体的宽度。
-3. 在 dstools/i18n/strings.py 里加一条 "settings.font_style_<key>"
-   的中英文文案（key 就是下面 FontStyleDef.key）。
-删除一款字体样式：从下面列表删掉对应条目 + 删掉 tools/fonts/ 里的文
-件 + 删掉 i18n 里那条文案，三步都做才算干净，不留孤儿文件。
-
-不需要碰的地方：theme.py/fonts.py/font_settings_dialog.py 都是通用循
-环读这个列表，不需要为每一款新字体单独加分支代码。
+新增样式需同时加入字体与许可证、``FONT_STYLES`` 和 i18n 文案。``family``
+必须用 Tk ``Font.actual()`` 真机核对；错误族名只会静默回退。此模块保持纯
+数据，避免与 theme/fonts 形成循环依赖。
 """
 
 from dataclasses import dataclass

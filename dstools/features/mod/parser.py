@@ -31,10 +31,10 @@ def _pick_quoted(m: re.Match) -> str:
 def _contains_cjk(s: str) -> bool:
     """字符串里是否含有 CJK 统一表意文字（汉字）——用于判断一个字符串字
     面量是不是中文，见 _extract_quoted 的三元双语名处理。"""
-    return any('一' <= ch <= '鿿' for ch in s)
+    return any("一" <= ch <= "鿿" for ch in s)
 
 
-_LUA_ESCAPES = {'n': '\n', 't': '\t', 'r': '\r', '\\': '\\', '"': '"', "'": "'"}
+_LUA_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", '"': '"', "'": "'"}
 
 # 一整个带引号的字符串（任一风格），供 _replace_idents_outside_strings 整
 # 段跳过字符串内容用，避免误匹配到字符串内部一个长得像标识符的子串。
@@ -62,7 +62,7 @@ def _replace_idents_outside_strings(text: str, subst_map: dict[str, str]) -> str
     if not subst_map:
         return text
     idents = "|".join(re.escape(i) for i in subst_map)
-    pattern = re.compile(rf'{_ANY_STRING.pattern}|\b(?:{idents})\b(?!\s*=(?!=))')
+    pattern = re.compile(rf"{_ANY_STRING.pattern}|\b(?:{idents})\b(?!\s*=(?!=))")
 
     def repl(m):
         s = m.group(0)
@@ -73,7 +73,7 @@ def _replace_idents_outside_strings(text: str, subst_map: dict[str, str]) -> str
     return pattern.sub(repl, text)
 
 
-_LONG_BRACKET_OPEN = re.compile(r'\[(=*)\[')
+_LONG_BRACKET_OPEN = re.compile(r"\[(=*)\[")
 
 
 def _strip_lua_comments(text: str) -> str:
@@ -107,7 +107,7 @@ def _strip_lua_comments(text: str) -> str:
             while i < n:
                 c = text[i]
                 out.append(c)
-                if c == '\\' and i + 1 < n:
+                if c == "\\" and i + 1 < n:
                     i += 1
                     out.append(text[i])
                 elif c == quote:
@@ -115,31 +115,31 @@ def _strip_lua_comments(text: str) -> str:
                     break
                 i += 1
             continue
-        if ch == '[':
+        if ch == "[":
             lm = _LONG_BRACKET_OPEN.match(text, i)
             if lm:
-                closer = ']' + lm.group(1) + ']'
+                closer = "]" + lm.group(1) + "]"
                 close_idx = text.find(closer, lm.end())
                 end = close_idx + len(closer) if close_idx != -1 else n
                 out.append(text[i:end])
                 i = end
                 continue
-        if text.startswith('--', i):
+        if text.startswith("--", i):
             j = i + 2
             lm = _LONG_BRACKET_OPEN.match(text, j)
             if lm:
-                closer = ']' + lm.group(1) + ']'
+                closer = "]" + lm.group(1) + "]"
                 close_idx = text.find(closer, lm.end())
                 end = close_idx + len(closer) if close_idx != -1 else n
             else:
-                nl = text.find('\n', j)
+                nl = text.find("\n", j)
                 end = nl if nl != -1 else n
-            out.append(''.join(c if c == '\n' else ' ' for c in text[i:end]))
+            out.append("".join(c if c == "\n" else " " for c in text[i:end]))
             i = end
             continue
         out.append(ch)
         i += 1
-    return ''.join(out)
+    return "".join(out)
 
 
 def _unescape_lua_string(s: str) -> str:
@@ -147,7 +147,7 @@ def _unescape_lua_string(s: str) -> str:
     tokenizer 捕获字符串时，这些转义会原样留在字符串里，变成字面的两字
     符序列，不解码的话，比如本该含制表符的标题标签就会显示成字面的反斜
     杠加 t。"""
-    return re.sub(r'\\(.)', lambda m: _LUA_ESCAPES.get(m.group(1), m.group(0)), s)
+    return re.sub(r"\\(.)", lambda m: _LUA_ESCAPES.get(m.group(1), m.group(0)), s)
 
 
 @dataclass
@@ -159,10 +159,11 @@ class ModConfigOption:
     度，不知道"DSTCamp 自己的解析代码变了"，字段形状一变，缓存里没有新
     字段时 `ModConfigOption(**o)` 会用默认值悄悄补上（不报错，不会触发
     重新解析），表现为"明明修了 bug，但界面还是老样子"。"""
-    name: str = ""      # 配置键名
-    label: str = ""     # 显示标签
-    hover: str = ""     # 悬浮提示
-    default: Any = None # 默认值
+
+    name: str = ""  # 配置键名
+    label: str = ""  # 显示标签
+    hover: str = ""  # 悬浮提示
+    default: Any = None  # 默认值
     choices: list[dict] = field(default_factory=list)
     # 每个选项：{"description": "...", "data": value, "hover": "..."}
     is_header: bool = False  # 纯视觉分区标题，不是真实设置项
@@ -201,6 +202,7 @@ class ModConfigOption:
 @dataclass
 class ModInfo:
     """来自 modinfo.lua 的 mod 元数据与配置。"""
+
     name: str = ""
     author: str = ""
     version: str = ""
@@ -214,8 +216,8 @@ class ModInfo:
     version_compatible_status: str = "pending"
     description: str = ""
     workshop_id: str = ""  # 从文件夹名派生
-    icon: str = ""         # 例如 "modicon.tex"，相对于 icon_atlas 所在文件夹
-    icon_atlas: str = ""   # 例如 "images/modicon.xml"，相对于 mod_folder
+    icon: str = ""  # 例如 "modicon.tex"，相对于 icon_atlas 所在文件夹
+    icon_atlas: str = ""  # 例如 "images/modicon.xml"，相对于 mod_folder
     config_options: list[ModConfigOption] = field(default_factory=list)
     # modinfo.lua 里 `configuration_options` 被赋值*之前*的全部内容——mod
     # 常用来以编程方式构建选项列表的局部辅助函数/表/for 循环。保留下来，
@@ -249,7 +251,9 @@ class ModInfo:
     chs_translation_tried: bool = False
 
 
-def visible_config_options(config_options: list[ModConfigOption]) -> list[ModConfigOption]:
+def visible_config_options(
+    config_options: list[ModConfigOption],
+) -> list[ModConfigOption]:
     """过滤掉标记为 client=true 的纯客户端配置项（见 ModConfigOption.client
     上的说明），供 ModConfigDialog 渲染前调用。
 
@@ -284,6 +288,50 @@ def visible_config_options(config_options: list[ModConfigOption]) -> list[ModCon
 
 # 已知的 DST Steam Workshop App ID
 DST_APP_ID = "322330"
+_MAX_PUBLISHED_FILE_ID = (1 << 64) - 1
+
+
+def is_workshop_content_id(value: str | int) -> bool:
+    """是否为 Steam ``content/322330/<PublishedFileId_t>`` 的标准目录名。
+
+    Steam Workshop ID 是非零 ``uint64``，落盘时使用无前导零的 ASCII
+    十进制字符串。不能用 ``str.isdigit()``：它也接受全角数字等 Unicode
+    字符；也不能限制十位，PublishedFileId_t 并没有这个长度约束。
+    """
+    text = str(value)
+    if not text or not text.isascii() or not text.isdecimal():
+        return False
+    if text[0] == "0":
+        return False
+    try:
+        return int(text) <= _MAX_PUBLISHED_FILE_ID
+    except ValueError:
+        return False
+
+
+def is_custom_steam_mod_id(value: str | int) -> bool:
+    """是否为 Steam 游戏 ``mods/`` 下非标准 Workshop 命名的自定义 Mod。
+
+    Steam 扫描会把创意工坊项目统一成 ``workshop-<PublishedFileId_t>``，
+    手动放进游戏 ``mods/`` 目录的 Mod 则保留真实文件夹名，例如
+    ``CommonModSets``。分类不依赖某台机器的盘符或 Steam 安装位置。
+    """
+    text = str(value)
+    prefix = "workshop-"
+    return not (text.startswith(prefix) and is_workshop_content_id(text[len(prefix) :]))
+
+
+def split_installed_mod_counts(mod_ids, platform: Platform) -> tuple[int, int]:
+    """返回 ``(普通模组数, 自定义模组数)``，供相关 Mod 页统一统计。
+
+    自定义目录是 Steam ``mods/`` 的命名约定；WeGame 的 Mod ID 本来就不
+    带 ``workshop-`` 前缀，不能套用这条规则，因此全部计入普通模组。
+    """
+    ids = list(mod_ids)
+    if platform != Platform.STEAM:
+        return len(ids), 0
+    custom = sum(1 for mod_id in ids if is_custom_steam_mod_id(mod_id))
+    return len(ids) - custom, custom
 
 
 def find_workshop_dir() -> Path | None:
@@ -308,7 +356,7 @@ def is_mod_subscribed(workshop_id: str) -> bool:
     途）——订阅是 Steam 账号操作，DSTCamp 没有 API 能代劳，也没有比"本地
     内容在不在"更权威的判断。"""
     workshop_dir = find_workshop_dir()
-    if workshop_dir is None:
+    if workshop_dir is None or not is_workshop_content_id(workshop_id):
         return False
     candidate = workshop_dir / workshop_id
     return candidate.exists() and (candidate / "modinfo.lua").exists()
@@ -319,7 +367,7 @@ def find_shared_ugc_directory() -> Path | None:
     传这台机器 Steam 自己维护的 `steamapps/workshop` 目录（`content/322330/
     <id>/` + `appworkshop_322330.acf` 都已经在这儿），服务器会直接读取，
     完全不会在每个 cluster/shard 下再各建一份 `ugc_mods` 副本——之前
-    core/mod_sync.py 把每个 V2 mod 的内容复制进
+    features/mod/sync.py 把每个 V2 Mod 的内容复制进
     `ugc_mods/<cluster>/<shard>/content/322330/<id>/`（外加复制校验文件）
     的做法已经被这个参数取代：一份内容所有存档共享，客户端更新了服务器
     立刻用到最新版本，不用重新同步。找不到 Steam 库就返回 None，调用方
@@ -341,19 +389,51 @@ def find_game_mods_dir() -> Path | None:
     "手动兜底"套路。没设置过/设置的路径不存在了才走自动识别。
     """
     from dstools.shared import app_settings
+
     override = app_settings.get_steam_mods_path()
-    if override and override.exists():
+    if override and override.exists() and not is_dedicated_server_mods_dir(override):
         return override
 
     for steam in find_all_steam_libraries():
         mods = steam / "steamapps" / "common" / "Don't Starve Together" / "mods"
         if mods.exists():
             return mods
-        # 也试一下专用服务器
-        mods = steam / "steamapps" / "common" / "Don't Starve Together Dedicated Server" / "mods"
-        if mods.exists():
-            return mods
     return None
+
+
+def is_dedicated_server_mods_dir(path: Path) -> bool:
+    """路径是否就是独立专服的目标 ``mods``，用于阻止源目标自指。
+
+    未安装客户端时，旧逻辑会把专服 ``mods`` 回退成“客户端源目录”，最终
+    让软连接的源和目标完全相同。这里同时识别用户保存的专服安装路径和
+    Steam 各库中的标准安装路径；只做路径比较，不修改用户设置。
+    """
+    from dstools.shared import app_settings
+
+    candidate = Path(path)
+    targets: list[Path] = []
+    configured = app_settings.get_dedicated_server_path()
+    if configured is not None:
+        targets.append(Path(configured) / "mods")
+    for steam in find_all_steam_libraries():
+        targets.append(
+            steam
+            / "steamapps"
+            / "common"
+            / "Don't Starve Together Dedicated Server"
+            / "mods"
+        )
+    for target in targets:
+        try:
+            if candidate.resolve(strict=False) == target.resolve(strict=False):
+                return True
+        except OSError:
+            if (
+                str(candidate.absolute()).casefold()
+                == str(target.absolute()).casefold()
+            ):
+                return True
+    return False
 
 
 # ── WeGame(Rail) / Mod 路径发现 ──────────────────────────────────────
@@ -363,6 +443,7 @@ def find_game_mods_dir() -> Path | None:
 # 直接放在两个产品各自的 mods/ 文件夹里，没有第二套机制，也就用不上
 # -ugc_directory 那一套。WeGame 的 rail_apps 安装根目录没有可靠的注册表
 # 项能查（不像 Steam），只能读用户手动确认过的路径。
+
 
 def _find_wegame_product_dir(root: Path, name_prefix: str) -> Path | None:
     """在 WeGame 根目录(rail_apps)下按前缀通配匹配"饥荒：联机版(数字)"/
@@ -396,6 +477,7 @@ def resolve_wegame_client_mods_dir(platform: Platform) -> Path | None:
     if platform != Platform.WEGAME:
         return None
     from dstools.shared.app_settings import get_wegame_root_path
+
     root = get_wegame_root_path()
     if not root:
         return None
@@ -403,8 +485,11 @@ def resolve_wegame_client_mods_dir(platform: Platform) -> Path | None:
     return client_dir / "mods" if client_dir else None
 
 
-def find_mod_folder(workshop_id: str, platform: Platform = Platform.STEAM,
-                     wegame_client_mods_dir: Path | None = None) -> Path | None:
+def find_mod_folder(
+    workshop_id: str,
+    platform: Platform = Platform.STEAM,
+    wegame_client_mods_dir: Path | None = None,
+) -> Path | None:
     """按给定的 workshop ID 查找 mod 文件夹。
 
     Steam(默认): Workshop content dir (<steam>/steamapps/workshop/content/
@@ -425,20 +510,22 @@ def find_mod_folder(workshop_id: str, platform: Platform = Platform.STEAM,
     Returns:
         mod 文件夹路径，找不到则返回 None。
     """
-    mod_id = workshop_id.replace("workshop-", "")
+    raw_id = str(workshop_id)
+    mod_id = raw_id.removeprefix("workshop-")
+    canonical_id = f"workshop-{mod_id}" if is_workshop_content_id(mod_id) else raw_id
 
     if platform == Platform.WEGAME:
         game_mods = wegame_client_mods_dir
     else:
         workshop_dir = find_workshop_dir()
-        if workshop_dir:
+        if workshop_dir and is_workshop_content_id(mod_id):
             candidate = workshop_dir / mod_id
             if candidate.exists() and (candidate / "modinfo.lua").exists():
                 return candidate
         game_mods = find_game_mods_dir()
 
     if game_mods:
-        candidate = game_mods / workshop_id  # 带前缀的完整 ID
+        candidate = game_mods / canonical_id  # Workshop 纯数字输入也规范为带前缀
         if candidate.exists() and (candidate / "modinfo.lua").exists():
             return candidate
         # 也试一下不带前缀的
@@ -449,8 +536,9 @@ def find_mod_folder(workshop_id: str, platform: Platform = Platform.STEAM,
     return None
 
 
-def list_installed_mod_ids(platform: Platform = Platform.STEAM,
-                            wegame_client_mods_dir: Path | None = None) -> list[str]:
+def list_installed_mod_ids(
+    platform: Platform = Platform.STEAM, wegame_client_mods_dir: Path | None = None
+) -> list[str]:
     """枚举每一个已安装 mod 的 ID（形式跟它作为 modoverrides.lua 键时一
     致）——同时扫描 Steam Workshop 内容目录和游戏本地 mods/ 目录。
 
@@ -472,7 +560,11 @@ def list_installed_mod_ids(platform: Platform = Platform.STEAM,
     if platform == Platform.WEGAME:
         if wegame_client_mods_dir and wegame_client_mods_dir.exists():
             for child in sorted(wegame_client_mods_dir.iterdir()):
-                if child.is_dir() and (child / "modinfo.lua").exists() and child.name not in seen:
+                if (
+                    child.is_dir()
+                    and (child / "modinfo.lua").exists()
+                    and child.name not in seen
+                ):
                     seen.add(child.name)
                     ids.append(child.name)
         return ids
@@ -480,7 +572,11 @@ def list_installed_mod_ids(platform: Platform = Platform.STEAM,
     workshop_dir = find_workshop_dir()
     if workshop_dir and workshop_dir.exists():
         for child in sorted(workshop_dir.iterdir()):
-            if child.is_dir() and (child / "modinfo.lua").exists():
+            if (
+                child.is_dir()
+                and is_workshop_content_id(child.name)
+                and (child / "modinfo.lua").exists()
+            ):
                 wid = "workshop-" + child.name
                 if wid not in seen:
                     seen.add(wid)
@@ -500,6 +596,7 @@ def list_installed_mod_ids(platform: Platform = Platform.STEAM,
 
 # ── modinfo.lua 解析器 ───────────────────────────────────────────────
 
+
 def _workshop_id_from_folder(mod_folder: Path) -> str:
     """按标准 Workshop 命名把 mod 文件夹名换成 "workshop-<id>"——本地/手动
     装的 mod 文件夹名本来就没有这个前缀，Workshop 订阅内容的文件夹名是
@@ -509,7 +606,11 @@ def _workshop_id_from_folder(mod_folder: Path) -> str:
     识符设成 `env.folder_name`），沙箱执行 modinfo.lua 时也要提供同一个
     值，见 resolve_full_modinfo() 调用 lua_sandbox.resolve_full_config_
     options() 时传的 folder_name 参数。"""
-    return "workshop-" + mod_folder.name if not mod_folder.name.startswith("workshop-") else mod_folder.name
+    return (
+        "workshop-" + mod_folder.name
+        if not mod_folder.name.startswith("workshop-")
+        else mod_folder.name
+    )
 
 
 def parse_modinfo(mod_folder: Path) -> ModInfo | None:
@@ -549,15 +650,18 @@ def parse_modinfo(mod_folder: Path) -> ModInfo | None:
     _extract_string(header, "icon", info)
     _extract_string(header, "icon_atlas", info)
     _extract_description(header, info)
+
     def _flag(name: str) -> bool:
-        fm = re.search(rf'\b{name}\s*=\s*(true|false)\b', header)
+        fm = re.search(rf"\b{name}\s*=\s*(true|false)\b", header)
         return bool(fm) and fm.group(1) == "true"
 
     # server_only_mod/all_clients_require_mod 只要有一个为真，就说明作者
     # 明确想让这个 mod 被"开服工具"当服务器 mod 处理（配置走
     # modoverrides.lua，不是只读）——盖过 client_only_mod 的默认结论。见
     # ModInfo.client_only 字段上的说明。
-    if _flag("client_only_mod") and not (_flag("server_only_mod") or _flag("all_clients_require_mod")):
+    if _flag("client_only_mod") and not (
+        _flag("server_only_mod") or _flag("all_clients_require_mod")
+    ):
         info.client_only = True
 
     # 解析 configuration_options 表
@@ -598,7 +702,7 @@ def _extract_quoted(text: str, key: str) -> str | None:
 
     返回原始（仍带 Lua 转义）的字符串内容，或 None。
     """
-    m = re.search(rf'\b{re.escape(key)}\s*=\s*\w+\s+and\s+(?:{_QUOTED_ALT})', text)
+    m = re.search(rf"\b{re.escape(key)}\s*=\s*\w+\s+and\s+(?:{_QUOTED_ALT})", text)
     if m:
         first = _pick_quoted(m)
         # 三元惯用写法 `key = IDENT and A or B`：多数 mod 写 `Ch/ZH and
@@ -607,7 +711,7 @@ def _extract_quoted(text: str, key: str) -> str | None:
         # 汉字，取中文那个（都没有或都是中文就维持原样取 A）——这样两种写
         # 法都能拿到中文名。
         if not _contains_cjk(first):
-            or_m = re.search(rf'\s+or\s+(?:{_QUOTED_ALT})', text[m.end():])
+            or_m = re.search(rf"\s+or\s+(?:{_QUOTED_ALT})", text[m.end() :])
             if or_m and _contains_cjk(_pick_quoted(or_m)):
                 return _pick_quoted(or_m)
         return first
@@ -617,8 +721,8 @@ def _extract_quoted(text: str, key: str) -> str | None:
     # 字符串字面量的安全形状，并取第二个中文参数；更复杂的函数调用仍
     # 保持未解析，交给按需 Lua 沙箱处理。
     m = re.search(
-        rf'\b{re.escape(key)}\s*=\s*en_zh\s*\(\s*'
-        rf'(?:{_QUOTED_ALT})\s*,\s*(?:{_QUOTED_ALT})\s*\)',
+        rf"\b{re.escape(key)}\s*=\s*en_zh\s*\(\s*"
+        rf"(?:{_QUOTED_ALT})\s*,\s*(?:{_QUOTED_ALT})\s*\)",
         text,
         re.DOTALL,
     )
@@ -627,10 +731,12 @@ def _extract_quoted(text: str, key: str) -> str | None:
     # 同样的惯用写法，但用 `[[...]]` 长括号字符串而不是带引号的——例如
     # `name =\nCh and\n[[ 卡尼猫]] or\n[[ Carney]]`（真实 mod 的例子；
     # 也说明这可以跨多行，\s* 本来就能匹配换行符，天然兼容）。
-    m = re.search(rf'\b{re.escape(key)}\s*=\s*\w+\s+and\s+\[\[(.*?)\]\]', text, re.DOTALL)
+    m = re.search(
+        rf"\b{re.escape(key)}\s*=\s*\w+\s+and\s+\[\[(.*?)\]\]", text, re.DOTALL
+    )
     if m:
         return m.group(1)
-    m = re.search(rf'\b{re.escape(key)}\s*=\s*(?:{_QUOTED_ALT})', text)
+    m = re.search(rf"\b{re.escape(key)}\s*=\s*(?:{_QUOTED_ALT})", text)
     if m:
         return _pick_quoted(m)
     return _extract_localized_table(text, key)
@@ -645,23 +751,25 @@ def _extract_localized_table(text: str, key: str) -> str | None:
 
     返回原始（仍带 Lua 转义）的字符串内容，或 None。
     """
-    m = re.search(rf'\b{re.escape(key)}\s*=\s*(?:ChooseTranslationTable\s*\(\s*)?(\{{)', text)
+    m = re.search(
+        rf"\b{re.escape(key)}\s*=\s*(?:ChooseTranslationTable\s*\(\s*)?(\{{)", text
+    )
     if not m:
         return None
     brace_start = m.start(1)
     depth = 0
     end = None
     for i in range(brace_start, len(text)):
-        if text[i] == '{':
+        if text[i] == "{":
             depth += 1
-        elif text[i] == '}':
+        elif text[i] == "}":
             depth -= 1
             if depth == 0:
                 end = i
                 break
     if end is None:
         return None
-    block = text[brace_start:end + 1]
+    block = text[brace_start : end + 1]
 
     zm = re.search(rf'\[\s*(?:"zh"|\'zh\')\s*\]\s*=\s*(?:{_QUOTED_ALT})', block)
     if zm:
@@ -670,15 +778,17 @@ def _extract_localized_table(text: str, key: str) -> str | None:
     # 没有 zh 条目——退回到第一个裸（无键）字符串，也就是 tbl[1]
     # （`[key] = value` 形式的条目永远不算"裸"字符串，所以这天然会跳过
     # 其它每个语言的条目，找到目标）。
-    for entry_m in re.finditer(rf'{_QUOTED_ALT}', block):
-        preceding = block[:entry_m.start()]
+    for entry_m in re.finditer(rf"{_QUOTED_ALT}", block):
+        preceding = block[: entry_m.start()]
         if re.search(r'\[\s*[\'"]?\w*[\'"]?\s*\]\s*=\s*$', preceding):
             continue  # 这个字符串是某个 `[key] = "..."` 条目的值
         return _pick_quoted(entry_m)
     return None
 
 
-def _extract_label_or_hover(block: str, key: str, local_tables: dict | None) -> str | None:
+def _extract_label_or_hover(
+    block: str, key: str, local_tables: dict | None
+) -> str | None:
     """按常规方式提取一个选项的 `label`/`hover`（_extract_quoted——字面
     量字符串，或 DST 自己的三元/ChooseTranslationTable 本地化惯用写
     法）——如果它是对一个本地表的单层点号引用（`label = configs.language`，
@@ -690,7 +800,7 @@ def _extract_label_or_hover(block: str, key: str, local_tables: dict | None) -> 
     if val is not None:
         return val
     raw = _extract_field_raw(block, key)
-    if raw is None or '.' not in raw:
+    if raw is None or "." not in raw:
         return None
     resolved = _resolve_dotted_ref(raw, local_tables)
     if resolved is None:
@@ -698,7 +808,7 @@ def _extract_label_or_hover(block: str, key: str, local_tables: dict | None) -> 
     # 把解析出来的值包装成一句合成的赋值语句，对它重新走一遍同样的字面
     # 量/三元/本地化表提取——复用 _extract_quoted，不用把它那三种兜底
     # 形状再抄一遍。
-    return _extract_quoted(f'__resolved__ = {resolved}', '__resolved__')
+    return _extract_quoted(f"__resolved__ = {resolved}", "__resolved__")
 
 
 def _extract_string(text: str, key: str, info: ModInfo):
@@ -709,8 +819,8 @@ def _extract_string(text: str, key: str, info: ModInfo):
         return
     # 匹配：key = 'value' 或 key = [[value]]
     patterns = [
-        rf'{key}\s*=\s*\'([^\']*)\'',
-        rf'{key}\s*=\s*\[\[(.*?)\]\]',
+        rf"{key}\s*=\s*\'([^\']*)\'",
+        rf"{key}\s*=\s*\[\[(.*?)\]\]",
     ]
     for pat in patterns:
         m = re.search(pat, text, re.DOTALL)
@@ -733,7 +843,7 @@ def _extract_description(text: str, info: ModInfo):
             return
 
     # 再试 [[...]] 多行形式
-    m = re.search(r'description\s*=\s*\[\[(.*?)\]\]', text, re.DOTALL)
+    m = re.search(r"description\s*=\s*\[\[(.*?)\]\]", text, re.DOTALL)
     if m:
         info.description = m.group(1).strip()
 
@@ -758,9 +868,9 @@ def _extract_configuration_options(text: str) -> list[ModConfigOption] | None:
     depth = 0
     brace_end = brace_start
     for i in range(brace_start, len(text)):
-        if text[i] == '{':
+        if text[i] == "{":
             depth += 1
-        elif text[i] == '}':
+        elif text[i] == "}":
             depth -= 1
             if depth == 0:
                 brace_end = i
@@ -769,7 +879,7 @@ def _extract_configuration_options(text: str) -> list[ModConfigOption] | None:
     if depth != 0:
         return None  # 花括号不匹配
 
-    table_text = text[brace_start:brace_end + 1]
+    table_text = text[brace_start : brace_end + 1]
     local_functions = _find_local_functions(text)
     local_tables = _find_local_tables(text)
 
@@ -787,12 +897,12 @@ def _has_nontrivial_table(text: str, idx: int) -> bool:
         return False
     depth = 0
     for i in range(brace_start, len(text)):
-        if text[i] == '{':
+        if text[i] == "{":
             depth += 1
-        elif text[i] == '}':
+        elif text[i] == "}":
             depth -= 1
             if depth == 0:
-                return len(text[brace_start + 1:i].strip()) > 10
+                return len(text[brace_start + 1 : i].strip()) > 10
     return False
 
 
@@ -805,17 +915,17 @@ def _find_local_tables(text: str) -> dict:
     返回：dict，名字 -> 表文本（含外层花括号）。
     """
     tables = {}
-    for m in re.finditer(r'local\s+(\w+)\s*=\s*\n?\s*\{', text):
+    for m in re.finditer(r"local\s+(\w+)\s*=\s*\n?\s*\{", text):
         name = m.group(1)
         brace_start = m.end() - 1
         depth = 0
         for i in range(brace_start, len(text)):
-            if text[i] == '{':
+            if text[i] == "{":
                 depth += 1
-            elif text[i] == '}':
+            elif text[i] == "}":
                 depth -= 1
                 if depth == 0:
-                    tables[name] = text[brace_start:i + 1]
+                    tables[name] = text[brace_start : i + 1]
                     break
     return tables
 
@@ -834,7 +944,7 @@ def _resolve_dotted_ref(expr: str, local_tables: dict | None) -> str | None:
     这个 mod 里*每一个*选项都解析成同一份合并后的列表，原因见
     _extract_choices 的 docstring）。
     """
-    m = re.match(r'^(\w+)\.(\w+)$', expr.strip())
+    m = re.match(r"^(\w+)\.(\w+)$", expr.strip())
     if not m or not local_tables:
         return None
     ident, field = m.groups()
@@ -856,9 +966,9 @@ def _find_local_functions(text: str) -> dict:
     返回：dict，名字 -> (params: list[str], body_text: str)
     """
     functions = {}
-    for m in re.finditer(r'local\s+function\s+(\w+)\s*\(([^)]*)\)', text):
+    for m in re.finditer(r"local\s+function\s+(\w+)\s*\(([^)]*)\)", text):
         name = m.group(1)
-        params = [p.strip() for p in m.group(2).split(',') if p.strip()]
+        params = [p.strip() for p in m.group(2).split(",") if p.strip()]
         start = m.end()
         # 粗略的基于关键字的深度计数器，用来找到这个函数自己对应的
         # "end"——对 mod 实际这样写的、短小单一用途的辅助函数体（几个字
@@ -866,12 +976,12 @@ def _find_local_functions(text: str) -> dict:
         # 解析器。
         depth = 1
         body_end = None
-        for line_m in re.finditer(r'.*\n?', text[start:]):
+        for line_m in re.finditer(r".*\n?", text[start:]):
             line = line_m.group(0)
             if not line:
                 break
-            depth += len(re.findall(r'\b(?:if|for|while|function)\b', line))
-            depth -= len(re.findall(r'\bend\b', line))
+            depth += len(re.findall(r"\b(?:if|for|while|function)\b", line))
+            depth -= len(re.findall(r"\bend\b", line))
             if depth <= 0:
                 body_end = start + line_m.end()
                 break
@@ -894,7 +1004,7 @@ def _split_call_args(text: str, open_paren_idx: int):
         ch = text[i]
         if in_str:
             current.append(ch)
-            if ch == '\\' and i + 1 < len(text):
+            if ch == "\\" and i + 1 < len(text):
                 i += 1
                 current.append(text[i])
             elif ch == in_str:
@@ -902,19 +1012,19 @@ def _split_call_args(text: str, open_paren_idx: int):
         elif ch in ('"', "'"):
             in_str = ch
             current.append(ch)
-        elif ch in '({':
+        elif ch in "({":
             depth += 1
             current.append(ch)
-        elif ch in ')}':
+        elif ch in ")}":
             depth -= 1
-            if depth == 0 and ch == ')':
-                tail = ''.join(current).strip()
+            if depth == 0 and ch == ")":
+                tail = "".join(current).strip()
                 if tail:
                     args.append(tail)
                 return args, i + 1
             current.append(ch)
-        elif ch == ',' and depth == 1:
-            args.append(''.join(current).strip())
+        elif ch == "," and depth == 1:
+            args.append("".join(current).strip())
             current = []
         else:
             current.append(ch)
@@ -941,8 +1051,8 @@ def _inline_helper_call(name: str, args: list, local_functions: dict) -> str | N
     subst = dict(zip(params, args))
     # 调用处没提供的形参（比如一个可选的尾部参数）按 Lua 隐式 `nil`
     # 处理。
-    for param in params[len(args):]:
-        subst[param] = 'nil'
+    for param in params[len(args) :]:
+        subst[param] = "nil"
 
     # 参数名（比如 "name"、"hover"）经常跟表自己的字段键
     # （"name = ..."、"hover = ..."）撞名，这些绝不能被替换——只有那些
@@ -963,35 +1073,38 @@ def _inline_helper_call(name: str, args: list, local_functions: dict) -> str | N
     # AddOption 风格辅助函数选取默认开/关措辞常用的形状）。只处理已经
     # 替换完成的字面量比较；其它情况都意味着这次调用没法安全化简，直
     # 接放弃。
-    if_m = re.search(r'if\s+(.+?)\s+then\b(.*?)\belse\b(.*?)\bend\b', result, re.DOTALL)
+    if_m = re.search(r"if\s+(.+?)\s+then\b(.*?)\belse\b(.*?)\bend\b", result, re.DOTALL)
     if if_m:
         cond, then_branch, else_branch = if_m.groups()
-        cond_m = re.match(r'\s*(\S+)\s*(==|~=)\s*(\S+)\s*$', cond.strip())
+        cond_m = re.match(r"\s*(\S+)\s*(==|~=)\s*(\S+)\s*$", cond.strip())
         if not cond_m:
             return None
         lhs, op, rhs = cond_m.groups()
-        lhs, rhs = lhs.strip('"\''), rhs.strip('"\'')
-        is_eq = (lhs == rhs)
-        taken = then_branch if (is_eq == (op == '==')) else else_branch
-        result = result[:if_m.start()] + taken + result[if_m.end():]
+        lhs, rhs = lhs.strip("\"'"), rhs.strip("\"'")
+        is_eq = lhs == rhs
+        taken = then_branch if (is_eq == (op == "==")) else else_branch
+        result = result[: if_m.start()] + taken + result[if_m.end() :]
 
-    ret_m = re.search(r'return\s*(\{.*)', result, re.DOTALL)
+    ret_m = re.search(r"return\s*(\{.*)", result, re.DOTALL)
     if not ret_m:
         return None
     brace_start = ret_m.start(1)
     depth = 0
     for i in range(brace_start, len(result)):
-        if result[i] == '{':
+        if result[i] == "{":
             depth += 1
-        elif result[i] == '}':
+        elif result[i] == "}":
             depth -= 1
             if depth == 0:
-                return result[brace_start:i + 1]
+                return result[brace_start : i + 1]
     return None
 
 
-def _parse_options_table(table_text: str, local_functions: dict | None = None,
-                          local_tables: dict | None = None) -> list[ModConfigOption]:
+def _parse_options_table(
+    table_text: str,
+    local_functions: dict | None = None,
+    local_tables: dict | None = None,
+) -> list[ModConfigOption]:
     """用基于文本的提取方式解析 configuration_options 表里的各条条目。
 
     每条条目要么是一张字面量表：
@@ -1016,21 +1129,21 @@ def _parse_options_table(table_text: str, local_functions: dict | None = None,
 
     i = 0
     while i < len(inner):
-        while i < len(inner) and inner[i] in ' \t\n\r,':
+        while i < len(inner) and inner[i] in " \t\n\r,":
             i += 1
         if i >= len(inner):
             break
 
-        if inner[i] == '{':
+        if inner[i] == "{":
             depth = 0
             start = i
             while i < len(inner):
-                if inner[i] == '{':
+                if inner[i] == "{":
                     depth += 1
-                elif inner[i] == '}':
+                elif inner[i] == "}":
                     depth -= 1
                     if depth == 0:
-                        block = inner[start:i + 1]
+                        block = inner[start : i + 1]
                         opt = _parse_single_option(block, local_tables)
                         if opt:
                             options.append(opt)
@@ -1038,7 +1151,7 @@ def _parse_options_table(table_text: str, local_functions: dict | None = None,
                         break
                 i += 1
         else:
-            call_m = re.match(r'(\w+)\s*\(', inner[i:])
+            call_m = re.match(r"(\w+)\s*\(", inner[i:])
             if call_m:
                 paren_idx = i + call_m.end() - 1
                 args, after = _split_call_args(inner, paren_idx)
@@ -1048,7 +1161,7 @@ def _parse_options_table(table_text: str, local_functions: dict | None = None,
                         opt = _parse_single_option(block, local_tables)
                         if opt:
                             if opt.is_header and not opt.label.strip() and args:
-                                opt.label = _unescape_lua_string(args[0].strip('"\''))
+                                opt.label = _unescape_lua_string(args[0].strip("\"'"))
                             options.append(opt)
                     i = after
                     continue
@@ -1057,12 +1170,14 @@ def _parse_options_table(table_text: str, local_functions: dict | None = None,
     return options
 
 
-def _parse_single_option(block: str, local_tables: dict | None = None) -> ModConfigOption | None:
+def _parse_single_option(
+    block: str, local_tables: dict | None = None
+) -> ModConfigOption | None:
     """解析单个配置选项块。"""
     opt = ModConfigOption(name="")
 
     # 提取 name
-    m = re.search(rf'name\s*=\s*(?:{_QUOTED_ALT})', block)
+    m = re.search(rf"name\s*=\s*(?:{_QUOTED_ALT})", block)
     if not m:
         return None  # 没有 name 的选项是标题/分隔符，跳过
     opt.name = _unescape_lua_string(_pick_quoted(m))
@@ -1073,7 +1188,7 @@ def _parse_single_option(block: str, local_tables: dict | None = None) -> ModCon
         opt.label = _unescape_lua_string(label)
 
     # 提取 hover
-    m = re.search(r'hover\s*=\s*\[\[(.*?)\]\]', block, re.DOTALL)
+    m = re.search(r"hover\s*=\s*\[\[(.*?)\]\]", block, re.DOTALL)
     if m:
         opt.hover = m.group(1).strip()
     else:
@@ -1089,11 +1204,13 @@ def _parse_single_option(block: str, local_tables: dict | None = None) -> ModCon
     if default_raw is not None:
         opt.default = _coerce_lua_value(default_raw)
 
-    opt.client = bool(re.search(r'\bclient\s*=\s*true\b', block))
-    opt.is_set_config = bool(re.search(r'\bis_set_config\s*=\s*true\b', block))
-    opt.is_array_config = bool(re.search(r'\bis_array_config\s*=\s*true\b', block))
-    opt.is_text_config = bool(re.search(r'\bis_text_config\s*=\s*true\b', block))
-    opt.is_dictionary_config = bool(re.search(r'\bis_dictionary_config\s*=\s*true\b', block))
+    opt.client = bool(re.search(r"\bclient\s*=\s*true\b", block))
+    opt.is_set_config = bool(re.search(r"\bis_set_config\s*=\s*true\b", block))
+    opt.is_array_config = bool(re.search(r"\bis_array_config\s*=\s*true\b", block))
+    opt.is_text_config = bool(re.search(r"\bis_text_config\s*=\s*true\b", block))
+    opt.is_dictionary_config = bool(
+        re.search(r"\bis_dictionary_config\s*=\s*true\b", block)
+    )
 
     opt.choices = _extract_choices(block, local_tables)
 
@@ -1105,9 +1222,11 @@ def _parse_single_option(block: str, local_tables: dict | None = None) -> ModCon
     #    `{name="null", label=title, options={{description="",data=0}}}`），
     #    用 "null" 这样的占位名字而不是 ""——这种空描述单选项跟
     #    AddOptionHeader 产生的非交互式标题是同一种形状，只是写法不同。
-    if opt.name == "" or (len(opt.choices) == 1 and opt.choices[0].get("description") == ""):
+    if opt.name == "" or (
+        len(opt.choices) == 1 and opt.choices[0].get("description") == ""
+    ):
         opt.is_header = True
-    elif not opt.choices and re.search(r'\boptions\s*=', block):
+    elif not opt.choices and re.search(r"\boptions\s*=", block):
         # 作者确实声明了一个 `options` 表，但 _extract_choices 解析出来
         # 是空的——不是"没有可选项"，而是"解析不出它们是什么"。两种已知
         # 形状：`options = SomeFunction(args)`（一个在运行时构建列表的
@@ -1134,7 +1253,7 @@ def _extract_field_raw(block: str, key: str) -> str | None:
     断/破坏这个值（这正是以前每个 `data`/`default` 是表而不是简单标量
     的 mod 选项都会解析出错的原因）。
     """
-    m = re.search(rf'\b{re.escape(key)}\s*=\s*', block)
+    m = re.search(rf"\b{re.escape(key)}\s*=\s*", block)
     if m is None:
         return None
     i = m.end()
@@ -1145,7 +1264,7 @@ def _extract_field_raw(block: str, key: str) -> str | None:
     while i < n:
         ch = block[i]
         if in_str:
-            if ch == '\\' and i + 1 < n:
+            if ch == "\\" and i + 1 < n:
                 i += 2
                 continue
             if ch == in_str:
@@ -1154,13 +1273,13 @@ def _extract_field_raw(block: str, key: str) -> str | None:
             continue
         if ch in ('"', "'"):
             in_str = ch
-        elif ch in '{[(':
+        elif ch in "{[(":
             depth += 1
-        elif ch in '}])':
+        elif ch in "}])":
             if depth == 0:
                 break  # 外层块自己的闭括号
             depth -= 1
-        elif ch == ',' and depth == 0:
+        elif ch == "," and depth == 0:
             break
         i += 1
     return block[start:i].strip()
@@ -1186,13 +1305,13 @@ def _extract_choices(block: str, local_tables: dict | None = None) -> list[dict]
     # 文本写着 "Note: Some options below may affect..."，结果匹配到的
     # 是这里，而不是几行之后真正的 `options = {...}` 字段，导致整个可
     # 选项列表悄悄变成空的）。
-    field_m = re.search(r'\boptions\s*=', block)
+    field_m = re.search(r"\boptions\s*=", block)
     if not field_m:
         return []
 
     # 找出 "options" 被赋值成了什么：一个字面量 "{"，或者对某个本地表
     # 变量的裸标识符/`identifier.field` 引用。
-    m = re.match(r'\s*(\{)|\s*(\w+(?:\.\w+)?)', block[field_m.end():])
+    m = re.match(r"\s*(\{)|\s*(\w+(?:\.\w+)?)", block[field_m.end() :])
     if not m:
         return []
 
@@ -1201,17 +1320,17 @@ def _extract_choices(block: str, local_tables: dict | None = None) -> list[dict]
         depth = 0
         brace_end = brace_start
         for i in range(brace_start, len(block)):
-            if block[i] == '{':
+            if block[i] == "{":
                 depth += 1
-            elif block[i] == '}':
+            elif block[i] == "}":
                 depth -= 1
                 if depth == 0:
                     brace_end = i
                     break
-        options_text = block[brace_start:brace_end + 1]
+        options_text = block[brace_start : brace_end + 1]
     else:
         ref = m.group(2)
-        if '.' in ref:
+        if "." in ref:
             options_text = _resolve_dotted_ref(ref, local_tables)
         else:
             options_text = local_tables.get(ref) if local_tables else None
@@ -1228,17 +1347,17 @@ def _extract_choices(block: str, local_tables: dict | None = None) -> list[dict]
     i = 0
     n = len(inner)
     while i < n:
-        while i < n and inner[i] in ' \t\r\n,':
+        while i < n and inner[i] in " \t\r\n,":
             i += 1
-        if i >= n or inner[i] != '{':
+        if i >= n or inner[i] != "{":
             i += 1
             continue
         depth = 0
         start = i
         while i < n:
-            if inner[i] == '{':
+            if inner[i] == "{":
                 depth += 1
-            elif inner[i] == '}':
+            elif inner[i] == "}":
                 depth -= 1
                 if depth == 0:
                     i += 1
@@ -1277,6 +1396,7 @@ def _coerce_lua_value(val_str: str) -> Any:
 
 # ── 配置值解析 ────────────────────────────────────────────────────────
 
+
 def resolve_config_value(mod_info: ModInfo, key: str, current_value: Any) -> tuple:
     """对某个 mod 配置键，确定其合法可选项列表和当前值。
 
@@ -1312,6 +1432,7 @@ def resolve_config_value(mod_info: ModInfo, key: str, current_value: Any) -> tup
 # 复了一点逻辑（标题检测、本地化值解析），而不是共用同一份：两边输入
 # 的形状不同（这里是已经执行完的 Python 值，那边是原始源码文本），共
 # 用一个辅助函数反而得同时兼容两种形状，实际省不下多少代码。
+
 
 def _resolve_localized_value(val: Any) -> str:
     """给定一个 label/hover/description 字段已经执行完的值——可能是纯
@@ -1355,22 +1476,26 @@ def _choices_from_lua_value(val: Any) -> list[dict]:
         for item in val:
             if not isinstance(item, dict) or "description" not in item:
                 continue
-            choices.append({
-                "description": _resolve_localized_value(item.get("description")),
-                "data": item.get("data", item.get("description")),
-                "hover": _resolve_localized_value(item.get("hover")),
-            })
+            choices.append(
+                {
+                    "description": _resolve_localized_value(item.get("description")),
+                    "data": item.get("data", item.get("description")),
+                    "hover": _resolve_localized_value(item.get("hover")),
+                }
+            )
         return choices
     if isinstance(val, dict):
         choices = []
         for key, item in val.items():
             if not isinstance(item, dict):
                 continue
-            choices.append({
-                "description": _resolve_localized_value(item.get("description")),
-                "data": _coerce_lua_value(key),
-                "hover": _resolve_localized_value(item.get("hover")),
-            })
+            choices.append(
+                {
+                    "description": _resolve_localized_value(item.get("description")),
+                    "data": _coerce_lua_value(key),
+                    "hover": _resolve_localized_value(item.get("hover")),
+                }
+            )
         return choices
     return []
 
@@ -1394,7 +1519,9 @@ def _options_from_lua_result(result: Any) -> list[ModConfigOption] | None:
     if isinstance(result, list):
         entries = [(None, item) for item in result if isinstance(item, dict)]
     elif isinstance(result, dict):
-        entries = [(key, item) for key, item in result.items() if isinstance(item, dict)]
+        entries = [
+            (key, item) for key, item in result.items() if isinstance(item, dict)
+        ]
     else:
         return None
     if not entries:
@@ -1404,7 +1531,11 @@ def _options_from_lua_result(result: Any) -> list[ModConfigOption] | None:
     for key, d in entries:
         opt = ModConfigOption()
         name = d.get("name")
-        opt.name = str(name) if name not in (None, "") else (str(key) if key is not None else "")
+        opt.name = (
+            str(name)
+            if name not in (None, "")
+            else (str(key) if key is not None else "")
+        )
         opt.label = _resolve_localized_value(d.get("label"))
         opt.hover = _resolve_localized_value(d.get("hover"))
         if "default" in d:
@@ -1419,7 +1550,9 @@ def _options_from_lua_result(result: Any) -> list[ModConfigOption] | None:
         # 跟 _parse_single_option 同样的两个标题信号（见其 docstring）：
         # 没有名字可存，或者 mod 作者自己的标题辅助函数常见的单个空描
         # 述选项这种形状。
-        if opt.name == "" or (len(opt.choices) == 1 and opt.choices[0].get("description") == ""):
+        if opt.name == "" or (
+            len(opt.choices) == 1 and opt.choices[0].get("description") == ""
+        ):
             opt.is_header = True
         elif not opt.choices and "options" in d:
             opt.is_dynamic = True
@@ -1462,15 +1595,28 @@ def resolve_full_modinfo(mod_folder: Path, timeout: float | None = None) -> dict
         return None
     text = _strip_lua_comments(text)
 
-    from dstools.features.mod.sandbox import FULL_FILE_TIMEOUT, resolve_full_config_options
+    from dstools.features.mod.sandbox import (
+        FULL_FILE_TIMEOUT,
+        resolve_full_config_options,
+    )
+
     folder_name = _workshop_id_from_folder(mod_folder)
-    result = resolve_full_config_options(text, timeout=timeout or FULL_FILE_TIMEOUT, folder_name=folder_name)
+    result = resolve_full_config_options(
+        text, timeout=timeout or FULL_FILE_TIMEOUT, folder_name=folder_name
+    )
     if not isinstance(result, dict):
         return None
 
     out = {}
-    for key in ("name", "author", "version", "version_compatible",
-                "description", "icon", "icon_atlas"):
+    for key in (
+        "name",
+        "author",
+        "version",
+        "version_compatible",
+        "description",
+        "icon",
+        "icon_atlas",
+    ):
         val = result.get(key)
         if val is not None:
             out[key] = val if isinstance(val, str) else _resolve_localized_value(val)

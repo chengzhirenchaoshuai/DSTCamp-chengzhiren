@@ -34,15 +34,16 @@ from typing import Callable
 import paramiko
 
 from dstools.features.frp_selfhost import deploy
-from dstools.shared.resource_paths import cache_dir, tool_binary_dir
+from dstools.shared.resource_paths import security_dir, tool_binary_dir
 
-KNOWN_HOSTS_PATH = cache_dir("frp_selfhost") / "known_hosts"
+_SECURITY_DIR = security_dir("frp_selfhost", legacy_cache_name="frp_selfhost")
+KNOWN_HOSTS_PATH = _SECURITY_DIR / "known_hosts"
 # "初次鉴权"生成的密钥对——固定路径，不分服务器（这个功能目前只支持
 # 管理一台自建服务器，见 shared/app_settings.py 的 selfhost_frp_server
 # 只存一份）。私钥只在本机使用，从不上传；公钥推送到服务器的
 # ~/.ssh/authorized_keys 后，以后连接直接用这把私钥，不需要再输密码。
-SSH_KEY_PATH = cache_dir("frp_selfhost") / "ssh_key"
-SSH_PUBKEY_PATH = cache_dir("frp_selfhost") / "ssh_key.pub"
+SSH_KEY_PATH = _SECURITY_DIR / "ssh_key"
+SSH_PUBKEY_PATH = _SECURITY_DIR / "ssh_key.pub"
 
 # 目前打包了这两种架构的 Linux 二进制（amd64 覆盖绝大多数云服务器，
 # arm64 覆盖近年常见的 ARM 云实例，比如阿里云倚天/AWS Graviton）——

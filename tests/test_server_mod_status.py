@@ -63,6 +63,26 @@ def test_luajit_companion_is_checked_but_not_counted() -> None:
     assert missing_companion.visible_mod_count == 2
 
 
+def test_missing_mods_are_reported_only_after_world_ready() -> None:
+    lines = [
+        "modoverrides.lua enabling workshop-1",
+        "modoverrides.lua enabling workshop-2",
+        "Loading mod: workshop-1 (One) Version:1.0",
+    ]
+    pending = _run_process(lines)
+    assert pending.world_ready is False
+    assert pending.missing_mods is None
+
+    ready = _run_process([
+        *lines,
+        "About to start a shard with these settings:",
+        "Reset() returning",
+        "Sim paused",
+    ])
+    assert ready.world_ready is True
+    assert ready.missing_mods == ["workshop-2"]
+
+
 def test_presentation_waits_until_ready_line_is_consumed() -> None:
     start_seen = False
     ready_seen = False
@@ -119,6 +139,7 @@ def test_mod_syntax_error_is_failed_but_world_can_be_ready() -> None:
 def main() -> None:
     tests = (
         test_luajit_companion_is_checked_but_not_counted,
+        test_missing_mods_are_reported_only_after_world_ready,
         test_presentation_waits_until_ready_line_is_consumed,
         test_mod_syntax_error_is_failed_but_world_can_be_ready,
     )

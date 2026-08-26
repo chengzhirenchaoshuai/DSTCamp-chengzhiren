@@ -1,6 +1,6 @@
 """SakuraFrp 客户端 frpc.exe 的本地进程生命周期管理。
 
-结构照抄 dstools/core/dedicated_server.py 的 ServerStatus/ServerProcess/
+进程生命周期参考 features/local_service/dedicated_server.py 的
 ServerManager 三件套——同样是"长驻子进程，stdout 走管道由 GUI 轮询，停止
 要在后台线程跑"。跟 DST 服务器进程唯一的实质区别：frpc 没有 c_shutdown()
 这种可以发送的优雅关闭指令，停止直接 terminate() -> kill()。

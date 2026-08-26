@@ -2,7 +2,7 @@
 器映射到公网，配合饥荒自带的 c_connect() 直连功能实现好友联机，不需要路由
 器端口转发。
 
-跟"回档"（core/backup_manager.py 的 zip 备份）是完全独立的两回事，也跟本地
+跟回档备份完全独立，也跟本地
 `frpc.exe` 客户端进程管理（features/sakura/frpc.py）分工明确：本文件只管 UI +
 编排 API 调用；隧道创建后"把远程端口回写进 server.ini"这一步，是让跨世界
 传送（Master<->Caves）能通过隧道正常工作的关键，见 _enable_mapping()。
@@ -22,7 +22,7 @@ from dstools.features.cluster_config.config_manager import (
     save_shard_config, set_shard_option,
 )
 from dstools.features.sakura.frpc import FrpcManager, FrpcStatus
-from dstools.shared.resource_paths import cache_dir, tool_binary_dir
+from dstools.shared.resource_paths import data_dir, runtime_tool_path
 from dstools.shared.token_manager import is_valid_token, mask_token
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
@@ -43,7 +43,7 @@ _NODE_GRID_COLS = 3
 
 
 def _frpc_exe_path():
-    return tool_binary_dir() / "frpc-sakura" / "sakura-frpc.exe"
+    return runtime_tool_path("frpc-sakura/sakura-frpc.exe")
 
 
 def _format_bytes_adaptive(num_bytes: float) -> str:
@@ -410,7 +410,7 @@ class SakuraTab:
         新文件名加入完整路径哈希，避免不同根目录下同名 Cluster_1 相互覆
         盖。旧文件仅在当前环境里这个目录名唯一时迁移；有歧义时不猜归属。
         """
-        root = cache_dir(_FRPC_CACHE_NAME)
+        root = data_dir(_FRPC_CACHE_NAME, legacy_cache_name=_FRPC_CACHE_NAME)
         current = root / f"{cluster_path.name}__{stable_path_key(cluster_path)}__{shard_name}.txt"
         if current.exists():
             return current

@@ -17,7 +17,14 @@ class ModSyncLogDialog:
     结果），"复制为服务器存档"（SaveBrowserTab._copy_to_server）复制文
     件耗时也是同一个形状，直接复用，标题通过参数区分。"""
 
-    def __init__(self, parent_widget, title: str | None = None, on_cancel=None):
+    def __init__(
+        self,
+        parent_widget,
+        title: str | None = None,
+        on_cancel=None,
+        allow_close_while_running: bool = False,
+        text_width: int = 64,
+    ):
         """`on_cancel`：给需要中途能取消的耗时操作用（目前只有
         features/frp_selfhost 的 SSH 远程部署）——传了才会多显示一个
         "取消"按钮，点一次就禁用自己并调用这个回调，不重复触发；不传
@@ -48,15 +55,20 @@ class ModSyncLogDialog:
         # 留——不然 body 的 Text 一样会把按钮挤没。
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, pady=10)
-        self.close_btn = ttk.Button(btn_frame, text=t("dlg.confirm_btn"), command=win.destroy, state=tk.DISABLED)
+        self.close_btn = ttk.Button(
+            btn_frame, text=t("dlg.confirm_btn"), command=win.destroy, state=tk.DISABLED
+        )
         self.close_btn.pack(side=tk.LEFT, padx=4)
         self._on_cancel = on_cancel
         self.cancel_btn = None
         if on_cancel is not None:
-            self.cancel_btn = ttk.Button(btn_frame, text=t("dlg.cancel_btn"), command=self._handle_cancel)
+            self.cancel_btn = ttk.Button(
+                btn_frame, text=t("dlg.cancel_btn"), command=self._handle_cancel
+            )
             self.cancel_btn.pack(side=tk.LEFT, padx=4)
 
-        body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10,0))
+        body = ttk.Frame(win)
+        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 0))
         # font 用系统默认字体（不指定字体族），不用 Consolas -- Consolas
         # 不含中文字形，日志内容中英文混排时 Windows 会给中文字符静默
         # fallback 到另一款字重不同的 CJK 字体，视觉上"忽粗忽细"，换成默
@@ -65,11 +77,20 @@ class ModSyncLogDialog:
         # Tk 会用当前实际字体度量换算成需要多少逻辑像素，这份换算本身
         # 就是 DPI 安全的，不需要额外处理（不能反过来给窗口写死一个固
         # 定像素高度，那样量出来的"能放下多少行"只在没缩放时准）。
-        self.text = tk.Text(body, wrap=tk.WORD, height=22, width=64,
-                             font=theme.font_tuple(theme.FONT_SIZE_SM), state=tk.DISABLED,
-                             bg=theme.CARD_BG, fg=theme.TEXT, relief=tk.FLAT,
-                             highlightthickness=1, highlightbackground=theme.CARD_BORDER,
-                             highlightcolor=theme.ACCENT)
+        self.text = tk.Text(
+            body,
+            wrap=tk.WORD,
+            height=22,
+            width=max(40, int(text_width)),
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            state=tk.DISABLED,
+            bg=theme.CARD_BG,
+            fg=theme.TEXT,
+            relief=tk.FLAT,
+            highlightthickness=1,
+            highlightbackground=theme.CARD_BORDER,
+            highlightcolor=theme.ACCENT,
+        )
         vsb = ttk.Scrollbar(body, orient=tk.VERTICAL, command=self.text.yview)
         self.text.configure(yscrollcommand=vsb.set)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
@@ -77,13 +98,39 @@ class ModSyncLogDialog:
 
         # 同步没跑完之前不让直接叉掉窗口——关掉了也看不到后续日志，容易
         # 让人误以为"点了叉就是中断同步了"，其实后台线程还在继续跑。
-        win.protocol("WM_DELETE_WINDOW", lambda: None)
+        win.protocol(
+            "WM_DELETE_WINDOW",
+            self.hide if allow_close_while_running else (lambda: None),
+        )
 
         root = parent_widget.winfo_toplevel()
         center_over_parent(win, root)
         win.transient(root)
         win.deiconify()
         win.grab_set()
+
+    def hide(self) -> None:
+        """暂时隐藏日志窗口，但保留现有内容供后台任务继续追加。"""
+        if not self.win.winfo_exists():
+            return
+        try:
+            self.win.grab_release()
+        except tk.TclError:
+            pass
+        self.win.withdraw()
+
+    def show(self) -> bool:
+        """恢复此前隐藏的日志窗口；窗口已销毁时返回 ``False``。"""
+        try:
+            if not self.win.winfo_exists():
+                return False
+            self.win.deiconify()
+            self.win.lift()
+            self.win.focus_force()
+            self.win.grab_set()
+            return True
+        except tk.TclError:
+            return False
 
     def _handle_cancel(self) -> None:
         # 立刻禁用，防止用户手滑连点多次重复触发 on_cancel——具体"取消

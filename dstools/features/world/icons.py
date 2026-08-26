@@ -1,6 +1,6 @@
 """用游戏自身的 PNG 文件做世界设置图标。
 
-PNG 图标运行时从 dstools/icons/world/ 加载。
+PNG 图标运行时从仓库或发布包的 ``icons/world`` 加载。
 """
 
 from pathlib import Path
@@ -378,4 +378,3 @@ CAVE_GEN_ICONS = {
     "bats": "Bat_Cave_Settings_Icon.png",  # 蝙蝠
     "tentacles": "Tentacle_Settings_Icon.png",  # 触手
 }
-

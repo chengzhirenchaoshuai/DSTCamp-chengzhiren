@@ -2,7 +2,7 @@
 
 只服务于 SaveSource.SERVER 类型的 Cluster 开服场景，不含任何 tkinter 依赖，
 方便独立验证。长驻子进程的 stdout/stdin 都走管道，不弹出真实控制台窗口，
-GUI 层自己用 Text 控件展示输出（见 dstools/gui/local_service_tab.py）。
+GUI 层自己用 Text 控件展示输出（见 features/local_service/tab.py）。
 """
 
 import csv
@@ -83,7 +83,7 @@ def pick_bitness(install_dir: Path) -> int:
 
 def find_bin64_dir(install_dir: Path) -> Path | None:
     """install_dir 是专用服务器安装根目录（bin64/bin 的上一级）——给
-    core/luajit_injector.py 这类需要直接操作 bin64 内容的功能用，跟
+    luajit_injector.py 这类需要直接操作 bin64 内容的功能用，跟
     pick_bitness() 不同，这里找不到对应 exe 时返回 None 而不是抛异常，方
     便调用方优雅处理"还没检测到安装目录"这种情况。"""
     try:
@@ -248,7 +248,7 @@ class ServerProcess:
         self.conf_dir_arg = conf_dir_arg
         self.is_master = is_master
         self.ugc_directory = ugc_directory
-        # 给 core/luajit_injector.py 用：真的要跑起来的 exe 所在目录改成
+        # 给 luajit_injector.py 用：真的要跑起来的 exe 所在目录改成
         # 别的地方（LuaJIT 隔离副本），而不是 install_dir 下的 bin64/。
         # install_dir 本身语义不变，仍然是"这份安装归哪个 cluster 管"这
         # 层判断（_any_running_for_bin64() 之类）依据的安装根目录。

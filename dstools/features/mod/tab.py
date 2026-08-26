@@ -1,13 +1,14 @@
-""""Mod 管理"标签页：查看/启用/禁用已安装的 Mod，编辑每个 Mod 的配置项。
+""" "Mod 管理"标签页：查看/启用/禁用已安装的 Mod，编辑每个 Mod 的配置项。
 
 Mod 列表复用 world_render.py 建立的"PIL 整图渲染 + ImageScrollPanel"架构
 （见 mod_render.render_mod_list()）——ttk.Treeview 没法在一行里同时塞图
 标+名字+开关+配置按钮，跟世界设置面板是同一个理由。
 """
 
-import functools
+import os
 import queue
 import threading
+import time
 import tkinter as tk
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -24,19 +25,45 @@ from dstools.features.local_service.dedicated_server import (
 )
 from dstools.features.mod import chs_translation, presets
 from dstools.features.mod.icons import get_mod_icon_path
-from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
+from dstools.features.mod.manager import (
+    enable_mod,
+    load_mod_overrides,
+    save_mod_overrides,
+    sync_mods,
+)
 from dstools.features.mod.cache import load_cached_result, save_result
 from dstools.features.mod.local_version import resolve_local_version_target
-from dstools.features.mod.parser import (
-    ModInfo, find_game_mods_dir, find_mod_folder, find_wegame_client_dir, find_wegame_server_dir,
-    list_installed_mod_ids, parse_modinfo, resolve_config_value, resolve_full_modinfo,
-    resolve_wegame_client_mods_dir, visible_config_options,
+from dstools.features.mod.list_model import (
+    build_mod_rows,
+    localize_mod_name,
+    sort_mod_data,
+    version_display,
 )
-from dstools.features.mod.sync import apply_mod_sync, get_enabled_mod_ids, plan_mod_sync, remove_mod_sync_junction
+from dstools.features.mod.parser import (
+    ModInfo,
+    find_game_mods_dir,
+    find_mod_folder,
+    find_wegame_client_dir,
+    find_wegame_server_dir,
+    is_dedicated_server_mods_dir,
+    list_installed_mod_ids,
+    parse_modinfo,
+    resolve_config_value,
+    resolve_full_modinfo,
+    resolve_wegame_client_mods_dir,
+    split_installed_mod_counts,
+    visible_config_options,
+)
+from dstools.features.mod.sync import (
+    apply_mod_sync,
+    detach_mod_sync_junction,
+    get_enabled_mod_ids,
+    plan_mod_sync,
+)
 from dstools.features.mod.workshop_api import (
-    query_workshop_item_details,
     update_workshop_items,
 )
+from dstools.features.mod.workshop_manifest import find_cached_manifest_versions
 from dstools.features.mod.workshop_status import (
     WorkshopModState,
     inspect_workshop_items,
@@ -78,8 +105,15 @@ def _apply_full_sandbox_result(mod_info, result: dict | None) -> None:
     if "config_options" in result:
         mod_info.config_options = result["config_options"]
         mod_info.unsupported_schema = False
-    for key in ("name", "author", "version", "version_compatible",
-                "description", "icon", "icon_atlas"):
+    for key in (
+        "name",
+        "author",
+        "version",
+        "version_compatible",
+        "description",
+        "icon",
+        "icon_atlas",
+    ):
         if key in result:
             setattr(mod_info, key, result[key])
     if "version" not in result or result["version"] is None:
@@ -116,87 +150,67 @@ def _apply_full_sandbox_result(mod_info, result: dict | None) -> None:
         mod_info.version_compatible_status = "undeclared"
 
 
-def _version_display(mod_info, include_label: bool = True) -> str:
-    if mod_info is None:
-        return t("mod.version_unresolved")
-    status = getattr(mod_info, "version_status", "pending")
-    if status == "confirmed":
-        return (t("mod.version_value", version=mod_info.version)
-                if include_label else mod_info.version)
-    if status == "undeclared":
-        return t("mod.version_undeclared")
-    if status == "unresolved":
-        return t("mod.version_unresolved")
-    return t("mod.version_pending")
+def _can_open_mod_update_hint(kind: str, has_log_dialog: bool) -> bool:
+    """只有更新日志状态可点击；待更新/检查中/已是最新均为只读提示。"""
+    return kind in {"updating", "done"} and has_log_dialog
 
 
-_strcmplogicalw = None
+def _workshop_modinfo_signature(
+    workshop_ids: list[int], mod_paths: dict
+) -> tuple[tuple[int, int, int], ...]:
+    """生成轻量文件签名，让状态缓存能感知运行期间的手动编辑。"""
+    rows = []
+    for workshop_id in workshop_ids:
+        path = mod_paths.get(f"workshop-{workshop_id}") or mod_paths.get(
+            str(workshop_id)
+        )
+        modinfo = Path(path) / "modinfo.lua" if path is not None else None
+        try:
+            stat = modinfo.stat() if modinfo is not None else None
+        except OSError:
+            stat = None
+        rows.append(
+            (
+                workshop_id,
+                stat.st_mtime_ns if stat is not None else -1,
+                stat.st_size if stat is not None else -1,
+            )
+        )
+    return tuple(rows)
 
 
-def _windows_name_cmp(a: str, b: str) -> int:
-    """自然排序比较——数字按自然顺序比大小（"mod2" 排在 "mod10" 前
-    面）、中文按拼音，直接调用 Windows 自带的 StrCmpLogicalW，不用自
-    己维护一份拼音表来猜怎么排最像原生。只在 _mod_name_cmp() 桶内细分
-    时使用，桶之间的顺序由 _name_bucket() 决定，不靠这个函数本身。"""
-    global _strcmplogicalw
-    if _strcmplogicalw is None:
-        import ctypes
-        _strcmplogicalw = ctypes.windll.shlwapi.StrCmpLogicalW
-        _strcmplogicalw.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
-        _strcmplogicalw.restype = ctypes.c_int
-    return _strcmplogicalw(a, b)
+def _is_steam_context_error(error) -> bool:
+    text = str(error or "")
+    return "SteamAPI_Init" in text or "没有有效的 Steam/DST 应用上下文" in text
 
 
-def _name_bucket(name: str) -> int:
-    """按用户要求的优先级给名字分桶：汉字(0) -> 符号(1) -> 字母(2) ->
-    数字(3) -> 其他(4)，只看首字符。"""
-    ch = name[:1]
-    if not ch:
-        return 4
-    if "一" <= ch <= "鿿":  # CJK 统一表意文字（常用汉字）
-        return 0
-    if ch.isdigit():
-        return 3
-    if ch.isalpha():
-        return 2
-    if not ch.isalnum():
-        return 1
-    return 4
+def _workshop_status_error_message(error) -> str:
+    """把状态扫描异常转换为更新窗口顶部可执行的用户提示。"""
+    if _is_steam_context_error(error):
+        return t("mod.update_steam_unavailable")
+    detail = (
+        f"{type(error).__name__}: {error}"
+        if isinstance(error, Exception)
+        else str(error)
+    )
+    return t("mod.update_status_check_failed", error=detail)
 
 
-def _mod_name_cmp(a: str, b: str) -> int:
-    """Mod 列表排序用的名字比较——先按 _name_bucket() 分组排好优先级，
-    组内再用 _windows_name_cmp() 细分（拼音/自然数字顺序）。"""
-    ca, cb = _name_bucket(a), _name_bucket(b)
-    if ca != cb:
-        return ca - cb
-    return _windows_name_cmp(a, b)
-
-
-def _localize_mod_name(wid: str, name: str) -> str:
-    """mod 显示名的本地化：中文界面下，对已登记中文名的 mod（贡献世界设置
-    的那几个）显示中文名，其余保持 modinfo 里的原名。只影响列表/对话框的
-    显示文本，不影响排序（排序仍用原英文名，见 _mod_name_cmp）。"""
-    if not name:
-        return name
-    try:
-        from dstools.i18n import get_lang
-        if get_lang() != "zh":
-            return name
-        from dstools.features.world.mod_settings import MOD_DISPLAY_NAMES
-        display = MOD_DISPLAY_NAMES.get(wid) or MOD_DISPLAY_NAMES.get(
-            str(wid).removeprefix("workshop-"))
-        if display:
-            return display.get("zh") or name
-    except Exception:
-        pass
-    return name
+def _workshop_update_error_message(error) -> str:
+    """更新日志保留诊断价值，但不直接暴露难懂的 Steam 初始化术语。"""
+    if _is_steam_context_error(error):
+        return t("mod.update_steam_unavailable")
+    return str(error)
 
 
 # 订阅推荐模组引导列表：(workshop id, 名称, 一句话描述)。
 RECOMMENDED_MODS = [
     ("3444078585", "DontStarveLuaJit2", "LuaJIT 性能补丁，大幅降低卡顿"),
-    ("2941527805", "Chinese++ Pro", "汉化其它模组的名称与配置项，Mod 列表和设置直接显示中文"),
+    (
+        "2941527805",
+        "Chinese++ Pro",
+        "汉化其它模组的名称与配置项，Mod 列表和设置直接显示中文",
+    ),
 ]
 
 
@@ -214,10 +228,12 @@ class ModManagerTab:
         # self.frame 用 BgFrame（gui/bg_frame.py）而不是 ttk.Frame——照
         # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
         # 义背景图。
-        self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
-        self._mod_data = {}     # workshop_id -> ModEntry
-        self._mod_infos = {}    # workshop_id -> ModInfo | None
-        self._icon_imgs = {}    # workshop_id -> PIL.Image (RGBA)
+        self.app = app
+        self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
+        self._mod_data = {}  # workshop_id -> ModEntry
+        self._mod_infos = {}  # workshop_id -> ModInfo | None
+        self._mod_paths = {}  # workshop_id -> 本次扫描实际发现的路径
+        self._icon_imgs = {}  # workshop_id -> PIL.Image (RGBA)
         # (workshop_id, icon_size) -> 缩放后的缩略图，memoize
         # render_mod_list() 里的 LANCZOS 缩放——真机测过 100 个 mod 时这
         # 一步单独占整个渲染耗时的一半。跟 self._icon_imgs 的生命周期绑
@@ -230,8 +246,12 @@ class ModManagerTab:
         # 打字越快越明显。跟 image_scroll.py 的 SETTLE_DELAY_MS 同一个套
         # 路：只在停顿超过这个时长之后才真的重画，敲字期间只取消重排。
         self._filter_render_after_id = None
+        # 后台版本/图标可能在很短时间内回传十几个批次。每批都重画一张
+        # 154+ 行长图会堵住 Tk 消息循环，因此统一合并为一次尾随刷新。
+        self._async_render_after_id = None
         self._loading = False
         self._loading_key = None
+        self._mods_loaded = False
         self._mod_scan_status_var = tk.StringVar(value="")
         self._refresh_gen = 0
         # 每一个曾经被完整解析过的 mod（静态解析 + 整份文件 Lua 沙箱——
@@ -250,36 +270,53 @@ class ModManagerTab:
         # WeGame: 用户选过的 rail_apps 根目录下的客户端 mods/），跟着平台
         # 筛选器切换自动更新（不是跟着具体选中哪个存档），"更换路径"/
         # "重新检测"分别对应各自平台的手动覆盖/重新探测。
-        self._mod_location_row = mod_location_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._mod_location_row = mod_location_row = BgFrame(
+            self.frame, app, bg=theme.CARD_BG
+        )
         mod_location_row.pack(fill=tk.X, padx=5, pady=(5, 0))
         self._mod_location_var = tk.StringVar()
-        self._mod_location_var.trace_add("write", lambda *a: self._redraw_mod_location_row_text())
-        mod_location_row.bind("<Configure>", lambda e: self._redraw_mod_location_row_text(), add="+")
+        self._mod_location_var.trace_add(
+            "write", lambda *a: self._redraw_mod_location_row_text()
+        )
+        mod_location_row.bind(
+            "<Configure>", lambda e: self._redraw_mod_location_row_text(), add="+"
+        )
         # "软链接mods文件夹到服务器"/"删除mod软连接"按钮放这一行最右侧
         # （"更换路径 重新检测"的右边）——文字会在两种状态间切换，放在行末
         # 向右伸缩就不会推动左侧元素。初始用短文案"删除mod软连接"，探测到
         # 未链接才变长、只向右扩展。文字/状态由 refresh_sync_button_state()
         # 探测后维护，初始值只是占位。
         self._sync_already_linked = False
-        self._md_sync = ttk.Button(mod_location_row, text=t("local.remove_junction_btn"),
-                                   command=self._sync_mods_to_server)
+        self._md_sync = ttk.Button(
+            mod_location_row,
+            text=t("local.remove_junction_btn"),
+            command=self._sync_mods_to_server,
+        )
         self._md_sync.pack(side=tk.RIGHT, padx=(5, 0))
         from dstools.shared.gui.tooltip import Tooltip
+
         Tooltip(self._md_sync, self._sync_button_hover_text)
-        self._mod_location_recheck_btn = ttk.Button(mod_location_row, text=t("local.install_recheck_btn"),
-                                                     command=self._recheck_mod_location)
+        self._mod_location_recheck_btn = ttk.Button(
+            mod_location_row,
+            text=t("local.install_recheck_btn"),
+            command=self._recheck_mod_location,
+        )
         self._mod_location_recheck_btn.pack(side=tk.RIGHT)
-        self._mod_location_change_btn = ttk.Button(mod_location_row, text=t("local.install_change_btn"),
-                                                    command=self._change_mod_location)
+        self._mod_location_change_btn = ttk.Button(
+            mod_location_row,
+            text=t("local.install_change_btn"),
+            command=self._change_mod_location,
+        )
         self._mod_location_change_btn.pack(side=tk.RIGHT, padx=(0, 5))
 
-        sf = BgFrame(self.frame, app, bg=theme.CARD_BG); sf.pack(fill=tk.X, padx=5, pady=5)
+        sf = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        sf.pack(fill=tk.X, padx=5, pady=5)
         # "存档"选择器已经搬到顶部的全局选择栏（见 DSToolsApp._cluster_bar），
         # 这里不再重复一份。
         self._md_lbl2 = make_toolbar_label(sf, app, lambda: t("mod.shard"))
         self.shard_var = tk.StringVar(value="Master")
         self.shard_combo = MenuCombo(sf, textvariable=self.shard_var, width=15)
-        self.shard_combo.pack(side=tk.LEFT, padx=(0,10))
+        self.shard_combo.pack(side=tk.LEFT, padx=(0, 10))
         self.shard_combo.bind("<<ComboboxSelected>>", self._on_shard_select)
         # “重新扫描”：跟普通刷新不同，这个按钮总是对每个已安装 mod
         # （名字/配置/图标）重新跑一遍整份文件的 Lua 沙箱解析，而不只是
@@ -292,11 +329,16 @@ class ModManagerTab:
         # "enabled" 状态可以显示/切换。这个按钮改成切换整个列表去浏览
         # 它们，纯只读查看（见 ModConfigDialog 的 read_only 模式）。
         self.show_local_var = tk.BooleanVar(value=False)
-        self._md_rl = ttk.Button(sf, text=t("mod.show_local"), command=self._toggle_show_local)
+        self._md_rl = ttk.Button(
+            sf, text=t("mod.show_local"), command=self._toggle_show_local
+        )
         self._md_rl.pack(side=tk.LEFT, padx=2)
         # 只在"查看本地模组"这个方向上给提示语——切回列表之后按钮变成
         # "返回列表"，含义已经很直白，不需要额外说明。
-        Tooltip(self._md_rl, lambda: "" if self.show_local_var.get() else t("mod.show_local_hover"))
+        Tooltip(
+            self._md_rl,
+            lambda: "" if self.show_local_var.get() else t("mod.show_local_hover"),
+        )
         # 只有真的做过修改(切换mod开关，或在配置弹窗里应用过设置)之后，
         # 这两个按钮才应该能点 -- 没有任何改动时点"保存"/"同步"没有意义，
         # 置灰能直接提示"当前没有待保存的修改"。这两个按钮的实际构造挪到
@@ -304,34 +346,57 @@ class ModManagerTab:
         # 钮的位置一致），这里先占位 self._dirty，构造顺序不影响这个值。
         self._dirty = False
 
-        ff = BgFrame(self.frame, app, bg=theme.CARD_BG); ff.pack(fill=tk.X, padx=5)
+        ff = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        ff.pack(fill=tk.X, padx=5)
         self._md_filt = make_toolbar_label(ff, app, lambda: t("mod.filter"))
-        self.filter_var = tk.StringVar(); self.filter_var.trace_add("write", self._on_filter_changed)
-        ttk.Entry(ff, textvariable=self.filter_var, width=30).pack(side=tk.LEFT, padx=(0,10))
+        self.filter_var = tk.StringVar()
+        self.filter_var.trace_add("write", self._on_filter_changed)
+        ttk.Entry(ff, textvariable=self.filter_var, width=30).pack(
+            side=tk.LEFT, padx=(0, 10)
+        )
         self.show_var = tk.StringVar(value="all")
         self._md_filter_chips = make_filter_chips(
-            ff, app,
-            [("all", lambda: t("mod.show_all")),
-             ("enabled", lambda: t("mod.show_enabled")),
-             ("disabled", lambda: t("mod.show_disabled"))],
-            self.show_var, self._render_list)
+            ff,
+            app,
+            [
+                ("all", lambda: t("mod.show_all")),
+                ("enabled", lambda: t("mod.show_enabled")),
+                ("disabled", lambda: t("mod.show_disabled")),
+                ("custom", lambda: t("mod.show_custom")),
+            ],
+            self.show_var,
+            self._render_list,
+        )
         # "订阅推荐模组"放在"已禁用"筛选项右侧（filter chips 之后、重新扫描
         # 之前），跟筛选功能挤在同一行，不再占 mod 列表顶部工具栏。
-        self._md_recommend = ttk.Button(ff, text=t("mod.recommend_btn"), command=self._open_recommend_mods)
+        self._md_recommend = ttk.Button(
+            ff, text=t("mod.recommend_btn"), command=self._open_recommend_mods
+        )
         self._md_recommend.pack(side=tk.LEFT, padx=(8, 0))
-        self._md_br = ttk.Button(ff, text=t("mod.reload_full"), command=self._reload_full)
+        self._md_br = ttk.Button(
+            ff, text=t("mod.reload_full"), command=self._reload_full
+        )
         self._md_br.pack(side=tk.RIGHT, padx=(6, 0))
         Tooltip(self._md_br, lambda: t("mod.reload_full_hover"))
         self._workshop_update_running = False
-        self._md_update_workshop = ttk.Button(ff, text=t("mod.workshop_update_btn"),
-                                              command=self._open_workshop_update_dialog)
-        self._md_update_workshop.pack(side=tk.RIGHT, padx=(6, 0))
-        Tooltip(self._md_update_workshop, lambda: t("mod.workshop_update_hover"))
-        make_transparent_status(ff, app, self._mod_scan_status_var, width=220)
+        self._workshop_status_cache = {}
+        self._workshop_title_cache: dict[str, str] = {}
+        self._workshop_status_checked_at = 0.0
+        self._workshop_status_file_signature = ()
+        self._workshop_status_refreshing = False
+        self._workshop_status_error = ""
+        self._workshop_log_dialog = None
+        self._mod_update_hint_var = tk.StringVar(value="")
+        self._mod_update_hint_kind = "idle"
+        self._md_update_status = make_transparent_status(
+            ff, app, self._mod_scan_status_var, width=310
+        )
 
         # 本地存档选中时显示的醒目提示——本地存档的 mod 启用/配置实际由
         # 客户端账号级 modindex 决定，这里只读查看，默认不 show()。
-        self._md_local_banner = ReadonlyBanner(self.frame, text=t("mod.local_view_only_banner"))
+        self._md_local_banner = ReadonlyBanner(
+            self.frame, text=t("mod.local_view_only_banner")
+        )
 
         # WeGame 存档选中、但还没设置过 WeGame 安装目录时的提示——没有这
         # 个目录就找不到客户端 mods/ 文件夹，"已安装但未在 modoverrides.
@@ -339,36 +404,39 @@ class ModManagerTab:
         # 图标/名称也全解析不出来（见 _resolve_mod_folder_args()）。整条
         # 幅可以点击，点了弹目录选择框，跟"同步到服务器"用的是同一个
         # app_settings 设置项，这里设完那边也不用再选一次。
-        self._md_wegame_banner = ReadonlyBanner(self.frame, text=t("mod.wegame_root_needed_banner"),
-                                                 on_click=self._pick_wegame_root_and_reload)
+        self._md_wegame_banner = ReadonlyBanner(
+            self.frame,
+            text=t("mod.wegame_root_needed_banner"),
+            on_click=self._pick_wegame_root_and_reload,
+        )
 
         # 真机反馈过：部分用户机器没装 ktech.exe 依赖的 Visual C++ 2013
         # 运行库，图标转换全部静默失败（退化成"无图标"，界面上看不出原
         # 因）。第一次进这个页签时探测一次（tex_convert.probe_ktech_
         # runtime() 自己做了只测一次的缓存），确认缺运行库就提示。
-        self._md_runtime_banner = ReadonlyBanner(self.frame, text=t("mod.ktech_runtime_missing_banner"),
-                                                  on_click=self._install_vcredist)
+        self._md_runtime_banner = ReadonlyBanner(
+            self.frame,
+            text=t("mod.ktech_runtime_missing_banner"),
+            on_click=self._install_vcredist,
+        )
 
         from dstools.shared.gui.image_scroll import ImageScrollPanel
         from dstools.features.mod.render import REF_WIDTH
-        self.list_panel = ImageScrollPanel(self.frame, ref_width=REF_WIDTH, bg=theme.CARD_BG)
+
+        self.list_panel = ImageScrollPanel(
+            self.frame, ref_width=REF_WIDTH, bg=theme.CARD_BG
+        )
         self.list_panel.frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
         self.list_panel.on_settle = lambda w, h: self._render_list(ref_width=w)
         self.list_panel.on_hover_change = self._on_mod_list_hover
         self._mod_list_tip = None
 
-        # "保存修改"/"只应用当前世界"居中，跟"世界设置"页签"保存世界规
-        # 则"按钮的位置一致；"配置集"这组按钮性质不同（不是针对当前编辑
-        # 会话的存盘操作），改放这一整行最右侧，避免跟中间那组主操作挤
-        # 成一排看起来像同一类功能。用 grid 分三列（左侧留白/居中主操
-        # 作/右侧配置集）而不是简单地全部 side=LEFT/RIGHT 混用——那样没
-        # 法同时做到"中间那组保持真正居中"和"右边那组贴住最右边"。
+        # 配置集放左侧、当前修改的保存操作保持居中、Mod 更新放右侧。
+        # 用三列 grid 保证三组职责分明，同时保持中间主操作真正居中。
         btn_row_bottom = BgFrame(self.frame, app, bg=theme.CARD_BG)
         btn_row_bottom.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 5))
-        # 两侧列必须用同一个 uniform 分组，宽度才会强制相等——否则右列因
-        # 为"配置集"按钮组占了实际宽度，会比左边纯留白的列宽，中间那组
-        # 主操作的视觉中点就会被往左挤偏（真机验证过这个偏差，纯凭权重
-        # 不够，两侧内容量不一样时权重相同不代表宽度相同）。
+        # 两侧列使用同一个 uniform 分组；即使左右按钮文字长度不同，中间
+        # 的“保存修改/只应用当前世界”仍保持在窗口真实中心。
         btn_row_bottom.grid_columnconfigure(0, weight=1, uniform="mod_btn_edge")
         btn_row_bottom.grid_columnconfigure(1, weight=0)
         btn_row_bottom.grid_columnconfigure(2, weight=1, uniform="mod_btn_edge")
@@ -381,9 +449,13 @@ class ModManagerTab:
         # 本身、sf/ff 这些工具栏行是同一个理由）。
         center_group = BgFrame(btn_row_bottom, app, bg=theme.CARD_BG)
         center_group.grid(row=0, column=1)
-        self._md_bs = ttk.Button(center_group, text=t("mod.save_btn"), command=self._save_mods)
+        self._md_bs = ttk.Button(
+            center_group, text=t("mod.save_btn"), command=self._save_mods
+        )
         self._md_bs.pack(side=tk.LEFT, padx=(0, 5))
-        self._md_ba = ttk.Button(center_group, text=t("mod.apply_current"), command=self._apply_current_shard)
+        self._md_ba = ttk.Button(
+            center_group, text=t("mod.apply_current"), command=self._apply_current_shard
+        )
         self._md_ba.pack(side=tk.LEFT)
         self._md_bs.configure(state=tk.DISABLED)
         self._md_ba.configure(state=tk.DISABLED)
@@ -392,13 +464,49 @@ class ModManagerTab:
         # 用到任意存档（见 features/mod/presets.py）——跟"同步mod文件到服
         # 务器"一样只对服务器存档开放，本地存档下置灰（见 on_cluster_changed）。
         preset_group = BgFrame(btn_row_bottom, app, bg=theme.CARD_BG)
-        preset_group.grid(row=0, column=2, sticky=tk.E, padx=(0, 10))
-        self._md_preset_save = ttk.Button(preset_group, text=t("mod.preset_save_btn"),
-                                           command=self._save_as_preset)
+        preset_group.grid(row=0, column=0, sticky=tk.W, padx=(10, 0))
+        self._md_preset_save = ttk.Button(
+            preset_group, text=t("mod.preset_save_btn"), command=self._save_as_preset
+        )
         self._md_preset_save.pack(side=tk.LEFT, padx=(0, 5))
-        self._md_preset_apply = ttk.Button(preset_group, text=t("mod.preset_apply_btn"),
-                                            command=self._apply_preset_dialog)
+        self._md_preset_apply = ttk.Button(
+            preset_group,
+            text=t("mod.preset_apply_btn"),
+            command=self._apply_preset_dialog,
+        )
         self._md_preset_apply.pack(side=tk.LEFT)
+
+        update_group = BgFrame(btn_row_bottom, app, bg=theme.CARD_BG)
+        update_group.grid(row=0, column=2, sticky=tk.E, padx=(0, 10))
+        self._md_update_workshop = ttk.Button(
+            update_group,
+            text=t("mod.workshop_update_btn"),
+            command=self._open_workshop_update_dialog,
+        )
+        self._md_update_workshop.pack(side=tk.RIGHT, padx=(8, 0))
+        self._md_update_workshop.configure(state=tk.DISABLED)
+        self._md_update_hint = make_transparent_status(
+            update_group,
+            app,
+            self._mod_update_hint_var,
+            width=210,
+            command=self._on_mod_update_hint_click,
+            command_enabled=lambda: (
+                bool(self._mod_update_hint_var.get())
+                and _can_open_mod_update_hint(
+                    self._mod_update_hint_kind, self._workshop_log_dialog is not None
+                )
+            ),
+            color_getter=lambda: (
+                "#2E7D32"
+                if self._mod_update_hint_kind == "current"
+                else theme.ERROR
+                if self._mod_update_hint_kind == "error"
+                else theme.TEXT_MUTED
+                if self._mod_update_hint_kind == "checking"
+                else theme.ACCENT
+            ),
+        )
 
         # 不在这里现场 on_cluster_changed()——即使重活本身在后台线程做
         # （_load_mods_worker），"要不要开始做"这个决定不应该在构造这一
@@ -417,6 +525,12 @@ class ModManagerTab:
         页签自己的 cluster_combo + _on_cluster_select。"""
         c = cluster if cluster is not None else self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
+        # 切换存档后，旧列表的 Mod ID、名称和路径已经不再可靠；在新一轮
+        # 扫描回传之前禁止打开更新窗口，避免拿上一份存档的数据去更新。
+        self._mods_loaded = False
+        self._mod_update_hint_kind = "idle"
+        self._mod_update_hint_var.set("")
+        self._refresh_workshop_update_button_state()
         self.refresh_sync_button_state()
         # 本地存档的 mod 启用状态其实不完全由 modoverrides.lua 决定——游戏
         # 客户端自己还维护一份账号级、加密的 modindex（不是这个工具能解析
@@ -436,7 +550,10 @@ class ModManagerTab:
             self._md_local_banner.hide()
         else:
             self._md_local_banner.set_text(
-                t("mod.no_save_banner") if c is None else t("mod.local_view_only_banner"))
+                t("mod.no_save_banner")
+                if c is None
+                else t("mod.local_view_only_banner")
+            )
             self._md_local_banner.show()
         if self._wegame_root_missing(c):
             self._md_wegame_banner.show()
@@ -455,19 +572,28 @@ class ModManagerTab:
         self.shard_combo["values"] = [s.name for s in c.shards]
         if c.shards:
             for i, s in enumerate(c.shards):
-                if s.name == "Master": self.shard_combo.current(i); break
-            else: self.shard_combo.current(0)
+                if s.name == "Master":
+                    self.shard_combo.current(i)
+                    break
+            else:
+                self.shard_combo.current(0)
         self._on_shard_select()
 
     def _install_vcredist(self):
         """点"缺运行库"提示条——本地直接拉起内置的官方安装程序（不需要
         联网），弹出的是安装向导自己的窗口，装完提示重启软件生效。"""
         if not tex_convert.launch_vcredist_installer():
-            dlg.show_error(self.app.root, t("mod.ktech_runtime_missing_banner"),
-                            t("mod.vcredist_installer_missing"))
+            dlg.show_error(
+                self.app.root,
+                t("mod.ktech_runtime_missing_banner"),
+                t("mod.vcredist_installer_missing"),
+            )
             return
-        dlg.show_info(self.app.root, t("mod.ktech_runtime_missing_banner"),
-                       t("mod.vcredist_installer_launched"))
+        dlg.show_info(
+            self.app.root,
+            t("mod.ktech_runtime_missing_banner"),
+            t("mod.vcredist_installer_launched"),
+        )
 
     def _wegame_root_missing(self, cluster) -> bool:
         """这个存档是 WeGame 版、但 WeGame 安装目录还没配置/解析不出来——
@@ -487,7 +613,11 @@ class ModManagerTab:
             return
         root = Path(chosen)
         if find_wegame_client_dir(root) is None or find_wegame_server_dir(root) is None:
-            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.wegame_root_picker_invalid"))
+            dlg.show_warning(
+                self.app.root,
+                t("local.sync_mods_btn"),
+                t("local.wegame_root_picker_invalid"),
+            )
             return
         app_settings.set_wegame_root_path(root)
         self.on_cluster_changed(self._get_cluster())
@@ -504,11 +634,25 @@ class ModManagerTab:
         cy = h / 2
         font = tkfont.nametofont("TkDefaultFont")
         label_text = t("mod.location_label")
-        c.create_text(4, cy, text=label_text, anchor=tk.W, fill=theme.TEXT,
-                       font=font, tags="mod_location_text")
+        c.create_text(
+            4,
+            cy,
+            text=label_text,
+            anchor=tk.W,
+            fill=theme.TEXT,
+            font=font,
+            tags="mod_location_text",
+        )
         label_w = font.measure(label_text)
-        c.create_text(4 + label_w + 6, cy, text=self._mod_location_var.get(), anchor=tk.W,
-                       fill=theme.TEXT_MUTED, font=font, tags="mod_location_text")
+        c.create_text(
+            4 + label_w + 6,
+            cy,
+            text=self._mod_location_var.get(),
+            anchor=tk.W,
+            fill=theme.TEXT_MUTED,
+            font=font,
+            tags="mod_location_text",
+        )
 
     def _detect_mod_location(self, platform):
         """按平台找客户端 mods/ 源头目录——跟 _resolve_mod_folder_args()
@@ -535,11 +679,22 @@ class ModManagerTab:
         if self.app._get_platform_filter() == Platform.WEGAME:
             self._pick_wegame_root_and_reload()
             return
-        picked = filedialog.askdirectory(parent=self.app.root, title=t("mod.location_picker_title"))
+        picked = filedialog.askdirectory(
+            parent=self.app.root, title=t("mod.location_picker_title")
+        )
         if not picked:
             return
-        app_settings.set_steam_mods_path(Path(picked))
+        picked_path = Path(picked)
+        if is_dedicated_server_mods_dir(picked_path):
+            dlg.show_warning(
+                self.app.root,
+                t("mod.location_label"),
+                t("mod.location_server_mods_invalid"),
+            )
+            return
+        app_settings.set_steam_mods_path(picked_path)
         self._update_mod_location_display()
+        self.refresh_sync_button_state()
         self._refresh_mods(full=True)
 
     def _recheck_mod_location(self):
@@ -551,10 +706,16 @@ class ModManagerTab:
         found = self._detect_mod_location(platform)
         if found:
             self._mod_location_var.set(str(found))
+            self.refresh_sync_button_state()
             self._refresh_mods(full=True)
         else:
             self._mod_location_var.set(t("mod.location_not_found"))
-            dlg.show_warning(self.app.root, t("mod.location_label"), t("mod.location_recheck_not_found"))
+            self.refresh_sync_button_state()
+            dlg.show_warning(
+                self.app.root,
+                t("mod.location_label"),
+                t("mod.location_recheck_not_found"),
+            )
 
     def _server_running_for(self, cluster) -> bool:
         """这个存档（不分具体哪个世界，同步是整个存档一起做的）是不是有
@@ -562,7 +723,9 @@ class ModManagerTab:
         安装目录下的 mods/，可能因为文件被占用而失败。"""
         if not cluster:
             return False
-        if any(p.cluster_path == cluster.path for p in self.app.local_tab.manager.running()):
+        if any(
+            p.cluster_path == cluster.path for p in self.app.local_tab.manager.running()
+        ):
             return True
         # WeGame 或用户从外部启动的专服不一定由 DSTools 的 manager 追踪，
         # 这里按世界配置的端口反查实际运行状态，避免替换正在使用的目录。
@@ -599,7 +762,7 @@ class ModManagerTab:
         return local_tab._install_dir, find_game_mods_dir()
 
     def refresh_sync_button_state(self):
-        """"软链接mods文件夹到服务器"按钮的可用状态和文字——本来就只对
+        """ "软链接mods文件夹到服务器"按钮的可用状态和文字——本来就只对
         服务器存档开放；这里再叠加一条：这个存档正被本工具自己启动的本
         地服务器占用时也要禁用，因为直接覆盖正在运行的服务器文件可能因
         为占用而失败。单独抽成方法而不是塞在 on_cluster_changed 里，是
@@ -616,13 +779,26 @@ class ModManagerTab:
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
         running = self._server_running_for(c) if is_server else False
-        self._md_sync.configure(state=tk.NORMAL if (is_server and not running) else tk.DISABLED)
-
         install_dir, client_mods_dir = self._passive_sync_dirs(c)
+        target_is_junction = bool(
+            install_dir and os.path.isjunction(Path(install_dir) / "mods")
+        )
         self._sync_already_linked = bool(
-            install_dir and plan_mod_sync(install_dir, client_mods_dir).already_linked)
+            target_is_junction
+            or (
+                install_dir
+                and client_mods_dir
+                and plan_mod_sync(install_dir, client_mods_dir).already_linked
+            )
+        )
+        can_create = bool(client_mods_dir and client_mods_dir.is_dir())
+        enabled = is_server and not running and can_create
+        self._md_sync.configure(state=tk.NORMAL if enabled else tk.DISABLED)
         self._md_sync.configure(
-            text=t("local.remove_junction_btn") if self._sync_already_linked else t("local.sync_mods_btn"))
+            text=t("local.remove_junction_btn")
+            if self._sync_already_linked
+            else t("local.sync_mods_btn")
+        )
 
     def _sync_button_hover_text(self) -> str:
         c = self._get_cluster()
@@ -631,18 +807,29 @@ class ModManagerTab:
         if self._server_running_for(c):
             return t("local.sync_running_hover")
         if getattr(self, "_sync_already_linked", False):
+            _install_dir, client_mods_dir = self._passive_sync_dirs(c)
+            if client_mods_dir is None:
+                return t("local.remove_junction_no_client_hover")
             return t("local.remove_junction_hover")
+        _install_dir, client_mods_dir = self._passive_sync_dirs(c)
+        if client_mods_dir is None:
+            return t("local.sync_no_client_hover")
         return t("local.sync_hover")
 
-    def _on_shard_select(self, event=None): self._refresh_mods()
+    def _on_shard_select(self, event=None):
+        self._refresh_mods()
 
     def _toggle_show_local(self):
         self.show_local_var.set(not self.show_local_var.get())
-        self._md_rl.configure(text=t("mod.back_to_list") if self.show_local_var.get() else t("mod.show_local"))
+        self._md_rl.configure(
+            text=t("mod.back_to_list")
+            if self.show_local_var.get()
+            else t("mod.show_local")
+        )
         self._render_list()
 
     def _reload_full(self):
-        """"重载mod信息"按钮——总是对每个已安装 mod 重新跑一遍整份文件
+        """ "重载mod信息"按钮——总是对每个已安装 mod 重新跑一遍整份文件
         的 Lua 沙箱解析（不只是普通切换世界时那种快速静态扫描），一次
         性刷新所有 mod 的名字/配置/图标，而不是要单独打开每个 mod 的配
         置弹窗才更新。"""
@@ -656,6 +843,15 @@ class ModManagerTab:
             if text_id.isdigit() and int(text_id) > 0:
                 ids.append(int(text_id))
         return ids
+
+    def _workshop_candidate_ids(self) -> list[int]:
+        """合并本地目录、V1 包和存档配置中的项目；订阅项由 Steam 补入。"""
+        from dstools.features.mod.legacy_v1 import find_legacy_packages
+
+        ids = list(self._workshop_mod_ids())
+        ids.extend(find_legacy_packages())
+        ids.extend(int(raw_id) for raw_id in self._current_cluster_workshop_ids())
+        return list(dict.fromkeys(item for item in ids if item > 0))
 
     def _current_cluster_workshop_ids(self) -> set[str]:
         """返回当前存档所有世界中出现过的 Workshop Mod key。"""
@@ -676,6 +872,37 @@ class ModManagerTab:
                     ids.add(text_id)
         return ids
 
+    def _cached_workshop_versions(self, workshop_ids: list[int]) -> dict[int, str]:
+        """读取游戏/专服最后一次官方 Workshop 查询留下的版本缓存。"""
+        roots: list[Path] = []
+        install_dir = getattr(
+            getattr(self.app, "local_tab", None), "_install_dir", None
+        )
+        if install_dir:
+            roots.append(Path(install_dir))
+        game_mods_dir = find_game_mods_dir()
+        if game_mods_dir is not None:
+            roots.append(game_mods_dir.parent)
+        return find_cached_manifest_versions(workshop_ids, extra_install_roots=roots)
+
+    def _server_mods_root(self) -> Path | None:
+        """返回专服实际消费的 mods 根目录；不存在也作为 V1 状态证据。"""
+        install_dir = getattr(
+            getattr(self.app, "local_tab", None), "_install_dir", None
+        )
+        if install_dir is None:
+            try:
+                from dstools.features.local_service.dedicated_server import (
+                    find_dedicated_server_dir,
+                )
+
+                install_dir = find_dedicated_server_dir()
+            except Exception:
+                install_dir = None
+        if install_dir is None:
+            return None
+        return Path(install_dir) / "mods"
+
     def _open_workshop_update_dialog(self) -> None:
         """打开 Workshop Mod 选择器，不在点击工具栏时立即更新全部 Mod。"""
         from PIL import Image, ImageTk
@@ -688,19 +915,26 @@ class ModManagerTab:
         win.withdraw()
         win.title(t("mod.update_title"))
         win.transient(self.frame.winfo_toplevel())
-        win.resizable(True, True)
+        # 列表使用整张 Canvas 重绘，拖动宽度会反复重排 100+ 行并缩放图标。
+        # 让 Tk 按内容请求尺寸计算窗口，再禁止缩放，避免无意义的持续重绘。
+        win.resizable(False, False)
         dialog_bg = "#ffffff"
         win.configure(bg=dialog_bg)
         count_var = tk.StringVar()
 
         toolbar = tk.Frame(win, bg=dialog_bg)
         toolbar.pack(fill=tk.X, padx=12, pady=(12, 6))
-        tk.Label(toolbar, text=t("mod.filter"), bg=dialog_bg, fg=theme.TEXT,
-                 font=theme.font_tuple(theme.FONT_SIZE_BASE)).pack(side=tk.LEFT, padx=(0, 6))
+        tk.Label(
+            toolbar,
+            text=t("mod.filter"),
+            bg=dialog_bg,
+            fg=theme.TEXT,
+            font=theme.font_tuple(theme.FONT_SIZE_BASE),
+        ).pack(side=tk.LEFT, padx=(0, 6))
         search_var = tk.StringVar()
         search = ttk.Entry(toolbar, textvariable=search_var, width=28)
         search.pack(side=tk.LEFT, padx=(0, 8))
-        filter_var = tk.StringVar(value="all")
+        filter_var = tk.StringVar(value="needs_update")
 
         # 选择器是独立白底窗口，这里使用普通 Label 绘制筛选文字，不使用
         # 外层页签的 BgFrame 筛选组件，避免自定义背景图在白底窗口中形成
@@ -710,6 +944,7 @@ class ModManagerTab:
         filter_labels = []
         filter_options = [
             ("all", lambda: t("mod.show_all")),
+            ("needs_update", lambda: t("mod.update_filter_needs_update")),
             ("current", lambda: t("mod.update_filter_current")),
         ]
 
@@ -718,8 +953,9 @@ class ModManagerTab:
                 label.configure(
                     text=text_getter(),
                     fg=theme.PRIMARY if filter_var.get() == value else theme.TEXT_MUTED,
-                    font=theme.font_tuple(theme.FONT_SIZE_BASE,
-                                          bold=filter_var.get() == value),
+                    font=theme.font_tuple(
+                        theme.FONT_SIZE_BASE, bold=filter_var.get() == value
+                    ),
                 )
 
         for value, text_getter in filter_options:
@@ -730,12 +966,41 @@ class ModManagerTab:
         _redraw_filter_labels()
         state_toolbar = tk.Frame(toolbar, bg=dialog_bg)
         state_toolbar.pack(side=tk.RIGHT)
-        tk.Label(state_toolbar, textvariable=count_var, bg=dialog_bg, fg=theme.TEXT_MUTED,
-                 font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(side=tk.LEFT)
+        tk.Label(
+            state_toolbar,
+            textvariable=count_var,
+            bg=dialog_bg,
+            fg=theme.TEXT_MUTED,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        ).pack(side=tk.LEFT)
         refresh_states_btn = ttk.Button(
-            state_toolbar, text=t("mod.update_refresh_states"),
-            command=lambda: _refresh_latest_states())
+            state_toolbar,
+            text=t("mod.update_refresh_states"),
+            command=lambda: _refresh_latest_states(force=True),
+        )
         refresh_states_btn.pack(side=tk.LEFT, padx=(8, 0))
+
+        state_notice = tk.Label(
+            win,
+            bg="#fff4dd",
+            fg="#8a4b08",
+            anchor=tk.W,
+            justify=tk.LEFT,
+            padx=12,
+            pady=8,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            wraplength=900,
+        )
+
+        def _show_state_notice(message: str) -> None:
+            state_notice.configure(text=message)
+            if message:
+                if not state_notice.winfo_manager():
+                    state_notice.pack(
+                        fill=tk.X, padx=12, pady=(0, 8), before=list_frame
+                    )
+            elif state_notice.winfo_manager():
+                state_notice.pack_forget()
 
         def _info_for(wid: str):
             key = f"workshop-{wid}"
@@ -745,23 +1010,58 @@ class ModManagerTab:
             key = f"workshop-{wid}"
             info = _info_for(wid)
             raw_name = (info.name if info else "") or source_titles.get(wid, "") or key
-            return str(_localize_mod_name(key, raw_name) or key)
+            return str(localize_mod_name(key, raw_name) or key)
 
         def _current_version_for(wid: str) -> str:
             info = _info_for(wid)
-            return _version_display(info, include_label=False)
+            # 与外层 Mod 列表一致，版本作为名称区的第三行元数据展示。
+            return version_display(info)
+
+        def _version_line_for(wid: str) -> str:
+            """名称区同时显示本地与 Klei 查询到的远程作者版本。"""
+            local = _current_version_for(wid)
+            status = latest_states.get(wid)
+            if status is not None and status.remote_version:
+                remote = status.remote_version
+            elif latest_state_loading or not latest_state_checked:
+                remote = t("mod.update_latest_checking")
+            else:
+                remote = t("mod.update_latest_unknown")
+            return t("mod.update_version_with_remote", local=local, remote=remote)
 
         # 默认只展示全部 Mod，不预先勾选，避免用户误触“更新所选 Mod”时
         # 一次更新整个 Workshop 库；需要批量更新时可使用“全选当前筛选”。
         selected: set[str] = set()
         # _mod_data 在外层加载完成时已经按照同一套名称清洗、自然排序、
         # 启用项优先规则排好；这里保留这个顺序，确保两个窗口完全一致。
-        all_ids = [str(wid) for wid in self._workshop_mod_ids()]
+        local_ids = [str(wid) for wid in self._workshop_candidate_ids()]
+        # 缓存中的订阅项也先参与首帧展示，避免刚检测出的缺失 Mod 在关闭
+        # 对话框后立刻消失；真正刷新时仍只把本地扫描项作为输入，再由
+        # Steam 重新枚举订阅集合，已取消订阅的陈旧项就会自然移除。
+        all_ids = list(local_ids)
+        known_ids = set(all_ids)
+        all_ids.extend(
+            str(wid) for wid in self._workshop_status_cache if str(wid) not in known_ids
+        )
         current_ids = self._current_cluster_workshop_ids()
-        latest_states = {}
-        source_titles: dict[str, str] = {}
+        latest_states = {
+            str(wid): status
+            for wid, status in self._workshop_status_cache.items()
+            if str(wid) in all_ids
+        }
+        source_titles: dict[str, str] = dict(self._workshop_title_cache)
         latest_state_loading = False
-        latest_state_checked = False
+        latest_state_checked = bool(latest_states)
+        # 五分钟内重复打开直接展示会话缓存；用户仍可点“刷新”强制重查，
+        # 实际执行更新后也会立即使缓存失效。
+        cache_is_fresh = (
+            set(latest_states) == set(all_ids)
+            and time.monotonic() - self._workshop_status_checked_at < 300.0
+            and self._workshop_status_file_signature
+            == _workshop_modinfo_signature(
+                [int(wid) for wid in local_ids], self._mod_paths
+            )
+        )
 
         # 列表和滚动条必须在同一个中间容器内；如果直接 side=LEFT/RIGHT
         # pack 到 Toplevel，会横向切走整个窗口的剩余区域，后创建的底部
@@ -770,9 +1070,20 @@ class ModManagerTab:
         list_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 6))
         vbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
-        canvas = tk.Canvas(list_frame, width=980, height=500, highlightthickness=0, bd=0,
-                           bg=dialog_bg,
-                           yscrollcommand=vbar.set)
+        # 窗口禁止缩放，因此列表从第一帧开始就按最终宽度绘制。不能在
+        # deiconify 前依赖 winfo_width()：Tk 此时通常只返回 1，旧代码会
+        # 回退到 760，直到异步状态刷新再次重绘才补齐右侧；缓存命中时则
+        # 会永久保留这块空白区域。
+        canvas_width = 980
+        canvas = tk.Canvas(
+            list_frame,
+            width=canvas_width,
+            height=500,
+            highlightthickness=0,
+            bd=0,
+            bg=dialog_bg,
+            yscrollcommand=vbar.set,
+        )
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vbar.configure(command=canvas.yview)
         canvas.configure(yscrollincrement=76)
@@ -780,6 +1091,12 @@ class ModManagerTab:
         visible_ids: list[str] = []
 
         def _on_wheel(event):
+            first, last = canvas.yview()
+            # 筛选结果少于一屏时，Tk Canvas 仍可能保留切换筛选前的偏移，
+            # 继续向上滚会把表头和首行一起推到窗口中间。到达边界后直接
+            # 截断滚轮事件，避免出现上下空白区域。
+            if (event.delta > 0 and first <= 0.0) or (event.delta < 0 and last >= 1.0):
+                return "break"
             canvas.yview_scroll(int(-3 * (event.delta / 120)), "units")
             return "break"
 
@@ -792,23 +1109,51 @@ class ModManagerTab:
             for wid in all_ids:
                 if mode == "current" and wid not in current_ids:
                     continue
+                if mode == "needs_update" and (
+                    wid not in latest_states or not latest_states[wid].needs_action
+                ):
+                    continue
                 name = _name_for(wid)
                 if needle and needle not in f"{name} {wid}".casefold():
                     continue
                 result.append(wid)
-            return result
+            priority = {
+                WorkshopModState.DOWNLOADING: 0,
+                WorkshopModState.DOWNLOAD_PENDING: 0,
+                WorkshopModState.UPDATE_AVAILABLE: 1,
+                WorkshopModState.MISSING: 2,
+                WorkshopModState.SOURCE_UNAVAILABLE: 2,
+                WorkshopModState.INTEGRITY_UNCONFIRMED: 3,
+                WorkshopModState.NOT_INSTALLED: 4,
+                WorkshopModState.UNKNOWN: 5,
+                WorkshopModState.LOCAL_FILES: 6,
+                WorkshopModState.CURRENT: 10,
+            }
+            # Python 排序稳定；同一状态内继续保留外层 Mod 列表的名称顺序。
+            return sorted(
+                result,
+                key=lambda wid: (
+                    priority.get(latest_states[wid].state, 7)
+                    if wid in latest_states
+                    else 7
+                ),
+            )
 
         def _latest_version_for(wid: str) -> str:
             status = latest_states.get(wid)
             if status is None:
-                return (t("mod.update_latest_checking")
-                        if latest_state_loading or not latest_state_checked
-                        else t("mod.update_latest_unknown"))
+                return (
+                    t("mod.update_latest_checking")
+                    if latest_state_loading or not latest_state_checked
+                    else t("mod.update_latest_unknown")
+                )
             labels = {
                 WorkshopModState.CURRENT: "mod.update_latest_up_to_date",
                 WorkshopModState.UPDATE_AVAILABLE: "mod.update_latest_available",
                 WorkshopModState.MISSING: "mod.update_latest_missing",
-                WorkshopModState.CORRUPT: "mod.update_latest_corrupt",
+                WorkshopModState.SOURCE_UNAVAILABLE: "mod.update_latest_source_unavailable",
+                WorkshopModState.INTEGRITY_UNCONFIRMED: "mod.update_latest_integrity_unconfirmed",
+                WorkshopModState.LOCAL_FILES: "mod.update_latest_local_files",
                 WorkshopModState.NOT_INSTALLED: "mod.update_latest_not_installed",
                 WorkshopModState.DOWNLOADING: "mod.update_latest_downloading",
                 WorkshopModState.DOWNLOAD_PENDING: "mod.update_latest_pending",
@@ -820,95 +1165,278 @@ class ModManagerTab:
             canvas.delete("all")
             photo_refs.clear()
             visible_ids[:] = _filtered_ids()
-            row_h = 78
+            row_h = 88
             header_h = 36
-            width = max(canvas.winfo_width(), 760)
-            current_x = width - 250
-            latest_x = width - 120
-            name_font = tkfont.Font(font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True))
+            width = canvas_width
+            # 右侧三列使用固定中心线：状态 / 创意工坊 / 操作。表头和每行
+            # 内容全部以同一中心点绘制，避免混用左锚点、中心锚点造成视觉
+            # 上歪斜；名称列则截止到状态列左侧，三列之间保留一致间距。
+            status_x = width - 322
+            workshop_x = width - 190
+            action_x = width - 66
+            status_w = 118
+            name_font = tkfont.Font(
+                font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True)
+            )
+            link_font = tkfont.Font(font=theme.font_tuple(theme.FONT_SIZE_SM))
 
             def _fit_name(text: str) -> str:
-                max_width = max(120, current_x - 145)
+                name_right = status_x - status_w / 2 - 16
+                max_width = max(120, name_right - 126)
                 if name_font.measure(text) <= max_width:
                     return text
                 while text and name_font.measure(text + "…") > max_width:
                     text = text[:-1]
                 return (text + "…") if text else "…"
 
-            canvas.create_rectangle(4, 4, width - 8, header_h,
-                                    fill=dialog_bg, outline="", tags=("select_all",))
-            header_checked = bool(visible_ids) and all(item in selected for item in visible_ids)
-            canvas.create_rectangle(16, 10, 36, 30,
-                                    fill=theme.PRIMARY if header_checked else dialog_bg,
-                                    outline=theme.PRIMARY if header_checked else theme.CARD_BORDER,
-                                    width=2, tags=("select_all",))
+            canvas.create_rectangle(
+                4,
+                4,
+                width - 8,
+                header_h,
+                fill=dialog_bg,
+                outline="",
+                tags=("select_all",),
+            )
+            header_checked = bool(visible_ids) and all(
+                item in selected for item in visible_ids
+            )
+            canvas.create_rectangle(
+                16,
+                10,
+                36,
+                30,
+                fill=theme.PRIMARY if header_checked else dialog_bg,
+                outline=theme.PRIMARY if header_checked else theme.CARD_BORDER,
+                width=2,
+                tags=("select_all",),
+            )
             if header_checked:
-                canvas.create_text(26, 20, text="✓", fill=dialog_bg,
-                                   font=theme.font_tuple(14, bold=True), tags=("select_all",))
+                canvas.create_text(
+                    26,
+                    20,
+                    text="✓",
+                    fill=dialog_bg,
+                    font=theme.font_tuple(14, bold=True),
+                    tags=("select_all",),
+                )
             canvas.create_text(
-                48, 20,
-                text=(t("mod.update_deselect_all") if header_checked
-                      else t("mod.update_select_all")),
+                48,
+                20,
+                text=(
+                    t("mod.update_deselect_all")
+                    if header_checked
+                    else t("mod.update_select_all")
+                ),
                 anchor=tk.W,
-                fill=theme.TEXT, font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
-                tags=("select_all",))
-            canvas.create_text(current_x, 20, text=t("mod.update_current_version"), anchor=tk.W,
-                               fill=theme.TEXT_MUTED, font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
-            canvas.create_text(latest_x, 20, text=t("mod.update_latest_version"), anchor=tk.W,
-                               fill=theme.TEXT_MUTED, font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
+                fill=theme.TEXT,
+                font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+                tags=("select_all",),
+            )
+            canvas.create_text(
+                status_x,
+                20,
+                text=t("mod.update_latest_version"),
+                anchor=tk.CENTER,
+                fill=theme.TEXT_MUTED,
+                font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+            )
+            canvas.create_text(
+                workshop_x,
+                20,
+                text=t("mod.update_workshop_column"),
+                anchor=tk.CENTER,
+                fill=theme.TEXT_MUTED,
+                font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+            )
+            canvas.create_text(
+                action_x,
+                20,
+                text=t("mod.update_action"),
+                anchor=tk.CENTER,
+                fill=theme.TEXT_MUTED,
+                font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+            )
             if not visible_ids:
-                canvas.create_text(width / 2, header_h + 48, text=t("mod.no_filtered"),
-                                   fill=theme.TEXT_MUTED,
-                                   font=theme.font_tuple(theme.FONT_SIZE_BASE))
+                empty_text = (
+                    t("mod.update_latest_checking")
+                    if (
+                        filter_var.get() == "needs_update"
+                        and (latest_state_loading or not latest_state_checked)
+                    )
+                    else t("mod.no_filtered")
+                )
+                canvas.create_text(
+                    width / 2,
+                    header_h + 48,
+                    text=empty_text,
+                    fill=theme.TEXT_MUTED,
+                    font=theme.font_tuple(theme.FONT_SIZE_BASE),
+                )
             for index, wid in enumerate(visible_ids):
                 y = header_h + index * row_h + 6
                 bg = "#f7f7f7" if index % 2 == 0 else dialog_bg
-                canvas.create_rectangle(4, y, width - 8, y + row_h - 5,
-                                        fill=bg, outline=theme.CARD_BORDER,
-                                        tags=(f"row:{wid}",))
+                canvas.create_rectangle(
+                    4,
+                    y,
+                    width - 8,
+                    y + row_h - 5,
+                    fill=bg,
+                    outline=theme.CARD_BORDER,
+                    tags=(f"row:{wid}",),
+                )
                 checked = wid in selected
-                box_x, box_y = 16, y + 27
-                canvas.create_rectangle(box_x, box_y, box_x + 24, box_y + 24,
-                                        fill=theme.PRIMARY if checked else dialog_bg,
-                                        outline=theme.PRIMARY if checked else theme.CARD_BORDER,
-                                        width=2, tags=(f"row:{wid}",))
+                box_x, box_y = 16, y + 32
+                canvas.create_rectangle(
+                    box_x,
+                    box_y,
+                    box_x + 24,
+                    box_y + 24,
+                    fill=theme.PRIMARY if checked else dialog_bg,
+                    outline=theme.PRIMARY if checked else theme.CARD_BORDER,
+                    width=2,
+                    tags=(f"row:{wid}",),
+                )
                 if checked:
-                    canvas.create_text(box_x + 12, box_y + 12, text="✓",
-                                       fill=dialog_bg, font=theme.font_tuple(16, bold=True),
-                                       tags=(f"row:{wid}",))
+                    canvas.create_text(
+                        box_x + 12,
+                        box_y + 12,
+                        text="✓",
+                        fill=dialog_bg,
+                        font=theme.font_tuple(16, bold=True),
+                        tags=(f"row:{wid}",),
+                    )
                 img = self._icon_imgs.get(f"workshop-{wid}") or self._icon_imgs.get(wid)
                 if img is None:
                     img = _get_default_icon(58)
                 if img:
                     try:
-                        photo = ImageTk.PhotoImage(img.convert("RGBA").resize((58, 58), Image.LANCZOS))
+                        photo = ImageTk.PhotoImage(
+                            img.convert("RGBA").resize((58, 58), Image.LANCZOS)
+                        )
                         photo_refs.append(photo)
-                        canvas.create_image(54, y + 7, image=photo, anchor=tk.NW,
-                                            tags=(f"row:{wid}",))
+                        canvas.create_image(
+                            54, y + 12, image=photo, anchor=tk.NW, tags=(f"row:{wid}",)
+                        )
                     except Exception:
                         pass
                 else:
-                    canvas.create_rectangle(54, y + 7, 112, y + 65,
-                                            fill=dialog_bg, outline=theme.CARD_BORDER,
-                                            tags=(f"row:{wid}",))
-                canvas.create_text(126, y + 26, text=_fit_name(_name_for(wid)), anchor=tk.W,
-                                   fill=theme.TEXT, font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
-                                   tags=(f"row:{wid}",))
-                canvas.create_text(126, y + 51, text=f"workshop-{wid}", anchor=tk.W,
-                                   fill=theme.TEXT_MUTED, font=theme.font_tuple(theme.FONT_SIZE_SM),
-                                   tags=(f"row:{wid}",))
-                canvas.create_text(current_x, y + 26, text=_current_version_for(wid), anchor=tk.W,
-                                   fill=theme.TEXT, font=theme.font_tuple(theme.FONT_SIZE_SM),
-                                   tags=(f"row:{wid}",))
-                canvas.create_text(latest_x, y + 26, text=_latest_version_for(wid), anchor=tk.W,
-                                   fill=theme.TEXT, font=theme.font_tuple(theme.FONT_SIZE_SM),
-                                   tags=(f"row:{wid}",))
-                canvas.tag_bind(f"row:{wid}", "<Button-1>",
-                                lambda _e, item=wid: toggle_one(item))
+                    canvas.create_rectangle(
+                        54,
+                        y + 12,
+                        112,
+                        y + 70,
+                        fill=dialog_bg,
+                        outline=theme.CARD_BORDER,
+                        tags=(f"row:{wid}",),
+                    )
+                canvas.create_text(
+                    126,
+                    y + 22,
+                    text=_fit_name(_name_for(wid)),
+                    anchor=tk.W,
+                    fill=theme.TEXT,
+                    font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
+                    tags=(f"row:{wid}",),
+                )
+                canvas.create_text(
+                    126,
+                    y + 47,
+                    text=f"workshop-{wid}",
+                    anchor=tk.W,
+                    fill=theme.TEXT_MUTED,
+                    font=theme.font_tuple(theme.FONT_SIZE_SM),
+                    tags=(f"row:{wid}",),
+                )
+                canvas.create_text(
+                    126,
+                    y + 70,
+                    text=_version_line_for(wid),
+                    anchor=tk.W,
+                    fill=theme.TEXT_MUTED,
+                    font=theme.font_tuple(theme.FONT_SIZE_SM),
+                    tags=(f"row:{wid}",),
+                )
+                canvas.create_text(
+                    status_x,
+                    y + 42,
+                    text=_latest_version_for(wid),
+                    anchor=tk.CENTER,
+                    fill=theme.TEXT,
+                    font=theme.font_tuple(theme.FONT_SIZE_SM),
+                    tags=(f"row:{wid}",),
+                )
+                link_tag = f"workshop:{wid}"
+                link_text = t("mod.workshop_link_btn")
+                canvas.create_text(
+                    workshop_x,
+                    y + 39,
+                    text=link_text,
+                    anchor=tk.CENTER,
+                    fill=theme.ACCENT,
+                    font=link_font,
+                    tags=(link_tag,),
+                )
+                link_half_w = link_font.measure(link_text) / 2
+                canvas.create_line(
+                    workshop_x - link_half_w,
+                    y + 51,
+                    workshop_x + link_half_w,
+                    y + 51,
+                    fill=theme.ACCENT,
+                    width=1,
+                    tags=(link_tag,),
+                )
+                canvas.tag_bind(
+                    link_tag,
+                    "<Button-1>",
+                    lambda _e, item=wid: self._on_link(f"workshop-{item}"),
+                )
+                canvas.tag_bind(
+                    link_tag, "<Enter>", lambda _e: canvas.configure(cursor="hand2")
+                )
+                canvas.tag_bind(
+                    link_tag, "<Leave>", lambda _e: canvas.configure(cursor="")
+                )
+                button_tag = f"update:{wid}"
+                canvas.create_rectangle(
+                    action_x - 38,
+                    y + 26,
+                    action_x + 38,
+                    y + 58,
+                    fill=theme.PRIMARY,
+                    outline=theme.PRIMARY,
+                    tags=(button_tag,),
+                )
+                canvas.create_text(
+                    action_x,
+                    y + 42,
+                    text=t("mod.update_one_btn"),
+                    fill=dialog_bg,
+                    font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+                    tags=(button_tag,),
+                )
+                canvas.tag_bind(
+                    button_tag, "<Button-1>", lambda _e, item=wid: update_one(item)
+                )
+                canvas.tag_bind(
+                    f"row:{wid}", "<Button-1>", lambda _e, item=wid: toggle_one(item)
+                )
             canvas.tag_bind("select_all", "<Button-1>", lambda _e: select_visible())
-            canvas.configure(scrollregion=(0, 0, width,
-                                           max(header_h + 1, header_h + len(visible_ids) * row_h + 8)))
-            count_var.set(t("mod.update_selected_count", selected=len(selected), total=len(all_ids)))
+            content_height = header_h + len(visible_ids) * row_h + 8
+            # scrollregion 小于 Canvas 可视高度时，Tk 会允许整个内容区域在
+            # 视口里发生反常位移。至少铺满一屏，短列表就会稳定贴在顶部。
+            viewport_height = max(500, canvas.winfo_height())
+            canvas.configure(
+                scrollregion=(0, 0, width, max(viewport_height, content_height))
+            )
+            count_var.set(
+                t(
+                    "mod.update_selected_count",
+                    selected=len(selected),
+                    total=len(all_ids),
+                )
+            )
 
         def toggle_one(wid: str):
             if wid in selected:
@@ -929,106 +1457,511 @@ class ModManagerTab:
                 dlg.show_info(win, t("mod.update_title"), t("mod.update_none_selected"))
                 return
             ids = sorted(int(wid) for wid in selected)
+            if not dlg.ask_yes_no(
+                win,
+                t("mod.update_confirm_title"),
+                t("mod.update_confirm_message", count=len(ids)),
+            ):
+                return
+            expected_versions = {
+                int(wid): latest_states[wid].remote_version
+                for wid in selected
+                if wid in latest_states
+                and latest_states[wid].state == WorkshopModState.UPDATE_AVAILABLE
+                and latest_states[wid].remote_version
+            }
             win.destroy()
-            self._update_workshop_mods(ids)
+            self._update_workshop_mods(ids, expected_versions=expected_versions)
 
-        search_var.trace_add("write", lambda *_: render_rows())
-        filter_var.trace_add("write", lambda *_: (_redraw_filter_labels(), render_rows()))
-        canvas.bind("<Configure>", lambda _e: render_rows(), add="+")
+        def update_one(wid: str):
+            status = latest_states.get(wid)
+            expected_versions = (
+                {int(wid): status.remote_version}
+                if status is not None
+                and status.state == WorkshopModState.UPDATE_AVAILABLE
+                and status.remote_version
+                else {}
+            )
+            win.destroy()
+            self._update_workshop_mods([int(wid)], expected_versions=expected_versions)
+
+        def _on_search_changed(*_args):
+            canvas.yview_moveto(0)
+            render_rows()
+
+        def _on_filter_changed(*_args):
+            _redraw_filter_labels()
+            canvas.yview_moveto(0)
+            render_rows()
+
+        search_var.trace_add("write", _on_search_changed)
+        filter_var.trace_add("write", _on_filter_changed)
 
         footer = tk.Frame(win, bg=dialog_bg)
         footer.pack(fill=tk.X, padx=12, pady=(0, 12))
-        ttk.Button(footer, text=t("mod.update_selected_btn"), command=update_selected).pack(side=tk.RIGHT)
+        ttk.Button(
+            footer, text=t("mod.update_selected_btn"), command=update_selected
+        ).pack(side=tk.RIGHT)
         win.protocol("WM_DELETE_WINDOW", win.destroy)
         center_over_parent(win, self.frame.winfo_toplevel())
         render_rows()
 
-        def _refresh_latest_states():
+        def _refresh_latest_states(force=False):
             nonlocal latest_state_loading, latest_state_checked
             if latest_state_loading:
                 return
+            if not force and cache_is_fresh:
+                return
             latest_state_loading = True
             latest_state_checked = False
-            latest_states.clear()
             refresh_states_btn.configure(state=tk.DISABLED)
             render_rows()
 
+            # 前一个选择器关闭时，其后台扫描仍可继续。新窗口等待共享结果，
+            # 不再启动第二个 Steam 会话和第二轮 Manifest 遍历。
+            if self._workshop_status_refreshing:
+
+                def _wait_for_shared_refresh():
+                    nonlocal latest_state_loading, latest_state_checked
+                    if not win.winfo_exists():
+                        return
+                    if self._workshop_status_refreshing:
+                        self.frame.after(100, _wait_for_shared_refresh)
+                        return
+                    latest_states.clear()
+                    latest_states.update(
+                        {
+                            str(wid): status
+                            for wid, status in self._workshop_status_cache.items()
+                        }
+                    )
+                    all_ids[:] = list(local_ids)
+                    known_ids = set(all_ids)
+                    all_ids.extend(
+                        str(wid)
+                        for wid in self._workshop_status_cache
+                        if str(wid) not in known_ids
+                    )
+                    source_titles.update(self._workshop_title_cache)
+                    latest_state_loading = False
+                    latest_state_checked = True
+                    refresh_states_btn.configure(state=tk.NORMAL)
+                    _show_state_notice(self._workshop_status_error)
+                    render_rows()
+
+                self.frame.after(100, _wait_for_shared_refresh)
+                return
+            self._workshop_status_refreshing = True
+            self._update_workshop_update_hint()
+            scan_signature = _workshop_modinfo_signature(
+                [int(wid) for wid in local_ids], self._mod_paths
+            )
+
             def _worker():
+                state_error = ""
                 try:
+                    scan_ids = [int(wid) for wid in local_ids]
                     states = inspect_workshop_items(
-                        [int(wid) for wid in all_ids], query_source=False)
-                except Exception:
+                        scan_ids,
+                        discovered_paths={
+                            int(str(wid).removeprefix("workshop-")): path
+                            for wid, path in self._mod_paths.items()
+                            if str(wid).removeprefix("workshop-").isdigit()
+                        },
+                        legacy_active_root=self._server_mods_root(),
+                        query_source=True,
+                        include_subscribed=True,
+                        cached_manifest_versions=self._cached_workshop_versions(
+                            scan_ids
+                        ),
+                    )
+                except Exception as exc:
                     states = {}
-                # 状态判定不依赖 Workshop 网页详情。只有本地解析确实没有
-                # 名称的项目才查询源端标题，避免 500+ Mod 时做十几批无用请求。
-                missing_title_ids = [
-                    int(wid) for wid in all_ids
-                    if not ((_info_for(wid).name if _info_for(wid) else "") or "").strip()
-                ]
-                try:
-                    details = query_workshop_item_details(missing_title_ids)
-                except Exception:
-                    details = {}
+                    state_error = _workshop_status_error_message(exc)
+                titles = {
+                    str(wid): status.evidence.source_details.title
+                    for wid, status in states.items()
+                    if status.evidence is not None
+                    and status.evidence.source_details is not None
+                    and status.evidence.source_details.title
+                }
 
                 def _apply_states():
                     nonlocal latest_state_loading, latest_state_checked
+                    self._workshop_status_refreshing = False
+                    self._workshop_status_error = state_error
+                    self._workshop_status_cache = dict(states)
+                    self._workshop_status_checked_at = time.monotonic()
+                    self._workshop_status_file_signature = scan_signature
+                    self._workshop_title_cache.update(titles)
+                    self._update_workshop_update_hint()
+                    source_titles.update(titles)
+                    # Steam 订阅枚举可能补出 ACF 和内容目录中都已消失的 ID。
+                    # 将它们加入当前选择器，后续状态排序会把异常项目置顶。
+                    all_ids[:] = list(local_ids)
+                    known_ids = set(all_ids)
+                    all_ids.extend(
+                        str(wid) for wid in states if str(wid) not in known_ids
+                    )
+                    # 和外层列表共用 ModInfo 与 version_display。即使发起扫描
+                    # 的旧窗口已关闭，也先把可信版本同步回公共对象。
+                    for wid, status in states.items():
+                        info = _info_for(str(wid))
+                        version = (
+                            status.evidence.source_version
+                            if status.evidence is not None
+                            else None
+                        )
+                        if info is not None and version is not None:
+                            info.version = version.version
+                            info.version_status = version.status
+                            info.version_source = version.source
+                            info.version_compatible = version.version_compatible
+                            info.version_compatible_status = version.compatible_status
                     latest_state_loading = False
                     latest_state_checked = True
                     if not win.winfo_exists():
                         return
-                    latest_states.update({str(wid): state for wid, state in states.items()})
-                    source_titles.update({str(wid): item.title for wid, item in details.items()
-                                          if item.title})
+                    latest_states.clear()
+                    latest_states.update(
+                        {str(wid): state for wid, state in states.items()}
+                    )
                     refresh_states_btn.configure(state=tk.NORMAL)
+                    _show_state_notice(state_error)
                     render_rows()
 
                 self.frame.after(0, _apply_states)
 
-            threading.Thread(target=_worker, name="dstcamp-workshop-state-check",
-                             daemon=True).start()
+            threading.Thread(
+                target=_worker, name="dstcamp-workshop-state-check", daemon=True
+            ).start()
 
         _refresh_latest_states()
         win.deiconify()
         win.lift()
         search.focus_set()
 
-    def _update_workshop_mods(self, ids: list[int] | None = None) -> None:
+    def _update_workshop_mods(
+        self,
+        ids: list[int] | None = None,
+        *,
+        expected_versions: dict[int, str] | None = None,
+    ) -> None:
         """后台调用普通 SteamUGC 更新已发现的 Workshop Mod。"""
         if self._workshop_update_running:
             return
         ids = ids if ids is not None else self._workshop_mod_ids()
         if not ids:
-            dlg.show_info(self.app.root, t("mod.workshop_update_btn"),
-                          t("mod.workshop_update_empty"))
+            dlg.show_info(
+                self.app.root,
+                t("mod.workshop_update_btn"),
+                t("mod.workshop_update_empty"),
+            )
             return
         self._workshop_update_running = True
-        self._md_update_workshop.configure(state=tk.DISABLED)
-        self._mod_scan_status_var.set(t("mod.workshop_update_running", current=0, total=len(ids)))
+        self._refresh_workshop_update_button_state()
+        log_dialog = ModSyncLogDialog(
+            self.app.root,
+            title=t("mod.update_log_title"),
+            allow_close_while_running=True,
+            text_width=82,
+        )
+        self._workshop_log_dialog = log_dialog
+        log_dialog.win.bind(
+            "<Destroy>",
+            lambda event, dialog=log_dialog: self._on_workshop_log_destroy(
+                event, dialog
+            ),
+            add="+",
+        )
+        self._set_workshop_update_progress(0, len(ids))
+        log_dialog.append(t("mod.update_log_start", count=len(ids)))
+
+        def display_name(workshop_id: int) -> str:
+            key = f"workshop-{workshop_id}"
+            info = self._mod_infos.get(key) or self._mod_infos.get(str(workshop_id))
+            raw = (
+                (info.name if info else "")
+                or self._workshop_title_cache.get(str(workshop_id), "")
+                or key
+            )
+            return str(localize_mod_name(key, raw) or key)
 
         def progress(current, total, _downloaded, _size):
+            self.frame.after(0, self._set_workshop_update_progress, current, total)
+
+        def item_start(current, total, workshop_id):
+            name = display_name(workshop_id)
             self.frame.after(
-                0, lambda: self._mod_scan_status_var.set(
-                    t("mod.workshop_update_running", current=current, total=total)))
+                0,
+                log_dialog.append,
+                t("mod.update_log_item_start", current=current, total=total, name=name),
+            )
+            self.frame.after(0, self._set_workshop_update_progress, current, total)
+
+        def item_complete(current, total, result):
+            name = display_name(result.workshop_id)
+            legacy_targets = result.details.get("legacy_targets") or ()
+            if legacy_targets:
+                self.frame.after(
+                    0,
+                    log_dialog.append,
+                    t(
+                        "mod.update_log_legacy_deployed",
+                        targets="；".join(str(path) for path in legacy_targets),
+                    ),
+                )
+            if result.completed and result.up_to_date:
+                line = t(
+                    "mod.update_log_item_current",
+                    current=current,
+                    total=total,
+                    name=name,
+                )
+            elif result.completed and result.details.get("repair"):
+                line = t(
+                    "mod.update_log_item_repaired",
+                    current=current,
+                    total=total,
+                    name=name,
+                )
+            elif result.completed:
+                line = t(
+                    "mod.update_log_item_updated",
+                    current=current,
+                    total=total,
+                    name=name,
+                )
+            else:
+                line = t(
+                    "mod.update_log_item_failed",
+                    current=current,
+                    total=total,
+                    name=name,
+                    error=_workshop_update_error_message(
+                        result.error or t("mod.update_latest_unknown")
+                    ),
+                )
+            self.frame.after(0, log_dialog.append, line)
 
         def worker():
             try:
-                batch = update_workshop_items(ids, on_progress=progress)
-                updated, up_to_date, failed = batch.updated, batch.up_to_date, batch.failed
-            except Exception:
+                batch = update_workshop_items(
+                    ids,
+                    expected_versions=expected_versions,
+                    on_progress=progress,
+                    on_item_start=item_start,
+                    on_item_complete=item_complete,
+                )
+                updated, up_to_date, failed = (
+                    batch.updated,
+                    batch.up_to_date,
+                    batch.failed,
+                )
+            except Exception as exc:
                 # 后台更新失败也必须恢复按钮状态，避免一次异常让页面永久卡在“更新中”。
                 updated, up_to_date, failed = 0, 0, len(ids)
-            self.frame.after(0, self._finish_workshop_update, updated, up_to_date, failed)
+                self.frame.after(
+                    0,
+                    log_dialog.append,
+                    t(
+                        "mod.update_log_item_failed",
+                        current=0,
+                        total=len(ids),
+                        name=t("mod.update_title"),
+                        error=_workshop_update_error_message(
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    ),
+                )
+            self.frame.after(
+                0, self._finish_workshop_update, updated, up_to_date, failed, log_dialog
+            )
 
-        threading.Thread(target=worker, name="dstcamp-workshop-update", daemon=True).start()
+        threading.Thread(
+            target=worker, name="dstcamp-workshop-update", daemon=True
+        ).start()
 
-    def _finish_workshop_update(self, updated: int, up_to_date: int, failed: int) -> None:
+    def _show_workshop_update_log(self) -> None:
+        """从底部更新状态文字恢复本次更新日志窗口。"""
+        log_dialog = self._workshop_log_dialog
+        if log_dialog is not None and not log_dialog.show():
+            self._workshop_log_dialog = None
+            if self._workshop_update_running:
+                self._md_update_hint.redraw()
+            else:
+                self._update_workshop_update_hint()
+
+    def _on_mod_update_hint_click(self) -> None:
+        """更新中/刚完成时恢复日志；其余状态文字均不执行操作。"""
+        if (
+            self._mod_update_hint_kind in {"updating", "done"}
+            and self._workshop_log_dialog is not None
+        ):
+            self._show_workshop_update_log()
+
+    def _set_workshop_update_progress(self, current: int, total: int) -> None:
+        self._mod_update_hint_kind = "updating"
+        self._mod_update_hint_var.set(
+            t("mod.workshop_update_running", current=current, total=total)
+        )
+
+    def _on_workshop_log_destroy(self, event, log_dialog) -> None:
+        """日志窗口真正销毁后取消工具栏文字的可点击状态。"""
+        if event.widget is not log_dialog.win:
+            return
+        if self._workshop_log_dialog is log_dialog:
+            self._workshop_log_dialog = None
+            if self._md_update_hint.winfo_exists():
+                if self._workshop_update_running:
+                    self._md_update_hint.redraw()
+                else:
+                    self._update_workshop_update_hint()
+
+    def _finish_workshop_update(
+        self, updated: int, up_to_date: int, failed: int, log_dialog=None
+    ) -> None:
         self._workshop_update_running = False
-        self._md_update_workshop.configure(state=tk.NORMAL)
-        self._mod_scan_status_var.set(
-            t("mod.workshop_update_done", updated=updated, up_to_date=up_to_date, failed=failed))
+        self._refresh_workshop_update_button_state()
+        self._mod_update_hint_kind = "done"
+        self._mod_update_hint_var.set(
+            t(
+                "mod.workshop_update_done",
+                updated=updated,
+                up_to_date=up_to_date,
+                failed=failed,
+            )
+        )
+        if log_dialog is not None:
+            log_dialog.append(
+                t(
+                    "mod.update_log_summary",
+                    updated=updated,
+                    up_to_date=up_to_date,
+                    failed=failed,
+                )
+            )
+            log_dialog.finish()
+        # 下载可能改变版本、路径和 Manifest，下一次打开选择器必须重新验收。
+        self._workshop_status_checked_at = 0.0
         # 没有实际更新时不重新扫描 500+ Mod，避免“已是最新”又触发一次重型解析。
         if updated:
+            # 文件内容已经变化，旧目录快照中的名称、版本、配置 schema 和
+            # 图标都可能失效；先清掉再走普通刷新，避免为了复用而读到旧值。
+            self.app.mod_catalog.invalidate(Platform.STEAM)
             self._refresh_mods(full=False)
+
+    def _refresh_workshop_update_button_state(self) -> None:
+        """只有当前 Mod 列表完整可用且没有更新任务时才开放更新入口。"""
+        ready = (
+            self._mods_loaded
+            and not self._loading
+            and not self._workshop_update_running
+        )
+        self._md_update_workshop.configure(state=tk.NORMAL if ready else tk.DISABLED)
+
+    def _update_workshop_update_hint(self) -> None:
+        """在主 Mod 页显示待处理数量或明确的“已是最新”状态。"""
+        if self._workshop_update_running:
+            return
+        if not self._mods_loaded:
+            self._mod_update_hint_kind = "idle"
+            text = ""
+        elif self._workshop_status_refreshing:
+            self._mod_update_hint_kind = "checking"
+            text = t("mod.update_status_checking_hint")
+        elif self._workshop_status_error:
+            self._mod_update_hint_kind = "error"
+            text = t("mod.update_status_unavailable_hint")
+        else:
+            count = sum(
+                status.needs_action for status in self._workshop_status_cache.values()
+            )
+            if count:
+                self._mod_update_hint_kind = "pending"
+                text = t("mod.update_pending_hint", count=count)
+            elif self._workshop_status_cache:
+                self._mod_update_hint_kind = "current"
+                text = t("mod.update_all_current_hint")
+            else:
+                self._mod_update_hint_kind = "idle"
+                text = ""
+        self._mod_update_hint_var.set(text)
+
+    def _refresh_main_workshop_status(self, gen: int) -> None:
+        """列表首帧完成后后台预查更新状态，供主页面提示和选择器复用。"""
+        if (
+            gen != self._refresh_gen
+            or not self._mods_loaded
+            or self._workshop_update_running
+        ):
+            return
+        local_ids = self._workshop_candidate_ids()
+        cache_fresh = (
+            time.monotonic() - self._workshop_status_checked_at < 300.0
+            and set(local_ids).issubset(
+                {int(wid) for wid in self._workshop_status_cache}
+            )
+            and self._workshop_status_file_signature
+            == _workshop_modinfo_signature(local_ids, self._mod_paths)
+        )
+        if cache_fresh:
+            self._update_workshop_update_hint()
+            return
+        if self._workshop_status_refreshing:
+            # 可能是切换存档前启动的扫描仍在收尾；当前代次稍后重试，不能
+            # 因为撞上共享 Steam 会话就永久失去主页面更新提示。
+            self.frame.after(300, self._refresh_main_workshop_status, gen)
+            return
+
+        self._workshop_status_refreshing = True
+        self._update_workshop_update_hint()
+        discovered_paths = {
+            int(str(wid).removeprefix("workshop-")): path
+            for wid, path in self._mod_paths.items()
+            if str(wid).removeprefix("workshop-").isdigit()
+        }
+        scan_signature = _workshop_modinfo_signature(local_ids, self._mod_paths)
+
+        def worker():
+            error = ""
+            try:
+                cached_versions = self._cached_workshop_versions(local_ids)
+                states = inspect_workshop_items(
+                    local_ids,
+                    discovered_paths=discovered_paths,
+                    legacy_active_root=self._server_mods_root(),
+                    query_source=True,
+                    include_subscribed=True,
+                    cached_manifest_versions=cached_versions,
+                )
+            except Exception as exc:
+                states = {}
+                error = _workshop_status_error_message(exc)
+            titles = {
+                str(wid): status.evidence.source_details.title
+                for wid, status in states.items()
+                if status.evidence is not None
+                and status.evidence.source_details is not None
+                and status.evidence.source_details.title
+            }
+
+            def apply():
+                self._workshop_status_refreshing = False
+                if gen != self._refresh_gen or not self.frame.winfo_exists():
+                    return
+                self._workshop_status_cache = dict(states)
+                self._workshop_status_error = error
+                self._workshop_status_checked_at = time.monotonic()
+                self._workshop_status_file_signature = scan_signature
+                self._workshop_title_cache.update(titles)
+                self._update_workshop_update_hint()
+
+            self.frame.after(0, apply)
+
+        threading.Thread(
+            target=worker, name="dstcamp-workshop-main-status", daemon=True
+        ).start()
 
     def _refresh_mods(self, full=None):
         """重新加载 modoverrides.lua，为每个 mod 解析 modinfo/图标。
@@ -1075,19 +2008,29 @@ class ModManagerTab:
         gen = self._refresh_gen
         self.app._current_shard = shard
         if not shard or not shard.mod_overrides_path:
-            self._mod_data.clear(); self._mod_infos.clear(); self._icon_imgs.clear()
+            self._mod_data.clear()
+            self._mod_infos.clear()
+            self._icon_imgs.clear()
             self._icon_thumb_cache.clear()
             self._loading = False
             self._loading_key = None
+            self._mods_loaded = True
+            self._refresh_workshop_update_button_state()
+            self._mod_update_hint_var.set("")
             self._mod_scan_status_var.set("已发现 0 个 Mod")
             self._render_list()
             return
         self._loading = True
+        self._mods_loaded = False
         self._loading_full = full
         self._loading_key = loading_key
+        self._refresh_workshop_update_button_state()
+        self._mod_update_hint_var.set("")
         self._mod_scan_status_var.set("正在扫描 Mod…")
         self._render_list()
         platform, wegame_client_mods_dir = self._resolve_mod_folder_args(c)
+        self._catalog_platform = platform
+        self._catalog_wegame_client_mods_dir = wegame_client_mods_dir
         # LuaJIT 补丁只服务 Steam 版专用服务器（features/local_service/luajit_injector.py），
         # 这里现查一次 bin64 目录是不是真的处于"生效中"——纯 Path.exists()
         # 检查，够便宜，放主线程算完再传给后台线程，跟 platform/
@@ -1098,10 +2041,18 @@ class ModManagerTab:
             install_dir = self.app.local_tab._install_dir
             if install_dir:
                 luajit_bin64_dir = find_bin64_dir(install_dir)
-        threading.Thread(target=self._load_mods_worker,
-                         args=(gen, shard.mod_overrides_path, full, platform, wegame_client_mods_dir,
-                               luajit_bin64_dir),
-                         daemon=True).start()
+        threading.Thread(
+            target=self._load_mods_worker,
+            args=(
+                gen,
+                shard.mod_overrides_path,
+                full,
+                platform,
+                wegame_client_mods_dir,
+                luajit_bin64_dir,
+            ),
+            daemon=True,
+        ).start()
 
     def _resolve_mod_folder_args(self, cluster):
         """给 find_mod_folder() 用的 (platform, wegame_client_mods_dir)
@@ -1111,21 +2062,35 @@ class ModManagerTab:
         platform = cluster.platform if cluster else Platform.STEAM
         return platform, resolve_wegame_client_mods_dir(platform)
 
-    def _load_mods_worker(self, gen, overrides_path, full, platform, wegame_client_mods_dir,
-                           luajit_bin64_dir):
+    def _load_mods_worker(
+        self,
+        gen,
+        overrides_path,
+        full,
+        platform,
+        wegame_client_mods_dir,
+        luajit_bin64_dir,
+    ):
         """跑在 Tk 主线程之外——绝不能碰任何 tkinter/Tcl 对象（包括
         PhotoImage/canvas 相关调用，但普通的 PIL Image.open()/convert()
         和 resolve_full_modinfo() 自己的 subprocess 调用在这里是安全
         的）。结果通过 .after() 交回主线程，而不是直接写
         self._mod_data 等属性，这样一次仍在跑的、来自更早的 cluster/
         shard 切换的刷新，绝不会覆盖掉更新的一次（见 gen）。"""
-        mod_data, mod_infos, icon_imgs = {}, {}, {}
+        mod_data, mod_infos, mod_paths, icon_imgs = {}, {}, {}, {}
         icon_targets = []
         version_targets = []
         initial_applied = False
         luajit_active = False
         try:
             overrides = load_mod_overrides(overrides_path)
+            catalog_snapshot = (
+                None
+                if full
+                else self.app.mod_catalog.get(platform, wegame_client_mods_dir)
+            )
+            if catalog_snapshot is not None:
+                icon_imgs.update(catalog_snapshot.icons)
 
             # 早前一版实现（这次会话里已经废弃、改成走创意工坊订阅）曾经
             # 把配套 Mod 当本地/手动装的 mod 处理，装成服务器 mods/ 下的
@@ -1143,9 +2108,11 @@ class ModManagerTab:
             # （is_workshop_subscribed()）——bin64 注入生效但没订阅这个
             # 工坊物品的话，强行写一个指向不存在内容的 key 没有意义。
             if luajit_bin64_dir is not None:
-                luajit_active = (luajit_injector.detect_state(luajit_bin64_dir)
-                                  is luajit_injector.InjectorState.ACTIVE
-                                  and luajit_injector.is_workshop_subscribed())
+                luajit_active = (
+                    luajit_injector.detect_state(luajit_bin64_dir)
+                    is luajit_injector.InjectorState.ACTIVE
+                    and luajit_injector.is_workshop_subscribed()
+                )
             if luajit_active:
                 entry = overrides.mods.get(luajit_injector.WORKSHOP_MOD_KEY)
                 if entry is None or not entry.enabled:
@@ -1155,17 +2122,26 @@ class ModManagerTab:
             if overrides_dirty:
                 save_mod_overrides(overrides)
 
-            ids = list(overrides.mods.keys())
-            for wid in list_installed_mod_ids(platform, wegame_client_mods_dir):
-                if wid not in overrides.mods:
-                    ids.append(wid)
+            # 与游戏的 TheSim:GetModDirectoryNames() 候选集合保持一致：
+            # 只有当前确实能从有效安装目录发现的 Mod 才进入列表。
+            # modoverrides.lua 只为这些项目提供启用状态和配置，不能让一个
+            # 已改名为 <id>_bak/已删除的旧 key 凭空生成“幽灵 Mod”行。
+            # 不修改 overrides 本身，用户以后把目录恢复为标准名时原配置
+            # 仍会回来。
+            ids = (
+                list(catalog_snapshot.mod_ids)
+                if catalog_snapshot is not None
+                else list_installed_mod_ids(platform, wegame_client_mods_dir)
+            )
 
             for wid in ids:
                 entry = overrides.mods.get(wid)
                 if entry is None:
                     # 已安装但 modoverrides.lua 里从没碰过——游戏会把它
                     # 当成禁用，直到被启用为止。
-                    entry = ModEntry(workshop_id=wid, enabled=False, configuration_options={})
+                    entry = ModEntry(
+                        workshop_id=wid, enabled=False, configuration_options={}
+                    )
                 mod_data[wid] = entry
                 # 一个行为异常的 mod 文件夹（读不了的 modinfo.lua、损坏/
                 # 被占用的图标文件、沙箱超时等）不能拖垮整批处理——那个
@@ -1177,7 +2153,13 @@ class ModManagerTab:
                     # Workshop 内容目录查找那条路径天然能找到它（前提是
                     # 真订阅过，内容就在
                     # <steam>/steamapps/workshop/content/322330/<id>/）。
-                    mod_folder = find_mod_folder(wid, platform, wegame_client_mods_dir)
+                    mod_folder = (
+                        catalog_snapshot.paths.get(wid)
+                        if catalog_snapshot is not None
+                        else find_mod_folder(wid, platform, wegame_client_mods_dir)
+                    )
+                    if mod_folder is not None:
+                        mod_paths[wid] = mod_folder
                     if mod_folder is None:
                         # 这个 mod 的物理文件夹这次找不到了（被手动删掉/
                         # 取消订阅/目录改了）——之前这个进程活着的时候可
@@ -1187,9 +2169,14 @@ class ModManagerTab:
                         # 而失效，不清掉的话名字/配置项会一直照着内容已
                         # 经不存在的旧数据显示，看起来像"删了还在"。
                         self._full_resolved_cache.pop(wid, None)
+                    catalog_has_info = bool(
+                        catalog_snapshot is not None and wid in catalog_snapshot.infos
+                    )
                     cached = self._full_resolved_cache.get(wid)
                     if cached is not None:
                         mod_info = cached
+                    elif catalog_has_info:
+                        mod_info = catalog_snapshot.infos.get(wid)
                     else:
                         mod_info = parse_modinfo(mod_folder) if mod_folder else None
                         if full and mod_info and mod_folder:
@@ -1208,31 +2195,52 @@ class ModManagerTab:
                     mod_infos[wid] = mod_info
                     if mod_info and mod_folder:
                         if not full and mod_info.version_status == "pending":
-                            version_targets.append((wid, mod_folder, mod_info.workshop_id))
+                            version_targets.append(
+                                (wid, mod_folder, mod_info.workshop_id)
+                            )
                         # 首次快速扫描先把列表和名称交回界面，图标转换单独
                         # 在后台继续做；否则 500 个 ktech.exe 调用完成前，
                         # 用户会一直看不到任何列表，也无法判断是否卡死。
-                        icon_targets.append((wid, mod_info, mod_folder))
+                        if wid not in icon_imgs:
+                            icon_targets.append((wid, mod_info, mod_folder))
                 except Exception:
                     mod_infos.setdefault(wid, None)
+            self.app.mod_catalog.publish(
+                platform, mod_infos, mod_paths, icon_imgs, wegame_client_mods_dir
+            )
             if not full:
-                self.frame.after(0, self._apply_loaded_mods, gen, mod_data,
-                                 mod_infos, {}, luajit_active)
+                self.frame.after(
+                    0,
+                    self._apply_loaded_mods,
+                    gen,
+                    mod_data,
+                    mod_infos,
+                    mod_paths,
+                    {},
+                    luajit_active,
+                )
                 if version_targets:
                     threading.Thread(
                         target=self._load_versions_worker,
                         args=(gen, version_targets),
-                        name="dstcamp-mod-version-scan", daemon=True,
+                        name="dstcamp-mod-version-scan",
+                        daemon=True,
                     ).start()
                 initial_applied = True
+            icon_batch = {}
             for index, (wid, mod_info, mod_folder) in enumerate(icon_targets, 1):
                 try:
                     icon_path = get_mod_icon_path(mod_info, mod_folder, platform)
                     if icon_path:
-                        icon_imgs[wid] = Image.open(icon_path).convert("RGBA")
-                        if not full and (index % 12 == 0 or index == len(icon_targets)):
-                            self.frame.after(0, self._apply_icon_batch, gen,
-                                             dict(icon_imgs))
+                        image = Image.open(icon_path).convert("RGBA")
+                        icon_imgs[wid] = image
+                        icon_batch[wid] = image
+                    if not full and (index % 12 == 0 or index == len(icon_targets)):
+                        if icon_batch:
+                            self.frame.after(
+                                0, self._apply_icon_batch, gen, dict(icon_batch)
+                            )
+                            icon_batch.clear()
                 except Exception:
                     pass
         finally:
@@ -1240,14 +2248,26 @@ class ModManagerTab:
             # 必须收到通知——否则 _loading 会永远保持 True，页签一直卡
             # 在显示"加载中"，除了重启应用没有别的恢复办法。
             if not initial_applied:
-                self.frame.after(0, self._apply_loaded_mods, gen, mod_data,
-                                 mod_infos, icon_imgs, luajit_active)
+                self.frame.after(
+                    0,
+                    self._apply_loaded_mods,
+                    gen,
+                    mod_data,
+                    mod_infos,
+                    mod_paths,
+                    icon_imgs,
+                    luajit_active,
+                )
 
     def _load_versions_worker(self, gen, targets):
         """限流并行解析版本，并按批次交回 Tk 主线程。"""
         batch = {}
-        with ThreadPoolExecutor(max_workers=4, thread_name_prefix="dstcamp-version") as pool:
-            futures = [pool.submit(resolve_local_version_target, target) for target in targets]
+        with ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="dstcamp-version"
+        ) as pool:
+            futures = [
+                pool.submit(resolve_local_version_target, target) for target in targets
+            ]
             for future in as_completed(futures):
                 try:
                     wid, normalized = future.result()
@@ -1264,10 +2284,25 @@ class ModManagerTab:
         if gen != self._refresh_gen or not self.frame.winfo_exists():
             return
         changed = False
+        icon_targets = []
         for wid, result in results.items():
             info = self._mod_infos.get(wid)
             if info is None:
                 continue
+            if result.name_status == "confirmed":
+                info.name = result.name
+            icon_changed = False
+            if result.icon_status == "confirmed" and info.icon != result.icon:
+                info.icon = result.icon
+                icon_changed = True
+            if (
+                result.icon_atlas_status == "confirmed"
+                and info.icon_atlas != result.icon_atlas
+            ):
+                info.icon_atlas = result.icon_atlas
+                icon_changed = True
+            if icon_changed and wid not in self._icon_imgs and wid in self._mod_paths:
+                icon_targets.append((wid, info, self._mod_paths[wid]))
             info.version = result.version
             info.version_status = result.status
             info.version_source = result.source
@@ -1275,9 +2310,38 @@ class ModManagerTab:
             info.version_compatible_status = result.compatible_status
             changed = True
         if changed:
-            self._render_list()
+            self.app.mod_catalog.publish(
+                self._catalog_platform,
+                self._mod_infos,
+                self._mod_paths,
+                self._icon_imgs,
+                self._catalog_wegame_client_mods_dir,
+            )
+            self._schedule_async_render(gen)
+        if icon_targets:
+            threading.Thread(
+                target=self._load_recovered_icons_worker,
+                args=(gen, icon_targets),
+                name="dstcamp-mod-recovered-icons",
+                daemon=True,
+            ).start()
 
-    def _apply_loaded_mods(self, gen, mod_data, mod_infos, icon_imgs, luajit_active):
+    def _load_recovered_icons_worker(self, gen, targets):
+        """沙箱补齐图标声明后重试先前因空字段跳过的图标。"""
+        icons = {}
+        for wid, info, folder in targets:
+            try:
+                icon_path = get_mod_icon_path(info, folder, self._catalog_platform)
+                if icon_path:
+                    icons[wid] = Image.open(icon_path).convert("RGBA")
+            except Exception:
+                continue
+        if icons:
+            self.frame.after(0, self._apply_icon_batch, gen, icons)
+
+    def _apply_loaded_mods(
+        self, gen, mod_data, mod_infos, mod_paths, icon_imgs, luajit_active
+    ):
         if gen != self._refresh_gen or not self.frame.winfo_exists():
             return  # 已经被更新的一次刷新顶替（或者页签已经关闭）
         # 排序只在这里（真正重新加载数据时）做一次，此后单纯切换某个
@@ -1286,39 +2350,65 @@ class ModManagerTab:
         # （_save_mods 非静默保存会调 _refresh_mods）才应该跳到新位置。
         # dict 本身的插入顺序就是后面 _build_rows() 遍历的顺序，这里排
         # 好之后不需要在每次渲染时都重新排一遍。
-        def _name_of(wid):
-            # 跟 mod_render.py 实际画出来的文字用同一套清洗——有些 mod
-            # 名字前后包着游戏自定义图标字体的私用区码位（比如真机遇到
-            # 过的 "\U000f000d Cherry Forest \U000f000d"），这些码位画
-            # 面上不显示任何字符，但原始字符串里它们才是第一个字符，不
-            # 清洗的话会被误判成"符号开头"，跟屏幕上实际看到的第一个字
-            # （字母/汉字）对不上，排序位置跟显示文字就不一致了。
-            info = mod_infos.get(wid)
-            raw = (info.name if info else "") or wid
-            return fonts.strip_unrenderable(raw) or raw
-        ordered_ids = sorted(mod_data.keys(), key=functools.cmp_to_key(
-            lambda a, b: _mod_name_cmp(_name_of(a), _name_of(b))))
-        ordered_ids.sort(key=lambda wid: not mod_data[wid].enabled)
-        mod_data = {wid: mod_data[wid] for wid in ordered_ids}
-        self._mod_data, self._mod_infos, self._icon_imgs = mod_data, mod_infos, icon_imgs
+        mod_data = sort_mod_data(mod_data, mod_infos)
+        self._mod_data = mod_data
+        self._mod_infos = mod_infos
+        self._mod_paths = mod_paths
+        self._icon_imgs = icon_imgs
         self._icon_thumb_cache.clear()
         self._luajit_mod_locked = luajit_active
         self._loading = False
-        self._mod_scan_status_var.set(f"已发现 {len(self._mod_data)} 个 Mod")
+        self._mods_loaded = True
+        self._refresh_workshop_update_button_state()
+        cluster = self._get_cluster()
+        platform = cluster.platform if cluster else Platform.STEAM
+        regular, custom = split_installed_mod_counts(self._mod_data, platform)
+        self._mod_scan_status_var.set(
+            t("mod.scan_found_breakdown", regular=regular, custom=custom)
+        )
         # 刚从磁盘（重新）加载完——在这之前的任何"未保存修改"标记都已经
         # 没有意义了，因为现在显示的状态本身就又是已保存的状态（覆盖首
         # 次加载、"重载Mod信息"、切换世界，以及 _save_mods/
         # _apply_current_shard 写盘之后自己触发的重新加载这几种情况）。
         self._clear_dirty()
         self._render_list()
+        self.frame.after(250, self._refresh_main_workshop_status, gen)
 
     def _apply_icon_batch(self, gen, icon_imgs):
         """把后台已经完成的图标批量补到已显示的 Mod 列表。"""
         if gen != self._refresh_gen or not self.frame.winfo_exists():
             return
         self._icon_imgs.update(icon_imgs)
-        self._icon_thumb_cache.clear()
-        self._render_list()
+        self.app.mod_catalog.update_icons(
+            self._catalog_platform,
+            icon_imgs,
+            self._catalog_wegame_client_mods_dir,
+        )
+        changed_ids = set(icon_imgs)
+        self._icon_thumb_cache = {
+            key: value
+            for key, value in self._icon_thumb_cache.items()
+            if key[0] not in changed_ids
+        }
+        self._schedule_async_render(gen)
+
+    def _schedule_async_render(self, gen, delay_ms=250):
+        """合并后台批次触发的昂贵整图重绘，保证 Tk 消息循环可响应。"""
+        if gen != self._refresh_gen or not self.frame.winfo_exists():
+            return
+        if self._async_render_after_id is not None:
+            try:
+                self.frame.after_cancel(self._async_render_after_id)
+            except tk.TclError:
+                pass
+        self._async_render_after_id = self.frame.after(
+            delay_ms, self._flush_async_render, gen
+        )
+
+    def _flush_async_render(self, gen):
+        self._async_render_after_id = None
+        if gen == self._refresh_gen and self.frame.winfo_exists():
+            self._render_list()
 
     def _mark_dirty(self):
         self._dirty = True
@@ -1345,7 +2435,9 @@ class ModManagerTab:
         if not self._dirty or self._loading or cluster is None:
             return None
         selected = self._get_cluster()
-        if selected is None or getattr(selected, "path", None) != getattr(cluster, "path", None):
+        if selected is None or getattr(selected, "path", None) != getattr(
+            cluster, "path", None
+        ):
             return None
         loading_key = getattr(self, "_loading_key", None)
         if loading_key and loading_key[0] != cluster.name:
@@ -1357,54 +2449,43 @@ class ModManagerTab:
         )
 
     def _build_rows(self):
-        ft = self.filter_var.get().lower()
-        show_local = self.show_local_var.get()
-        show = self.show_var.get()
-        rows = []
-        for wid, mod in self._mod_data.items():
-            info = self._mod_infos.get(wid)
-            is_local = bool(info and info.client_only)
-            # "本地模组"视图和普通的启用/全部/禁用浏览视图是互斥的——
-            # client_only 的 mod 没有本工具能显示的实质意义上的启用状
-            # 态（见 show_local_var 设置处的注释），所以直接从普通视图
-            # 里整个排除掉，而不是在那里显示一个可能没有意义的开关。
-            if show_local != is_local:
-                continue
-            if not show_local:
-                if show == "enabled" and not mod.enabled: continue
-                if show == "disabled" and mod.enabled: continue
-            name = _localize_mod_name(wid, info.name if info else "")
-            if ft and ft not in wid.lower() and ft not in name.lower(): continue
-            numeric_id = wid.replace("workshop-", "")
-            # LuaJIT 补丁生效时，配套 mod 的开关强制显示为开、锁住不能点
-            # （按作者的建议：装了注入 DLL 却手滑关掉配套 mod，设置调不
-            # 了、行为不完整）——_load_mods_worker() 已经在磁盘层面自愈
-            # 成 enabled=True 了，这里只是让开关本身不能再被点掉。配置按
-            # 钮不受影响，正常可以点开调整。
-            locked = bool(self._luajit_mod_locked and wid == luajit_injector.WORKSHOP_MOD_KEY)
-            rows.append({
-                "workshop_id": wid,
-                "name": name,
-                "version_text": _version_display(info),
-                "enabled": mod.enabled,
-                "is_local": is_local,
-                "locked": locked,
-                "has_config": bool(info and (info.config_options or info.unsupported_schema)),
-                "has_link": numeric_id.isdigit(),
-            })
-        return rows
+        cluster = self._get_cluster()
+        platform = cluster.platform if cluster else Platform.STEAM
+        locked_id = (
+            luajit_injector.WORKSHOP_MOD_KEY if self._luajit_mod_locked else None
+        )
+        return build_mod_rows(
+            self._mod_data,
+            self._mod_infos,
+            self.filter_var.get(),
+            self.show_var.get(),
+            platform,
+            show_local=self.show_local_var.get(),
+            separate_client_mods=True,
+            locked_mod_id=locked_id,
+        )
 
     def _render_list(self, ref_width=None):
         from dstools.features.mod.render import REF_WIDTH, render_mod_list
+
         if ref_width is None:
             ref_width = self.list_panel.current_width(REF_WIDTH)
         if getattr(self, "_loading", False):
-            msg = t("mod.loading_full") if getattr(self, "_loading_full", False) else t("mod.loading")
+            msg = (
+                t("mod.loading_full")
+                if getattr(self, "_loading_full", False)
+                else t("mod.loading")
+            )
             self._render_placeholder(msg, ref_width)
             return
         rows = self._build_rows()
         if not rows:
-            self._render_placeholder(t("mod.no_filtered") if self.filter_var.get().strip() or self.show_var.get() != "all" else "", ref_width)
+            self._render_placeholder(
+                t("mod.no_filtered")
+                if self.filter_var.get().strip() or self.show_var.get() != "all"
+                else "",
+                ref_width,
+            )
             return
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
@@ -1413,12 +2494,16 @@ class ModManagerTab:
         # is_local(客户端模组) 那一行不接 on_toggle 是同一个套路，不用在
         # mod_render.py 里再加一套"禁用态"绘制。"配置"按钮仍然接 on_config，
         # 点开的弹窗会自己按 read_only 只显示不给改（见 _on_config）。
-        img, hits, hovers = render_mod_list(rows, self._icon_imgs,
-                                    on_toggle=self._on_toggle if is_server else None,
-                                    on_config=self._on_config, on_link=self._on_link,
-                                    on_copy_id=self._on_copy_id,
-                                    ref_width=ref_width,
-                                    icon_thumb_cache=self._icon_thumb_cache)
+        img, hits, hovers = render_mod_list(
+            rows,
+            self._icon_imgs,
+            on_toggle=self._on_toggle if is_server else None,
+            on_config=self._on_config,
+            on_link=self._on_link,
+            on_copy_id=self._on_copy_id,
+            ref_width=ref_width,
+            icon_thumb_cache=self._icon_thumb_cache,
+        )
         self.list_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
 
     def _on_mod_list_hover(self, payload, x_root, y_root):
@@ -1441,31 +2526,44 @@ class ModManagerTab:
             tip.attributes("-topmost", True)
         except Exception:
             pass
-        tk.Label(tip, text=payload, justify=tk.LEFT, background="#ffffe0",
-                relief=tk.SOLID, borderwidth=1, wraplength=280,
-                font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=4, ipady=2)
+        tk.Label(
+            tip,
+            text=payload,
+            justify=tk.LEFT,
+            background="#ffffe0",
+            relief=tk.SOLID,
+            borderwidth=1,
+            wraplength=280,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        ).pack(ipadx=4, ipady=2)
 
     def _render_placeholder(self, text, ref_width=None):
         from PIL import Image as _Image, ImageDraw as _ImageDraw
         from dstools.shared.gui.fonts import get_font
         from dstools.features.mod.render import REF_WIDTH
+
         w = ref_width or self.list_panel.current_width(REF_WIDTH)
         img = _Image.new("RGB", (w, 60), theme.CARD_BG)
         if text:
             draw = _ImageDraw.Draw(img)
-            draw.text((w / 2, 30), text, font=get_font(16), fill=theme.TEXT_MUTED, anchor="mm")
+            draw.text(
+                (w / 2, 30), text, font=get_font(16), fill=theme.TEXT_MUTED, anchor="mm"
+            )
         self.list_panel.set_image(img, [], keep_scroll=True)
 
     def _on_toggle(self, workshop_id):
         # 只读兜底：_render_list() 已经不会在本地存档下给开关注册点击
         # 区域，正常点不到这里；这里再挡一道防止别的路径漏调。
         c = self._get_cluster()
-        if not c or c.source != SaveSource.SERVER: return
+        if not c or c.source != SaveSource.SERVER:
+            return
         # LuaJIT 补丁生效时配套 mod 强制锁开——同上，正常点不到这里（渲染
         # 时就没注册点击区域），这里是第二道防线。
-        if self._luajit_mod_locked and workshop_id == luajit_injector.WORKSHOP_MOD_KEY: return
+        if self._luajit_mod_locked and workshop_id == luajit_injector.WORKSHOP_MOD_KEY:
+            return
         mod = self._mod_data.get(workshop_id)
-        if not mod: return
+        if not mod:
+            return
         mod.enabled = not mod.enabled
         normalized_id = str(workshop_id).removeprefix("workshop-")
         if normalized_id == IA_SHIPWRECKED_MOD_ID and mod.enabled:
@@ -1517,34 +2615,56 @@ class ModManagerTab:
     def _on_config(self, workshop_id):
         mod = self._mod_data.get(workshop_id)
         mod_info = self._mod_infos.get(workshop_id)
-        if not mod or not mod_info: return
-        if not mod_info.config_options and not mod_info.unsupported_schema: return
+        if not mod or not mod_info:
+            return
+        if not mod_info.config_options and not mod_info.unsupported_schema:
+            return
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
         if mod_info.client_only:
             # client_only 的 mod 不绑定任何存档的 modoverrides.lua，所
             # 以没有真实的"当前已保存"配置可编辑——弹窗以只读方式打开，
             # 显示每个选项自己的默认值。
-            ModConfigDialog(self, workshop_id, mod, mod_info, read_only=True, read_only_reason="client_only")
+            ModConfigDialog(
+                self,
+                workshop_id,
+                mod,
+                mod_info,
+                read_only=True,
+                read_only_reason="client_only",
+            )
         elif not is_server:
             # 本地存档：只读查看，不给改（见 on_cluster_changed 顶部的说明）。
-            ModConfigDialog(self, workshop_id, mod, mod_info, read_only=True, read_only_reason="local_save")
+            ModConfigDialog(
+                self,
+                workshop_id,
+                mod,
+                mod_info,
+                read_only=True,
+                read_only_reason="local_save",
+            )
         else:
             ModConfigDialog(self, workshop_id, mod, mod_info)
 
     def _on_link(self, workshop_id):
         numeric_id = workshop_id.replace("workshop-", "")
-        if not numeric_id.isdigit(): return
+        if not numeric_id.isdigit():
+            return
         import webbrowser
+
         c = self._get_cluster()
         if c and c.platform == Platform.WEGAME:
             # 2000004 是 WeGame 版《饥荒：联机版》客户端自己的 game_id
             # （真机验证过：客户端安装目录下 rail_files/rail_game_identify.json
             # 里就是这个值），是这个游戏本身固定的标识符，不随用户安装
             # 位置变化，不需要现查。
-            webbrowser.open(f"https://www.wegame.com.cn/pc_game/assistant.html#/2000004/newMod/{numeric_id}")
+            webbrowser.open(
+                f"https://www.wegame.com.cn/pc_game/assistant.html#/2000004/newMod/{numeric_id}"
+            )
         else:
-            webbrowser.open(f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}")
+            webbrowser.open(
+                f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}"
+            )
 
     def _open_recommend_mods(self):
         """订阅推荐模组引导：列出推荐 mod（图标 + 名称 + 描述），已订阅显示
@@ -1573,8 +2693,9 @@ class ModManagerTab:
         # 左侧主体：canvas（列表）+ 底部关闭按钮
         main = tk.Frame(win, bg=theme.CARD_BG)
         main.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        canvas = tk.Canvas(main, width=800, height=520, highlightthickness=0,
-                           bd=0, bg=theme.CARD_BG)
+        canvas = tk.Canvas(
+            main, width=800, height=520, highlightthickness=0, bd=0, bg=theme.CARD_BG
+        )
         canvas.configure(yscrollcommand=vbar.set)
         vbar.configure(command=canvas.yview)
         canvas.pack(fill=tk.BOTH, expand=True)
@@ -1642,16 +2763,36 @@ class ModManagerTab:
             text_col.pack(side=tk.LEFT, fill=tk.X, expand=True)
             name_row = tk.Frame(text_col, bg=theme.CARD_BG)
             name_row.pack(fill=tk.X)
-            tk.Label(name_row, text=name, anchor=tk.W, bg=theme.CARD_BG, fg=theme.TEXT,
-                     font=theme.font_tuple(theme.FONT_SIZE_LG, bold=True)).pack(side=tk.LEFT)
+            tk.Label(
+                name_row,
+                text=name,
+                anchor=tk.W,
+                bg=theme.CARD_BG,
+                fg=theme.TEXT,
+                font=theme.font_tuple(theme.FONT_SIZE_LG, bold=True),
+            ).pack(side=tk.LEFT)
             if is_mod_subscribed(wid):
-                tk.Label(name_row, text=t("mod.recommend_subscribed"), bg=theme.CARD_BG,
-                         fg=theme.TEXT_MUTED).pack(side=tk.RIGHT)
+                tk.Label(
+                    name_row,
+                    text=t("mod.recommend_subscribed"),
+                    bg=theme.CARD_BG,
+                    fg=theme.TEXT_MUTED,
+                ).pack(side=tk.RIGHT)
             else:
-                ttk.Button(name_row, text=t("mod.recommend_subscribe"),
-                           command=lambda w=wid: self._on_link(f"workshop-{w}")).pack(side=tk.RIGHT)
-            tk.Label(text_col, text=desc, anchor=tk.W, justify=tk.LEFT, wraplength=680,
-                     bg=theme.CARD_BG, fg=theme.TEXT_MUTED).pack(fill=tk.X, pady=(3, 0))
+                ttk.Button(
+                    name_row,
+                    text=t("mod.recommend_subscribe"),
+                    command=lambda w=wid: self._on_link(f"workshop-{w}"),
+                ).pack(side=tk.RIGHT)
+            tk.Label(
+                text_col,
+                text=desc,
+                anchor=tk.W,
+                justify=tk.LEFT,
+                wraplength=680,
+                bg=theme.CARD_BG,
+                fg=theme.TEXT_MUTED,
+            ).pack(fill=tk.X, pady=(3, 0))
 
         ttk.Button(main, text=t("dlg.close_btn"), command=win.destroy).pack(pady=16)
         center_over_parent(win, self.frame.winfo_toplevel())
@@ -1678,8 +2819,15 @@ class ModManagerTab:
             tip.attributes("-topmost", True)
         except Exception:
             pass
-        tk.Label(tip, text=text, justify=tk.LEFT, background="#323232", foreground="#ffffff",
-                 font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(ipadx=8, ipady=4)
+        tk.Label(
+            tip,
+            text=text,
+            justify=tk.LEFT,
+            background="#323232",
+            foreground="#ffffff",
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        ).pack(ipadx=8, ipady=4)
+
         # 停留 700ms 后开始淡出（逐步降 alpha 到 0）再销毁，比直接消失柔和。
         def _fade_out(step: int = 0, total: int = 8, interval: int = 40):
             if step >= total:
@@ -1692,12 +2840,17 @@ class ModManagerTab:
                 tip.destroy()
                 return
             tip.after(interval, lambda: _fade_out(step + 1))
+
         tip.after(700, lambda: _fade_out())
 
     def _save_mods(self, silent=False):
-        c = self._get_cluster(); s = self.app._current_shard
+        c = self._get_cluster()
+        s = self.app._current_shard
         if not c or not s or not s.mod_overrides_path or c.source != SaveSource.SERVER:
-            if not silent: dlg.show_warning(self.app.root, t("mod.save_btn"), t("dlg.no_overrides"))
+            if not silent:
+                dlg.show_warning(
+                    self.app.root, t("mod.save_btn"), t("dlg.no_overrides")
+                )
             return
         overrides = load_mod_overrides(s.mod_overrides_path)
         self._write_mod_states(overrides)
@@ -1714,18 +2867,27 @@ class ModManagerTab:
             # 跟这次操作毫无关系的历史记录，数字本身没有传达任何有用信
             # 息，只会让人怀疑是不是哪里操作错了）。
             enabled_count = sum(1 for m in overrides.mods.values() if m.enabled)
-            dlg.show_info(self.app.root, t("dlg.save_ok"),
-                          t("dlg.saved_mods", count=enabled_count, shard=s.name))
+            dlg.show_info(
+                self.app.root,
+                t("dlg.save_ok"),
+                t("dlg.saved_mods", count=enabled_count, shard=s.name),
+            )
             # “保存修改”是常规操作：保存当前世界后自动把同一份状态同步
             # 到其它世界，不再额外弹确认框，避免用户以为已经保存但实际
             # 仍有其它世界没有更新。
-            other_shards = [sh for sh in c.shards if sh.name != s.name and sh.mod_overrides_path]
+            other_shards = [
+                sh for sh in c.shards if sh.name != s.name and sh.mod_overrides_path
+            ]
             cnt = 0
             for sh in other_shards:
                 dst = load_mod_overrides(sh.mod_overrides_path)
-                sync_mods(overrides, dst); save_mod_overrides(dst); cnt += 1
+                sync_mods(overrides, dst)
+                save_mod_overrides(dst)
+                cnt += 1
             if cnt:
-                dlg.show_info(self.app.root, t("mod.save_btn"), t("dlg.sync_done", count=cnt))
+                dlg.show_info(
+                    self.app.root, t("mod.save_btn"), t("dlg.sync_done", count=cnt)
+                )
             self._refresh_mods()
 
     def _write_mod_states(self, overrides):
@@ -1747,7 +2909,9 @@ class ModManagerTab:
         for wid, mod in self._mod_data.items():
             if wid in overrides.mods:
                 overrides.mods[wid].enabled = mod.enabled
-                overrides.mods[wid].configuration_options = dict(mod.configuration_options)
+                overrides.mods[wid].configuration_options = dict(
+                    mod.configuration_options
+                )
             elif mod.enabled or mod.configuration_options:
                 config = dict(mod.configuration_options)
                 if not config:
@@ -1758,20 +2922,40 @@ class ModManagerTab:
                     # 这个前提没法保证）。
                     info = self._mod_infos.get(wid)
                     if info:
-                        config = {opt.name: opt.default for opt in info.config_options if not opt.is_header}
-                overrides.mods[wid] = ModEntry(workshop_id=wid, enabled=mod.enabled,
-                                               configuration_options=config)
+                        config = {
+                            opt.name: opt.default
+                            for opt in info.config_options
+                            if not opt.is_header
+                        }
+                overrides.mods[wid] = ModEntry(
+                    workshop_id=wid, enabled=mod.enabled, configuration_options=config
+                )
 
     def _apply_current_shard(self):
-        c = self._get_cluster(); src = self.app._current_shard
-        if not c or not src or not src.mod_overrides_path or c.source != SaveSource.SERVER: return
-        if not dlg.ask_yes_no(self.app.root, t("mod.apply_current"), t("dlg.apply_current_confirm", shard=src.name)):
+        c = self._get_cluster()
+        src = self.app._current_shard
+        if (
+            not c
+            or not src
+            or not src.mod_overrides_path
+            or c.source != SaveSource.SERVER
+        ):
+            return
+        if not dlg.ask_yes_no(
+            self.app.root,
+            t("mod.apply_current"),
+            t("dlg.apply_current_confirm", shard=src.name),
+        ):
             return
         overrides = load_mod_overrides(src.mod_overrides_path)
         self._write_mod_states(overrides)
         save_mod_overrides(overrides)
         self.app.mark_world_tab_stale()
-        dlg.show_info(self.app.root, t("mod.apply_current"), t("dlg.current_saved", shard=src.name))
+        dlg.show_info(
+            self.app.root,
+            t("mod.apply_current"),
+            t("dlg.current_saved", shard=src.name),
+        )
         self._refresh_mods()
 
     def _resolve_wegame_sync_dirs(self):
@@ -1788,7 +2972,11 @@ class ModManagerTab:
         if server_dir is not None and client_dir is not None:
             return server_dir, client_dir / "mods"
 
-        if not dlg.ask_yes_no(self.app.root, t("local.sync_mods_btn"), t("local.wegame_root_picker_prompt")):
+        if not dlg.ask_yes_no(
+            self.app.root,
+            t("local.sync_mods_btn"),
+            t("local.wegame_root_picker_prompt"),
+        ):
             return None, None
         chosen = filedialog.askdirectory(title=t("local.wegame_root_picker_title"))
         if not chosen:
@@ -1797,41 +2985,88 @@ class ModManagerTab:
         server_dir = find_wegame_server_dir(root)
         client_dir = find_wegame_client_dir(root)
         if server_dir is None or client_dir is None:
-            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.wegame_root_picker_invalid"))
+            dlg.show_warning(
+                self.app.root,
+                t("local.sync_mods_btn"),
+                t("local.wegame_root_picker_invalid"),
+            )
             return None, None
         app_settings.set_wegame_root_path(root)
         return server_dir, client_dir / "mods"
 
     def _remove_mod_sync_junction(self, cluster):
-        """"删除mod软连接"——撤销 apply_mod_sync() 建的目录联接。这是按
+        """ "删除mod软连接"——撤销 apply_mod_sync() 建的目录联接。这是按
         整台机器一次性生效的全局设置，跟具体哪个存档无关，用
         _passive_sync_dirs() 拿 install_dir（跟检测按钮该显示哪个文字用
         的是同一份只读逻辑），不会弹 WeGame 根目录选择框——能走到这个分
         支说明前面 refresh_sync_button_state() 已经探测到联接确实存在，
         install_dir 理应已经能不弹窗地解析出来。"""
-        if not dlg.ask_yes_no(self.app.root, t("local.remove_junction_btn"), t("local.remove_junction_confirm_msg")):
+        if not dlg.ask_yes_no(
+            self.app.root,
+            t("local.remove_junction_btn"),
+            t("local.remove_junction_confirm_msg"),
+            wraplength=640,
+            min_width=720,
+        ):
             return
         install_dir, _client_mods_dir = self._passive_sync_dirs(cluster)
         if install_dir is None:
             return
-        try:
-            removed = remove_mod_sync_junction(install_dir)
-        except OSError as exc:
-            dlg.show_warning(
-                self.app.root,
-                t("local.remove_junction_btn"),
-                t("sync.error_prefix", detail=str(exc)),
-            )
-            return
-        if not removed:
+        _server_dir, client_mods_dir = self._passive_sync_dirs(cluster)
+        self._md_sync.configure(state=tk.DISABLED, text=t("local.sync_running_btn"))
+        log_dialog = ModSyncLogDialog(
+            self.app.root, title=t("local.remove_junction_btn")
+        )
+        log_queue: "queue.Queue" = queue.Queue()
+
+        def worker():
+            try:
+                result = detach_mod_sync_junction(
+                    install_dir, client_mods_dir, on_log=log_queue.put
+                )
+            except Exception as exc:
+                result = None
+                log_queue.put(t("sync.error_prefix", detail=str(exc)))
+            log_queue.put(("result", result))
+
+        def poll():
+            finished = False
+            removal = None
+            while True:
+                try:
+                    item = log_queue.get_nowait()
+                except queue.Empty:
+                    break
+                if isinstance(item, tuple) and item[0] == "result":
+                    finished = True
+                    removal = item[1]
+                    break
+                log_dialog.append(str(item))
+            if not finished:
+                self.frame.after(100, poll)
+                return
+            if removal is not None:
+                for error in removal.errors:
+                    log_dialog.append(t("sync.error_prefix", detail=error))
+                if removal.removed and removal.copied:
+                    log_dialog.append(
+                        t(
+                            "local.remove_junction_done_detail",
+                            count=len(removal.copied_entries),
+                        )
+                    )
+            log_dialog.finish()
+            self._md_sync.configure(state=tk.NORMAL)
             self.refresh_sync_button_state()
-            return
-        dlg.show_info(self.app.root, t("local.remove_junction_btn"), t("local.remove_junction_done"))
-        self.refresh_sync_button_state()
+
+        threading.Thread(
+            target=worker, name="dstcamp-mod-junction-detach", daemon=True
+        ).start()
+        self.frame.after(100, poll)
 
     def _sync_mods_to_server(self):
         """把服务器 mods/ 目录整体替换成指向客户端 mods/ 文件夹的目录联
-        接（见 dstools/core/mod_sync.py）——这是按这台机器一次性生效的，
+        接（见 features/mod/sync.py）——这是按这台机器一次性生效的，
         不是针对某个具体存档，但入口还是放在这个按钮下，方便和"这个存档
         有没有启用 mod"的前置判断放在一起。不受 self._dirty 门控——跟这
         次编辑会话有没有点过"保存"无关，随时可以点。
@@ -1840,17 +3075,23 @@ class ModManagerTab:
         refresh_sync_button_state()），点击走撤销流程而不是重新建联接。"""
         c = self._get_cluster()
         if not c or c.source != SaveSource.SERVER:
-            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.select_cluster_first"))
+            dlg.show_warning(
+                self.app.root, t("local.sync_mods_btn"), t("local.select_cluster_first")
+            )
             return
         if self._server_running_for(c):
-            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.sync_running_hover"))
+            dlg.show_warning(
+                self.app.root, t("local.sync_mods_btn"), t("local.sync_running_hover")
+            )
             self.refresh_sync_button_state()
             return
         if self._sync_already_linked:
             self._remove_mod_sync_junction(c)
             return
         if not get_enabled_mod_ids(c):
-            dlg.show_info(self.app.root, t("local.sync_mods_btn"), t("local.sync_no_mods"))
+            dlg.show_info(
+                self.app.root, t("local.sync_mods_btn"), t("local.sync_no_mods")
+            )
             return
 
         if c.platform == Platform.WEGAME:
@@ -1866,24 +3107,40 @@ class ModManagerTab:
 
         plan = plan_mod_sync(install_dir, client_mods_dir)
         if plan.client_mods_dir is None:
-            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), t("local.sync_no_client_mods_dir"))
+            dlg.show_warning(
+                self.app.root,
+                t("local.sync_mods_btn"),
+                t("local.sync_no_client_mods_dir"),
+            )
             return
         if plan.invalid_reason:
-            dlg.show_warning(self.app.root, t("local.sync_mods_btn"), plan.invalid_reason)
+            dlg.show_warning(
+                self.app.root, t("local.sync_mods_btn"), plan.invalid_reason
+            )
             return
         if plan.needs_confirm_delete:
             if plan.lost_on_replace:
-                detail = t("local.sync_replace_lost_detail", items="、".join(plan.lost_on_replace))
+                detail = t(
+                    "local.sync_replace_lost_detail",
+                    items="、".join(plan.lost_on_replace),
+                )
             elif plan.target_kind == "file":
                 detail = t("local.sync_replace_file_detail")
             elif plan.target_kind in {"junction", "link"}:
                 detail = t("local.sync_replace_link_detail")
             else:
                 detail = t("local.sync_replace_nothing_lost")
-            if plan.backup_path is not None:
-                detail += "\n" + t("local.sync_backup_detail", path=str(plan.backup_path))
-            if not dlg.ask_yes_no(self.app.root, t("local.sync_mods_btn"),
-                                   t("local.sync_replace_confirm_msg", detail=detail)):
+            if not dlg.ask_yes_no(
+                self.app.root,
+                t("local.sync_mods_btn"),
+                t(
+                    "local.sync_replace_confirm_msg",
+                    path=str(Path(install_dir) / "mods"),
+                    detail=detail,
+                ),
+                wraplength=640,
+                min_width=720,
+            ):
                 return
 
         self._md_sync.configure(state=tk.DISABLED, text=t("local.sync_running_btn"))
@@ -1923,21 +3180,31 @@ class ModManagerTab:
 
     def refresh_language(self):
         self._md_lbl2.redraw()
-        self._md_br.configure(text=t("mod.reload_full")); self._md_bs.configure(text=t("mod.save_btn"))
+        self._md_br.configure(text=t("mod.reload_full"))
+        self._md_bs.configure(text=t("mod.save_btn"))
         self._md_update_workshop.configure(text=t("mod.workshop_update_btn"))
         self._md_ba.configure(text=t("mod.apply_current"))
         self._md_sync.configure(
-            text=t("local.remove_junction_btn") if self._sync_already_linked else t("local.sync_mods_btn"))
+            text=t("local.remove_junction_btn")
+            if self._sync_already_linked
+            else t("local.sync_mods_btn")
+        )
         self._md_preset_save.configure(text=t("mod.preset_save_btn"))
         self._md_preset_apply.configure(text=t("mod.preset_apply_btn"))
         self._md_filt.redraw()
         self._md_filter_chips.redraw()
-        self._md_rl.configure(text=t("mod.back_to_list") if self.show_local_var.get() else t("mod.show_local"))
+        self._md_rl.configure(
+            text=t("mod.back_to_list")
+            if self.show_local_var.get()
+            else t("mod.show_local")
+        )
         c = self._get_cluster()
         self._md_local_banner.set_text(
-            t("mod.no_save_banner") if c is None else t("mod.local_view_only_banner"))
+            t("mod.no_save_banner") if c is None else t("mod.local_view_only_banner")
+        )
         self._md_wegame_banner.set_text(t("mod.wegame_root_needed_banner"))
         self._md_runtime_banner.set_text(t("mod.ktech_runtime_missing_banner"))
+        self._update_workshop_update_hint()
         self._mod_location_recheck_btn.configure(text=t("local.install_recheck_btn"))
         self._mod_location_change_btn.configure(text=t("local.install_change_btn"))
         self._redraw_mod_location_row_text()
@@ -1956,8 +3223,11 @@ class ModManagerTab:
         self._md_lbl2.redraw()
         self._md_filt.redraw()
         self._md_filter_chips.redraw()
+        self._md_update_hint.redraw()
+        self._md_update_status.redraw()
 
-    def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())
+    def refresh(self):
+        self.on_cluster_changed(self.app.get_selected_cluster())
 
     def refresh_full(self):
         """供 DSToolsApp._refresh()（"刷新全部"）使用——总是强制跑一遍
@@ -1971,18 +3241,22 @@ class ModManagerTab:
         self._refresh_mods(full=True)
 
     def _save_as_preset(self):
-        """"保存为配置集"按钮——弹出勾选对话框，把选中的这些 mod 当前的
+        """ "保存为配置集"按钮——弹出勾选对话框，把选中的这些 mod 当前的
         启用/配置状态打包存起来。"""
         if self._loading:
             dlg.show_info(self.app.root, t("mod.preset_save_btn"), t("mod.loading"))
             return
         if not self._mod_data:
-            dlg.show_warning(self.app.root, t("mod.preset_save_btn"), t("preset.no_mods_selected_in_tab"))
+            dlg.show_warning(
+                self.app.root,
+                t("mod.preset_save_btn"),
+                t("preset.no_mods_selected_in_tab"),
+            )
             return
         _SavePresetDialog(self)
 
     def _apply_preset_dialog(self):
-        """"应用配置集"按钮——弹出已保存配置集的选择器，选中后先给一份
+        """ "应用配置集"按钮——弹出已保存配置集的选择器，选中后先给一份
         预览报告（见 presets.plan_apply_preset），确认了才真正写盘。"""
         if self._loading:
             dlg.show_info(self.app.root, t("mod.preset_apply_btn"), t("mod.loading"))
@@ -1991,7 +3265,7 @@ class ModManagerTab:
 
 
 class _SavePresetDialog:
-    """"保存为配置集"弹窗——名字输入 + 勾选要打包哪些 mod（默认勾选当
+    """ "保存为配置集"弹窗——名字输入 + 勾选要打包哪些 mod（默认勾选当
     前已启用的），确认后调用 presets.capture_preset()/save_preset()。"""
 
     # 加宽到能放下大多数 mod 的中英文合并标题而不换行（少数超长的仍然会
@@ -2009,23 +3283,36 @@ class _SavePresetDialog:
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
 
-        ttk.Label(win, text=t("preset.save_name_label")).pack(anchor=tk.W, padx=20, pady=(20, 4))
+        ttk.Label(win, text=t("preset.save_name_label")).pack(
+            anchor=tk.W, padx=20, pady=(20, 4)
+        )
         self.name_var = tk.StringVar()
         ttk.Entry(win, textvariable=self.name_var, width=40).pack(fill=tk.X, padx=20)
 
-        ttk.Label(win, text=t("preset.save_select_hint"), wraplength=self._DIALOG_W - 40,
-                  justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(14, 4))
+        ttk.Label(
+            win,
+            text=t("preset.save_select_hint"),
+            wraplength=self._DIALOG_W - 40,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=20, pady=(14, 4))
 
         list_frame = ttk.Frame(win)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
         list_w = self._DIALOG_W - 40
         # background=theme.BG_SOFT——不设的话 tk.Canvas 默认是系统灰
         # （跟 win/body 用的主题背景色对不上，露出一块突兀的灰色）。
-        canvas = tk.Canvas(list_frame, height=self._LIST_H, width=list_w,
-                            highlightthickness=0, background=theme.BG_SOFT)
+        canvas = tk.Canvas(
+            list_frame,
+            height=self._LIST_H,
+            width=list_w,
+            highlightthickness=0,
+            background=theme.BG_SOFT,
+        )
         vbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=canvas.yview)
         body = ttk.Frame(canvas)
-        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        body.bind(
+            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
         # create_window 不传 width 的话，嵌入的 body 只会按自己内容算出的
         # 实际宽度显示（这批 mod 名字大多比 list_w 短很多），canvas 比
         # body 多出来的那一截就会露出上面那个背景色——一样会看到一条空
@@ -2039,8 +3326,13 @@ class _SavePresetDialog:
         # 按 mod 名字排序展示，跟主列表一样以名字为准，不是 dict 插入顺序
         # （dict 插入顺序其实是"已启用优先"，这里不需要那个视觉效果）。
         from dstools.shared.gui.tooltip import Tooltip
-        ordered_ids = sorted(tab._mod_data.keys(),
-                              key=lambda wid: (tab._mod_infos.get(wid).name if tab._mod_infos.get(wid) else "") or wid)
+
+        ordered_ids = sorted(
+            tab._mod_data.keys(),
+            key=lambda wid: (
+                (tab._mod_infos.get(wid).name if tab._mod_infos.get(wid) else "") or wid
+            ),
+        )
         # ttk::checkbutton 没有 -wraplength 选项（那是 ttk::label 独有
         # 的，实测直接传会抛 TclError），所以用跟 ModConfigDialog 同款的
         # "按像素宽度截断 + 完整内容放 Tooltip"，而不是指望自动换行——先
@@ -2067,14 +3359,19 @@ class _SavePresetDialog:
 
         def _make_row(parent, wid: str, default_checked: bool) -> None:
             info = tab._mod_infos.get(wid)
-            name = _localize_mod_name(wid, (info.name if info else "") or wid)
+            name = localize_mod_name(wid, (info.name if info else "") or wid)
             var = tk.BooleanVar(value=default_checked)
             self.vars[wid] = var
             full_text = f"{name}  ({wid})"
             shown_text = _truncate(full_text)
-            row_lbl = tk.Label(parent, anchor=tk.W, justify=tk.LEFT,
-                                background=theme.BG_SOFT, foreground=theme.TEXT,
-                                font=name_font)
+            row_lbl = tk.Label(
+                parent,
+                anchor=tk.W,
+                justify=tk.LEFT,
+                background=theme.BG_SOFT,
+                foreground=theme.TEXT,
+                font=name_font,
+            )
 
             def _redraw(lbl=row_lbl, v=var, text=shown_text):
                 mark = "☑" if v.get() else "☐"
@@ -2111,8 +3408,15 @@ class _SavePresetDialog:
         if disabled_ids:
             toggle_shown = tk.BooleanVar(value=False)
             self._toggle_shown = toggle_shown
-            toggle_lbl = tk.Label(body, anchor=tk.W, justify=tk.LEFT, cursor="hand2",
-                                   background=theme.BG_SOFT, foreground=theme.ACCENT, font=name_font)
+            toggle_lbl = tk.Label(
+                body,
+                anchor=tk.W,
+                justify=tk.LEFT,
+                cursor="hand2",
+                background=theme.BG_SOFT,
+                foreground=theme.ACCENT,
+                font=name_font,
+            )
             self._toggle_lbl = toggle_lbl
             disabled_frame = tk.Frame(body, background=theme.BG_SOFT)
             self._disabled_frame = disabled_frame
@@ -2121,7 +3425,9 @@ class _SavePresetDialog:
 
             def _redraw_toggle():
                 arrow = "▾" if toggle_shown.get() else "▸"
-                toggle_lbl.configure(text=f"{arrow} {t('preset.expand_disabled_btn', count=len(disabled_ids))}")
+                toggle_lbl.configure(
+                    text=f"{arrow} {t('preset.expand_disabled_btn', count=len(disabled_ids))}"
+                )
 
             def _toggle_disabled_section(_event=None):
                 toggle_shown.set(not toggle_shown.get())
@@ -2161,12 +3467,18 @@ class _SavePresetDialog:
             widget.bind("<MouseWheel>", _on_wheel)
             for child in widget.winfo_children():
                 _bind_wheel(child)
+
         _bind_wheel(body)
         canvas.bind("<MouseWheel>", _on_wheel)
 
-        btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=20)
-        ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
-        ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill=tk.X, padx=20, pady=20)
+        ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._cancel).pack(
+            side=tk.LEFT
+        )
+        ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=self._confirm).pack(
+            side=tk.RIGHT
+        )
 
         win.protocol("WM_DELETE_WINDOW", self._cancel)
         root = tab.frame.winfo_toplevel()
@@ -2179,21 +3491,37 @@ class _SavePresetDialog:
     def _confirm(self):
         name = self.name_var.get().strip()
         if not name:
-            dlg.show_warning(self.win, t("preset.save_dialog_title"), t("preset.save_name_empty"))
+            dlg.show_warning(
+                self.win, t("preset.save_dialog_title"), t("preset.save_name_empty")
+            )
             return
         selected = {wid for wid, v in self.vars.items() if v.get()}
         if not selected:
-            dlg.show_warning(self.win, t("preset.save_dialog_title"), t("preset.save_none_selected"))
+            dlg.show_warning(
+                self.win, t("preset.save_dialog_title"), t("preset.save_none_selected")
+            )
             return
         if presets.find_preset(name) and not dlg.ask_yes_no(
-                self.win, t("preset.save_dialog_title"), t("preset.save_overwrite_confirm", name=name)):
+            self.win,
+            t("preset.save_dialog_title"),
+            t("preset.save_overwrite_confirm", name=name),
+        ):
             return
         cluster = self.tab._get_cluster()
-        platform = (cluster.platform.value if cluster
-                    else getattr(self.tab, "_preset_source_platform", ""))
-        preset = presets.capture_preset(name, self.tab._mod_data, self.tab._mod_infos, selected, platform)
+        platform = (
+            cluster.platform.value
+            if cluster
+            else getattr(self.tab, "_preset_source_platform", "")
+        )
+        preset = presets.capture_preset(
+            name, self.tab._mod_data, self.tab._mod_infos, selected, platform
+        )
         presets.save_preset(preset, overwrite=True)
-        dlg.show_info(self.win, t("preset.save_dialog_title"), t("preset.save_done", name=name, count=len(selected)))
+        dlg.show_info(
+            self.win,
+            t("preset.save_dialog_title"),
+            t("preset.save_done", name=name, count=len(selected)),
+        )
         self.win.destroy()
 
     def _cancel(self):
@@ -2201,7 +3529,7 @@ class _SavePresetDialog:
 
 
 class _ApplyPresetDialog:
-    """"应用配置集"弹窗——选一个已保存的配置集，点"应用"先弹出预览报告
+    """ "应用配置集"弹窗——选一个已保存的配置集，点"应用"先弹出预览报告
     （_ApplyReportDialog），确认后才真正写盘。"""
 
     def __init__(self, tab: ModManagerTab):
@@ -2214,7 +3542,9 @@ class _ApplyPresetDialog:
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
 
-        ttk.Label(win, text=t("preset.apply_pick_hint")).pack(anchor=tk.W, padx=20, pady=(20, 8))
+        ttk.Label(win, text=t("preset.apply_pick_hint")).pack(
+            anchor=tk.W, padx=20, pady=(20, 8)
+        )
         # 跟 save_browser/tab.py._RestoreBackupDialog 的列表同款字体
         # （theme.FONT_FAMILY/FONT_SIZE_BASE）——之前用的是等宽字体
         # Consolas，中文配置集名字用等宽字体渲染字宽参差不齐，看着很怪。
@@ -2224,12 +3554,18 @@ class _ApplyPresetDialog:
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20)
         scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.listbox = tk.Listbox(list_frame, height=8, font=theme.font_tuple(theme.FONT_SIZE_BASE),
-                                   yscrollcommand=scrollbar.set, exportselection=False)
+        self.listbox = tk.Listbox(
+            list_frame,
+            height=8,
+            font=theme.font_tuple(theme.FONT_SIZE_BASE),
+            yscrollcommand=scrollbar.set,
+            exportselection=False,
+        )
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.configure(command=self.listbox.yview)
 
-        btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=(10, 20))
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill=tk.X, padx=20, pady=(10, 20))
         # "删除"(左) 跟"应用"/"取消"(右) 中间原来没有留白——pack() 的
         # side=LEFT/side=RIGHT 只各自从窗口两边往中间排，中间空隙纯粹
         # 靠窗口比按钮总宽度富余出来的那部分撑开，没有显式保留。默认
@@ -2238,9 +3574,15 @@ class _ApplyPresetDialog:
         # 实际内容收紧，富余空间归零，"删除"和"应用"就贴在一起了（真机
         # 反馈过）。给"删除"补一个右侧 padx，不管窗口宽不宽裕都留出这一
         # 块间距。
-        ttk.Button(btn_row, text=t("preset.delete_btn"), command=self._delete).pack(side=tk.LEFT, padx=(0, 16))
-        ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._close).pack(side=tk.RIGHT)
-        ttk.Button(btn_row, text=t("preset.apply_btn"), command=self._apply).pack(side=tk.RIGHT, padx=(0, 6))
+        ttk.Button(btn_row, text=t("preset.delete_btn"), command=self._delete).pack(
+            side=tk.LEFT, padx=(0, 16)
+        )
+        ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._close).pack(
+            side=tk.RIGHT
+        )
+        ttk.Button(btn_row, text=t("preset.apply_btn"), command=self._apply).pack(
+            side=tk.RIGHT, padx=(0, 6)
+        )
 
         self._refresh_listbox()
         win.protocol("WM_DELETE_WINDOW", self._close)
@@ -2271,7 +3613,11 @@ class _ApplyPresetDialog:
             return
         c = self.tab._get_cluster()
         if not c or c.source != SaveSource.SERVER:
-            dlg.show_warning(self.win, t("preset.apply_dialog_title"), t("local.select_cluster_first"))
+            dlg.show_warning(
+                self.win,
+                t("preset.apply_dialog_title"),
+                t("local.select_cluster_first"),
+            )
             return
         plan = presets.plan_apply_preset(preset, self.tab._mod_infos)
         report = _ApplyReportDialog(self.win, plan)
@@ -2279,7 +3625,11 @@ class _ApplyPresetDialog:
             return
         count = presets.apply_preset(c, plan, clear_first=report.clear_first)
         self.tab.app.mark_world_tab_stale()
-        dlg.show_info(self.win, t("preset.apply_dialog_title"), t("preset.applied_done", count=count))
+        dlg.show_info(
+            self.win,
+            t("preset.apply_dialog_title"),
+            t("preset.applied_done", count=count),
+        )
         self.tab._refresh_mods(full=False)
         self._close()
 
@@ -2287,7 +3637,11 @@ class _ApplyPresetDialog:
         preset = self._selected_preset()
         if not preset:
             return
-        if not dlg.ask_yes_no(self.win, t("preset.delete_btn"), t("preset.delete_confirm", name=preset.name)):
+        if not dlg.ask_yes_no(
+            self.win,
+            t("preset.delete_btn"),
+            t("preset.delete_confirm", name=preset.name),
+        ):
             return
         presets.delete_preset(preset.name)
         self._presets = presets.list_presets()
@@ -2312,32 +3666,56 @@ class _ApplyReportDialog:
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
 
-        body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=20, pady=(20, 0))
-        ttk.Label(body, text=t("preset.report_ok_count", count=len(plan.ok_ids))).pack(anchor=tk.W)
+        body = ttk.Frame(win)
+        body.pack(fill=tk.BOTH, expand=True, padx=20, pady=(20, 0))
+        ttk.Label(body, text=t("preset.report_ok_count", count=len(plan.ok_ids))).pack(
+            anchor=tk.W
+        )
 
         def _section(title_key, items, color):
             if not items:
                 return
-            ttk.Label(body, text=t(title_key), foreground=color, wraplength=420,
-                      justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 2))
+            ttk.Label(
+                body,
+                text=t(title_key),
+                foreground=color,
+                wraplength=420,
+                justify=tk.LEFT,
+            ).pack(anchor=tk.W, pady=(10, 2))
             for text in items:
-                ttk.Label(body, text=f"· {text}", wraplength=420,
-                          justify=tk.LEFT).pack(anchor=tk.W, padx=(10, 0))
+                ttk.Label(body, text=f"· {text}", wraplength=420, justify=tk.LEFT).pack(
+                    anchor=tk.W, padx=(10, 0)
+                )
 
         missing = [i.display_name for i in plan.issues if i.kind == "missing"]
-        stale = [f"{i.display_name}: {i.detail}" for i in plan.issues if i.kind == "stale_option"]
-        invalid = [f"{i.display_name}: {i.detail}" for i in plan.issues if i.kind == "invalid_value"]
+        stale = [
+            f"{i.display_name}: {i.detail}"
+            for i in plan.issues
+            if i.kind == "stale_option"
+        ]
+        invalid = [
+            f"{i.display_name}: {i.detail}"
+            for i in plan.issues
+            if i.kind == "invalid_value"
+        ]
         _section("preset.report_issue_missing_title", missing, theme.ERROR)
         _section("preset.report_issue_stale_title", stale, "#8d6e00")
         _section("preset.report_issue_invalid_title", invalid, "#8d6e00")
         if plan.needs_configs_extended:
-            ttk.Label(body, text=t("preset.report_needs_configs_extended"), foreground="#8d6e00",
-                      wraplength=420, justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
+            ttk.Label(
+                body,
+                text=t("preset.report_needs_configs_extended"),
+                foreground="#8d6e00",
+                wraplength=420,
+                justify=tk.LEFT,
+            ).pack(anchor=tk.W, pady=(10, 0))
 
         # 跟 _SavePresetDialog 同样的理由：不用 ttk.Checkbutton（clam 主题
         # 选中态画的是"×"），自己画"☐"/"☑"。
         self.clear_var = tk.BooleanVar(value=False)
-        clear_lbl = tk.Label(win, anchor=tk.W, background=theme.BG_SOFT, foreground=theme.TEXT)
+        clear_lbl = tk.Label(
+            win, anchor=tk.W, background=theme.BG_SOFT, foreground=theme.TEXT
+        )
 
         def _redraw_clear():
             mark = "☑" if self.clear_var.get() else "☐"
@@ -2351,9 +3729,14 @@ class _ApplyReportDialog:
         clear_lbl.bind("<Button-1>", _toggle_clear)
         clear_lbl.pack(anchor=tk.W, padx=20, pady=(14, 0))
 
-        btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=20)
-        ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._cancel).pack(side=tk.LEFT)
-        ttk.Button(btn_row, text=t("preset.report_confirm_btn"), command=self._confirm).pack(side=tk.RIGHT)
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill=tk.X, padx=20, pady=20)
+        ttk.Button(btn_row, text=t("dlg.cancel_btn"), command=self._cancel).pack(
+            side=tk.LEFT
+        )
+        ttk.Button(
+            btn_row, text=t("preset.report_confirm_btn"), command=self._confirm
+        ).pack(side=tk.RIGHT)
 
         win.protocol("WM_DELETE_WINDOW", self._cancel)
         root = parent_widget.winfo_toplevel()
@@ -2410,11 +3793,21 @@ def _pack_option_desc(parent, hover_text: str) -> None:
     `ttk.Frame` 没设自定义 style，用的是 `theme.py` 里 `TFrame` 的全局
     背景 `BG_SOFT`）。"""
     desc_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
-    lines = min(_OPTION_DESC_MAX_LINES, _hover_line_count(hover_text, desc_font, _OPTION_DESC_WRAP_PX))
-    tk.Label(parent, text=hover_text, foreground=theme.TEXT_MUTED, background=theme.BG_SOFT,
-            font=desc_font, justify=tk.LEFT,
-            anchor=tk.NW, wraplength=_OPTION_DESC_WRAP_PX, height=lines,
-            ).pack(fill=tk.X, anchor=tk.W, pady=(4, 0))
+    lines = min(
+        _OPTION_DESC_MAX_LINES,
+        _hover_line_count(hover_text, desc_font, _OPTION_DESC_WRAP_PX),
+    )
+    tk.Label(
+        parent,
+        text=hover_text,
+        foreground=theme.TEXT_MUTED,
+        background=theme.BG_SOFT,
+        font=desc_font,
+        justify=tk.LEFT,
+        anchor=tk.NW,
+        wraplength=_OPTION_DESC_WRAP_PX,
+        height=lines,
+    ).pack(fill=tk.X, anchor=tk.W, pady=(4, 0))
 
 
 class ModConfigDialog:
@@ -2432,9 +3825,19 @@ class ModConfigDialog:
     用的改动。
     """
 
-    def __init__(self, tab: ModManagerTab, workshop_id: str, mod, mod_info, read_only: bool = False,
-                 read_only_reason: str = "client_only"):
-        self.tab = tab; self.workshop_id = workshop_id; self.mod = mod; self.mod_info = mod_info
+    def __init__(
+        self,
+        tab: ModManagerTab,
+        workshop_id: str,
+        mod,
+        mod_info,
+        read_only: bool = False,
+        read_only_reason: str = "client_only",
+    ):
+        self.tab = tab
+        self.workshop_id = workshop_id
+        self.mod = mod
+        self.mod_info = mod_info
         self.read_only = read_only
         self.vars: dict[str, tk.StringVar] = {}
         self.choice_maps: dict[str, dict[str, Any]] = {}
@@ -2462,7 +3865,9 @@ class ModConfigDialog:
         # 台机器缺字体"）。mod 列表那边（mod_render.py）已经在画之前调
         # fonts.strip_unrenderable() 清过一遍，这里也一样清一遍再拼进标
         # 题文字。
-        title_name = fonts.strip_unrenderable(mod_info.name or workshop_id) or workshop_id
+        title_name = (
+            fonts.strip_unrenderable(mod_info.name or workshop_id) or workshop_id
+        )
         win.title(t("mod.config_dialog_title", name=title_name))
         # 刻意不用 transient()：在 Windows 上，transient 的 Toplevel 会被
         # 画成一个"对话框"，不管 resizable() 怎么设置，Windows 自己都会
@@ -2480,11 +3885,18 @@ class ModConfigDialog:
         # 按钮栏必须先 pack 到底部，这样它总能先占好自己那一块空间，再
         # 让接下来 pack 的滚动区域去占剩下的部分——如果先 pack 会扩张的
         # 控件，它会把整个空间都占满，把按钮挤出去。
-        btn_frame = ttk.Frame(win); btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
         if not read_only:
-            ttk.Button(btn_frame, text=t("mod.apply"), command=self._apply).pack(side=tk.LEFT, padx=2)
-            ttk.Button(btn_frame, text=t("mod.reset"), command=self._reset).pack(side=tk.LEFT, padx=2)
-        ttk.Button(btn_frame, text=t("mod.back"), command=self._close).pack(side=tk.RIGHT, padx=2)
+            ttk.Button(btn_frame, text=t("mod.apply"), command=self._apply).pack(
+                side=tk.LEFT, padx=2
+            )
+            ttk.Button(btn_frame, text=t("mod.reset"), command=self._reset).pack(
+                side=tk.LEFT, padx=2
+            )
+        ttk.Button(btn_frame, text=t("mod.back"), command=self._close).pack(
+            side=tk.RIGHT, padx=2
+        )
 
         # 一个针对整个 mod 的横幅（不是逐行的）——要么这是个 client_only
         # （"本地"）mod，压根没有 modoverrides.lua 记录可编辑（见
@@ -2495,18 +3907,37 @@ class ModConfigDialog:
         # 见，不会跟着行内容一起被滚动出去。
         remaining_dynamic = sum(1 for o in mod_info.config_options if o.is_dynamic)
         if read_only:
-            banner_key = "mod.read_only_local" if read_only_reason == "client_only" else "mod.read_only_local_save"
-            ttk.Label(win, text=t(banner_key), foreground="#607d8b",
-                     wraplength=DIALOG_W - 40, justify=tk.LEFT,
-                     font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True)).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
+            banner_key = (
+                "mod.read_only_local"
+                if read_only_reason == "client_only"
+                else "mod.read_only_local_save"
+            )
+            ttk.Label(
+                win,
+                text=t(banner_key),
+                foreground="#607d8b",
+                wraplength=DIALOG_W - 40,
+                justify=tk.LEFT,
+                font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True),
+            ).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0, 6))
         if mod_info.unsupported_schema:
-            ttk.Label(win, text=t("mod.unsupported_schema"), foreground=theme.ERROR,
-                     wraplength=DIALOG_W - 40, justify=tk.LEFT,
-                     font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True)).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
+            ttk.Label(
+                win,
+                text=t("mod.unsupported_schema"),
+                foreground=theme.ERROR,
+                wraplength=DIALOG_W - 40,
+                justify=tk.LEFT,
+                font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True),
+            ).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0, 6))
         elif remaining_dynamic:
-            ttk.Label(win, text=t("mod.dynamic_banner", count=remaining_dynamic),
-                     foreground="#8d6e00", wraplength=DIALOG_W - 40, justify=tk.LEFT,
-                     font=theme.font_tuple(theme.FONT_SIZE_XS)).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0,6))
+            ttk.Label(
+                win,
+                text=t("mod.dynamic_banner", count=remaining_dynamic),
+                foreground="#8d6e00",
+                wraplength=DIALOG_W - 40,
+                justify=tk.LEFT,
+                font=theme.font_tuple(theme.FONT_SIZE_XS),
+            ).pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0, 6))
 
         canvas = tk.Canvas(win, highlightthickness=0)
         self.canvas = canvas
@@ -2531,7 +3962,9 @@ class ModConfigDialog:
 
         vbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=_on_vbar)
         body = ttk.Frame(canvas)
-        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        body.bind(
+            "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
         # 刻意不跟踪 canvas 宽度、不在窗口缩放时重新排布这个 frame：配置
         # 项超过 100 条时，每次缩放都重新排布所有行（后来发现还连带影
         # 响滚动），才是这个弹窗感觉卡顿的真正原因。改成每一行都用固定
@@ -2539,7 +3972,7 @@ class ModConfigDialog:
         # 操作，完全不会碰到这些行。
         canvas.create_window((0, 0), window=body, anchor="nw")
         canvas.configure(yscrollcommand=vbar.set)
-        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10,0), pady=10)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # 名字列/下拉框宽度仍然是固定的（单行，绝不随标签长度增长——见
@@ -2549,11 +3982,16 @@ class ModConfigDialog:
         # 线下面，固定预留 2 行高度，让有/没有 hover 的行仍然大体对齐
         # （见该函数的 docstring）。
         from dstools.shared.gui.tooltip import Tooltip
+
         NAME_W_PX = 520
         HEADER_W_PX = 900
         COMBO_CHARS = 26
-        name_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_MD, weight="bold")
-        hdr_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_LG, weight="bold")
+        name_font = tkfont.Font(
+            family=theme.FONT_FAMILY, size=theme.FONT_SIZE_MD, weight="bold"
+        )
+        hdr_font = tkfont.Font(
+            family=theme.FONT_FAMILY, size=theme.FONT_SIZE_LG, weight="bold"
+        )
 
         def _truncate(text, font, max_px):
             if font.measure(text) <= max_px:
@@ -2572,23 +4010,35 @@ class ModConfigDialog:
                 # 文字），要么是作者纯粹用来留竖直间距的空白占位符。
                 label_text = opt.label.strip()
                 if label_text:
-                    ttk.Separator(body, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=5, pady=(12,3))
+                    ttk.Separator(body, orient=tk.HORIZONTAL).pack(
+                        fill=tk.X, padx=5, pady=(12, 3)
+                    )
                     title = _truncate(label_text, hdr_font, HEADER_W_PX)
-                    ttk.Label(body, text=title, font=theme.font_tuple(theme.FONT_SIZE_LG, bold=True),
-                             foreground=theme.HEADING, anchor=tk.CENTER,
-                             justify=tk.CENTER).pack(fill=tk.X, padx=5, pady=(0,5))
+                    ttk.Label(
+                        body,
+                        text=title,
+                        font=theme.font_tuple(theme.FONT_SIZE_LG, bold=True),
+                        foreground=theme.HEADING,
+                        anchor=tk.CENTER,
+                        justify=tk.CENTER,
+                    ).pack(fill=tk.X, padx=5, pady=(0, 5))
                 else:
                     ttk.Frame(body, height=10).pack(fill=tk.X)
                 continue
 
             real_options += 1
 
-            if opt.is_set_config or opt.is_array_config or opt.is_text_config or opt.is_dictionary_config:
+            if (
+                opt.is_set_config
+                or opt.is_array_config
+                or opt.is_text_config
+                or opt.is_dictionary_config
+            ):
                 current_value = mod.configuration_options.get(opt.name, opt.default)
                 self._render_raw_value_editor(body, opt, current_value)
                 continue
 
-            row = ttk.Frame(body, padding=(10,8), relief=tk.GROOVE, borderwidth=1)
+            row = ttk.Frame(body, padding=(10, 8), relief=tk.GROOVE, borderwidth=1)
             row.pack(fill=tk.X, padx=5, pady=3)
 
             # 名称+控件这一行单独放进 top 子容器，说明文字（如果有）打
@@ -2600,13 +4050,20 @@ class ModConfigDialog:
 
             label_full = opt.label or opt.name
             label_shown = _truncate(label_full, name_font, NAME_W_PX)
-            name_lbl = ttk.Label(top, text=label_shown, font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True), anchor=tk.W)
+            name_lbl = ttk.Label(
+                top,
+                text=label_shown,
+                font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
+                anchor=tk.W,
+            )
             name_lbl.pack(side=tk.LEFT)
             if label_shown != label_full:
                 Tooltip(name_lbl, label_full)
 
             current_value = mod.configuration_options.get(opt.name, opt.default)
-            choices, current_display, _ = resolve_config_value(mod_info, opt.name, current_value)
+            choices, current_display, _ = resolve_config_value(
+                mod_info, opt.name, current_value
+            )
             desc_to_data = {c["description"]: c["data"] for c in choices}
 
             if not desc_to_data:
@@ -2619,9 +4076,15 @@ class ModConfigDialog:
                 # 项。不加进 self.vars/choice_maps，所以 _reset()/
                 # _apply() 会跳过它（没有东西可以写回——反正在这里编辑
                 # 也不安全）。
-                reason = t("mod.dynamic_option") if opt.is_dynamic else t("mod.no_choices")
-                ttk.Label(top, text=f"{current_display}  ({reason})",
-                         foreground=theme.TEXT_MUTED, font=theme.font_tuple(theme.FONT_SIZE_SM, italic=True)).pack(side=tk.RIGHT)
+                reason = (
+                    t("mod.dynamic_option") if opt.is_dynamic else t("mod.no_choices")
+                )
+                ttk.Label(
+                    top,
+                    text=f"{current_display}  ({reason})",
+                    foreground=theme.TEXT_MUTED,
+                    font=theme.font_tuple(theme.FONT_SIZE_SM, italic=True),
+                ).pack(side=tk.RIGHT)
                 if opt.hover:
                     _pack_option_desc(row, opt.hover)
                 continue
@@ -2639,8 +4102,9 @@ class ModConfigDialog:
             # 拒绝重新画字"的状态，换成 Menubutton+Menu 没有 Entry，从根
             # 上不存在这个问题。read_only 弹窗依然能点开浏览（不会真的
             # 存盘，因为它根本不建应用/重置按钮）。
-            menu_btn = ttk.Menubutton(top, textvariable=var, width=COMBO_CHARS,
-                                      style="ModOption.TMenubutton")
+            menu_btn = ttk.Menubutton(
+                top, textvariable=var, width=COMBO_CHARS, style="ModOption.TMenubutton"
+            )
             opt_menu = tk.Menu(menu_btn, tearoff=0)
             for desc in desc_to_data.keys():
                 opt_menu.add_command(label=desc, command=lambda d=desc, v=var: v.set(d))
@@ -2657,6 +4121,7 @@ class ModConfigDialog:
             # 次。
             def _current_choice_hover(dth=desc_to_hover, v=var):
                 return dth.get(v.get(), "")
+
             Tooltip(menu_btn, _current_choice_hover)
 
         if not real_options and not mod_info.unsupported_schema:
@@ -2668,12 +4133,15 @@ class ModConfigDialog:
         # 前执行，阻止它触发。
         self._bind_mousewheel(win)
 
-        center_over_parent(win, self.tab.frame.winfo_toplevel(), width=DIALOG_W, height=DIALOG_H)
+        center_over_parent(
+            win, self.tab.frame.winfo_toplevel(), width=DIALOG_W, height=DIALOG_H
+        )
 
         # 把窗口宽高比锁定成它最初布局时的样子，用的是跟主窗口同一套原
         # 生 WM_SIZING 钩子——否则拖拽单条边只会拉伸宽或高其中一个方
         # 向，固定尺寸的行周围会出现明显不对称的大片空白。
         from dstools.shared.gui.win_aspect_lock import AspectLock
+
         self._aspect_lock = AspectLock(win, DIALOG_W, DIALOG_H)
         self._aspect_lock.install()
 
@@ -2697,13 +4165,19 @@ class ModConfigDialog:
         header = ttk.Frame(row)
         header.pack(fill=tk.X)
         label_full = opt.label or opt.name
-        ttk.Label(header, text=label_full, font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
-                  anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Label(
+            header,
+            text=label_full,
+            font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
+            anchor=tk.W,
+        ).pack(side=tk.LEFT)
         if opt.hover:
             _pack_option_desc(row, opt.hover)
 
         if opt.is_text_config:
-            var = tk.StringVar(value="" if current_value is None else str(current_value))
+            var = tk.StringVar(
+                value="" if current_value is None else str(current_value)
+            )
             ttk.Entry(row, textvariable=var).pack(fill=tk.X, pady=(6, 0))
             self.raw_widgets[opt.name] = ("text", {"var": var})
             return
@@ -2718,7 +4192,7 @@ class ModConfigDialog:
         self._render_item_list_editor(row, opt.name, kind, values)
 
     def _render_item_list_editor(self, row, name: str, kind: str, values: list) -> None:
-        """"+/×"逐条管理的值列表：每个值一个 Entry+"×"删除按钮，顶部
+        """ "+/×"逐条管理的值列表：每个值一个 Entry+"×"删除按钮，顶部
         "+"按钮在末尾新增一个空白输入行。self.raw_widgets[name] 存的是
         (kind, {"vars": [...], "items_frame": ..., "add_row": 回调})——
         _reset() 靠 items_frame/add_row 整体清空重建（不是逐行找差异），
@@ -2732,22 +4206,31 @@ class ModConfigDialog:
             entry_vars.append(var)
             item_row = ttk.Frame(items_frame)
             item_row.pack(fill=tk.X, pady=2)
-            ttk.Entry(item_row, textvariable=var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Entry(item_row, textvariable=var).pack(
+                side=tk.LEFT, fill=tk.X, expand=True
+            )
 
             def _remove():
                 entry_vars.remove(var)
                 item_row.destroy()
 
-            ttk.Button(item_row, text="×", width=3, command=_remove).pack(side=tk.LEFT, padx=(4, 0))
+            ttk.Button(item_row, text="×", width=3, command=_remove).pack(
+                side=tk.LEFT, padx=(4, 0)
+            )
 
         add_bar = ttk.Frame(row)
         add_bar.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(add_bar, text=t("mod.add_value_btn"), command=lambda: _add_row("")).pack(side=tk.LEFT)
+        ttk.Button(
+            add_bar, text=t("mod.add_value_btn"), command=lambda: _add_row("")
+        ).pack(side=tk.LEFT)
 
         for v in values:
             _add_row(v)
 
-        self.raw_widgets[name] = (kind, {"vars": entry_vars, "items_frame": items_frame, "add_row": _add_row})
+        self.raw_widgets[name] = (
+            kind,
+            {"vars": entry_vars, "items_frame": items_frame, "add_row": _add_row},
+        )
 
     def _render_dict_list_editor(self, row, name: str, pairs: list) -> None:
         """字典(is_dictionary_config)专用的"+/×"逐条管理编辑器——跟
@@ -2768,22 +4251,31 @@ class ModConfigDialog:
             item_row.pack(fill=tk.X, pady=2)
             ttk.Entry(item_row, textvariable=key_var, width=18).pack(side=tk.LEFT)
             ttk.Label(item_row, text="=").pack(side=tk.LEFT, padx=4)
-            ttk.Entry(item_row, textvariable=val_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            ttk.Entry(item_row, textvariable=val_var).pack(
+                side=tk.LEFT, fill=tk.X, expand=True
+            )
 
             def _remove():
                 entry_vars.remove((key_var, val_var))
                 item_row.destroy()
 
-            ttk.Button(item_row, text="×", width=3, command=_remove).pack(side=tk.LEFT, padx=(4, 0))
+            ttk.Button(item_row, text="×", width=3, command=_remove).pack(
+                side=tk.LEFT, padx=(4, 0)
+            )
 
         add_bar = ttk.Frame(row)
         add_bar.pack(fill=tk.X, pady=(4, 0))
-        ttk.Button(add_bar, text=t("mod.add_value_btn"), command=lambda: _add_row("", "")).pack(side=tk.LEFT)
+        ttk.Button(
+            add_bar, text=t("mod.add_value_btn"), command=lambda: _add_row("", "")
+        ).pack(side=tk.LEFT)
 
         for k, v in pairs:
             _add_row(k, v)
 
-        self.raw_widgets[name] = ("dict", {"vars": entry_vars, "items_frame": items_frame, "add_row": _add_row})
+        self.raw_widgets[name] = (
+            "dict",
+            {"vars": entry_vars, "items_frame": items_frame, "add_row": _add_row},
+        )
 
     @staticmethod
     def _raw_value_to_pairs(value) -> list:
@@ -2822,7 +4314,9 @@ class ModConfigDialog:
         处理（Lua 的空表 `{}` 本身也没法区分是空数组还是空集合/字典，
         这里两种解读的结果都是空列表，不影响正确性）。"""
         if kind == "set":
-            return sorted(str(k) for k in value.keys()) if isinstance(value, dict) else []
+            return (
+                sorted(str(k) for k in value.keys()) if isinstance(value, dict) else []
+            )
         if isinstance(value, (list, tuple)):
             return [str(v) for v in value]
         if isinstance(value, dict):
@@ -2901,7 +4395,9 @@ class ModConfigDialog:
         if mod_info.full_sandbox_tried:
             return
         mod_info.full_sandbox_tried = True
-        platform, wegame_client_mods_dir = self.tab._resolve_mod_folder_args(self.tab._get_cluster())
+        platform, wegame_client_mods_dir = self.tab._resolve_mod_folder_args(
+            self.tab._get_cluster()
+        )
         mod_folder = find_mod_folder(workshop_id, platform, wegame_client_mods_dir)
         if not mod_folder:
             return
@@ -2940,13 +4436,16 @@ class ModConfigDialog:
             return
         import time
         from dstools.features.mod.sandbox import resolve_dynamic_option
+
         deadline = time.monotonic() + budget
         for opt in mod_info.config_options:
             if not opt.is_dynamic:
                 continue
             if time.monotonic() >= deadline:
                 break
-            choices = resolve_dynamic_option(mod_info.dynamic_preamble, opt.raw_options_expr)
+            choices = resolve_dynamic_option(
+                mod_info.dynamic_preamble, opt.raw_options_expr
+            )
             if choices:
                 opt.choices = choices
                 opt.is_dynamic = False
@@ -2961,8 +4460,12 @@ class ModConfigDialog:
         if mod_info.chs_translation_tried:
             return
         mod_info.chs_translation_tried = True
-        platform, wegame_client_mods_dir = self.tab._resolve_mod_folder_args(self.tab._get_cluster())
-        path = chs_translation.find_translation_file(workshop_id, platform, wegame_client_mods_dir)
+        platform, wegame_client_mods_dir = self.tab._resolve_mod_folder_args(
+            self.tab._get_cluster()
+        )
+        path = chs_translation.find_translation_file(
+            workshop_id, platform, wegame_client_mods_dir
+        )
         if not path:
             return
         translation = chs_translation.resolve_translation(path)
@@ -3006,10 +4509,13 @@ class ModConfigDialog:
         self._dialog_confirmed_foreground = False
         try:
             import ctypes
+
             root = self.tab.frame.winfo_toplevel()
             root.update_idletasks()
             self.win.update_idletasks()
-            self._root_hwnd = ctypes.windll.user32.GetAncestor(root.winfo_id(), 2)  # GA_ROOT
+            self._root_hwnd = ctypes.windll.user32.GetAncestor(
+                root.winfo_id(), 2
+            )  # GA_ROOT
             self._dialog_hwnd = ctypes.windll.user32.GetAncestor(self.win.winfo_id(), 2)
         except Exception:
             self._root_hwnd = None
@@ -3021,6 +4527,7 @@ class ModConfigDialog:
             return
         try:
             import ctypes
+
             fg = ctypes.windll.user32.GetForegroundWindow()
             if fg == self._dialog_hwnd:
                 self._dialog_confirmed_foreground = True
@@ -3033,6 +4540,7 @@ class ModConfigDialog:
     def _on_main_window_poked(self):
         try:
             import winsound
+
             winsound.MessageBeep()
         except Exception:
             self.win.bell()
@@ -3057,7 +4565,6 @@ class ModConfigDialog:
             self.win.after_cancel(self._poll_after_id)
         self.win.destroy()
 
-
     def _reset(self):
         """把每个下拉框都还原成 mod 自己的默认值（只影响界面，尚未保存）。"""
         for opt in self.mod_info.config_options:
@@ -3072,7 +4579,10 @@ class ModConfigDialog:
             if opt.name not in self.vars:
                 continue
             desc_to_data = self.choice_maps[opt.name]
-            default_desc = next((desc for desc, data in desc_to_data.items() if data == opt.default), None)
+            default_desc = next(
+                (desc for desc, data in desc_to_data.items() if data == opt.default),
+                None,
+            )
             if default_desc is not None:
                 self.vars[opt.name].set(default_desc)
 
@@ -3082,7 +4592,9 @@ class ModConfigDialog:
                 continue
             if opt.name in self.raw_widgets:
                 kind, data = self.raw_widgets[opt.name]
-                self.mod.configuration_options[opt.name] = self._read_raw_widget_value(kind, data)
+                self.mod.configuration_options[opt.name] = self._read_raw_widget_value(
+                    kind, data
+                )
                 continue
             if opt.name not in self.vars:
                 continue

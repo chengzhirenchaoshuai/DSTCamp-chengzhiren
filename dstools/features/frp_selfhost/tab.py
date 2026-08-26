@@ -19,7 +19,7 @@ from dstools.features.cluster_config.config_manager import (
 from dstools.features.frp_selfhost import connectivity, deploy, probe, remote_deploy
 from dstools.features.frp_selfhost.client import FrpcManager, FrpcStatus, build_frpc_toml
 from dstools.features.local_service.tab import _RUNNING_LIKE
-from dstools.shared.resource_paths import cache_dir, tool_binary_dir
+from dstools.shared.resource_paths import data_dir, runtime_tool_path
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
@@ -42,7 +42,7 @@ _UDP_CHECK_KEY_BY_STATUS = {
 
 
 def _frpc_exe_path():
-    return tool_binary_dir() / "frp_selfhost" / "frpc.exe"
+    return runtime_tool_path("frp_selfhost/frpc.exe")
 
 
 class _SSHAuthSetupDialog:
@@ -292,7 +292,10 @@ class SelfHostFrpPage:
     # ── 跨页签接口：给 sakura/tab.py 转发、local_service/tab.py 用 ──────
 
     def _frpc_config_path(self, cluster_path):
-        root = cache_dir(_FRPC_CONFIG_CACHE_NAME)
+        root = data_dir(
+            _FRPC_CONFIG_CACHE_NAME,
+            legacy_cache_name=_FRPC_CONFIG_CACHE_NAME,
+        )
         current = root / f"{cluster_path.name}__{stable_path_key(cluster_path)}.toml"
         if current.exists():
             return current

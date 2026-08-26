@@ -21,11 +21,14 @@ Steamworks 的正式 SDK 用回调类接收 ``DownloadItemResult_t``。这里使
 from __future__ import annotations
 
 import ctypes
+import json
 import os
+import subprocess
 import sys
+import tempfile
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable
@@ -73,6 +76,10 @@ class WorkshopItemState:
         return bool(self.flags & ITEM_INSTALLED)
 
     @property
+    def legacy_item(self) -> bool:
+        return bool(self.flags & ITEM_LEGACY)
+
+    @property
     def needs_update(self) -> bool:
         return bool(self.flags & ITEM_NEEDS_UPDATE)
 
@@ -88,6 +95,7 @@ class WorkshopItemState:
         return {
             "flags": self.flags,
             "subscribed": self.subscribed,
+            "legacy_item": self.legacy_item,
             "installed": self.installed,
             "needs_update": self.needs_update,
             "downloading": self.downloading,
@@ -148,6 +156,7 @@ class _SteamUGCQueryCompleted(ctypes.Structure):
 
 _STEAM_UGC_QUERY_COMPLETED_CALLBACK = 3401
 _STEAM_RESULT_OK = 1
+_STEAM_RESULT_ACCESS_DENIED = 15
 _UGC_DETAILS_BUFFER_SIZE = 32768
 
 
@@ -166,14 +175,17 @@ def _parse_ugc_details_buffer(raw: bytes) -> WorkshopItemDetails:
 
     if len(raw) < 9764:
         raise ValueError("SteamUGCDetails_t 返回缓冲区过短")
-    tags_text = _decode_c_string(raw[8183:9208])
-    content_handle = struct.unpack_from("<Q", raw, 9208)[0]
-    file_size = (max(0, struct.unpack_from("<i", raw, 9484)[0])
-                 if content_handle else 0)
+    # SteamUGCDetails_t 按 8 字节对齐：三个 bool 位于 8184..8186，
+    # m_rgchTags[1025] 从 8187 开始；其后补齐到 8 字节边界，主文件句柄
+    # 从 9216 开始。旧偏移少算了 bool/尾部 padding，标题虽正常但标签
+    # 永远从字符串中间读取，导致 Klei 发布的 ``version:x.y.z`` 丢失。
+    tags_text = _decode_c_string(raw[8187:9212])
+    content_handle = struct.unpack_from("<Q", raw, 9216)[0]
+    file_size = max(0, struct.unpack_from("<i", raw, 9492)[0]) if content_handle else 0
     # 现代目录式 ISteamUGC 项目通常不填旧版 RemoteStorage 的主文件句柄、
     # 文件名和大小，文件名缓冲区也不保证清零；没有句柄/大小时必须忽略，
     # 不能把未初始化字节显示给用户。
-    filename = _decode_c_string(raw[9224:9484]) if content_handle else ""
+    filename = _decode_c_string(raw[9232:9492]) if content_handle else ""
     return WorkshopItemDetails(
         workshop_id=struct.unpack_from("<Q", raw, 0)[0],
         result=struct.unpack_from("<i", raw, 8)[0],
@@ -187,6 +199,29 @@ def _parse_ugc_details_buffer(raw: bytes) -> WorkshopItemDetails:
         file_size=file_size,
         tags=tuple(tag.strip() for tag in tags_text.split(",") if tag.strip()),
     )
+
+
+def workshop_source_error(details: WorkshopItemDetails | None) -> str:
+    """把源端详情的逐项目 EResult 转成可操作的错误说明。"""
+    if details is None or details.result == _STEAM_RESULT_OK:
+        return ""
+    if details.result == _STEAM_RESULT_ACCESS_DENIED:
+        return (
+            "Steam 源端不可用（EResult=15：拒绝访问；项目可能已下架、"
+            "被设为私密、被平台移除，或当前账号无权访问）"
+        )
+    return f"Steam 源端无法取得此项目（EResult={details.result}）"
+
+
+def workshop_version_from_details(details: WorkshopItemDetails | None) -> str:
+    """提取 Klei 随 Workshop 项目发布的 ``version:<值>`` 标签。"""
+    if details is None or details.result != _STEAM_RESULT_OK:
+        return ""
+    for tag in details.tags:
+        key, separator, value = str(tag).partition(":")
+        if separator and key.strip().casefold() == "version":
+            return value.strip()
+    return ""
 
 
 @dataclass
@@ -213,13 +248,23 @@ class WorkshopInstallValidation:
     valid: bool
     path: Path | None = None
     error: str = ""
+    warning: str = ""
 
 
-def validate_workshop_install(path: Path | None) -> WorkshopInstallValidation:
+def validate_workshop_install(
+    path: Path | None, *, legacy_item: bool = False
+) -> WorkshopInstallValidation:
     """确认 Mod 已真实落盘，并验证游戏 Manifest 声明的文件。"""
     if path is None:
         return WorkshopInstallValidation(False, error="Steam 没有返回安装路径")
     path = Path(path)
+    if legacy_item:
+        from dstools.features.mod.legacy_v1 import validate_legacy_package
+
+        validation = validate_legacy_package(path)
+        return WorkshopInstallValidation(
+            validation.valid, path, "" if validation.valid else validation.error
+        )
     if not path.is_dir():
         return WorkshopInstallValidation(False, path, "Steam 返回的安装目录不存在")
     if not (path / "modinfo.lua").is_file():
@@ -227,7 +272,8 @@ def validate_workshop_install(path: Path | None) -> WorkshopInstallValidation:
     manifest = verify_mod_manifest(path)
     if manifest.available and manifest.valid is False:
         return WorkshopInstallValidation(
-            False, path, manifest.error or "mod.manifest 完整性校验失败")
+            True, path, warning=manifest.error or "mod.manifest 完整性无法确认"
+        )
     return WorkshopInstallValidation(True, path)
 
 
@@ -274,6 +320,145 @@ class WorkshopBatchResult:
         return sum(not item.completed for item in self.results)
 
 
+_WORKSHOP_WORKER_FLAG = "--dstcamp-workshop-worker"
+
+
+def _download_result_to_payload(result: WorkshopDownloadResult) -> dict[str, Any]:
+    return {
+        "backend": result.backend.value,
+        "workshop_id": result.workshop_id,
+        "accepted": result.accepted,
+        "completed": result.completed,
+        "up_to_date": result.up_to_date,
+        "installed_path": str(result.installed_path) if result.installed_path else None,
+        "state": result.state.flags if result.state is not None else None,
+        "downloaded_bytes": result.downloaded_bytes,
+        "total_bytes": result.total_bytes,
+        "error": result.error,
+        "details": result.details,
+    }
+
+
+def _download_result_from_payload(payload: dict[str, Any]) -> WorkshopDownloadResult:
+    state = payload.get("state")
+    return WorkshopDownloadResult(
+        WorkshopBackend(payload["backend"]),
+        int(payload["workshop_id"]),
+        accepted=bool(payload.get("accepted")),
+        completed=bool(payload.get("completed")),
+        up_to_date=bool(payload.get("up_to_date")),
+        installed_path=(
+            Path(payload["installed_path"]) if payload.get("installed_path") else None
+        ),
+        state=WorkshopItemState(int(state)) if state is not None else None,
+        downloaded_bytes=payload.get("downloaded_bytes"),
+        total_bytes=payload.get("total_bytes"),
+        error=payload.get("error"),
+        details=dict(payload.get("details") or {}),
+    )
+
+
+def _snapshot_to_payload(
+    states: dict[int, WorkshopItemState],
+    installs: dict[int, WorkshopInstallInfo],
+    details: dict[int, WorkshopItemDetails],
+) -> dict[str, Any]:
+    return {
+        "states": {str(wid): state.flags for wid, state in states.items()},
+        "installs": {
+            str(wid): {
+                "path": str(info.path),
+                "size_on_disk": info.size_on_disk,
+                "timestamp": info.timestamp,
+            }
+            for wid, info in installs.items()
+        },
+        "details": {str(wid): asdict(item) for wid, item in details.items()},
+    }
+
+
+def _snapshot_from_payload(
+    payload: dict[str, Any],
+) -> tuple[
+    dict[int, WorkshopItemState],
+    dict[int, WorkshopInstallInfo],
+    dict[int, WorkshopItemDetails],
+]:
+    states = {
+        int(wid): WorkshopItemState(int(flags))
+        for wid, flags in (payload.get("states") or {}).items()
+    }
+    installs = {
+        int(wid): WorkshopInstallInfo(
+            Path(item["path"]), int(item["size_on_disk"]), int(item["timestamp"])
+        )
+        for wid, item in (payload.get("installs") or {}).items()
+    }
+    details = {}
+    for wid, item in (payload.get("details") or {}).items():
+        decoded = dict(item)
+        decoded["tags"] = tuple(decoded.get("tags") or ())
+        decoded["key_value_tags"] = tuple(
+            tuple(pair) for pair in decoded.get("key_value_tags") or ()
+        )
+        decoded["previews"] = tuple(
+            WorkshopPreview(**preview) for preview in decoded.get("previews") or ()
+        )
+        details[int(wid)] = WorkshopItemDetails(**decoded)
+    return states, installs, details
+
+
+def _workshop_worker_command(
+    request_path: Path, event_path: Path, result_path: Path
+) -> list[str]:
+    args = [str(request_path), str(event_path), str(result_path)]
+    if getattr(sys, "frozen", False):
+        return [sys.executable, _WORKSHOP_WORKER_FLAG, *args]
+    return [sys.executable, "-m", "dstools.features.mod.workshop_worker", *args]
+
+
+def _run_workshop_worker(
+    request: dict[str, Any],
+    on_event: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """在短生命周期子进程中运行普通 SteamAPI，避免占用游戏 AppID。"""
+    with tempfile.TemporaryDirectory(prefix="dstcamp_workshop_") as tmp:
+        root = Path(tmp)
+        request_path = root / "request.json"
+        event_path = root / "events.jsonl"
+        result_path = root / "result.json"
+        request_path.write_text(
+            json.dumps(request, ensure_ascii=False), encoding="utf-8"
+        )
+        event_path.touch()
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        process = subprocess.Popen(
+            _workshop_worker_command(request_path, event_path, result_path),
+            cwd=str(Path(__file__).resolve().parents[3]),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+        )
+        with event_path.open("r", encoding="utf-8") as events:
+            while process.poll() is None:
+                line = events.readline()
+                if line:
+                    if on_event:
+                        on_event(json.loads(line))
+                else:
+                    time.sleep(0.05)
+            for line in events:
+                if on_event:
+                    on_event(json.loads(line))
+        if not result_path.is_file():
+            raise RuntimeError(f"Steam Worker 异常退出（exit={process.returncode}）")
+        response = json.loads(result_path.read_text(encoding="utf-8"))
+        if not response.get("ok"):
+            raise RuntimeError(response.get("error") or "Steam Worker 执行失败")
+        return dict(response.get("result") or {})
+
+
 def _load_dll(path: Path):
     """加载 DLL 并保留依赖目录句柄直到会话关闭。"""
     if sys.platform != "win32":
@@ -281,7 +466,9 @@ def _load_dll(path: Path):
     if not path.is_file():
         raise FileNotFoundError(f"找不到 Steam API DLL：{path}")
     add_dll_directory = getattr(os, "add_dll_directory", None)
-    directory_handle = add_dll_directory(str(path.parent)) if add_dll_directory else None
+    directory_handle = (
+        add_dll_directory(str(path.parent)) if add_dll_directory else None
+    )
     try:
         return ctypes.WinDLL(str(path)), directory_handle
     except Exception:
@@ -303,22 +490,40 @@ def find_steam_api_dll(explicit: Path | None = None) -> Path | None:
     candidates: list[Path] = []
     # 延迟导入，避免 Mod 页签构造时加载本地服务器模块。
     try:
-        from dstools.features.local_service.dedicated_server import find_dedicated_server_dir
+        from dstools.features.local_service.dedicated_server import (
+            find_dedicated_server_dir,
+        )
 
         install_dir = find_dedicated_server_dir()
         if install_dir:
-            candidates.extend((install_dir / "bin64" / "steam_api64.dll",
-                               install_dir / "bin" / "steam_api64.dll"))
+            candidates.extend(
+                (
+                    install_dir / "bin64" / "steam_api64.dll",
+                    install_dir / "bin" / "steam_api64.dll",
+                )
+            )
     except Exception:
         pass
     try:
         from dstools.shared.steam_discovery import find_all_steam_libraries
 
         for library in find_all_steam_libraries():
-            candidates.extend((
-                library / "steamapps" / "common" / "Don't Starve Together" / "bin64" / "steam_api64.dll",
-                library / "steamapps" / "common" / "Don't Starve Together Dedicated Server" / "bin64" / "steam_api64.dll",
-            ))
+            candidates.extend(
+                (
+                    library
+                    / "steamapps"
+                    / "common"
+                    / "Don't Starve Together"
+                    / "bin64"
+                    / "steam_api64.dll",
+                    library
+                    / "steamapps"
+                    / "common"
+                    / "Don't Starve Together Dedicated Server"
+                    / "bin64"
+                    / "steam_api64.dll",
+                )
+            )
     except Exception:
         pass
     seen: set[str] = set()
@@ -339,13 +544,20 @@ class SteamWorkshopSession:
     每个批次打开一次会话，完成后立刻 Shutdown，避免和游戏/专服抢 API 状态。
     """
 
-    def __init__(self, dll_path: Path, backend: WorkshopBackend,
-                 *, app_id: int = DST_APP_ID,
-                 game_server_app_id: int = DST_GAME_SERVER_APP_ID,
-                 workshop_depot_id: int = DST_GAME_SERVER_WORKSHOP_DEPOT,
-                 workshop_folder: Path | None = None):
+    def __init__(
+        self,
+        dll_path: Path,
+        backend: WorkshopBackend,
+        *,
+        app_id: int = DST_APP_ID,
+        game_server_app_id: int = DST_GAME_SERVER_APP_ID,
+        workshop_depot_id: int = DST_GAME_SERVER_WORKSHOP_DEPOT,
+        workshop_folder: Path | None = None,
+    ):
         if backend is WorkshopBackend.AUTO:
-            raise ValueError("SteamWorkshopSession 必须使用具体后端，AUTO 由 download_workshop_item 处理")
+            raise ValueError(
+                "SteamWorkshopSession 必须使用具体后端，AUTO 由 download_workshop_item 处理"
+            )
         self.dll_path = Path(dll_path)
         self.backend = backend
         self.app_id = int(app_id)
@@ -381,40 +593,64 @@ class SteamWorkshopSession:
             return
         self.dll, self._dll_directory_handle = _load_dll(self.dll_path)
         if self.backend is WorkshopBackend.CLIENT:
-            self._require("SteamAPI_Init", "SteamAPI_Shutdown", "SteamAPI_RunCallbacks",
-                          "SteamAPI_SteamUGC_v015", "SteamAPI_ISteamUGC_GetItemState",
-                          "SteamAPI_ISteamUGC_DownloadItem", "SteamAPI_ISteamUGC_GetItemDownloadInfo",
-                          "SteamAPI_ISteamUGC_GetItemInstallInfo")
+            self._require(
+                "SteamAPI_Init",
+                "SteamAPI_Shutdown",
+                "SteamAPI_RunCallbacks",
+                "SteamAPI_SteamUGC_v015",
+                "SteamAPI_ISteamUGC_GetItemState",
+                "SteamAPI_ISteamUGC_DownloadItem",
+                "SteamAPI_ISteamUGC_GetItemDownloadInfo",
+                "SteamAPI_ISteamUGC_GetItemInstallInfo",
+            )
             self.dll.SteamAPI_Init.restype = ctypes.c_bool
             if not self._init_steam_api(self.dll.SteamAPI_Init):
-                raise RuntimeError("SteamAPI_Init 失败：当前进程没有有效的 Steam/DST 应用上下文")
+                raise RuntimeError(
+                    "SteamAPI_Init 失败：当前进程没有有效的 Steam/DST 应用上下文"
+                )
             self._native_initialized = True
             self.dll.SteamAPI_SteamUGC_v015.restype = ctypes.c_void_p
             self.ugc = self.dll.SteamAPI_SteamUGC_v015()
             if not self.ugc:
                 raise RuntimeError("SteamAPI_SteamUGC_v015 返回空接口")
         else:
-            self._require("SteamInternal_GameServer_Init", "SteamAPI_SteamGameServer_v013",
-                          "SteamAPI_SteamGameServerUGC_v015", "SteamGameServer_RunCallbacks",
-                          "SteamGameServer_Shutdown", "SteamAPI_ISteamGameServer_LogOnAnonymous",
-                          "SteamAPI_ISteamGameServer_BLoggedOn",
-                          "SteamAPI_ISteamUGC_BInitWorkshopForGameServer",
-                          "SteamAPI_ISteamUGC_GetItemState", "SteamAPI_ISteamUGC_DownloadItem",
-                          "SteamAPI_ISteamUGC_GetItemDownloadInfo", "SteamAPI_ISteamUGC_GetItemInstallInfo")
+            self._require(
+                "SteamInternal_GameServer_Init",
+                "SteamAPI_SteamGameServer_v013",
+                "SteamAPI_SteamGameServerUGC_v015",
+                "SteamGameServer_RunCallbacks",
+                "SteamGameServer_Shutdown",
+                "SteamAPI_ISteamGameServer_LogOnAnonymous",
+                "SteamAPI_ISteamGameServer_BLoggedOn",
+                "SteamAPI_ISteamUGC_BInitWorkshopForGameServer",
+                "SteamAPI_ISteamUGC_GetItemState",
+                "SteamAPI_ISteamUGC_DownloadItem",
+                "SteamAPI_ISteamUGC_GetItemDownloadInfo",
+                "SteamAPI_ISteamUGC_GetItemInstallInfo",
+            )
             self.dll.SteamInternal_GameServer_Init.argtypes = [
-                ctypes.c_uint32, ctypes.c_uint16, ctypes.c_uint16, ctypes.c_uint16,
-                ctypes.c_int, ctypes.c_char_p,
+                ctypes.c_uint32,
+                ctypes.c_uint16,
+                ctypes.c_uint16,
+                ctypes.c_uint16,
+                ctypes.c_int,
+                ctypes.c_char_p,
             ]
             self.dll.SteamInternal_GameServer_Init.restype = ctypes.c_bool
-            if not self._init_steam_api(lambda: self.dll.SteamInternal_GameServer_Init(
-                    0, 0, 0, 0, 1, f"dstcamp-{self.game_server_app_id}".encode("ascii"))):
+            if not self._init_steam_api(
+                lambda: self.dll.SteamInternal_GameServer_Init(
+                    0, 0, 0, 0, 1, f"dstcamp-{self.game_server_app_id}".encode("ascii")
+                )
+            ):
                 raise RuntimeError("SteamInternal_GameServer_Init 失败")
             self._native_initialized = True
             self.dll.SteamAPI_SteamGameServer_v013.restype = ctypes.c_void_p
             self.game_server = self.dll.SteamAPI_SteamGameServer_v013()
             if not self.game_server:
                 raise RuntimeError("SteamAPI_SteamGameServer_v013 返回空接口")
-            self.dll.SteamAPI_ISteamGameServer_LogOnAnonymous.argtypes = [ctypes.c_void_p]
+            self.dll.SteamAPI_ISteamGameServer_LogOnAnonymous.argtypes = [
+                ctypes.c_void_p
+            ]
             self.dll.SteamAPI_ISteamGameServer_LogOnAnonymous.restype = None
             self.dll.SteamAPI_ISteamGameServer_LogOnAnonymous(self.game_server)
             self.dll.SteamAPI_ISteamGameServer_BLoggedOn.argtypes = [ctypes.c_void_p]
@@ -430,13 +666,23 @@ class SteamWorkshopSession:
             self.game_server_logged_on = self._wait_game_server_logged_on()
             self.workshop_folder.mkdir(parents=True, exist_ok=True)
             self.dll.SteamAPI_ISteamUGC_BInitWorkshopForGameServer.argtypes = [
-                ctypes.c_void_p, ctypes.c_uint32, ctypes.c_char_p,
+                ctypes.c_void_p,
+                ctypes.c_uint32,
+                ctypes.c_char_p,
             ]
-            self.dll.SteamAPI_ISteamUGC_BInitWorkshopForGameServer.restype = ctypes.c_bool
-            if not bool(self.dll.SteamAPI_ISteamUGC_BInitWorkshopForGameServer(
-                    self.ugc, self.workshop_depot_id,
-                    str(self.workshop_folder).encode("utf-8"))):
-                raise RuntimeError("BInitWorkshopForGameServer 失败：服务器用户未就绪或 Workshop 正在更新")
+            self.dll.SteamAPI_ISteamUGC_BInitWorkshopForGameServer.restype = (
+                ctypes.c_bool
+            )
+            if not bool(
+                self.dll.SteamAPI_ISteamUGC_BInitWorkshopForGameServer(
+                    self.ugc,
+                    self.workshop_depot_id,
+                    str(self.workshop_folder).encode("utf-8"),
+                )
+            ):
+                raise RuntimeError(
+                    "BInitWorkshopForGameServer 失败：服务器用户未就绪或 Workshop 正在更新"
+                )
         self._configure_ugc_calls()
         self._started = True
 
@@ -462,31 +708,85 @@ class SteamWorkshopSession:
                 os.chdir(previous)
 
     def _configure_ugc_calls(self) -> None:
-        self.dll.SteamAPI_ISteamUGC_GetItemState.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        self.dll.SteamAPI_ISteamUGC_GetItemState.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+        ]
         self.dll.SteamAPI_ISteamUGC_GetItemState.restype = ctypes.c_uint32
         self.dll.SteamAPI_ISteamUGC_DownloadItem.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_bool,
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.c_bool,
         ]
         self.dll.SteamAPI_ISteamUGC_DownloadItem.restype = ctypes.c_bool
         self.dll.SteamAPI_ISteamUGC_GetItemDownloadInfo.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64,
-            ctypes.POINTER(ctypes.c_uint64), ctypes.POINTER(ctypes.c_uint64),
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.POINTER(ctypes.c_uint64),
         ]
         self.dll.SteamAPI_ISteamUGC_GetItemDownloadInfo.restype = ctypes.c_bool
         self.dll.SteamAPI_ISteamUGC_GetItemInstallInfo.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64,
-            ctypes.POINTER(ctypes.c_uint64), ctypes.c_char_p, ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.c_char_p,
+            ctypes.c_uint32,
             ctypes.POINTER(ctypes.c_uint32),
         ]
         self.dll.SteamAPI_ISteamUGC_GetItemInstallInfo.restype = ctypes.c_bool
 
+    def subscribed_item_ids(
+        self, *, include_locally_disabled: bool = True
+    ) -> list[int]:
+        """枚举当前 Steam 用户为 DST 订阅的全部 Workshop 项目。
+
+        这份账号级列表不依赖 ``appworkshop_322330.acf`` 和内容目录，因此
+        也是发现“仍在订阅、但 ACF 与实际文件均已丢失”项目的唯一可靠入口。
+        额外的 ``bool`` 参数在新版 Steamworks 中用于包含本地禁用项目；
+        x64 下旧版 v015 包装会安全忽略多余参数。
+        """
+        self._ensure_started()
+        if self.backend is not WorkshopBackend.CLIENT:
+            return []
+        self._require(
+            "SteamAPI_ISteamUGC_GetNumSubscribedItems",
+            "SteamAPI_ISteamUGC_GetSubscribedItems",
+        )
+        get_count = self.dll.SteamAPI_ISteamUGC_GetNumSubscribedItems
+        get_count.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+        get_count.restype = ctypes.c_uint32
+        get_items = self.dll.SteamAPI_ISteamUGC_GetSubscribedItems
+        get_items.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.c_uint32,
+            ctypes.c_bool,
+        ]
+        get_items.restype = ctypes.c_uint32
+        count = int(get_count(self.ugc, bool(include_locally_disabled)))
+        if count <= 0:
+            return []
+        buffer = (ctypes.c_uint64 * count)()
+        written = min(
+            count,
+            int(get_items(self.ugc, buffer, count, bool(include_locally_disabled))),
+        )
+        return list(
+            dict.fromkeys(
+                int(buffer[index]) for index in range(written) if int(buffer[index]) > 0
+            )
+        )
+
     def item_state(self, workshop_id: int) -> WorkshopItemState:
         self._ensure_started()
-        return WorkshopItemState(int(self.dll.SteamAPI_ISteamUGC_GetItemState(
-            self.ugc, int(workshop_id))))
+        return WorkshopItemState(
+            int(self.dll.SteamAPI_ISteamUGC_GetItemState(self.ugc, int(workshop_id)))
+        )
 
-    def query_item_details(self, workshop_ids: list[int] | tuple[int, ...], *,
-                           timeout: float = 20.0) -> list[WorkshopItemDetails]:
+    def query_item_details(
+        self, workshop_ids: list[int] | tuple[int, ...], *, timeout: float = 20.0
+    ) -> list[WorkshopItemDetails]:
         """批量查询最多50个 Workshop 项目的源端详情，不触发下载。"""
         self._ensure_started()
         if self.backend is not WorkshopBackend.CLIENT:
@@ -498,75 +798,108 @@ class SteamWorkshopSession:
             raise ValueError("单次 Workshop 详情查询不能超过50项")
         self._configure_query_calls()
         id_array = (ctypes.c_uint64 * len(ids))(*ids)
-        query_handle = int(self.dll.SteamAPI_ISteamUGC_CreateQueryUGCDetailsRequest(
-            self.ugc, id_array, len(ids)))
+        query_handle = int(
+            self.dll.SteamAPI_ISteamUGC_CreateQueryUGCDetailsRequest(
+                self.ugc, id_array, len(ids)
+            )
+        )
         if query_handle == 0xFFFFFFFFFFFFFFFF:
             raise RuntimeError("CreateQueryUGCDetailsRequest 返回无效句柄")
         try:
             self.dll.SteamAPI_ISteamUGC_SetReturnKeyValueTags(
-                self.ugc, query_handle, True)
-            self.dll.SteamAPI_ISteamUGC_SetReturnMetadata(
-                self.ugc, query_handle, True)
+                self.ugc, query_handle, True
+            )
+            self.dll.SteamAPI_ISteamUGC_SetReturnMetadata(self.ugc, query_handle, True)
             self.dll.SteamAPI_ISteamUGC_SetReturnAdditionalPreviews(
-                self.ugc, query_handle, True)
-            api_call = int(self.dll.SteamAPI_ISteamUGC_SendQueryUGCRequest(
-                self.ugc, query_handle))
+                self.ugc, query_handle, True
+            )
+            api_call = int(
+                self.dll.SteamAPI_ISteamUGC_SendQueryUGCRequest(self.ugc, query_handle)
+            )
             if not api_call:
                 raise RuntimeError("SendQueryUGCRequest 返回无效 API 调用")
             completed = self._wait_query_call(api_call, timeout)
             if completed.result != _STEAM_RESULT_OK:
-                raise RuntimeError(f"Workshop 源端查询失败：Steam EResult={completed.result}")
+                raise RuntimeError(
+                    f"Workshop 源端查询失败：Steam EResult={completed.result}"
+                )
             details = []
             for index in range(int(completed.num_results_returned)):
                 raw = ctypes.create_string_buffer(_UGC_DETAILS_BUFFER_SIZE)
                 if not self.dll.SteamAPI_ISteamUGC_GetQueryUGCResult(
-                        self.ugc, query_handle, index, raw):
+                    self.ugc, query_handle, index, raw
+                ):
                     continue
                 base = _parse_ugc_details_buffer(raw.raw)
                 metadata_buffer = ctypes.create_string_buffer(32768)
                 metadata = ""
                 if self.dll.SteamAPI_ISteamUGC_GetQueryUGCMetadata(
-                        self.ugc, query_handle, index,
-                        metadata_buffer, len(metadata_buffer)):
+                    self.ugc, query_handle, index, metadata_buffer, len(metadata_buffer)
+                ):
                     metadata = _decode_c_string(metadata_buffer.raw)
                 key_values = []
-                count = int(self.dll.SteamAPI_ISteamUGC_GetQueryUGCNumKeyValueTags(
-                    self.ugc, query_handle, index))
+                count = int(
+                    self.dll.SteamAPI_ISteamUGC_GetQueryUGCNumKeyValueTags(
+                        self.ugc, query_handle, index
+                    )
+                )
                 for tag_index in range(count):
                     key = ctypes.create_string_buffer(1024)
                     value = ctypes.create_string_buffer(8192)
                     if self.dll.SteamAPI_ISteamUGC_GetQueryUGCKeyValueTag(
-                            self.ugc, query_handle, index, tag_index,
-                            key, len(key), value, len(value)):
-                        key_values.append((_decode_c_string(key.raw),
-                                           _decode_c_string(value.raw)))
+                        self.ugc,
+                        query_handle,
+                        index,
+                        tag_index,
+                        key,
+                        len(key),
+                        value,
+                        len(value),
+                    ):
+                        key_values.append(
+                            (_decode_c_string(key.raw), _decode_c_string(value.raw))
+                        )
                 previews = []
                 preview_count = int(
                     self.dll.SteamAPI_ISteamUGC_GetQueryUGCNumAdditionalPreviews(
-                        self.ugc, query_handle, index))
+                        self.ugc, query_handle, index
+                    )
+                )
                 for preview_index in range(preview_count):
                     url = ctypes.create_string_buffer(4096)
                     filename = ctypes.create_string_buffer(1024)
                     preview_type = ctypes.c_int32()
                     if self.dll.SteamAPI_ISteamUGC_GetQueryUGCAdditionalPreview(
-                            self.ugc, query_handle, index, preview_index,
-                            url, len(url), filename, len(filename),
-                            ctypes.byref(preview_type)):
-                        previews.append(WorkshopPreview(
-                            _decode_c_string(url.raw),
-                            _decode_c_string(filename.raw),
-                            int(preview_type.value),
-                        ))
-                details.append(WorkshopItemDetails(
-                    **{**base.__dict__,
-                       "metadata": metadata,
-                       "key_value_tags": tuple(key_values),
-                       "previews": tuple(previews)}
-                ))
+                        self.ugc,
+                        query_handle,
+                        index,
+                        preview_index,
+                        url,
+                        len(url),
+                        filename,
+                        len(filename),
+                        ctypes.byref(preview_type),
+                    ):
+                        previews.append(
+                            WorkshopPreview(
+                                _decode_c_string(url.raw),
+                                _decode_c_string(filename.raw),
+                                int(preview_type.value),
+                            )
+                        )
+                details.append(
+                    WorkshopItemDetails(
+                        **{
+                            **base.__dict__,
+                            "metadata": metadata,
+                            "key_value_tags": tuple(key_values),
+                            "previews": tuple(previews),
+                        }
+                    )
+                )
             return details
         finally:
-            self.dll.SteamAPI_ISteamUGC_ReleaseQueryUGCRequest(
-                self.ugc, query_handle)
+            self.dll.SteamAPI_ISteamUGC_ReleaseQueryUGCRequest(self.ugc, query_handle)
 
     def _configure_query_calls(self) -> None:
         """延迟绑定只读查询接口，普通下载路径不强制依赖这些导出。"""
@@ -594,50 +927,98 @@ class SteamWorkshopSession:
         if not self.utils:
             raise RuntimeError("SteamAPI_SteamUtils_v010 返回空接口")
         d.SteamAPI_ISteamUGC_CreateQueryUGCDetailsRequest.argtypes = [
-            ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint64), ctypes.c_uint32]
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.c_uint32,
+        ]
         d.SteamAPI_ISteamUGC_CreateQueryUGCDetailsRequest.restype = ctypes.c_uint64
-        for name in ("SteamAPI_ISteamUGC_SetReturnKeyValueTags",
-                     "SteamAPI_ISteamUGC_SetReturnMetadata",
-                     "SteamAPI_ISteamUGC_SetReturnAdditionalPreviews"):
+        for name in (
+            "SteamAPI_ISteamUGC_SetReturnKeyValueTags",
+            "SteamAPI_ISteamUGC_SetReturnMetadata",
+            "SteamAPI_ISteamUGC_SetReturnAdditionalPreviews",
+        ):
             fn = getattr(d, name)
             fn.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.c_bool]
             fn.restype = ctypes.c_bool
-        d.SteamAPI_ISteamUGC_SendQueryUGCRequest.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        d.SteamAPI_ISteamUGC_SendQueryUGCRequest.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+        ]
         d.SteamAPI_ISteamUGC_SendQueryUGCRequest.restype = ctypes.c_uint64
         d.SteamAPI_ISteamUtils_IsAPICallCompleted.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_bool)]
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_bool),
+        ]
         d.SteamAPI_ISteamUtils_IsAPICallCompleted.restype = ctypes.c_bool
         d.SteamAPI_ISteamUtils_GetAPICallResult.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int,
-            ctypes.c_int, ctypes.POINTER(ctypes.c_bool)]
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_bool),
+        ]
         d.SteamAPI_ISteamUtils_GetAPICallResult.restype = ctypes.c_bool
         d.SteamAPI_ISteamUGC_GetQueryUGCResult.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32, ctypes.c_void_p]
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+        ]
         d.SteamAPI_ISteamUGC_GetQueryUGCResult.restype = ctypes.c_bool
         d.SteamAPI_ISteamUGC_GetQueryUGCNumKeyValueTags.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32]
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+        ]
         d.SteamAPI_ISteamUGC_GetQueryUGCNumKeyValueTags.restype = ctypes.c_uint32
         d.SteamAPI_ISteamUGC_GetQueryUGCKeyValueTag.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32, ctypes.c_uint32,
-            ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint32]
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+        ]
         d.SteamAPI_ISteamUGC_GetQueryUGCKeyValueTag.restype = ctypes.c_bool
         d.SteamAPI_ISteamUGC_GetQueryUGCMetadata.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32,
-            ctypes.c_char_p, ctypes.c_uint32]
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+        ]
         d.SteamAPI_ISteamUGC_GetQueryUGCMetadata.restype = ctypes.c_bool
         d.SteamAPI_ISteamUGC_GetQueryUGCNumAdditionalPreviews.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32]
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+        ]
         d.SteamAPI_ISteamUGC_GetQueryUGCNumAdditionalPreviews.restype = ctypes.c_uint32
         d.SteamAPI_ISteamUGC_GetQueryUGCAdditionalPreview.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32, ctypes.c_uint32,
-            ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint32,
-            ctypes.POINTER(ctypes.c_int32)]
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+            ctypes.POINTER(ctypes.c_int32),
+        ]
         d.SteamAPI_ISteamUGC_GetQueryUGCAdditionalPreview.restype = ctypes.c_bool
         d.SteamAPI_ISteamUGC_ReleaseQueryUGCRequest.argtypes = [
-            ctypes.c_void_p, ctypes.c_uint64]
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+        ]
         d.SteamAPI_ISteamUGC_ReleaseQueryUGCRequest.restype = ctypes.c_bool
 
-    def _wait_query_call(self, api_call: int, timeout: float) -> _SteamUGCQueryCompleted:
+    def _wait_query_call(
+        self, api_call: int, timeout: float
+    ) -> _SteamUGCQueryCompleted:
         run_callbacks = self.dll.SteamAPI_RunCallbacks
         run_callbacks.restype = None
         io_failed = ctypes.c_bool()
@@ -645,7 +1026,8 @@ class SteamWorkshopSession:
         while time.monotonic() < deadline:
             run_callbacks()
             if self.dll.SteamAPI_ISteamUtils_IsAPICallCompleted(
-                    self.utils, api_call, ctypes.byref(io_failed)):
+                self.utils, api_call, ctypes.byref(io_failed)
+            ):
                 break
             time.sleep(0.05)
         else:
@@ -653,56 +1035,414 @@ class SteamWorkshopSession:
         completed = _SteamUGCQueryCompleted()
         result_failed = ctypes.c_bool()
         ok = self.dll.SteamAPI_ISteamUtils_GetAPICallResult(
-            self.utils, api_call, ctypes.byref(completed), ctypes.sizeof(completed),
-            _STEAM_UGC_QUERY_COMPLETED_CALLBACK, ctypes.byref(result_failed))
+            self.utils,
+            api_call,
+            ctypes.byref(completed),
+            ctypes.sizeof(completed),
+            _STEAM_UGC_QUERY_COMPLETED_CALLBACK,
+            ctypes.byref(result_failed),
+        )
         if not ok or io_failed.value or result_failed.value:
             raise RuntimeError("Workshop 源端查询发生 Steam IO 错误")
         return completed
 
-    def download_item(self, workshop_id: int, *, high_priority: bool = True) -> WorkshopDownloadResult:
+    def download_item(
+        self,
+        workshop_id: int,
+        *,
+        high_priority: bool = True,
+        expected_version: str = "",
+        source_details: WorkshopItemDetails | None = None,
+    ) -> WorkshopDownloadResult:
         self._ensure_started()
         workshop_id = int(workshop_id)
         result = WorkshopDownloadResult(self.backend, workshop_id)
-        if (self.backend is WorkshopBackend.GAME_SERVER
-                and not getattr(self, "game_server_logged_on", False)):
+        if self.backend is WorkshopBackend.GAME_SERVER and not getattr(
+            self, "game_server_logged_on", False
+        ):
             result.error = "SteamGameServer 尚未完成匿名登录"
             return result
         result.state = self.item_state(workshop_id)
+        install_info = self.item_install_details(workshop_id)
+        if (
+            source_details is not None
+            and source_details.content_handle > 0
+            and (result.state.legacy_item or install_info is None)
+        ):
+            from dstools.features.mod.parser import find_workshop_dir
+
+            workshop_root = find_workshop_dir()
+            if workshop_root is not None:
+                legacy_path = (
+                    Path(workshop_root)
+                    / str(workshop_id)
+                    / f"{source_details.content_handle}_legacy.bin"
+                )
+                install_info = WorkshopInstallInfo(
+                    legacy_path,
+                    max(0, int(source_details.file_size)),
+                    max(0, int(source_details.time_updated)),
+                )
+                if not result.state.legacy_item:
+                    result.state = WorkshopItemState(result.state.flags | ITEM_LEGACY)
+                result.details["legacy_path_recovered_from_source"] = True
         # Steam 的 Installed 位和 GetItemInstallInfo 可能在文件被手动删除后
         # 仍保留旧值。只有物理目录、modinfo 和可用 Manifest 都通过验收，
         # 才能跳过 DownloadItem；否则把本次请求标记为修复。
-        if (result.state.installed and not result.state.needs_update
-                and not result.state.downloading
-                and not result.state.download_pending):
-            validation = validate_workshop_install(self.item_install_info(workshop_id))
+        if (
+            result.state.installed
+            and not result.state.needs_update
+            and not result.state.downloading
+            and not result.state.download_pending
+        ):
+            validation = validate_workshop_install(
+                install_info.path if install_info is not None else None,
+                legacy_item=result.state.legacy_item,
+            )
             if validation.valid:
-                result.accepted = True
-                result.completed = True
-                result.up_to_date = True
-                result.installed_path = validation.path
-                result.details["validation"] = "passed"
-                return result
+                if result.state.legacy_item:
+                    legacy_result = SteamWorkshopSession._finish_legacy_install(
+                        result,
+                        validation.path,
+                        expected_version=expected_version,
+                        force=False,
+                    )
+                    if legacy_result.completed:
+                        return legacy_result
+                    # 本地旧式包也无法还原出远程版本时，再从 Steam 拉取一次；
+                    # 不能把“包存在”当作“运行目录已经是最新版”。
+                    legacy_result.details["legacy_local_repair_error"] = (
+                        legacy_result.error
+                    )
+                    legacy_result.error = ""
+                if expected_version:
+                    if not SteamWorkshopSession._prepare_forced_version_repair(
+                        result, validation.path, expected_version
+                    ):
+                        return result
+                else:
+                    result.accepted = True
+                    result.completed = True
+                    result.up_to_date = True
+                    result.installed_path = validation.path
+                    result.details["validation"] = "passed"
+                    if validation.warning:
+                        result.details["validation_warning"] = validation.warning
+                    return result
             result.details["repair"] = True
             result.details["precheck_error"] = validation.error
-        result.accepted = bool(self.dll.SteamAPI_ISteamUGC_DownloadItem(
-            self.ugc, workshop_id, bool(high_priority)))
+        if result.state.legacy_item:
+            if expected_version:
+                result.details["expected_version"] = str(expected_version).strip()
+            return self._download_legacy_item(result, install_info)
+        result.accepted = bool(
+            self.dll.SteamAPI_ISteamUGC_DownloadItem(
+                self.ugc, workshop_id, bool(high_priority)
+            )
+        )
         if not result.accepted:
             result.error = "ISteamUGC::DownloadItem 返回 false（项目无效、用户未登录或服务器上下文未就绪）"
+            SteamWorkshopSession._finish_forced_version_repair(result, success=False)
         return result
 
-    def wait_for_download(self, result: WorkshopDownloadResult, *, timeout: float = 180.0,
-                          poll_interval: float = 0.2,
-                          on_progress: Callable[[int | None, int | None], None] | None = None
-                          ) -> WorkshopDownloadResult:
+    @staticmethod
+    def _prepare_forced_version_repair(
+        result: WorkshopDownloadResult, install_path: Path | None, expected_version: str
+    ) -> bool:
+        """可恢复地移走 modinfo.lua，让 Steam 对“清单最新但文件被改”重下。"""
+        path = Path(install_path) if install_path is not None else None
+        if path is None or path.name != str(result.workshop_id):
+            result.error = "Steam 返回的 Mod 安装目录不符合 Workshop ID，已停止强制修复"
+            return False
+        modinfo = path / "modinfo.lua"
+        if not modinfo.is_file():
+            result.error = "强制修复前找不到 modinfo.lua"
+            return False
+        backup = path / f"modinfo.lua.dstcamp-update-{os.getpid()}-{time.time_ns()}.bak"
+        try:
+            modinfo.replace(backup)
+        except OSError as exc:
+            result.error = f"无法备份本地 modinfo.lua：{exc}"
+            return False
+        result.details.update(
+            {
+                "repair": True,
+                "version_repair": True,
+                "expected_version": str(expected_version).strip(),
+                "forced_modinfo_path": str(modinfo),
+                "forced_modinfo_backup": str(backup),
+            }
+        )
+        return True
+
+    @staticmethod
+    def _finish_forced_version_repair(
+        result: WorkshopDownloadResult, *, success: bool
+    ) -> None:
+        backup_text = result.details.get("forced_modinfo_backup")
+        target_text = result.details.get("forced_modinfo_path")
+        if not backup_text or not target_text:
+            return
+        backup = Path(backup_text)
+        target = Path(target_text)
+        try:
+            if success:
+                backup.unlink(missing_ok=True)
+            elif backup.is_file():
+                os.replace(backup, target)
+        except OSError as exc:
+            result.details["backup_cleanup_error"] = str(exc)
+
+    @staticmethod
+    def _downloaded_version_matches(
+        result: WorkshopDownloadResult, install_path: Path | None
+    ) -> bool:
+        expected = str(result.details.get("expected_version") or "").strip()
+        if not expected:
+            return True
+        if install_path is None:
+            return False
+        from dstools.features.mod.local_version import (
+            VERSION_CONFIRMED,
+            normalize_version_for_compare,
+            resolve_local_mod_version,
+        )
+
+        local = resolve_local_mod_version(
+            str(result.workshop_id),
+            Path(install_path),
+            f"workshop-{result.workshop_id}",
+        )
+        if local.status == VERSION_CONFIRMED and normalize_version_for_compare(
+            local.version
+        ) == normalize_version_for_compare(expected):
+            result.details["installed_version"] = local.version
+            return True
+        result.details["postcheck_error"] = (
+            f"下载后版本仍不匹配：本地 {local.version or '未知'}，远程 {expected}"
+        )
+        return False
+
+    def _download_legacy_item(
+        self, result: WorkshopDownloadResult, install_info: WorkshopInstallInfo | None
+    ) -> WorkshopDownloadResult:
+        """用旧版 RemoteStorage 接口修复 Legacy Workshop 文件。
+
+        Legacy 项目的 ``GetItemInstallInfo`` 返回的是 ``*_legacy.bin`` 文件，
+        并非目录。Steam 即使发现该文件被删除，也可能继续保留 Installed 位；
+        此时现代 ``ISteamUGC::DownloadItem`` 会接受请求但永远不产生传输。
+        文件名本身包含旧接口所需的 UGCHandle，因此直接下载到 Steam 记录的
+        原位置，完成后仍按实际文件大小验收。
+        """
+        if self.backend is not WorkshopBackend.CLIENT:
+            result.error = "Legacy Mod 修复仅支持普通 SteamUGC 客户端上下文"
+            return result
+        if install_info is None:
+            result.error = "Steam 没有返回 Legacy Mod 的安装记录"
+            return result
+        target = install_info.path
+        suffix = "_legacy.bin"
+        if not target.name.endswith(suffix):
+            result.error = "Steam 返回的 Legacy Mod 文件名无法识别"
+            return result
+        handle_text = target.name[: -len(suffix)]
+        if not handle_text.isdigit():
+            result.error = "Steam 返回的 Legacy Mod 内容句柄无效"
+            return result
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            result.error = f"无法创建 Legacy Mod 目录：{exc}"
+            return result
+        self._require(
+            "SteamAPI_SteamRemoteStorage_v014",
+            "SteamAPI_ISteamRemoteStorage_UGCDownloadToLocation",
+            "SteamAPI_SteamUtils_v010",
+            "SteamAPI_ISteamUtils_IsAPICallCompleted",
+        )
+        self.dll.SteamAPI_SteamRemoteStorage_v014.restype = ctypes.c_void_p
+        remote_storage = self.dll.SteamAPI_SteamRemoteStorage_v014()
+        if not remote_storage:
+            result.error = "SteamAPI_SteamRemoteStorage_v014 返回空接口"
+            return result
+        self.dll.SteamAPI_ISteamRemoteStorage_UGCDownloadToLocation.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+        ]
+        self.dll.SteamAPI_ISteamRemoteStorage_UGCDownloadToLocation.restype = (
+            ctypes.c_uint64
+        )
+        self.dll.SteamAPI_SteamUtils_v010.restype = ctypes.c_void_p
+        self.utils = self.dll.SteamAPI_SteamUtils_v010()
+        if not self.utils:
+            result.error = "SteamAPI_SteamUtils_v010 返回空接口"
+            return result
+        self.dll.SteamAPI_ISteamUtils_IsAPICallCompleted.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_bool),
+        ]
+        self.dll.SteamAPI_ISteamUtils_IsAPICallCompleted.restype = ctypes.c_bool
+        temporary = target.with_name(
+            f".{target.name}.dstcamp-download-{os.getpid()}-{time.time_ns()}.tmp"
+        )
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError as exc:
+            result.error = f"无法清理 Legacy Mod 临时文件：{exc}"
+            return result
+        api_call = int(
+            self.dll.SteamAPI_ISteamRemoteStorage_UGCDownloadToLocation(
+                remote_storage, int(handle_text), str(temporary).encode("utf-8"), 0
+            )
+        )
+        if not api_call:
+            result.error = "Legacy Workshop 下载请求未能创建"
+            return result
+        result.accepted = True
+        result.details["legacy_api_call"] = api_call
+        result.details["legacy_target"] = str(temporary)
+        result.details["legacy_final_target"] = str(target)
+        return result
+
+    @staticmethod
+    def _finish_legacy_install(
+        result: WorkshopDownloadResult,
+        archive_path: Path | None,
+        *,
+        expected_version: str = "",
+        force: bool,
+    ) -> WorkshopDownloadResult:
+        """校验并部署 V1 包；只有运行目录也可用时才算完成。"""
+        from dstools.features.mod.legacy_v1 import deploy_legacy_package
+        from dstools.features.mod.legacy_v1 import discover_legacy_runtime_targets
+        from dstools.features.mod.local_version import (
+            VERSION_CONFIRMED,
+            normalize_version_for_compare,
+            resolve_local_mod_version,
+        )
+
+        archive = Path(archive_path) if archive_path is not None else None
+        if archive is None:
+            result.error = "Legacy Mod 下载包路径不存在"
+            return result
+        expected = str(
+            expected_version or result.details.get("expected_version") or ""
+        ).strip()
+        roots = discover_legacy_runtime_targets()
+        targets = [Path(root) / f"workshop-{result.workshop_id}" for root in roots]
+
+        def target_version(path: Path):
+            return (
+                resolve_local_mod_version(
+                    str(result.workshop_id), path, f"workshop-{result.workshop_id}"
+                )
+                if path.is_dir() and (path / "modinfo.lua").is_file()
+                else None
+            )
+
+        target_versions = [(path, target_version(path)) for path in targets]
+        all_targets_current = bool(target_versions)
+        for _path, version in target_versions:
+            if version is None:
+                all_targets_current = False
+                break
+            if expected and (
+                version.status != VERSION_CONFIRMED
+                or normalize_version_for_compare(version.version)
+                != normalize_version_for_compare(expected)
+            ):
+                all_targets_current = False
+                break
+        if not force and all_targets_current:
+            result.accepted = True
+            result.completed = True
+            result.up_to_date = True
+            result.installed_path = targets[0]
+            result.details.update(
+                {
+                    "validation": "passed",
+                    "legacy_runtime": str(targets[0]),
+                    "legacy_targets_checked": [str(path) for path in targets],
+                }
+            )
+            return result
+
+        deployment = deploy_legacy_package(result.workshop_id, archive, force=True)
+        if not deployment.completed:
+            result.error = deployment.error or "Legacy Mod 未能部署到运行目录"
+            return result
+        result.accepted = True
+        result.completed = True
+        result.up_to_date = False
+        result.installed_path = deployment.deployed[0] if deployment.deployed else None
+        result.details.update(
+            {
+                "repair": True,
+                "legacy_materialized": True,
+                "legacy_archive": str(archive),
+                "legacy_targets": [str(path) for path in deployment.deployed],
+                "validation": "passed",
+            }
+        )
+        if expected:
+            result.details["expected_version"] = expected
+            installed_versions = [(path, target_version(path)) for path in targets]
+            mismatch = next(
+                (
+                    (path, version)
+                    for path, version in installed_versions
+                    if (
+                        version is None
+                        or version.status != VERSION_CONFIRMED
+                        or normalize_version_for_compare(version.version)
+                        != normalize_version_for_compare(expected)
+                    )
+                ),
+                None,
+            )
+            if mismatch is not None:
+                mismatch_path, installed_version = mismatch
+                result.completed = False
+                result.error = (
+                    "Legacy Mod 部署后版本仍不匹配："
+                    f"{mismatch_path} 为 "
+                    f"{installed_version.version if installed_version else '未知'}，"
+                    f"远程 {expected}"
+                )
+        return result
+
+    def wait_for_download(
+        self,
+        result: WorkshopDownloadResult,
+        *,
+        timeout: float = 180.0,
+        poll_interval: float = 0.2,
+        on_progress: Callable[[int | None, int | None], None] | None = None,
+    ) -> WorkshopDownloadResult:
         """泵送回调并等待安装完成，再解析安装目录。"""
         self._ensure_started()
         if not result.accepted:
             return result
-        if result.up_to_date:
+        # V1 可能直接复用现有 *_legacy.bin 完成本地部署，没有创建新的
+        # Steam API 下载调用。此时 completed=True、up_to_date=False，仍是
+        # 一次真实“修复完成”，不能再进入 Legacy 下载等待并制造伪错误。
+        if result.completed:
             return result
-        run_callbacks = (self.dll.SteamAPI_RunCallbacks
-                         if self.backend is WorkshopBackend.CLIENT
-                         else self.dll.SteamGameServer_RunCallbacks)
+        if result.state is not None and result.state.legacy_item:
+            return self._wait_for_legacy_download(
+                result,
+                timeout=timeout,
+                poll_interval=poll_interval,
+                on_progress=on_progress,
+            )
+        run_callbacks = (
+            self.dll.SteamAPI_RunCallbacks
+            if self.backend is WorkshopBackend.CLIENT
+            else self.dll.SteamGameServer_RunCallbacks
+        )
         run_callbacks.restype = None
         deadline = time.monotonic() + max(0.0, timeout)
         started_at = time.monotonic()
@@ -715,7 +1455,11 @@ class SteamWorkshopSession:
             total = ctypes.c_uint64()
             progress_available = False
             if self.dll.SteamAPI_ISteamUGC_GetItemDownloadInfo(
-                    self.ugc, result.workshop_id, ctypes.byref(downloaded), ctypes.byref(total)):
+                self.ugc,
+                result.workshop_id,
+                ctypes.byref(downloaded),
+                ctypes.byref(total),
+            ):
                 result.downloaded_bytes = int(downloaded.value)
                 result.total_bytes = int(total.value)
                 progress_available = True
@@ -727,23 +1471,38 @@ class SteamWorkshopSession:
                 or total.value == 0
                 or downloaded.value >= total.value
             )
-            if (result.state.installed and not result.state.downloading
-                    and not result.state.download_pending
-                    and not result.state.needs_update and transfer_finished):
+            if (
+                result.state.installed
+                and not result.state.downloading
+                and not result.state.download_pending
+                and not result.state.needs_update
+                and transfer_finished
+            ):
                 # DownloadItem 可能在第一次查询时仍返回旧的 Installed 状态；
                 # 至少连续几次稳定且留出一个短暂启动窗口，再读安装目录，
                 # 避免把“请求已接受”误报成“新文件已经落盘”。
                 stable_installed_polls += 1
             else:
                 stable_installed_polls = 0
-            if (stable_installed_polls >= 3
-                    and (saw_transfer or time.monotonic() - started_at >= 0.5)):
+            if stable_installed_polls >= 3 and (
+                saw_transfer or time.monotonic() - started_at >= 0.5
+            ):
                 path = self.item_install_info(result.workshop_id)
-                validation = validate_workshop_install(path)
-                if validation.valid:
+                validation = validate_workshop_install(
+                    path, legacy_item=bool(result.state and result.state.legacy_item)
+                )
+                if (
+                    validation.valid
+                    and SteamWorkshopSession._downloaded_version_matches(result, path)
+                ):
                     result.installed_path = validation.path
                     result.completed = True
                     result.details["validation"] = "passed"
+                    if validation.warning:
+                        result.details["validation_warning"] = validation.warning
+                    SteamWorkshopSession._finish_forced_version_repair(
+                        result, success=True
+                    )
                     return result
                 result.details["postcheck_error"] = validation.error
             time.sleep(max(0.02, poll_interval))
@@ -752,6 +1511,79 @@ class SteamWorkshopSession:
             result.error = f"Workshop 请求已接受，但文件验收失败：{validation_error}"
         else:
             result.error = "等待 Workshop 下载完成超时；请检查 Steam 登录状态和网络"
+        SteamWorkshopSession._finish_forced_version_repair(result, success=False)
+        return result
+
+    def _wait_for_legacy_download(
+        self,
+        result: WorkshopDownloadResult,
+        *,
+        timeout: float,
+        poll_interval: float,
+        on_progress: Callable[[int | None, int | None], None] | None,
+    ) -> WorkshopDownloadResult:
+        """等待 ``UGCDownloadToLocation`` 完成并验收实际 Legacy 文件。"""
+        target_text = result.details.get("legacy_target")
+        api_call = int(result.details.get("legacy_api_call") or 0)
+        if not target_text or not api_call:
+            result.error = "Legacy Workshop 下载上下文不完整"
+            return result
+        target = Path(target_text)
+        final_target = Path(result.details.get("legacy_final_target") or target)
+        expected_size = int(result.details.get("legacy_expected_size") or 0)
+        info = self.item_install_details(result.workshop_id)
+        if not expected_size and info is not None:
+            expected_size = max(0, int(info.size_on_disk))
+        run_callbacks = self.dll.SteamAPI_RunCallbacks
+        run_callbacks.restype = None
+        io_failed = ctypes.c_bool()
+        deadline = time.monotonic() + max(0.0, timeout)
+        while time.monotonic() < deadline:
+            run_callbacks()
+            try:
+                current_size = target.stat().st_size
+            except OSError:
+                current_size = 0
+            result.downloaded_bytes = current_size
+            result.total_bytes = expected_size or None
+            if on_progress:
+                on_progress(result.downloaded_bytes, result.total_bytes)
+            if self.dll.SteamAPI_ISteamUtils_IsAPICallCompleted(
+                self.utils, api_call, ctypes.byref(io_failed)
+            ):
+                if io_failed.value:
+                    result.error = "Legacy Workshop 下载发生 Steam IO 错误"
+                    return result
+                from dstools.features.mod.legacy_v1 import validate_legacy_package
+
+                validation = validate_legacy_package(target)
+                if validation.valid and (
+                    not expected_size or current_size == expected_size
+                ):
+                    try:
+                        os.replace(target, final_target)
+                    except OSError as exc:
+                        result.error = f"无法替换 Legacy Mod 下载包：{exc}"
+                        return result
+                    return SteamWorkshopSession._finish_legacy_install(
+                        result,
+                        final_target,
+                        expected_version=str(
+                            result.details.get("expected_version") or ""
+                        ),
+                        force=True,
+                    )
+                if validation.valid:
+                    result.error = f"Legacy Workshop 文件大小不完整：{current_size}/{expected_size} 字节"
+                else:
+                    result.error = f"Legacy Workshop 文件验收失败：{validation.error}"
+                return result
+            time.sleep(max(0.02, poll_interval))
+        try:
+            target.unlink(missing_ok=True)
+        except OSError:
+            pass
+        result.error = "等待 Legacy Workshop 下载完成超时；请检查 Steam 登录状态和网络"
         return result
 
     def item_install_info(self, workshop_id: int) -> Path | None:
@@ -763,13 +1595,24 @@ class SteamWorkshopSession:
         size = ctypes.c_uint64()
         timestamp = ctypes.c_uint32()
         buf = ctypes.create_string_buffer(4096)
-        ok = bool(self.dll.SteamAPI_ISteamUGC_GetItemInstallInfo(
-            self.ugc, int(workshop_id), ctypes.byref(size), buf, len(buf), ctypes.byref(timestamp)))
+        ok = bool(
+            self.dll.SteamAPI_ISteamUGC_GetItemInstallInfo(
+                self.ugc,
+                int(workshop_id),
+                ctypes.byref(size),
+                buf,
+                len(buf),
+                ctypes.byref(timestamp),
+            )
+        )
         if not ok:
             return None
         raw = buf.value.decode("utf-8", errors="replace").strip()
-        return (WorkshopInstallInfo(Path(raw), int(size.value), int(timestamp.value))
-                if raw else None)
+        return (
+            WorkshopInstallInfo(Path(raw), int(size.value), int(timestamp.value))
+            if raw
+            else None
+        )
 
     def _ensure_started(self) -> None:
         if not self._started or self.dll is None or not self.ugc:
@@ -796,13 +1639,17 @@ class SteamWorkshopSession:
                 self._dll_directory_handle = None
 
 
-def download_workshop_item(workshop_id: int, *, backend: WorkshopBackend = WorkshopBackend.AUTO,
-                           dll_path: Path | None = None, workshop_folder: Path | None = None,
-                           workshop_depot_id: int = DST_GAME_SERVER_WORKSHOP_DEPOT,
-                           allow_game_server_fallback: bool = False,
-                           timeout: float = 180.0,
-                           on_progress: Callable[[int | None, int | None], None] | None = None
-                           ) -> WorkshopUpdateResult:
+def download_workshop_item(
+    workshop_id: int,
+    *,
+    backend: WorkshopBackend = WorkshopBackend.AUTO,
+    dll_path: Path | None = None,
+    workshop_folder: Path | None = None,
+    workshop_depot_id: int = DST_GAME_SERVER_WORKSHOP_DEPOT,
+    allow_game_server_fallback: bool = False,
+    timeout: float = 180.0,
+    on_progress: Callable[[int | None, int | None], None] | None = None,
+) -> WorkshopUpdateResult:
     """通过一个或两个后端更新单个 Workshop 项目。
 
     ``auto`` 默认只使用普通 SteamUGC。SteamGameServerUGC 的匿名下载在
@@ -821,8 +1668,11 @@ def download_workshop_item(workshop_id: int, *, backend: WorkshopBackend = Works
     resolved_dll = find_steam_api_dll(dll_path)
     attempts: list[WorkshopDownloadResult] = []
     if resolved_dll is None:
-        attempt = WorkshopDownloadResult(WorkshopBackend.CLIENT, workshop_id,
-                                         error="找不到 DST 或专用服务器的 bin64\\steam_api64.dll")
+        attempt = WorkshopDownloadResult(
+            WorkshopBackend.CLIENT,
+            workshop_id,
+            error="找不到 DST 或专用服务器的 bin64\\steam_api64.dll",
+        )
         return WorkshopUpdateResult(False, None, workshop_id, attempts=[attempt])
 
     backends: list[WorkshopBackend]
@@ -834,33 +1684,51 @@ def download_workshop_item(workshop_id: int, *, backend: WorkshopBackend = Works
         backends = [backend]
     for current in backends:
         if current is WorkshopBackend.GAME_SERVER and workshop_folder is None:
-            attempts.append(WorkshopDownloadResult(
-                current, workshop_id, error="未指定 SteamGameServerUGC 的 workshop_folder"))
+            attempts.append(
+                WorkshopDownloadResult(
+                    current,
+                    workshop_id,
+                    error="未指定 SteamGameServerUGC 的 workshop_folder",
+                )
+            )
             continue
         try:
             with SteamWorkshopSession(
-                    resolved_dll, current, workshop_folder=workshop_folder,
-                    workshop_depot_id=workshop_depot_id) as session:
+                resolved_dll,
+                current,
+                workshop_folder=workshop_folder,
+                workshop_depot_id=workshop_depot_id,
+            ) as session:
                 attempt = session.download_item(workshop_id)
-                attempt = session.wait_for_download(attempt, timeout=timeout,
-                                                    on_progress=on_progress)
+                attempt = session.wait_for_download(
+                    attempt, timeout=timeout, on_progress=on_progress
+                )
         except Exception as exc:
             attempt = WorkshopDownloadResult(
-                current, workshop_id, error=f"{type(exc).__name__}: {exc}")
+                current, workshop_id, error=f"{type(exc).__name__}: {exc}"
+            )
         attempts.append(attempt)
         if attempt.completed:
-            return WorkshopUpdateResult(True, current, workshop_id,
-                                        installed_path=attempt.installed_path,
-                                        attempts=attempts)
+            return WorkshopUpdateResult(
+                True,
+                current,
+                workshop_id,
+                installed_path=attempt.installed_path,
+                attempts=attempts,
+            )
     return WorkshopUpdateResult(False, None, workshop_id, attempts=attempts)
 
 
-def update_workshop_items(workshop_ids: list[int] | tuple[int, ...], *,
-                          dll_path: Path | None = None,
-                          timeout: float = 180.0,
-                          on_progress: Callable[[int, int, int | None, int | None], None] | None = None,
-                          on_item_complete: Callable[[int, int, WorkshopDownloadResult], None] | None = None
-                          ) -> WorkshopBatchResult:
+def _update_workshop_items_in_process(
+    workshop_ids: list[int] | tuple[int, ...],
+    *,
+    dll_path: Path | None = None,
+    timeout: float = 180.0,
+    expected_versions: dict[int, str] | None = None,
+    on_progress: Callable[[int, int, int | None, int | None], None] | None = None,
+    on_item_start: Callable[[int, int, int], None] | None = None,
+    on_item_complete: Callable[[int, int, WorkshopDownloadResult], None] | None = None,
+) -> WorkshopBatchResult:
     """使用普通 SteamUGC 会话批量检查/更新 Workshop Mod。
 
     这里故意不接受 ``workshop_folder`` 或服务器后端参数：Mod 管理页的
@@ -880,26 +1748,86 @@ def update_workshop_items(workshop_ids: list[int] | tuple[int, ...], *,
     resolved_dll = find_steam_api_dll(dll_path)
     if resolved_dll is None:
         error = "找不到 DST 或专用服务器的 bin64\\steam_api64.dll"
-        batch.results = [WorkshopDownloadResult(WorkshopBackend.CLIENT, item, error=error)
-                         for item in unique_ids]
+        batch.results = [
+            WorkshopDownloadResult(WorkshopBackend.CLIENT, item, error=error)
+            for item in unique_ids
+        ]
         return batch
     total = len(unique_ids)
+    expected_versions = {
+        int(key): str(value).strip()
+        for key, value in (expected_versions or {}).items()
+        if int(key) > 0 and str(value).strip()
+    }
     try:
         with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
+            source_details: dict[int, WorkshopItemDetails] = {}
+            # DownloadItem 对已下架/私密项目有时仍返回 true，但之后永远不会
+            # 产生下载状态。先做一次批量源端预检，只有明确的逐项目错误才
+            # 短路；网络查询整体失败时仍保留原下载路径，避免误拦正常 Mod。
+            try:
+                for start in range(0, total, 50):
+                    for item in session.query_item_details(
+                        unique_ids[start : start + 50], timeout=min(timeout, 20.0)
+                    ):
+                        source_details[item.workshop_id] = item
+            except Exception:
+                source_details = {}
             for index, workshop_id in enumerate(unique_ids, 1):
+                if on_item_start:
+                    on_item_start(index, total, workshop_id)
                 try:
-                    result = session.download_item(workshop_id)
-                    result = session.wait_for_download(
-                        result, timeout=timeout,
-                        on_progress=(
-                            None if on_progress is None else
-                            lambda done, size, i=index: on_progress(i, total, done, size)
-                        ),
+                    source_error = workshop_source_error(
+                        source_details.get(workshop_id)
                     )
+                    if source_error:
+                        result = WorkshopDownloadResult(
+                            WorkshopBackend.CLIENT,
+                            workshop_id,
+                            error=source_error,
+                            details={
+                                "source_result": source_details[workshop_id].result
+                            },
+                        )
+                    else:
+                        result = session.download_item(
+                            workshop_id,
+                            expected_version=expected_versions.get(workshop_id, ""),
+                            source_details=source_details.get(workshop_id),
+                        )
+                        detail = source_details.get(workshop_id)
+                        if (
+                            result.state is not None
+                            and result.state.legacy_item
+                            and detail is not None
+                            and detail.file_size > 0
+                        ):
+                            result.details["legacy_expected_size"] = int(
+                                detail.file_size
+                            )
+                        try:
+                            result = session.wait_for_download(
+                                result,
+                                timeout=timeout,
+                                on_progress=(
+                                    None
+                                    if on_progress is None
+                                    else lambda done, size, i=index: on_progress(
+                                        i, total, done, size
+                                    )
+                                ),
+                            )
+                        except Exception:
+                            SteamWorkshopSession._finish_forced_version_repair(
+                                result, success=False
+                            )
+                            raise
                 except Exception as exc:
                     result = WorkshopDownloadResult(
-                        WorkshopBackend.CLIENT, workshop_id,
-                        error=f"{type(exc).__name__}: {exc}")
+                        WorkshopBackend.CLIENT,
+                        workshop_id,
+                        error=f"{type(exc).__name__}: {exc}",
+                    )
                 batch.results.append(result)
                 if on_item_complete:
                     on_item_complete(index, total, result)
@@ -907,16 +1835,88 @@ def update_workshop_items(workshop_ids: list[int] | tuple[int, ...], *,
         error = f"{type(exc).__name__}: {exc}"
         while len(batch.results) < total:
             workshop_id = unique_ids[len(batch.results)]
-            result = WorkshopDownloadResult(WorkshopBackend.CLIENT, workshop_id, error=error)
+            result = WorkshopDownloadResult(
+                WorkshopBackend.CLIENT, workshop_id, error=error
+            )
             batch.results.append(result)
             if on_item_complete:
                 on_item_complete(len(batch.results), total, result)
     return batch
 
 
-def get_workshop_item_states(workshop_ids: list[int] | tuple[int, ...], *,
-                             dll_path: Path | None = None
-                             ) -> dict[int, WorkshopItemState]:
+def update_workshop_items(
+    workshop_ids: list[int] | tuple[int, ...],
+    *,
+    dll_path: Path | None = None,
+    timeout: float = 180.0,
+    expected_versions: dict[int, str] | None = None,
+    on_progress: Callable[[int, int, int | None, int | None], None] | None = None,
+    on_item_start: Callable[[int, int, int], None] | None = None,
+    on_item_complete: Callable[[int, int, WorkshopDownloadResult], None] | None = None,
+) -> WorkshopBatchResult:
+    """通过独立进程更新 Mod，完成后立即释放 Steam 的 322330 AppID。"""
+    ids = list(dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0))
+    if not ids:
+        return WorkshopBatchResult()
+    expected_versions = {
+        int(key): str(value).strip()
+        for key, value in (expected_versions or {}).items()
+        if int(key) in ids and str(value).strip()
+    }
+
+    def handle_event(event: dict[str, Any]) -> None:
+        event_type = event.get("type")
+        if event_type == "progress" and on_progress:
+            on_progress(
+                int(event["current"]),
+                int(event["total"]),
+                event.get("downloaded"),
+                event.get("size"),
+            )
+        elif event_type == "item_start" and on_item_start:
+            on_item_start(
+                int(event["current"]), int(event["total"]), int(event["workshop_id"])
+            )
+        elif event_type == "item_complete" and on_item_complete:
+            on_item_complete(
+                int(event["current"]),
+                int(event["total"]),
+                _download_result_from_payload(event["result"]),
+            )
+
+    try:
+        payload = _run_workshop_worker(
+            {
+                "action": "update",
+                "ids": ids,
+                "dll_path": str(dll_path) if dll_path else None,
+                "timeout": timeout,
+                "expected_versions": expected_versions,
+            },
+            handle_event,
+        )
+        return WorkshopBatchResult(
+            [
+                _download_result_from_payload(item)
+                for item in payload.get("results") or ()
+            ]
+        )
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+        results = []
+        for index, workshop_id in enumerate(ids, 1):
+            result = WorkshopDownloadResult(
+                WorkshopBackend.CLIENT, workshop_id, error=error
+            )
+            results.append(result)
+            if on_item_complete:
+                on_item_complete(index, len(ids), result)
+        return WorkshopBatchResult(results)
+
+
+def get_workshop_item_states(
+    workshop_ids: list[int] | tuple[int, ...], *, dll_path: Path | None = None
+) -> dict[int, WorkshopItemState]:
     """读取一批 Workshop 项目的本地 Steam 状态，不触发下载。
 
     ``GetItemState`` 是 Steam 判断已安装内容是否需要更新的权威入口；
@@ -936,13 +1936,111 @@ def get_workshop_item_states(workshop_ids: list[int] | tuple[int, ...], *,
     if resolved_dll is None:
         raise FileNotFoundError("找不到 DST 或专用服务器的 bin64\\steam_api64.dll")
     with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
-        return {workshop_id: session.item_state(workshop_id)
-                for workshop_id in unique_ids}
+        return {
+            workshop_id: session.item_state(workshop_id) for workshop_id in unique_ids
+        }
 
 
-def get_workshop_install_info(workshop_ids: list[int] | tuple[int, ...], *,
-                              dll_path: Path | None = None
-                              ) -> dict[int, WorkshopInstallInfo]:
+def _get_workshop_item_snapshot_in_process(
+    workshop_ids: list[int] | tuple[int, ...],
+    *,
+    detail_ids: list[int] | tuple[int, ...] = (),
+    dll_path: Path | None = None,
+    detail_timeout: float = 20.0,
+    include_subscribed: bool = False,
+) -> tuple[
+    dict[int, WorkshopItemState],
+    dict[int, WorkshopInstallInfo],
+    dict[int, WorkshopItemDetails],
+]:
+    """在一次 Steam 会话中读取状态、安装记录和可选的源端详情。
+
+    Mod 更新选择器一次刷新需要三类证据。以前分别调用三个公共函数，
+    每类都会单独 ``SteamAPI_Init/Shutdown``；这里专供组合刷新路径复用
+    同一会话。源端标题只是展示增强，查询失败时仍保留本地状态和安装
+    记录，不能让一次网络问题抹掉已经取得的可靠证据。
+    """
+    requested_ids = list(
+        dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0)
+    )
+    if not requested_ids and not include_subscribed:
+        return {}, {}, {}
+    resolved_dll = find_steam_api_dll(dll_path)
+    if resolved_dll is None:
+        raise FileNotFoundError("找不到 DST 或专用服务器的 bin64\\steam_api64.dll")
+    states: dict[int, WorkshopItemState] = {}
+    installs: dict[int, WorkshopInstallInfo] = {}
+    details: dict[int, WorkshopItemDetails] = {}
+    with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
+        subscribed_ids = session.subscribed_item_ids() if include_subscribed else []
+        ids = list(dict.fromkeys((*requested_ids, *subscribed_ids)))
+        id_set = set(ids)
+        # 新枚举出来的 ID 没有本地 ModInfo 可提供名称，只查询这些新增项；
+        # 已扫描项目仍只按调用方给出的 detail_ids 查询，避免数百个 Mod
+        # 每次都重新访问源端详情。
+        details_to_query = list(
+            dict.fromkeys(
+                (
+                    *(int(raw) for raw in detail_ids if int(raw) > 0),
+                    *(
+                        item
+                        for item in subscribed_ids
+                        if item not in set(requested_ids)
+                    ),
+                )
+            )
+        )
+        details_to_query = [item for item in details_to_query if item in id_set]
+        states = {workshop_id: session.item_state(workshop_id) for workshop_id in ids}
+        for workshop_id in ids:
+            info = session.item_install_details(workshop_id)
+            if info is not None:
+                installs[workshop_id] = info
+        try:
+            for start in range(0, len(details_to_query), 50):
+                for item in session.query_item_details(
+                    details_to_query[start : start + 50], timeout=detail_timeout
+                ):
+                    details[item.workshop_id] = item
+        except Exception:
+            # 150+ Mod 会分成多批查询；后续某一批失败时保留此前已经取得的
+            # 远程版本和标题，其余项目再由 Klei 本地缓存降级，不能整批清空。
+            pass
+    return states, installs, details
+
+
+def get_workshop_item_snapshot(
+    workshop_ids: list[int] | tuple[int, ...],
+    *,
+    detail_ids: list[int] | tuple[int, ...] = (),
+    dll_path: Path | None = None,
+    detail_timeout: float = 20.0,
+    include_subscribed: bool = False,
+) -> tuple[
+    dict[int, WorkshopItemState],
+    dict[int, WorkshopInstallInfo],
+    dict[int, WorkshopItemDetails],
+]:
+    """在独立进程中读取 Workshop 证据，GUI 进程不加载 Steam API。"""
+    ids = list(dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0))
+    if not ids:
+        return {}, {}, {}
+    payload = _run_workshop_worker(
+        {
+            "action": "snapshot",
+            "ids": ids,
+            "detail_ids": list(detail_ids),
+            "dll_path": str(dll_path) if dll_path else None,
+            "detail_timeout": detail_timeout,
+            "include_subscribed": include_subscribed,
+        }
+    )
+    return _snapshot_from_payload(payload)
+
+
+def get_workshop_install_info(
+    workshop_ids: list[int] | tuple[int, ...], *, dll_path: Path | None = None
+) -> dict[int, WorkshopInstallInfo]:
     """读取 Steam 安装记录；返回路径不代表目录当前确实存在。"""
     unique_ids = []
     seen = set()
@@ -965,9 +2063,12 @@ def get_workshop_install_info(workshop_ids: list[int] | tuple[int, ...], *,
     return result
 
 
-def query_workshop_item_details(workshop_ids: list[int] | tuple[int, ...], *,
-                                dll_path: Path | None = None,
-                                timeout: float = 20.0) -> dict[int, WorkshopItemDetails]:
+def query_workshop_item_details(
+    workshop_ids: list[int] | tuple[int, ...],
+    *,
+    dll_path: Path | None = None,
+    timeout: float = 20.0,
+) -> dict[int, WorkshopItemDetails]:
     """按游戏相同的50项分页方式查询源端详情，不下载或修改 Mod。"""
     unique_ids = []
     seen = set()
@@ -985,6 +2086,7 @@ def query_workshop_item_details(workshop_ids: list[int] | tuple[int, ...], *,
     with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
         for start in range(0, len(unique_ids), 50):
             for item in session.query_item_details(
-                    unique_ids[start:start + 50], timeout=timeout):
+                unique_ids[start : start + 50], timeout=timeout
+            ):
                 result[item.workshop_id] = item
     return result
