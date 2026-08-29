@@ -1,12 +1,12 @@
 # DSTCamp
 
 <p align="center">
-  <strong>Windows 上的《饥荒：联机版》本地服务器管理工具</strong><br>
-  用一个图形界面管理存档、Mod、世界设置、专用服务器与内网穿透。
+  <strong>Windows 上的《饥荒：联机版》一站式本地服务器管理工具</strong><br>
+  从创建世界、配置 Mod 到启动专服、备份存档与内网穿透，都在一个图形界面中完成。
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.1.0-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.2.0-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
@@ -14,6 +14,8 @@
 </p>
 
 ## 功能
+
+> 面向希望在 Windows 上轻松搭建和维护 DST 专用服务器的玩家：无需手工来回编辑 Lua/INI，也能清楚看到 Mod、端口、存档与服务器状态。
 
 | 模块 | 能力 |
 |---|---|
@@ -32,8 +34,8 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.1.0.exe`：工具与资源全部内嵌，单文件运行。
-- `DSTCamp-1.1.0.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
+- `DSTCamp-1.2.0.exe`：工具与资源全部内嵌，单文件运行。
+- `DSTCamp-1.2.0.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
 
 源码运行：
 
@@ -92,6 +94,17 @@ python scripts/build_exe.py
 ```
 
 构建脚本使用固定工具白名单，不打包 `cache/`、`data/`、`security/`、`reference/` 或旧版 `dist/`；两个 EXE 都会在生成后执行冻结入口和资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+
+## 1.2.0 更新
+
+- 重构主页与创建世界的 Mod 数据链路，共享名称、版本、图标、筛选和自然排序规则，同时保持各存档启用状态与配置独立。
+- Mod 名称和版本统一通过受限 Lua 5.1 沙箱确认；图标按当前列表从上到下优先加载，首屏更快完整显示。
+- “Mod 更新”新增待更新筛选、单项/批量更新、残留目录结构预览、一键清理及空文件夹清理，操作过程不再反复全局刷新。
+- 完善 Steam V1 Legacy 包校验、版本识别、立即解压与原子替换；启动专服前仍按当前存档启用项校验兜底。
+- 主页 Mod 管理统一以专服 `mods` 目录为运行状态依据，补充自定义 Mod 筛选、打开位置图标和更紧凑的列表布局。
+- 新增 Steam 客户端专服安装/更新/完整性校验流程；发现专服明确待更新时阻止启动并给出提示。
+- 优化窗口拖动与缩放：高频事件合并、背景重绘节流，并使用轻量预览降低复杂页签缩放时的卡顿。
+- 改进多存档端口预检、重启流程、交互光标、弹窗样式及多处中英文文案。
 
 ## 1.1.0 更新
 

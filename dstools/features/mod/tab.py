@@ -2882,6 +2882,18 @@ class ModManagerTab:
             self.app.mod_catalog.publish(
                 platform, mod_infos, mod_paths, icon_imgs, wegame_client_mods_dir
             )
+            # 列表最终会按“当前页面启用项优先 + 名称自然排序”展示；图标和
+            # 版本后台任务也必须复用同一顺序。否则它们仍按文件系统扫描
+            # 顺序执行，用户看到的前几行反而可能最后才补出图标。
+            ordered_ids = tuple(sort_mod_data(mod_data, mod_infos))
+            load_order = {wid: index for index, wid in enumerate(ordered_ids)}
+            fallback_order = len(load_order)
+            icon_targets.sort(
+                key=lambda target: load_order.get(target[0], fallback_order)
+            )
+            version_targets.sort(
+                key=lambda target: load_order.get(target[0], fallback_order)
+            )
             if not full:
                 self.frame.after(
                     0,
@@ -2993,6 +3005,13 @@ class ModManagerTab:
             )
             self._schedule_async_render(gen)
         if icon_targets:
+            # 版本沙箱可能补出此前无法识别的图标声明；这些二次图标任务
+            # 同样按当前可见列表顺序排队，优先完善用户首先看到的行。
+            load_order = {wid: index for index, wid in enumerate(self._mod_data)}
+            fallback_order = len(load_order)
+            icon_targets.sort(
+                key=lambda target: load_order.get(target[0], fallback_order)
+            )
             threading.Thread(
                 target=self._load_recovered_icons_worker,
                 args=(gen, icon_targets),

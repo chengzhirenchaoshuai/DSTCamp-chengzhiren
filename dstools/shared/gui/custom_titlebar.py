@@ -270,7 +270,8 @@ class ResizeGrips:
     来 AspectLock(root, 1500, 820) 的语义完全一致（那边的 min_width/
     min_height 参数其实就是直接传的 base_width/base_height）。
 
-    **拖拽节流 + 背景图暂停**（解决真实拖拽缩放时的卡顿/背景图错位）：
+    **轻量预览 + 拖拽节流 + 背景图暂停**（解决真实拖拽缩放时的卡顿/
+    背景图错位）：
     原来 `<B1-Motion>` 每收到一个鼠标事件就同步调一次 `root.geometry()`，
     没有任何节流——这会级联触发树上几十个 `BgFrame` 各自独立的
     `<Configure>` 重绘，而且这些重绘是拿"实时"控件坐标去裁一张要等停顿
@@ -280,38 +281,39 @@ class ResizeGrips:
     同时按住的整个拖拽期间通过 `app._begin_bg_drag_suppress()` 让所有
     `BgFrame` 暂停背景图重绘（见 bg_frame.py），松手
     （`<ButtonRelease-1>`）那一刻才用最终尺寸整体重算一次背景图并恢复
-    重绘（`app._end_bg_drag_suppress()`）——代价是拖拽过程中背景图会短
-    暂"冻结"不跟手，换来的是不再有中途错位/撕裂的观感，且窗口本身的
-    reflow 频率大幅降低。
+    重绘（`app._end_bg_drag_suppress()`）。当前重型页签还会在按下时冻结
+    为一张截图并暂时移出布局，拖动中只缩放这张预览图，松手后才按最终
+    尺寸恢复一次真实控件；否则即使降到 30fps，服务器配置页单次 20ms+
+    的同步 reflow 仍会直接阻塞 Tk 主线程。
     """
 
-    _GRIP = 6  # 边缘手柄粗细（像素）；四角手柄用同样的边长做成正方形
-    # 真机测过（脚本连续调用 root.geometry()+update_idletasks() 模拟拖拽，
-    # 各页签实测单次 resize+relayout 真实耗时）：本地服务器约 12~14ms，
-    # 世界设置约 7~12ms，都在 16ms（60fps）预算内；但服务器配置约
-    # 21~23ms、存档信息约 12~20ms、樱花映射约 11~18ms——这几个页签单次
-    # 就已经超过 16ms，节流定时器每 16ms 触发一次却要等更久才真正处理
-    # 完，会积压/跟不上鼠标，这正是"卡顿明显"的根因，不是背景图那部分
-    # （拖拽期间背景图整个跳过重绘，见下方说明，本来就不参与这个开销）。
-    # 调到 33ms（~30fps）后，这几个页签实测的最大耗时都能在一个节流周
-    # 期内跑完，不再积压；代价是拖拽中间帧变少、手感没有 60fps 那么"跟
-    # 手"，但比"该慢的页签持续卡顿"换来的观感明显更好。
-    _DRAG_THROTTLE_MS = 33
+    # 四边缩放热区统一为 5px；窗口可见描边仍由
+    # apply_window_border() 保持 2px。四角命中范围通过独立参数设置，
+    # 不与边缘厚度绑定。
+    _GRIP = 5
+    # 当前页签在拖拽期间已冻结成轻量截图，不再有服务器配置页单帧 20ms+
+    # 的整树 reflow；窗口边界可以恢复到约 60fps。截图本身由 app.py 独立
+    # 限制到约 30fps，边界跟手优先于临时内容的逐帧清晰度。
+    _DRAG_THROTTLE_MS = 16
 
     def __init__(self, root: tk.Tk, app, base_width: int, base_height: int,
                  bottom_reserve: int = 0, top_reserve: int = 0,
                  bottom_grip: int | None = None, top_grip: int | None = None,
-                 min_width: int | None = None, min_height: int | None = None):
+                 min_width: int | None = None, min_height: int | None = None,
+                 top_corner_size: int | None = None,
+                 bottom_corner_size: int | None = None):
         """n/nw/ne 三个手柄现在**始终贴在窗口真实顶边**（y=0，固定值，
-        不受 top_reserve 影响），尺寸用 top_grip——早期版本靠 top_reserve
+        不受 top_reserve 影响），边厚用 top_grip、角尺寸用
+        top_corner_size——早期版本靠 top_reserve
         把它们整体下移一整条标题栏+菜单条的高度，用户反馈"应该跟
         Windows 一样能在左上/右上角直接拖拽缩放"，这里改成跟原生窗口一
         样的思路：真正贴边的是一条很细的缩放热区，可点击的按钮本身反而
         离真实边缘留一点点距离（见 `CustomTitleBar._EDGE_MARGIN`，标题栏
         关闭/最小化按钮的可点击矩形从 y=`_EDGE_MARGIN` 开始画，不再铺到
         y=0），两者刚好首尾相接、不重叠：n/nw/ne 占
-        `[0, top_grip]`（边）/`[0, 2*top_grip]`（角），按钮占
-        `[_EDGE_MARGIN, 标题栏高度]`，只要 `2*top_grip <= _EDGE_MARGIN`
+        `[0, top_grip]`（边）/`[0, top_corner_size]`（角），按钮占
+        `[_EDGE_MARGIN, 标题栏高度]`，只要
+        `top_corner_size <= _EDGE_MARGIN`
         就不会互相盖住。
 
         top_reserve：w/e 两条竖边的可拖拽范围上边界（`[top_reserve, 窗口
@@ -338,13 +340,10 @@ class ResizeGrips:
         手柄本身通过 bottom_grip 缩小到能塞进状态栏文字自带的那几像素留
         白里，不需要改状态栏的布局。
 
-        bottom_grip/top_grip：south/north 手柄（边用作厚度，角用作方形
-        边长的一半）的尺寸，默认都等于 `_GRIP`（跟 w/e 一样粗）。app.py
-        传小一点的值——状态栏文字上下留白、标题栏按钮上方新留出来的
-        `_EDGE_MARGIN`都只有几像素，`_GRIP`(6)/角手柄 2*_GRIP(12) 那个厚
-        度直接贴到真实边缘会盖住文字/按钮，缩小到能塞进留白里的尺寸，代
-        价是这两边摸起来比 w/e 细一点，比"完全够不到"仍然是明显的可用性
-        提升。
+        bottom_grip/top_grip：south/north 边缘手柄的厚度，默认都等于
+        `_GRIP`（跟 w/e 一样粗）。top_corner_size/bottom_corner_size 是
+        上下两组角手柄的正方形边长；未传时跟对应边缘厚度相同。主窗口
+        使用 5px 四边、2x2 上角和 6x6 下角。
 
         宽高比锁死，从任何一条边/角拖都能等效缩放整个窗口，让开标题栏/
         缩小手柄尺寸都不影响缩放操作本身。"""
@@ -357,6 +356,7 @@ class ResizeGrips:
         self._edge = None
         self._pending_rect = None
         self._drag_after_id = None
+        self._grips = []
 
         # 4 条边（沿窗口铺满，两端各让开对应角手柄的边长）+ 4 个角（固定
         # 正方形，钉在角上）。字典写死每种手柄的 place() 参数，比用公式套
@@ -368,9 +368,9 @@ class ResizeGrips:
         # top_reserve 和 bottom_reserve 之间。
         grip = self._GRIP
         tg_grip = grip if top_grip is None else top_grip
-        tg = 2 * tg_grip
+        tg = tg_grip if top_corner_size is None else top_corner_size
         bg_grip = grip if bottom_grip is None else bottom_grip
-        bg = 2 * bg_grip
+        bg = bg_grip if bottom_corner_size is None else bottom_corner_size
         v_shrink = top_reserve + bottom_reserve
         grip_place_kw = {
             "n":  dict(anchor="n",  relx=0.5, rely=0.0, y=0,
@@ -413,6 +413,17 @@ class ResizeGrips:
             grip.bind("<ButtonPress-1>", lambda e, ed=edge: self._on_press(e, ed))
             grip.bind("<B1-Motion>", self._on_drag)
             grip.bind("<ButtonRelease-1>", self._on_release)
+            self._grips.append(grip)
+
+    def raise_grips(self) -> None:
+        """全窗口缩放预览覆盖层显示后，把 8 个真实拖拽热区提回最上层。"""
+        for grip in self._grips:
+            try:
+                # BgFrame 继承自 Canvas，tkraise() 会被解释为提升画布图元；
+                # 这里要提升整个子窗口，因此直接调用 Tk 的窗口 raise。
+                grip.tk.call("raise", grip._w)
+            except tk.TclError:
+                pass
 
     def _on_press(self, event, edge):
         self._edge = edge
@@ -421,6 +432,9 @@ class ResizeGrips:
         w0 = self.root.winfo_width()
         h0 = self.root.winfo_height()
         self._start = (event.x_root, event.y_root, x0, y0, x0 + w0, y0 + h0)
+        begin_preview = getattr(self._app, "_begin_window_resize_preview", None)
+        if callable(begin_preview):
+            begin_preview()
         self._app._begin_bg_drag_suppress()
 
     def _on_drag(self, event):
@@ -452,6 +466,9 @@ class ResizeGrips:
         self._pending_rect = None
         self._start = None
         self._edge = None
+        end_preview = getattr(self._app, "_end_window_resize_preview", None)
+        if callable(end_preview):
+            end_preview()
         self._app._end_bg_drag_suppress()
 
     def _compute_rect(self, edge, left0, top0, right0, bottom0, dx, dy):
@@ -520,11 +537,15 @@ class CustomTitleBar(BgFrame):
     # "抠"。第一版只在 y 方向留了这圈空隙（`_TOP_MARGIN`），x 方向（右
     # 边）还是直接铺到窗口真实右边缘，被用户截图对比出"紧贴右侧"跟参考
     # 图不一致，改成两边都留；后来用户反馈这个空隙看着偏大，又调小了一
-    # 次。跟 ResizeGrips 的 top_grip 是配套的一对数字，改这个值时
-    # gui/app.py 里传给 ResizeGrips 的 top_grip 也要跟着改（
-    # `2*top_grip <= _EDGE_MARGIN`，否则角手柄会比留白还大，重新盖住按
+    # 次。跟 ResizeGrips 的 top_corner_size 是配套的一对数字，改这个值
+    # 时 gui/app.py 里传给 ResizeGrips 的 top_corner_size 也要跟着改（
+    # `top_corner_size <= _EDGE_MARGIN`，否则角手柄会比留白还大，重新盖住按
     # 钮）。
     _EDGE_MARGIN = 5
+    # 高采样率鼠标在拖动时每秒可能发送数百个 B1-Motion；逐事件调用
+    # geometry() 只会让 Tk 消息队列积压。窗口移动不涉及内容重排，按显示
+    # 帧率合并到约 60 FPS 足够跟手，同时显著减少 Tcl/Win32 往返。
+    _MOVE_THROTTLE_MS = 16
 
     def __init__(self, root: tk.Tk, app, icon_path=None, title_getter=None, bg=None):
         # 创建向导标题栏使用窗口背景色，BgFrame 会继续裁剪独立窗口的背景图。
@@ -553,6 +574,9 @@ class CustomTitleBar(BgFrame):
                 self._icon_photo = None
 
         self._drag_start = None
+        self._pending_drag_pos = None
+        self._drag_after_id = None
+        self._last_drag_pos = None
         self._btn_regions: list[dict] = []
         self.bind("<Configure>", lambda e: self._redraw(), add="+")
         # 这几个绑定只在构造时做一次——_redraw() 会在每次 <Configure>/
@@ -561,6 +585,7 @@ class CustomTitleBar(BgFrame):
         # _on_click()（已通过实测日志确认）。
         self.bind("<ButtonPress-1>", self._on_press)
         self.bind("<B1-Motion>", self._on_drag)
+        self.bind("<ButtonRelease-1>", self._on_drag_release)
         self.bind("<Motion>", self._on_motion)
         self.bind("<Leave>", self._on_leave)
         self.bind("<Button-1>", self._on_click, add="+")
@@ -589,6 +614,11 @@ class CustomTitleBar(BgFrame):
         if self._hit_button(event.x, event.y):
             self._drag_start = None
             return
+        if self._drag_after_id is not None:
+            self.after_cancel(self._drag_after_id)
+            self._drag_after_id = None
+        self._pending_drag_pos = None
+        self._last_drag_pos = None
         self._drag_start = (event.x_root, event.y_root, self.root.winfo_x(), self.root.winfo_y())
 
     def _on_drag(self, event):
@@ -596,7 +626,38 @@ class CustomTitleBar(BgFrame):
             return
         sx, sy, wx, wy = self._drag_start
         dx, dy = event.x_root - sx, event.y_root - sy
-        self.root.geometry(f"+{wx + dx}+{wy + dy}")
+        self._pending_drag_pos = (wx + dx, wy + dy)
+        if self._drag_after_id is None:
+            self._drag_after_id = self.after(
+                self._MOVE_THROTTLE_MS, self._apply_pending_drag,
+            )
+
+    def _apply_pending_drag(self):
+        self._drag_after_id = None
+        pos = self._pending_drag_pos
+        self._pending_drag_pos = None
+        if pos is None or pos == self._last_drag_pos:
+            return
+        self._last_drag_pos = pos
+        self.root.geometry(f"+{pos[0]}+{pos[1]}")
+
+    def _on_drag_release(self, event):
+        if self._drag_start is None:
+            return
+        # Motion 与 ButtonRelease 是两条事件流；松手坐标可能比最后一条
+        # Motion 更新，必须用 release 的最终坐标覆盖并立即落地，不能让窗
+        # 口停在鼠标前一帧的位置。
+        sx, sy, wx, wy = self._drag_start
+        self._pending_drag_pos = (
+            wx + event.x_root - sx,
+            wy + event.y_root - sy,
+        )
+        if self._drag_after_id is not None:
+            self.after_cancel(self._drag_after_id)
+            self._drag_after_id = None
+        self._apply_pending_drag()
+        self._drag_start = None
+        self._last_drag_pos = None
 
     # ── 绘制 ─────────────────────────────────────────────────────────
     def render_now(self) -> None:

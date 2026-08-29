@@ -120,6 +120,98 @@ def test_gui_imports():
     print("  PASS: custom_titlebar imports OK")
 
 
+def test_window_drag_event_coalescing():
+    """标题栏拖动应合并高频 Motion，背景系统应忽略纯位置变化。"""
+    from types import SimpleNamespace
+    from dstools.gui.app import DSToolsApp
+    from dstools.shared.gui.custom_titlebar import CustomTitleBar, ResizeGrips
+
+    class FakeRoot:
+        def __init__(self):
+            self.callbacks = {}
+            self.cancelled = []
+            self.geometries = []
+            self.next_id = 0
+
+        def winfo_x(self): return 100
+        def winfo_y(self): return 200
+        def winfo_width(self): return 1600
+        def winfo_height(self): return 900
+
+        def after(self, _delay, callback):
+            self.next_id += 1
+            token = f"after-{self.next_id}"
+            self.callbacks[token] = callback
+            return token
+
+        def after_cancel(self, token):
+            self.cancelled.append(token)
+            self.callbacks.pop(token, None)
+
+        def geometry(self, value):
+            self.geometries.append(value)
+
+    root = FakeRoot()
+    bar = CustomTitleBar.__new__(CustomTitleBar)
+    bar.root = root
+    bar._btn_regions = []
+    bar._drag_start = None
+    bar._pending_drag_pos = None
+    bar._drag_after_id = None
+    bar._last_drag_pos = None
+    bar.after = root.after
+    bar.after_cancel = root.after_cancel
+
+    bar._on_press(SimpleNamespace(x=20, y=10, x_root=300, y_root=400))
+    bar._on_drag(SimpleNamespace(x_root=310, y_root=410))
+    first_token = bar._drag_after_id
+    bar._on_drag(SimpleNamespace(x_root=330, y_root=440))
+    assert bar._drag_after_id == first_token
+    assert not root.geometries, "同一节流周期内不得逐 Motion 调 geometry()"
+    root.callbacks.pop(first_token)()
+    assert root.geometries == ["+130+240"]
+
+    bar._on_drag(SimpleNamespace(x_root=340, y_root=450))
+    bar._on_drag_release(SimpleNamespace(x_root=350, y_root=460))
+    assert root.geometries[-1] == "+150+260"
+    assert bar._drag_start is None and bar._drag_after_id is None
+
+    lifecycle = []
+    grip_app = SimpleNamespace(
+        _begin_window_resize_preview=lambda: lifecycle.append("preview_begin"),
+        _begin_bg_drag_suppress=lambda: lifecycle.append("bg_begin"),
+        _end_window_resize_preview=lambda: lifecycle.append("preview_end"),
+        _end_bg_drag_suppress=lambda: lifecycle.append("bg_end"),
+    )
+    grips = ResizeGrips.__new__(ResizeGrips)
+    grips.root = root
+    grips._app = grip_app
+    grips._start = None
+    grips._edge = None
+    grips._pending_rect = None
+    grips._drag_after_id = None
+    grips._on_press(SimpleNamespace(x_root=1600, y_root=900), "se")
+    grips._on_release(SimpleNamespace(x_root=1600, y_root=900))
+    assert lifecycle == ["preview_begin", "bg_begin", "preview_end", "bg_end"]
+
+    app = DSToolsApp.__new__(DSToolsApp)
+    app.root = root
+    app._bg_root_size = None
+    app._bg_drag_suppressed = False
+    app._bg_settle_after_id = None
+    event = SimpleNamespace(widget=root, width=1500, height=820)
+    app._on_root_configure_for_bg(event)
+    scheduled = app._bg_settle_after_id
+    app._on_root_configure_for_bg(event)
+    assert app._bg_settle_after_id == scheduled
+    assert scheduled not in root.cancelled, "纯位置变化不得重置背景防抖定时器"
+    app._on_root_configure_for_bg(
+        SimpleNamespace(widget=root, width=1600, height=875)
+    )
+    assert scheduled in root.cancelled
+    print("  PASS: move events are coalesced and resize uses a lightweight preview lifecycle")
+
+
 def test_main_tab_refresh_contract():
     """顶部刷新应覆盖全部主页签，并优先使用页面的全量刷新接口。"""
     from dstools.gui.app import DSToolsApp
@@ -169,6 +261,7 @@ def main():
         test_i18n_basic,
         test_exe_entry_imports,
         test_gui_imports,
+        test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
     ]
 

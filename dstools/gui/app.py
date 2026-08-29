@@ -9,7 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from tkinter import font as tkfont, ttk
 
-from PIL import ImageTk
+from PIL import Image, ImageGrab, ImageTk
 
 from dstools import __version__
 from dstools.shared.app_settings import (
@@ -477,6 +477,20 @@ class DSToolsApp:
         self._refresh()
         self._start_update_check()
 
+        # 边缘缩放期间用一张覆盖整个客户区的截图做轻量预览。必须覆盖标
+        # 题栏、菜单、页签条和存档栏，而不只是 _tab_area；否则这些区域
+        # 会分别露出纯色底或冻结在旧背景尺寸。Canvas 先于缩放手柄创建，
+        # 显示时再由 ResizeGrips.raise_grips() 把真实热区提到最上层。
+        self._resize_preview_overlay = tk.Canvas(
+            self.root,
+            background=theme.BG_SOFT,
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        self._resize_preview_overlay.bind(
+            "<Configure>", self._on_window_resize_preview_configure, add="+"
+        )
+
         # 缩放手柄放在 __init__ 最后——直接 place() 在 root 上，同一父容
         # 器下后创建的控件层叠顺序更靠上，必须等标题栏/菜单/卡片/状态栏
         # 都建完，手柄才能稳定盖在最上层接收边缘鼠标事件。
@@ -490,15 +504,17 @@ class DSToolsApp:
         # 字，同时缩放热区仍然覆盖到窗口最底边。
         self.root.update_idletasks()
         top_reserve = self._titlebar.winfo_height() + self._menu_strip.winfo_height()
-        custom_titlebar.ResizeGrips(
+        self._resize_grips = custom_titlebar.ResizeGrips(
             self.root,
             self,
             self.WINDOW_BASE_W,
             self.WINDOW_BASE_H,
             bottom_reserve=0,
             top_reserve=top_reserve,
-            bottom_grip=3,
-            top_grip=2,
+            bottom_grip=5,
+            top_grip=5,
+            top_corner_size=2,
+            bottom_corner_size=6,
         )
 
     def _on_tab_select(self, key: str) -> None:
@@ -1095,6 +1111,9 @@ class DSToolsApp:
     # WM_SIZING 钩子打架，出现过布局错位/闪烁/背景图割裂的问题。
 
     _BG_SETTLE_MS = 150  # 跟 image_scroll.py 的 SETTLE_DELAY_MS 保持一致
+    # 窗口边界由 ResizeGrips 以约 60fps 更新；预览截图没必要同频，独立
+    # 限制到约 30fps，避免 PIL 缩放和 PhotoImage 传输挤占鼠标事件预算。
+    _RESIZE_PREVIEW_MS = 33
 
     def _init_bg_system(self) -> None:
         self._bg_surfaces: list = []  # BgFrame 的弱引用列表
@@ -1104,7 +1123,15 @@ class DSToolsApp:
         # 共享图裁剪；按每个独立窗口尺寸惰性生成一份背景图。
         self._secondary_bg_images: dict[str, tuple[tuple, object]] = {}
         self._bg_settle_after_id = None
+        # root 的 <Configure> 同时表示尺寸改变和纯位置移动。背景共享图只
+        # 跟客户区宽高有关，记住最近尺寸即可跳过标题栏拖动产生的无效调度。
+        self._bg_root_size = None
         self._bg_drag_suppressed = False  # ResizeGrips 拖拽期间为 True，见下
+        self._resize_preview_source = None
+        self._resize_preview_photo = None
+        self._resize_preview_after_id = None
+        self._resize_preview_size = None
+        self._resize_preview_focus = None
         self._theme_switch_suppressed = False  # _switch_theme() 执行期间为 True，见下
         self.root.bind("<Configure>", self._on_root_configure_for_bg)
         # 从任务栏恢复窗口时 Tk 会分层 expose 重绘（父容器先、子控件后），
@@ -1135,6 +1162,10 @@ class DSToolsApp:
         # 自己的 <Configure> 不会冒泡到这里，这个判断只是双重保险。
         if event.widget is not self.root:
             return
+        size = (event.width, event.height)
+        if size == self._bg_root_size:
+            return
+        self._bg_root_size = size
         if self._bg_drag_suppressed:
             # 拖拽缩放期间（custom_titlebar.ResizeGrips）——背景图的重
             # 建/刷新已经交给 _begin_bg_drag_suppress()/
@@ -1165,18 +1196,122 @@ class DSToolsApp:
         寸的共享大图，产生错位/割裂的观感。顺带取消掉可能已经武装的
         150ms 停顿计时器，避免它在拖拽中途被触发。
 
-        清掉每个表面已有的 bg_image 贴图（而不是保留旧内容不动）——只
-        "跳过更新"会让整段拖拽期间都冻结着一张按旧尺寸裁好的图，CardFrame
-        圆角外壳这类"外框描边独立重绘、背景图贴图被这里冻结"的组合会明
-        显看出来是一小块贴歪的旧图被框在新描边里（残影）。清空之后拖拽
-        期间就是纯色，跟"没有背景图"时的观感一致，松手那一刻
-        _end_bg_drag_suppress() 才补上一张按最终尺寸裁好的图——这只是清
-        一次空画布，不涉及任何裁剪/缩放，比继续渲染旧内容还便宜。"""
+        拖拽期间由覆盖整个客户区的静态截图遮住真实控件，底下各 BgFrame
+        保留原图即可；不能再清空可见表面的 bg_image，否则截图出现前或
+        收尾重绘时会让标题栏、菜单和存档栏短暂露出白色纯色底。"""
         self._bg_drag_suppressed = True
         if self._bg_settle_after_id is not None:
             self.root.after_cancel(self._bg_settle_after_id)
             self._bg_settle_after_id = None
-        self._for_each_alive_bg_surface(lambda surf: surf.clear_bg_image())
+
+    def _begin_window_resize_preview(self) -> None:
+        """冻结整个客户区为一张截图，同时移出当前页签的重型控件树。"""
+        if self._resize_preview_source is not None:
+            return
+        self.root.update_idletasks()
+        card = self._tab_cards.get(self._current_tab_key)
+        if card is None:
+            return
+
+        width = self.root.winfo_width()
+        height = self.root.winfo_height()
+        if width < 2 or height < 2:
+            return
+        try:
+            left = self.root.winfo_rootx()
+            top = self.root.winfo_rooty()
+            self._resize_preview_source = ImageGrab.grab(
+                bbox=(left, top, left + width, top + height)
+            )
+        except Exception:
+            # 截图在极少数远程桌面/显示驱动环境下可能不可用；仍然隐藏重
+            # 型内容并用纯色占位，优先保证缩放操作不卡死。
+            self._resize_preview_source = Image.new(
+                "RGB", (width, height), theme.BG_SOFT
+            )
+
+        try:
+            self._resize_preview_focus = self.root.focus_get()
+        except tk.TclError:
+            self._resize_preview_focus = None
+        card.grid_remove()
+        overlay = self._resize_preview_overlay
+        overlay.configure(background=theme.BG_SOFT)
+        overlay.delete("window_resize_preview")
+        overlay.place(x=0, y=0, relwidth=1, relheight=1)
+        # Canvas.tkraise()/lift() 被 Tkinter 重载成了画布图元的 tag_raise，
+        # 调用时必须带 tagOrId；这里要提升的是整个控件窗口，直接走 Tk 的
+        # 顶层 raise 命令，避免 "wrong # args: ... raise tagOrId"。
+        overlay.tk.call("raise", overlay._w)
+        self._resize_grips.raise_grips()
+        overlay.update_idletasks()
+        self._render_window_resize_preview()
+
+    def _on_window_resize_preview_configure(self, _event=None) -> None:
+        if self._resize_preview_source is None:
+            return
+        if self._resize_preview_after_id is None:
+            # 只画最新尺寸，连续 Configure 不排队；窗口边界本身保持约
+            # 60fps，截图预览独立按约 30fps 更新，避免图像传输堵住鼠标。
+            self._resize_preview_after_id = self.root.after(
+                self._RESIZE_PREVIEW_MS, self._render_window_resize_preview
+            )
+
+    def _render_window_resize_preview(self) -> None:
+        self._resize_preview_after_id = None
+        source = self._resize_preview_source
+        if source is None:
+            return
+        overlay = self._resize_preview_overlay
+        width = max(1, overlay.winfo_width())
+        height = max(1, overlay.winfo_height())
+        size = (width, height)
+        if size == self._resize_preview_size:
+            return
+        # BILINEAR 的观感足够用于拖拽中的临时预览，成本显著低于 LANCZOS
+        # 和数百个 Tk 控件的同步重排；松手后会立即恢复清晰的真实控件。
+        preview = source.resize(size, Image.Resampling.BILINEAR)
+        self._resize_preview_photo = ImageTk.PhotoImage(
+            preview, master=overlay
+        )
+        overlay.delete("window_resize_preview")
+        overlay.create_image(
+            0,
+            0,
+            image=self._resize_preview_photo,
+            anchor=tk.NW,
+            tags="window_resize_preview",
+        )
+        self._resize_preview_size = size
+
+    def _end_window_resize_preview(self) -> None:
+        """移除临时截图，并只按最终窗口尺寸恢复一次当前页签布局。"""
+        if self._resize_preview_source is None:
+            return
+        if self._resize_preview_after_id is not None:
+            self.root.after_cancel(self._resize_preview_after_id)
+            self._resize_preview_after_id = None
+        overlay = self._resize_preview_overlay
+        overlay.delete("window_resize_preview")
+        self._resize_preview_source = None
+        self._resize_preview_photo = None
+        self._resize_preview_size = None
+
+        card = self._tab_cards.get(self._current_tab_key)
+        if card is not None:
+            card.grid()
+        overlay.place_forget()
+        focus = self._resize_preview_focus
+        self._resize_preview_focus = None
+        if focus is not None:
+            def _restore_focus():
+                try:
+                    if focus.winfo_exists() and focus.winfo_ismapped():
+                        focus.focus_set()
+                except tk.TclError:
+                    pass
+
+            self.root.after_idle(_restore_focus)
 
     def _end_bg_drag_suppress(self) -> None:
         """ResizeGrips 松手时调用——跟 _on_bg_settle() 做的事完全一样
