@@ -6,15 +6,25 @@ import tempfile
 import zipfile
 from pathlib import Path
 import sys
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import dstools.features.mod.legacy_v1 as legacy_v1
+import dstools.features.mod.parser as mod_parser
 from dstools.features.mod.legacy_v1 import (
     deploy_legacy_package,
+    find_legacy_runtime_residual_dirs,
+    is_legacy_read_cache_path,
     legacy_runtime_matches_package,
+    materialize_legacy_package_for_read,
     prepare_enabled_legacy_mods,
     resolve_legacy_package_version,
     validate_legacy_package,
+)
+from dstools.features.mod.parser import parse_modinfo
+from dstools.features.mod.workshop_cleanup import (
+    delete_legacy_runtime_residual,
 )
 from dstools.features.mod.workshop_api import (
     SteamWorkshopSession,
@@ -46,6 +56,28 @@ def main() -> None:
         packaged_version = resolve_legacy_package_version(123, archive)
         assert packaged_version.version == "1.0"
         assert packaged_version.status == "confirmed"
+
+        read_archive = root / "read_legacy.bin"
+        _write_package(read_archive)
+        with patch.object(
+            legacy_v1,
+            "cache_dir",
+            side_effect=lambda name: root / "cache" / name,
+        ):
+            read_root = materialize_legacy_package_for_read(123, read_archive)
+            assert read_root.name == "workshop-123"
+            assert is_legacy_read_cache_path(read_root)
+            parsed = parse_modinfo(read_root)
+            assert parsed is not None
+            assert parsed.name == "V1 Test"
+            assert parsed.version == "1.0"
+            assert materialize_legacy_package_for_read(123, read_archive) == read_root
+
+            _write_package(read_archive, version="1.1")
+            updated_root = materialize_legacy_package_for_read(123, read_archive)
+            assert updated_root != read_root
+            updated = parse_modinfo(updated_root)
+            assert updated is not None and updated.version == "1.1"
 
         mods = root / "game" / "mods"
         old = mods / "workshop-123"
@@ -79,10 +111,7 @@ def main() -> None:
         assert not (root / "outside.txt").exists()
 
         # Steam 下载完成后的收尾必须把 Legacy 包物化成游戏实际读取的目录，
-        # 并复核远程 version；不能只因 *_legacy.bin 存在就报告成功。
-        import dstools.features.mod.legacy_v1 as legacy_v1
-        import dstools.features.mod.parser as mod_parser
-
+        # 并复核远程 version。
         pipeline_mods = root / "pipeline" / "client-mods"
         pipeline_server_mods = root / "pipeline" / "server-mods"
         pipeline_target = pipeline_mods / "workshop-123"
@@ -108,8 +137,7 @@ def main() -> None:
             assert (pipeline_target / "modmain.lua").is_file()
             assert (pipeline_server_target / "modmain.lua").is_file()
 
-            # 客户端已经最新但专服目录被删除时不能返回“已是最新”，必须
-            # 从现有 Legacy 包重新部署专服，且无需触发 Steam 下载。
+            # 客户端已经最新但专服目录被删除时必须从现有 Legacy 包重新部署。
             import shutil
 
             shutil.rmtree(pipeline_server_target)
@@ -178,7 +206,57 @@ def main() -> None:
             legacy_v1.find_legacy_packages = original_packages
             legacy_v1.running_dst_processes = original_processes
 
-    print("PASS: V1 Legacy Mod 校验、内容核对、开服前部署和异常保留旧目录")
+        # 取消订阅后 Steam 会删除 V1 包，但游戏展开到 mods 的目录可能暂存。
+        # 只识别标准 workshop-ID 普通目录，并在再次验收后永久删除。
+        runtime_root = root / "runtime-residue" / "mods"
+        runtime = runtime_root / "workshop-789"
+        runtime.mkdir(parents=True)
+        (runtime / "modinfo.lua").write_text('name = "old v1"', encoding="utf-8")
+        unrelated = runtime_root / "manual-mod"
+        unrelated.mkdir()
+        (unrelated / "modinfo.lua").write_text("name='manual'", encoding="utf-8")
+        with patch.object(
+            legacy_v1, "discover_legacy_runtime_roots", return_value=[runtime_root]
+        ), patch.object(legacy_v1, "find_legacy_package_ids", return_value=set()):
+            residuals = find_legacy_runtime_residual_dirs()
+            assert residuals == {789: (runtime,)}
+        with patch.object(
+            legacy_v1, "discover_legacy_runtime_roots", return_value=[runtime_root]
+        ), patch.object(legacy_v1, "find_legacy_package_ids", return_value={789}):
+            assert find_legacy_runtime_residual_dirs() == {}
+
+        with patch.object(
+            legacy_v1, "discover_legacy_runtime_roots", return_value=[runtime_root]
+        ), patch.object(
+            legacy_v1, "find_legacy_package_ids", return_value=set()
+        ), patch.object(
+            legacy_v1, "running_dst_processes", return_value=()
+        ):
+            deleted = delete_legacy_runtime_residual(
+                789, runtime, WorkshopItemState(0)
+            )
+            assert not runtime.exists()
+            assert deleted == runtime.resolve()
+            assert unrelated.is_dir()
+
+        managed = runtime_root / "workshop-789"
+        managed.mkdir()
+        (managed / "modinfo.lua").write_text("name='managed'", encoding="utf-8")
+        with patch.object(
+            legacy_v1, "discover_legacy_runtime_roots", return_value=[runtime_root]
+        ), patch.object(
+            legacy_v1, "find_legacy_package_ids", return_value=set()
+        ), patch.object(legacy_v1, "running_dst_processes", return_value=()):
+            try:
+                delete_legacy_runtime_residual(
+                    789, managed, WorkshopItemState(1)
+                )
+            except ValueError as exc:
+                assert "Steam 仍在" in str(exc)
+            else:
+                raise AssertionError("仍受 Steam 管理的 V1 目录不能清理")
+
+    print("PASS: V1 Legacy Mod 校验、部署、取消订阅残留删除和异常保护")
 
 
 if __name__ == "__main__":

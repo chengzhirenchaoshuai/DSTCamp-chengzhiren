@@ -22,13 +22,15 @@ class ModSyncLogDialog:
         parent_widget,
         title: str | None = None,
         on_cancel=None,
+        cancel_text: str | None = None,
         allow_close_while_running: bool = False,
         text_width: int = 64,
     ):
         """`on_cancel`：给需要中途能取消的耗时操作用（目前只有
         features/frp_selfhost 的 SSH 远程部署）——传了才会多显示一个
-        "取消"按钮，点一次就禁用自己并调用这个回调，不重复触发；不传
-        （默认）就是原来的行为，没有取消按钮，其它调用方不用改。"""
+        "取消"按钮，点一次就禁用自己并调用这个回调，不重复触发；
+        `cancel_text` 可为具体业务覆盖按钮文案；不传 `on_cancel`（默认）
+        就是原来的行为，没有取消按钮，其它调用方不用改。"""
         win = tk.Toplevel(parent_widget)
         self.win = win
         # 跟 themed_dialog.py 的 _show() 一个道理：创建 Toplevel 后立刻
@@ -63,7 +65,9 @@ class ModSyncLogDialog:
         self.cancel_btn = None
         if on_cancel is not None:
             self.cancel_btn = ttk.Button(
-                btn_frame, text=t("dlg.cancel_btn"), command=self._handle_cancel
+                btn_frame,
+                text=cancel_text or t("dlg.cancel_btn"),
+                command=self._handle_cancel,
             )
             self.cancel_btn.pack(side=tk.LEFT, padx=4)
 

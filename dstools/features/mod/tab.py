@@ -24,7 +24,7 @@ from dstools.features.local_service.dedicated_server import (
     find_bin64_dir,
 )
 from dstools.features.mod import chs_translation, presets
-from dstools.features.mod.icons import get_mod_icon_path
+from dstools.features.mod.icons import get_cached_mod_icon_path, get_mod_icon_path
 from dstools.features.mod.manager import (
     enable_mod,
     load_mod_overrides,
@@ -32,7 +32,16 @@ from dstools.features.mod.manager import (
     sync_mods,
 )
 from dstools.features.mod.cache import load_cached_result, save_result
+from dstools.features.mod.cleanup_dialog import ResidualCleanupDialog
 from dstools.features.mod.local_version import resolve_local_version_target
+from dstools.features.mod.locations import resolve_mod_open_location
+from dstools.features.mod.legacy_v1 import (
+    find_legacy_packages,
+    find_legacy_runtime_residual_dirs,
+    is_legacy_read_cache_path,
+    materialize_legacy_package_for_read,
+    running_dst_processes,
+)
 from dstools.features.mod.list_model import (
     build_mod_rows,
     localize_mod_name,
@@ -43,6 +52,8 @@ from dstools.features.mod.parser import (
     ModInfo,
     find_game_mods_dir,
     find_mod_folder,
+    find_workshop_content_dirs,
+    find_workshop_residual_dirs,
     find_wegame_client_dir,
     find_wegame_server_dir,
     is_dedicated_server_mods_dir,
@@ -61,9 +72,16 @@ from dstools.features.mod.sync import (
     plan_mod_sync,
 )
 from dstools.features.mod.workshop_api import (
+    WorkshopUpdateCancelled,
     update_workshop_items,
 )
 from dstools.features.mod.workshop_manifest import find_cached_manifest_versions
+from dstools.features.mod.workshop_cleanup import (
+    build_residual_cleanup_context,
+    delete_legacy_runtime_residual,
+    delete_workshop_residual,
+    format_residual_directory_tree,
+)
 from dstools.features.mod.workshop_status import (
     WorkshopModState,
     inspect_workshop_items,
@@ -76,6 +94,7 @@ from dstools.features.world.location_profiles import (
 from dstools.shared.gui import fonts, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
+from dstools.shared.gui.interaction_cursor import bind_canvas_hand_cursor
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.toolbar_widgets import (
@@ -155,8 +174,27 @@ def _can_open_mod_update_hint(kind: str, has_log_dialog: bool) -> bool:
     return kind in {"updating", "done"} and has_log_dialog
 
 
+def _workshop_needs_update_count(states: dict) -> int:
+    """统计“待更新”筛选中的 Mod 数量。"""
+    return sum(1 for status in states.values() if status.needs_action)
+
+
+def _workshop_actionable_update_ids(ordered_ids: list[str], states: dict) -> list[str]:
+    """按选择器顺序返回确实需要更新、且当前允许更新的 Workshop ID。"""
+    result = []
+    for workshop_id in ordered_ids:
+        key = str(workshop_id)
+        status = states.get(key)
+        if status is not None and status.needs_action and status.can_update:
+            result.append(key)
+    return result
+
+
 def _workshop_modinfo_signature(
-    workshop_ids: list[int], mod_paths: dict
+    workshop_ids: list[int],
+    mod_paths: dict,
+    residual_paths: dict[int, Path] | None = None,
+    legacy_runtime_residual_paths: dict[int, tuple[Path, ...]] | None = None,
 ) -> tuple[tuple[int, int, int], ...]:
     """生成轻量文件签名，让状态缓存能感知运行期间的手动编辑。"""
     rows = []
@@ -165,8 +203,14 @@ def _workshop_modinfo_signature(
             str(workshop_id)
         )
         modinfo = Path(path) / "modinfo.lua" if path is not None else None
+        runtime_paths = (legacy_runtime_residual_paths or {}).get(workshop_id, ())
+        marker = (
+            modinfo
+            or (residual_paths or {}).get(workshop_id)
+            or (runtime_paths[0] / "modinfo.lua" if runtime_paths else None)
+        )
         try:
-            stat = modinfo.stat() if modinfo is not None else None
+            stat = marker.stat() if marker is not None else None
         except OSError:
             stat = None
         rows.append(
@@ -266,10 +310,9 @@ class ModManagerTab:
         # "Mod位置:"+ 实际路径——跟 local_service_tab.py 的"专用服务器工
         # 具:"一行是同一个思路（BgFrame 的 Canvas 上 create_text 画字，
         # 不用 ttk.Label 挡住背景图），显示的是当前"存档类型"筛选器对应
-        # 平台的客户端 mods/ 源头目录（Steam: find_game_mods_dir()；
-        # WeGame: 用户选过的 rail_apps 根目录下的客户端 mods/），跟着平台
-        # 筛选器切换自动更新（不是跟着具体选中哪个存档），"更换路径"/
-        # "重新检测"分别对应各自平台的手动覆盖/重新探测。
+        # Steam 默认显示并读取专服实际消费的 Dedicated Server/mods；
+        # WeGame 仍使用用户选过的客户端 mods/。客户端 Workshop 缓存只作为
+        # 下载/解析回退，不作为主页默认运行目录。
         self._mod_location_row = mod_location_row = BgFrame(
             self.frame, app, bg=theme.CARD_BG
         )
@@ -281,8 +324,8 @@ class ModManagerTab:
         mod_location_row.bind(
             "<Configure>", lambda e: self._redraw_mod_location_row_text(), add="+"
         )
-        # "软链接mods文件夹到服务器"/"删除mod软连接"按钮放这一行最右侧
-        # （"更换路径 重新检测"的右边）——文字会在两种状态间切换，放在行末
+        # "添加mod软链接"/"删除mod软连接"按钮放这一行最右侧
+        # （“更换路径”的右边）——文字会在两种状态间切换，放在行末
         # 向右伸缩就不会推动左侧元素。初始用短文案"删除mod软连接"，探测到
         # 未链接才变长、只向右扩展。文字/状态由 refresh_sync_button_state()
         # 探测后维护，初始值只是占位。
@@ -296,12 +339,6 @@ class ModManagerTab:
         from dstools.shared.gui.tooltip import Tooltip
 
         Tooltip(self._md_sync, self._sync_button_hover_text)
-        self._mod_location_recheck_btn = ttk.Button(
-            mod_location_row,
-            text=t("local.install_recheck_btn"),
-            command=self._recheck_mod_location,
-        )
-        self._mod_location_recheck_btn.pack(side=tk.RIGHT)
         self._mod_location_change_btn = ttk.Button(
             mod_location_row,
             text=t("local.install_change_btn"),
@@ -665,7 +702,7 @@ class ModManagerTab:
                 if client_dir:
                     return client_dir / "mods"
             return None
-        return find_game_mods_dir()
+        return self._server_mods_root()
 
     def _update_mod_location_display(self) -> None:
         found = self._detect_mod_location(self.app._get_platform_filter())
@@ -696,26 +733,6 @@ class ModManagerTab:
         self._update_mod_location_display()
         self.refresh_sync_button_state()
         self._refresh_mods(full=True)
-
-    def _recheck_mod_location(self):
-        """重新探测一次（不清空已经保存的手动覆盖，find_game_mods_dir()/
-        _detect_mod_location() 本身就是"先查覆盖，没有才自动识别"）；找
-        不到才弹提示，找到了静默更新，跟 local_service_tab.py 的
-        _recheck_install_dir() 是同一个套路。"""
-        platform = self.app._get_platform_filter()
-        found = self._detect_mod_location(platform)
-        if found:
-            self._mod_location_var.set(str(found))
-            self.refresh_sync_button_state()
-            self._refresh_mods(full=True)
-        else:
-            self._mod_location_var.set(t("mod.location_not_found"))
-            self.refresh_sync_button_state()
-            dlg.show_warning(
-                self.app.root,
-                t("mod.location_label"),
-                t("mod.location_recheck_not_found"),
-            )
 
     def _server_running_for(self, cluster) -> bool:
         """这个存档（不分具体哪个世界，同步是整个存档一起做的）是不是有
@@ -762,7 +779,7 @@ class ModManagerTab:
         return local_tab._install_dir, find_game_mods_dir()
 
     def refresh_sync_button_state(self):
-        """ "软链接mods文件夹到服务器"按钮的可用状态和文字——本来就只对
+        """ "添加mod软链接"按钮的可用状态和文字——本来就只对
         服务器存档开放；这里再叠加一条：这个存档正被本工具自己启动的本
         地服务器占用时也要禁用，因为直接覆盖正在运行的服务器文件可能因
         为占用而失败。单独抽成方法而不是塞在 on_cluster_changed 里，是
@@ -851,6 +868,8 @@ class ModManagerTab:
         ids = list(self._workshop_mod_ids())
         ids.extend(find_legacy_packages())
         ids.extend(int(raw_id) for raw_id in self._current_cluster_workshop_ids())
+        ids.extend(find_workshop_residual_dirs())
+        ids.extend(find_legacy_runtime_residual_dirs())
         return list(dict.fromkeys(item for item in ids if item > 0))
 
     def _current_cluster_workshop_ids(self) -> set[str]:
@@ -903,6 +922,17 @@ class ModManagerTab:
             return None
         return Path(install_dir) / "mods"
 
+    def _is_server_mod_path(self, path: Path) -> bool:
+        """判断路径是否位于主页默认的专服 mods 运行目录。"""
+        root = self._server_mods_root()
+        if root is None:
+            return False
+        try:
+            Path(path).resolve(strict=False).relative_to(root.resolve(strict=False))
+            return True
+        except (OSError, ValueError):
+            return False
+
     def _open_workshop_update_dialog(self) -> None:
         """打开 Workshop Mod 选择器，不在点击工具栏时立即更新全部 Mod。"""
         from PIL import Image, ImageTk
@@ -934,7 +964,7 @@ class ModManagerTab:
         search_var = tk.StringVar()
         search = ttk.Entry(toolbar, textvariable=search_var, width=28)
         search.pack(side=tk.LEFT, padx=(0, 8))
-        filter_var = tk.StringVar(value="needs_update")
+        filter_var = tk.StringVar(value="all")
 
         # 选择器是独立白底窗口，这里使用普通 Label 绘制筛选文字，不使用
         # 外层页签的 BgFrame 筛选组件，避免自定义背景图在白底窗口中形成
@@ -942,6 +972,7 @@ class ModManagerTab:
         filter_bar = tk.Frame(toolbar, bg=dialog_bg)
         filter_bar.pack(side=tk.LEFT, padx=(0, 6))
         filter_labels = []
+        needs_update_badge = None
         filter_options = [
             ("all", lambda: t("mod.show_all")),
             ("needs_update", lambda: t("mod.update_filter_needs_update")),
@@ -957,13 +988,66 @@ class ModManagerTab:
                         theme.FONT_SIZE_BASE, bold=filter_var.get() == value
                     ),
                 )
+            pending_count = _workshop_needs_update_count(latest_states)
+            if pending_count:
+                badge_text = "99+" if pending_count > 99 else str(pending_count)
+                badge_width = (
+                    18 if len(badge_text) == 1 else 26 if len(badge_text) == 2 else 32
+                )
+                canvas_width = badge_width + 2
+                needs_update_badge.configure(width=canvas_width, height=20)
+                needs_update_badge.delete("all")
+                needs_update_badge.create_oval(
+                    1, 1, 19, 19, fill=theme.ERROR, outline=theme.ERROR
+                )
+                needs_update_badge.create_oval(
+                    canvas_width - 19,
+                    1,
+                    canvas_width - 1,
+                    19,
+                    fill=theme.ERROR,
+                    outline=theme.ERROR,
+                )
+                if badge_width > 18:
+                    needs_update_badge.create_rectangle(
+                        10,
+                        1,
+                        canvas_width - 10,
+                        19,
+                        fill=theme.ERROR,
+                        outline=theme.ERROR,
+                    )
+                needs_update_badge.create_text(
+                    canvas_width / 2,
+                    10,
+                    text=badge_text,
+                    fill="#ffffff",
+                    font=theme.font_tuple(theme.FONT_SIZE_XS, bold=True),
+                )
+                needs_update_badge.place(relx=1.0, x=0, y=0, anchor=tk.NE)
+            else:
+                needs_update_badge.place_forget()
 
         for value, text_getter in filter_options:
-            label = tk.Label(filter_bar, bg=dialog_bg, cursor="hand2")
-            label.pack(side=tk.LEFT, padx=(0, 16))
-            label.bind("<Button-1>", lambda _e, item=value: filter_var.set(item))
+            chip = tk.Frame(filter_bar, bg=dialog_bg, cursor="hand2")
+            chip.pack(side=tk.LEFT, padx=(0, 16))
+            label = tk.Label(chip, bg=dialog_bg, cursor="hand2")
+            label.pack(padx=(0, 12), pady=(5, 0))
+            def select_filter(_event, item=value):
+                filter_var.set(item)
+
+            chip.bind("<Button-1>", select_filter)
+            label.bind("<Button-1>", select_filter)
             filter_labels.append((label, value, text_getter))
-        _redraw_filter_labels()
+            if value == "needs_update":
+                needs_update_badge = tk.Canvas(
+                    chip,
+                    bg=dialog_bg,
+                    bd=0,
+                    highlightthickness=0,
+                    cursor="hand2",
+                )
+                needs_update_badge.bind("<Button-1>", select_filter)
         state_toolbar = tk.Frame(toolbar, bg=dialog_bg)
         state_toolbar.pack(side=tk.RIGHT)
         tk.Label(
@@ -1032,8 +1116,14 @@ class ModManagerTab:
         # 默认只展示全部 Mod，不预先勾选，避免用户误触“更新所选 Mod”时
         # 一次更新整个 Workshop 库；需要批量更新时可使用“全选当前筛选”。
         selected: set[str] = set()
+        cleanup_running: set[str] = set()
+        cleanup_all_btn = None
+        update_all_btn = None
         # _mod_data 在外层加载完成时已经按照同一套名称清洗、自然排序、
         # 启用项优先规则排好；这里保留这个顺序，确保两个窗口完全一致。
+        residual_paths = find_workshop_residual_dirs()
+        workshop_content_paths = find_workshop_content_dirs()
+        legacy_runtime_residual_paths = find_legacy_runtime_residual_dirs()
         local_ids = [str(wid) for wid in self._workshop_candidate_ids()]
         # 缓存中的订阅项也先参与首帧展示，避免刚检测出的缺失 Mod 在关闭
         # 对话框后立刻消失；真正刷新时仍只把本地扫描项作为输入，再由
@@ -1059,7 +1149,7 @@ class ModManagerTab:
             and time.monotonic() - self._workshop_status_checked_at < 300.0
             and self._workshop_status_file_signature
             == _workshop_modinfo_signature(
-                [int(wid) for wid in local_ids], self._mod_paths
+                [int(wid) for wid in local_ids], self._mod_paths, residual_paths
             )
         )
 
@@ -1122,20 +1212,30 @@ class ModManagerTab:
                 WorkshopModState.DOWNLOAD_PENDING: 0,
                 WorkshopModState.UPDATE_AVAILABLE: 1,
                 WorkshopModState.MISSING: 2,
-                WorkshopModState.SOURCE_UNAVAILABLE: 2,
+                # 仅提示信息，不属于需要处理的状态，按普通 Mod 顺序展示。
+                WorkshopModState.SOURCE_UNAVAILABLE: 10,
                 WorkshopModState.INTEGRITY_UNCONFIRMED: 3,
+                WorkshopModState.UNSUBSCRIBED_REFERENCED: 3,
+                WorkshopModState.RESIDUAL_FILES: 4,
+                # V1 包已就绪同样不是待更新项，不应因状态被置顶。
+                WorkshopModState.LEGACY_PACKAGE_READY: 10,
+                WorkshopModState.LEGACY_RUNTIME_RESIDUAL: 4,
+                WorkshopModState.UNSUBSCRIBED_PENDING_CLEANUP: 4,
                 WorkshopModState.NOT_INSTALLED: 4,
                 WorkshopModState.UNKNOWN: 5,
                 WorkshopModState.LOCAL_FILES: 6,
                 WorkshopModState.CURRENT: 10,
             }
-            # Python 排序稳定；同一状态内继续保留外层 Mod 列表的名称顺序。
+            # 状态优先级只用于真正需要处理的项目；同一优先级按名称排序，
+            # 避免 V1 包就绪/源端不可用因扫描顺序恰好被置于列表开头。
             return sorted(
                 result,
                 key=lambda wid: (
                     priority.get(latest_states[wid].state, 7)
                     if wid in latest_states
-                    else 7
+                    else 7,
+                    _name_for(wid).casefold(),
+                    wid,
                 ),
             )
 
@@ -1147,12 +1247,18 @@ class ModManagerTab:
                     if latest_state_loading or not latest_state_checked
                     else t("mod.update_latest_unknown")
                 )
+            if status.state == WorkshopModState.UNSUBSCRIBED_PENDING_CLEANUP:
+                return t("mod.update_latest_unsubscribed_pending_cleanup")
             labels = {
                 WorkshopModState.CURRENT: "mod.update_latest_up_to_date",
                 WorkshopModState.UPDATE_AVAILABLE: "mod.update_latest_available",
                 WorkshopModState.MISSING: "mod.update_latest_missing",
                 WorkshopModState.SOURCE_UNAVAILABLE: "mod.update_latest_source_unavailable",
                 WorkshopModState.INTEGRITY_UNCONFIRMED: "mod.update_latest_integrity_unconfirmed",
+                WorkshopModState.UNSUBSCRIBED_REFERENCED: "mod.update_latest_unsubscribed_referenced",
+                WorkshopModState.RESIDUAL_FILES: "mod.update_latest_residual_files",
+                WorkshopModState.LEGACY_PACKAGE_READY: "mod.update_latest_legacy_package_ready",
+                WorkshopModState.LEGACY_RUNTIME_RESIDUAL: "mod.update_latest_legacy_runtime_residual",
                 WorkshopModState.LOCAL_FILES: "mod.update_latest_local_files",
                 WorkshopModState.NOT_INSTALLED: "mod.update_latest_not_installed",
                 WorkshopModState.DOWNLOADING: "mod.update_latest_downloading",
@@ -1161,7 +1267,12 @@ class ModManagerTab:
             }
             return t(labels.get(status.state, "mod.update_latest_unknown"))
 
+        def _can_select(wid: str) -> bool:
+            status = latest_states.get(wid)
+            return bool(status is not None and status.can_update)
+
         def render_rows():
+            _redraw_filter_labels()
             canvas.delete("all")
             photo_refs.clear()
             visible_ids[:] = _filtered_ids()
@@ -1198,8 +1309,9 @@ class ModManagerTab:
                 outline="",
                 tags=("select_all",),
             )
-            header_checked = bool(visible_ids) and all(
-                item in selected for item in visible_ids
+            selectable_ids = [item for item in visible_ids if _can_select(item)]
+            header_checked = bool(selectable_ids) and all(
+                item in selected for item in selectable_ids
             )
             canvas.create_rectangle(
                 16,
@@ -1286,14 +1398,25 @@ class ModManagerTab:
                     tags=(f"row:{wid}",),
                 )
                 checked = wid in selected
+                can_select = _can_select(wid)
                 box_x, box_y = 16, y + 32
                 canvas.create_rectangle(
                     box_x,
                     box_y,
                     box_x + 24,
                     box_y + 24,
-                    fill=theme.PRIMARY if checked else dialog_bg,
-                    outline=theme.PRIMARY if checked else theme.CARD_BORDER,
+                    fill=(
+                        theme.PRIMARY
+                        if checked
+                        else dialog_bg
+                        if can_select
+                        else theme.CARD_BG_ALT
+                    ),
+                    outline=(
+                        theme.PRIMARY
+                        if checked or can_select
+                        else theme.CARD_BORDER
+                    ),
                     width=2,
                     tags=(f"row:{wid}",),
                 )
@@ -1362,6 +1485,7 @@ class ModManagerTab:
                     y + 42,
                     text=_latest_version_for(wid),
                     anchor=tk.CENTER,
+                    justify=tk.CENTER,
                     fill=theme.TEXT,
                     font=theme.font_tuple(theme.FONT_SIZE_SM),
                     tags=(f"row:{wid}",),
@@ -1392,37 +1516,53 @@ class ModManagerTab:
                     "<Button-1>",
                     lambda _e, item=wid: self._on_link(f"workshop-{item}"),
                 )
-                canvas.tag_bind(
-                    link_tag, "<Enter>", lambda _e: canvas.configure(cursor="hand2")
-                )
-                canvas.tag_bind(
-                    link_tag, "<Leave>", lambda _e: canvas.configure(cursor="")
-                )
-                button_tag = f"update:{wid}"
-                canvas.create_rectangle(
-                    action_x - 38,
-                    y + 26,
-                    action_x + 38,
-                    y + 58,
-                    fill=theme.PRIMARY,
-                    outline=theme.PRIMARY,
-                    tags=(button_tag,),
-                )
-                canvas.create_text(
-                    action_x,
-                    y + 42,
-                    text=t("mod.update_one_btn"),
-                    fill=dialog_bg,
-                    font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
-                    tags=(button_tag,),
-                )
-                canvas.tag_bind(
-                    button_tag, "<Button-1>", lambda _e, item=wid: update_one(item)
-                )
-                canvas.tag_bind(
-                    f"row:{wid}", "<Button-1>", lambda _e, item=wid: toggle_one(item)
-                )
+                bind_canvas_hand_cursor(canvas, link_tag)
+                status = latest_states.get(wid)
+                action = None
+                if status is not None and status.can_update:
+                    action = (t("mod.update_one_btn"), update_one)
+                elif (
+                    status is not None
+                    and status.state == WorkshopModState.UNSUBSCRIBED_REFERENCED
+                ):
+                    action = (t("mod.update_remove_reference_btn"), remove_reference)
+                elif status is not None and status.can_cleanup_residual:
+                    action = (t("mod.update_cleanup_residual_btn"), cleanup_residual)
+                if action is not None:
+                    button_tag = f"action:{wid}"
+                    canvas.create_rectangle(
+                        action_x - 38,
+                        y + 26,
+                        action_x + 38,
+                        y + 58,
+                        fill=theme.PRIMARY,
+                        outline=theme.PRIMARY,
+                        tags=(button_tag,),
+                    )
+                    canvas.create_text(
+                        action_x,
+                        y + 42,
+                        text=action[0],
+                        fill=dialog_bg,
+                        font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+                        tags=(button_tag,),
+                    )
+                    canvas.tag_bind(
+                        button_tag,
+                        "<Button-1>",
+                        lambda _e, item=wid, handler=action[1]: handler(item),
+                    )
+                    bind_canvas_hand_cursor(canvas, button_tag)
+                if can_select:
+                    row_tag = f"row:{wid}"
+                    canvas.tag_bind(
+                        row_tag,
+                        "<Button-1>",
+                        lambda _e, item=wid: toggle_one(item),
+                    )
+                    bind_canvas_hand_cursor(canvas, row_tag)
             canvas.tag_bind("select_all", "<Button-1>", lambda _e: select_visible())
+            bind_canvas_hand_cursor(canvas, "select_all")
             content_height = header_h + len(visible_ids) * row_h + 8
             # scrollregion 小于 Canvas 可视高度时，Tk 会允许整个内容区域在
             # 视口里发生反常位移。至少铺满一屏，短列表就会稳定贴在顶部。
@@ -1437,8 +1577,34 @@ class ModManagerTab:
                     total=len(all_ids),
                 )
             )
+            if cleanup_all_btn is not None:
+                has_residual = any(
+                    status.can_cleanup_residual
+                    and status.state != WorkshopModState.UNSUBSCRIBED_REFERENCED
+                    for status in latest_states.values()
+                )
+                cleanup_all_btn.configure(
+                    state=(
+                        tk.NORMAL
+                        if has_residual and not cleanup_running
+                        else tk.DISABLED
+                    )
+                )
+            if update_all_btn is not None:
+                actionable_ids = _workshop_actionable_update_ids(
+                    all_ids, latest_states
+                )
+                update_all_btn.configure(
+                    state=(
+                        tk.NORMAL
+                        if actionable_ids and not latest_state_loading
+                        else tk.DISABLED
+                    )
+                )
 
         def toggle_one(wid: str):
+            if not _can_select(wid):
+                return
             if wid in selected:
                 selected.remove(wid)
             else:
@@ -1446,26 +1612,24 @@ class ModManagerTab:
             render_rows()
 
         def select_visible():
-            if visible_ids and all(item in selected for item in visible_ids):
-                selected.difference_update(visible_ids)
+            selectable = [item for item in visible_ids if _can_select(item)]
+            if selectable and all(item in selected for item in selectable):
+                selected.difference_update(selectable)
             else:
-                selected.update(visible_ids)
+                selected.update(selectable)
             render_rows()
 
-        def update_selected():
-            if not selected:
-                dlg.show_info(win, t("mod.update_title"), t("mod.update_none_selected"))
-                return
-            ids = sorted(int(wid) for wid in selected)
+        def _start_update(update_ids: list[str], confirm_message_key: str) -> None:
+            ids = [int(wid) for wid in update_ids]
             if not dlg.ask_yes_no(
                 win,
                 t("mod.update_confirm_title"),
-                t("mod.update_confirm_message", count=len(ids)),
+                t(confirm_message_key, count=len(ids)),
             ):
                 return
             expected_versions = {
                 int(wid): latest_states[wid].remote_version
-                for wid in selected
+                for wid in update_ids
                 if wid in latest_states
                 and latest_states[wid].state == WorkshopModState.UPDATE_AVAILABLE
                 and latest_states[wid].remote_version
@@ -1473,8 +1637,27 @@ class ModManagerTab:
             win.destroy()
             self._update_workshop_mods(ids, expected_versions=expected_versions)
 
+        def update_selected():
+            update_ids = [wid for wid in all_ids if wid in selected and _can_select(wid)]
+            if not update_ids:
+                dlg.show_info(win, t("mod.update_title"), t("mod.update_none_selected"))
+                return
+            _start_update(update_ids, "mod.update_confirm_message")
+
+        def update_all():
+            update_ids = _workshop_actionable_update_ids(all_ids, latest_states)
+            if not update_ids:
+                dlg.show_info(win, t("mod.update_title"), t("mod.workshop_update_empty"))
+                return
+            _start_update(update_ids, "mod.update_all_confirm_message")
+
         def update_one(wid: str):
             status = latest_states.get(wid)
+            if status is None or not status.can_update:
+                dlg.show_warning(
+                    win, t("mod.update_title"), t("mod.update_cannot_update")
+                )
+                return
             expected_versions = (
                 {int(wid): status.remote_version}
                 if status is not None
@@ -1484,6 +1667,323 @@ class ModManagerTab:
             )
             win.destroy()
             self._update_workshop_mods([int(wid)], expected_versions=expected_versions)
+
+        def remove_reference(wid: str):
+            if not dlg.ask_yes_no(
+                win,
+                t("mod.update_remove_reference_title"),
+                t("mod.update_remove_reference_confirm", mod_id=f"workshop-{wid}"),
+            ):
+                return
+            changed = 0
+            cluster = self._get_cluster()
+            for shard in cluster.shards if cluster else ():
+                if not shard.mod_overrides_path:
+                    continue
+                overrides = load_mod_overrides(shard.mod_overrides_path)
+                removed = False
+                for key in (f"workshop-{wid}", wid):
+                    removed = overrides.mods.pop(key, None) is not None or removed
+                if removed:
+                    save_mod_overrides(overrides)
+                    changed += 1
+            if not changed:
+                dlg.show_info(
+                    win, t("mod.update_title"), t("mod.update_reference_not_found")
+                )
+                return
+            win.destroy()
+            self._workshop_status_checked_at = 0.0
+            self._refresh_mods(full=False)
+            dlg.show_info(
+                self.app.root,
+                t("mod.update_remove_reference_title"),
+                t("mod.update_reference_removed", count=changed),
+            )
+
+        def _cleanup_paths(status):
+            evidence = status.evidence if status is not None else None
+            content_path = (
+                evidence.workshop_content_path or evidence.residual_path
+                if evidence is not None
+                else None
+            )
+            runtime_paths = (
+                evidence.legacy_runtime_residual_paths if evidence is not None else ()
+            )
+            paths = tuple(
+                path for path in (content_path, *runtime_paths) if path is not None
+            )
+            return paths
+
+        def _is_empty_directory(path: Path) -> bool:
+            try:
+                return path.is_dir() and next(path.iterdir(), None) is None
+            except OSError:
+                return False
+
+        def _apply_cleaned_items(cleaned_ids: list[str]):
+            changed_main_list = False
+            for wid in cleaned_ids:
+                numeric_id = int(wid)
+                latest_states.pop(wid, None)
+                self._workshop_status_cache.pop(numeric_id, None)
+                self._workshop_status_cache.pop(wid, None)
+                selected.discard(wid)
+                all_ids[:] = [item for item in all_ids if item != wid]
+                local_ids[:] = [item for item in local_ids if item != wid]
+                residual_paths.pop(numeric_id, None)
+                workshop_content_paths.pop(numeric_id, None)
+                legacy_runtime_residual_paths.pop(numeric_id, None)
+
+                mod_keys = (wid, f"workshop-{wid}")
+                for key in mod_keys:
+                    changed_main_list = (
+                        self._mod_data.pop(key, None) is not None
+                        or changed_main_list
+                    )
+                    self._mod_infos.pop(key, None)
+                    self._mod_paths.pop(key, None)
+                    self._icon_imgs.pop(key, None)
+                self._icon_thumb_cache = {
+                    key: value
+                    for key, value in self._icon_thumb_cache.items()
+                    if key[0] not in mod_keys
+                }
+
+            if changed_main_list:
+                regular, custom = split_installed_mod_counts(
+                    self._mod_data, Platform.STEAM
+                )
+                self._mod_scan_status_var.set(
+                    t(
+                        "mod.scan_found_breakdown",
+                        regular=regular,
+                        custom=custom,
+                    )
+                )
+                self._render_list()
+
+            if cleaned_ids:
+                self.app.mod_catalog.invalidate(Platform.STEAM)
+                self._workshop_status_checked_at = 0.0
+                self._update_workshop_update_hint()
+
+        def _start_residual_cleanup(
+            ids: list[str], *, bulk: bool, empty_only: bool = False
+        ):
+            cleanup_running.update(ids)
+            _show_state_notice(
+                t("mod.update_cleanup_all_checking", count=len(ids))
+                if bulk
+                else t("mod.update_cleanup_residual_checking")
+            )
+            render_rows()
+
+            def worker():
+                cleaned: list[str] = []
+                errors: dict[str, Exception] = {}
+                try:
+                    fresh_content_paths = find_workshop_residual_dirs()
+                    fresh_workshop_content_paths = find_workshop_content_dirs()
+                    fresh_runtime_paths = find_legacy_runtime_residual_dirs()
+                    processes = running_dst_processes()
+                    cleanup_context = build_residual_cleanup_context(
+                        running_processes=processes
+                    )
+                    numeric_ids = [int(wid) for wid in ids]
+                    fresh_states = inspect_workshop_items(
+                        numeric_ids,
+                        query_source=False,
+                        residual_paths=fresh_content_paths,
+                        workshop_content_paths=fresh_workshop_content_paths,
+                        legacy_runtime_residual_paths=fresh_runtime_paths,
+                        running_dst_processes=processes,
+                    )
+                except (OSError, ValueError, KeyError) as exc:
+                    fresh_states = {}
+                    errors.update({wid: exc for wid in ids})
+
+                for wid in ids:
+                    if wid in errors:
+                        continue
+                    try:
+                        fresh = fresh_states[int(wid)]
+                        if not fresh.can_cleanup_residual or fresh.evidence is None:
+                            raise ValueError(t("mod.update_cannot_cleanup"))
+                        content_path = (
+                            fresh.evidence.workshop_content_path
+                            or fresh.evidence.residual_path
+                        )
+                        deleted_any = False
+                        if content_path is not None and (
+                            not empty_only or _is_empty_directory(content_path)
+                        ):
+                            delete_workshop_residual(
+                                int(wid),
+                                content_path,
+                                fresh.evidence.steam_state,
+                                context=cleanup_context,
+                            )
+                            deleted_any = True
+                        if not empty_only:
+                            for runtime_path in (
+                                fresh.evidence.legacy_runtime_residual_paths
+                            ):
+                                delete_legacy_runtime_residual(
+                                    int(wid),
+                                    runtime_path,
+                                    fresh.evidence.steam_state,
+                                    context=cleanup_context,
+                                )
+                                deleted_any = True
+                        if not deleted_any:
+                            raise ValueError(t("mod.update_cleanup_empty_changed"))
+                        cleaned.append(wid)
+                    except (OSError, ValueError, KeyError) as exc:
+                        errors[wid] = exc
+
+                def apply():
+                    cleanup_running.difference_update(ids)
+                    _apply_cleaned_items(cleaned)
+                    if not win.winfo_exists():
+                        return
+                    _show_state_notice("")
+                    render_rows()
+                    if errors:
+                        details = "\n".join(
+                            f"workshop-{wid}: {error}"
+                            for wid, error in sorted(
+                                errors.items(), key=lambda item: int(item[0])
+                            )
+                        )
+                        dlg.show_error(
+                            win,
+                            t("mod.update_cleanup_residual_title"),
+                            t(
+                                "mod.update_cleanup_all_result",
+                                success=len(cleaned),
+                                failed=len(errors),
+                                details=details,
+                            ),
+                        )
+                    elif bulk:
+                        dlg.show_toast(
+                            win,
+                            t("mod.update_cleanup_all_done_toast", count=len(cleaned)),
+                        )
+                    else:
+                        dlg.show_toast(
+                            win,
+                            t("mod.update_cleanup_residual_done_toast"),
+                        )
+
+                self.frame.after(0, apply)
+
+            threading.Thread(
+                target=worker,
+                name=(
+                    "dstcamp-workshop-residual-cleanup-all"
+                    if bulk
+                    else "dstcamp-workshop-residual-cleanup"
+                ),
+                daemon=True,
+            ).start()
+
+        def cleanup_residual(wid: str):
+            if wid in cleanup_running:
+                return
+            status = latest_states.get(wid)
+            paths = _cleanup_paths(status)
+            if not paths or status is None or not status.can_cleanup_residual:
+                dlg.show_warning(
+                    win, t("mod.update_title"), t("mod.update_cannot_cleanup")
+                )
+                return
+            directory_tree = format_residual_directory_tree(paths)
+
+            def open_residual_folder():
+                try:
+                    target = next((path for path in paths if Path(path).is_dir()), None)
+                    if target is not None:
+                        os.startfile(str(target))
+                except OSError as exc:
+                    dlg.show_error(
+                        win,
+                        t("mod.update_cleanup_residual_title"),
+                        t("mod.update_cleanup_open_failed", error=exc),
+                    )
+
+            if not dlg.ask_yes_no(
+                win,
+                t("mod.update_cleanup_residual_title"),
+                t(
+                    "mod.update_cleanup_residual_confirm",
+                    tree=directory_tree,
+                ),
+                wraplength=760,
+                min_width=820,
+                auxiliary_button=(t("mod.update_cleanup_open_btn"), open_residual_folder),
+            ):
+                return
+            _start_residual_cleanup([wid], bulk=False)
+
+        def cleanup_all_residuals():
+            if cleanup_running:
+                return
+            candidates = [
+                wid
+                for wid, status in latest_states.items()
+                if status.can_cleanup_residual
+                and status.state != WorkshopModState.UNSUBSCRIBED_REFERENCED
+                and _cleanup_paths(status)
+            ]
+            if not candidates:
+                dlg.show_info(
+                    win,
+                    t("mod.update_cleanup_residual_title"),
+                    t("mod.update_cleanup_all_empty"),
+                )
+                return
+            paths = tuple(
+                path
+                for wid in candidates
+                for path in _cleanup_paths(latest_states.get(wid))
+            )
+            directory_tree = format_residual_directory_tree(paths)
+
+            cleanup_mode = ResidualCleanupDialog(
+                win,
+                title=t("mod.update_cleanup_all_title"),
+                message=t(
+                    "mod.update_cleanup_all_confirm",
+                    count=len(candidates),
+                    tree=directory_tree,
+                ),
+            ).result
+            if cleanup_mode is None:
+                return
+            if cleanup_mode == "empty":
+                candidates = [
+                    wid
+                    for wid in candidates
+                    if any(
+                        _is_empty_directory(Path(path))
+                        for path in _cleanup_paths(latest_states.get(wid))
+                    )
+                ]
+                if not candidates:
+                    dlg.show_info(
+                        win,
+                        t("mod.update_cleanup_all_title"),
+                        t("mod.update_cleanup_empty_none"),
+                    )
+                    return
+            _start_residual_cleanup(
+                candidates,
+                bulk=True,
+                empty_only=cleanup_mode == "empty",
+            )
 
         def _on_search_changed(*_args):
             canvas.yview_moveto(0)
@@ -1499,9 +1999,28 @@ class ModManagerTab:
 
         footer = tk.Frame(win, bg=dialog_bg)
         footer.pack(fill=tk.X, padx=12, pady=(0, 12))
+        footer.grid_columnconfigure(0, weight=1, uniform="footer_side")
+        footer.grid_columnconfigure(2, weight=1, uniform="footer_side")
         ttk.Button(
-            footer, text=t("mod.update_selected_btn"), command=update_selected
-        ).pack(side=tk.RIGHT)
+            footer,
+            text=t("mod.update_selected_btn"),
+            command=update_selected,
+            padding=(12, 6),
+        ).grid(row=0, column=0, sticky=tk.W, ipady=2)
+        update_all_btn = ttk.Button(
+            footer,
+            text=t("mod.update_all_btn"),
+            command=update_all,
+            padding=(12, 6),
+        )
+        update_all_btn.grid(row=0, column=1, ipady=2)
+        cleanup_all_btn = ttk.Button(
+            footer,
+            text=t("mod.update_cleanup_all_btn"),
+            command=cleanup_all_residuals,
+            padding=(12, 6),
+        )
+        cleanup_all_btn.grid(row=0, column=2, sticky=tk.E, ipady=2)
         win.protocol("WM_DELETE_WINDOW", win.destroy)
         center_over_parent(win, self.frame.winfo_toplevel())
         render_rows()
@@ -1535,6 +2054,9 @@ class ModManagerTab:
                             for wid, status in self._workshop_status_cache.items()
                         }
                     )
+                    selected.intersection_update(
+                        wid for wid, status in latest_states.items() if status.can_update
+                    )
                     all_ids[:] = list(local_ids)
                     known_ids = set(all_ids)
                     all_ids.extend(
@@ -1553,24 +2075,46 @@ class ModManagerTab:
                 return
             self._workshop_status_refreshing = True
             self._update_workshop_update_hint()
+            residual_paths.clear()
+            residual_paths.update(find_workshop_residual_dirs())
+            workshop_content_paths.clear()
+            workshop_content_paths.update(find_workshop_content_dirs())
+            legacy_runtime_residual_paths.clear()
+            legacy_runtime_residual_paths.update(
+                find_legacy_runtime_residual_dirs()
+            )
             scan_signature = _workshop_modinfo_signature(
-                [int(wid) for wid in local_ids], self._mod_paths
+                [int(wid) for wid in local_ids],
+                self._mod_paths,
+                residual_paths,
+                legacy_runtime_residual_paths,
             )
 
             def _worker():
                 state_error = ""
                 try:
                     scan_ids = [int(wid) for wid in local_ids]
+                    processes = running_dst_processes()
                     states = inspect_workshop_items(
                         scan_ids,
                         discovered_paths={
                             int(str(wid).removeprefix("workshop-")): path
                             for wid, path in self._mod_paths.items()
                             if str(wid).removeprefix("workshop-").isdigit()
+                            and not is_legacy_read_cache_path(path)
+                            and (
+                                self.app._get_platform_filter() != Platform.STEAM
+                                or self._is_server_mod_path(path)
+                            )
                         },
                         legacy_active_root=self._server_mods_root(),
                         query_source=True,
                         include_subscribed=True,
+                        configured_ids=[int(wid) for wid in current_ids],
+                        residual_paths=residual_paths,
+                        workshop_content_paths=workshop_content_paths,
+                        legacy_runtime_residual_paths=legacy_runtime_residual_paths,
+                        running_dst_processes=processes,
                         cached_manifest_versions=self._cached_workshop_versions(
                             scan_ids
                         ),
@@ -1626,6 +2170,9 @@ class ModManagerTab:
                     latest_states.update(
                         {str(wid): state for wid, state in states.items()}
                     )
+                    selected.intersection_update(
+                        wid for wid, status in latest_states.items() if status.can_update
+                    )
                     refresh_states_btn.configure(state=tk.NORMAL)
                     _show_state_notice(state_error)
                     render_rows()
@@ -1660,9 +2207,19 @@ class ModManagerTab:
             return
         self._workshop_update_running = True
         self._refresh_workshop_update_button_state()
+        cancel_event = threading.Event()
+        log_dialog = None
+
+        def request_stop() -> None:
+            cancel_event.set()
+            if log_dialog is not None:
+                log_dialog.append(t("mod.update_log_stop_requested"))
+
         log_dialog = ModSyncLogDialog(
             self.app.root,
             title=t("mod.update_log_title"),
+            on_cancel=request_stop,
+            cancel_text=t("mod.update_stop_btn"),
             allow_close_while_running=True,
             text_width=82,
         )
@@ -1676,6 +2233,7 @@ class ModManagerTab:
         )
         self._set_workshop_update_progress(0, len(ids))
         log_dialog.append(t("mod.update_log_start", count=len(ids)))
+        completed_counts = {"updated": 0, "up_to_date": 0, "failed": 0}
 
         def display_name(workshop_id: int) -> str:
             key = f"workshop-{workshop_id}"
@@ -1700,6 +2258,12 @@ class ModManagerTab:
             self.frame.after(0, self._set_workshop_update_progress, current, total)
 
         def item_complete(current, total, result):
+            if result.completed and result.up_to_date:
+                completed_counts["up_to_date"] += 1
+            elif result.completed:
+                completed_counts["updated"] += 1
+            else:
+                completed_counts["failed"] += 1
             name = display_name(result.workshop_id)
             legacy_targets = result.details.get("legacy_targets") or ()
             if legacy_targets:
@@ -1752,12 +2316,28 @@ class ModManagerTab:
                     on_progress=progress,
                     on_item_start=item_start,
                     on_item_complete=item_complete,
+                    cancel_event=cancel_event,
                 )
                 updated, up_to_date, failed = (
                     batch.updated,
                     batch.up_to_date,
                     batch.failed,
                 )
+            except WorkshopUpdateCancelled:
+                updated = completed_counts["updated"]
+                up_to_date = completed_counts["up_to_date"]
+                failed = completed_counts["failed"]
+                self.frame.after(
+                    0,
+                    self._finish_workshop_update,
+                    updated,
+                    up_to_date,
+                    failed,
+                    log_dialog,
+                    True,
+                    len(ids),
+                )
+                return
             except Exception as exc:
                 # 后台更新失败也必须恢复按钮状态，避免一次异常让页面永久卡在“更新中”。
                 updated, up_to_date, failed = 0, 0, len(ids)
@@ -1819,26 +2399,49 @@ class ModManagerTab:
                     self._update_workshop_update_hint()
 
     def _finish_workshop_update(
-        self, updated: int, up_to_date: int, failed: int, log_dialog=None
+        self,
+        updated: int,
+        up_to_date: int,
+        failed: int,
+        log_dialog=None,
+        cancelled: bool = False,
+        total: int | None = None,
     ) -> None:
         self._workshop_update_running = False
         self._refresh_workshop_update_button_state()
         self._mod_update_hint_kind = "done"
-        self._mod_update_hint_var.set(
-            t(
-                "mod.workshop_update_done",
-                updated=updated,
-                up_to_date=up_to_date,
-                failed=failed,
-            )
-        )
-        if log_dialog is not None:
-            log_dialog.append(
+        processed = updated + up_to_date + failed
+        total = processed if total is None else total
+        skipped = max(0, total - processed)
+        if cancelled:
+            self._mod_update_hint_var.set(
                 t(
-                    "mod.update_log_summary",
+                    "mod.workshop_update_stopped",
                     updated=updated,
                     up_to_date=up_to_date,
                     failed=failed,
+                    skipped=skipped,
+                )
+            )
+        else:
+            self._mod_update_hint_var.set(
+                t(
+                    "mod.workshop_update_done",
+                    updated=updated,
+                    up_to_date=up_to_date,
+                    failed=failed,
+                )
+            )
+        if log_dialog is not None:
+            log_dialog.append(
+                t(
+                    "mod.update_log_stopped" if cancelled else "mod.update_log_summary",
+                    processed=processed,
+                    total=total,
+                    updated=updated,
+                    up_to_date=up_to_date,
+                    failed=failed,
+                    skipped=skipped,
                 )
             )
             log_dialog.finish()
@@ -1874,9 +2477,7 @@ class ModManagerTab:
             self._mod_update_hint_kind = "error"
             text = t("mod.update_status_unavailable_hint")
         else:
-            count = sum(
-                status.needs_action for status in self._workshop_status_cache.values()
-            )
+            count = _workshop_needs_update_count(self._workshop_status_cache)
             if count:
                 self._mod_update_hint_kind = "pending"
                 text = t("mod.update_pending_hint", count=count)
@@ -1897,13 +2498,21 @@ class ModManagerTab:
         ):
             return
         local_ids = self._workshop_candidate_ids()
+        residual_paths = find_workshop_residual_dirs()
+        workshop_content_paths = find_workshop_content_dirs()
+        legacy_runtime_residual_paths = find_legacy_runtime_residual_dirs()
         cache_fresh = (
             time.monotonic() - self._workshop_status_checked_at < 300.0
             and set(local_ids).issubset(
                 {int(wid) for wid in self._workshop_status_cache}
             )
             and self._workshop_status_file_signature
-            == _workshop_modinfo_signature(local_ids, self._mod_paths)
+            == _workshop_modinfo_signature(
+                local_ids,
+                self._mod_paths,
+                residual_paths,
+                legacy_runtime_residual_paths,
+            )
         )
         if cache_fresh:
             self._update_workshop_update_hint()
@@ -1920,19 +2529,37 @@ class ModManagerTab:
             int(str(wid).removeprefix("workshop-")): path
             for wid, path in self._mod_paths.items()
             if str(wid).removeprefix("workshop-").isdigit()
+            and not is_legacy_read_cache_path(path)
+            and (
+                self.app._get_platform_filter() != Platform.STEAM
+                or self._is_server_mod_path(path)
+            )
         }
-        scan_signature = _workshop_modinfo_signature(local_ids, self._mod_paths)
+        scan_signature = _workshop_modinfo_signature(
+            local_ids,
+            self._mod_paths,
+            residual_paths,
+            legacy_runtime_residual_paths,
+        )
 
         def worker():
             error = ""
             try:
                 cached_versions = self._cached_workshop_versions(local_ids)
+                processes = running_dst_processes()
                 states = inspect_workshop_items(
                     local_ids,
                     discovered_paths=discovered_paths,
                     legacy_active_root=self._server_mods_root(),
                     query_source=True,
                     include_subscribed=True,
+                    configured_ids=[
+                        int(wid) for wid in self._current_cluster_workshop_ids()
+                    ],
+                    residual_paths=residual_paths,
+                    workshop_content_paths=workshop_content_paths,
+                    legacy_runtime_residual_paths=legacy_runtime_residual_paths,
+                    running_dst_processes=processes,
                     cached_manifest_versions=cached_versions,
                 )
             except Exception as exc:
@@ -2029,6 +2656,9 @@ class ModManagerTab:
         self._mod_scan_status_var.set("正在扫描 Mod…")
         self._render_list()
         platform, wegame_client_mods_dir = self._resolve_mod_folder_args(c)
+        steam_runtime_mods_dir = (
+            self._server_mods_root() if platform == Platform.STEAM else None
+        )
         self._catalog_platform = platform
         self._catalog_wegame_client_mods_dir = wegame_client_mods_dir
         # LuaJIT 补丁只服务 Steam 版专用服务器（features/local_service/luajit_injector.py），
@@ -2049,6 +2679,7 @@ class ModManagerTab:
                 full,
                 platform,
                 wegame_client_mods_dir,
+                steam_runtime_mods_dir,
                 luajit_bin64_dir,
             ),
             daemon=True,
@@ -2069,6 +2700,7 @@ class ModManagerTab:
         full,
         platform,
         wegame_client_mods_dir,
+        steam_runtime_mods_dir,
         luajit_bin64_dir,
     ):
         """跑在 Tk 主线程之外——绝不能碰任何 tkinter/Tcl 对象（包括
@@ -2086,7 +2718,7 @@ class ModManagerTab:
             overrides = load_mod_overrides(overrides_path)
             catalog_snapshot = (
                 None
-                if full
+                if full or steam_runtime_mods_dir is not None
                 else self.app.mod_catalog.get(platform, wegame_client_mods_dir)
             )
             if catalog_snapshot is not None:
@@ -2122,16 +2754,19 @@ class ModManagerTab:
             if overrides_dirty:
                 save_mod_overrides(overrides)
 
-            # 与游戏的 TheSim:GetModDirectoryNames() 候选集合保持一致：
-            # 只有当前确实能从有效安装目录发现的 Mod 才进入列表。
+            # 只列出当前能从有效目录或 Legacy 包读取的 Mod。
             # modoverrides.lua 只为这些项目提供启用状态和配置，不能让一个
             # 已改名为 <id>_bak/已删除的旧 key 凭空生成“幽灵 Mod”行。
             # 不修改 overrides 本身，用户以后把目录恢复为标准名时原配置
             # 仍会回来。
-            ids = (
-                list(catalog_snapshot.mod_ids)
-                if catalog_snapshot is not None
-                else list_installed_mod_ids(platform, wegame_client_mods_dir)
+            legacy_packages = (
+                find_legacy_packages() if platform == Platform.STEAM else {}
+            )
+            ids = list_installed_mod_ids(
+                platform,
+                wegame_client_mods_dir,
+                legacy_packages=legacy_packages,
+                steam_runtime_mods_dir=steam_runtime_mods_dir,
             )
 
             for wid in ids:
@@ -2148,16 +2783,36 @@ class ModManagerTab:
                 # mod 就显示成没有名字/图标，而不是让其它所有 mod（以及
                 # 这个页签本身，一直卡在显示"加载中"）都渲染不出来。
                 try:
-                    # luajit_injector.WORKSHOP_MOD_KEY 是标准 "workshop-<id>"
-                    # 格式，不需要任何特判——find_mod_folder() 自己的
-                    # Workshop 内容目录查找那条路径天然能找到它（前提是
-                    # 真订阅过，内容就在
-                    # <steam>/steamapps/workshop/content/322330/<id>/）。
-                    mod_folder = (
-                        catalog_snapshot.paths.get(wid)
-                        if catalog_snapshot is not None
-                        else find_mod_folder(wid, platform, wegame_client_mods_dir)
+                    # 普通 Mod 直接读取安装目录；尚未被游戏展开的 V1 包只
+                    # 物化到解析缓存，不能因此冒充实际运行目录。
+                    text_id = str(wid).removeprefix("workshop-")
+                    archive = (
+                        legacy_packages.get(int(text_id))
+                        if text_id.isdigit()
+                        else None
                     )
+                    if archive is not None:
+                        mod_folder = find_mod_folder(
+                            wid,
+                            platform,
+                            wegame_client_mods_dir,
+                            steam_runtime_mods_dir,
+                        )
+                        if mod_folder is None:
+                            mod_folder = materialize_legacy_package_for_read(
+                                int(text_id), archive
+                            )
+                    else:
+                        mod_folder = (
+                            catalog_snapshot.paths.get(wid)
+                            if catalog_snapshot is not None
+                            else find_mod_folder(
+                                wid,
+                                platform,
+                                wegame_client_mods_dir,
+                                steam_runtime_mods_dir,
+                            )
+                        )
                     if mod_folder is not None:
                         mod_paths[wid] = mod_folder
                     if mod_folder is None:
@@ -2169,9 +2824,19 @@ class ModManagerTab:
                         # 而失效，不清掉的话名字/配置项会一直照着内容已
                         # 经不存在的旧数据显示，看起来像"删了还在"。
                         self._full_resolved_cache.pop(wid, None)
-                    catalog_has_info = bool(
-                        catalog_snapshot is not None and wid in catalog_snapshot.infos
+                    catalog_path = (
+                        catalog_snapshot.paths.get(wid)
+                        if catalog_snapshot is not None
+                        else None
                     )
+                    same_catalog_path = catalog_path == mod_folder
+                    catalog_has_info = bool(
+                        catalog_snapshot is not None
+                        and wid in catalog_snapshot.infos
+                        and same_catalog_path
+                    )
+                    if archive is not None and not same_catalog_path:
+                        self._full_resolved_cache.pop(wid, None)
                     cached = self._full_resolved_cache.get(wid)
                     if cached is not None:
                         mod_info = cached
@@ -2202,7 +2867,16 @@ class ModManagerTab:
                         # 在后台继续做；否则 500 个 ktech.exe 调用完成前，
                         # 用户会一直看不到任何列表，也无法判断是否卡死。
                         if wid not in icon_imgs:
-                            icon_targets.append((wid, mod_info, mod_folder))
+                            cached_icon = get_cached_mod_icon_path(
+                                mod_info, mod_folder, platform
+                            )
+                            if cached_icon is not None:
+                                try:
+                                    icon_imgs[wid] = Image.open(cached_icon).convert("RGBA")
+                                except Exception:
+                                    icon_targets.append((wid, mod_info, mod_folder))
+                            else:
+                                icon_targets.append((wid, mod_info, mod_folder))
                 except Exception:
                     mod_infos.setdefault(wid, None)
             self.app.mod_catalog.publish(
@@ -2216,7 +2890,7 @@ class ModManagerTab:
                     mod_data,
                     mod_infos,
                     mod_paths,
-                    {},
+                    dict(icon_imgs),
                     luajit_active,
                 )
                 if version_targets:
@@ -2454,7 +3128,7 @@ class ModManagerTab:
         locked_id = (
             luajit_injector.WORKSHOP_MOD_KEY if self._luajit_mod_locked else None
         )
-        return build_mod_rows(
+        rows = build_mod_rows(
             self._mod_data,
             self._mod_infos,
             self.filter_var.get(),
@@ -2464,6 +3138,10 @@ class ModManagerTab:
             separate_client_mods=True,
             locked_mod_id=locked_id,
         )
+        for row in rows:
+            path = self._mod_paths.get(row["workshop_id"])
+            row["has_folder"] = bool(path and Path(path).is_dir())
+        return rows
 
     def _render_list(self, ref_width=None):
         from dstools.features.mod.render import REF_WIDTH, render_mod_list
@@ -2500,6 +3178,7 @@ class ModManagerTab:
             on_toggle=self._on_toggle if is_server else None,
             on_config=self._on_config,
             on_link=self._on_link,
+            on_open_folder=self._on_open_mod_folder,
             on_copy_id=self._on_copy_id,
             ref_width=ref_width,
             icon_thumb_cache=self._icon_thumb_cache,
@@ -2665,6 +3344,22 @@ class ModManagerTab:
             webbrowser.open(
                 f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}"
             )
+
+    def _on_open_mod_folder(self, workshop_id):
+        path = resolve_mod_open_location(
+            workshop_id, self._mod_paths.get(workshop_id)
+        )
+        if path is None:
+            dlg.show_warning(
+                self.app.root,
+                t("env.open_location"),
+                t("mod.open_location_missing"),
+            )
+            return
+        try:
+            os.startfile(str(Path(path)))
+        except OSError as exc:
+            dlg.show_error(self.app.root, t("env.open_location"), str(exc))
 
     def _open_recommend_mods(self):
         """订阅推荐模组引导：列出推荐 mod（图标 + 名称 + 描述），已订阅显示
@@ -3205,7 +3900,6 @@ class ModManagerTab:
         self._md_wegame_banner.set_text(t("mod.wegame_root_needed_banner"))
         self._md_runtime_banner.set_text(t("mod.ktech_runtime_missing_banner"))
         self._update_workshop_update_hint()
-        self._mod_location_recheck_btn.configure(text=t("local.install_recheck_btn"))
         self._mod_location_change_btn.configure(text=t("local.install_change_btn"))
         self._redraw_mod_location_row_text()
         # 语言相关的动态内容（mod 列表名/描述）交给 refresh() 重新扫描渲
@@ -3368,6 +4062,7 @@ class _SavePresetDialog:
                 parent,
                 anchor=tk.W,
                 justify=tk.LEFT,
+                cursor="hand2",
                 background=theme.BG_SOFT,
                 foreground=theme.TEXT,
                 font=name_font,
@@ -3714,7 +4409,11 @@ class _ApplyReportDialog:
         # 选中态画的是"×"），自己画"☐"/"☑"。
         self.clear_var = tk.BooleanVar(value=False)
         clear_lbl = tk.Label(
-            win, anchor=tk.W, background=theme.BG_SOFT, foreground=theme.TEXT
+            win,
+            anchor=tk.W,
+            cursor="hand2",
+            background=theme.BG_SOFT,
+            foreground=theme.TEXT,
         )
 
         def _redraw_clear():
@@ -4398,7 +5097,9 @@ class ModConfigDialog:
         platform, wegame_client_mods_dir = self.tab._resolve_mod_folder_args(
             self.tab._get_cluster()
         )
-        mod_folder = find_mod_folder(workshop_id, platform, wegame_client_mods_dir)
+        mod_folder = self.tab._mod_paths.get(workshop_id) or find_mod_folder(
+            workshop_id, platform, wegame_client_mods_dir
+        )
         if not mod_folder:
             return
         modinfo_path = mod_folder / "modinfo.lua"

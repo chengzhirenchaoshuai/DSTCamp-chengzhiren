@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def read_adminlist(path: Path) -> list[str]:
-    """读取 adminlist.txt，每一行是一个 Klei 用户 ID（如 KU_4R9OEYX3）。
+    """读取权限名单，每一行是一个 DST 用户 ID（如 KU_... 或 OU_...）。
 
     Args:
         path: adminlist.txt 的路径。
@@ -37,7 +37,7 @@ def add_admin(path: Path, admin_id: str) -> bool:
 
     Args:
         path: adminlist.txt 的路径。
-        admin_id: 要添加的 Klei 用户 ID（如 KU_xxx）。
+        admin_id: 要添加的 DST 用户 ID（如 KU_xxx 或 OU_xxx）。
 
     Returns:
         添加成功返回 True，已存在则返回 False。

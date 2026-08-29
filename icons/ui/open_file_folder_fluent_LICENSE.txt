@@ -1,0 +1,7 @@
+Microsoft Fluent Emoji - Open File Folder (Flat)
+
+Source: https://github.com/microsoft/fluentui-emoji
+Asset: assets/Open file folder/Flat/open_file_folder_flat.svg
+Copyright (c) Microsoft Corporation
+License: MIT
+License text: https://github.com/microsoft/fluentui-emoji/blob/main/LICENSE

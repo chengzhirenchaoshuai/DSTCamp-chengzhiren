@@ -209,6 +209,26 @@ def test_local_service_batch_preflight() -> None:
                 target, {claim.port for claim in running_claims}, create_backup=False,
             )
             assert service._preflight_start(target, target.shards)
+
+            # 重启是在停服前做预检：当前目标进程自己的端口应被排除，不能
+            # 把它误报成外部占用；普通启动模式下同一证据仍必须报冲突。
+            running_proc.proc = SimpleNamespace(pid=4321)
+            manager.running = lambda: [running_proc]
+            master_claims, _ = collect_cluster_port_claims(
+                running_cluster, ["Master"]
+            )
+            own_ports = frozenset(
+                claim.port for claim in master_claims if claim.binding
+            )
+            local_tab.scan_udp_ports = lambda: UdpPortScan(
+                True, {4321: own_ports}
+            )
+            assert not service._preflight_start(
+                running_cluster, running_cluster.shards
+            )
+            assert service._preflight_start(
+                running_cluster, running_cluster.shards, restarting=True
+            )
         finally:
             local_tab.scan_udp_ports = old_scan
             local_tab.dlg.ask_choice = old_ask_choice
@@ -233,11 +253,68 @@ def test_config_editor_effective_conflicts() -> None:
         config.network["server_port"] = 10999
         warnings = editor._find_cross_cluster_port_conflicts(cluster, master, config)
         assert any("10999" in warning for warning in warnings)
+        assert not any("10888" in warning for warning in warnings), (
+            "保存 server.ini 时不得校验从 cluster.ini 继承的 master_port"
+        )
         assert all(not warning.startswith("UDP ") for warning in warnings)
         assert any(
             warning.startswith("10999: ") and "Cluster_B/Master (server_port)" in warning
             for warning in warnings
         )
+
+        cluster_config = cluster.config
+        cluster_warnings = editor._find_cross_cluster_cluster_port_conflicts(
+            cluster, cluster_config,
+        )
+        assert any(
+            warning.startswith("10888: ")
+            and "Cluster_A (master_port)" in warning
+            and "Cluster_B (master_port)" in warning
+            for warning in cluster_warnings
+        ), "保存 cluster.ini 时必须校验 master_port"
+
+
+def test_config_editor_port_ranges() -> None:
+    from dstools.features.cluster_config import tab as cluster_tab
+    from dstools.features.cluster_config.ini_field_info import get_range_limits
+
+    port_fields = (
+        ("SHARD", "master_port"),
+        ("NETWORK", "server_port"),
+        ("STEAM", "master_server_port"),
+        ("STEAM", "authentication_port"),
+    )
+    assert all(get_range_limits(*field) == (1, 65535) for field in port_fields)
+
+    editor = cluster_tab.ClusterConfigTab.__new__(cluster_tab.ClusterConfigTab)
+    editor.app = SimpleNamespace(root=None)
+    errors = []
+    old_show_error = cluster_tab.dlg.show_error
+    cluster_tab.dlg.show_error = lambda *_args, **_kwargs: errors.append(True)
+    try:
+        def check(section, key, value, *, shard):
+            editor._entries = {
+                (section, key): (SimpleNamespace(get=lambda: value), False),
+            }
+            errors.clear()
+            return editor._validate_entry_ranges(shard=shard)
+
+        assert check("SHARD_NETWORK", "server_port", "1", shard=True)
+        assert check("SHARD_NETWORK", "server_port", "65535", shard=True)
+        assert not check("SHARD_NETWORK", "server_port", "0", shard=True)
+        assert errors
+        assert not check("SHARD_NETWORK", "server_port", "65536", shard=True)
+        assert errors
+        assert not check("SHARD_NETWORK", "server_port", "-1", shard=True)
+        assert errors
+        assert check("SHARD_STEAM", "master_server_port", "", shard=True), (
+            "可选 Steam 端口仍应允许留空"
+        )
+        assert check("SHARD", "master_port", "10888", shard=False)
+        assert not check("SHARD", "master_port", "abc", shard=False)
+        assert errors
+    finally:
+        cluster_tab.dlg.show_error = old_show_error
 
 
 def test_world_creation_port_conflict_choices() -> None:
@@ -319,6 +396,99 @@ def test_server_manager_rejects_duplicate_start() -> None:
         dedicated_server.ServerProcess.start = old_start
 
 
+def test_restart_all_preserves_stopped_shards_and_rejects_transitions() -> None:
+    from dstools.features.local_service import tab as local_tab
+    from dstools.features.local_service.dedicated_server import ServerStatus
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(Path(tmp), "Cluster_A")
+        statuses = {
+            "Master": ServerStatus.RUNNING,
+            "Caves": ServerStatus.STOPPED,
+        }
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service._get_cluster = lambda: cluster
+        service.manager = SimpleNamespace(
+            get=lambda _path, name: SimpleNamespace(status=statuses[name])
+        )
+        calls = []
+        service._restart_shards = lambda current, shards: calls.append(
+            (current, [shard.name for shard in shards])
+        )
+
+        service._restart_all()
+        assert calls == [(cluster, ["Master"])]
+
+        statuses["Caves"] = ServerStatus.STARTING
+        calls.clear()
+        service._restart_all()
+        assert not calls, "存在启动中或停止中的分片时不得批量重启"
+
+
+def test_restart_stop_barrier_waits_for_every_shard() -> None:
+    from dstools.features.local_service import tab as local_tab
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(Path(tmp), "Cluster_A")
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        callbacks = {}
+        service._stop_and_then = lambda _cluster, shard, callback: callbacks.setdefault(
+            shard.name, callback
+        )
+        completed = []
+
+        service._stop_shards_and_then(cluster, cluster.shards, lambda: completed.append(True))
+        callbacks["Caves"]()
+        assert not completed, "不能在部分分片停完时提前重新启动"
+        callbacks["Master"]()
+        assert completed == [True]
+
+
+def test_connect_code_display_masks_secrets() -> None:
+    from dstools.features.local_service import tab as local_tab
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
+        with (cluster.path / "cluster.ini").open("a", encoding="utf-8") as stream:
+            stream.write("\n[NETWORK]\ncluster_password=secret123\n")
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+
+        original, display = service._build_connect_strings(
+            "203.0.113.42", 10999, cluster, mask_ipv4=True
+        )
+        assert '"203.0.113.42"' in original and '"secret123"' in original
+        assert '"203.0.xx.xx"' in display and '"***"' in display
+        assert "113.42" not in display and "secret123" not in display
+
+        original, display = service._build_connect_strings(
+            "example.com", 10999, cluster, mask_ipv4=True
+        )
+        assert '"example.com"' in original and '"example.com"' in display
+        assert "secret123" not in display
+
+
+def test_local_refresh_redetects_server_tool() -> None:
+    """顶部刷新必须重新探测专用服务器工具，而不只刷新存档列表。"""
+    from dstools.features.local_service import tab as local_tab
+    from dstools.models import Platform
+
+    calls = []
+    cluster = SimpleNamespace(platform=Platform.STEAM)
+    service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+    service.app = SimpleNamespace(get_selected_cluster=lambda: cluster)
+    service._detect_install_dir = lambda: calls.append("detect_install")
+    service.on_cluster_changed = lambda current: calls.append(("cluster", current))
+    service._on_wegame_detect = lambda: calls.append("detect_wegame")
+
+    service.refresh()
+    assert calls == ["detect_install", ("cluster", cluster)]
+
+    cluster.platform = Platform.WEGAME
+    calls.clear()
+    service.refresh()
+    assert calls == ["detect_install", ("cluster", cluster), "detect_wegame"]
+
+
 def main() -> None:
     tests = [
         test_effective_defaults_and_internal_ports,
@@ -329,8 +499,13 @@ def main() -> None:
         test_atomic_port_rewrite,
         test_local_service_batch_preflight,
         test_config_editor_effective_conflicts,
+        test_config_editor_port_ranges,
         test_world_creation_port_conflict_choices,
         test_server_manager_rejects_duplicate_start,
+        test_restart_all_preserves_stopped_shards_and_rejects_transitions,
+        test_restart_stop_barrier_waits_for_every_shard,
+        test_connect_code_display_masks_secrets,
+        test_local_refresh_redetects_server_tool,
     ]
     for test in tests:
         test()

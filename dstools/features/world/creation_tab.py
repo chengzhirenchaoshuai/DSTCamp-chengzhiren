@@ -1,6 +1,7 @@
 """Standalone create-world tab reusing the existing world renderer."""
 
 import copy
+import os
 import threading
 import tkinter as tk
 import webbrowser
@@ -37,6 +38,7 @@ from dstools.features.world.reader import WorldOverride, WorldPreset
 from dstools.features.world.value_sets import get_value_set
 from dstools.features.world.view_model import build_world_view_model
 from dstools.features.mod.icons import get_mod_icon_path
+from dstools.features.mod.locations import resolve_mod_open_location
 from dstools.features.mod import presets
 from dstools.features.mod.parser import (
     find_mod_folder,
@@ -995,6 +997,10 @@ class WorldCreationTab:
             show_local=False,
             separate_client_mods=True,
         )
+        mod_paths = getattr(self, "_mod_paths", {})
+        for row in rows:
+            path = mod_paths.get(row["workshop_id"])
+            row["has_folder"] = bool(path and path.is_dir())
         if not rows:
             from PIL import Image as _Image, ImageDraw as _ImageDraw
             from dstools.shared.gui.fonts import get_font
@@ -1017,6 +1023,7 @@ class WorldCreationTab:
             on_toggle=self._toggle_mod,
             on_config=self._open_mod_config,
             on_link=self._open_mod_link,
+            on_open_folder=self._open_mod_folder,
             on_copy_id=self._on_copy_id,
             ref_width=ref_width,
             icon_thumb_cache=self._icon_thumb_cache,
@@ -1193,6 +1200,22 @@ class WorldCreationTab:
         else:
             webbrowser.open(
                 f"https://steamcommunity.com/sharedfiles/filedetails/?id={numeric_id}"
+            )
+
+    def _open_mod_folder(self, mod_id):
+        path = resolve_mod_open_location(mod_id, self._mod_paths.get(mod_id))
+        if path is None:
+            dlg.show_warning(
+                self.frame.winfo_toplevel(),
+                t("env.open_location"),
+                t("mod.open_location_missing"),
+            )
+            return
+        try:
+            os.startfile(str(path))
+        except OSError as exc:
+            dlg.show_error(
+                self.frame.winfo_toplevel(), t("env.open_location"), str(exc)
             )
 
     def _sync_mod_overrides(self):

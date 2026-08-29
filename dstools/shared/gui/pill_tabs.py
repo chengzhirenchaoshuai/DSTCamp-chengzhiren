@@ -131,6 +131,8 @@ class PillTabBar(tk.Frame):
         self._redraw_after_id = None
         self._canvas.bind("<Configure>", lambda e: self._request_redraw())
         self._canvas.bind("<Button-1>", self._on_click)
+        self._canvas.bind("<Motion>", self._on_motion)
+        self._canvas.bind("<Leave>", lambda _event: self._canvas.configure(cursor=""))
         if self._app is not None:
             self._app._register_bg_surface(self)
 
@@ -199,6 +201,10 @@ class PillTabBar(tk.Frame):
                     self._redraw()
                     self._on_select(key)
                 return
+
+    def _on_motion(self, event):
+        interactive = any(x1 <= event.x <= x2 for x1, x2, _key in self._regions)
+        self._canvas.configure(cursor="hand2" if interactive else "")
 
     def _redraw(self):
         # 真机反馈过的坑：apply_theme() 直接调用这个方法（不走上面

@@ -39,6 +39,7 @@ from dstools.shared.gui.card_frame import CardFrame
 from dstools.features.cluster_config.tab import ClusterConfigTab
 from dstools.shared.gui.cluster_select import cluster_label as _cluster_label
 from dstools.shared.gui.dialog_geometry import center_over_parent
+from dstools.shared.gui.interaction_cursor import install_interactive_cursors
 from dstools.features.local_service.tab import LocalServiceTab
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.features.mod.tab import ModManagerTab
@@ -100,6 +101,7 @@ class DSToolsApp:
         self.style = ttk.Style()
         self.style.theme_use("clam")
         theme.apply_theme(self.root, self.style)
+        install_interactive_cursors(self.root)
         custom_titlebar.apply_window_border(self.root)
         # theme.apply_theme() 会调 root.attributes("-alpha", ...)，这在
         # Windows 上会冲掉 apply_borderless_style() 设置的 WS_EX_APPWINDOW，
@@ -298,7 +300,7 @@ class DSToolsApp:
             text=t("save.refresh"),
             command=self._refresh,
             style="Big.TButton",
-        ).pack(side=tk.LEFT, padx=(0, 10))
+        ).pack(side=tk.RIGHT, padx=(0, 10))
         self._cluster_bar.pack(
             fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6)
         )
@@ -333,6 +335,9 @@ class DSToolsApp:
             "sakura": self.sakura_tab,
         }
         self._stale_cluster_tabs: set[str] = set()
+        # 顶部“刷新”要求隐藏页签在稍后首次打开时也执行同等级刷新；普通
+        # 的存档切换/主题切换仍只需要各页签的常规 refresh()。
+        self._full_refresh_tabs: set[str] = set()
         self._current_tab_key = "local"
 
         self._tabs = [
@@ -523,6 +528,8 @@ class DSToolsApp:
         # 显示出来，避免用户看到画面僵住。
         if key in self._stale_cluster_tabs:
             self._stale_cluster_tabs.discard(key)
+            full_refresh = key in self._full_refresh_tabs
+            self._full_refresh_tabs.discard(key)
             # 服务器配置页会在 on_cluster_changed() 中事务式重建两套动态
             # 表单；此时不要先把空壳 page 强制绘制到屏幕，否则用户会看到
             # 一次旧卡片/空白卡片，再看到最终布局。其它页签仍保留原有的
@@ -532,7 +539,7 @@ class DSToolsApp:
                 self._refresh_all_bg_surfaces()
                 self.root.update()
 
-            self._cluster_tab_map[key].on_cluster_changed()
+            self._refresh_tab(key, full=full_refresh)
 
             # 重活完成后，各 BgFrame 的 <Configure> 会走 16ms 节流裁剪补上
             # 最终背景，不需要再来一次 250ms 的全量刷新（之前这里刷第二次，
@@ -1667,23 +1674,27 @@ class DSToolsApp:
         for key, tab in self._cluster_tab_map.items():
             if key != self._current_tab_key:
                 self._stale_cluster_tabs.add(key)
+                self._full_refresh_tabs.add(key)
                 continue
             # "刷新全部"（F5/菜单/启动时的首次调用）应该跟应用刚启动时
             # 表现完全一致——包括强制 ModManagerTab 重新跑一遍全文件 Lua
             # 沙箱扫描，而不只是普通 tab.refresh() 那种快速的静态重扫。
             # refresh_full() 是可选接口（只有 ModManagerTab 定义了它），
             # 其它页签仍然只用各自普通的 refresh()。
-            refresh_full = getattr(tab, "refresh_full", None)
-            if refresh_full:
-                refresh_full()
-            else:
-                tab.refresh()
+            self._full_refresh_tabs.discard(key)
+            self._refresh_tab(key, full=True)
         # "刷新全部"本身逻辑一直是对的（无条件重新拉取数据/重新渲染），
         # 但如果磁盘上确实没有任何变化，界面前后长得一模一样，用户点了会
         # 觉得"跟没点一样"。这里加一句短暂的状态栏提示，过 1.5 秒后恢复
         # 成 _update_status() 本来的内容，纯视觉反馈，不影响任何刷新逻辑。
         self.status_var.set(f"{t('app.refreshed_hint')}  {self.status_var.get()}")
         self.root.after(1500, self._update_status)
+
+    def _refresh_tab(self, key: str, *, full: bool = False) -> None:
+        """按页签刷新契约执行；全量接口不存在时退回普通刷新。"""
+        tab = self._cluster_tab_map[key]
+        refresh = getattr(tab, "refresh_full", None) if full else None
+        (refresh or tab.refresh)()
 
     def _open_cache_dir(self) -> None:
         """ "文件"菜单"打开缓存目录"——跟 save_browser_tab.py"一键打开存

@@ -261,6 +261,7 @@ class SakuraTab:
         self._max_tunnels = _FALLBACK_MAX_TUNNELS
         self._tunnel_count = 0  # 账号下全部隧道数，_apply_loaded() 加载完才有真实值
         self._tunnels_exhausted = False  # _render_shard_rows() 每次刷新时重算
+        self._reload_gen = 0
         # 隧道用满时，能反查到是本机哪些已知存档占用的（按命名约定匹配，
         # 见 _reload_async() 的说明）——查不到归属（账号里手动建的隧道、
         # 或者别的设备用同一账号建的）就不出现在这里，不猜测。
@@ -504,7 +505,11 @@ class SakuraTab:
         self.selfhost_page.on_cluster_changed(self._current_cluster)
 
     def refresh(self):
-        self.on_cluster_changed()
+        self._load_token_display()
+        self._current_cluster = self._get_cluster()
+        self._render_shard_placeholders()
+        self._reload_async()
+        self.selfhost_page.refresh()
 
     def refresh_language(self):
         """语言切换时调用——只更新构造时建一次、不会被 refresh() 重建的
@@ -644,8 +649,11 @@ class SakuraTab:
     # ── 后台加载：Token/节点/隧道/流量 ───────────────────────────────
 
     def _reload_async(self):
+        self._reload_gen += 1
+        gen = self._reload_gen
         token = app_settings.get_sakura_token()
         cluster = self._current_cluster
+        cluster_key = str(cluster.path) if cluster else None
         self._set_status("")
         if not token:
             self._render_account_info("--", "--", "--", "--", "--")
@@ -709,22 +717,62 @@ class SakuraTab:
                         occupant_tunnel = self._find_cluster_tunnel(tunnels, c, shard)
                         if occupant_tunnel:
                             occupants.append(f"{c.name}（{shard.name}）")
-                self.frame.after(0, lambda: self._apply_loaded(user_info, nodes, by_key, recent_bytes,
-                                                                 len(tunnels), occupants))
+                self.frame.after(
+                    0,
+                    lambda: self._apply_loaded(
+                        user_info,
+                        nodes,
+                        by_key,
+                        recent_bytes,
+                        len(tunnels),
+                        occupants,
+                        gen,
+                        cluster_key,
+                        token,
+                    ),
+                )
             except sakura_frp.SakuraApiError as e:
                 # `except ... as e` 在 except 块结束时会自动 del 掉这个名
                 # 字——lambda 要等 .after(0, ...) 真正调度执行时才引用它，
                 # 那时候早就删了，必须用默认参数在这里立刻把值捕获下来。
-                self.frame.after(0, lambda err=e: self._apply_error(err))
+                self.frame.after(
+                    0,
+                    lambda err=e: self._apply_error(
+                        err, gen, cluster_key, token
+                    ),
+                )
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _apply_error(self, e):
+    def _reload_is_current(self, gen, cluster_key, token) -> bool:
+        cluster = self._get_cluster()
+        return (
+            gen == self._reload_gen
+            and cluster_key == (str(cluster.path) if cluster else None)
+            and token == (app_settings.get_sakura_token() or "")
+        )
+
+    def _apply_error(self, e, gen, cluster_key, token):
+        if not self._reload_is_current(gen, cluster_key, token):
+            return
         self._render_account_info("--", "--", "--", "--", "--")
         self._render_recent_traffic("")
         self._set_status(t("sakura.api_error", detail=str(e)))
 
-    def _apply_loaded(self, user_info, nodes, by_key, recent_bytes, tunnel_count, occupants=()):
+    def _apply_loaded(
+        self,
+        user_info,
+        nodes,
+        by_key,
+        recent_bytes,
+        tunnel_count,
+        occupants,
+        gen,
+        cluster_key,
+        token,
+    ):
+        if not self._reload_is_current(gen, cluster_key, token):
+            return
         self._nodes = nodes
         self._tunnels_by_key = by_key
         # 账号下全部隧道数（不只是 DSTCamp 建的那几条，樱花账号里手动建

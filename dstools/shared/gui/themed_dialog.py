@@ -48,8 +48,17 @@ else:
         pass
 
 
-def _show(parent, title, message, kind, buttons, wraplength=420, min_width=460,
-          auxiliary_button=None, button_layout="horizontal"):
+def _show(
+    parent,
+    title,
+    message,
+    kind,
+    buttons,
+    wraplength=420,
+    min_width=460,
+    auxiliary_button=None,
+    button_layout="horizontal",
+):
     """buttons: [(label, value, is_default), ...] 列表。返回被选中的
     value，弹窗没选就关掉则返回 None。
 
@@ -84,8 +93,15 @@ def _show(parent, title, message, kind, buttons, wraplength=420, min_width=460,
     icon_char, icon_color = _icon_for(kind)
     tk.Label(row, text=icon_char, font=theme.font_tuple(22, bold=True), fg=icon_color,
              bg=theme.CARD_BG).pack(side=tk.LEFT, padx=(0, 14), anchor="n")
-    tk.Label(row, text=message, font=theme.font_tuple(theme.FONT_SIZE_BASE), fg=theme.TEXT, bg=theme.CARD_BG,
-             justify=tk.LEFT, wraplength=wraplength).pack(side=tk.LEFT, fill=tk.X, expand=True)
+    tk.Label(
+        row,
+        text=message,
+        font=theme.font_tuple(theme.FONT_SIZE_BASE),
+        fg=theme.TEXT,
+        bg=theme.CARD_BG,
+        justify=tk.LEFT,
+        wraplength=wraplength,
+    ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     btn_row = tk.Frame(card, background=theme.CARD_BG)
     btn_row.pack(fill=tk.X, pady=(18, 20), padx=20)
@@ -244,19 +260,36 @@ def show_toast(parent, message, duration_ms=2400):
         win.after(duration_ms, win.destroy)
 
 
-def ask_yes_no(parent, title, message, wraplength=420, min_width=460) -> bool:
+def ask_yes_no(parent, title, message, wraplength=420, min_width=460,
+               auxiliary_button=None) -> bool:
     return bool(_show(parent, title, message, "question",
                        [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)],
-                       wraplength=wraplength, min_width=min_width))
+                       wraplength=wraplength, min_width=min_width,
+                       auxiliary_button=auxiliary_button))
 
 
-def ask_choice(parent, title, message, choices, default=None,
-               wraplength=420, min_width=460, layout="horizontal"):
+def ask_choice(
+    parent,
+    title,
+    message,
+    choices,
+    default=None,
+    wraplength=420,
+    min_width=460,
+    layout="horizontal",
+):
     """显示多选项确认框，返回被选中的值；关闭窗口或按 Esc 返回 None。"""
     buttons = [(label, value, value == default) for label, value in choices]
-    return _show(parent, title, message, "question", buttons,
-                 wraplength=wraplength, min_width=min_width,
-                 button_layout=layout)
+    return _show(
+        parent,
+        title,
+        message,
+        "question",
+        buttons,
+        wraplength=wraplength,
+        min_width=min_width,
+        button_layout=layout,
+    )
 
 
 def ask_yes_no_with_auxiliary(parent, title, message, auxiliary_label, auxiliary_command,

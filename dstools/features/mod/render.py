@@ -19,7 +19,11 @@ from dstools.i18n import t
 # 游戏自己在 mod 没有 modicon.tex 时的回退取值），用 ktech 提取出来。
 # 没图标的 mod 用它而不是纯色占位矩形。
 _DEFAULT_ICON_PATH = bundled_resource_dir() / "icons" / "ui" / "mod_icon_default.png"
+_OPEN_FOLDER_ICON_PATH = (
+    bundled_resource_dir() / "icons" / "ui" / "open_file_folder_fluent.png"
+)
 _default_icon_cache: dict[int, Image.Image] = {}
+_open_folder_icon_cache: dict[int, Image.Image] = {}
 
 
 def _get_default_icon(size: int) -> Image.Image | None:
@@ -37,10 +41,9 @@ BASE_REF_WIDTH = 1300
 REF_WIDTH = BASE_REF_WIDTH
 
 PAD_X = 14
-# 图标尺寸跟 world_render.py 的 ICON_SIZE（110）对齐，让 mod 行跟世界
-# 设置面板视觉比例一致。
-ICON_SIZE = 108
-ROW_GAP = 16
+# 默认行高略微收紧，在保持名称、ID、版本三行信息可读的同时显示更多 Mod。
+ICON_SIZE = 88
+ROW_GAP = 8
 ROW_H = ICON_SIZE + ROW_GAP
 SWITCH_W = 76
 SWITCH_H = 34
@@ -54,8 +57,17 @@ _CFG_TEXT_DISABLED = "#90a4ae"
 _LINK_DISABLED = "#bdbdbd"
 
 
-def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=None, on_copy_id=None,
-                     ref_width=None, icon_thumb_cache=None):
+def render_mod_list(
+    rows,
+    icon_images,
+    on_toggle=None,
+    on_config=None,
+    on_link=None,
+    on_open_folder=None,
+    on_copy_id=None,
+    ref_width=None,
+    icon_thumb_cache=None,
+):
     """把 mod 列表渲染成一张 PIL 图片。
 
     Args:
@@ -72,6 +84,8 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
             has_config 为 True 时才会接上）
         on_link: workshop 链接的回调 callable(workshop_id)（只有
             has_link 为 True 时才会接上）
+        on_open_folder: 打开 Mod 所在目录的回调 callable(workshop_id)；
+            只有 has_folder 为 True 时才绘制图标并注册点击区域。
         on_copy_id: 第 2 列 workshop id 那行文字的回调
             callable(workshop_id)——点一下把纯数字 ID（不带 "workshop-"
             前缀）复制到剪贴板，调用方（ModManagerTab._on_copy_id）负责
@@ -211,6 +225,10 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
 
         # ── 第 5 列：workshop 链接 ───────────────────────────────────
         has_link = row.get("has_link", False)
+        has_folder = bool(row.get("has_folder"))
+        folder_size = 24 * s
+        # 与卡片右边框留出完整控件间距，避免彩色图标贴边显得拥挤。
+        folder_x = rw - pad_x - folder_size - 33 * s
         link_color = theme.ACCENT if has_link else _LINK_DISABLED
         link_text = t("mod.workshop_link_btn") if has_link else t("mod.no_workshop_link")
         draw.text((link_x, cy), link_text, font=btn_font, fill=link_color, anchor="lm")
@@ -219,8 +237,29 @@ def render_mod_list(rows, icon_images, on_toggle=None, on_config=None, on_link=N
             draw.line([(link_x, cy + 9 * s), (link_x + tw, cy + 9 * s)],
                       fill=link_color, width=1)
             if on_link:
-                hit_regions.append((link_x, y, link_x + link_w, y + row_h,
+                hit_regions.append((link_x, y, min(link_x + tw + 8 * s, folder_x), y + row_h,
                                     _mk_cb(on_link, wid)))
+        if has_folder:
+            _paste_folder_icon(img, folder_x, cy, folder_size)
+            hover_regions.append(
+                (
+                    folder_x - 6 * s,
+                    y,
+                    folder_x + folder_size + 6 * s,
+                    y + row_h,
+                    t("mod.open_location_hover"),
+                )
+            )
+            if on_open_folder:
+                hit_regions.append(
+                    (
+                        folder_x - 6 * s,
+                        y,
+                        folder_x + folder_size + 6 * s,
+                        y + row_h,
+                        _mk_cb(on_open_folder, wid),
+                    )
+                )
 
         y += row_h + row_gap
 
@@ -236,6 +275,23 @@ def _draw_local_badge(draw, x, cy, w, h, font):
     draw.rounded_rectangle([x, cy - r, x + w, cy + r], radius=r,
                            fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
     draw.text((x + w / 2, cy), t("mod.local_badge"), font=font, fill=theme.TEXT_MUTED, anchor="mm")
+
+
+def _paste_folder_icon(image, x, cy, size):
+    """粘贴 Microsoft Fluent Emoji 的彩色“打开文件夹”图标。"""
+    target_size = max(16, round(size))
+    icon = _open_folder_icon_cache.get(target_size)
+    if icon is None:
+        with Image.open(_OPEN_FOLDER_ICON_PATH) as source:
+            icon = source.convert("RGBA").resize(
+                (target_size, target_size), Image.Resampling.LANCZOS
+            )
+        _open_folder_icon_cache[target_size] = icon
+    image.paste(
+        icon,
+        (round(x), round(cy - target_size / 2)),
+        icon,
+    )
 
 
 def _draw_switch(draw, x, cy, w, h, on, locked=False):

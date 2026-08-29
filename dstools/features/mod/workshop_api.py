@@ -61,6 +61,10 @@ class WorkshopBackend(str, Enum):
     AUTO = "auto"
 
 
+class WorkshopUpdateCancelled(RuntimeError):
+    """用户主动停止了独立 Workshop 更新进程。"""
+
+
 @dataclass(frozen=True)
 class WorkshopItemState:
     """对 Steam ``EItemState`` 的稳定快照。"""
@@ -420,6 +424,7 @@ def _workshop_worker_command(
 def _run_workshop_worker(
     request: dict[str, Any],
     on_event: Callable[[dict[str, Any]], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """在短生命周期子进程中运行普通 SteamAPI，避免占用游戏 AppID。"""
     with tempfile.TemporaryDirectory(prefix="dstcamp_workshop_") as tmp:
@@ -442,6 +447,21 @@ def _run_workshop_worker(
         )
         with event_path.open("r", encoding="utf-8") as events:
             while process.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    try:
+                        process.terminate()
+                    except OSError:
+                        # Worker 可能恰好在 poll() 后退出；停止意图仍然成立。
+                        pass
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            process.kill()
+                            process.wait(timeout=5)
+                        except OSError:
+                            pass
+                    raise WorkshopUpdateCancelled("Workshop 更新已停止")
                 line = events.readline()
                 if line:
                     if on_event:
@@ -1065,9 +1085,16 @@ class SteamWorkshopSession:
         result.state = self.item_state(workshop_id)
         install_info = self.item_install_details(workshop_id)
         if (
-            source_details is not None
+            self.backend is WorkshopBackend.CLIENT
+            and not result.state.subscribed
+        ):
+            result.error = "当前 Steam 账号未订阅此 Mod，已停止更新"
+            return result
+        if (
+            result.state.legacy_item
+            and install_info is None
+            and source_details is not None
             and source_details.content_handle > 0
-            and (result.state.legacy_item or install_info is None)
         ):
             from dstools.features.mod.parser import find_workshop_dir
 
@@ -1083,8 +1110,6 @@ class SteamWorkshopSession:
                     max(0, int(source_details.file_size)),
                     max(0, int(source_details.time_updated)),
                 )
-                if not result.state.legacy_item:
-                    result.state = WorkshopItemState(result.state.flags | ITEM_LEGACY)
                 result.details["legacy_path_recovered_from_source"] = True
         # Steam 的 Installed 位和 GetItemInstallInfo 可能在文件被手动删除后
         # 仍保留旧值。只有物理目录、modinfo 和可用 Manifest 都通过验收，
@@ -1109,8 +1134,7 @@ class SteamWorkshopSession:
                     )
                     if legacy_result.completed:
                         return legacy_result
-                    # 本地旧式包也无法还原出远程版本时，再从 Steam 拉取一次；
-                    # 不能把“包存在”当作“运行目录已经是最新版”。
+                    # 本地旧式包无法通过远程版本校验时，再从 Steam 拉取一次。
                     legacy_result.details["legacy_local_repair_error"] = (
                         legacy_result.error
                     )
@@ -1315,13 +1339,17 @@ class SteamWorkshopSession:
         expected_version: str = "",
         force: bool,
     ) -> WorkshopDownloadResult:
-        """校验并部署 V1 包；只有运行目录也可用时才算完成。"""
+        """校验 V1 包并立即部署到 DSTCamp 管理的运行目录。"""
         from dstools.features.mod.legacy_v1 import deploy_legacy_package
         from dstools.features.mod.legacy_v1 import discover_legacy_runtime_targets
         from dstools.features.mod.local_version import (
             VERSION_CONFIRMED,
             normalize_version_for_compare,
             resolve_local_mod_version,
+        )
+        from dstools.features.mod.legacy_v1 import (
+            resolve_legacy_package_version,
+            validate_legacy_package,
         )
 
         archive = Path(archive_path) if archive_path is not None else None
@@ -1331,6 +1359,10 @@ class SteamWorkshopSession:
         expected = str(
             expected_version or result.details.get("expected_version") or ""
         ).strip()
+        validation = validate_legacy_package(archive)
+        if not validation.valid:
+            result.error = validation.error
+            return result
         roots = discover_legacy_runtime_targets()
         targets = [Path(root) / f"workshop-{result.workshop_id}" for root in roots]
 
@@ -1356,6 +1388,20 @@ class SteamWorkshopSession:
             ):
                 all_targets_current = False
                 break
+        if expected:
+            package_version = resolve_legacy_package_version(
+                result.workshop_id, archive
+            )
+            if (
+                package_version.status != VERSION_CONFIRMED
+                or normalize_version_for_compare(package_version.version)
+                != normalize_version_for_compare(expected)
+            ):
+                result.error = (
+                    "Legacy Mod 下载包版本不匹配："
+                    f"包内为 {package_version.version or '未知'}，远程为 {expected}"
+                )
+                return result
         if not force and all_targets_current:
             result.accepted = True
             result.completed = True
@@ -1369,7 +1415,6 @@ class SteamWorkshopSession:
                 }
             )
             return result
-
         deployment = deploy_legacy_package(result.workshop_id, archive, force=True)
         if not deployment.completed:
             result.error = deployment.error or "Legacy Mod 未能部署到运行目录"
@@ -1381,8 +1426,8 @@ class SteamWorkshopSession:
         result.details.update(
             {
                 "repair": True,
-                "legacy_materialized": True,
                 "legacy_archive": str(archive),
+                "legacy_materialized": True,
                 "legacy_targets": [str(path) for path in deployment.deployed],
                 "validation": "passed",
             }
@@ -1426,9 +1471,9 @@ class SteamWorkshopSession:
         self._ensure_started()
         if not result.accepted:
             return result
-        # V1 可能直接复用现有 *_legacy.bin 完成本地部署，没有创建新的
-        # Steam API 下载调用。此时 completed=True、up_to_date=False，仍是
-        # 一次真实“修复完成”，不能再进入 Legacy 下载等待并制造伪错误。
+        # V1 可能直接复用现有 *_legacy.bin 完成本地包验收，没有创建新的
+        # Steam API 下载调用。此时 completed=True，不能再进入 Legacy
+        # 下载等待并制造伪错误。
         if result.completed:
             return result
         if result.state is not None and result.state.legacy_item:
@@ -1853,6 +1898,7 @@ def update_workshop_items(
     on_progress: Callable[[int, int, int | None, int | None], None] | None = None,
     on_item_start: Callable[[int, int, int], None] | None = None,
     on_item_complete: Callable[[int, int, WorkshopDownloadResult], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> WorkshopBatchResult:
     """通过独立进程更新 Mod，完成后立即释放 Steam 的 322330 AppID。"""
     ids = list(dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0))
@@ -1894,6 +1940,7 @@ def update_workshop_items(
                 "expected_versions": expected_versions,
             },
             handle_event,
+            cancel_event=cancel_event,
         )
         return WorkshopBatchResult(
             [
@@ -1901,6 +1948,8 @@ def update_workshop_items(
                 for item in payload.get("results") or ()
             ]
         )
+    except WorkshopUpdateCancelled:
+        raise
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
         results = []

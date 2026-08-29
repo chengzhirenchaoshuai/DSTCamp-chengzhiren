@@ -6,6 +6,7 @@ model 字段的默认值本身不需要单独测——那是 dataclass 声明上
 import os
 import sys
 from string import Formatter
+from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -79,6 +80,19 @@ def test_exe_entry_imports():
     import build_exe  # noqa: F401
     print("  PASS: scripts/build_exe.py imports successfully")
 
+    # PyInstaller --windowed 的冒烟进程没有控制台，sys.stdin 可能为 None。
+    # Worker 模块只是在入口完整性检查中被导入，不能在 import 阶段假定管
+    # 道已经存在；真正执行 Worker 时才校验 stdin/stdout。
+    import importlib
+    import dstools.features.mod._sandbox_worker as sandbox_worker
+    original_stdin = sys.stdin
+    try:
+        sys.stdin = None
+        importlib.reload(sandbox_worker)
+    finally:
+        sys.stdin = original_stdin
+    print("  PASS: sandbox worker imports when windowed stdin is unavailable")
+
 
 def test_gui_imports():
     """Test that the new GUI module imports correctly."""
@@ -106,6 +120,42 @@ def test_gui_imports():
     print("  PASS: custom_titlebar imports OK")
 
 
+def test_main_tab_refresh_contract():
+    """顶部刷新应覆盖全部主页签，并优先使用页面的全量刷新接口。"""
+    from dstools.gui.app import DSToolsApp
+    from dstools.features.cluster_config.tab import ClusterConfigTab
+    from dstools.features.local_service.tab import LocalServiceTab
+    from dstools.features.mod.tab import ModManagerTab
+    from dstools.features.sakura.tab import SakuraTab
+    from dstools.features.save_browser.tab import SaveBrowserTab
+    from dstools.features.world.tab import WorldSettingsTab
+
+    tab_classes = (
+        LocalServiceTab,
+        WorldSettingsTab,
+        ModManagerTab,
+        ClusterConfigTab,
+        SaveBrowserTab,
+        SakuraTab,
+    )
+    assert all(callable(getattr(tab_class, "refresh", None)) for tab_class in tab_classes)
+
+    calls = []
+    normal_tab = SimpleNamespace(refresh=lambda: calls.append("normal"))
+    full_tab = SimpleNamespace(
+        refresh=lambda: calls.append("light"),
+        refresh_full=lambda: calls.append("full"),
+    )
+    app = DSToolsApp.__new__(DSToolsApp)
+    app._cluster_tab_map = {"normal": normal_tab, "full": full_tab}
+
+    app._refresh_tab("normal", full=True)
+    app._refresh_tab("full", full=True)
+    app._refresh_tab("full")
+    assert calls == ["normal", "full", "light"]
+    print("  PASS: 六个主页签均提供刷新接口，且全量刷新可正确回退")
+
+
 
 def main():
     """Run all Phase 2 tests."""
@@ -119,6 +169,7 @@ def main():
         test_i18n_basic,
         test_exe_entry_imports,
         test_gui_imports,
+        test_main_tab_refresh_contract,
     ]
 
     for test in tests:

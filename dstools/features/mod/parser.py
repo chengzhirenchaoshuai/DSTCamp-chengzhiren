@@ -489,6 +489,7 @@ def find_mod_folder(
     workshop_id: str,
     platform: Platform = Platform.STEAM,
     wegame_client_mods_dir: Path | None = None,
+    steam_runtime_mods_dir: Path | None = None,
 ) -> Path | None:
     """按给定的 workshop ID 查找 mod 文件夹。
 
@@ -522,7 +523,9 @@ def find_mod_folder(
             candidate = workshop_dir / mod_id
             if candidate.exists() and (candidate / "modinfo.lua").exists():
                 return candidate
-        game_mods = find_game_mods_dir()
+        # DSTCamp 主 Mod 管理页以专服实际消费目录为准；客户端 mods/ 仅
+        # 作为未部署时的兼容回退。
+        game_mods = steam_runtime_mods_dir or find_game_mods_dir()
 
     if game_mods:
         candidate = game_mods / canonical_id  # Workshop 纯数字输入也规范为带前缀
@@ -537,16 +540,18 @@ def find_mod_folder(
 
 
 def list_installed_mod_ids(
-    platform: Platform = Platform.STEAM, wegame_client_mods_dir: Path | None = None
+    platform: Platform = Platform.STEAM,
+    wegame_client_mods_dir: Path | None = None,
+    legacy_packages: dict[int, Path] | None = None,
+    steam_runtime_mods_dir: Path | None = None,
 ) -> list[str]:
-    """枚举每一个已安装 mod 的 ID（形式跟它作为 modoverrides.lua 键时一
-    致）——同时扫描 Steam Workshop 内容目录和游戏本地 mods/ 目录。
+    """枚举每一个可读取 Mod 的 ID，包括目录式内容和有效 V1 包。
 
     modoverrides.lua 里只会列出玩家*碰过*的 mod（启用过，或者启用后又
     显式禁用过)——一个刚订阅、玩家从没打开过配置/开关的 mod 根本不会出
     现在里面。游戏内 mod 界面仍然会显示它（显示为禁用），做法是列出每
-    个已安装的 mod 文件夹再跟 modoverrides.lua 交叉核对，而不是直接遍
-    历 modoverrides.lua 本身。这个函数照搬了同样的做法。
+    个已安装目录或 Legacy 包再跟 modoverrides.lua 交叉核对，而不是直接
+    遍历 modoverrides.lua 本身。
 
     **坑**：以前这里不分平台，一律扫 Steam 的两个目录，导致查看 WeGame
     存档时，Steam 本地装的 mod 也会混进"已安装"列表里显示出来（WeGame 的
@@ -582,7 +587,7 @@ def list_installed_mod_ids(
                     seen.add(wid)
                     ids.append(wid)
 
-    game_mods = find_game_mods_dir()
+    game_mods = steam_runtime_mods_dir or find_game_mods_dir()
     if game_mods and game_mods.exists():
         for child in sorted(game_mods.iterdir()):
             if child.is_dir() and (child / "modinfo.lua").exists():
@@ -591,7 +596,42 @@ def list_installed_mod_ids(
                     seen.add(wid)
                     ids.append(wid)
 
+    if legacy_packages is None:
+        from dstools.features.mod.legacy_v1 import find_legacy_packages
+
+        legacy_packages = find_legacy_packages()
+    for workshop_id in legacy_packages:
+        wid = f"workshop-{workshop_id}"
+        if wid not in seen:
+            seen.add(wid)
+            ids.append(wid)
+
     return ids
+
+
+def find_workshop_content_dirs() -> dict[int, Path]:
+    """返回 322330 下现存的标准 Workshop 数字目录。"""
+    workshop_dir = find_workshop_dir()
+    if workshop_dir is None or not workshop_dir.is_dir():
+        return {}
+    result = {}
+    try:
+        children = list(workshop_dir.iterdir())
+    except OSError:
+        return result
+    for child in children:
+        if child.is_dir() and is_workshop_content_id(child.name):
+            result[int(child.name)] = child
+    return result
+
+
+def find_workshop_residual_dirs() -> dict[int, Path]:
+    """返回缺少 ``modinfo.lua`` 的标准 Workshop 数字目录。"""
+    return {
+        workshop_id: path
+        for workshop_id, path in find_workshop_content_dirs().items()
+        if not (path / "modinfo.lua").is_file()
+    }
 
 
 # ── modinfo.lua 解析器 ───────────────────────────────────────────────

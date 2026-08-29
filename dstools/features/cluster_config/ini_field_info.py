@@ -212,6 +212,10 @@ def get_enum_choices(section: str, key: str) -> list[tuple[str, str]] | None:
 # (section, key) -> (最小值, 最大值)——官方文档明确给出取值范围的数值字段，界面上禁止输入/保存范围之外的值。
 RANGE_FIELDS: dict[tuple[str, str], tuple[int, int]] = {
     ("NETWORK", "tick_rate"): (15, 60),
+    ("SHARD", "master_port"): (1, 65535),
+    ("NETWORK", "server_port"): (1, 65535),
+    ("STEAM", "master_server_port"): (1, 65535),
+    ("STEAM", "authentication_port"): (1, 65535),
 }
 
 

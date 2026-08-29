@@ -35,16 +35,14 @@ _SUB_TAB_H = 32
 _SUB_PILL_H = 24
 _SUB_FONT_SIZE = 10
 
-# Klei 用户 ID（adminlist.txt/blocklist.txt 里用的那种）形如
-# "KU_4R9OEYX3"——"KU_" 前缀后面跟几位大小写混合的字母数字（跟这台机
-# 器真实的 adminlist.txt 条目核对过）。这只是个粗略的合理性检查，用
-# 来抓明显的手误（漏了 "KU_" 前缀、多余空白、大小写弄错等），不是要
-# 覆盖所有真实 ID 的严格校验规则。
-_KLEI_ID_RE = re.compile(r"^KU_[A-Za-z0-9]{6,16}$")
+# DST 权限名单中的用户 ID：在线认证用户使用 KU_，离线/LAN 用户使用 OU_。
+# 后半段只做宽松的字母数字与长度检查，用于拦截明显手误；OU_ 常见为较长
+# 的平台数字 ID，因此上限不能沿用原来只按 KU_ 样本设置的 16 位。
+_DST_USER_ID_RE = re.compile(r"^(?:KU|OU)_[A-Za-z0-9]{6,20}$")
 
 
-def _is_valid_klei_id(value: str) -> bool:
-    return bool(_KLEI_ID_RE.match(value.strip()))
+def _is_valid_dst_user_id(value: str) -> bool:
+    return bool(_DST_USER_ID_RE.match(value.strip()))
 
 
 class _TextVar:
@@ -784,7 +782,7 @@ class ClusterConfigTab:
         # 结果（不是靠猜的），可以放心据此判断要不要画成开关。
         is_bool = isinstance(value, bool)
         enum_choices = None if is_shard_section else get_enum_choices(ini_section, key)
-        range_limits = None if is_shard_section else get_range_limits(ini_section, key)
+        range_limits = get_range_limits(ini_section, key)
 
         if readonly:
             # 只读字段直接用 Label 展示，不再创建输入框 -- 本地存档的配置
@@ -1305,10 +1303,9 @@ class ClusterConfigTab:
         kid = _IdInputDialog(self.frame).result
         if not kid: return
         kid = kid.strip()
-        if not _is_valid_klei_id(kid):
-            # 简单校验一下格式（KU_ 开头 + 若干字母数字），防止手滑填错
-            # 一个游戏根本不认识的 ID -- 不阻止真正合法但少见的 ID，只
-            # 拦明显不对的输入。
+        if not _is_valid_dst_user_id(kid):
+            # 简单校验 KU_/OU_ 前缀和后续字母数字，防止手滑填入游戏根本
+            # 不认识的 ID；管理员和黑名单共用这条规则。
             status.configure(text=t("admin.invalid_format"))
             return
         path = getattr(c, path_attr) or (c.path / default_filename)
@@ -1380,6 +1377,46 @@ class ClusterConfigTab:
         c.token_path = path
         self._load_token(c)
 
+    def _validate_entry_ranges(self, *, shard: bool) -> bool:
+        """校验当前配置页所有带范围约束的字段。
+
+        输入框的数字过滤只负责减少误输入；保存时仍需做完整校验，避免
+        程序赋值、旧配置或空值绕过控件层约束。
+        """
+        cluster_sections = ("GAMEPLAY", "NETWORK", "MISC", "SHARD", "STEAM")
+        for (section, key), (var, readonly) in self._entries.items():
+            is_shard_section = section.startswith("SHARD_")
+            if readonly or is_shard_section != shard:
+                continue
+            if not shard and section not in cluster_sections:
+                continue
+            ini_section = section[len("SHARD_"):] if shard else section
+            limits = get_range_limits(ini_section, key)
+            if limits is None:
+                continue
+            raw = var.get()
+            if shard and (ini_section, key) in self._SHARD_PORT_OPTIONAL_FIELDS \
+                    and str(raw).strip() == "":
+                continue
+            lo, hi = limits
+            label = get_field_info(ini_section, key, is_shard=shard)
+            field_name = label[0] if label else key
+            try:
+                value = int(raw)
+            except (TypeError, ValueError):
+                dlg.show_error(
+                    self.app.root, t("dlg.save_ok"),
+                    t("cluster.range_error", field=field_name, min=lo, max=hi),
+                )
+                return False
+            if not lo <= value <= hi:
+                dlg.show_error(
+                    self.app.root, t("dlg.save_ok"),
+                    t("cluster.range_error", field=field_name, min=lo, max=hi),
+                )
+                return False
+        return True
+
     def _save_cluster_ini(self):
         """GAMEPLAY/NETWORK/MISC/SHARD/STEAM 共用的"保存"按钮——这五个
         分区其实都在同一个 cluster.ini 里，点任何一个按钮都是整个文件
@@ -1390,26 +1427,9 @@ class ClusterConfigTab:
         么都没写进文件）。"""
         c = self._get_cluster()
         if not c: return
-        # 有官方取值范围的字段（比如 tick_rate）先整体校验一遍，任何一个
-        # 越界就整个中止保存、什么都不写——而不是走一个各自夹一下范围的
-        # "自动纠正"，那样用户可能都不知道自己填的值被悄悄改掉了。
-        for (section, key), (var, readonly) in self._entries.items():
-            if readonly or section not in ("GAMEPLAY","NETWORK","MISC","SHARD","STEAM"):
-                continue
-            limits = get_range_limits(section, key)
-            if limits is None:
-                continue
-            lo, hi = limits
-            label = get_field_info(section, key)
-            field_name = label[0] if label else key
-            try:
-                n = int(var.get())
-            except (TypeError, ValueError):
-                dlg.show_error(self.app.root, t("dlg.save_ok"), t("cluster.range_error", field=field_name, min=lo, max=hi))
-                return
-            if not (lo <= n <= hi):
-                dlg.show_error(self.app.root, t("dlg.save_ok"), t("cluster.range_error", field=field_name, min=lo, max=hi))
-                return
+        # 所有带范围的字段先整体校验，任何一个越界就中止保存、什么都不写。
+        if not self._validate_entry_ranges(shard=False):
+            return
 
         config = load_cluster_config(c.path)
         for (section, key), (var, readonly) in self._entries.items():
@@ -1420,6 +1440,18 @@ class ClusterConfigTab:
         # 着，不主动清掉的话每次保存都会原样写回文件。
         for section, key in self._REMOVED_CLUSTER_FIELDS:
             getattr(config, section.lower()).pop(key, None)
+
+        conflict = self._find_cluster_port_conflict(c, config)
+        if conflict:
+            dlg.show_error(self.app.root, t("dlg.save_fail"), conflict)
+            return
+        cross_conflicts = self._find_cross_cluster_cluster_port_conflicts(c, config)
+        if cross_conflicts and not dlg.ask_yes_no(
+                self.app.root, t("cluster.cross_cluster_port_title"),
+                t("cluster.cross_cluster_port_confirm", details="\n".join(cross_conflicts[:12])),
+                wraplength=780, min_width=840):
+            return
+
         save_cluster_config(config, c.path)
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=c.name))
         # _load_config() 会连"世界配置"一起重建，其中世界下拉框固定默认
@@ -1437,29 +1469,57 @@ class ClusterConfigTab:
     _SHARD_PORT_FIELDS = [("NETWORK", "server_port"), ("STEAM", "master_server_port"),
                           ("STEAM", "authentication_port")]
 
-    def _find_port_conflict(self, cluster, shard, shard_config) -> str | None:
-        """检查同一存档内的有效端口，包含默认值与跨字段冲突。"""
-        target_claims, _ = collect_cluster_port_claims(
+    @staticmethod
+    def _server_ini_port_claims(cluster, shard, shard_config):
+        """返回由当前 ``server.ini`` 实际控制的端口声明。
+
+        ``collect_cluster_port_claims`` 为启动预检返回完整的运行时端口集合，
+        因而主世界还会包含从 ``cluster.ini`` 继承的 ``master_port``。保存
+        世界设置时不能把继承值算成本次文件的配置；只有旧 server.ini
+        自己明确带有该字段时，它才属于这里。
+        """
+        claims, _ = collect_cluster_port_claims(
             cluster, [shard.name], shard_config_overrides={shard.name: shard_config},
         )
-        sibling_claims, _ = collect_cluster_port_claims(
-            cluster, [item.name for item in cluster.shards if item.path != shard.path],
+        if "master_port" not in shard_config.shard:
+            claims = [claim for claim in claims if claim.field != "master_port"]
+        return claims
+
+    @staticmethod
+    def _cluster_ini_port_claims(cluster, cluster_config):
+        """返回由当前 ``cluster.ini`` 实际控制的 master_port 声明。"""
+        claims, _ = collect_cluster_port_claims(
+            cluster, cluster_config_override=cluster_config,
         )
+        result = []
+        for claim in claims:
+            if claim.field != "master_port" or not claim.shard_name:
+                continue
+            shard = next(
+                (item for item in cluster.shards if item.name == claim.shard_name),
+                None,
+            )
+            if shard is None:
+                continue
+            shard_config = load_shard_config(shard.path)
+            if "master_port" not in shard_config.shard:
+                result.append(claim)
+        return result
+
+    @staticmethod
+    def _first_target_port_conflict(target_claims, all_claims) -> str | None:
         target_keys = {claim.owner_key for claim in target_claims}
         conflicts = [
-            conflict for conflict in find_port_conflicts(target_claims + sibling_claims)
+            conflict for conflict in find_port_conflicts(all_claims)
             if any(claim.owner_key in target_keys for claim in conflict.claims)
         ]
-        if conflicts:
-            conflict = conflicts[0]
-            owners = "; ".join(claim.display_owner() for claim in conflict.claims)
-            return t("cluster.port_conflict_effective", value=conflict.port, owners=owners)
-        return None
+        if not conflicts:
+            return None
+        conflict = conflicts[0]
+        owners = "; ".join(claim.display_owner() for claim in conflict.claims)
+        return t("cluster.port_conflict_effective", value=conflict.port, owners=owners)
 
-    def _find_cross_cluster_port_conflicts(self, cluster, shard, shard_config) -> list[str]:
-        target_claims, _ = collect_cluster_port_claims(
-            cluster, [shard.name], shard_config_overrides={shard.name: shard_config},
-        )
+    def _cross_cluster_port_conflicts(self, cluster, target_claims) -> list[str]:
         other_claims = []
         for other in self.app.env.clusters:
             if other.source != SaveSource.SERVER or other.platform != Platform.STEAM:
@@ -1477,6 +1537,36 @@ class ClusterConfigTab:
             if any(claim.owner_key in target_keys for claim in conflict.claims)
         ]
 
+    def _find_cluster_port_conflict(self, cluster, cluster_config) -> str | None:
+        """检查 cluster.ini 的 master_port 与本存档世界端口是否冲突。"""
+        target_claims = self._cluster_ini_port_claims(cluster, cluster_config)
+        all_claims, _ = collect_cluster_port_claims(
+            cluster, cluster_config_override=cluster_config,
+        )
+        return self._first_target_port_conflict(target_claims, all_claims)
+
+    def _find_cross_cluster_cluster_port_conflicts(
+            self, cluster, cluster_config) -> list[str]:
+        """检查 cluster.ini 的 master_port 与其它服务器存档是否冲突。"""
+        target_claims = self._cluster_ini_port_claims(cluster, cluster_config)
+        return self._cross_cluster_port_conflicts(cluster, target_claims)
+
+    def _find_port_conflict(self, cluster, shard, shard_config) -> str | None:
+        """检查同一存档内的有效端口，包含默认值与跨字段冲突。"""
+        target_claims = self._server_ini_port_claims(cluster, shard, shard_config)
+        runtime_claims, _ = collect_cluster_port_claims(
+            cluster, [shard.name], shard_config_overrides={shard.name: shard_config},
+        )
+        sibling_claims, _ = collect_cluster_port_claims(
+            cluster, [item.name for item in cluster.shards if item.path != shard.path],
+        )
+        return self._first_target_port_conflict(
+            target_claims, runtime_claims + sibling_claims,
+        )
+
+    def _find_cross_cluster_port_conflicts(self, cluster, shard, shard_config) -> list[str]:
+        target_claims = self._server_ini_port_claims(cluster, shard, shard_config)
+        return self._cross_cluster_port_conflicts(cluster, target_claims)
     def _save_shard_ini(self):
         """"世界配置(server.ini)"页签的"保存"按钮——写的是选中那个世
         界各自的 server.ini 文件，跟 cluster.ini 完全独立。"""
@@ -1485,6 +1575,8 @@ class ClusterConfigTab:
         shard_name = self._shard_sel_var.get()
         target = next((s for s in c.shards if s.name == shard_name), None)
         if not target: return
+        if not self._validate_entry_ranges(shard=True):
+            return
         shard_config = load_shard_config(target.path)
         for (section, key), (var, readonly) in self._entries.items():
             if section.startswith("SHARD_") and not readonly:

@@ -901,6 +901,8 @@ def test_workshop_content_directory_filter():
 
 def test_admin_manager():
     """测试 adminlist.txt 读写往返（admin_manager.py）。"""
+    from dstools.features.cluster_config.tab import _is_valid_dst_user_id
+
     print("\n" + "=" * 60)
     print("Test 15: Admin List Manager")
 
@@ -910,19 +912,29 @@ def test_admin_manager():
         assert read_adminlist(path) == []
         print("  PASS: Missing adminlist.txt reads as empty list")
 
+        assert _is_valid_dst_user_id("KU_aaaaaaaa")
+        assert _is_valid_dst_user_id("OU_76561198000000000")
+        assert not _is_valid_dst_user_id("ou_76561198000000000")
+        assert not _is_valid_dst_user_id("XX_aaaaaaaa")
+        assert not _is_valid_dst_user_id("OU_bad-id")
+        print("  PASS: KU_ and OU_ IDs accepted; invalid prefixes/characters rejected")
+
         assert add_admin(path, "KU_aaaaaaaa") is True
+        assert add_admin(path, "OU_76561198000000000") is True
         assert add_admin(path, "KU_bbbbbbbb") is True
         assert add_admin(path, "KU_aaaaaaaa") is False, (
             "Adding an existing admin should be a no-op"
         )
-        assert read_adminlist(path) == ["KU_aaaaaaaa", "KU_bbbbbbbb"]
+        assert read_adminlist(path) == [
+            "KU_aaaaaaaa", "OU_76561198000000000", "KU_bbbbbbbb",
+        ]
         print("  PASS: add_admin appends new IDs and rejects duplicates")
 
         assert remove_admin(path, "KU_aaaaaaaa") is True
         assert remove_admin(path, "KU_aaaaaaaa") is False, (
             "Removing an absent admin should be a no-op"
         )
-        assert read_adminlist(path) == ["KU_bbbbbbbb"]
+        assert read_adminlist(path) == ["OU_76561198000000000", "KU_bbbbbbbb"]
         print("  PASS: remove_admin removes an entry and is idempotent")
 
 
@@ -1982,10 +1994,15 @@ def test_workshop_status_evidence_priority():
             install_info=WorkshopInstallInfo(
                 legacy_file, legacy_file.stat().st_size, 1
             ),
+            legacy_package_valid=True,
+            legacy_package_version=LocalModVersion(
+                "1.0", VERSION_CONFIRMED, "", "undeclared", "legacy_package"
+            ),
         )
         legacy_status = evaluate_workshop_status(legacy)
-        assert legacy_status.state == WorkshopModState.MISSING
-        assert "尚未解压" in legacy_status.reasons[0]
+        assert legacy_status.state == WorkshopModState.LEGACY_PACKAGE_READY
+        assert legacy_status.can_update
+        assert "首次加载" in legacy_status.reasons[0]
         legacy_runtime = root / "workshop-463952377"
         legacy_runtime.mkdir()
         (legacy_runtime / "modinfo.lua").write_text('version = "1.0"', encoding="utf-8")
@@ -2010,8 +2027,7 @@ def test_workshop_status_evidence_priority():
             }
         )
         server_missing_status = evaluate_workshop_status(legacy_server_missing)
-        assert server_missing_status.state == WorkshopModState.MISSING
-        assert "专服缺少" in server_missing_status.reasons[0]
+        assert server_missing_status.state == WorkshopModState.LEGACY_PACKAGE_READY
         legacy_modified = WorkshopModEvidence(
             **{
                 **legacy_complete.__dict__,

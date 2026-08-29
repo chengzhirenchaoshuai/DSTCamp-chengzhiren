@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import secrets
 import shutil
@@ -14,6 +16,8 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+from dstools.shared.resource_paths import cache_dir
+
 
 _MAX_ENTRY_COUNT = 50_000
 _MAX_EXPANDED_SIZE = 4 * 1024 * 1024 * 1024
@@ -25,6 +29,7 @@ _DST_PROCESS_NAMES = {
 }
 _PACKAGE_VERSION_CACHE: dict[str, tuple[int, int, int, object]] = {}
 _PACKAGE_VERSION_CACHE_LOCK = threading.RLock()
+_READ_CACHE_MARKER = "source.json"
 
 
 @dataclass(frozen=True)
@@ -197,6 +202,28 @@ def discover_legacy_runtime_targets() -> list[Path]:
     return result
 
 
+def discover_legacy_runtime_roots() -> list[Path]:
+    """返回游戏可能展开 V1 Mod 的客户端和专服 ``mods`` 目录。"""
+    from dstools.features.local_service.dedicated_server import (
+        find_dedicated_server_dir,
+    )
+    from dstools.features.mod.parser import find_game_mods_dir
+
+    candidates: list[Path] = []
+    client = find_game_mods_dir()
+    if client is not None:
+        candidates.append(Path(client))
+    server = find_dedicated_server_dir()
+    if server is not None:
+        candidates.append(Path(server) / "mods")
+
+    roots: list[Path] = []
+    for candidate in candidates:
+        if not any(_same_location(candidate, existing) for existing in roots):
+            roots.append(candidate)
+    return roots
+
+
 def find_legacy_packages() -> dict[int, Path]:
     """扫描 Steam 共享缓存中的 V1 包，每个项目只取最新的有效文件。"""
     from dstools.features.mod.parser import find_workshop_dir, is_workshop_content_id
@@ -227,6 +254,159 @@ def find_legacy_packages() -> dict[int, Path]:
         if valid is not None:
             packages[int(item_dir.name)] = valid
     return packages
+
+
+def find_legacy_package_ids() -> set[int]:
+    """返回存在任意 ``*_legacy.bin`` 的项目，不要求包已经通过校验。"""
+    from dstools.features.mod.parser import find_workshop_dir, is_workshop_content_id
+
+    root = find_workshop_dir()
+    if root is None or not root.is_dir():
+        return set()
+    result: set[int] = set()
+    try:
+        item_dirs = list(root.iterdir())
+    except OSError:
+        return result
+    for item_dir in item_dirs:
+        if not item_dir.is_dir() or not is_workshop_content_id(item_dir.name):
+            continue
+        try:
+            if any(path.is_file() for path in item_dir.glob("*_legacy.bin")):
+                result.add(int(item_dir.name))
+        except OSError:
+            continue
+    return result
+
+
+def materialize_legacy_package_for_read(
+    workshop_id: int, archive_path: Path
+) -> Path:
+    """把有效 V1 包展开到内容寻址缓存，仅供元数据、图标和配置解析。"""
+    workshop_id = int(workshop_id)
+    archive = Path(archive_path)
+    validation = validate_legacy_package(archive)
+    if not validation.valid:
+        raise OSError(validation.error)
+    try:
+        archive_stat = archive.stat()
+        source_path = str(archive.resolve(strict=True))
+    except OSError as exc:
+        raise OSError(f"无法读取 Legacy Mod 下载包：{exc}") from exc
+
+    digest = hashlib.sha256()
+    with archive.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    content_hash = digest.hexdigest()
+    source_hash = hashlib.sha256(
+        os.path.normcase(source_path).encode("utf-8", errors="surrogatepass")
+    ).hexdigest()[:12]
+    item_root = cache_dir("legacy_v1_read") / str(workshop_id)
+    bundle = item_root / f"{source_hash}-{content_hash}"
+    mod_root = bundle / f"workshop-{workshop_id}"
+    marker = bundle / _READ_CACHE_MARKER
+    expected = {
+        "workshop_id": workshop_id,
+        "source_path": source_path,
+        "source_size": archive_stat.st_size,
+        "source_mtime_ns": archive_stat.st_mtime_ns,
+        "sha256": content_hash,
+    }
+    try:
+        cached = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        cached = None
+    if cached == expected and (mod_root / "modinfo.lua").is_file():
+        return mod_root
+
+    item_root.mkdir(parents=True, exist_ok=True)
+    stage = item_root / f".stage-{secrets.token_hex(6)}"
+    stage_mod = stage / f"workshop-{workshop_id}"
+    try:
+        stage_mod.mkdir(parents=True)
+        with zipfile.ZipFile(archive) as package:
+            _safe_extract(package, stage_mod)
+        if not (stage_mod / "modinfo.lua").is_file():
+            raise OSError("Legacy Mod 解析缓存缺少 modinfo.lua")
+        (stage / _READ_CACHE_MARKER).write_text(
+            json.dumps(expected, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        stale = None
+        if os.path.lexists(bundle):
+            stale = item_root / f".stale-{secrets.token_hex(6)}"
+            bundle.rename(stale)
+        try:
+            stage.rename(bundle)
+        except FileExistsError:
+            try:
+                concurrent = json.loads(marker.read_text(encoding="utf-8"))
+            except (OSError, ValueError, TypeError):
+                concurrent = None
+            if concurrent == expected and (mod_root / "modinfo.lua").is_file():
+                return mod_root
+            raise
+        except Exception:
+            if stale is not None and not os.path.lexists(bundle):
+                stale.rename(bundle)
+            raise
+        if stale is not None:
+            if os.path.isjunction(stale):
+                os.rmdir(stale)
+            elif stale.is_dir() and not stale.is_symlink():
+                shutil.rmtree(stale, ignore_errors=True)
+            else:
+                stale.unlink(missing_ok=True)
+        if not (mod_root / "modinfo.lua").is_file():
+            raise OSError("Legacy Mod 解析缓存创建失败")
+        return mod_root
+    finally:
+        if stage.exists():
+            shutil.rmtree(stage, ignore_errors=True)
+
+
+def is_legacy_read_cache_path(path: Path) -> bool:
+    """判断路径是否位于 V1 只读解析缓存，避免把缓存当成运行目录。"""
+    candidate = Path(path)
+    root = cache_dir("legacy_v1_read")
+    try:
+        candidate.resolve(strict=False).relative_to(root.resolve(strict=False))
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def find_legacy_runtime_residual_dirs() -> dict[int, tuple[Path, ...]]:
+    """查找已无 V1 包、但仍留在标准 ``mods`` 目录的运行文件夹。"""
+    from dstools.features.mod.parser import is_workshop_content_id
+
+    packaged_ids = find_legacy_package_ids()
+    residuals: dict[int, list[Path]] = {}
+    for root in discover_legacy_runtime_roots():
+        if not root.is_dir():
+            continue
+        try:
+            children = list(root.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            name = child.name
+            if not name.startswith("workshop-"):
+                continue
+            text_id = name.removeprefix("workshop-")
+            if (
+                not is_workshop_content_id(text_id)
+                or int(text_id) in packaged_ids
+                or child.is_symlink()
+                or os.path.isjunction(child)
+                or not child.is_dir()
+                or not (child / "modinfo.lua").is_file()
+            ):
+                continue
+            paths = residuals.setdefault(int(text_id), [])
+            if not any(_same_location(child, existing) for existing in paths):
+                paths.append(child)
+    return {workshop_id: tuple(paths) for workshop_id, paths in residuals.items()}
 
 
 def legacy_runtime_matches_package(archive_path: Path, runtime_dir: Path) -> bool:
@@ -326,7 +506,18 @@ def running_dst_processes() -> tuple[str, ...]:
 def _safe_extract(package: zipfile.ZipFile, stage: Path) -> None:
     for entry in package.infolist():
         normalized = entry.filename.replace("\\", "/")
-        parts = PurePosixPath(normalized).parts
+        pure = PurePosixPath(normalized)
+        mode = (entry.external_attr >> 16) & 0xFFFF
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or pure.is_absolute()
+            or ".." in pure.parts
+            or (pure.parts and ":" in pure.parts[0])
+            or stat.S_ISLNK(mode)
+        ):
+            raise OSError(f"Legacy Mod 包含不安全条目：{entry.filename}")
+        parts = pure.parts
         target = stage.joinpath(*parts)
         if entry.is_dir() or normalized.endswith("/"):
             target.mkdir(parents=True, exist_ok=True)

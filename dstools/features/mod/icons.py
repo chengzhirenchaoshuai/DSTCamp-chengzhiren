@@ -26,6 +26,31 @@ def _cache_dir_for(platform: Platform) -> Path:
     return cache_dir("mod_icons") / platform.value
 
 
+def get_cached_mod_icon_path(
+    mod_info: ModInfo,
+    mod_folder: Path,
+    platform: Platform = Platform.STEAM,
+) -> Path | None:
+    """只返回仍与源 ``.tex`` 匹配的现有 PNG，不执行任何图像转换。
+
+    首帧加载用这个轻量路径恢复上次已经生成的图标；缓存缺失或失效时
+    返回 ``None``，再由后台调用 :func:`get_mod_icon_path` 完成转换。
+    """
+    if not mod_info.icon or not mod_info.icon_atlas:
+        return None
+    xml_path = Path(mod_folder) / mod_info.icon_atlas
+    tex_path = xml_path.parent / mod_info.icon
+    if not xml_path.is_file() or not tex_path.is_file():
+        return None
+    cache_path = _cache_dir_for(platform) / f"{mod_info.workshop_id}.png"
+    try:
+        if cache_path.is_file() and cache_path.stat().st_mtime >= tex_path.stat().st_mtime:
+            return cache_path
+    except OSError:
+        return None
+    return None
+
+
 def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path,
                        platform: Platform = Platform.STEAM) -> Path | None:
     """返回该 mod 图标的缓存 PNG 路径，首次使用时才做转换。
@@ -33,6 +58,9 @@ def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path,
     若 mod 没有图标字段、引用的文件不存在、或转换因任何原因失败，都返回
     None——调用方应把它当作"没有图标"处理，回退到占位图。
     """
+    cached = get_cached_mod_icon_path(mod_info, mod_folder, platform)
+    if cached is not None:
+        return cached
     if not mod_info.icon or not mod_info.icon_atlas:
         return None
 

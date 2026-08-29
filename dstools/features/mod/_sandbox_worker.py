@@ -6,10 +6,23 @@
 import json
 import sys
 
-# 中文 Windows 默认使用 GBK；子进程管道必须与父进程统一为 UTF-8。
-sys.stdin.reconfigure(encoding="utf-8", errors="replace")
-sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-sys.stderr.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+def _configure_worker_streams() -> None:
+    """把实际 Worker 管道统一为 UTF-8，但保持模块可被无控制台 EXE 导入。
+
+    PyInstaller ``--windowed`` 进程没有控制台时，未重定向的标准流可能是
+    ``None``。发布冒烟测试只需要导入本模块，不应因此崩溃；真正的沙箱
+    子进程由 ``subprocess.run(input=..., capture_output=True)`` 提供管道，
+    会在进入 ``main()`` 后完成编码配置和可用性校验。
+    """
+    streams = (
+        (sys.stdin, "replace"),
+        (sys.stdout, "replace"),
+        (sys.stderr, "backslashreplace"),
+    )
+    for stream, errors in streams:
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors=errors)
 
 
 def _to_plain(value, _seen=None):
@@ -34,6 +47,9 @@ def _to_plain(value, _seen=None):
 
 
 def main():
+    _configure_worker_streams()
+    if sys.stdin is None or sys.stdout is None:
+        raise RuntimeError("Lua 沙箱 Worker 缺少标准输入/输出管道")
     lua_code = sys.stdin.read()
 
     from lupa.lua51 import LuaRuntime

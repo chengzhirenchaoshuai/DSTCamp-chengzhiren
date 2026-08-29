@@ -30,6 +30,11 @@ class WorkshopModState(str, Enum):
     INTEGRITY_UNCONFIRMED = "integrity_unconfirmed"
     LOCAL_FILES = "local_files"
     NOT_INSTALLED = "not_installed"
+    RESIDUAL_FILES = "residual_files"
+    LEGACY_PACKAGE_READY = "legacy_package_ready"
+    LEGACY_RUNTIME_RESIDUAL = "legacy_runtime_residual"
+    UNSUBSCRIBED_PENDING_CLEANUP = "unsubscribed_pending_cleanup"
+    UNSUBSCRIBED_REFERENCED = "unsubscribed_referenced"
     UPDATE_AVAILABLE = "update_available"
     CURRENT = "current"
     UNKNOWN = "unknown"
@@ -53,6 +58,11 @@ class WorkshopModEvidence:
     legacy_package_valid: bool | None = None
     legacy_package_error: str = ""
     legacy_package_version: LocalModVersion | None = None
+    configured: bool = False
+    residual_path: Path | None = None
+    workshop_content_path: Path | None = None
+    legacy_runtime_residual_paths: tuple[Path, ...] = ()
+    running_dst_processes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,9 +80,46 @@ class WorkshopModStatus:
     def needs_action(self) -> bool:
         return self.state in {
             WorkshopModState.MISSING,
-            WorkshopModState.NOT_INSTALLED,
             WorkshopModState.UPDATE_AVAILABLE,
         }
+
+    @property
+    def can_update(self) -> bool:
+        steam = self.evidence.steam_state if self.evidence is not None else None
+        return bool(
+            steam is not None
+            and steam.subscribed
+            and self.state
+            in {
+                WorkshopModState.CURRENT,
+                WorkshopModState.MISSING,
+                WorkshopModState.UPDATE_AVAILABLE,
+                # 新订阅的 V1 Mod 可能只有有效 Legacy 包、尚未展开运行
+                # 目录；仍应显示“更新”，由更新流程决定下载还是直接复用
+                # 并部署现有包。
+                WorkshopModState.LEGACY_PACKAGE_READY,
+            }
+        )
+
+    @property
+    def can_cleanup_residual(self) -> bool:
+        evidence = self.evidence
+        steam = evidence.steam_state if evidence is not None else None
+        return bool(
+            evidence is not None
+            and steam is not None
+            and (
+                evidence.residual_path is not None
+                or evidence.workshop_content_path is not None
+                or bool(evidence.legacy_runtime_residual_paths)
+            )
+            and not evidence.running_dst_processes
+            and not (
+                steam.subscribed
+                or steam.downloading
+                or steam.download_pending
+            )
+        )
 
 
 def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus:
@@ -86,6 +133,9 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
         source_path = discovered_path
     active_path = evidence.active_path or source_path or discovered_path
     source_version = evidence.source_version or LocalModVersion()
+    residual_path = evidence.residual_path
+    content_path = evidence.workshop_content_path
+    runtime_residual_paths = evidence.legacy_runtime_residual_paths
     # active_path 被显式传入就代表“专服实际消费路径”。即使目录缺失，
     # 也不能回退成客户端 source_version，否则会把客户端最新误报成专服最新。
     active_version = (
@@ -128,16 +178,46 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
         return result(WorkshopModState.DOWNLOADING, "Steam 正在下载此 Mod")
     if steam is not None and steam.download_pending:
         return result(WorkshopModState.DOWNLOAD_PENDING, "Mod 已进入 Steam 下载队列")
-    if (
-        evidence.source_details is not None
-        and evidence.source_details.result != 1
-        and not (source_path and source_path.exists())
-    ):
+    source_error = ""
+    if evidence.source_details is not None and evidence.source_details.result != 1:
         from dstools.features.mod.workshop_api import workshop_source_error
 
+        source_error = workshop_source_error(evidence.source_details)
+    if steam is not None and not steam.subscribed and content_path is not None:
+        if evidence.running_dst_processes:
+            return result(
+                WorkshopModState.UNSUBSCRIBED_PENDING_CLEANUP,
+                "Steam 已取消订阅，等待游戏和专用服务器退出后清理本地文件",
+                "运行中的进程：" + "、".join(evidence.running_dst_processes),
+                source_error,
+            )
         return result(
-            WorkshopModState.SOURCE_UNAVAILABLE,
-            workshop_source_error(evidence.source_details),
+            WorkshopModState.UNSUBSCRIBED_REFERENCED
+            if evidence.configured
+            else WorkshopModState.RESIDUAL_FILES,
+            "当前存档仍引用此 Mod，但 Steam 账号未订阅"
+            if evidence.configured
+            else "Steam 已取消管理，但 322330 内容目录仍然存在",
+            "Steam Installed 位仍存在，可能来自其他账号或异常残留"
+            if steam.installed
+            else "",
+            source_error,
+        )
+    if (
+        runtime_residual_paths
+        and steam is not None
+        and not (steam.subscribed or steam.installed)
+    ):
+        return result(
+            WorkshopModState.UNSUBSCRIBED_REFERENCED
+            if evidence.configured
+            else WorkshopModState.LEGACY_RUNTIME_RESIDUAL,
+            "当前存档仍引用此 Mod，但 Steam 账号未订阅"
+            if evidence.configured
+            else "Steam 已取消管理，但 V1 解压运行目录仍然存在",
+            "可安全隔离的运行目录："
+            + "；".join(str(path) for path in runtime_residual_paths),
+            source_error,
         )
     if source_path is None:
         if steam is not None and steam.installed:
@@ -148,6 +228,21 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
             return result(
                 WorkshopModState.MISSING, "已订阅，但本地安装记录和文件均不存在"
             )
+        if evidence.configured:
+            return result(
+                WorkshopModState.UNSUBSCRIBED_REFERENCED,
+                "当前存档仍引用此 Mod，但 Steam 账号未订阅",
+                "本地存在不完整残留目录" if residual_path is not None else "",
+                source_error,
+            )
+        if residual_path is not None:
+            return result(
+                WorkshopModState.RESIDUAL_FILES,
+                "未订阅且安装目录缺少 modinfo.lua，仅剩残留文件",
+                source_error,
+            )
+        if source_error:
+            return result(WorkshopModState.SOURCE_UNAVAILABLE, source_error)
         return result(WorkshopModState.NOT_INSTALLED, "未找到本地安装记录")
     if steam is not None and steam.legacy_item:
         legacy_path = install_path or source_path
@@ -158,42 +253,54 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
                 WorkshopModState.MISSING,
                 evidence.legacy_package_error or "旧式 Mod 下载包损坏",
             )
-        if discovered_path is None or not discovered_path.is_dir():
+        if evidence.legacy_package_valid is not True:
             return result(
-                WorkshopModState.MISSING, "旧式 Mod 已下载，但运行目录尚未解压"
+                WorkshopModState.UNKNOWN, "Legacy 下载包存在，但尚未完成内容校验"
             )
-        if not (discovered_path / "modinfo.lua").is_file():
-            return result(WorkshopModState.MISSING, "旧式 Mod 运行目录缺少 modinfo.lua")
-        if evidence.active_path is not None:
-            if not evidence.active_path.is_dir():
-                return result(WorkshopModState.MISSING, "专服缺少旧式 Mod 运行目录")
-            if not (evidence.active_path / "modinfo.lua").is_file():
-                return result(
-                    WorkshopModState.MISSING, "专服旧式 Mod 目录缺少 modinfo.lua"
-                )
         package_version = evidence.legacy_package_version or LocalModVersion()
         comparison_version = str(
-            evidence.remote_version
-            or (
-                package_version.version
-                if package_version.status == VERSION_CONFIRMED
-                else ""
-            )
-            or evidence.cached_manifest_version
-            or ""
+            evidence.remote_version or evidence.cached_manifest_version or ""
         ).strip()
         if (
             comparison_version
-            and source_version.status == VERSION_CONFIRMED
+            and package_version.status == VERSION_CONFIRMED
             and normalize_version_for_compare(comparison_version)
-            != source_version.compare_version
+            != package_version.compare_version
         ):
-            reason = (
-                "旧式 Mod 运行目录版本与远程版本不同"
-                if evidence.remote_version
-                else "旧式 Mod 运行目录版本与 Legacy 下载包不同"
+            return result(
+                WorkshopModState.UPDATE_AVAILABLE,
+                "Legacy 下载包版本与远程版本不同",
             )
-            return result(WorkshopModState.UPDATE_AVAILABLE, reason)
+        if steam.needs_update:
+            return result(
+                WorkshopModState.UPDATE_AVAILABLE, "Steam 标记此旧式 Mod 需要更新"
+            )
+        runtime_ready = bool(
+            discovered_path is not None
+            and discovered_path.is_dir()
+            and (discovered_path / "modinfo.lua").is_file()
+        )
+        active_ready = bool(
+            evidence.active_path is None
+            or (
+                evidence.active_path.is_dir()
+                and (evidence.active_path / "modinfo.lua").is_file()
+            )
+        )
+        if not runtime_ready or not active_ready:
+            return result(
+                WorkshopModState.LEGACY_PACKAGE_READY,
+                "Legacy 下载包已就绪；游戏首次加载或专服启动前会安全解压",
+            )
+        if (
+            package_version.status == VERSION_CONFIRMED
+            and source_version.status == VERSION_CONFIRMED
+            and package_version.compare_version != source_version.compare_version
+        ):
+            return result(
+                WorkshopModState.UPDATE_AVAILABLE,
+                "旧式 Mod 运行目录版本与 Legacy 下载包不同",
+            )
         if (
             active_version.status == VERSION_CONFIRMED
             and source_version.status == VERSION_CONFIRMED
@@ -202,10 +309,6 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
             return result(
                 WorkshopModState.UPDATE_AVAILABLE,
                 "服务器当前版本与旧式 Mod 运行目录版本不同",
-            )
-        if steam.needs_update:
-            return result(
-                WorkshopModState.UPDATE_AVAILABLE, "Steam 标记此旧式 Mod 需要更新"
             )
         if steam.installed and source_version.status == VERSION_CONFIRMED:
             return result(
@@ -239,6 +342,20 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
         if not has_contents:
             return result(
                 WorkshopModState.NOT_INSTALLED, "没有 Steam 安装记录，仅残留空目录"
+            )
+        if not (steam and (steam.subscribed or steam.installed)):
+            state = (
+                WorkshopModState.UNSUBSCRIBED_REFERENCED
+                if evidence.configured
+                else WorkshopModState.RESIDUAL_FILES
+            )
+            return result(
+                state,
+                "当前存档仍引用此 Mod，但 Steam 账号未订阅"
+                if evidence.configured
+                else "未订阅且安装目录不完整",
+                "目录缺少 modinfo.lua，仅剩残留文件",
+                source_error,
             )
         return result(
             WorkshopModState.INTEGRITY_UNCONFIRMED,
@@ -312,6 +429,11 @@ def inspect_workshop_items(
     query_source: bool = True,
     source_detail_ids: list[int] | tuple[int, ...] = (),
     include_subscribed: bool = False,
+    configured_ids: list[int] | tuple[int, ...] = (),
+    residual_paths: dict[int, Path] | None = None,
+    workshop_content_paths: dict[int, Path] | None = None,
+    legacy_runtime_residual_paths: dict[int, tuple[Path, ...]] | None = None,
+    running_dst_processes: tuple[str, ...] = (),
 ) -> dict[int, WorkshopModStatus]:
     """读取一批真实状态并评估；源端详情失败不会抹掉本地物理证据。"""
     ids = list(dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0))
@@ -327,6 +449,10 @@ def inspect_workshop_items(
     ids = list(dict.fromkeys((*ids, *states.keys())))
     active_paths = active_paths or {}
     discovered_paths = discovered_paths or {}
+    residual_paths = residual_paths or {}
+    workshop_content_paths = workshop_content_paths or {}
+    legacy_runtime_residual_paths = legacy_runtime_residual_paths or {}
+    configured = {int(item) for item in configured_ids if int(item) > 0}
     cached_manifest_versions = cached_manifest_versions or {}
     statuses = {}
     for workshop_id in ids:
@@ -368,6 +494,8 @@ def inspect_workshop_items(
                 legacy_package_version = resolve_legacy_package_version(
                     workshop_id, install.path
                 )
+                if source_version.status != VERSION_CONFIRMED:
+                    source_version = legacy_package_version
         active_path = active_paths.get(workshop_id)
         if (
             active_path is None
@@ -417,6 +545,13 @@ def inspect_workshop_items(
                 legacy_validation.error if legacy_validation is not None else ""
             ),
             legacy_package_version=legacy_package_version,
+            configured=workshop_id in configured,
+            residual_path=residual_paths.get(workshop_id),
+            workshop_content_path=workshop_content_paths.get(workshop_id),
+            legacy_runtime_residual_paths=legacy_runtime_residual_paths.get(
+                workshop_id, ()
+            ),
+            running_dst_processes=running_dst_processes,
         )
         statuses[workshop_id] = evaluate_workshop_status(evidence)
     return statuses

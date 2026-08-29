@@ -53,6 +53,7 @@ class ImageScrollPanel:
         self.hover_regions: list[tuple[int, int, int, int, object]] = []
         self.on_hover_change = None  # 可调用对象：callable(payload | None, x_root, y_root)
         self._last_hover_payload = None
+        self._over_hit_region = False
         self.scroll_y = 0.0  # 用参照（未缩放）像素坐标表示
 
         self._photo = None
@@ -73,7 +74,7 @@ class ImageScrollPanel:
         self.canvas.bind("<Button-5>", lambda e: self._scroll_by_screen(50))
         self.canvas.bind("<Button-1>", self._on_click)
         self.canvas.bind("<Motion>", self._on_motion)
-        self.canvas.bind("<Leave>", lambda e: self._update_hover(None, 0, 0))
+        self.canvas.bind("<Leave>", self._on_leave)
 
     def current_width(self, default: int) -> int:
         """已知的真实屏幕 canvas 宽度（>4px）就返回它，否则返回 `default`。
@@ -105,6 +106,7 @@ class ImageScrollPanel:
         else:
             self.scroll_y = 0.0
         self._clamp_scroll()
+        self._set_hit_cursor(False)
         self._render()
 
     def _on_configure(self, event):
@@ -234,6 +236,7 @@ class ImageScrollPanel:
 
     def _on_motion(self, event):
         if self._scale <= 0:
+            self._set_hit_cursor(False)
             self._update_hover(None, event.x_root, event.y_root)
             return
         rx = event.x / self._scale
@@ -243,7 +246,22 @@ class ImageScrollPanel:
             if x1 <= rx <= x2 and y1 <= ry <= y2:
                 payload = p
                 break
+        interactive = any(
+            x1 <= rx <= x2 and y1 <= ry <= y2
+            for x1, y1, x2, y2, _callback in self.hit_regions
+        )
+        self._set_hit_cursor(interactive)
         self._update_hover(payload, event.x_root, event.y_root)
+
+    def _on_leave(self, _event):
+        self._set_hit_cursor(False)
+        self._update_hover(None, 0, 0)
+
+    def _set_hit_cursor(self, interactive: bool):
+        if interactive == self._over_hit_region:
+            return
+        self._over_hit_region = interactive
+        self.canvas.configure(cursor="hand2" if interactive else "")
 
     def _update_hover(self, payload, x_root, y_root):
         # 只在"悬停的区域真的变了"（进入/离开某个区域，或者换到另一个区

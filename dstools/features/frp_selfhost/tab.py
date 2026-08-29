@@ -356,7 +356,13 @@ class SelfHostFrpPage:
         self._render_shard_rows()
 
     def refresh(self):
+        # 保留尚未部署的输入框内容，只刷新磁盘映射、进程状态和远端状态。
         self.on_cluster_changed()
+        self._refresh_action_buttons()
+        self._render_server_status_panel()
+        self._maybe_start_probe_cycle()
+        if self._is_authenticated():
+            self._run_probe(reschedule=False)
 
     def retheme(self):
         """主题切换时调用——这个页面几乎全用 BgFrame（要透出自定义背景
