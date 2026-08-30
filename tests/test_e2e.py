@@ -1238,10 +1238,29 @@ def test_cache_path_user_guidance():
     with (
         patch.object(run_gui, "_wait_for_process_exit") as wait_for_exit,
         patch.object(run_gui.subprocess, "Popen") as start_process,
+        patch.object(run_gui.sys, "frozen", True, create=True),
     ):
         run_gui._run_restart_helper(12345, ["--example"])
     wait_for_exit.assert_called_once_with(12345)
     assert start_process.call_args.args[0][-1] == "--example"
+    assert (
+        start_process.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"]
+        == "1"
+    )
+
+    dummy._restart_helper_command = Mock(return_value=["DSTCamp.exe", "--helper"])
+    dummy._quit_app = Mock()
+    with (
+        patch.object(gui_app.sys, "frozen", True, create=True),
+        patch.object(gui_app.subprocess, "Popen") as start_helper,
+    ):
+        DSToolsApp._quit_and_restart(dummy)
+    assert start_helper.call_args.args[0] == ["DSTCamp.exe", "--helper"]
+    assert (
+        start_helper.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"]
+        == "1"
+    )
+    dummy._quit_app.assert_called_once_with()
     print("  PASS: 有效路径保存后可立即重启，辅助进程会等待旧实例退出")
 
 

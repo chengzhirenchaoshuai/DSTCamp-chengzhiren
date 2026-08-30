@@ -45,11 +45,15 @@ def _wait_for_process_exit(pid: int) -> None:
 
 def _run_restart_helper(parent_pid: int, original_args: list[str]) -> None:
     _wait_for_process_exit(parent_pid)
+    restart_env = os.environ.copy()
     if getattr(sys, "frozen", False):
         command = [sys.executable, *original_args]
+        # 最终 GUI 需要比本辅助进程活得更久，同样不能复用辅助进程的
+        # onefile 解压目录。两层启动都设置该变量，分别得到独立 _MEI。
+        restart_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     else:
         command = [sys.executable, os.path.abspath(__file__), *original_args]
-    subprocess.Popen(command)
+    subprocess.Popen(command, env=restart_env)
 
 if __name__ == "__main__":
     if len(sys.argv) > 2 and sys.argv[1] == "--restart-helper":

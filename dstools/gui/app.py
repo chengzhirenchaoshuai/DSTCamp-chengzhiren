@@ -683,7 +683,14 @@ class DSToolsApp:
 
     def _quit_and_restart(self, dialog: tk.Misc | None = None) -> None:
         try:
-            subprocess.Popen(self._restart_helper_command())
+            restart_env = os.environ.copy()
+            if getattr(sys, "frozen", False):
+                # PyInstaller 6.9+ 默认让同一 EXE 的子进程复用父进程的
+                # onefile 解压目录。重启辅助进程会活得比当前 GUI 更久，
+                # 必须强制创建独立运行环境，否则父进程清理 _MEI 时会删掉
+                # 辅助进程仍在使用的 bcrypt 等二进制扩展。
+                restart_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+            subprocess.Popen(self._restart_helper_command(), env=restart_env)
         except OSError as exc:
             dlg.show_error(
                 dialog or self.root,
