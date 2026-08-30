@@ -2,11 +2,60 @@
 
 import sys
 import os
+import subprocess
+import time
 
 # 允许从 scripts 目录直接执行。
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
+def _wait_for_process_exit(pid: int) -> None:
+    """等待旧 GUI 退出并释放单实例锁；辅助进程不参与 GUI 初始化。"""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        synchronize = 0x00100000
+        infinite = 0xFFFFFFFF
+        kernel32 = ctypes.windll.kernel32
+        kernel32.OpenProcess.argtypes = [
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        handle = kernel32.OpenProcess(synchronize, False, pid)
+        if handle:
+            try:
+                kernel32.WaitForSingleObject(handle, infinite)
+            finally:
+                kernel32.CloseHandle(handle)
+        return
+    while True:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return
+        time.sleep(0.1)
+
+
+def _run_restart_helper(parent_pid: int, original_args: list[str]) -> None:
+    _wait_for_process_exit(parent_pid)
+    if getattr(sys, "frozen", False):
+        command = [sys.executable, *original_args]
+    else:
+        command = [sys.executable, os.path.abspath(__file__), *original_args]
+    subprocess.Popen(command)
+
 if __name__ == "__main__":
+    if len(sys.argv) > 2 and sys.argv[1] == "--restart-helper":
+        _run_restart_helper(int(sys.argv[2]), sys.argv[3:])
+        raise SystemExit(0)
+
     if len(sys.argv) > 1 and sys.argv[1] == "--smoke-test":
         from dstools.features.mod._sandbox_worker import run_worker_main
         from dstools.features.mod.workshop_worker import main as workshop_worker_main

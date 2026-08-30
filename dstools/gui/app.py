@@ -1,5 +1,7 @@
 """饥荒存档管理工具的 GUI。页签：存档信息 | Mod | 世界 | 配置 | 环境。"""
 
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -642,6 +644,58 @@ class DSToolsApp:
                 return
             self.local_tab.confirm_and_shutdown_all(on_done=self._quit_app)
             return
+        self._quit_app()
+
+    def _restart_helper_command(self) -> list[str]:
+        """返回绕过单实例竞争的重启辅助进程命令。"""
+        original_args = sys.argv[1:]
+        if getattr(sys, "frozen", False):
+            launcher = [sys.executable]
+        else:
+            launcher = [
+                sys.executable,
+                str(Path(__file__).resolve().parents[2] / "scripts" / "run_gui.py"),
+            ]
+        return [*launcher, "--restart-helper", str(os.getpid()), *original_args]
+
+    def _restart_app(self, dialog: tk.Misc | None = None) -> None:
+        """确认服务器退出后启动等待型辅助进程，再完整退出当前实例。"""
+        def restart() -> None:
+            self._quit_and_restart(dialog)
+
+        if self.local_tab.has_running_servers():
+            running = self.local_tab.manager.running()
+            world_count = len(running)
+            cluster_count = len({str(proc.cluster_path) for proc in running})
+            if not dlg.ask_yes_no(
+                self.root,
+                t("local.confirm_close_title"),
+                t(
+                    "local.confirm_close_msg",
+                    cluster_count=cluster_count,
+                    world_count=world_count,
+                ),
+            ):
+                return
+            self.local_tab.confirm_and_shutdown_all(on_done=restart)
+            return
+        restart()
+
+    def _quit_and_restart(self, dialog: tk.Misc | None = None) -> None:
+        try:
+            subprocess.Popen(self._restart_helper_command())
+        except OSError as exc:
+            dlg.show_error(
+                dialog or self.root,
+                t("settings.cache_dir_label"),
+                t("settings.restart_failed", error=str(exc)),
+            )
+            return
+        if dialog is not None and dialog is not self.root:
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass
         self._quit_app()
 
     def _quit_app(self):
@@ -1731,6 +1785,23 @@ class DSToolsApp:
         if choice == "fix":
             self._choose_cache_dir()
 
+    def _prompt_restart_after_cache_change(
+        self, parent: tk.Misc, message: str
+    ) -> None:
+        choice = dlg.ask_choice(
+            parent,
+            t("settings.cache_dir_label"),
+            message,
+            [
+                (t("settings.restart_now"), "restart"),
+                (t("dlg.cancel_btn"), "cancel"),
+            ],
+            default="restart",
+            min_width=520,
+        )
+        if choice == "restart":
+            self._restart_app(parent)
+
     def _choose_cache_dir(self, parent: tk.Misc | None = None) -> bool:
         """选择可写的纯 ASCII 缓存目录；图标缓存与 ktools 共用该根目录。"""
         from dstools.shared.resource_paths import cache_root_dir, validate_cache_root
@@ -1758,9 +1829,8 @@ class DSToolsApp:
                     initial = path
                 continue
             set_cache_dir_override(path)
-            dlg.show_info(
+            self._prompt_restart_after_cache_change(
                 parent,
-                t("settings.cache_dir_label"),
                 t("settings.cache_dir_changed", path=str(path)),
             )
             return True
@@ -1790,9 +1860,8 @@ class DSToolsApp:
                 self._show_cache_dir_error(reason, path, parent)
             return False
         set_cache_dir_override(None)
-        dlg.show_info(
+        self._prompt_restart_after_cache_change(
             parent,
-            t("settings.cache_dir_label"),
             t("settings.cache_dir_default_restored", path=str(path)),
         )
         return True
@@ -1845,11 +1914,19 @@ class DSToolsApp:
 
         def change_dir() -> None:
             if self._choose_cache_dir(win):
-                refresh_path()
+                try:
+                    if win.winfo_exists():
+                        refresh_path()
+                except tk.TclError:
+                    pass
 
         def restore_default() -> None:
             if self._restore_default_cache_dir(win):
-                refresh_path()
+                try:
+                    if win.winfo_exists():
+                        refresh_path()
+                except tk.TclError:
+                    pass
 
         ttk.Button(
             actions, text=t("settings.cache_dir_change"), command=change_dir
@@ -2000,7 +2077,6 @@ class DSToolsApp:
         （全新安装、还没触发过任何一次 mod 图标/角色头像/mod 完整解析，
         目录可能还没创建过），先建好再打开，不让用户对着一个"找不到该
         文件"的系统错误弹窗摸不着头脑。"""
-        import os
         from dstools.shared.resource_paths import cache_root_dir
 
         d = cache_root_dir()

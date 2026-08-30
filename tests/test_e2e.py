@@ -1206,6 +1206,8 @@ def test_cache_path_user_guidance():
 
     valid_path = Path("D:/DSTCampData/cache")
     dummy._show_cache_dir_error = Mock()
+    prompt_restart = Mock()
+    dummy._prompt_restart_after_cache_change = prompt_restart
     with (
         patch.object(resource_paths, "cache_root_dir", return_value=invalid_path),
         patch.object(
@@ -1219,14 +1221,28 @@ def test_cache_path_user_guidance():
             side_effect=[str(invalid_path), str(valid_path)],
         ) as ask_directory,
         patch.object(gui_app, "set_cache_dir_override") as save_cache_dir,
-        patch.object(gui_app.dlg, "show_info") as show_info,
     ):
         assert DSToolsApp._choose_cache_dir(dummy) is True
     assert ask_directory.call_count == 2
     dummy._show_cache_dir_error.assert_called_once()
     save_cache_dir.assert_called_once_with(valid_path)
-    assert str(valid_path) in show_info.call_args.args[2]
-    print("  PASS: 无效路径确认后自动重新选择，有效路径保存后明确提示重启")
+    assert str(valid_path) in prompt_restart.call_args.args[1]
+
+    dummy._restart_app = Mock()
+    with patch.object(gui_app.dlg, "ask_choice", return_value="restart"):
+        DSToolsApp._prompt_restart_after_cache_change(dummy, dummy.root, "saved")
+    dummy._restart_app.assert_called_once_with(dummy.root)
+
+    import scripts.run_gui as run_gui
+
+    with (
+        patch.object(run_gui, "_wait_for_process_exit") as wait_for_exit,
+        patch.object(run_gui.subprocess, "Popen") as start_process,
+    ):
+        run_gui._run_restart_helper(12345, ["--example"])
+    wait_for_exit.assert_called_once_with(12345)
+    assert start_process.call_args.args[0][-1] == "--example"
+    print("  PASS: 有效路径保存后可立即重启，辅助进程会等待旧实例退出")
 
 
 def test_mod_sync_junction():
