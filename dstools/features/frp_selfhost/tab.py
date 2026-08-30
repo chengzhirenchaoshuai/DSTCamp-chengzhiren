@@ -127,6 +127,12 @@ class _SSHAuthSetupDialog:
 
 
 class SelfHostFrpPage:
+    @staticmethod
+    def _masked_host(host: str) -> str:
+        """非编辑状态仅显示 IPv4 前两段，避免完整暴露服务器地址。"""
+        parts = host.strip().split(".")
+        return ".".join(parts[:2] + ["xx", "xx"]) if len(parts) == 4 and all(p.isdigit() for p in parts) else host
+
     def _label(self, parent, text, *, fg=None, font=None):
         """照抄 sakura/tab.py 的同名方法——BgFrame + create_text，不用
         ttk.Label（会挡住自定义背景图）。返回的 BgFrame 挂了 `redraw()`
@@ -148,6 +154,13 @@ class SelfHostFrpPage:
         label.redraw = _redraw
         _redraw()
         return label
+
+    def _reveal_host(self, _event=None):
+        self._host_var.set(self._host_raw_var.get())
+
+    def _mask_host(self, _event=None):
+        self._host_raw_var.set(self._host_var.get().strip())
+        self._host_var.set(self._masked_host(self._host_raw_var.get()))
 
     def _make_token_display(self, parent):
         """Token 展示——跟 `_label()` 一样用 BgFrame + create_text（真正
@@ -212,8 +225,12 @@ class SelfHostFrpPage:
         self._row1 = row1 = BgFrame(top, app, bg=theme.CARD_BG); row1.pack(fill=tk.X, pady=3)
         self._host_label = self._label(row1, t("selfhost.host_label"))
         self._host_label.pack(side=tk.LEFT)
+        self._host_raw_var = tk.StringVar()
         self._host_var = tk.StringVar()
-        ttk.Entry(row1, textvariable=self._host_var, width=24).pack(side=tk.LEFT, padx=(4, 12))
+        self._host_entry = ttk.Entry(row1, textvariable=self._host_var, width=24)
+        self._host_entry.pack(side=tk.LEFT, padx=(4, 12))
+        self._host_entry.bind("<FocusIn>", self._reveal_host, add="+")
+        self._host_entry.bind("<FocusOut>", self._mask_host, add="+")
         bind_port_label = self._bind_port_label = self._label(row1, t("selfhost.bind_port_label"))
         bind_port_label.pack(side=tk.LEFT)
         self._bind_port_var = tk.StringVar(value=str(deploy.DEFAULT_BIND_PORT))
@@ -390,7 +407,8 @@ class SelfHostFrpPage:
     def _load_server_display(self):
         server = app_settings.get_selfhost_frp_server()
         if server:
-            self._host_var.set(server.get("host", ""))
+            self._host_raw_var.set(server.get("host", ""))
+            self._host_var.set(self._masked_host(self._host_raw_var.get()))
             self._bind_port_var.set(str(server.get("bind_port", deploy.DEFAULT_BIND_PORT)))
             self._token_var.set(server.get("token", ""))
         else:
@@ -438,7 +456,7 @@ class SelfHostFrpPage:
         if saved_conn:
             default_host, default_port, default_user = saved_conn["host"], saved_conn["port"], saved_conn["username"]
         else:
-            default_host, default_port, default_user = self._host_var.get().strip(), 22, "root"
+            default_host, default_port, default_user = self._host_raw_var.get().strip(), 22, "root"
 
         auth_dlg = _SSHAuthSetupDialog(self.frame, default_host, default_port, default_user)
         if auth_dlg.result is None:
@@ -493,7 +511,7 @@ class SelfHostFrpPage:
         if not self._is_authenticated():
             dlg.show_warning(self.app.root, t("selfhost.ssh_deploy_btn"), t("selfhost.deploy_needs_auth_hint"))
             return
-        host = self._host_var.get().strip()
+        host = self._host_raw_var.get().strip()
         if not host:
             dlg.show_warning(self.app.root, t("selfhost.ssh_deploy_btn"), t("selfhost.host_missing"))
             return
