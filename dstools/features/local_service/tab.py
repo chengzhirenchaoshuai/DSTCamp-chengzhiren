@@ -1100,19 +1100,6 @@ class LocalServiceTab:
         )
         self._luajit_bin64_dir: Path | None = None
 
-        # 额外参数作用于 DSTCamp 直接启动的所有 Steam 专服世界；参数作为
-        # 列表传给 subprocess，不经过 shell，避免输入内容被当成命令执行。
-        self._extra_args_row = extra_args_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
-        extra_args_row.pack(fill=tk.X, padx=5, pady=(0, 5))
-        ttk.Label(extra_args_row, text=t("local.extra_args_label")).pack(side=tk.LEFT)
-        self._extra_args_var = tk.StringVar(
-            value=get_dedicated_server_extra_args()
-        )
-        self._extra_args_entry = ttk.Entry(extra_args_row, textvariable=self._extra_args_var)
-        self._extra_args_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-        self._extra_args_entry.bind("<FocusOut>", self._save_extra_args, add="+")
-        self._extra_args_entry.bind("<Return>", self._save_extra_args, add="+")
-
         self._luajit_uninstall_btn = ttk.Button(
             luajit_row,
             text=t("local.luajit_uninstall_btn"),
@@ -1174,6 +1161,17 @@ class LocalServiceTab:
             btn_row, text=t("local.get_logs_btn"), command=self._get_logs
         )
         self._logs_btn.pack(side=tk.LEFT, padx=(5, 0))
+
+        # 额外参数放在多层世界启动按钮组的正下方，避免在页签顶部额外拉长
+        # 启动准备区域；作用于 DSTCamp 直接启动的所有 Steam 专服世界。
+        self._extra_args_row = extra_args_row = BgFrame(left, app, bg=theme.CARD_BG)
+        extra_args_row.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(extra_args_row, text=t("local.extra_args_label")).pack(side=tk.LEFT)
+        self._extra_args_var = tk.StringVar(value=get_dedicated_server_extra_args())
+        self._extra_args_entry = ttk.Entry(extra_args_row, textvariable=self._extra_args_var)
+        self._extra_args_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        self._extra_args_entry.bind("<FocusOut>", self._save_extra_args, add="+")
+        self._extra_args_entry.bind("<Return>", self._save_extra_args, add="+")
 
         # WeGame 版世界不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
         # 客户端才能签发的一次性会话令牌，DSTCamp 拼不出来）——选中一个
