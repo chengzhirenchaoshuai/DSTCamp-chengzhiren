@@ -570,7 +570,7 @@ STRINGS = {
         "world.creation_rules_tab": "世界规则",
         "world.creation_generation_tab": "世界生成",
         "world.creation_search_mod": "搜索 Mod",
-        "world.creation_rescan": "重新扫描",
+        "world.creation_rescan": "刷新",
         "world.creation_save_preset": "保存为配置集",
         "world.creation_load_preset": "载入配置集",
         # Mod 信息
@@ -1400,7 +1400,7 @@ STRINGS = {
         "world.creation_rules_tab": "World Rules",
         "world.creation_generation_tab": "World Generation",
         "world.creation_search_mod": "Search Mods",
-        "world.creation_rescan": "Rescan",
+        "world.creation_rescan": "Refresh",
         "world.creation_save_preset": "Save as Preset",
         "world.creation_load_preset": "Load Preset",
         # Mod 信息

@@ -1114,7 +1114,10 @@ class WorldCreationTab:
         self._ensure_island_adventures_dependency(show_dialog=True)
         if "world" in self._initialized_pages:
             self._reload_template(apply_profile_defaults=True)
-        self._render_list()
+        # 载入配置集后按“刷新”按钮的同一条路径重建 ModEntry 和列表图。
+        # 不能只重画现有列表；实际界面中那样会继续显示载入前的开关状态，
+        # 用户必须再手动刷新一次才能看到配置集已经生效。
+        self._scan_installed_mods(force=False)
         self.status_var.set(f"已载入 Mod 配置集：{preset.name}")
 
     def _toggle_mod(self, mod_id):

@@ -56,6 +56,7 @@ from dstools.features.world.render import (  # noqa: E402
 from dstools.features.world.value_sets import get_value_set  # noqa: E402
 from dstools.features.world.reader import WorldOverride  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
+from dstools.features.mod.presets import ModPreset  # noqa: E402
 from dstools.features.mod.tab import ModManagerTab  # noqa: E402
 from dstools.features.world.creation_tab import WorldCreationTab  # noqa: E402
 from dstools.features.cluster_config.config_manager import load_shard_config  # noqa: E402
@@ -485,6 +486,38 @@ def test_creation_mod_list_uses_native_canvas_width() -> None:
     assert captured["ref_width"] == 777
 
 
+def test_creation_preset_apply_refreshes_mod_list() -> None:
+    refreshed = []
+    statuses = []
+    tab = WorldCreationTab.__new__(WorldCreationTab)
+    tab._mod_overrides = {}
+    tab._selected_mod_ids = set()
+    tab._mod_data = {
+        "workshop-123": ModEntry(workshop_id="workshop-123", enabled=False),
+    }
+    tab._initialized_pages = set()
+    tab._ensure_island_adventures_dependency = lambda show_dialog: True
+    tab._scan_installed_mods = lambda force=False: refreshed.append(force)
+    tab.status_var = SimpleNamespace(set=statuses.append)
+    preset = ModPreset(
+        name="启用测试",
+        mods={
+            "workshop-123": {
+                "enabled": True,
+                "configuration_options": {"mode": "hard"},
+            }
+        },
+    )
+
+    tab._apply_preset_to_session(preset)
+
+    assert tab._selected_mod_ids == {"workshop-123"}
+    assert tab._mod_data["workshop-123"].enabled is True
+    assert tab._mod_data["workshop-123"].configuration_options == {"mode": "hard"}
+    assert refreshed == [False]
+    assert statuses == ["已载入 Mod 配置集：启用测试"]
+
+
 def test_creation_matrix() -> None:
     with TemporaryDirectory() as directory:
         root = Path(directory)
@@ -650,6 +683,7 @@ def main() -> None:
         test_creation_error_dialog_uses_wizard_parent,
         test_pending_mod_world_preview,
         test_creation_mod_list_uses_native_canvas_width,
+        test_creation_preset_apply_refreshes_mod_list,
         test_creation_matrix,
         test_creation_rejects_invalid_combinations,
         test_porkland_creation,
