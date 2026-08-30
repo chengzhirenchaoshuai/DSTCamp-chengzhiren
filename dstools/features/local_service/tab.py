@@ -1162,17 +1162,6 @@ class LocalServiceTab:
         )
         self._logs_btn.pack(side=tk.LEFT, padx=(5, 0))
 
-        # 额外参数放在多层世界启动按钮组的正下方，避免在页签顶部额外拉长
-        # 启动准备区域；作用于 DSTCamp 直接启动的所有 Steam 专服世界。
-        self._extra_args_row = extra_args_row = BgFrame(left, app, bg=theme.CARD_BG)
-        extra_args_row.pack(fill=tk.X, pady=(0, 5))
-        ttk.Label(extra_args_row, text=t("local.extra_args_label")).pack(side=tk.LEFT)
-        self._extra_args_var = tk.StringVar(value=get_dedicated_server_extra_args())
-        self._extra_args_entry = ttk.Entry(extra_args_row, textvariable=self._extra_args_var)
-        self._extra_args_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-        self._extra_args_entry.bind("<FocusOut>", self._save_extra_args, add="+")
-        self._extra_args_entry.bind("<Return>", self._save_extra_args, add="+")
-
         # WeGame 版世界不支持在这个页签里启动/停止（Rail SDK 需要 WeGame
         # 客户端才能签发的一次性会话令牌，DSTCamp 拼不出来）——选中一个
         # WeGame 存档时这一组（提示+"检测服务器状态"+检测结果）替代世界
@@ -1206,6 +1195,18 @@ class LocalServiceTab:
 
         self._shard_list = BgFrame(left, app, bg=theme.CARD_BG)
         self._shard_list.pack(fill=tk.BOTH, expand=True)
+        # 放在世界列表容器的最后：双世界时自然显示在 Master/Caves 两行之后，
+        # 而不是占用页面顶部或“全部启动”按钮组的额外高度。
+        self._extra_args_row = extra_args_row = BgFrame(
+            self._shard_list, app, bg=theme.CARD_BG
+        )
+        extra_args_row.pack(fill=tk.X, pady=(5, 0))
+        ttk.Label(extra_args_row, text=t("local.extra_args_label")).pack(side=tk.LEFT)
+        self._extra_args_var = tk.StringVar(value=get_dedicated_server_extra_args())
+        self._extra_args_entry = ttk.Entry(extra_args_row, textvariable=self._extra_args_var)
+        self._extra_args_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        self._extra_args_entry.bind("<FocusOut>", self._save_extra_args, add="+")
+        self._extra_args_entry.bind("<Return>", self._save_extra_args, add="+")
 
         # 左下角“直连代码”三行——局域网、公网、内网穿透均可点击复制。
         # side=tk.BOTTOM 放在世界列表下面；标签用 BgFrame+create_text 画字
