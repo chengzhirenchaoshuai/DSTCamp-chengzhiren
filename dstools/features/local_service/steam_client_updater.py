@@ -8,21 +8,27 @@ Steamworks 的 ``ISteamApps`` 只能查询 App 信息，不能替应用安装或
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from dstools.shared.steam_discovery import find_all_steam_libraries
+from dstools.shared.ssl_context import default_ssl_context
 
 DEDICATED_SERVER_APP_ID = "343050"
 _MANIFEST_RE = re.compile(r'^\s*"(?P<key>[^"\\]+)"\s+"(?P<value>[^"\\]*)"\s*$')
 _STATE_UPDATE_REQUIRED = 2
 _STATE_FULLY_INSTALLED = 4
+_REMOTE_BUILD_API = "https://api.steamcmd.net/v1/info/{app_id}"
+_REMOTE_BUILD_TIMEOUT = 5
 
 
 class SteamUpdateState:
@@ -40,16 +46,18 @@ class SteamUpdateState:
     TIMEOUT = "timeout"
 
 
-def action_for_snapshot(snapshot: "SteamAppSnapshot") -> str:
-    """根据本地 manifest 决定入口动作。
+def action_for_snapshot(
+    snapshot: "SteamAppSnapshot", *, remote_build_id: str | None = None
+) -> str:
+    """根据远程 public Build 和本地 manifest 决定入口动作。
 
-    Steam 不提供公开的“查询远程 buildid”接口；只有 manifest 明确标记
-    待更新/待下载时才能确定有新版本。其余已安装状态使用 validate，
-    由 Steam 客户端负责检查并修复完整性。
+    远程 Build 可用时优先比较版本；查询失败、Build 缺失或非 public 分支
+    时回退 manifest。其余已安装状态使用 validate，由 Steam 客户端负责
+    检查并修复完整性。
     """
     if snapshot.install_dir is None:
         return "install"
-    if snapshot.update_pending:
+    if remote_requires_update(snapshot, remote_build_id) or snapshot.update_pending:
         return "update"
     return "validate"
 
@@ -67,6 +75,7 @@ class SteamAppSnapshot:
     target_build_id: str | None = None
     bytes_staged: int | None = None
     bytes_to_stage: int | None = None
+    branch: str | None = None
 
     @property
     def update_pending(self) -> bool:
@@ -172,6 +181,72 @@ def _to_int(value: str | None) -> int | None:
         return None
 
 
+def _valid_build_id(value: object) -> str | None:
+    """只接受 Steam Build ID 使用的正十进制整数。"""
+    text = str(value).strip() if value is not None else ""
+    return text if text.isdecimal() and int(text) > 0 else None
+
+
+def remote_requires_update(
+    snapshot: SteamAppSnapshot, remote_build_id: str | None
+) -> bool:
+    """远程 public Build 明确高于本地时返回 True。
+
+    非 public 分支不能拿 public Build 比较；本地或远程 Build 缺失时也不
+    猜测，交回本地 manifest 状态判断。远程服务短暂滞后时可能返回较小
+    Build，因此不能把单纯“不相等”当成更新证据。
+    """
+    if snapshot.branch and snapshot.branch.casefold() != "public":
+        return False
+    local = _valid_build_id(snapshot.build_id)
+    remote = _valid_build_id(remote_build_id)
+    return bool(local and remote and int(remote) > int(local))
+
+
+def fetch_public_build_id(
+    app_id: str = DEDICATED_SERVER_APP_ID,
+    *,
+    timeout: float = _REMOTE_BUILD_TIMEOUT,
+    opener: Callable[..., object] | None = None,
+) -> str | None:
+    """查询远程 public 分支 Build ID，失败或响应不可信时返回 None。
+
+    Steam 官方 Web API 不公开当前 public Build；这里使用开源 SteamCMD
+    API 对 ``app_info`` 的只读镜像。调用方必须在后台线程执行，并在 None
+    时回退本地 manifest，网络故障不能影响专服启动。
+    """
+    request = urllib.request.Request(
+        _REMOTE_BUILD_API.format(app_id=app_id),
+        headers={"User-Agent": "DSTCamp-SteamBuildCheck", "Accept": "application/json"},
+    )
+    open_url = opener or urllib.request.urlopen
+    try:
+        with open_url(
+            request,
+            timeout=max(0.1, timeout),
+            context=default_ssl_context(),
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (
+        urllib.error.URLError,
+        TimeoutError,
+        ValueError,
+        OSError,
+        AttributeError,
+        TypeError,
+    ):
+        return None
+    if not isinstance(payload, dict) or payload.get("status") != "success":
+        return None
+    try:
+        build_id = payload["data"][str(app_id)]["depots"]["branches"]["public"][
+            "buildid"
+        ]
+    except (KeyError, TypeError):
+        return None
+    return _valid_build_id(build_id)
+
+
 def find_app_manifests(
     app_id: str = DEDICATED_SERVER_APP_ID,
     libraries: list[Path] | None = None,
@@ -232,6 +307,7 @@ def snapshot_app(
         target_build_id=values.get("targetbuildid"),
         bytes_staged=_to_int(values.get("bytesstaged")),
         bytes_to_stage=_to_int(values.get("bytestostage")),
+        branch=values.get("betakey"),
     )
 
 
@@ -297,7 +373,12 @@ def request_update(
     return uri
 
 
-def classify_snapshot(before: SteamAppSnapshot, after: SteamAppSnapshot) -> str:
+def classify_snapshot(
+    before: SteamAppSnapshot,
+    after: SteamAppSnapshot,
+    *,
+    remote_build_id: str | None = None,
+) -> str:
     """根据 manifest 快照给出保守状态，不猜测 Steam 内部下载结果。"""
     if after.manifest_path is None:
         return (
@@ -305,7 +386,7 @@ def classify_snapshot(before: SteamAppSnapshot, after: SteamAppSnapshot) -> str:
             if after.install_ready
             else SteamUpdateState.APP_NOT_INSTALLED
         )
-    if after.update_pending:
+    if remote_requires_update(after, remote_build_id) or after.update_pending:
         return SteamUpdateState.DOWNLOADING
     if not after.download_complete or not after.staging_complete:
         return SteamUpdateState.VERIFYING
@@ -330,6 +411,7 @@ def monitor_update(
     on_snapshot: Callable[[SteamAppSnapshot, str], None] | None = None,
     snapshot_reader: Callable[[], SteamAppSnapshot] | None = None,
     settle_polls: int = 3,
+    remote_build_id: str | None = None,
 ) -> SteamAppSnapshot:
     """轮询 manifest，供后台线程使用；超时抛出 TimeoutError。"""
     read = snapshot_reader or (lambda: snapshot_app(app_id, libraries))
@@ -339,7 +421,7 @@ def monitor_update(
     ready_polls = 0
     while True:
         latest = read()
-        state = classify_snapshot(before, latest)
+        state = classify_snapshot(before, latest, remote_build_id=remote_build_id)
         if on_snapshot:
             on_snapshot(latest, state)
         if state == SteamUpdateState.UPDATED:

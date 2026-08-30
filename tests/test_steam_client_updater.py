@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -13,9 +15,11 @@ from dstools.features.local_service.steam_client_updater import (  # noqa: E402
     build_update_uri,
     classify_snapshot,
     action_for_snapshot,
+    fetch_public_build_id,
     find_app_manifests,
     monitor_update,
     request_update,
+    remote_requires_update,
     snapshot_app,
 )
 
@@ -62,6 +66,13 @@ def main() -> None:
         assert before.last_updated == "123"
         assert before.install_dir is not None
         assert action_for_snapshot(before) == "validate"
+        assert not remote_requires_update(before, "100")
+        assert remote_requires_update(before, "101")
+        assert not remote_requires_update(before, "99")
+        assert action_for_snapshot(before, remote_build_id="101") == "update"
+        assert classify_snapshot(
+            before, before, remote_build_id="101"
+        ) == SteamUpdateState.DOWNLOADING
 
         _write_manifest(root, buildid="101")
         after = snapshot_app(libraries=[root])
@@ -122,6 +133,24 @@ def main() -> None:
         state_requires_update = snapshot_app(libraries=[root])
         assert state_requires_update.update_pending
         assert action_for_snapshot(state_requires_update) == "update"
+        assert (
+            action_for_snapshot(
+                state_requires_update, remote_build_id="24700372"
+            )
+            == "update"
+        )
+
+        manifest.write_text(
+            completed_manifest_text.replace(
+                ' "TargetBuildID" "24700372"',
+                ' "BetaKey" "private_test"\n "TargetBuildID" "24700372"',
+            ),
+            encoding="utf-8",
+        )
+        beta_branch = snapshot_app(libraries=[root])
+        assert beta_branch.branch == "private_test"
+        assert not remote_requires_update(beta_branch, "24700373")
+        assert action_for_snapshot(beta_branch, remote_build_id="24700373") == "validate"
 
         reads = iter([after, after, after])
         settled = monitor_update(
@@ -136,6 +165,38 @@ def main() -> None:
     seen: list[str] = []
     assert request_update(opener=seen.append) == "steam://install/343050"
     assert seen == ["steam://install/343050"]
+
+    class FakeResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            self.close()
+
+    def remote_payload(build_id="24700372"):
+        return json.dumps(
+            {
+                "status": "success",
+                "data": {
+                    "343050": {
+                        "depots": {"branches": {"public": {"buildid": build_id}}}
+                    }
+                },
+            }
+        ).encode("utf-8")
+
+    assert fetch_public_build_id(
+        opener=lambda *_args, **_kwargs: FakeResponse(remote_payload())
+    ) == "24700372"
+    assert fetch_public_build_id(
+        opener=lambda *_args, **_kwargs: FakeResponse(remote_payload("invalid"))
+    ) is None
+    assert fetch_public_build_id(
+        opener=lambda *_args, **_kwargs: FakeResponse(b'{"status":"error"}')
+    ) is None
+    assert fetch_public_build_id(
+        opener=lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError())
+    ) is None
     print("Steam 客户端更新模块测试通过")
 
 

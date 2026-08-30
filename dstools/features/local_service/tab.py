@@ -84,6 +84,7 @@ from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
 _POLL_MS = 150
+_STEAM_REMOTE_BUILD_TTL = 300.0
 _LUAJIT_VCREDIST_DOWNLOAD_URL = "https://wwwu.lanzoub.com/b0nyns22d"
 _PUBLIC_IP_URLS = (
     "https://myip.ipip.net",
@@ -1048,6 +1049,12 @@ class LocalServiceTab:
         self._install_dir: Path | None = None
         self._steam_update_dialog = None
         self._steam_update_mode = "install"
+        self._steam_remote_build_id: str | None = None
+        self._steam_remote_build_checked_at = 0.0
+        self._steam_remote_build_fetching = False
+        self._steam_remote_build_queue: "queue.SimpleQueue[str | None]" = (
+            queue.SimpleQueue()
+        )
         # 公网/NAT 查询在线程里执行，但后台线程不能直接调用 Tk 的 after()：
         # 应用构造阶段 mainloop 尚未启动、退出阶段 mainloop 已经停止，这两种
         # 时机都会偶发触发 "main thread is not in main loop"。线程只写队列，
@@ -2202,13 +2209,49 @@ class LocalServiceTab:
             else t("local.install_not_found")
         )
         self._refresh_steam_update_button()
+        self._refresh_steam_remote_build_async()
+
+    def _refresh_steam_remote_build_async(self, *, force: bool = False) -> None:
+        """后台刷新远程 public Build；主线程始终只读取缓存。"""
+        if self._steam_remote_build_fetching:
+            return
+        if (
+            not force
+            and self._steam_remote_build_checked_at
+            and time.monotonic() - self._steam_remote_build_checked_at
+            < _STEAM_REMOTE_BUILD_TTL
+        ):
+            return
+        self._steam_remote_build_fetching = True
+
+        def worker() -> None:
+            try:
+                build_id = steam_client_updater.fetch_public_build_id()
+            except Exception:  # noqa: BLE001 - 后台查询失败必须可靠回退本地
+                build_id = None
+            self._steam_remote_build_queue.put(build_id)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _drain_steam_remote_build_result(self) -> None:
+        """在 Tk 主线程应用远程查询结果；None 表示回退本地清单。"""
+        try:
+            build_id = self._steam_remote_build_queue.get_nowait()
+        except queue.Empty:
+            return
+        self._steam_remote_build_id = build_id
+        self._steam_remote_build_checked_at = time.monotonic()
+        self._steam_remote_build_fetching = False
+        self._refresh_steam_update_button()
 
     def _refresh_steam_update_button(self) -> None:
         """按 manifest 当前证据刷新 Steam 操作按钮文案。"""
         if not hasattr(self, "_steam_update_btn"):
             return
         snapshot = steam_client_updater.snapshot_app()
-        mode = steam_client_updater.action_for_snapshot(snapshot)
+        mode = steam_client_updater.action_for_snapshot(
+            snapshot, remote_build_id=self._steam_remote_build_id
+        )
         labels = {
             "install": "local.steam_install_btn",
             "update": "local.steam_update_btn",
@@ -2247,12 +2290,25 @@ class LocalServiceTab:
             dlg.show_warning(self.app.root, title, t("local.steam_update_not_running"))
             return
         before = steam_client_updater.snapshot_app()
-        mode = steam_client_updater.action_for_snapshot(before)
+        remote_build_id = self._steam_remote_build_id
+        mode = steam_client_updater.action_for_snapshot(
+            before, remote_build_id=remote_build_id
+        )
         self._steam_update_mode = mode
         labels = {"install": "local.steam_install_btn", "update": "local.steam_update_btn", "validate": "local.steam_validate_btn"}
         self._steam_update_btn.configure(text=t(labels[mode]))
         dialog = ModSyncLogDialog(self.app.root, title=title, allow_close_while_running=True)
         self._steam_update_dialog = dialog
+        if remote_build_id:
+            dialog.append(
+                t(
+                    "local.steam_remote_build",
+                    remote=remote_build_id,
+                    local=before.build_id or "-",
+                )
+            )
+        else:
+            dialog.append(t("local.steam_remote_fallback"))
         uri = steam_client_updater.build_update_uri(validate=mode == "validate")
         dialog.append(t("local.steam_update_requested", uri=uri))
         self._steam_update_btn.configure(text=t("local.steam_view_log_btn"), state=tk.NORMAL)
@@ -2271,7 +2327,11 @@ class LocalServiceTab:
                             waiting_logged[0] = True
                             self.frame.after(0, lambda: dialog.append(t("local.steam_update_waiting")))
 
-                steam_client_updater.monitor_update(before, on_snapshot=on_snapshot)
+                steam_client_updater.monitor_update(
+                    before,
+                    on_snapshot=on_snapshot,
+                    remote_build_id=remote_build_id,
+                )
                 self.frame.after(0, lambda: dialog.append(t("local.steam_update_done")))
             except TimeoutError:
                 self.frame.after(0, lambda: dialog.append(t("local.steam_update_timeout")))
@@ -2282,7 +2342,9 @@ class LocalServiceTab:
                     try:
                         self._steam_update_btn.configure(state=tk.NORMAL)
                         latest = steam_client_updater.snapshot_app()
-                        current_mode = steam_client_updater.action_for_snapshot(latest)
+                        current_mode = steam_client_updater.action_for_snapshot(
+                            latest, remote_build_id=self._steam_remote_build_id
+                        )
                         self._steam_update_btn.configure(
                             text=t(labels[current_mode])
                         )
@@ -2573,7 +2635,11 @@ class LocalServiceTab:
             server_snapshot = steam_client_updater.snapshot_app()
             if (
                 getattr(self.app, "root", None) is not None
-                and steam_client_updater.action_for_snapshot(server_snapshot) == "update"
+                and steam_client_updater.action_for_snapshot(
+                    server_snapshot,
+                    remote_build_id=getattr(self, "_steam_remote_build_id", None),
+                )
+                == "update"
             ):
                 dlg.show_warning(
                     self.app.root,
@@ -3242,6 +3308,8 @@ class LocalServiceTab:
     # ── 轮询 ────────────────────────────────────────────────────────
 
     def _poll(self):
+        self._drain_steam_remote_build_result()
+        self._refresh_steam_remote_build_async()
         self._drain_connect_results()
         for pane in self._console_panes.values():
             pane.pump()
