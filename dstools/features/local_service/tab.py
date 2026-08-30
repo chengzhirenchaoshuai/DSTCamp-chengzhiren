@@ -2037,6 +2037,7 @@ class LocalServiceTab:
 
     def _refresh_shard_rows(self, cluster):
         if cluster is None:
+            self._extra_args_row.pack_forget()
             for row in self._shard_rows.values():
                 row.destroy()
             self._shard_rows = {}
@@ -2056,6 +2057,10 @@ class LocalServiceTab:
         else:
             for row in self._shard_rows.values():
                 row.update()
+        # 输入框在构造时先于动态世界行创建；重新 pack 到最后，确保它始终
+        # 位于当前列表最后一个世界（通常是 Caves）之后。
+        self._extra_args_row.pack_forget()
+        self._extra_args_row.pack(fill=tk.X, pady=(5, 0))
     def _open_rollback_dialog(self):
         c = self._get_cluster()
         if not c or c.source != SaveSource.SERVER:
