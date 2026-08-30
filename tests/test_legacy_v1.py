@@ -129,9 +129,10 @@ def main() -> None:
             update = WorkshopDownloadResult(
                 WorkshopBackend.CLIENT, 123, accepted=True, state=WorkshopItemState(7)
             )
-            finished = SteamWorkshopSession._finish_legacy_install(
-                update, archive, expected_version="1.0", force=True
-            )
+            with patch.object(legacy_v1, "running_dst_processes", return_value=()):
+                finished = SteamWorkshopSession._finish_legacy_install(
+                    update, archive, expected_version="1.0", force=True
+                )
             assert finished.completed and not finished.up_to_date, finished.error
             assert finished.details["legacy_materialized"] is True
             assert (pipeline_target / "modmain.lua").is_file()
@@ -144,9 +145,10 @@ def main() -> None:
             repair = WorkshopDownloadResult(
                 WorkshopBackend.CLIENT, 123, accepted=True, state=WorkshopItemState(7)
             )
-            repaired = SteamWorkshopSession._finish_legacy_install(
-                repair, archive, expected_version="1.0", force=False
-            )
+            with patch.object(legacy_v1, "running_dst_processes", return_value=()):
+                repaired = SteamWorkshopSession._finish_legacy_install(
+                    repair, archive, expected_version="1.0", force=False
+                )
             assert repaired.completed and not repaired.up_to_date, repaired.error
             assert (pipeline_server_target / "modinfo.lua").is_file()
 
@@ -159,6 +161,50 @@ def main() -> None:
                 is repaired
             )
             assert repaired.error is None
+
+            # V1 目录部署失败必须保留原始原因，不能把 *_legacy.bin 当成
+            # V2 目录继续执行 modinfo.lua 强制修复。
+            class FailedLegacySession:
+                backend = WorkshopBackend.CLIENT
+
+                def _ensure_started(self):
+                    pass
+
+                def item_state(self, _workshop_id):
+                    return WorkshopItemState(7)
+
+                def item_install_details(self, _workshop_id):
+                    from dstools.features.mod.workshop_api import WorkshopInstallInfo
+
+                    return WorkshopInstallInfo(archive, archive.stat().st_size, 1)
+
+            def fail_deployment(result, *_args, **_kwargs):
+                result.error = "目标 V1 目录正在使用"
+                return result
+
+            with patch.object(
+                SteamWorkshopSession,
+                "_finish_legacy_install",
+                side_effect=fail_deployment,
+            ):
+                failed = SteamWorkshopSession.download_item(
+                    FailedLegacySession(), 123, expected_version="1.0"
+                )
+            assert failed.error == "目标 V1 目录正在使用"
+            assert "forced_modinfo_backup" not in failed.details
+
+            # 仅当现有下载包本身与目标版本不一致时，才允许重新向
+            # Steam 请求 Legacy 包。
+            stale_package = WorkshopDownloadResult(
+                WorkshopBackend.CLIENT, 123, accepted=True, state=WorkshopItemState(7)
+            )
+            with patch.object(legacy_v1, "running_dst_processes", return_value=()):
+                stale_package = SteamWorkshopSession._finish_legacy_install(
+                    stale_package, archive, expected_version="9.9", force=False
+                )
+            assert not stale_package.completed
+            assert stale_package.details["legacy_retry_download"] is True
+            assert "包内为 1.0" in stale_package.error
         finally:
             legacy_v1.discover_legacy_runtime_targets = original_targets
             mod_parser.find_mod_folder = original_find

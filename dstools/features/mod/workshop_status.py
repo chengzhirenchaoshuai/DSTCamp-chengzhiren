@@ -105,6 +105,16 @@ class WorkshopModStatus:
         )
 
     @property
+    def update_expected_version(self) -> str:
+        """返回更新完成后必须匹配的版本；V1 拉新包时由新包自行定版。"""
+        steam = self.evidence.steam_state if self.evidence is not None else None
+        if self.state != WorkshopModState.UPDATE_AVAILABLE:
+            return ""
+        if steam is not None and steam.legacy_item and steam.needs_update:
+            return ""
+        return self.remote_version
+
+    @property
     def can_cleanup_residual(self) -> bool:
         evidence = self.evidence
         steam = evidence.steam_state if evidence is not None else None
@@ -147,6 +157,15 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
     if active_version is None:
         active_version = LocalModVersion()
 
+    legacy_package_version = (
+        evidence.legacy_package_version.version
+        if steam is not None
+        and steam.legacy_item
+        and evidence.legacy_package_version is not None
+        and evidence.legacy_package_version.status == VERSION_CONFIRMED
+        else ""
+    )
+
     def result(state: WorkshopModState, *reasons: str) -> WorkshopModStatus:
         return WorkshopModStatus(
             workshop_id=evidence.workshop_id,
@@ -163,14 +182,9 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
                 else ""
             ),
             remote_version=str(
-                evidence.remote_version
-                or (
-                    evidence.legacy_package_version.version
-                    if evidence.legacy_package_version is not None
-                    and evidence.legacy_package_version.status == VERSION_CONFIRMED
-                    else ""
-                )
-                or evidence.cached_manifest_version
+                legacy_package_version
+                if steam is not None and steam.legacy_item
+                else evidence.remote_version or evidence.cached_manifest_version
                 or ""
             ).strip(),
             reasons=tuple(reason for reason in reasons if reason),
@@ -261,19 +275,6 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
                 WorkshopModState.UNKNOWN, "Legacy 下载包存在，但尚未完成内容校验"
             )
         package_version = evidence.legacy_package_version or LocalModVersion()
-        comparison_version = str(
-            evidence.remote_version or evidence.cached_manifest_version or ""
-        ).strip()
-        if (
-            comparison_version
-            and package_version.status == VERSION_CONFIRMED
-            and normalize_version_for_compare(comparison_version)
-            != package_version.compare_version
-        ):
-            return result(
-                WorkshopModState.UPDATE_AVAILABLE,
-                "Legacy 下载包版本与远程版本不同",
-            )
         if steam.needs_update:
             return result(
                 WorkshopModState.UPDATE_AVAILABLE, "Steam 标记此旧式 Mod 需要更新"

@@ -2148,6 +2148,37 @@ def test_workshop_status_evidence_priority():
         assert (
             evaluate_workshop_status(legacy_complete).state == WorkshopModState.CURRENT
         )
+        stale_remote_legacy = WorkshopModEvidence(
+            **{
+                **legacy_complete.__dict__,
+                "remote_version": "9.9",
+                "cached_manifest_version": "8.8",
+            }
+        )
+        stale_remote_status = evaluate_workshop_status(stale_remote_legacy)
+        assert stale_remote_status.state == WorkshopModState.CURRENT
+        assert stale_remote_status.remote_version == "1.0"
+        runtime_mismatch = WorkshopModEvidence(
+            **{
+                **legacy_complete.__dict__,
+                "source_version": LocalModVersion(
+                    version="1.2", status=VERSION_CONFIRMED
+                ),
+            }
+        )
+        runtime_mismatch_status = evaluate_workshop_status(runtime_mismatch)
+        assert runtime_mismatch_status.state == WorkshopModState.UPDATE_AVAILABLE
+        assert runtime_mismatch_status.update_expected_version == "1.0"
+        steam_update = WorkshopModEvidence(
+            **{
+                **legacy_complete.__dict__,
+                "steam_state": WorkshopItemState(15),
+            }
+        )
+        steam_update_status = evaluate_workshop_status(steam_update)
+        assert steam_update_status.state == WorkshopModState.UPDATE_AVAILABLE
+        assert steam_update_status.remote_version == "1.0"
+        assert steam_update_status.update_expected_version == ""
         legacy_server_missing = WorkshopModEvidence(
             **{
                 **legacy_complete.__dict__,

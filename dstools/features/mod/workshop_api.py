@@ -1142,11 +1142,20 @@ class SteamWorkshopSession:
                     )
                     if legacy_result.completed:
                         return legacy_result
-                    # 本地旧式包无法通过远程版本校验时，再从 Steam 拉取一次。
+                    # 只有包本身损坏或版本不匹配时，重新从 Steam 拉包才可能
+                    # 修复。目录占用、没有部署目标等错误必须原样返回，不能
+                    # 再误入只适用于 V2 目录的 modinfo.lua 强制修复。
+                    if not legacy_result.details.get("legacy_retry_download"):
+                        return legacy_result
                     legacy_result.details["legacy_local_repair_error"] = (
                         legacy_result.error
                     )
                     legacy_result.error = ""
+                    if expected_version:
+                        legacy_result.details["expected_version"] = str(
+                            expected_version
+                        ).strip()
+                    return self._download_legacy_item(legacy_result, install_info)
                 if expected_version:
                     if not SteamWorkshopSession._prepare_forced_version_repair(
                         result, validation.path, expected_version
@@ -1395,6 +1404,7 @@ class SteamWorkshopSession:
         archive = Path(archive_path) if archive_path is not None else None
         if archive is None:
             result.error = "Legacy Mod 下载包路径不存在"
+            result.details["legacy_retry_download"] = True
             return result
         expected = str(
             expected_version or result.details.get("expected_version") or ""
@@ -1402,6 +1412,7 @@ class SteamWorkshopSession:
         validation = validate_legacy_package(archive)
         if not validation.valid:
             result.error = validation.error
+            result.details["legacy_retry_download"] = True
             return result
         roots = discover_legacy_runtime_targets()
         targets = [Path(root) / f"workshop-{result.workshop_id}" for root in roots]
@@ -1441,6 +1452,7 @@ class SteamWorkshopSession:
                     "Legacy Mod 下载包版本不匹配："
                     f"包内为 {package_version.version or '未知'}，远程为 {expected}"
                 )
+                result.details["legacy_retry_download"] = True
                 return result
         if not force and all_targets_current:
             result.accepted = True

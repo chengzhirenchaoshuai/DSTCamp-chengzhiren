@@ -1650,11 +1650,10 @@ class ModManagerTab:
             ):
                 return
             expected_versions = {
-                int(wid): latest_states[wid].remote_version
+                int(wid): latest_states[wid].update_expected_version
                 for wid in update_ids
                 if wid in latest_states
-                and latest_states[wid].state == WorkshopModState.UPDATE_AVAILABLE
-                and latest_states[wid].remote_version
+                and latest_states[wid].update_expected_version
             }
             force_redownload_ids = {
                 int(wid)
@@ -1691,10 +1690,9 @@ class ModManagerTab:
                 )
                 return
             expected_versions = (
-                {int(wid): status.remote_version}
+                {int(wid): status.update_expected_version}
                 if status is not None
-                and status.state == WorkshopModState.UPDATE_AVAILABLE
-                and status.remote_version
+                and status.update_expected_version
                 else {}
             )
             force_redownload_ids = (
