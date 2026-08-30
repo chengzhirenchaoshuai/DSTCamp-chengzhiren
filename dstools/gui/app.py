@@ -1863,12 +1863,21 @@ class DSToolsApp:
     def _restore_default_cache_dir(self, parent: tk.Misc | None = None) -> bool:
         """恢复默认前同样校验；中文用户名下不能恢复到不可用路径。"""
         from dstools.shared.resource_paths import (
+            cache_root_dir,
             default_cache_root_dir,
             validate_cache_root,
         )
 
         parent = parent or self.root
         path = default_cache_root_dir()
+        if cache_root_dir() == path:
+            dlg.show_info(
+                parent,
+                t("settings.cache_dir_label"),
+                t("settings.cache_dir_already_default", path=str(path)),
+            )
+            return False
+
         reason = validate_cache_root(path)
         if reason is not None:
             key = {
@@ -1893,7 +1902,10 @@ class DSToolsApp:
 
     def _show_cache_dir_dialog(self) -> None:
         """集中展示缓存路径及更改、恢复默认、打开目录三个操作。"""
-        from dstools.shared.resource_paths import cache_root_dir
+        from dstools.shared.resource_paths import (
+            cache_root_dir,
+            default_cache_root_dir,
+        )
 
         win = tk.Toplevel(self.root)
         win.withdraw()
@@ -1935,7 +1947,13 @@ class DSToolsApp:
         actions.columnconfigure(0, weight=1)
 
         def refresh_path() -> None:
-            path_var.set(str(cache_root_dir()))
+            current_path = cache_root_dir()
+            path_var.set(str(current_path))
+            reset_button.state(
+                ["disabled"]
+                if current_path == default_cache_root_dir()
+                else ["!disabled"]
+            )
 
         def change_dir() -> None:
             if self._choose_cache_dir(win):
@@ -1956,11 +1974,14 @@ class DSToolsApp:
         ttk.Button(
             actions, text=t("settings.cache_dir_change"), command=change_dir
         ).grid(row=0, column=1)
-        ttk.Button(
+        reset_button = ttk.Button(
             actions,
             text=t("settings.cache_dir_reset"),
             command=restore_default,
-        ).grid(row=0, column=2, padx=(8, 0))
+        )
+        reset_button.grid(row=0, column=2, padx=(8, 0))
+        if cache_root_dir() == default_cache_root_dir():
+            reset_button.state(["disabled"])
         ttk.Button(
             actions, text=t("settings.cache_dir_open"), command=self._open_cache_dir
         ).grid(row=0, column=3, padx=(8, 0))

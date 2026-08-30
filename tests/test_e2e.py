@@ -1194,6 +1194,11 @@ def test_cache_path_user_guidance():
     dummy._show_cache_dir_error = Mock()
     with (
         patch.object(
+            resource_paths,
+            "cache_root_dir",
+            return_value=Path("D:/DSTCampData/cache"),
+        ),
+        patch.object(
             resource_paths, "default_cache_root_dir", return_value=invalid_path
         ),
         patch.object(resource_paths, "validate_cache_root", return_value="non_ascii"),
@@ -1203,6 +1208,24 @@ def test_cache_path_user_guidance():
     show_warning.assert_called_once()
     assert str(invalid_path) in show_warning.call_args.args[2]
     dummy._show_cache_dir_error.assert_not_called()
+
+    default_path = Path("C:/Users/Administrator/AppData/Roaming/DSTCamp/cache")
+    dummy._prompt_restart_after_cache_change = Mock()
+    with (
+        patch.object(resource_paths, "cache_root_dir", return_value=default_path),
+        patch.object(
+            resource_paths, "default_cache_root_dir", return_value=default_path
+        ),
+        patch.object(resource_paths, "validate_cache_root") as validate_cache,
+        patch.object(gui_app, "set_cache_dir_override") as save_cache_dir,
+        patch.object(gui_app.dlg, "show_info") as show_info,
+    ):
+        assert DSToolsApp._restore_default_cache_dir(dummy) is False
+    validate_cache.assert_not_called()
+    save_cache_dir.assert_not_called()
+    dummy._prompt_restart_after_cache_change.assert_not_called()
+    show_info.assert_called_once()
+    assert str(default_path) in show_info.call_args.args[2]
 
     valid_path = Path("D:/DSTCampData/cache")
     dummy._show_cache_dir_error = Mock()
