@@ -2580,6 +2580,7 @@ class LocalServiceTab:
                         t("local.steam_update_now_btn"),
                         self._on_steam_update_clicked,
                     ),
+                    primary_label=t("dlg.cancel_btn"),
                 )
                 return False
 

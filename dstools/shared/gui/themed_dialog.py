@@ -148,8 +148,10 @@ def show_info(parent, title, message, wraplength=420, min_width=460):
 
 
 def show_warning(parent, title, message, wraplength=420, min_width=460,
-                 auxiliary_button=None):
-    _show(parent, title, message, "warning", [(t("dlg.confirm_btn"), True, True)],
+                 auxiliary_button=None, primary_label=None):
+    _show(parent, title, message, "warning", [(
+            primary_label or t("dlg.confirm_btn"), True, True
+        )],
           wraplength=wraplength, min_width=min_width,
           auxiliary_button=auxiliary_button)
 
