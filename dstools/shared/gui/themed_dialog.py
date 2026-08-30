@@ -115,7 +115,8 @@ def _show(
     default_btn = None
     if auxiliary_button is not None:
         label, command = auxiliary_button
-        ttk.Button(btn_row, text=label, command=command).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text=label,
+                   command=lambda: (choose("auxiliary"), command())).pack(side=tk.LEFT)
     for label, value, is_default in buttons:
         b = ttk.Button(btn_row, text=label, command=lambda v=value: choose(v))
         if button_layout == "vertical":
@@ -146,9 +147,11 @@ def show_info(parent, title, message, wraplength=420, min_width=460):
           wraplength=wraplength, min_width=min_width)
 
 
-def show_warning(parent, title, message, wraplength=420, min_width=460):
+def show_warning(parent, title, message, wraplength=420, min_width=460,
+                 auxiliary_button=None):
     _show(parent, title, message, "warning", [(t("dlg.confirm_btn"), True, True)],
-          wraplength=wraplength, min_width=min_width)
+          wraplength=wraplength, min_width=min_width,
+          auxiliary_button=auxiliary_button)
 
 
 def show_error(parent, title, message, wraplength=420, min_width=460):

@@ -1206,7 +1206,7 @@ class LocalServiceTab:
         # 固定为适中的输入宽度，避免把世界列表右侧的默认运行日志区域
         # 挤掉；较长参数仍可通过输入框横向滚动查看。
         self._extra_args_entry = ttk.Entry(
-            extra_args_row, textvariable=self._extra_args_var, width=30
+            extra_args_row, textvariable=self._extra_args_var, width=41
         )
         self._extra_args_entry.pack(side=tk.LEFT, padx=(8, 0))
         self._extra_args_entry.bind("<FocusOut>", self._save_extra_args, add="+")
@@ -2576,6 +2576,10 @@ class LocalServiceTab:
                     self.app.root,
                     t("local.steam_update_title"),
                     t("local.server_update_required"),
+                    auxiliary_button=(
+                        t("local.steam_update_now_btn"),
+                        self._on_steam_update_clicked,
+                    ),
                 )
                 return False
 

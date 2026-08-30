@@ -31,6 +31,8 @@ from dstools.shared.app_settings import (
 )
 from dstools.shared.custom_background import get_custom_bg_path, render_background
 from dstools.shared.discovery import discover_environment
+from dstools.shared.steam_discovery import read_game_version_file
+from dstools.features.local_service import steam_client_updater
 from dstools.shared.tex_convert import launch_vcredist_installer
 from dstools.shared.update_check import check_latest_version, is_newer_version
 from dstools.shared.gui import theme, themed_dialog as dlg
@@ -70,7 +72,7 @@ class DSToolsApp:
         set_process_dpi_aware()
 
         self.root = tk.Tk()
-        self.root.title(t("app.title"))
+        self.root.title(f"{t('app.title')} v{__version__}")
         from dstools.shared.resource_paths import bundled_resource_dir
 
         _icon_dir = bundled_resource_dir() / "icons" / "app"
@@ -119,7 +121,8 @@ class DSToolsApp:
         self._root_bg = BgFrame(self.root, self)
         self._root_bg.place(relx=0, rely=0, relwidth=1, relheight=1)
         self._titlebar = custom_titlebar.CustomTitleBar(
-            self.root, self, icon_path=_icon_dir / "icon.png"
+            self.root, self, icon_path=_icon_dir / "icon.png",
+            title_getter=lambda: f"{t('app.title')} v{__version__}",
         )
         self._titlebar.pack(fill=tk.X, side=tk.TOP)
         self._build_menu()
@@ -365,6 +368,7 @@ class DSToolsApp:
         # 状态栏用 BgFrame + create_text（不用 ttk.Label——TLabel 样式背
         # 景固定浅色，在暗色自定义背景图下会像一条白色横杠）。
         self.status_var = tk.StringVar(value=t("app.ready"))
+        self._server_versions_text = ""
         # 之前直接引用 Tk 自己的系统默认字体("TkDefaultFont" 这个命名字体
         # 对象)，从来没跟随过 theme.FONT_FAMILY——建一份独立的 Font 对象，
         # 字号沿用系统默认大小（存一份基准值，_redraw_status_bar() 每次
@@ -418,11 +422,21 @@ class DSToolsApp:
                 font=self._status_font,
                 tags="status_text",
             )
+            if self._server_versions_text:
+                self._status_bar.create_text(
+                    w - 230 if (w := self._status_bar.winfo_width()) else 0,
+                    self._status_text_h / 2,
+                    text=self._server_versions_text,
+                    anchor=tk.E,
+                    fill=theme.TEXT_MUTED,
+                    font=self._status_font,
+                    tags="server_versions",
+                )
             if self._update_notice is not None:
                 version, _url = self._update_notice
                 w = self._status_bar.winfo_width()
                 self._status_bar.create_text(
-                    w - 8,
+                    w - 240,
                     self._status_text_h / 2,
                     text=t("app.update_available", version=version),
                     anchor=tk.E,
@@ -1005,7 +1019,7 @@ class DSToolsApp:
         # 见 gui/custom_titlebar.py）——保留这一行只是让底层窗口标题字符
         # 串（任务栏悬浮提示等系统层面还会用到）跟着语言同步，真正显示
         # 给用户看的是 self._titlebar._redraw()。
-        self.root.title(t("app.title"))
+        self.root.title(f"{t('app.title')} v{__version__}")
         self._titlebar._redraw()
         self._build_menu()
         self._refresh_tab_labels()
@@ -2013,6 +2027,13 @@ class DSToolsApp:
         clusters = self.get_clusters()
         sv = sum(1 for c in clusters if c.source == SaveSource.SERVER)
         lc = sum(1 for c in clusters if c.source == SaveSource.LOCAL)
+        snapshot = steam_client_updater.snapshot_app()
+        current = read_game_version_file(snapshot.install_dir) if snapshot.install_dir else None
+        latest = snapshot.target_build_id or snapshot.build_id
+        self._server_versions_text = (
+            f"专服 v{current or '?'} · 最新 v{latest or '?'}"
+            if snapshot.install_dir else "专服版本：未检测到"
+        )
         self.status_var.set(
             f"{t('status.klei')}: {klei}  |  {t('status.user')}: {user_id or '?'}  |  {t('status.clusters')}: {sv}  |  {t('status.local_saves')}: {lc}"
         )
