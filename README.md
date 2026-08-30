@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.2.0-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.3.0-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
@@ -34,8 +34,8 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.2.0.exe`：工具与资源全部内嵌，单文件运行。
-- `DSTCamp-1.2.0.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
+- `DSTCamp-1.3.0.exe`：工具与资源全部内嵌，单文件运行。
+- `DSTCamp-1.3.0.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
 
 源码运行：
 
@@ -94,6 +94,15 @@ python scripts/build_exe.py
 ```
 
 构建脚本使用固定工具白名单，不打包 `cache/`、`data/`、`security/`、`reference/` 或旧版 `dist/`；两个 EXE 都会在生成后执行冻结入口和资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+
+## 1.3.0 更新
+
+- 新增缓存目录设置与恢复引导：支持中文安装路径和自定义缓存位置，设置后可立即重启并连续引导选择有效目录。
+- 增强单文件版重启与 GUI 单实例机制，减少临时目录竞争，并在重复启动时激活已有窗口。
+- 完善专服更新预检、版本提示和更新引导；无界面预检与真实启动判断保持一致。
+- 优化 V1 Mod 包版本更新、重下和启动前部署限制，降低运行中的文件冲突。
+- 修复背景错位、缓存恢复、直连查询跨线程访问 Tk，以及中文路径下的 Mod 图标转换问题。
+- 改进自建 frpc 地址脱敏、额外启动参数布局、缓存操作按钮和相关中英文文案。
 
 ## 1.2.0 更新
 
