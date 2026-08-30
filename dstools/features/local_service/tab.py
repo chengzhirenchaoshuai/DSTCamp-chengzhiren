@@ -2571,9 +2571,10 @@ class LocalServiceTab:
         # 不兼容；必须在任何 Mod 准备和 Popen 之前阻止启动。
         if cluster.platform == Platform.STEAM:
             server_snapshot = steam_client_updater.snapshot_app()
-            if steam_client_updater.action_for_snapshot(server_snapshot) == "update":
-                if getattr(self.app, "root", None) is None:
-                    return False
+            if (
+                getattr(self.app, "root", None) is not None
+                and steam_client_updater.action_for_snapshot(server_snapshot) == "update"
+            ):
                 dlg.show_warning(
                     self.app.root,
                     t("local.steam_update_title"),
