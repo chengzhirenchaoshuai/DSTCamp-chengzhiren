@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import secrets
 import sys
 import shutil
 from pathlib import Path
@@ -69,10 +70,56 @@ def runtime_tool_path(relative: str | Path) -> Path:
     return target
 
 
+def default_cache_root_dir() -> Path:
+    """返回不含用户覆盖值的默认缓存目录。"""
+    return get_settings_dir() / "cache"
+
+
 def cache_root_dir() -> Path:
-    """返回缓存根目录，默认是 ``%APPDATA%/DSTCamp/cache``。"""
-    from dstools.shared.app_settings import get_cache_use_exe_dir
-    return exe_dir() / "cache" if get_cache_use_exe_dir() else get_settings_dir() / "cache"
+    """返回缓存根目录，并兼容旧版“缓存跟随 EXE”设置。"""
+    from dstools.shared.app_settings import (
+        get_cache_dir_override,
+        get_cache_use_exe_dir,
+    )
+
+    override = get_cache_dir_override()
+    if override is not None:
+        return override
+    return exe_dir() / "cache" if get_cache_use_exe_dir() else default_cache_root_dir()
+
+
+def path_is_ascii(path: str | Path) -> bool:
+    """路径传给旧版 ktech 前必须能完整编码成 ASCII。"""
+    try:
+        str(path).encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def validate_cache_root(path: str | Path) -> str | None:
+    """验证缓存目录是否适合存放并运行 ktools。
+
+    返回 ``None`` 表示通过，否则返回稳定错误码供 GUI 翻译。测试文件使用
+    Python 的宽字符文件 API 创建，不会把用户选择的路径交给 ktech。
+    """
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        return "not_absolute"
+    if not path_is_ascii(candidate):
+        return "non_ascii"
+    probe = candidate / f".dstcamp-write-test-{secrets.token_hex(6)}"
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        probe.write_bytes(b"dstcamp")
+        probe.unlink()
+    except OSError:
+        try:
+            probe.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return "not_writable"
+    return None
 
 
 def cache_dir(name: str) -> Path:

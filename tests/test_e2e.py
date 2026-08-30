@@ -59,6 +59,8 @@ from dstools.shared.app_settings import (
     set_minimize_on_close,
     get_cache_use_exe_dir,
     set_cache_use_exe_dir,
+    get_cache_dir_override,
+    set_cache_dir_override,
     get_backup_auto_enabled,
     set_backup_auto_enabled,
     set_backup_retention,
@@ -1118,13 +1120,32 @@ def test_app_settings_toggles():
         from unittest.mock import patch
 
         from dstools.shared.resource_paths import (
+            cache_root_dir,
             cache_dir,
             data_dir,
+            path_is_ascii,
             runtime_tool_path,
             security_dir,
+            validate_cache_root,
         )
 
         root = get_settings_dir()
+        custom_cache = root / "custom-cache"
+        assert get_cache_dir_override() is None
+        set_cache_use_exe_dir(True)
+        set_cache_dir_override(custom_cache)
+        assert get_cache_dir_override() == custom_cache
+        assert get_cache_use_exe_dir() is False
+        assert cache_root_dir() == custom_cache
+        assert validate_cache_root(custom_cache) is None
+        assert path_is_ascii(custom_cache) is True
+        assert validate_cache_root(root / "中文缓存") == "non_ascii"
+        assert validate_cache_root(Path("relative-cache")) == "not_absolute"
+        set_cache_dir_override(None)
+        assert get_cache_dir_override() is None
+        assert cache_root_dir() == root / "cache"
+        print("  PASS: 自定义缓存目录可持久化，且拒绝中文路径、相对路径")
+
         legacy_background = cache_dir("background")
         legacy_background.mkdir(parents=True)
         (legacy_background / "custom.png").write_bytes(b"image")
@@ -3179,6 +3200,65 @@ def test_ktech_runtime_detector():
     print("  PASS: VCOMP120.dll 缺失会被无弹窗地识别为缺 VC++ 2013 x86 运行库")
 
 
+def test_ktech_ascii_runtime_conversion():
+    """中文安装/输入路径下，ktech 仍须从纯 ASCII 缓存副本中运行。"""
+    print("\n" + "=" * 60)
+    print("Test 37b: Ktech ASCII Runtime Conversion")
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    from dstools.shared import tex_convert
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source_dir = root / "中文安装目录" / "tools" / "ktools"
+        source_dir.mkdir(parents=True)
+        (source_dir / "ktech.exe").write_bytes(b"fake-ktech")
+        (source_dir / "CORE_RL_test.dll").write_bytes(b"fake-dll")
+        cache_root = root / "ascii-cache"
+        tex_path = root / "中文输入" / "icon.tex"
+        tex_path.parent.mkdir()
+        tex_path.write_bytes(b"fake-tex")
+        out_path = root / "中文输出" / "icon.png"
+
+        calls = []
+
+        def fake_run(args, *, cwd, **_kwargs):
+            calls.append((args, cwd))
+            assert len(args) == 2
+            assert args[1] == "input.tex"
+            assert Path(args[0]).parent.is_relative_to(
+                cache_root / "runtime" / "ktools"
+            )
+            assert Path(cwd).is_relative_to(cache_root / "runtime" / "ktech_jobs")
+            assert (Path(cwd) / "input.tex").read_bytes() == b"fake-tex"
+            (Path(cwd) / "input.png").write_bytes(b"fake-png")
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+        tex_convert._ktools_runtime_attempted = False
+        tex_convert._ktools_runtime_dir = None
+        try:
+            with (
+                patch.object(tex_convert, "_TOOLS_DIR", source_dir),
+                patch.object(tex_convert, "_KTECH_EXE", source_dir / "ktech.exe"),
+                patch.object(tex_convert, "cache_root_dir", return_value=cache_root),
+                patch.object(tex_convert.subprocess, "run", side_effect=fake_run),
+            ):
+                assert tex_convert.tex_to_png(tex_path, out_path) is True
+        finally:
+            tex_convert._ktools_runtime_attempted = False
+            tex_convert._ktools_runtime_dir = None
+
+        assert len(calls) == 1
+        assert out_path.read_bytes() == b"fake-png"
+        runtime_dirs = list((cache_root / "runtime" / "ktools").iterdir())
+        assert len(runtime_dirs) == 1
+        assert len(runtime_dirs[0].name) == 64
+        assert (runtime_dirs[0] / "CORE_RL_test.dll").is_file()
+        assert (runtime_dirs[0] / ".bundle.sha256").is_file()
+    print("  PASS: 整套 ktools 按内容哈希复制到英文缓存，转换只使用固定英文文件名")
+
+
 def main():
     """运行全部测试。"""
     print("\n" + "█" * 60)
@@ -3235,6 +3315,7 @@ def main():
         test_font_style_switch,
         test_frp_selfhost_port_conflict_detection,
         test_ktech_runtime_detector,
+        test_ktech_ascii_runtime_conversion,
         test_world_ocean_frequency_labels,
     ]
 

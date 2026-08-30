@@ -1,11 +1,13 @@
 """用内置 ``ktech.exe`` 将 Klei TEX 转成 PNG。
 
-已确认 ktech 的输出路径不支持中文，且 Windows 8.3 短名可能被禁用。因此
-始终输出到纯 ASCII 临时目录，再用 Python 移动到最终缓存；不要直接把目标
-路径传给 ktech。
+已确认 ktech 所在目录、输入路径和输出路径都不能可靠处理中文，且 Windows
+8.3 短名可能被禁用。因此把整套 ktools 部署到纯 ASCII 缓存目录，并让
+ktech 只接触该目录中的固定英文文件名；源文件和最终输出由 Python 搬运。
 """
 
 import ctypes
+import hashlib
+import logging
 import os
 import shutil
 import subprocess
@@ -15,10 +17,20 @@ import threading
 import time
 from pathlib import Path
 
-from dstools.shared.resource_paths import tool_binary_dir
+from dstools.shared.resource_paths import (
+    cache_root_dir,
+    path_is_ascii,
+    tool_binary_dir,
+    validate_cache_root,
+)
 
 _TOOLS_DIR = tool_binary_dir() / "ktools"
 _KTECH_EXE = _TOOLS_DIR / "ktech.exe"
+_KTOOLS_MARKER = ".bundle.sha256"
+_KTOOLS_RUNTIME_LOCK = threading.Lock()
+_ktools_runtime_dir: Path | None = None
+_ktools_runtime_attempted = False
+_logger = logging.getLogger(__name__)
 
 # 微软官方原始文件（下载自 download.microsoft.com，装前核实过数字签名
 # 确实是 Microsoft Corporation 签发），随软件本体一起打包，用户点安装
@@ -69,6 +81,94 @@ def probe_ktech_runtime() -> bool:
         x86_runtime_dir = windows_dir / "System32"
     _runtime_missing = not _has_vc2013_x86_runtime(x86_runtime_dir)
     return _runtime_missing
+
+
+def ktech_cache_path_invalid() -> bool:
+    """缓存路径含非 ASCII 字符时，旧版 ImageMagick 无法可靠运行。"""
+    return not path_is_ascii(cache_root_dir())
+
+
+def _ktools_bundle_digest(source_dir: Path) -> str:
+    """把文件相对路径和内容一起纳入哈希，目录缺文件也会生成不同版本。"""
+    digest = hashlib.sha256()
+    for path in sorted(
+        (item for item in source_dir.rglob("*") if item.is_file()),
+        key=lambda item: item.relative_to(source_dir).as_posix().casefold(),
+    ):
+        relative = path.relative_to(source_dir).as_posix()
+        digest.update(relative.encode("utf-8"))
+        digest.update(b"\0")
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _runtime_bundle_ready(path: Path, digest: str) -> bool:
+    try:
+        return (
+            (path / "ktech.exe").is_file()
+            and (path / _KTOOLS_MARKER).read_text(encoding="ascii").strip() == digest
+        )
+    except OSError:
+        return False
+
+
+def _prepare_ktools_runtime() -> Path | None:
+    """把整套 ktools 部署到纯 ASCII 缓存路径并返回运行目录。
+
+    ktech 依赖同目录的旧版 ImageMagick DLL；只复制 exe 不完整。按内容哈希
+    建稳定目录既避免每次启动重复复制，也让升级后的工具包自然使用新目录。
+    """
+    global _ktools_runtime_attempted, _ktools_runtime_dir
+    with _KTOOLS_RUNTIME_LOCK:
+        if _ktools_runtime_attempted:
+            return _ktools_runtime_dir
+        _ktools_runtime_attempted = True
+        if not _TOOLS_DIR.is_dir() or not _KTECH_EXE.is_file():
+            return None
+
+        cache_root = cache_root_dir()
+        if validate_cache_root(cache_root) is not None:
+            return None
+        try:
+            bundle_digest = _ktools_bundle_digest(_TOOLS_DIR)
+        except OSError:
+            return None
+        runtime_parent = cache_root / "runtime" / "ktools"
+        target = runtime_parent / bundle_digest
+        if _runtime_bundle_ready(target, bundle_digest):
+            _ktools_runtime_dir = target
+            return target
+
+        staging: Path | None = None
+        try:
+            runtime_parent.mkdir(parents=True, exist_ok=True)
+            staging = Path(
+                tempfile.mkdtemp(
+                    prefix=f".{bundle_digest[:8]}-{os.getpid()}-",
+                    dir=runtime_parent,
+                )
+            )
+            shutil.copytree(_TOOLS_DIR, staging, dirs_exist_ok=True)
+            (staging / _KTOOLS_MARKER).write_text(bundle_digest, encoding="ascii")
+            if target.exists() and not _runtime_bundle_ready(target, bundle_digest):
+                shutil.rmtree(target)
+            try:
+                os.replace(staging, target)
+                staging = None
+            except OSError:
+                # 另一个进程可能刚刚完成了同一份原子部署。
+                if not _runtime_bundle_ready(target, bundle_digest):
+                    raise
+            _ktools_runtime_dir = target
+            return target
+        except OSError as exc:
+            _logger.warning("部署 ktools 运行副本失败：%s", exc)
+            return None
+        finally:
+            if staging is not None and staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
 
 
 # 真机踩过的坑：不显式声明 argtypes/restype 时 ctypes 默认按 32 位 int
@@ -206,25 +306,43 @@ def tex_to_png(tex_path: Path, out_path: Path) -> bool:
     成功返回 True；工具缺失或转换失败（源文件损坏/不存在等）返回 False，
     从不抛异常——调用方应把失败一律当作"没有图标可用"处理。
     """
-    if not _KTECH_EXE.exists() or not Path(tex_path).exists():
+    tex_path = Path(tex_path)
+    if not _KTECH_EXE.exists() or not tex_path.exists():
+        return False
+    runtime_dir = _prepare_ktools_runtime()
+    if runtime_dir is None:
         return False
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    # ktech.exe 只在这个临时目录（保证纯 ASCII）里落地，真正的目标路径
-    # 哪怕带中文也不会直接交给它，见本文件顶部说明。
-    with tempfile.TemporaryDirectory(prefix="dstools_ktech_") as tmp_dir:
-        staged_out = Path(tmp_dir) / out_path.name
+    jobs_root = cache_root_dir() / "runtime" / "ktech_jobs"
+    try:
+        jobs_root.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    # 输入和输出都由 Python 搬运，ktech 只看纯 ASCII 的固定文件名。该版
+    # ktech 传两个位置参数会把第二个继续当输入，因此只传 input.tex，让它
+    # 按原生规则在 cwd 生成 input.png。
+    with tempfile.TemporaryDirectory(prefix="job_", dir=jobs_root) as tmp_dir:
+        job_dir = Path(tmp_dir)
+        staged_input = job_dir / "input.tex"
+        staged_out = job_dir / "input.png"
         try:
+            shutil.copy2(tex_path, staged_input)
             result = subprocess.run(
-                [str(_KTECH_EXE), str(tex_path), str(staged_out)],
-                cwd=str(_TOOLS_DIR),
+                [str(runtime_dir / "ktech.exe"), staged_input.name],
+                cwd=str(job_dir),
                 capture_output=True,
                 timeout=30,
                 creationflags=_CREATIONFLAGS,
             )
-        except Exception:
+        except (OSError, subprocess.SubprocessError) as exc:
+            _logger.warning("ktech 转换启动失败：%s", exc)
             return False
         if result.returncode != 0 or not staged_out.exists():
+            detail = (result.stderr or result.stdout or b"").decode(
+                errors="replace"
+            ).strip()
+            _logger.warning("ktech 转换失败（exit=%s）：%s", result.returncode, detail)
             return False
         try:
             shutil.move(str(staged_out), str(out_path))

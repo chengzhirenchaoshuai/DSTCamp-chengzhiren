@@ -15,6 +15,7 @@ _DEFAULT_FONT_STYLE_CHOICE = "default"
 _KEY_PLAYER_NOTES = "player_notes"
 _KEY_MINIMIZE_ON_CLOSE = "minimize_on_close"
 _KEY_CACHE_USE_EXE_DIR = "cache_use_exe_dir"
+_KEY_CACHE_DIR = "cache_dir"
 _KEY_CUSTOM_BG_FILENAME = "custom_bg_filename"
 _KEY_CUSTOM_BG_OPACITY = "custom_bg_opacity"
 _DEFAULT_CUSTOM_BG_OPACITY = 0.35
@@ -227,6 +228,23 @@ def get_cache_use_exe_dir() -> bool:
 def set_cache_use_exe_dir(value: bool) -> None:
     data = load_settings()
     data[_KEY_CACHE_USE_EXE_DIR] = value
+    save_settings(data)
+
+
+def get_cache_dir_override() -> Path | None:
+    """返回用户明确选择的缓存目录；未设置时由资源路径模块决定默认值。"""
+    raw = load_settings().get(_KEY_CACHE_DIR)
+    return Path(raw) if isinstance(raw, str) and raw.strip() else None
+
+
+def set_cache_dir_override(path: Path | None) -> None:
+    """保存自定义缓存目录，并结束旧版“跟随 EXE”布尔设置的迁移期。"""
+    data = load_settings()
+    data.pop(_KEY_CACHE_USE_EXE_DIR, None)
+    if path is None:
+        data.pop(_KEY_CACHE_DIR, None)
+    else:
+        data[_KEY_CACHE_DIR] = str(Path(path))
     save_settings(data)
 
 

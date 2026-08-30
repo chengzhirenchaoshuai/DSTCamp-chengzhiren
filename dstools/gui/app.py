@@ -7,7 +7,7 @@ import tkinter as tk
 import weakref
 from pathlib import Path
 from types import SimpleNamespace
-from tkinter import font as tkfont, ttk
+from tkinter import filedialog, font as tkfont, ttk
 
 from PIL import Image, ImageGrab, ImageTk
 
@@ -18,8 +18,7 @@ from dstools.shared.app_settings import (
     set_font_style_choice,
     get_minimize_on_close,
     set_minimize_on_close,
-    get_cache_use_exe_dir,
-    set_cache_use_exe_dir,
+    set_cache_dir_override,
     get_custom_bg_opacity,
     get_window_position,
     set_window_position,
@@ -801,10 +800,8 @@ class DSToolsApp:
         )
         self.root.bind("<F5>", self._on_f5_key)
 
-        # "设置"菜单：语言是二级级联子菜单（两态互斥）；"关闭时最小化到
-        # 任务栏"/"缓存存放在程序所在目录"是布尔开关，用 add_checkbutton
-        # 打勾。这几个 Var 必须挂在 self 上——菜单对象平时不重建，勾选
-        # 状态全靠 Var 存活于菜单生命周期内。
+        # "设置"菜单：语言是二级级联子菜单（两态互斥）；关闭行为是布尔
+        # 开关。缓存目录改为显式命令，选择时现场校验并在重启后统一生效。
         sm = tk.Menu(self.root, tearoff=0)
         lang_menu = tk.Menu(sm, tearoff=0)
         self._settings_lang_var = tk.StringVar(value=get_lang())
@@ -828,12 +825,15 @@ class DSToolsApp:
             variable=self._settings_minimize_var,
             command=lambda: set_minimize_on_close(self._settings_minimize_var.get()),
         )
-        self._settings_cache_var = tk.BooleanVar(value=get_cache_use_exe_dir())
-        sm.add_checkbutton(
-            label=t("settings.cache_use_exe_dir_label"),
-            variable=self._settings_cache_var,
-            command=self._on_cache_setting_toggle,
+        cache_menu = tk.Menu(sm, tearoff=0)
+        cache_menu.add_command(
+            label=t("settings.cache_dir_change"), command=self._choose_cache_dir
         )
+        cache_menu.add_command(
+            label=t("settings.cache_dir_reset"),
+            command=self._restore_default_cache_dir,
+        )
+        sm.add_cascade(label=t("settings.cache_dir_label"), menu=cache_menu)
 
         # 语言/主题切换都会重新调一次这个方法，旧的触发条要先拆掉再重
         # 建，不然会在 root 里留一条重复的。
@@ -1699,13 +1699,59 @@ class DSToolsApp:
         win.grab_set()
         win.wait_window()
 
-    def _on_cache_setting_toggle(self) -> None:
-        """这一项是"重启后生效"（跟主题切换不一样——主题已经改成实时生
-        效了，见 _switch_theme()）：mod_icons.py/character_icons.py 的缓
-        存目录是模块级常量，import 时就算好了，这里改完设置本身立刻持久
-        化，但要提示用户重启才会用上新目录。"""
-        set_cache_use_exe_dir(self._settings_cache_var.get())
-        dlg.show_info(self.root, t("settings.title"), t("settings.restart_required"))
+    def _show_cache_dir_error(self, reason: str, path: Path) -> None:
+        key = {
+            "not_absolute": "settings.cache_dir_not_absolute",
+            "non_ascii": "settings.cache_dir_non_ascii",
+            "not_writable": "settings.cache_dir_not_writable",
+        }.get(reason, "settings.cache_dir_not_writable")
+        dlg.show_error(self.root, t("settings.cache_dir_label"), t(key, path=str(path)))
+
+    def _choose_cache_dir(self) -> None:
+        """选择可写的纯 ASCII 缓存目录；图标缓存与 ktools 共用该根目录。"""
+        from dstools.shared.resource_paths import cache_root_dir, validate_cache_root
+
+        current = cache_root_dir()
+        initial = current if current.is_dir() else current.parent
+        if not initial.is_dir():
+            initial = Path.home()
+        chosen = filedialog.askdirectory(
+            parent=self.root,
+            title=t("settings.cache_dir_picker_title"),
+            initialdir=str(initial),
+        )
+        if not chosen:
+            return
+        path = Path(chosen)
+        reason = validate_cache_root(path)
+        if reason is not None:
+            self._show_cache_dir_error(reason, path)
+            return
+        set_cache_dir_override(path)
+        dlg.show_info(
+            self.root,
+            t("settings.cache_dir_label"),
+            t("settings.cache_dir_changed", path=str(path)),
+        )
+
+    def _restore_default_cache_dir(self) -> None:
+        """恢复默认前同样校验；中文用户名下不能恢复到不可用路径。"""
+        from dstools.shared.resource_paths import (
+            default_cache_root_dir,
+            validate_cache_root,
+        )
+
+        path = default_cache_root_dir()
+        reason = validate_cache_root(path)
+        if reason is not None:
+            self._show_cache_dir_error(reason, path)
+            return
+        set_cache_dir_override(None)
+        dlg.show_info(
+            self.root,
+            t("settings.cache_dir_label"),
+            t("settings.cache_dir_default_restored", path=str(path)),
+        )
 
     def _show_custom_bg_dialog(self) -> None:
         """ "主题"菜单里的"背景图设置…"——背景图是跟主题解耦的全局功能，

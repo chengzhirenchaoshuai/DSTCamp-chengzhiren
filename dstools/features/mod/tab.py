@@ -456,6 +456,11 @@ class ModManagerTab:
             text=t("mod.ktech_runtime_missing_banner"),
             on_click=self._install_vcredist,
         )
+        self._md_cache_banner = ReadonlyBanner(
+            self.frame,
+            text=t("mod.ktech_cache_path_banner"),
+            on_click=self.app._choose_cache_dir,
+        )
 
         from dstools.shared.gui.image_scroll import ImageScrollPanel
         from dstools.features.mod.render import REF_WIDTH
@@ -600,6 +605,10 @@ class ModManagerTab:
             self._md_runtime_banner.show()
         else:
             self._md_runtime_banner.hide()
+        if tex_convert.ktech_cache_path_invalid():
+            self._md_cache_banner.show()
+        else:
+            self._md_cache_banner.hide()
         self._update_mod_location_display()
         if not c:
             self.shard_combo["values"] = []
@@ -3918,6 +3927,7 @@ class ModManagerTab:
         )
         self._md_wegame_banner.set_text(t("mod.wegame_root_needed_banner"))
         self._md_runtime_banner.set_text(t("mod.ktech_runtime_missing_banner"))
+        self._md_cache_banner.set_text(t("mod.ktech_cache_path_banner"))
         self._update_workshop_update_hint()
         self._mod_location_change_btn.configure(text=t("local.install_change_btn"))
         self._redraw_mod_location_row_text()
@@ -3932,6 +3942,7 @@ class ModManagerTab:
         self._md_local_banner.apply_theme()
         self._md_wegame_banner.apply_theme()
         self._md_runtime_banner.apply_theme()
+        self._md_cache_banner.apply_theme()
         self._redraw_mod_location_row_text()
         self._md_lbl2.redraw()
         self._md_filt.redraw()
