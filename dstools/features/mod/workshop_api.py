@@ -23,6 +23,7 @@ from __future__ import annotations
 import ctypes
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1073,6 +1074,7 @@ class SteamWorkshopSession:
         high_priority: bool = True,
         expected_version: str = "",
         source_details: WorkshopItemDetails | None = None,
+        force_redownload: bool = False,
     ) -> WorkshopDownloadResult:
         self._ensure_started()
         workshop_id = int(workshop_id)
@@ -1090,6 +1092,11 @@ class SteamWorkshopSession:
         ):
             result.error = "当前 Steam 账号未订阅此 Mod，已停止更新"
             return result
+        if force_redownload and not result.state.legacy_item:
+            if not SteamWorkshopSession._delete_install_for_redownload(
+                result, install_info.path if install_info is not None else None
+            ):
+                return result
         if (
             result.state.legacy_item
             and install_info is None
@@ -1115,7 +1122,8 @@ class SteamWorkshopSession:
         # 仍保留旧值。只有物理目录、modinfo 和可用 Manifest 都通过验收，
         # 才能跳过 DownloadItem；否则把本次请求标记为修复。
         if (
-            result.state.installed
+            not force_redownload
+            and result.state.installed
             and not result.state.needs_update
             and not result.state.downloading
             and not result.state.download_pending
@@ -1168,6 +1176,38 @@ class SteamWorkshopSession:
             result.error = "ISteamUGC::DownloadItem 返回 false（项目无效、用户未登录或服务器上下文未就绪）"
             SteamWorkshopSession._finish_forced_version_repair(result, success=False)
         return result
+
+    @staticmethod
+    def _delete_install_for_redownload(
+        result: WorkshopDownloadResult, install_path: Path | None
+    ) -> bool:
+        """删除精确匹配的 Workshop 安装目录，让 Steam 重新下载订阅内容。"""
+        path = Path(install_path) if install_path is not None else None
+        if (
+            path is None
+            or path.name != str(result.workshop_id)
+            or path.parent.name != str(DST_APP_ID)
+        ):
+            result.error = "Steam 返回的 Mod 安装目录不符合 Workshop 路径，已停止重新下载"
+            return False
+        try:
+            if getattr(os.path, "isjunction", lambda _path: False)(path):
+                os.rmdir(path)
+            elif path.is_symlink():
+                path.unlink()
+            elif path.exists():
+                shutil.rmtree(path)
+        except OSError as exc:
+            result.error = f"无法删除疑似过期的 Mod 目录：{exc}"
+            return False
+        result.details.update(
+            {
+                "repair": True,
+                "forced_redownload": True,
+                "deleted_install_path": str(path),
+            }
+        )
+        return True
 
     @staticmethod
     def _prepare_forced_version_repair(
@@ -1770,6 +1810,7 @@ def _update_workshop_items_in_process(
     dll_path: Path | None = None,
     timeout: float = 180.0,
     expected_versions: dict[int, str] | None = None,
+    force_redownload_ids: set[int] | None = None,
     on_progress: Callable[[int, int, int | None, int | None], None] | None = None,
     on_item_start: Callable[[int, int, int], None] | None = None,
     on_item_complete: Callable[[int, int, WorkshopDownloadResult], None] | None = None,
@@ -1803,6 +1844,9 @@ def _update_workshop_items_in_process(
         int(key): str(value).strip()
         for key, value in (expected_versions or {}).items()
         if int(key) > 0 and str(value).strip()
+    }
+    force_redownload_ids = {
+        int(item) for item in (force_redownload_ids or ()) if int(item) > 0
     }
     try:
         with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
@@ -1839,6 +1883,7 @@ def _update_workshop_items_in_process(
                             workshop_id,
                             expected_version=expected_versions.get(workshop_id, ""),
                             source_details=source_details.get(workshop_id),
+                            force_redownload=workshop_id in force_redownload_ids,
                         )
                         detail = source_details.get(workshop_id)
                         if (
@@ -1895,6 +1940,7 @@ def update_workshop_items(
     dll_path: Path | None = None,
     timeout: float = 180.0,
     expected_versions: dict[int, str] | None = None,
+    force_redownload_ids: set[int] | None = None,
     on_progress: Callable[[int, int, int | None, int | None], None] | None = None,
     on_item_start: Callable[[int, int, int], None] | None = None,
     on_item_complete: Callable[[int, int, WorkshopDownloadResult], None] | None = None,
@@ -1908,6 +1954,9 @@ def update_workshop_items(
         int(key): str(value).strip()
         for key, value in (expected_versions or {}).items()
         if int(key) in ids and str(value).strip()
+    }
+    force_redownload_ids = {
+        int(item) for item in (force_redownload_ids or ()) if int(item) in ids
     }
 
     def handle_event(event: dict[str, Any]) -> None:
@@ -1938,6 +1987,7 @@ def update_workshop_items(
                 "dll_path": str(dll_path) if dll_path else None,
                 "timeout": timeout,
                 "expected_versions": expected_versions,
+                "force_redownload_ids": sorted(force_redownload_ids),
             },
             handle_event,
             cancel_event=cancel_event,

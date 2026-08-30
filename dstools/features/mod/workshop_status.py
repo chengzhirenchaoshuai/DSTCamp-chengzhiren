@@ -36,6 +36,7 @@ class WorkshopModState(str, Enum):
     UNSUBSCRIBED_PENDING_CLEANUP = "unsubscribed_pending_cleanup"
     UNSUBSCRIBED_REFERENCED = "unsubscribed_referenced"
     UPDATE_AVAILABLE = "update_available"
+    SUSPECTED_OUTDATED = "suspected_outdated"
     CURRENT = "current"
     UNKNOWN = "unknown"
 
@@ -81,6 +82,7 @@ class WorkshopModStatus:
         return self.state in {
             WorkshopModState.MISSING,
             WorkshopModState.UPDATE_AVAILABLE,
+            WorkshopModState.SUSPECTED_OUTDATED,
         }
 
     @property
@@ -94,6 +96,7 @@ class WorkshopModStatus:
                 WorkshopModState.CURRENT,
                 WorkshopModState.MISSING,
                 WorkshopModState.UPDATE_AVAILABLE,
+                WorkshopModState.SUSPECTED_OUTDATED,
                 # 新订阅的 V1 Mod 可能只有有效 Legacy 包、尚未展开运行
                 # 目录；仍应显示“更新”，由更新流程决定下载还是直接复用
                 # 并部署现有包。
@@ -399,9 +402,24 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
         return result(WorkshopModState.UPDATE_AVAILABLE, "Steam 标记此项目需要更新")
     if steam is not None and steam.installed:
         if source_version.status == VERSION_CONFIRMED:
+            details = evidence.source_details
+            local_timestamp = int(install.timestamp) if install is not None else 0
+            remote_timestamp = int(details.time_updated) if details is not None else 0
+            if (
+                details is None
+                or details.result != 1
+                or local_timestamp <= 0
+                or remote_timestamp <= 0
+                or local_timestamp != remote_timestamp
+            ):
+                return result(
+                    WorkshopModState.SUSPECTED_OUTDATED,
+                    "Steam 未标记更新，但缺少可确认本地内容为最新版的远端证据",
+                    source_error,
+                )
             return result(
                 WorkshopModState.CURRENT,
-                "实际目录和 modinfo.lua 存在，Steam 未标记更新",
+                "Steam 未标记更新，且本地安装时间与远端更新时间一致",
                 integrity_note,
             )
         return result(

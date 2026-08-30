@@ -2027,9 +2027,17 @@ def test_workshop_status_evidence_priority():
             steam_state=WorkshopItemState(5),
             install_info=WorkshopInstallInfo(installed, 100, 1),
             source_version=version,
+            source_details=WorkshopItemDetails(1, 1, time_updated=1),
         )
         assert evaluate_workshop_status(current).state == WorkshopModState.CURRENT
         print("  PASS: 目录与 modinfo 存在、版本可信且 Steam 无更新时判定最新")
+
+        suspected = WorkshopModEvidence(
+            **{**current.__dict__, "source_details": None}
+        )
+        suspected_status = evaluate_workshop_status(suspected)
+        assert suspected_status.state == WorkshopModState.SUSPECTED_OUTDATED
+        assert suspected_status.needs_action and suspected_status.can_update
 
         steam_update = WorkshopModEvidence(
             **{**current.__dict__, "steam_state": WorkshopItemState(13)}
@@ -2065,7 +2073,10 @@ def test_workshop_status_evidence_priority():
             **{
                 **current.__dict__,
                 "source_details": WorkshopItemDetails(
-                    1, 1, tags=("all_clients_require_mod", "version:V1.2.3")
+                    1,
+                    1,
+                    time_updated=1,
+                    tags=("all_clients_require_mod", "version:V1.2.3"),
                 ),
                 "remote_version": "V1.2.3",
                 "remote_version_source": "steam_workshop_tag",
@@ -2467,6 +2478,18 @@ def test_workshop_download_precheck_uses_physical_files():
         SteamWorkshopSession._finish_forced_version_repair(forced, success=False)
         assert force_modinfo.read_text(encoding="utf-8") == 'version = "modified"'
         assert not backup.exists()
+
+        redownload_root = root / "322330"
+        redownload_path = redownload_root / "123"
+        redownload_path.mkdir(parents=True)
+        (redownload_path / "modinfo.lua").write_text('version = "old"', encoding="utf-8")
+        redownload_session = FakeSession(redownload_path)
+        redownload = SteamWorkshopSession.download_item(
+            redownload_session, 123, force_redownload=True
+        )
+        assert redownload.accepted and redownload.details["forced_redownload"] is True
+        assert not redownload_path.exists()
+        assert redownload_session.dll.download_calls
         print("  PASS: 文件完整才跳过下载，Installed+目录缺失会强制进入修复")
 
 

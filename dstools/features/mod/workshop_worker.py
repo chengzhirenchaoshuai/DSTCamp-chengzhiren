@@ -41,6 +41,9 @@ def run_request(request: dict, emit) -> dict:
                 int(key): str(value)
                 for key, value in (request.get("expected_versions") or {}).items()
             },
+            force_redownload_ids={
+                int(item) for item in (request.get("force_redownload_ids") or ())
+            },
             on_progress=lambda current, total, done, size: emit(
                 {
                     "type": "progress",

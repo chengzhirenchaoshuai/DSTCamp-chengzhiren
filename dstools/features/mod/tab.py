@@ -1220,6 +1220,7 @@ class ModManagerTab:
                 WorkshopModState.DOWNLOADING: 0,
                 WorkshopModState.DOWNLOAD_PENDING: 0,
                 WorkshopModState.UPDATE_AVAILABLE: 1,
+                WorkshopModState.SUSPECTED_OUTDATED: 1,
                 WorkshopModState.MISSING: 2,
                 # 仅提示信息，不属于需要处理的状态，按普通 Mod 顺序展示。
                 WorkshopModState.SOURCE_UNAVAILABLE: 10,
@@ -1261,6 +1262,7 @@ class ModManagerTab:
             labels = {
                 WorkshopModState.CURRENT: "mod.update_latest_up_to_date",
                 WorkshopModState.UPDATE_AVAILABLE: "mod.update_latest_available",
+                WorkshopModState.SUSPECTED_OUTDATED: "mod.update_latest_suspected_outdated",
                 WorkshopModState.MISSING: "mod.update_latest_missing",
                 WorkshopModState.SOURCE_UNAVAILABLE: "mod.update_latest_source_unavailable",
                 WorkshopModState.INTEGRITY_UNCONFIRMED: "mod.update_latest_integrity_unconfirmed",
@@ -1630,10 +1632,21 @@ class ModManagerTab:
 
         def _start_update(update_ids: list[str], confirm_message_key: str) -> None:
             ids = [int(wid) for wid in update_ids]
+            suspected_count = sum(
+                1
+                for wid in update_ids
+                if wid in latest_states
+                and latest_states[wid].state == WorkshopModState.SUSPECTED_OUTDATED
+            )
+            confirm_message = t(confirm_message_key, count=len(ids))
+            if suspected_count:
+                confirm_message += "\n\n" + t(
+                    "mod.update_suspected_redownload_notice", count=suspected_count
+                )
             if not dlg.ask_yes_no(
                 win,
                 t("mod.update_confirm_title"),
-                t(confirm_message_key, count=len(ids)),
+                confirm_message,
             ):
                 return
             expected_versions = {
@@ -1643,8 +1656,18 @@ class ModManagerTab:
                 and latest_states[wid].state == WorkshopModState.UPDATE_AVAILABLE
                 and latest_states[wid].remote_version
             }
+            force_redownload_ids = {
+                int(wid)
+                for wid in update_ids
+                if wid in latest_states
+                and latest_states[wid].state == WorkshopModState.SUSPECTED_OUTDATED
+            }
             win.destroy()
-            self._update_workshop_mods(ids, expected_versions=expected_versions)
+            self._update_workshop_mods(
+                ids,
+                expected_versions=expected_versions,
+                force_redownload_ids=force_redownload_ids,
+            )
 
         def update_selected():
             update_ids = [wid for wid in all_ids if wid in selected and _can_select(wid)]
@@ -1674,8 +1697,17 @@ class ModManagerTab:
                 and status.remote_version
                 else {}
             )
+            force_redownload_ids = (
+                {int(wid)}
+                if status.state == WorkshopModState.SUSPECTED_OUTDATED
+                else set()
+            )
             win.destroy()
-            self._update_workshop_mods([int(wid)], expected_versions=expected_versions)
+            self._update_workshop_mods(
+                [int(wid)],
+                expected_versions=expected_versions,
+                force_redownload_ids=force_redownload_ids,
+            )
 
         def remove_reference(wid: str):
             if not dlg.ask_yes_no(
@@ -2202,6 +2234,7 @@ class ModManagerTab:
         ids: list[int] | None = None,
         *,
         expected_versions: dict[int, str] | None = None,
+        force_redownload_ids: set[int] | None = None,
     ) -> None:
         """后台调用普通 SteamUGC 更新已发现的 Workshop Mod。"""
         if self._workshop_update_running:
@@ -2322,6 +2355,7 @@ class ModManagerTab:
                 batch = update_workshop_items(
                     ids,
                     expected_versions=expected_versions,
+                    force_redownload_ids=force_redownload_ids,
                     on_progress=progress,
                     on_item_start=item_start,
                     on_item_complete=item_complete,
