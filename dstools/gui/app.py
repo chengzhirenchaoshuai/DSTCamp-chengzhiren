@@ -515,6 +515,10 @@ class DSToolsApp:
             top_corner_size=2,
             bottom_corner_size=6,
         )
+        # 主窗口完成首次布局后再提示缓存路径异常，避免弹窗早于主窗口出现。
+        # 未修复前每次启动都提醒一次；用户选择“立即更改”后直接进入目录
+        # 选择器，减少再打开一层设置窗口的操作。
+        self.root.after(500, self._check_cache_dir_on_startup)
 
     def _on_tab_select(self, key: str) -> None:
         # 全局存档选择栏对全部页签都常驻显示。这里保留"若之前被临时隐藏
@@ -1706,6 +1710,27 @@ class DSToolsApp:
             t(key, path=str(path)),
         )
 
+    def _check_cache_dir_on_startup(self) -> None:
+        """中文用户名导致默认缓存路径不可用时，在启动后主动引导修复。"""
+        from dstools.shared.resource_paths import cache_root_dir, path_is_ascii
+
+        path = cache_root_dir()
+        if path_is_ascii(path):
+            return
+        choice = dlg.ask_choice(
+            self.root,
+            t("settings.cache_dir_label"),
+            t("settings.cache_dir_startup_warning", path=str(path)),
+            [
+                (t("settings.cache_dir_fix_now"), "fix"),
+                (t("settings.cache_dir_later"), "later"),
+            ],
+            default="fix",
+            min_width=520,
+        )
+        if choice == "fix":
+            self._choose_cache_dir()
+
     def _choose_cache_dir(self, parent: tk.Misc | None = None) -> bool:
         """选择可写的纯 ASCII 缓存目录；图标缓存与 ktools 共用该根目录。"""
         from dstools.shared.resource_paths import cache_root_dir, validate_cache_root
@@ -1746,7 +1771,18 @@ class DSToolsApp:
         path = default_cache_root_dir()
         reason = validate_cache_root(path)
         if reason is not None:
-            self._show_cache_dir_error(reason, path, parent)
+            key = {
+                "non_ascii": "settings.cache_dir_default_non_ascii",
+                "not_writable": "settings.cache_dir_default_not_writable",
+            }.get(reason)
+            if key is not None:
+                dlg.show_warning(
+                    parent,
+                    t("settings.cache_dir_label"),
+                    t(key, path=str(path)),
+                )
+            else:
+                self._show_cache_dir_error(reason, path, parent)
             return False
         set_cache_dir_override(None)
         dlg.show_info(

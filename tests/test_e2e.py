@@ -1167,6 +1167,45 @@ def test_app_settings_toggles():
         print("  PASS: 缓存、持久数据、安全材料和长驻工具使用独立目录")
 
 
+def test_cache_path_user_guidance():
+    """缓存路径异常应在启动时提醒，恢复无效默认值时使用专门提示。"""
+    print("\n" + "=" * 60)
+    print("Test 20b: Cache Path User Guidance")
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    from dstools.gui.app import DSToolsApp
+    from dstools.gui import app as gui_app
+    from dstools.shared import resource_paths
+
+    invalid_path = Path("C:/Users/中文用户/AppData/Roaming/DSTCamp/cache")
+    choose_cache = Mock()
+    dummy = SimpleNamespace(root=object(), _choose_cache_dir=choose_cache)
+    with (
+        patch.object(resource_paths, "cache_root_dir", return_value=invalid_path),
+        patch.object(resource_paths, "path_is_ascii", return_value=False),
+        patch.object(gui_app.dlg, "ask_choice", return_value="fix") as ask_choice,
+    ):
+        DSToolsApp._check_cache_dir_on_startup(dummy)
+    ask_choice.assert_called_once()
+    assert str(invalid_path) in ask_choice.call_args.args[2]
+    choose_cache.assert_called_once_with()
+
+    dummy._show_cache_dir_error = Mock()
+    with (
+        patch.object(
+            resource_paths, "default_cache_root_dir", return_value=invalid_path
+        ),
+        patch.object(resource_paths, "validate_cache_root", return_value="non_ascii"),
+        patch.object(gui_app.dlg, "show_warning") as show_warning,
+    ):
+        assert DSToolsApp._restore_default_cache_dir(dummy) is False
+    show_warning.assert_called_once()
+    assert str(invalid_path) in show_warning.call_args.args[2]
+    dummy._show_cache_dir_error.assert_not_called()
+    print("  PASS: 启动时主动引导更改，恢复无效默认目录时不再误称所选路径")
+
+
 def test_mod_sync_junction():
     """验证 Mod 目录联接的直接替换、解除复制和源目标保护。"""
     print("\n" + "=" * 60)
@@ -3286,6 +3325,7 @@ def main():
         test_cluster_copy,
         test_player_notes,
         test_app_settings_toggles,
+        test_cache_path_user_guidance,
         test_mod_sync_junction,
         test_theme_set_theme,
         test_world_reader_and_view_model,
