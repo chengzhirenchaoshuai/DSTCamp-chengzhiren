@@ -30,7 +30,7 @@ def _write_manifest(root: Path, *, buildid: str = "100", remaining: str = "0") -
         ' "installdir" "Don\'t Starve Together Dedicated Server"\n'
         f' "buildid" "{buildid}"\n'
         f' "BytesToDownload" "{remaining}"\n'
-        ' "LastUpdated" "123"\n}\n',
+        ' "lastupdated" "123"\n}\n',
         encoding="utf-8",
     )
     game = root / "steamapps" / "common" / "Don't Starve Together Dedicated Server"
@@ -59,6 +59,7 @@ def main() -> None:
         before = snapshot_app(libraries=[root])
         assert before.build_id == "100"
         assert before.bytes_to_download == 0
+        assert before.last_updated == "123"
         assert before.install_dir is not None
         assert action_for_snapshot(before) == "validate"
 
@@ -79,6 +80,48 @@ def main() -> None:
         total_style_done = snapshot_app(libraries=[root])
         assert total_style_done.download_complete
         assert classify_snapshot(after, total_style_done) == SteamUpdateState.UP_TO_DATE
+        assert action_for_snapshot(total_style_done) == "validate"
+
+        # 用户真实清单样式：下载和暂存字段保留总量，但两者均已完成，
+        # StateFlags=4 且目标 build 与当前 build 一致，不能误报待更新。
+        completed_manifest_text = (
+            '"AppState"\n{\n'
+            ' "appid" "343050"\n'
+            ' "StateFlags" "4"\n'
+            ' "installdir" "Don\'t Starve Together Dedicated Server"\n'
+            ' "lastupdated" "1786641009"\n'
+            ' "buildid" "24700372"\n'
+            ' "BytesToDownload" "63771680"\n'
+            ' "BytesDownloaded" "63771680"\n'
+            ' "BytesToStage" "145019662"\n'
+            ' "BytesStaged" "145019662"\n'
+            ' "TargetBuildID" "24700372"\n}\n'
+        )
+        manifest.write_text(completed_manifest_text, encoding="utf-8")
+        completed_total_style = snapshot_app(libraries=[root])
+        assert not completed_total_style.update_pending
+        assert completed_total_style.download_complete
+        assert completed_total_style.staging_complete
+        assert action_for_snapshot(completed_total_style) == "validate"
+
+        # 下载未完成、暂存未完成、目标 build 不一致均须独立阻止启动。
+        for old, new in (
+            ('"BytesDownloaded" "63771680"', '"BytesDownloaded" "1"'),
+            ('"BytesStaged" "145019662"', '"BytesStaged" "1"'),
+            ('"TargetBuildID" "24700372"', '"TargetBuildID" "24700373"'),
+        ):
+            manifest.write_text(completed_manifest_text.replace(old, new), encoding="utf-8")
+            pending = snapshot_app(libraries=[root])
+            assert pending.update_pending
+            assert action_for_snapshot(pending) == "update"
+
+        manifest.write_text(
+            completed_manifest_text.replace('"StateFlags" "4"', '"StateFlags" "6"'),
+            encoding="utf-8",
+        )
+        state_requires_update = snapshot_app(libraries=[root])
+        assert state_requires_update.update_pending
+        assert action_for_snapshot(state_requires_update) == "update"
 
         reads = iter([after, after, after])
         settled = monitor_update(

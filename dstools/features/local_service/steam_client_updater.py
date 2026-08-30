@@ -21,6 +21,8 @@ from dstools.shared.steam_discovery import find_all_steam_libraries
 
 DEDICATED_SERVER_APP_ID = "343050"
 _MANIFEST_RE = re.compile(r'^\s*"(?P<key>[^"\\]+)"\s+"(?P<value>[^"\\]*)"\s*$')
+_STATE_UPDATE_REQUIRED = 2
+_STATE_FULLY_INSTALLED = 4
 
 
 class SteamUpdateState:
@@ -47,11 +49,7 @@ def action_for_snapshot(snapshot: "SteamAppSnapshot") -> str:
     """
     if snapshot.install_dir is None:
         return "install"
-    if snapshot.bytes_to_download not in (None, 0) or (
-        snapshot.target_build_id
-        and snapshot.build_id
-        and snapshot.target_build_id != snapshot.build_id
-    ):
+    if snapshot.update_pending:
         return "update"
     return "validate"
 
@@ -67,6 +65,40 @@ class SteamAppSnapshot:
     bytes_to_download: int | None
     last_updated: str | None
     target_build_id: str | None = None
+    bytes_staged: int | None = None
+    bytes_to_stage: int | None = None
+
+    @property
+    def update_pending(self) -> bool:
+        """只在 manifest 提供明确待更新证据时返回 True。
+
+        Steam 的字节字段存在两种写法：有的版本记录剩余量，有的版本
+        保留本次更新总量。后者即使更新完成也不会归零，必须结合已下载
+        和已暂存字节数判断，不能单看 ``BytesToDownload``。
+        """
+        if self.state_flags is not None and self.state_flags & _STATE_UPDATE_REQUIRED:
+            return True
+        if (
+            self.target_build_id
+            and self.build_id
+            and self.target_build_id != self.build_id
+        ):
+            return True
+        fully_installed = bool(
+            self.state_flags is not None
+            and self.state_flags & _STATE_FULLY_INSTALLED
+        )
+        if self.bytes_to_download is not None and self.bytes_to_download > 0:
+            if self.bytes_downloaded is not None:
+                if self.bytes_downloaded < self.bytes_to_download:
+                    return True
+            elif not fully_installed:
+                return True
+        if self.bytes_to_stage is not None and self.bytes_to_stage > 0:
+            if self.bytes_staged is not None:
+                return self.bytes_staged < self.bytes_to_stage
+            return not fully_installed
+        return False
 
     @property
     def download_complete(self) -> bool:
@@ -87,7 +119,24 @@ class SteamAppSnapshot:
             return True
         # StateFlags 的 fully-installed 位是 Steam 客户端在下载/校验结束
         # 后写入的最后一道证据；部分版本不会及时刷新字节字段。
-        return bool(self.state_flags is not None and self.state_flags & 4)
+        return bool(
+            self.state_flags is not None
+            and self.state_flags & _STATE_FULLY_INSTALLED
+            and not self.state_flags & _STATE_UPDATE_REQUIRED
+        )
+
+    @property
+    def staging_complete(self) -> bool:
+        """返回暂存阶段是否完成；未提供暂存字段时不额外制造阻塞。"""
+        if self.bytes_to_stage in (None, 0):
+            return True
+        if self.bytes_staged is not None:
+            return self.bytes_staged >= self.bytes_to_stage
+        return bool(
+            self.state_flags is not None
+            and self.state_flags & _STATE_FULLY_INSTALLED
+            and not self.state_flags & _STATE_UPDATE_REQUIRED
+        )
 
     @property
     def install_ready(self) -> bool:
@@ -104,13 +153,13 @@ class SteamAppSnapshot:
 
 
 def _parse_scalar_manifest(path: Path) -> dict[str, str]:
-    """读取 appmanifest 顶层标量字段，忽略嵌套块和损坏行。"""
+    """读取 appmanifest 标量字段，字段名按不区分大小写处理。"""
     values: dict[str, str] = {}
     try:
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
             match = _MANIFEST_RE.match(line)
             if match:
-                values.setdefault(match.group("key"), match.group("value"))
+                values.setdefault(match.group("key").casefold(), match.group("value"))
     except OSError:
         return {}
     return values
@@ -175,12 +224,14 @@ def snapshot_app(
         app_id=app_id,
         manifest_path=path,
         install_dir=resolved_install if resolved_install and resolved_install.exists() else None,
-        state_flags=_to_int(values.get("StateFlags")),
+        state_flags=_to_int(values.get("stateflags")),
         build_id=values.get("buildid"),
-        bytes_downloaded=_to_int(values.get("BytesDownloaded")),
-        bytes_to_download=_to_int(values.get("BytesToDownload")),
-        last_updated=values.get("LastUpdated"),
-        target_build_id=values.get("TargetBuildID"),
+        bytes_downloaded=_to_int(values.get("bytesdownloaded")),
+        bytes_to_download=_to_int(values.get("bytestodownload")),
+        last_updated=values.get("lastupdated"),
+        target_build_id=values.get("targetbuildid"),
+        bytes_staged=_to_int(values.get("bytesstaged")),
+        bytes_to_stage=_to_int(values.get("bytestostage")),
     )
 
 
@@ -254,20 +305,16 @@ def classify_snapshot(before: SteamAppSnapshot, after: SteamAppSnapshot) -> str:
             if after.install_ready
             else SteamUpdateState.APP_NOT_INSTALLED
         )
-    if not after.download_complete:
+    if after.update_pending:
         return SteamUpdateState.DOWNLOADING
+    if not after.download_complete or not after.staging_complete:
+        return SteamUpdateState.VERIFYING
     if not after.install_ready:
         return SteamUpdateState.VERIFYING
     if before.manifest_path is None:
         return SteamUpdateState.UPDATED
     if before.build_id and after.build_id and before.build_id != after.build_id:
         return SteamUpdateState.UPDATED
-    if (
-        after.target_build_id
-        and after.build_id
-        and after.target_build_id != after.build_id
-    ):
-        return SteamUpdateState.DOWNLOADING
     if before.last_updated and after.last_updated and before.last_updated != after.last_updated:
         return SteamUpdateState.UPDATED
     return SteamUpdateState.UP_TO_DATE
