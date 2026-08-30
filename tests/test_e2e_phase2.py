@@ -109,6 +109,25 @@ def test_gui_imports():
     assert DSToolsApp and ModManagerTab and ClusterConfigTab
     print("  PASS: GUI imports OK")
 
+
+def test_single_instance_contract():
+    from dstools.shared.single_instance import SingleInstance, acquire_gui_instance
+
+    assert SingleInstance and callable(acquire_gui_instance)
+    # Worker 参数在 run_gui.py 的 GUI 分支之前处理，单实例模块本身只负责
+    # 普通 GUI 进程；这里验证入口仍保留这些独立分流参数。
+    run_gui_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "scripts",
+        "run_gui.py",
+    )
+    with open(run_gui_path, encoding="utf-8") as stream:
+        source = stream.read()
+    assert "--lua-sandbox-worker" in source
+    assert "--dstcamp-workshop-worker" in source
+    assert "acquire_gui_instance" in source
+    print("  PASS: GUI 单实例入口与 Worker 分流契约正常")
+
     # custom_titlebar.py 只在 DSToolsApp.__init__ 里延迟 import（避免非
     # Windows 平台在模块加载时就碰 ctypes.windll），这里单独补一次模块级
     # 可导入性检查——否则这个文件里的语法错误/ctypes 符号错误只有真正启
@@ -261,6 +280,7 @@ def main():
         test_i18n_basic,
         test_exe_entry_imports,
         test_gui_imports,
+        test_single_instance_contract,
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
     ]

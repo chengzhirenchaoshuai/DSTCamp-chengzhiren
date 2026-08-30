@@ -40,6 +40,17 @@ if __name__ == "__main__":
 
         raise SystemExit(workshop_worker_main(sys.argv[2:]))
 
+    # 只有普通 GUI 入口启用单实例；上面的 Worker 分支必须允许 onefile EXE
+    # 自己启动短生命周期子进程，不应被 GUI 的 Mutex 拦截。
+    from dstools.shared.single_instance import acquire_gui_instance
+
+    gui_instance = acquire_gui_instance()
+    if gui_instance is None:
+        raise SystemExit(0)
+
     from dstools.gui.app import main
 
-    main()
+    try:
+        main()
+    finally:
+        gui_instance.close()
