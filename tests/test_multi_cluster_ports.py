@@ -489,6 +489,42 @@ def test_local_refresh_redetects_server_tool() -> None:
     assert calls == ["detect_install", ("cluster", cluster), "detect_wegame"]
 
 
+def test_connect_results_return_through_main_thread_poll() -> None:
+    """网络线程只能写结果队列，Tk 更新由主线程轮询完成。"""
+    import inspect
+    import queue
+
+    from dstools.features.local_service import tab as local_tab
+
+    public_source = inspect.getsource(
+        local_tab.LocalServiceTab._fetch_public_connect_async
+    )
+    nat_source = inspect.getsource(local_tab.LocalServiceTab._fetch_nat_connect_async)
+    assert ".after(" not in public_source
+    assert ".after(" not in nat_source
+
+    service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+    service._connect_result_queue = queue.SimpleQueue()
+    service._connect_fetch_generation = 2
+    applied = []
+    service._apply_public_result = lambda codes, key, available: applied.append(
+        ("public", codes, key, available)
+    )
+    service._apply_nat_result = lambda codes, key: applied.append(
+        ("nat", codes, key)
+    )
+    service._connect_result_queue.put(("public", 1, "old", "old-key", True))
+    service._connect_result_queue.put(("public", 2, "public", "key", True))
+    service._connect_result_queue.put(("nat", 2, "nat", "key", None))
+
+    service._drain_connect_results()
+
+    assert applied == [
+        ("public", "public", "key", True),
+        ("nat", "nat", "key"),
+    ]
+
+
 def main() -> None:
     tests = [
         test_effective_defaults_and_internal_ports,
@@ -506,6 +542,7 @@ def main() -> None:
         test_restart_stop_barrier_waits_for_every_shard,
         test_connect_code_display_masks_secrets,
         test_local_refresh_redetects_server_tool,
+        test_connect_results_return_through_main_thread_poll,
     ]
     for test in tests:
         test()

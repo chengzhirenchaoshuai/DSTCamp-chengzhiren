@@ -1046,6 +1046,12 @@ class LocalServiceTab:
         self._install_dir: Path | None = None
         self._steam_update_dialog = None
         self._steam_update_mode = "install"
+        # 公网/NAT 查询在线程里执行，但后台线程不能直接调用 Tk 的 after()：
+        # 应用构造阶段 mainloop 尚未启动、退出阶段 mainloop 已经停止，这两种
+        # 时机都会偶发触发 "main thread is not in main loop"。线程只写队列，
+        # 由主线程现有的 _poll() 统一取回结果并更新界面。
+        self._connect_result_queue: "queue.SimpleQueue[tuple]" = queue.SimpleQueue()
+        self._connect_fetch_generation = 0
         # cluster.path 字符串 -> 上一次给它做"运行时定期自动备份"的
         # time.monotonic() 时间戳，见 _maybe_periodic_backup()。
         self._last_auto_backup_ts: dict[str, float] = {}
@@ -1544,6 +1550,10 @@ class LocalServiceTab:
 
     def _refresh_connect_labels(self):
         """刷新三行直连代码；网络查询全部放后台线程，避免卡住界面。"""
+        cluster = self._get_cluster()
+        cluster_key = str(cluster.path) if cluster else None
+        self._connect_fetch_generation += 1
+        generation = self._connect_fetch_generation
         self._lan_status_key = None  # 重置缓存强制整行重画（含语言切换场景）
         self._public_status_key = None
         self._nat_status_key = None
@@ -1560,12 +1570,18 @@ class LocalServiceTab:
         self._nat_code = None
         self._nat_set_text(t("local.connect_loading"))
         self._nat_set_status("")
-        threading.Thread(target=self._fetch_public_connect_async, daemon=True).start()
-        threading.Thread(target=self._fetch_nat_connect_async, daemon=True).start()
+        threading.Thread(
+            target=self._fetch_public_connect_async,
+            args=(cluster, cluster_key, generation),
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._fetch_nat_connect_async,
+            args=(cluster, cluster_key, generation),
+            daemon=True,
+        ).start()
 
-    def _fetch_public_connect_async(self):
-        cluster = self._get_cluster()
-        cluster_key = str(cluster.path) if cluster else None
+    def _fetch_public_connect_async(self, cluster, cluster_key, generation):
         public_ip = self._fetch_public_ipv4()
         codes = None
         if cluster and public_ip:
@@ -1578,16 +1594,9 @@ class LocalServiceTab:
                     codes = self._build_connect_strings(
                         public_ip, port, cluster, mask_ipv4=True
                     )
-        try:
-            self.frame.after(
-                0,
-                lambda: self._apply_public_result(
-                    codes, cluster_key, public_ip is not None
-                ),
-            )
-        except tk.TclError:
-            # 软件关闭后网络线程可能才返回，窗口已销毁时直接丢弃结果。
-            pass
+        self._connect_result_queue.put(
+            ("public", generation, codes, cluster_key, public_ip is not None)
+        )
 
     def _apply_public_result(self, codes, cluster_key, ip_available):
         cluster = self._get_cluster()
@@ -1660,19 +1669,33 @@ class LocalServiceTab:
                 t("local.public_ip_unavailable_reason"),
             )
 
-    def _fetch_nat_connect_async(self):
+    def _fetch_nat_connect_async(self, cluster, cluster_key, generation):
         """后台线程查内网穿透映射，拿到后回主线程更新标签。"""
-        cluster = self._get_cluster()
-        cluster_key = str(cluster.path) if cluster else None
         host, port = self._nat_connect_info(cluster)
         codes = None
         if cluster and host and port:
             codes = self._build_connect_strings(
                 host, port, cluster, mask_ipv4=True
             )
-        self.frame.after(
-            0, lambda: self._apply_nat_result(codes, cluster_key)
+        self._connect_result_queue.put(
+            ("nat", generation, codes, cluster_key, None)
         )
+
+    def _drain_connect_results(self):
+        """在 Tk 主线程消费网络查询结果，并丢弃刷新前的过期结果。"""
+        while True:
+            try:
+                kind, generation, codes, cluster_key, extra = (
+                    self._connect_result_queue.get_nowait()
+                )
+            except queue.Empty:
+                return
+            if generation != self._connect_fetch_generation:
+                continue
+            if kind == "public":
+                self._apply_public_result(codes, cluster_key, extra)
+            else:
+                self._apply_nat_result(codes, cluster_key)
 
     def _apply_nat_result(self, codes, cluster_key):
         # 内网穿透要真正能连，三个条件缺一不可：映射建立、世界在跑、frpc
@@ -3172,6 +3195,7 @@ class LocalServiceTab:
     # ── 轮询 ────────────────────────────────────────────────────────
 
     def _poll(self):
+        self._drain_connect_results()
         for pane in self._console_panes.values():
             pane.pump()
         for row in self._shard_rows.values():
