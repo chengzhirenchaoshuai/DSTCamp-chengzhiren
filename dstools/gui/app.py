@@ -773,7 +773,6 @@ class DSToolsApp:
         self._install_vcredist_menu_idx = fm.index("end")
         fm.bind("<<MenuSelect>>", lambda e: self._on_file_menu_select(fm))
         fm.bind("<Unmap>", lambda e: self._hide_menu_hint())
-        fm.add_command(label=t("app.open_cache_dir"), command=self._open_cache_dir)
         # 主题用 add_radiobutton 互斥选择，variable 必须显式挂在 self 上
         # ——不然每次语言/主题切换重建菜单（_build_menu 整体重跑）选中
         # 态会丢，用 get_theme_name() 初始化保证重建后仍对得上号。
@@ -825,15 +824,9 @@ class DSToolsApp:
             variable=self._settings_minimize_var,
             command=lambda: set_minimize_on_close(self._settings_minimize_var.get()),
         )
-        cache_menu = tk.Menu(sm, tearoff=0)
-        cache_menu.add_command(
-            label=t("settings.cache_dir_change"), command=self._choose_cache_dir
+        sm.add_command(
+            label=t("settings.cache_dir_label"), command=self._show_cache_dir_dialog
         )
-        cache_menu.add_command(
-            label=t("settings.cache_dir_reset"),
-            command=self._restore_default_cache_dir,
-        )
-        sm.add_cascade(label=t("settings.cache_dir_label"), menu=cache_menu)
 
         # 语言/主题切换都会重新调一次这个方法，旧的触发条要先拆掉再重
         # 建，不然会在 root 里留一条重复的。
@@ -1699,59 +1692,148 @@ class DSToolsApp:
         win.grab_set()
         win.wait_window()
 
-    def _show_cache_dir_error(self, reason: str, path: Path) -> None:
+    def _show_cache_dir_error(
+        self, reason: str, path: Path, parent: tk.Misc | None = None
+    ) -> None:
         key = {
             "not_absolute": "settings.cache_dir_not_absolute",
             "non_ascii": "settings.cache_dir_non_ascii",
             "not_writable": "settings.cache_dir_not_writable",
         }.get(reason, "settings.cache_dir_not_writable")
-        dlg.show_error(self.root, t("settings.cache_dir_label"), t(key, path=str(path)))
+        dlg.show_error(
+            parent or self.root,
+            t("settings.cache_dir_label"),
+            t(key, path=str(path)),
+        )
 
-    def _choose_cache_dir(self) -> None:
+    def _choose_cache_dir(self, parent: tk.Misc | None = None) -> bool:
         """选择可写的纯 ASCII 缓存目录；图标缓存与 ktools 共用该根目录。"""
         from dstools.shared.resource_paths import cache_root_dir, validate_cache_root
 
+        parent = parent or self.root
         current = cache_root_dir()
         initial = current if current.is_dir() else current.parent
         if not initial.is_dir():
             initial = Path.home()
         chosen = filedialog.askdirectory(
-            parent=self.root,
+            parent=parent,
             title=t("settings.cache_dir_picker_title"),
             initialdir=str(initial),
         )
         if not chosen:
-            return
+            return False
         path = Path(chosen)
         reason = validate_cache_root(path)
         if reason is not None:
-            self._show_cache_dir_error(reason, path)
-            return
+            self._show_cache_dir_error(reason, path, parent)
+            return False
         set_cache_dir_override(path)
         dlg.show_info(
-            self.root,
+            parent,
             t("settings.cache_dir_label"),
             t("settings.cache_dir_changed", path=str(path)),
         )
+        return True
 
-    def _restore_default_cache_dir(self) -> None:
+    def _restore_default_cache_dir(self, parent: tk.Misc | None = None) -> bool:
         """恢复默认前同样校验；中文用户名下不能恢复到不可用路径。"""
         from dstools.shared.resource_paths import (
             default_cache_root_dir,
             validate_cache_root,
         )
 
+        parent = parent or self.root
         path = default_cache_root_dir()
         reason = validate_cache_root(path)
         if reason is not None:
-            self._show_cache_dir_error(reason, path)
-            return
+            self._show_cache_dir_error(reason, path, parent)
+            return False
         set_cache_dir_override(None)
         dlg.show_info(
-            self.root,
+            parent,
             t("settings.cache_dir_label"),
             t("settings.cache_dir_default_restored", path=str(path)),
         )
+        return True
+
+    def _show_cache_dir_dialog(self) -> None:
+        """集中展示缓存路径及更改、恢复默认、打开目录三个操作。"""
+        from dstools.shared.resource_paths import cache_root_dir
+
+        win = tk.Toplevel(self.root)
+        win.withdraw()
+        win.title(t("settings.cache_dir_label"))
+        win.resizable(False, False)
+        win.configure(background=theme.CARD_BORDER)
+
+        card = tk.Frame(win, background=theme.CARD_BG)
+        card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        tk.Label(
+            card,
+            text=t("settings.cache_dir_current"),
+            font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
+            fg=theme.TEXT,
+            bg=theme.CARD_BG,
+            anchor=tk.W,
+        ).pack(fill=tk.X, padx=24, pady=(24, 8))
+
+        path_var = tk.StringVar(value=str(cache_root_dir()))
+        path_entry = ttk.Entry(
+            card,
+            textvariable=path_var,
+            state="readonly",
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        )
+        path_entry.pack(fill=tk.X, padx=24)
+        tk.Label(
+            card,
+            text=t("settings.cache_dir_restart_hint"),
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            fg=theme.TEXT_MUTED,
+            bg=theme.CARD_BG,
+            justify=tk.LEFT,
+            anchor=tk.W,
+        ).pack(fill=tk.X, padx=24, pady=(8, 18))
+
+        actions = tk.Frame(card, background=theme.CARD_BG)
+        actions.pack(fill=tk.X, padx=24)
+
+        def refresh_path() -> None:
+            path_var.set(str(cache_root_dir()))
+
+        def change_dir() -> None:
+            if self._choose_cache_dir(win):
+                refresh_path()
+
+        def restore_default() -> None:
+            if self._restore_default_cache_dir(win):
+                refresh_path()
+
+        ttk.Button(
+            actions, text=t("settings.cache_dir_change"), command=change_dir
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            actions,
+            text=t("settings.cache_dir_reset"),
+            command=restore_default,
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(
+            actions, text=t("settings.cache_dir_open"), command=self._open_cache_dir
+        ).pack(side=tk.LEFT, padx=(8, 0))
+
+        close_row = tk.Frame(card, background=theme.CARD_BG)
+        close_row.pack(fill=tk.X, padx=24, pady=(18, 24))
+        ttk.Button(
+            close_row, text=t("dlg.close_btn"), command=win.destroy
+        ).pack(side=tk.RIGHT)
+
+        win.protocol("WM_DELETE_WINDOW", win.destroy)
+        win.bind("<Escape>", lambda _event: win.destroy())
+        center_over_parent(win, self.root, min_width=620)
+        win.transient(self.root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
 
     def _show_custom_bg_dialog(self) -> None:
         """ "主题"菜单里的"背景图设置…"——背景图是跟主题解耦的全局功能，
@@ -1878,8 +1960,7 @@ class DSToolsApp:
         (refresh or tab.refresh)()
 
     def _open_cache_dir(self) -> None:
-        """ "文件"菜单"打开缓存目录"——跟 save_browser_tab.py"一键打开存
-        档文件夹"同一个模式（os.startfile()）。缓存目录不保证已经存在
+        """打开当前缓存目录。缓存目录不保证已经存在
         （全新安装、还没触发过任何一次 mod 图标/角色头像/mod 完整解析，
         目录可能还没创建过），先建好再打开，不让用户对着一个"找不到该
         文件"的系统错误弹窗摸不着头脑。"""

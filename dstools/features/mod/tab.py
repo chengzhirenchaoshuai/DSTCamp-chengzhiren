@@ -459,7 +459,7 @@ class ModManagerTab:
         self._md_cache_banner = ReadonlyBanner(
             self.frame,
             text=t("mod.ktech_cache_path_banner"),
-            on_click=self.app._choose_cache_dir,
+            on_click=self.app._show_cache_dir_dialog,
         )
 
         from dstools.shared.gui.image_scroll import ImageScrollPanel
