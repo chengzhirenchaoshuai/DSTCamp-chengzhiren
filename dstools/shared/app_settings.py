@@ -37,6 +37,7 @@ _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
 _KEY_GLOBAL_TOKENS = "global_tokens"
 _KEY_MOD_PRESETS = "mod_presets"
+_KEY_DEDICATED_SERVER_EXTRA_ARGS = "dedicated_server_extra_args"
 
 
 def get_settings_dir() -> Path:
@@ -78,6 +79,22 @@ def set_dedicated_server_path(path: Path) -> None:
     """记住用户手动确认过的专用服务器安装目录。"""
     data = load_settings()
     data[_KEY_DEDICATED_SERVER_PATH] = str(path)
+    save_settings(data)
+
+
+def get_dedicated_server_extra_args() -> str:
+    """返回专用服务器启动时追加的命令行参数。"""
+    return str(load_settings().get(_KEY_DEDICATED_SERVER_EXTRA_ARGS, ""))
+
+
+def set_dedicated_server_extra_args(value: str) -> None:
+    """保存专用服务器启动时追加的命令行参数。"""
+    data = load_settings()
+    value = value.strip()
+    if value:
+        data[_KEY_DEDICATED_SERVER_EXTRA_ARGS] = value
+    else:
+        data.pop(_KEY_DEDICATED_SERVER_EXTRA_ARGS, None)
     save_settings(data)
 
 

@@ -7,6 +7,7 @@ GUI 层自己用 Text 控件展示输出（见 features/local_service/tab.py）�
 
 import csv
 import os
+import shlex
 import queue
 import re
 import subprocess
@@ -134,7 +135,8 @@ def resolve_conf_dir_arg(klei_root: Path) -> str | None:
 
 
 def build_launch_args(cluster_name: str, shard_name: str, conf_dir_arg: str | None,
-                       ugc_directory: str | None = None) -> list[str]:
+                       ugc_directory: str | None = None,
+                       extra_args: str = "") -> list[str]:
     """ugc_directory：真机验证过，传这台机器 Steam 的 steamapps/workshop
     目录能让服务器直接读那份内容，不再各自建一份 ugc_mods（见
     modinfo_reader.find_shared_ugc_directory()）；找不到就是 None，不传
@@ -144,6 +146,15 @@ def build_launch_args(cluster_name: str, shard_name: str, conf_dir_arg: str | No
         args = args + ["-ugc_directory", ugc_directory]
     if conf_dir_arg:
         args = ["-conf_dir", conf_dir_arg] + args
+    if extra_args.strip():
+        try:
+            parsed = shlex.split(extra_args, posix=False)
+        except ValueError as exc:
+            raise ValueError(f"额外启动参数格式错误：{exc}") from exc
+        args.extend(
+            token[1:-1] if len(token) >= 2 and token[0] == token[-1] and token[0] in "\"'" else token
+            for token in parsed
+        )
     return args
 
 
@@ -240,7 +251,8 @@ class ServerProcess:
 
     def __init__(self, cluster_name: str, shard_name: str, cluster_path: Path,
                  install_dir: Path, conf_dir_arg: str | None, is_master: bool = True,
-                 ugc_directory: str | None = None, bin64_override: Path | None = None):
+                 ugc_directory: str | None = None, bin64_override: Path | None = None,
+                 extra_args: str = ""):
         self.cluster_name = cluster_name
         self.shard_name = shard_name
         self.cluster_path = cluster_path
@@ -248,6 +260,7 @@ class ServerProcess:
         self.conf_dir_arg = conf_dir_arg
         self.is_master = is_master
         self.ugc_directory = ugc_directory
+        self.extra_args = extra_args
         # 给 luajit_injector.py 用：真的要跑起来的 exe 所在目录改成
         # 别的地方（LuaJIT 隔离副本），而不是 install_dir 下的 bin64/。
         # install_dir 本身语义不变，仍然是"这份安装归哪个 cluster 管"这
@@ -293,7 +306,10 @@ class ServerProcess:
         bin64_dir = self.bin64_override if self.bin64_override is not None \
             else self.install_dir / _BIN_DIRS[bitness]
         exe = bin64_dir / _EXE_NAMES[bitness]
-        args = build_launch_args(self.cluster_name, self.shard_name, self.conf_dir_arg, self.ugc_directory)
+        args = build_launch_args(
+            self.cluster_name, self.shard_name, self.conf_dir_arg,
+            self.ugc_directory, self.extra_args
+        )
         creationflags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
         self.proc = subprocess.Popen(
             [str(exe)] + args,
@@ -450,7 +466,8 @@ class ServerManager:
 
     def start(self, cluster_name: str, cluster_path: Path, shard_name: str,
               install_dir: Path, conf_dir_arg: str | None, is_master: bool = True,
-              ugc_directory: str | None = None, bin64_override: Path | None = None) -> ServerProcess:
+              ugc_directory: str | None = None, bin64_override: Path | None = None,
+              extra_args: str = "") -> ServerProcess:
         existing = self.get(cluster_path, shard_name)
         if existing and existing.status in (
                 ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING):
@@ -458,7 +475,7 @@ class ServerManager:
             # 按钮状态兜底，否则旧进程引用会被覆盖并变成停不掉的孤儿。
             return existing
         proc = ServerProcess(cluster_name, shard_name, cluster_path, install_dir, conf_dir_arg,
-                              is_master, ugc_directory, bin64_override)
+                             is_master, ugc_directory, bin64_override, extra_args)
         proc.start()
         self._procs[self._key(cluster_path, shard_name)] = proc
         return proc

@@ -638,6 +638,7 @@ STRINGS = {
         "preset.no_mods_selected_in_tab": "当前没有已启用的 Mod 可以打包，请先勾选至少一个。",
         # 本地服务器页签
         "local.select_cluster_first": "请先选择一个服务器存档",
+        "local.extra_args_label": "额外启动参数:",
         "local.select_server_hint": "当前选中的是本地存档，无需在这里管理服务器进程。请在上方切换到一个服务器存档。",
         "local.no_save_hint": "未检测到任何存档，请先创建或导入一个服务器存档。",
         "local.wegame_manual_start_hint": "该存档是 WeGame 版专用服务器：启动/停止/公告/回档暂不支持在这里操作，请通过 WeGame 客户端点击「开始游戏」启动（这是平台限制，WeGame 要求专用服务器必须经客户端启动）。存档浏览、配置编辑、Mod 管理、备份、内网穿透等其它功能不受影响。",
@@ -1459,6 +1460,7 @@ STRINGS = {
         "preset.no_mods_selected_in_tab": "No enabled mods to pack right now -- check at least one first.",
         # 本地服务器页签
         "local.select_cluster_first": "Select a server save first",
+        "local.extra_args_label": "Extra launch arguments:",
         "local.select_server_hint": "The selected save is a local one -- there's no server process to manage here. Switch to a server save above.",
         "local.no_save_hint": "No saves were detected. Create or import a server save first.",
         "local.wegame_manual_start_hint": "This save is a WeGame dedicated server: start/stop/announce/rollback aren't available here -- launch it via the WeGame client's \"Start Game\" button instead (a platform requirement; WeGame dedicated servers must be launched through the client). Save browsing, config editing, mod management, backups, and NAT traversal still work normally.",

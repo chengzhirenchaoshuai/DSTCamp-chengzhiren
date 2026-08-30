@@ -30,7 +30,9 @@ from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.shared.app_settings import (
     get_backup_auto_enabled,
     get_backup_interval_minutes,
+    get_dedicated_server_extra_args,
     set_dedicated_server_path,
+    set_dedicated_server_extra_args,
     get_sakura_token,
     get_selfhost_frp_mapping,
     get_selfhost_frp_server,
@@ -1098,6 +1100,19 @@ class LocalServiceTab:
         )
         self._luajit_bin64_dir: Path | None = None
 
+        # 额外参数作用于 DSTCamp 直接启动的所有 Steam 专服世界；参数作为
+        # 列表传给 subprocess，不经过 shell，避免输入内容被当成命令执行。
+        self._extra_args_row = extra_args_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        extra_args_row.pack(fill=tk.X, padx=5, pady=(0, 5))
+        ttk.Label(extra_args_row, text=t("local.extra_args_label")).pack(side=tk.LEFT)
+        self._extra_args_var = tk.StringVar(
+            value=get_dedicated_server_extra_args()
+        )
+        self._extra_args_entry = ttk.Entry(extra_args_row, textvariable=self._extra_args_var)
+        self._extra_args_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        self._extra_args_entry.bind("<FocusOut>", self._save_extra_args, add="+")
+        self._extra_args_entry.bind("<Return>", self._save_extra_args, add="+")
+
         self._luajit_uninstall_btn = ttk.Button(
             luajit_row,
             text=t("local.luajit_uninstall_btn"),
@@ -1276,6 +1291,11 @@ class LocalServiceTab:
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 
     # ── Cluster/世界选择 ────────────────────────────────────────────
+
+    def _save_extra_args(self, event=None):
+        """保存输入框内容；返回键不继续触发默认控件行为。"""
+        set_dedicated_server_extra_args(self._extra_args_var.get())
+        return "break" if event is not None and str(event.keysym) == "Return" else None
 
     def _get_cluster(self):
         return self.app.get_selected_cluster()
@@ -2855,6 +2875,7 @@ class LocalServiceTab:
         self.frame.after(100, _poll_log)
 
     def _continue_start_shard(self, cluster, shard, conf_dir_arg):
+        self._save_extra_args()
         # Master 和非 Master(Caves 等) 的"真正就绪"判断不是同一回事(见
         # dedicated_server.py 的 _MASTER_READY_MARKERS/_SECONDARY_READY_
         # MARKERS)，这里读一下 server.ini 的 [SHARD] is_master 告诉它按
@@ -2881,8 +2902,9 @@ class LocalServiceTab:
                 is_master,
                 str(ugc_directory) if ugc_directory else None,
                 bin64_override=bin64_override,
+                extra_args=get_dedicated_server_extra_args(),
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             dlg.show_error(
                 self.app.root,
                 t("local.install_title"),
