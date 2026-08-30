@@ -1740,25 +1740,30 @@ class DSToolsApp:
         initial = current if current.is_dir() else current.parent
         if not initial.is_dir():
             initial = Path.home()
-        chosen = filedialog.askdirectory(
-            parent=parent,
-            title=t("settings.cache_dir_picker_title"),
-            initialdir=str(initial),
-        )
-        if not chosen:
-            return False
-        path = Path(chosen)
-        reason = validate_cache_root(path)
-        if reason is not None:
-            self._show_cache_dir_error(reason, path, parent)
-            return False
-        set_cache_dir_override(path)
-        dlg.show_info(
-            parent,
-            t("settings.cache_dir_label"),
-            t("settings.cache_dir_changed", path=str(path)),
-        )
-        return True
+        while True:
+            chosen = filedialog.askdirectory(
+                parent=parent,
+                title=t("settings.cache_dir_picker_title"),
+                initialdir=str(initial),
+            )
+            if not chosen:
+                return False
+            path = Path(chosen)
+            reason = validate_cache_root(path)
+            if reason is not None:
+                self._show_cache_dir_error(reason, path, parent)
+                # 错误弹窗确认后继续本循环，自动重新打开 Windows 目录
+                # 选择器；只有用户主动取消选择器才结束引导。
+                if path.is_dir():
+                    initial = path
+                continue
+            set_cache_dir_override(path)
+            dlg.show_info(
+                parent,
+                t("settings.cache_dir_label"),
+                t("settings.cache_dir_changed", path=str(path)),
+            )
+            return True
 
     def _restore_default_cache_dir(self, parent: tk.Misc | None = None) -> bool:
         """恢复默认前同样校验；中文用户名下不能恢复到不可用路径。"""
