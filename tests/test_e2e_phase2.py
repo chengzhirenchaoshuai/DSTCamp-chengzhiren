@@ -326,7 +326,58 @@ def test_background_refresh_contract():
         ("invalidate", False),
         ("render", True),
     ]
-    print("  PASS: 背景切片感知位置变化，强制刷新会失效旧缓存")
+    host_calls = []
+
+    class Host:
+        def refresh_custom_background(self, **kw):
+            host_calls.append(kw)
+
+    host = Host()
+    app._bg_refresh_hosts = [weakref.ref(host)]
+    app._refresh_registered_bg_hosts(throttle=True, force=True)
+    assert host_calls == [{"throttle": True, "force": True}]
+
+    from dstools.features.world.creation_entry import _CreationWindowChrome
+
+    calls.clear()
+    chrome = _CreationWindowChrome.__new__(_CreationWindowChrome)
+    chrome._bg_surfaces = [weakref.ref(surface), weakref.ref(hidden_surface)]
+    chrome._bg_image = object()
+    chrome._bg_image_key = ("old",)
+    surface._request_render = lambda: calls.append(("request", True))
+    hidden_surface._request_render = lambda: calls.append(("request", False))
+    chrome.refresh_custom_background(throttle=True, force=True)
+    assert chrome._bg_image is None and chrome._bg_image_key is None
+    assert calls == [
+        ("invalidate", True),
+        ("request", True),
+        ("invalidate", False),
+    ]
+
+    from dstools.shared.gui.background_dialog import BackgroundImageDialog
+
+    previewed = []
+    saved = []
+    finished = []
+    refreshed = []
+    dialog = BackgroundImageDialog.__new__(BackgroundImageDialog)
+    dialog.app = SimpleNamespace(
+        _preview_custom_bg_opacity=lambda value: previewed.append(value),
+        _finish_custom_bg_opacity_preview=lambda: finished.append(True),
+    )
+    dialog.win = SimpleNamespace(after_cancel=lambda _token: None)
+    dialog._opacity_apply_after_id = "pending"
+    dialog._opacity_pending = 0.72
+    dialog._opacity_preview_active = False
+    dialog._opacity_var = SimpleNamespace(get=lambda: 0.72)
+    dialog._committed_opacity = 0.35
+    dialog._set_custom_bg_opacity = lambda value: saved.append(value)
+    dialog._refresh_custom_bg_surfaces = lambda: refreshed.append(True)
+    dialog._apply_pending_opacity()
+    assert previewed == [0.72] and saved == [], "拖动预览不应高频落盘"
+    dialog._commit_opacity_preview(refresh=True)
+    assert saved == [0.72] and finished == [True] and refreshed == [True]
+    print("  PASS: 背景切片与独立窗口均能失效缓存并节流刷新")
 
 
 

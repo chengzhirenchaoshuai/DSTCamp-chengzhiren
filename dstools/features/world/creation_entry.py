@@ -8,7 +8,6 @@ import tkinter as tk
 import weakref
 from tkinter import ttk
 
-from dstools.shared.app_settings import get_custom_bg_opacity
 from dstools.shared.custom_background import get_custom_bg_path, render_background
 from dstools.shared.gui import theme
 from dstools.shared.gui.bg_frame import BgFrame
@@ -33,6 +32,7 @@ class _CreationWindowChrome:
         self._is_pseudo_maximized = False
         self._pre_maximize_geom: tuple[int, int, int, int] | None = None
         self._geometry_refresh_after_id = None
+        entry.app._register_bg_refresh_host(self)
 
     def __getattr__(self, name):
         """把业务层访问的主应用接口转发出去，只覆盖窗口级背景接口。"""
@@ -57,7 +57,7 @@ class _CreationWindowChrome:
         top = widget.winfo_toplevel()
         tw = max(1, top.winfo_width())
         th = max(1, top.winfo_height())
-        opacity = get_custom_bg_opacity()
+        opacity = self.entry.app._get_active_custom_bg_opacity()
         key = (str(bg_path), opacity, tw, th, theme.BG_SOFT)
         if self._bg_image is None or self._bg_image_key != key:
             self._bg_image = render_background(bg_path, tw, th, opacity, theme.BG_SOFT)
@@ -105,6 +105,33 @@ class _CreationWindowChrome:
                     surface.refresh_descendants()
             except tk.TclError:
                 continue
+
+    def refresh_custom_background(
+        self, *, throttle: bool = False, force: bool = False
+    ) -> None:
+        """跟随主窗口的背景图/透明度变化，只重画当前可见表面。"""
+        self._bg_image = None
+        self._bg_image_key = None
+        alive = []
+        for ref in self._bg_surfaces:
+            surface = ref()
+            if surface is None:
+                continue
+            try:
+                if not surface.winfo_exists():
+                    continue
+                alive.append(ref)
+                if force:
+                    surface.invalidate_bg_cache()
+                if not surface.winfo_ismapped():
+                    continue
+                if throttle:
+                    surface._request_render()
+                else:
+                    surface.render_now()
+            except tk.TclError:
+                continue
+        self._bg_surfaces = alive
 
     def _queue_geometry_refresh(self) -> None:
         """伪最大化/还原后，在最终客户区尺寸确定时刷新一次背景切片。"""

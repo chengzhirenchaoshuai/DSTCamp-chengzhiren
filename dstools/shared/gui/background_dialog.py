@@ -68,26 +68,33 @@ class BackgroundImageDialog:
         row_opacity.pack(fill=tk.X, padx=24, pady=(0, 24))
         tk.Label(row_opacity, text=t("settings.custom_bg_opacity_label"), font=theme.font_tuple(theme.FONT_SIZE_BASE),
                  fg=theme.TEXT, bg=theme.CARD_BG).pack(side=tk.LEFT)
-        self._opacity_var = tk.DoubleVar(value=get_custom_bg_opacity())
+        initial_opacity = get_custom_bg_opacity()
+        self._opacity_var = tk.DoubleVar(value=initial_opacity)
+        self._committed_opacity = initial_opacity
         self._opacity_apply_after_id = None
         self._opacity_pending = None
+        self._opacity_preview_active = False
         # 这里用自绘的 Slider（gui/slider.py）而不是 ttk.Scale——实测
         # ttk.Scale 在这个项目用的 "clam" 主题下点击滑槽任意位置不会跳
         # 到点击处，落点几乎是随机蹦到最左/最右（合成点击事件逐点验证
         # 过），是 clam 主题 Scale 元素几何计算的问题，改不了，只能换
         # 成自己画的滑块——跟 menu_combo.py 用 MenuCombo 替换有渲染缺陷
         # 的 ttk.Combobox 是同一个理由。
-        Slider(row_opacity, variable=self._opacity_var, from_=0.0, to=1.0,
-               width=160, height=20, command=self._on_opacity_change,
-               bg=theme.CARD_BG).pack(side=tk.RIGHT)
+        self._opacity_slider = Slider(
+            row_opacity, variable=self._opacity_var, from_=0.0, to=1.0,
+            width=160, height=20, command=self._on_opacity_change,
+            bg=theme.CARD_BG,
+        )
+        self._opacity_slider.pack(side=tk.RIGHT)
+        self._opacity_slider.bind("<ButtonRelease-1>", self._on_opacity_release)
 
         btn_row2 = tk.Frame(card, background=theme.CARD_BG)
         btn_row2.pack(fill=tk.X, padx=24, pady=(0, 24))
-        ttk.Button(btn_row2, text=t("dlg.confirm_btn"), command=win.destroy).pack(side=tk.RIGHT)
+        ttk.Button(btn_row2, text=t("dlg.confirm_btn"), command=self._close).pack(side=tk.RIGHT)
 
-        win.protocol("WM_DELETE_WINDOW", win.destroy)
-        win.bind("<Return>", lambda e: win.destroy())
-        win.bind("<Escape>", lambda e: win.destroy())
+        win.protocol("WM_DELETE_WINDOW", self._close)
+        win.bind("<Return>", lambda e: self._close())
+        win.bind("<Escape>", lambda e: self._close())
 
         center_over_parent(win, self.app.root, min_width=360)
 
@@ -97,6 +104,7 @@ class BackgroundImageDialog:
         win.wait_window()
 
     def _on_choose(self) -> None:
+        self._commit_opacity_preview(refresh=False)
         path = self._filedialog.askopenfilename(
             parent=self.win,
             title=t("settings.custom_bg_choose"),
@@ -109,19 +117,20 @@ class BackgroundImageDialog:
         self._refresh_custom_bg_surfaces()
 
     def _on_clear(self) -> None:
+        self._commit_opacity_preview(refresh=False)
         self._clear_custom_bg_image()
         self._status_var.set(t("settings.custom_bg_none"))
         self._refresh_custom_bg_surfaces()
 
     # 拖动滑块时每移动一个像素都会触发一次这个回调——真正的重活
-    # （_refresh_custom_bg_surfaces() 里 app._force_refresh_bg_now() 强
-    # 制重新裁剪/缩放/混合整张背景大图 + set_custom_bg_opacity() 落盘）
+    # （_refresh_custom_bg_surfaces() 里的共享大图重建和可见表面刷新）
     # 在这里完全不节流的话，拖一下滑块要同步做几十次这套重活，正是用户
     # 反馈"拖动的时候有点卡"的根因——跟 image_scroll.py/bg_frame.py 已
     # 经验证过的"拖拽中便宜、停顿后（或按固定节奏）才做重活"是同一个思
     # 路，只是这里不是等停顿，而是限制成大约每 _OPACITY_THROTTLE_MS
     # 做一次（留着live预览的观感，不是等松手才更新），用最新值覆盖旧的
-    # 待处理值，不会因为节流丢结果或者停在中间某个过时的值上。
+    # 待处理值，不会因为节流丢结果或者停在中间某个过时的值上。拖动期间
+    # 不写 settings.json，松手时才持久化最终值并做一次精确收尾刷新。
     _OPACITY_THROTTLE_MS = 60
 
     def _on_opacity_change(self, value: float) -> None:
@@ -136,8 +145,37 @@ class BackgroundImageDialog:
             return
         value = self._opacity_pending
         self._opacity_pending = None
-        self._set_custom_bg_opacity(value)
-        self._refresh_custom_bg_surfaces(throttle=True)
+        self._opacity_preview_active = True
+        self.app._preview_custom_bg_opacity(value)
+
+    def _on_opacity_release(self, _event=None) -> None:
+        self._commit_opacity_preview(refresh=True)
+
+    def _commit_opacity_preview(self, *, refresh: bool) -> None:
+        had_preview = self._opacity_preview_active or self._opacity_pending is not None
+        if self._opacity_apply_after_id is not None:
+            try:
+                self.win.after_cancel(self._opacity_apply_after_id)
+            except tk.TclError:
+                pass
+            self._opacity_apply_after_id = None
+        value = float(
+            self._opacity_pending
+            if self._opacity_pending is not None
+            else self._opacity_var.get()
+        )
+        self._opacity_pending = None
+        self._opacity_preview_active = False
+        if value != self._committed_opacity:
+            self._set_custom_bg_opacity(value)
+            self._committed_opacity = value
+        self.app._finish_custom_bg_opacity_preview()
+        if refresh and had_preview:
+            self._refresh_custom_bg_surfaces()
+
+    def _close(self) -> None:
+        self._commit_opacity_preview(refresh=True)
+        self.win.destroy()
 
     def _refresh_custom_bg_surfaces(self, throttle: bool = False) -> None:
         """选完图/调完不透明度/清除背景图，都要立刻生效——跟"窗口停顿

@@ -1176,8 +1176,15 @@ class DSToolsApp:
 
     def _init_bg_system(self) -> None:
         self._bg_surfaces: list = []  # BgFrame 的弱引用列表
+        # 独立创建向导等窗口有自己的整窗背景缓存，不能混进
+        # root 的共享大图。这里只登记宿主弱引用，透明度变化时通知
+        # 它们各自失效缓存并刷新当前可见表面。
+        self._bg_refresh_hosts: list = []
         self._shared_bg_image = None  # PIL Image，跟 root 客户区同尺寸
         self._shared_bg_key = None
+        # 拖动不透明度滑块时只在内存中保留最新预览值，松手再
+        # 写 settings.json，避免高频原子替换跟 Tk 主线程抢时间。
+        self._custom_bg_opacity_preview: float | None = None
         # 独立创建向导等 Toplevel 不属于 root 客户区，不能直接从 root
         # 共享图裁剪；按每个独立窗口尺寸惰性生成一份背景图。
         self._secondary_bg_images: dict[str, tuple[tuple, object]] = {}
@@ -1201,6 +1208,25 @@ class DSToolsApp:
     def _register_bg_surface(self, surface) -> None:
         """BgFrame 构造时调用，登记进来以便窗口停顿后统一收到重画通知。"""
         self._bg_surfaces.append(weakref.ref(surface))
+
+    def _register_bg_refresh_host(self, host) -> None:
+        """登记拥有独立背景大图的窗口宿主。"""
+        self._bg_refresh_hosts.append(weakref.ref(host))
+
+    def _get_active_custom_bg_opacity(self) -> float:
+        """返回当前渲染值；拖动期间优先使用不落盘的预览值。"""
+        if self._custom_bg_opacity_preview is not None:
+            return self._custom_bg_opacity_preview
+        return get_custom_bg_opacity()
+
+    def _preview_custom_bg_opacity(self, value: float) -> None:
+        """合并后的滑块回调：只更新内存值并节流刷新可见表面。"""
+        self._custom_bg_opacity_preview = max(0.0, min(1.0, float(value)))
+        self._force_refresh_bg_now(throttle=True)
+
+    def _finish_custom_bg_opacity_preview(self) -> None:
+        """透明度已由弹窗落盘，恢复从设置读取。"""
+        self._custom_bg_opacity_preview = None
 
     def _on_root_map(self, event) -> None:
         """恢复窗口（或首次显示）时 Tk 会逐个投递子 widget 的 Map/Visibility/
@@ -1396,7 +1422,7 @@ class DSToolsApp:
         250ms+ 把 90 个表面全刷一遍。"""
         w, h = self.root.winfo_width(), self.root.winfo_height()
         bg_path = get_custom_bg_path()
-        opacity = get_custom_bg_opacity()
+        opacity = self._get_active_custom_bg_opacity()
         key = (bg_path, opacity, w, h)
         if self._shared_bg_key == key:
             return False
@@ -1431,7 +1457,7 @@ class DSToolsApp:
                 return None
             tw = max(1, top.winfo_width())
             th = max(1, top.winfo_height())
-            opacity = get_custom_bg_opacity()
+            opacity = self._get_active_custom_bg_opacity()
             key = (bg_path, opacity, tw, th, theme.BG_SOFT)
             cache_key = str(top)
             cached = self._secondary_bg_images.get(cache_key)
@@ -1512,6 +1538,22 @@ class DSToolsApp:
 
         self._for_each_alive_bg_surface(fn, visible_only=True)
 
+    def _refresh_registered_bg_hosts(
+        self, throttle: bool = False, *, force: bool = False
+    ) -> None:
+        """通知独立窗口更新自己的背景缓存，并清理已关闭宿主。"""
+        alive = []
+        for ref in self._bg_refresh_hosts:
+            host = ref()
+            if host is None:
+                continue
+            alive.append(ref)
+            try:
+                host.refresh_custom_background(throttle=throttle, force=force)
+            except tk.TclError:
+                pass
+        self._bg_refresh_hosts = alive
+
     def refresh_bg_surface(self, surface) -> None:
         """重建共享背景后只刷新指定的可见页面。"""
         try:
@@ -1533,6 +1575,7 @@ class DSToolsApp:
         self._secondary_bg_images.clear()
         self._rebuild_shared_bg_image()
         self._refresh_all_bg_surfaces(throttle=throttle, force=True)
+        self._refresh_registered_bg_hosts(throttle=throttle, force=True)
 
     def _show_manual_update(self) -> None:
         """显示手动更新下载地址；蓝奏云先复制提取码再打开网页。"""
