@@ -111,9 +111,22 @@ def test_gui_imports():
 
 
 def test_single_instance_contract():
-    from dstools.shared.single_instance import SingleInstance, acquire_gui_instance
+    from dstools import __version__
+    from dstools.shared.single_instance import (
+        SingleInstance,
+        _is_dstcamp_window_title,
+        acquire_gui_instance,
+    )
 
     assert SingleInstance and callable(acquire_gui_instance)
+    assert _is_dstcamp_window_title("DSTCamp · 本地服务器管理")
+    assert _is_dstcamp_window_title(
+        f"DSTCamp · 本地服务器管理 v{__version__}"
+    )
+    assert _is_dstcamp_window_title(
+        f"DSTCamp · Local Server Manager v{__version__}"
+    )
+    assert not _is_dstcamp_window_title("其他程序 v1.3.0")
     # Worker 参数在 run_gui.py 的 GUI 分支之前处理，单实例模块本身只负责
     # 普通 GUI 进程；这里验证入口仍保留这些独立分流参数。
     run_gui_path = os.path.join(
