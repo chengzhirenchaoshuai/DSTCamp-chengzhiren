@@ -1203,8 +1203,12 @@ class LocalServiceTab:
         extra_args_row.pack(fill=tk.X, pady=(5, 0))
         ttk.Label(extra_args_row, text=t("local.extra_args_label")).pack(side=tk.LEFT)
         self._extra_args_var = tk.StringVar(value=get_dedicated_server_extra_args())
-        self._extra_args_entry = ttk.Entry(extra_args_row, textvariable=self._extra_args_var)
-        self._extra_args_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        # 固定为适中的输入宽度，避免把世界列表右侧的默认运行日志区域
+        # 挤掉；较长参数仍可通过输入框横向滚动查看。
+        self._extra_args_entry = ttk.Entry(
+            extra_args_row, textvariable=self._extra_args_var, width=30
+        )
+        self._extra_args_entry.pack(side=tk.LEFT, padx=(8, 0))
         self._extra_args_entry.bind("<FocusOut>", self._save_extra_args, add="+")
         self._extra_args_entry.bind("<Return>", self._save_extra_args, add="+")
 
