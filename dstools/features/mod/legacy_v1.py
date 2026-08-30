@@ -444,7 +444,7 @@ def legacy_runtime_matches_package(archive_path: Path, runtime_dir: Path) -> boo
 
 
 def prepare_enabled_legacy_mods(
-    workshop_ids, server_mods_root: Path, *, check_running: bool = True
+    workshop_ids, server_mods_root: Path
 ) -> LegacyPreparationResult:
     """用本地 Legacy 包准备当前存档启用的 V1 Mod。
 
@@ -477,7 +477,6 @@ def prepare_enabled_legacy_mods(
             archive,
             target_roots=[root],
             force=True,
-            check_running=check_running,
         )
         if deployment.completed:
             result.deployed.extend(deployment.deployed)
@@ -508,42 +507,6 @@ def running_dst_processes() -> tuple[str, ...]:
         if image in _DST_PROCESS_NAMES and image not in found:
             found.append(image)
     return tuple(found)
-
-
-def running_dst_processes_for_targets(
-    target_roots: list[Path] | tuple[Path, ...],
-) -> tuple[str, ...]:
-    """只返回可能正在使用目标 ``mods`` 目录的 DST 进程。
-
-    客户端和独立专服通常使用不同目录，彼此不应误拦；如果专服 ``mods``
-    通过 Junction 指向客户端目录，真实路径相同，两类进程仍都会被保留。
-    无法识别目标归属时保持原来的保守行为。
-    """
-    running = running_dst_processes()
-    if not running:
-        return ()
-
-    from dstools.features.local_service.dedicated_server import (
-        find_dedicated_server_dir,
-    )
-    from dstools.features.mod.parser import find_game_mods_dir
-
-    client_root = find_game_mods_dir()
-    server_dir = find_dedicated_server_dir()
-    server_root = Path(server_dir) / "mods" if server_dir is not None else None
-    relevant_names: set[str] = set()
-    for raw_root in target_roots:
-        root = Path(raw_root)
-        recognized = False
-        if client_root is not None and _same_location(root, Path(client_root)):
-            relevant_names.update(_CLIENT_PROCESS_NAMES)
-            recognized = True
-        if server_root is not None and _same_location(root, server_root):
-            relevant_names.update(_SERVER_PROCESS_NAMES)
-            recognized = True
-        if not recognized:
-            relevant_names.update(_DST_PROCESS_NAMES)
-    return tuple(name for name in running if name in relevant_names)
 
 
 def _safe_extract(package: zipfile.ZipFile, stage: Path) -> None:
@@ -615,7 +578,6 @@ def deploy_legacy_package(
     *,
     target_roots: list[Path] | tuple[Path, ...] | None = None,
     force: bool = True,
-    check_running: bool = True,
 ) -> LegacyDeploymentResult:
     """把一个 V1 包原子部署到 DSTCamp 管理的专服 ``mods`` 目录。"""
     workshop_id = int(workshop_id)
@@ -630,14 +592,6 @@ def deploy_legacy_package(
         if target_roots is not None
         else discover_legacy_runtime_targets()
     )
-    running = running_dst_processes_for_targets(roots) if check_running else ()
-    if running:
-        result.error = (
-            "使用目标 Mod 目录的游戏或专用服务器正在运行，无法安全替换 V1 Mod："
-            + "、".join(running)
-            + "。请先退出上述进程后重试。"
-        )
-        return result
     result.targets = [Path(root) / f"workshop-{workshop_id}" for root in roots]
     if not result.targets:
         result.error = "没有找到游戏或专用服务器的 mods 运行目录"

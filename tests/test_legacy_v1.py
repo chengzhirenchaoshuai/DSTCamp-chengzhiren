@@ -84,9 +84,7 @@ def main() -> None:
         old.mkdir(parents=True)
         (old / "modinfo.lua").write_text('version = "old"', encoding="utf-8")
         (old / "old-only.txt").write_text("old", encoding="utf-8")
-        result = deploy_legacy_package(
-            123, archive, target_roots=[mods], check_running=False
-        )
+        result = deploy_legacy_package(123, archive, target_roots=[mods])
         assert result.completed, result.error
         assert (old / "modmain.lua").is_file()
         assert not (old / "old-only.txt").exists()
@@ -103,9 +101,7 @@ def main() -> None:
         traversal = root / "traversal_legacy.bin"
         _write_package(traversal, unsafe_name="../outside.txt")
         assert not validate_legacy_package(traversal).valid
-        blocked = deploy_legacy_package(
-            123, traversal, target_roots=[mods], check_running=False
-        )
+        blocked = deploy_legacy_package(123, traversal, target_roots=[mods])
         assert not blocked.completed
         assert (old / "modmain.lua").is_file()
         assert not (root / "outside.txt").exists()
@@ -129,10 +125,9 @@ def main() -> None:
             update = WorkshopDownloadResult(
                 WorkshopBackend.CLIENT, 123, accepted=True, state=WorkshopItemState(7)
             )
-            with patch.object(legacy_v1, "running_dst_processes", return_value=()):
-                finished = SteamWorkshopSession._finish_legacy_install(
-                    update, archive, expected_version="1.0", force=True
-                )
+            finished = SteamWorkshopSession._finish_legacy_install(
+                update, archive, expected_version="1.0", force=True
+            )
             assert finished.completed and not finished.up_to_date, finished.error
             assert finished.details["legacy_materialized"] is True
             assert (pipeline_target / "modmain.lua").is_file()
@@ -145,10 +140,9 @@ def main() -> None:
             repair = WorkshopDownloadResult(
                 WorkshopBackend.CLIENT, 123, accepted=True, state=WorkshopItemState(7)
             )
-            with patch.object(legacy_v1, "running_dst_processes", return_value=()):
-                repaired = SteamWorkshopSession._finish_legacy_install(
-                    repair, archive, expected_version="1.0", force=False
-                )
+            repaired = SteamWorkshopSession._finish_legacy_install(
+                repair, archive, expected_version="1.0", force=False
+            )
             assert repaired.completed and not repaired.up_to_date, repaired.error
             assert (pipeline_server_target / "modinfo.lua").is_file()
 
@@ -198,10 +192,9 @@ def main() -> None:
             stale_package = WorkshopDownloadResult(
                 WorkshopBackend.CLIENT, 123, accepted=True, state=WorkshopItemState(7)
             )
-            with patch.object(legacy_v1, "running_dst_processes", return_value=()):
-                stale_package = SteamWorkshopSession._finish_legacy_install(
-                    stale_package, archive, expected_version="9.9", force=False
-                )
+            stale_package = SteamWorkshopSession._finish_legacy_install(
+                stale_package, archive, expected_version="9.9", force=False
+            )
             assert not stale_package.completed
             assert stale_package.details["legacy_retry_download"] is True
             assert "包内为 1.0" in stale_package.error
@@ -221,9 +214,7 @@ def main() -> None:
             assert legacy_v1.discover_legacy_runtime_targets() == [
                 server_install / "mods"
             ]
-            server_only = legacy_v1.deploy_legacy_package(
-                123, archive, check_running=False
-            )
+            server_only = legacy_v1.deploy_legacy_package(123, archive)
             assert server_only.completed, server_only.error
             assert (server_install / "mods" / "workshop-123" / "modinfo.lua").is_file()
         finally:
@@ -234,10 +225,8 @@ def main() -> None:
         # 不会被误判。内容不同的旧目录应自动替换，第二次检查不再重复部署。
         prepared_root = root / "prepared-server-mods"
         original_packages = legacy_v1.find_legacy_packages
-        original_processes = legacy_v1.running_dst_processes
         try:
             legacy_v1.find_legacy_packages = lambda: {123: archive}
-            legacy_v1.running_dst_processes = lambda: ()
             prepared = prepare_enabled_legacy_mods(
                 ["workshop-123", "456"], prepared_root
             )
@@ -250,10 +239,9 @@ def main() -> None:
             assert len(again.already_current) == 1
         finally:
             legacy_v1.find_legacy_packages = original_packages
-            legacy_v1.running_dst_processes = original_processes
 
-        # 客户端和专服使用不同 mods 目录时，客户端运行不能误拦专服 V1
-        # 部署；目录真实共享时仍必须保留保护。
+        # V1 部署不再按游戏或专服进程做前置阻止；无论目录独立还是共享，
+        # 都直接尝试原子替换，并在系统真实拒绝文件操作时返回实际错误。
         client_mods = root / "client" / "mods"
         scoped_server = root / "scoped-server"
         server_mods = scoped_server / "mods"
@@ -274,10 +262,10 @@ def main() -> None:
         ), patch.object(mod_parser, "find_game_mods_dir", return_value=client_mods), patch.object(
             dedicated, "find_dedicated_server_dir", return_value=scoped_server
         ):
-            blocked_server = deploy_legacy_package(
+            running_server = deploy_legacy_package(
                 322, archive, target_roots=[server_mods]
             )
-            assert not blocked_server.completed and "正在运行" in blocked_server.error
+            assert running_server.completed, running_server.error
 
         shared_server = root / "shared-server"
         shared_mods = shared_server / "mods"
@@ -287,10 +275,10 @@ def main() -> None:
         ), patch.object(mod_parser, "find_game_mods_dir", return_value=shared_mods), patch.object(
             dedicated, "find_dedicated_server_dir", return_value=shared_server
         ):
-            blocked_shared = deploy_legacy_package(
+            running_shared = deploy_legacy_package(
                 654, archive, target_roots=[shared_mods]
             )
-            assert not blocked_shared.completed and "正在运行" in blocked_shared.error
+            assert running_shared.completed, running_shared.error
 
         # 取消订阅后 Steam 会删除 V1 包，但游戏展开到 mods 的目录可能暂存。
         # 只识别标准 workshop-ID 普通目录，并在再次验收后永久删除。
