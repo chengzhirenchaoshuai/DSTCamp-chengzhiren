@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -444,6 +445,53 @@ def test_restart_stop_barrier_waits_for_every_shard() -> None:
         assert completed == [True]
 
 
+def test_restart_prepares_legacy_after_stop() -> None:
+    """重启必须先停服，再部署 V1，最后才重新创建专服进程。"""
+    from dstools.features.local_service import tab as local_tab
+    from dstools.features.local_service.dedicated_server import ServerStatus
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        cluster = _write_cluster(root, "Cluster_A", caves=False)
+        shard = cluster.shards[0]
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service.app = SimpleNamespace(env=SimpleNamespace(klei_root=root), root=None)
+        service.manager = SimpleNamespace(
+            get=lambda _path, _name: SimpleNamespace(status=ServerStatus.RUNNING)
+        )
+        service._restarting_keys = set()
+        service._install_dir = root / "server"
+        service._confirm_token_ok = lambda _cluster: True
+        events = []
+        service._preflight_start = lambda *_args, **kwargs: events.append(
+            ("preflight", kwargs.get("restarting"))
+        ) or True
+        service._stop_shards_and_then = lambda _cluster, _shards, callback: (
+            events.append(("stopped", True)),
+            callback(),
+        )
+        service._prepare_legacy_mods_for_start = lambda _cluster: events.append(
+            ("prepared", True)
+        ) or True
+        service._continue_start_shard = lambda *_args: events.append(("started", True))
+        service._select_master_console_tab = lambda _cluster: None
+        service._refresh_shard_rows = lambda _cluster: None
+        service._get_cluster = lambda: cluster
+        service._update_restart_all_btn_state = lambda _cluster: None
+
+        with patch.object(
+            local_tab.luajit_injector, "needs_regeneration", return_value=False
+        ), patch.object(local_tab, "resolve_conf_dir_arg", return_value=None):
+            service._restart_shards(cluster, [shard])
+
+        assert events == [
+            ("preflight", True),
+            ("stopped", True),
+            ("prepared", True),
+            ("started", True),
+        ]
+
+
 def test_connect_code_display_masks_secrets() -> None:
     from dstools.features.local_service import tab as local_tab
 
@@ -540,6 +588,7 @@ def main() -> None:
         test_server_manager_rejects_duplicate_start,
         test_restart_all_preserves_stopped_shards_and_rejects_transitions,
         test_restart_stop_barrier_waits_for_every_shard,
+        test_restart_prepares_legacy_after_stop,
         test_connect_code_display_masks_secrets,
         test_local_refresh_redetects_server_tool,
         test_connect_results_return_through_main_thread_poll,

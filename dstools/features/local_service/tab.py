@@ -2587,29 +2587,10 @@ class LocalServiceTab:
                 )
                 return False
 
-        # V2 由 -ugc_directory 直接映射 Workshop 完整目录；V1 LegacyItem
-        # 则必须先展开成专服 mods/workshop-<id>。官方专服只有在
-        # dedicated_server_mods_setup.lua 列出 ID 时才会自动解包，而
-        # DSTCamp 不依赖那条旧下载链路：这里从已下载的有效 Legacy 包做
-        # 内容级核对，必要时本地原子部署。全部启动时此处只执行一次。
-        if cluster.platform == Platform.STEAM:
-            server_dir = find_dedicated_server_dir()
-            if server_dir is not None:
-                from dstools.features.mod.legacy_v1 import prepare_enabled_legacy_mods
-
-                prepared = prepare_enabled_legacy_mods(
-                    get_enabled_mod_ids(cluster), Path(server_dir) / "mods"
-                )
-                if not prepared.completed:
-                    dlg.show_error(
-                        self.app.root,
-                        t("local.install_title"),
-                        t(
-                            "local.legacy_prepare_failed",
-                            detail="\n".join(prepared.errors),
-                        ),
-                    )
-                    return False
+        # 重启预检发生在目标分片停服之前，此时不能替换它正在使用的 V1
+        # 目录；重启流程会在停止屏障完成后、重新 Popen 前再次部署。
+        if not restarting and not self._prepare_legacy_mods_for_start(cluster):
+            return False
         candidate_claims, issues = collect_cluster_port_claims(cluster, target_names)
         if issues:
             lines = [
@@ -2753,9 +2734,35 @@ class LocalServiceTab:
                     t("local.port_repair_title"),
                     t("local.port_repair_done", details="\n".join(summary)),
                 )
-                return self._preflight_start(cluster, shards, allow_repair=False)
+                return self._preflight_start(
+                    cluster,
+                    shards,
+                    allow_repair=False,
+                    restarting=restarting,
+                )
             return False
         return True
+
+    def _prepare_legacy_mods_for_start(self, cluster) -> bool:
+        """在目标专服启动前部署已启用 V1 Mod，并展示可恢复的失败原因。"""
+        if cluster.platform != Platform.STEAM:
+            return True
+        server_dir = find_dedicated_server_dir()
+        if server_dir is None:
+            return True
+        from dstools.features.mod.legacy_v1 import prepare_enabled_legacy_mods
+
+        prepared = prepare_enabled_legacy_mods(
+            get_enabled_mod_ids(cluster), Path(server_dir) / "mods"
+        )
+        if prepared.completed:
+            return True
+        dlg.show_error(
+            self.app.root,
+            t("local.install_title"),
+            t("local.legacy_prepare_failed", detail="\n".join(prepared.errors)),
+        )
+        return False
 
     def start_shard(self, cluster, shard):
         if (str(cluster.path), shard.name) in self._restarting_keys:
@@ -3066,6 +3073,8 @@ class LocalServiceTab:
 
         def start_after_stop():
             try:
+                if not self._prepare_legacy_mods_for_start(cluster):
+                    return
                 for target in targets:
                     self._continue_start_shard(cluster, target, conf_dir_arg)
                 if any(

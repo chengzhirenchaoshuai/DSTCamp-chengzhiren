@@ -206,6 +206,46 @@ def main() -> None:
             legacy_v1.find_legacy_packages = original_packages
             legacy_v1.running_dst_processes = original_processes
 
+        # 客户端和专服使用不同 mods 目录时，客户端运行不能误拦专服 V1
+        # 部署；目录真实共享时仍必须保留保护。
+        client_mods = root / "client" / "mods"
+        scoped_server = root / "scoped-server"
+        server_mods = scoped_server / "mods"
+        client_mods.mkdir(parents=True)
+        server_mods.mkdir(parents=True)
+        with patch.object(
+            legacy_v1, "running_dst_processes", return_value=("dontstarve_steam_x64.exe",)
+        ), patch.object(mod_parser, "find_game_mods_dir", return_value=client_mods), patch.object(
+            dedicated, "find_dedicated_server_dir", return_value=scoped_server
+        ):
+            separate = deploy_legacy_package(321, archive, target_roots=[server_mods])
+            assert separate.completed, separate.error
+
+        with patch.object(
+            legacy_v1,
+            "running_dst_processes",
+            return_value=("dontstarve_dedicated_server_nullrenderer_x64.exe",),
+        ), patch.object(mod_parser, "find_game_mods_dir", return_value=client_mods), patch.object(
+            dedicated, "find_dedicated_server_dir", return_value=scoped_server
+        ):
+            blocked_server = deploy_legacy_package(
+                322, archive, target_roots=[server_mods]
+            )
+            assert not blocked_server.completed and "正在运行" in blocked_server.error
+
+        shared_server = root / "shared-server"
+        shared_mods = shared_server / "mods"
+        shared_mods.mkdir(parents=True)
+        with patch.object(
+            legacy_v1, "running_dst_processes", return_value=("dontstarve_steam_x64.exe",)
+        ), patch.object(mod_parser, "find_game_mods_dir", return_value=shared_mods), patch.object(
+            dedicated, "find_dedicated_server_dir", return_value=shared_server
+        ):
+            blocked_shared = deploy_legacy_package(
+                654, archive, target_roots=[shared_mods]
+            )
+            assert not blocked_shared.completed and "正在运行" in blocked_shared.error
+
         # 取消订阅后 Steam 会删除 V1 包，但游戏展开到 mods 的目录可能暂存。
         # 只识别标准 workshop-ID 普通目录，并在再次验收后永久删除。
         runtime_root = root / "runtime-residue" / "mods"
