@@ -1796,7 +1796,7 @@ class DSToolsApp:
         ).pack(fill=tk.X, padx=24, pady=(8, 18))
 
         actions = tk.Frame(card, background=theme.CARD_BG)
-        actions.pack(fill=tk.X, padx=24)
+        actions.pack(fill=tk.X, padx=24, pady=(0, 24))
 
         def refresh_path() -> None:
             path_var.set(str(cache_root_dir()))
@@ -1820,12 +1820,6 @@ class DSToolsApp:
         ttk.Button(
             actions, text=t("settings.cache_dir_open"), command=self._open_cache_dir
         ).pack(side=tk.LEFT, padx=(8, 0))
-
-        close_row = tk.Frame(card, background=theme.CARD_BG)
-        close_row.pack(fill=tk.X, padx=24, pady=(18, 24))
-        ttk.Button(
-            close_row, text=t("dlg.close_btn"), command=win.destroy
-        ).pack(side=tk.RIGHT)
 
         win.protocol("WM_DELETE_WINDOW", win.destroy)
         win.bind("<Escape>", lambda _event: win.destroy())
