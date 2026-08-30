@@ -5,6 +5,7 @@ model 字段的默认值本身不需要单独测——那是 dataclass 声明上
 
 import os
 import sys
+from pathlib import Path
 from string import Formatter
 from types import SimpleNamespace
 
@@ -316,6 +317,9 @@ def test_background_refresh_contract():
         def render_now(self):
             calls.append(("render", self.mapped))
 
+        def request_render(self):
+            calls.append(("request", self.mapped))
+
     surface = Surface()
     hidden_surface = Surface(mapped=False)
     app = DSToolsApp.__new__(DSToolsApp)
@@ -326,6 +330,9 @@ def test_background_refresh_contract():
         ("invalidate", False),
         ("render", True),
     ]
+    calls.clear()
+    app._refresh_all_bg_surfaces(throttle=True)
+    assert calls == [("request", True)]
     host_calls = []
 
     class Host:
@@ -344,8 +351,6 @@ def test_background_refresh_contract():
     chrome._bg_surfaces = [weakref.ref(surface), weakref.ref(hidden_surface)]
     chrome._bg_image = object()
     chrome._bg_image_key = ("old",)
-    surface._request_render = lambda: calls.append(("request", True))
-    hidden_surface._request_render = lambda: calls.append(("request", False))
     chrome.refresh_custom_background(throttle=True, force=True)
     assert chrome._bg_image is None and chrome._bg_image_key is None
     assert calls == [
@@ -380,6 +385,38 @@ def test_background_refresh_contract():
     print("  PASS: 背景切片与独立窗口均能失效缓存并节流刷新")
 
 
+def test_selfhost_worker_ui_dispatch_contract():
+    """自建 FRP 工作线程只入队，不得跨线程调用 Tk.after()。"""
+    import queue
+
+    from dstools.features.frp_selfhost.tab import SelfHostFrpPage
+
+    scheduled = []
+    executed = []
+
+    class Frame:
+        def winfo_exists(self):
+            return True
+
+        def after(self, delay, callback):
+            scheduled.append((delay, callback))
+            return "poll-after"
+
+    page = SelfHostFrpPage.__new__(SelfHostFrpPage)
+    page.frame = Frame()
+    page._ui_callback_queue = queue.SimpleQueue()
+    page._ui_poll_after_id = None
+    page._post_to_ui(lambda: executed.append("done"))
+    assert executed == [], "工作线程入队时不应立即执行 Tk 回调"
+    page._poll_ui_callbacks()
+    assert executed == ["done"]
+    assert scheduled and scheduled[-1][0] == page._UI_POLL_MS
+
+    source = Path("dstools/features/frp_selfhost/tab.py").read_text(encoding="utf-8")
+    assert "self.frame.after(0" not in source
+    print("  PASS: 自建 FRP 工作线程结果经队列回到 Tk 主线程")
+
+
 
 def main():
     """Run all Phase 2 tests."""
@@ -397,6 +434,7 @@ def main():
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
         test_background_refresh_contract,
+        test_selfhost_worker_ui_dispatch_contract,
     ]
 
     for test in tests:

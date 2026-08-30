@@ -126,7 +126,7 @@ class _CreationWindowChrome:
                 if not surface.winfo_ismapped():
                     continue
                 if throttle:
-                    surface._request_render()
+                    surface.request_render()
                 else:
                     surface.render_now()
             except tk.TclError:

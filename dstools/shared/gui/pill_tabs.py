@@ -146,6 +146,10 @@ class PillTabBar(tk.Frame):
         if self._redraw_after_id is None:
             self._redraw_after_id = self._canvas.after(16, self._do_throttled_redraw)
 
+    def request_render(self) -> None:
+        """与 BgFrame 共用的背景节流刷新接口。"""
+        self._request_redraw()
+
     def _do_throttled_redraw(self):
         self._redraw_after_id = None
         self._redraw()

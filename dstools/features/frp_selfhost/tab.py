@@ -7,6 +7,7 @@ get_selfhost_frp_mapping 等函数），不像樱花那样能现查 list_tunnels
 拿到权威数据。
 """
 
+import queue
 import threading
 import time
 import tkinter as tk
@@ -127,6 +128,8 @@ class _SSHAuthSetupDialog:
 
 
 class SelfHostFrpPage:
+    _UI_POLL_MS = 50
+
     @staticmethod
     def _masked_host(host: str) -> str:
         """非编辑状态仅显示 IPv4 前两段，避免完整暴露服务器地址。"""
@@ -207,6 +210,14 @@ class SelfHostFrpPage:
         # 检查"，不影响这个类本身的可测试性。
         self._is_other_mapping_active = is_other_mapping_active
         self.frame = BgFrame(parent_widget, app, bg=theme.CARD_BG)
+        # 后台 SSH/探测线程不能直接调用 Tk.after()：主线程
+        # 处在 wait_window() 这类模态事件循环时，Tkinter 会拒绝跨线程
+        # 注册命令并报 "main thread is not in main loop"。线程只写
+        # 队列，由已经在 Tk 主线程上的定时轮询执行回调。
+        self._ui_callback_queue: "queue.SimpleQueue[object]" = queue.SimpleQueue()
+        self._ui_poll_after_id = self.frame.after(
+            self._UI_POLL_MS, self._poll_ui_callbacks
+        )
         self.frpc = FrpcManager()
         self._current_cluster = None
         self._any_mapped = False
@@ -381,6 +392,27 @@ class SelfHostFrpPage:
         if self._is_authenticated():
             self._run_probe(reschedule=False)
 
+    def _post_to_ui(self, callback) -> None:
+        """可从工作线程调用：只入队，不触碰任何 Tk 对象。"""
+        self._ui_callback_queue.put(callback)
+
+    def _poll_ui_callbacks(self) -> None:
+        """在 Tk 主线程上排空工作线程的界面回调。"""
+        self._ui_poll_after_id = None
+        try:
+            while True:
+                self._ui_callback_queue.get_nowait()()
+        except queue.Empty:
+            pass
+        finally:
+            try:
+                if self.frame.winfo_exists():
+                    self._ui_poll_after_id = self.frame.after(
+                        self._UI_POLL_MS, self._poll_ui_callbacks
+                    )
+            except tk.TclError:
+                pass
+
     def retheme(self):
         """主题切换时调用——这个页面几乎全用 BgFrame（要透出自定义背景
         图，见各处构造时的说明），这类画布容器不会像 ttk 控件那样被
@@ -447,7 +479,7 @@ class SelfHostFrpPage:
                                        t("selfhost.host_key_confirm_msg", host=host, fingerprint=fingerprint))
             event.set()
 
-        self.frame.after(0, _ask)
+        self._post_to_ui(_ask)
         event.wait()
         return result[0]
 
@@ -466,7 +498,7 @@ class SelfHostFrpPage:
         progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_auth_progress_title"))
 
         def _on_log(line):
-            self.frame.after(0, lambda: progress.append(line))
+            self._post_to_ui(lambda: progress.append(line))
 
         def _worker():
             try:
@@ -476,9 +508,9 @@ class SelfHostFrpPage:
                     _on_log, self._confirm_host_key)
                 remote_deploy.verify_key_login(conn["host"], conn["port"], conn["username"], _on_log)
                 app_settings.set_selfhost_ssh_connection(conn["host"], conn["port"], conn["username"])
-                self.frame.after(0, lambda: self._on_ssh_auth_done(progress))
+                self._post_to_ui(lambda: self._on_ssh_auth_done(progress))
             except remote_deploy.RemoteDeployError as e:
-                self.frame.after(0, lambda err=e: self._on_ssh_auth_error(progress, err))
+                self._post_to_ui(lambda err=e: self._on_ssh_auth_error(progress, err))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -538,7 +570,7 @@ class SelfHostFrpPage:
                                     on_cancel=cancel_event.set)
 
         def _on_log(line):
-            self.frame.after(0, lambda: progress.append(line))
+            self._post_to_ui(lambda: progress.append(line))
 
         def _worker():
             try:
@@ -566,11 +598,11 @@ class SelfHostFrpPage:
                     conn["host"], conn["port"], conn["username"], port, token,
                     _on_log, self._confirm_host_key,
                     key_path=str(remote_deploy.SSH_KEY_PATH), cancel_event=cancel_event)
-                self.frame.after(0, lambda: self._on_ssh_deploy_done(progress))
+                self._post_to_ui(lambda: self._on_ssh_deploy_done(progress))
             except remote_deploy.RemoteDeployCancelled:
-                self.frame.after(0, lambda: self._on_ssh_deploy_cancelled(progress))
+                self._post_to_ui(lambda: self._on_ssh_deploy_cancelled(progress))
             except remote_deploy.RemoteDeployError as e:
-                self.frame.after(0, lambda err=e: self._on_ssh_deploy_error(progress, err))
+                self._post_to_ui(lambda err=e: self._on_ssh_deploy_error(progress, err))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -616,7 +648,7 @@ class SelfHostFrpPage:
 
         def _worker():
             status = probe.probe_server_status(conn["host"], conn["port"], conn["username"])
-            self.frame.after(0, lambda: self._on_probe_done(status, reschedule))
+            self._post_to_ui(lambda: self._on_probe_done(status, reschedule))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -829,7 +861,7 @@ class SelfHostFrpPage:
             ok, detail = connectivity.check_tcp_port(host, bind_port)
             line = t("selfhost.conn_tcp_ok", port=bind_port) if ok \
                 else t("selfhost.conn_tcp_fail", port=bind_port, detail=detail or "")
-            self.frame.after(0, lambda ln=line: progress.append(ln))
+            self._post_to_ui(lambda ln=line: progress.append(ln))
 
             # UDP 优先用 tcpdump 在服务器网卡上核实——客户端本地 send/
             # recv 那种探测几乎总收不到响应（DST 不回应陌生包），分不
@@ -839,12 +871,16 @@ class SelfHostFrpPage:
                 ssh_conn["host"], ssh_conn["port"], ssh_conn["username"]) if ssh_conn else None
 
             if tcpdump_probe and tcpdump_probe.available:
-                self.frame.after(0, lambda: progress.append(t("selfhost.conn_udp_method_tcpdump")))
+                self._post_to_ui(
+                    lambda: progress.append(t("selfhost.conn_udp_method_tcpdump"))
+                )
             else:
                 reason = (tcpdump_probe.unavailable_reason if tcpdump_probe else None) or "not_authenticated"
                 fallback_detail = tcpdump_probe.unavailable_detail if tcpdump_probe else None
                 key = f"selfhost.conn_udp_method_fallback_{reason}"
-                self.frame.after(0, lambda k=key, d=fallback_detail: progress.append(t(k, detail=d or "")))
+                self._post_to_ui(
+                    lambda k=key, d=fallback_detail: progress.append(t(k, detail=d or ""))
+                )
 
             for shard_name, remote_port in mappings:
                 if tcpdump_probe and tcpdump_probe.available:
@@ -852,11 +888,11 @@ class SelfHostFrpPage:
                 else:
                     status, detail = connectivity.check_udp_port(host, remote_port)
                 line = t(_UDP_CHECK_KEY_BY_STATUS[status], shard=shard_name, port=remote_port, detail=detail or "")
-                self.frame.after(0, lambda ln=line: progress.append(ln))
+                self._post_to_ui(lambda ln=line: progress.append(ln))
 
             if tcpdump_probe:
                 tcpdump_probe.close()
-            self.frame.after(0, progress.finish)
+            self._post_to_ui(progress.finish)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -908,7 +944,7 @@ class SelfHostFrpPage:
         if not cluster:
             return
         if self._frpc_running(cluster):
-            self.frpc.stop(cluster.path, on_done=lambda p: self.frame.after(0, self._refresh_frpc_row))
+            self.frpc.stop(cluster.path, on_done=lambda _p: self._post_to_ui(self._refresh_frpc_row))
         else:
             for shard in cluster.shards:
                 self.maybe_start_frpc(cluster, shard)
@@ -980,7 +1016,10 @@ class SelfHostFrpPage:
         if self.frpc.get(cluster.path):
             def _after_stop(_proc):
                 self._maybe_start_after_restart(cluster, on_done)
-            self.frpc.stop(cluster.path, on_done=lambda p: self.frame.after(0, lambda: _after_stop(p)))
+            self.frpc.stop(
+                cluster.path,
+                on_done=lambda p: self._post_to_ui(lambda: _after_stop(p)),
+            )
         else:
             self._maybe_start_after_restart(cluster, on_done)
 
@@ -1026,11 +1065,15 @@ class SelfHostFrpPage:
             fresh_used_ports: frozenset = frozenset()
             conn = app_settings.get_selfhost_ssh_connection()
             if conn:
-                self.frame.after(0, lambda: progress.append(t("selfhost.checking_port_conflict")))
+                self._post_to_ui(
+                    lambda: progress.append(t("selfhost.checking_port_conflict"))
+                )
                 fresh_status = probe.probe_server_status(conn["host"], conn["port"], conn["username"])
                 if fresh_status.reachable:
                     fresh_used_ports = fresh_status.used_ports
-                    self.frame.after(0, lambda s=fresh_status: setattr(self, "_last_status", s))
+                    self._post_to_ui(
+                        lambda s=fresh_status: setattr(self, "_last_status", s)
+                    )
 
             for shard in shards:
                 remote_port = app_settings.get_selfhost_frp_mapping(cluster.path, shard.name)
@@ -1043,11 +1086,18 @@ class SelfHostFrpPage:
                 shard_config = load_shard_config(shard.path)
                 set_shard_option(shard_config, "NETWORK", "server_port", remote_port)
                 save_shard_config(shard_config, shard.path)
-                self.frame.after(0, lambda s=shard, p=remote_port:
-                                  progress.append(t("selfhost.setup_step_mapping", shard=s.name, port=p)))
+                self._post_to_ui(
+                    lambda s=shard, p=remote_port: progress.append(
+                        t("selfhost.setup_step_mapping", shard=s.name, port=p)
+                    )
+                )
 
             self._rebuild_frpc_config(cluster)
-            self.frame.after(0, lambda: self._restart_frpc(cluster, on_done=lambda: self._on_enable_done(progress)))
+            self._post_to_ui(
+                lambda: self._restart_frpc(
+                    cluster, on_done=lambda: self._on_enable_done(progress)
+                )
+            )
 
         threading.Thread(target=_worker, daemon=True).start()
 

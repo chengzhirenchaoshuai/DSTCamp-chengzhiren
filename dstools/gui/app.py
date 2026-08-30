@@ -1532,7 +1532,7 @@ class DSToolsApp:
 
         def fn(surf):
             if throttle:
-                surf._request_render()
+                surf.request_render()
             else:
                 surf.render_now()
 

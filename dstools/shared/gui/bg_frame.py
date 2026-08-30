@@ -91,6 +91,10 @@ class BgFrame(tk.Canvas):
         if self._render_after_id is None:
             self._render_after_id = self.after(16, self._do_throttled_render)
 
+    def request_render(self) -> None:
+        """背景系统的公开节流刷新接口。"""
+        self._request_render()
+
     def _do_throttled_render(self) -> None:
         self._render_after_id = None
         self.render_now()
