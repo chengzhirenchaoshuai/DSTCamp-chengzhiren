@@ -27,6 +27,16 @@ import tkinter as tk
 from dstools.shared.gui import theme
 
 
+def _relative_bg_offset(widget, root) -> tuple[int, int]:
+    """返回背景切片相对所属顶层窗口的坐标。"""
+    top = widget.winfo_toplevel()
+    origin = root if top is root else top
+    return (
+        widget.winfo_rootx() - origin.winfo_rootx(),
+        widget.winfo_rooty() - origin.winfo_rooty(),
+    )
+
+
 class BgFrame(tk.Canvas):
     """app 必须实现 `_register_bg_surface(self)` 和
     `_get_bg_slice(widget, w, h) -> ImageTk.PhotoImage | None`（见
@@ -125,7 +135,13 @@ class BgFrame(tk.Canvas):
         # theme.BG_SOFT 也参与 render_background 的混合，切主题后共享图内容
         # 变了但 _shared_bg_key 不含它，这里把 BG_SOFT 一并算进缓存键，切主
         # 题后缓存自动失效、重新裁剪。
-        render_key = (shared_key, w, h, theme.BG_SOFT)
+        # 背景切片不仅由尺寸决定，也由控件在顶层窗口里的位置决定。动态
+        # 表单/页签切换可能只移动控件、宽高完全不变；旧缓存键漏掉坐标时
+        # 会错误复用移动前的切片，表现为局部背景错位，而且普通刷新也无法
+        # 恢复（共享图和控件尺寸都没变，缓存会一直命中）。
+        root = getattr(self._app, "root", self.winfo_toplevel())
+        offset = _relative_bg_offset(self, root)
+        render_key = (shared_key, w, h, offset, theme.BG_SOFT)
         # 纯色主题下没有 bg_image（只有 bg_fill 兜底矩形），两个都要认，否
         # 则纯色主题从任务栏恢复时缓存永不命中、每次都重画一遍。
         if render_key == self._last_render_key and (self.find_withtag("bg_image") or self.find_withtag("bg_fill")):
@@ -162,7 +178,12 @@ class BgFrame(tk.Canvas):
         self.tag_lower("bg_image")
         self.tag_lower("bg_fill")
 
-    def refresh_descendants(self) -> None:
+    def invalidate_bg_cache(self) -> None:
+        """让下一次 render_now() 无条件重新裁剪当前背景。"""
+        self._last_render_key = None
+        self._bg_retry_done = False
+
+    def refresh_descendants(self, *, force: bool = False) -> None:
         """在动态窗口完成布局后递归刷新所有背景表面。
 
         独立创建窗口在 withdraw 状态下先构造控件，卡片内部的
@@ -176,6 +197,8 @@ class BgFrame(tk.Canvas):
             return
         def _refresh_widget(widget) -> None:
             if isinstance(widget, BgFrame):
+                if force:
+                    widget.invalidate_bg_cache()
                 widget.render_now()
             for child in widget.winfo_children():
                 _refresh_widget(child)

@@ -267,6 +267,55 @@ def test_main_tab_refresh_contract():
     print("  PASS: 六个主页签均提供刷新接口，且全量刷新可正确回退")
 
 
+def test_background_refresh_contract():
+    """背景缓存必须感知位置变化，强刷必须使表面缓存失效。"""
+    import weakref
+
+    from dstools.gui.app import DSToolsApp
+    from dstools.shared.gui.bg_frame import _relative_bg_offset
+
+    root = SimpleNamespace(winfo_rootx=lambda: 100, winfo_rooty=lambda: 200)
+    position = [130, 260]
+    widget = SimpleNamespace(
+        winfo_toplevel=lambda: root,
+        winfo_rootx=lambda: position[0],
+        winfo_rooty=lambda: position[1],
+    )
+    assert _relative_bg_offset(widget, root) == (30, 60)
+    position[:] = [150, 280]
+    assert _relative_bg_offset(widget, root) == (50, 80)
+
+    calls = []
+
+    class Surface:
+        def __init__(self, mapped=True):
+            self.mapped = mapped
+
+        def winfo_exists(self):
+            return True
+
+        def winfo_ismapped(self):
+            return self.mapped
+
+        def invalidate_bg_cache(self):
+            calls.append(("invalidate", self.mapped))
+
+        def render_now(self):
+            calls.append(("render", self.mapped))
+
+    surface = Surface()
+    hidden_surface = Surface(mapped=False)
+    app = DSToolsApp.__new__(DSToolsApp)
+    app._bg_surfaces = [weakref.ref(surface), weakref.ref(hidden_surface)]
+    app._refresh_all_bg_surfaces(force=True)
+    assert calls == [
+        ("invalidate", True),
+        ("invalidate", False),
+        ("render", True),
+    ]
+    print("  PASS: 背景切片感知位置变化，强制刷新会失效旧缓存")
+
+
 
 def main():
     """Run all Phase 2 tests."""
@@ -283,6 +332,7 @@ def main():
         test_single_instance_contract,
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
+        test_background_refresh_contract,
     ]
 
     for test in tests:

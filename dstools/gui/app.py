@@ -1486,16 +1486,30 @@ class DSToolsApp:
                 pass
         self._bg_surfaces = alive
 
-    def _refresh_all_bg_surfaces(self, throttle: bool = False) -> None:
+    def _refresh_all_bg_surfaces(
+        self, throttle: bool = False, *, force: bool = False
+    ) -> None:
         """刷新所有可见背景表面。throttle=True 时走 16ms 节流路径（_request_
         render），供"背景图弹窗拖不透明度滑块"这种高频调用——每 60ms 触发
         一次全量同步 render_now（250ms+）是拖滑块卡顿的瓶颈，改成节流让主
-        线程不阻塞，预览依旧流畅。"""
-        fn = (
-            (lambda surf: surf._request_render())
-            if throttle
-            else (lambda surf: surf.render_now())
-        )
+        线程不阻塞，预览依旧流畅。force=True 会先清掉各表面的切片缓存，
+        用于用户主动刷新时修复已经错位或加载异常的背景。"""
+        if force:
+            # 隐藏页签暂时不渲染，但缓存也必须失效；否则之后重新映射时仍
+            # 可能命中刷新前的旧切片。真正绘制仍只处理可见表面。
+            def invalidate_surface(surf):
+                invalidate = getattr(surf, "invalidate_bg_cache", None)
+                if invalidate is not None:
+                    invalidate()
+
+            self._for_each_alive_bg_surface(invalidate_surface)
+
+        def fn(surf):
+            if throttle:
+                surf._request_render()
+            else:
+                surf.render_now()
+
         self._for_each_alive_bg_surface(fn, visible_only=True)
 
     def refresh_bg_surface(self, surface) -> None:
@@ -1505,7 +1519,7 @@ class DSToolsApp:
             self._shared_bg_key = None
             self._rebuild_shared_bg_image()
             if surface is not None and surface.winfo_exists():
-                surface.refresh_descendants()
+                surface.refresh_descendants(force=True)
         except tk.TclError:
             pass
 
@@ -1514,8 +1528,11 @@ class DSToolsApp:
         跟"窗口停顿后"是两回事，这里要立刻生效，不等 150ms。throttle=True
         时表面刷新走 16ms 节流（拖滑块这种高频场景用），重建共享图仍是同步。"""
         self._shared_bg_key = None  # 强制下一次 _rebuild_shared_bg_image() 真的重算
+        # 独立 Toplevel 的缓存不能只看路径/透明度/尺寸：用户可能用相同扩
+        # 展名覆盖了背景文件，key 不变但图片内容已经变了。强刷时一起失效。
+        self._secondary_bg_images.clear()
         self._rebuild_shared_bg_image()
-        self._refresh_all_bg_surfaces(throttle=throttle)
+        self._refresh_all_bg_surfaces(throttle=throttle, force=True)
 
     def _show_manual_update(self) -> None:
         """显示手动更新下载地址；蓝奏云先复制提取码再打开网页。"""
@@ -2067,6 +2084,11 @@ class DSToolsApp:
             # 其它页签仍然只用各自普通的 refresh()。
             self._full_refresh_tabs.discard(key)
             self._refresh_tab(key, full=True)
+        # “刷新全部”同时承担用户主动修复视觉异常的入口。业务页签刷新可能
+        # 改变容器位置但不改变尺寸，必须等几何传播完成后强制重建共享图并
+        # 使每个可见表面的切片缓存失效，否则错位切片会继续被缓存命中。
+        self.root.update_idletasks()
+        self._force_refresh_bg_now()
         # "刷新全部"本身逻辑一直是对的（无条件重新拉取数据/重新渲染），
         # 但如果磁盘上确实没有任何变化，界面前后长得一模一样，用户点了会
         # 觉得"跟没点一样"。这里加一句短暂的状态栏提示，过 1.5 秒后恢复
