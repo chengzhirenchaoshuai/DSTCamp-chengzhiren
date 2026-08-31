@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.3.0-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.3.1-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
@@ -34,8 +34,8 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.3.0.exe`：工具与资源全部内嵌，单文件运行。
-- `DSTCamp-1.3.0.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
+- `DSTCamp-1.3.1.exe`：工具与资源全部内嵌，单文件运行。
+- `DSTCamp-1.3.1.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
 
 源码运行：
 
@@ -94,6 +94,13 @@ python scripts/build_exe.py
 ```
 
 构建脚本使用固定工具白名单，不打包 `cache/`、`data/`、`security/`、`reference/` 或旧版 `dist/`；两个 EXE 都会在生成后执行冻结入口和资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+
+## 1.3.1 更新
+
+- 优化创建存档时的配置集刷新，减少配置状态不同步。
+- 修复背景刷新、透明度实时更新及跨线程回调异常。
+- 修复重复启动时已有窗口未正确置前的问题。
+- 新增专服远程版本检测，并修复专服更新状态误判。
 
 ## 1.3.0 更新
 
