@@ -45,6 +45,7 @@ from dstools.features.mod.workshop_cleanup import (
     delete_workshop_residual,
     format_residual_directory_tree,
 )
+from dstools.i18n.strings import STRINGS
 from dstools.features.mod.workshop_status import (
     WorkshopModEvidence,
     WorkshopModState,
@@ -144,6 +145,15 @@ def test_visible_mod_ids_include_enabled_missing_references_only():
         state=WorkshopModState.UNSUBSCRIBED_REFERENCED
     )
     assert "未订阅" in _referenced_missing_status_text(unsubscribed)
+
+
+def test_missing_mod_scan_summary_stays_compact():
+    values = {"total": 155, "custom": 0, "missing": 16}
+    zh = STRINGS["zh"]["mod.scan_found_with_missing"].format(**values)
+    en = STRINGS["en"]["mod.scan_found_with_missing"].format(**values)
+    assert zh == "已安装155个模组（自定义0个）· 存档缺少16个"
+    assert len(zh) <= 28
+    assert len(en) <= 52
 
 
 def test_mod_update_hint_click_rules():
@@ -535,6 +545,7 @@ if __name__ == "__main__":
     test_catalog_icons_and_platform_invalidation()
     test_shared_rows_keep_filter_and_sort_consistent()
     test_visible_mod_ids_include_enabled_missing_references_only()
+    test_missing_mod_scan_summary_stays_compact()
     test_mod_update_hint_click_rules()
     test_workshop_needs_update_count()
     test_workshop_update_all_only_returns_actionable_items_in_display_order()

@@ -3129,7 +3129,7 @@ class ModManagerTab:
         if missing:
             scan_text = t(
                 "mod.scan_found_with_missing",
-                regular=regular,
+                total=regular + custom,
                 custom=custom,
                 missing=missing,
             )
