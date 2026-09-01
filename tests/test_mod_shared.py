@@ -12,7 +12,11 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dstools.features.mod.catalog import ModCatalogStore
-from dstools.features.mod.list_model import build_mod_rows, sort_mod_data
+from dstools.features.mod.list_model import (
+    build_mod_rows,
+    merge_visible_mod_ids,
+    sort_mod_data,
+)
 from dstools.features.mod.parser import (
     ModInfo,
     find_workshop_content_dirs,
@@ -22,6 +26,7 @@ from dstools.features.mod.parser import (
 from dstools.features.mod.tab import (
     ModManagerTab,
     _can_open_mod_update_hint,
+    _referenced_missing_status_text,
     _workshop_actionable_update_ids,
     _workshop_needs_update_count,
     _workshop_modinfo_signature,
@@ -122,6 +127,23 @@ def test_shared_rows_keep_filter_and_sort_consistent():
     assert [row["workshop_id"] for row in rows] == ["CommonModSets"]
     assert rows[0]["version_text"]
     assert rows[0]["has_link"] is False
+
+
+def test_visible_mod_ids_include_enabled_missing_references_only():
+    configured = {
+        "workshop-20": ModEntry("workshop-20", enabled=True),
+        "workshop-30": ModEntry("workshop-30", enabled=False),
+        "workshop-40": ModEntry("workshop-40", enabled=True),
+    }
+    assert merge_visible_mod_ids(
+        ["workshop-10", "workshop-20", "workshop-10"], configured
+    ) == ["workshop-10", "workshop-20", "workshop-40"]
+
+    assert "本机未安装" in _referenced_missing_status_text(None)
+    unsubscribed = SimpleNamespace(
+        state=WorkshopModState.UNSUBSCRIBED_REFERENCED
+    )
+    assert "未订阅" in _referenced_missing_status_text(unsubscribed)
 
 
 def test_mod_update_hint_click_rules():
@@ -512,6 +534,7 @@ if __name__ == "__main__":
     test_catalog_does_not_store_page_state()
     test_catalog_icons_and_platform_invalidation()
     test_shared_rows_keep_filter_and_sort_consistent()
+    test_visible_mod_ids_include_enabled_missing_references_only()
     test_mod_update_hint_click_rules()
     test_workshop_needs_update_count()
     test_workshop_update_all_only_returns_actionable_items_in_display_order()

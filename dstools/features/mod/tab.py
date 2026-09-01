@@ -45,6 +45,7 @@ from dstools.features.mod.legacy_v1 import (
 from dstools.features.mod.list_model import (
     build_mod_rows,
     localize_mod_name,
+    merge_visible_mod_ids,
     sort_mod_data,
     version_display,
 )
@@ -245,6 +246,24 @@ def _workshop_update_error_message(error) -> str:
     if _is_steam_context_error(error):
         return t("mod.update_steam_unavailable")
     return str(error)
+
+
+def _referenced_missing_status_text(status) -> str:
+    """把缺失引用的 Workshop 状态转换成主页第三行文字。"""
+    if status is None:
+        return t("mod.reference_missing_local")
+    labels = {
+        WorkshopModState.UNSUBSCRIBED_REFERENCED:
+            "mod.update_latest_unsubscribed_referenced",
+        WorkshopModState.MISSING: "mod.update_latest_missing",
+        WorkshopModState.NOT_INSTALLED: "mod.update_latest_not_installed",
+        WorkshopModState.SOURCE_UNAVAILABLE:
+            "mod.update_latest_source_unavailable",
+        WorkshopModState.DOWNLOADING: "mod.update_latest_downloading",
+        WorkshopModState.DOWNLOAD_PENDING: "mod.update_latest_pending",
+    }
+    key = labels.get(getattr(status, "state", None))
+    return t(key) if key else t("mod.reference_missing_local")
 
 
 # 订阅推荐模组引导列表：(workshop id, 名称, 一句话描述)。
@@ -2624,6 +2643,9 @@ class ModManagerTab:
                 self._workshop_status_file_signature = scan_signature
                 self._workshop_title_cache.update(titles)
                 self._update_workshop_update_hint()
+                # 缺失引用首帧先显示“本机未安装”；Steam 状态返回后立即
+                # 替换成“未订阅/文件缺失”等准确文字，不要求用户再刷新。
+                self._schedule_async_render(gen, delay_ms=0)
 
             self.frame.after(0, apply)
 
@@ -2795,19 +2817,21 @@ class ModManagerTab:
             if overrides_dirty:
                 save_mod_overrides(overrides)
 
-            # 只列出当前能从有效目录或 Legacy 包读取的 Mod。
-            # modoverrides.lua 只为这些项目提供启用状态和配置，不能让一个
-            # 已改名为 <id>_bak/已删除的旧 key 凭空生成“幽灵 Mod”行。
-            # 不修改 overrides 本身，用户以后把目录恢复为标准名时原配置
-            # 仍会回来。
+            # 已安装内容始终显示；当前世界已启用但本机缺失的引用也必须
+            # 显示，便于接手其它机器的存档后发现未订阅/未下载项。已经
+            # 禁用且没有内容的旧 key 继续隐藏，避免删除/改名后生成幽灵行。
+            # 这里只合并列表，不修改 overrides 本身。
             legacy_packages = (
                 find_legacy_packages() if platform == Platform.STEAM else {}
             )
-            ids = list_installed_mod_ids(
-                platform,
-                wegame_client_mods_dir,
-                legacy_packages=legacy_packages,
-                steam_runtime_mods_dir=steam_runtime_mods_dir,
+            ids = merge_visible_mod_ids(
+                list_installed_mod_ids(
+                    platform,
+                    wegame_client_mods_dir,
+                    legacy_packages=legacy_packages,
+                    steam_runtime_mods_dir=steam_runtime_mods_dir,
+                ),
+                overrides.mods,
             )
 
             for wid in ids:
@@ -3096,10 +3120,24 @@ class ModManagerTab:
         self._refresh_workshop_update_button_state()
         cluster = self._get_cluster()
         platform = cluster.platform if cluster else Platform.STEAM
-        regular, custom = split_installed_mod_counts(self._mod_data, platform)
-        self._mod_scan_status_var.set(
-            t("mod.scan_found_breakdown", regular=regular, custom=custom)
+        regular, custom = split_installed_mod_counts(self._mod_paths, platform)
+        missing = sum(
+            1
+            for wid, entry in self._mod_data.items()
+            if entry.enabled and wid not in self._mod_paths
         )
+        if missing:
+            scan_text = t(
+                "mod.scan_found_with_missing",
+                regular=regular,
+                custom=custom,
+                missing=missing,
+            )
+        else:
+            scan_text = t(
+                "mod.scan_found_breakdown", regular=regular, custom=custom
+            )
+        self._mod_scan_status_var.set(scan_text)
         # 刚从磁盘（重新）加载完——在这之前的任何"未保存修改"标记都已经
         # 没有意义了，因为现在显示的状态本身就又是已保存的状态（覆盖首
         # 次加载、"重载Mod信息"、切换世界，以及 _save_mods/
@@ -3201,6 +3239,16 @@ class ModManagerTab:
         for row in rows:
             path = self._mod_paths.get(row["workshop_id"])
             row["has_folder"] = bool(path and Path(path).is_dir())
+            if row["has_folder"] or not row["enabled"]:
+                continue
+            text_id = str(row["workshop_id"]).removeprefix("workshop-")
+            status = self._workshop_status_cache.get(text_id)
+            if status is None and text_id.isdigit():
+                status = self._workshop_status_cache.get(int(text_id))
+            row["version_text"] = _referenced_missing_status_text(status)
+            title = self._workshop_title_cache.get(text_id, "")
+            if title and not row["name"]:
+                row["name"] = localize_mod_name(row["workshop_id"], title)
         return rows
 
     def _render_list(self, ref_width=None):

@@ -94,6 +94,28 @@ def sort_mod_data(mod_data: dict, mod_infos: dict) -> dict:
     return {mod_id: mod_data[mod_id] for mod_id in ordered}
 
 
+def merge_visible_mod_ids(installed_ids, configured_mods: dict) -> list[str]:
+    """合并主页需要显示的已安装 Mod 和存档缺失引用。
+
+    已安装内容始终显示；存档里已启用、但当前机器找不到内容的 Mod 也必须
+    显示，否则用户接手其它机器的存档时看不到真正会导致开服缺 Mod 的项。
+    已禁用且没有本地内容的旧记录继续隐藏，避免删除/改名后留下的幽灵行。
+    """
+    result = []
+    seen = set()
+    for mod_id in installed_ids:
+        if mod_id in seen:
+            continue
+        seen.add(mod_id)
+        result.append(mod_id)
+    for mod_id, entry in configured_mods.items():
+        if mod_id in seen or not getattr(entry, "enabled", False):
+            continue
+        seen.add(mod_id)
+        result.append(mod_id)
+    return result
+
+
 def build_mod_rows(
     mod_data: dict,
     mod_infos: dict,
