@@ -137,6 +137,7 @@ class PillTabBar(tk.Frame):
         self._selection_to = None
         self._selection_current_bounds = None
         self._selection_text_key = None
+        self._pending_select_key = None
         self._pill_bounds = {}
         self._text_items = {}
         self._selected_pill_item = None
@@ -220,12 +221,14 @@ class PillTabBar(tk.Frame):
                     target_bounds = self._pill_bounds.get(key)
                     self._cancel_selection_animation()
                     self._selected = key
+                    self._pending_select_key = key
                     self._selection_current_bounds = start_bounds
                     self._selection_text_key = old_key
-                    self._redraw()
                     if start_bounds is not None and target_bounds is not None:
                         self._start_selection_animation(start_bounds, target_bounds)
-                    self._on_select(key)
+                    else:
+                        self._pending_select_key = None
+                        self._on_select(key)
                 return
 
     def _cancel_selection_animation(self) -> None:
@@ -238,10 +241,22 @@ class PillTabBar(tk.Frame):
         self._selection_after_id = None
 
     def _start_selection_animation(self, start_bounds, target_bounds) -> None:
-        """只移动选中药丸这一张小图，不重画页签内容或背景大图。"""
-        self._selection_from = tuple(start_bounds)
-        self._selection_to = tuple(target_bounds)
+        """预先生成目标药丸，后续每帧只移动 Canvas 坐标。"""
+        target_w = max(1, int(round(target_bounds[2] - target_bounds[0])))
+        target_h = max(1, int(round(target_bounds[3] - target_bounds[1])))
+        start_cx = (start_bounds[0] + start_bounds[2]) / 2
+        start_cy = (start_bounds[1] + start_bounds[3]) / 2
+        self._selection_from = (
+            start_cx - target_w / 2,
+            start_cy - target_h / 2,
+        )
+        self._selection_to = (target_bounds[0], target_bounds[1])
         self._selection_step = 0
+        if self._selected_pill_item is not None:
+            photo = _selected_pill_image(
+                target_w, target_h, int(self._pill_h / 2), theme.PRIMARY
+            )
+            self._canvas.itemconfigure(self._selected_pill_item, image=photo)
         self._animate_selection()
 
     def _animate_selection(self) -> None:
@@ -252,10 +267,16 @@ class PillTabBar(tk.Frame):
             return
         progress = min(1.0, self._selection_step / _SELECTION_STEPS)
         eased = 1.0 - (1.0 - progress) ** 3
-        bounds = tuple(
+        x, y = (
             start_value + (target_value - start_value) * eased
             for start_value, target_value in zip(start, target)
         )
+        target_bounds = self._pill_bounds.get(self._selected)
+        if target_bounds is None:
+            return
+        target_w = target_bounds[2] - target_bounds[0]
+        target_h = target_bounds[3] - target_bounds[1]
+        bounds = (x, y, x + target_w, y + target_h)
         self._selection_current_bounds = bounds
         if progress >= 0.45 and self._selection_text_key != self._selected:
             old_item = self._text_items.get(self._selection_text_key)
@@ -279,18 +300,16 @@ class PillTabBar(tk.Frame):
         self._selection_from = None
         self._selection_to = None
         self._selection_text_key = None
+        pending_key = self._pending_select_key
+        self._pending_select_key = None
+        if pending_key == self._selected:
+            self._on_select(pending_key)
 
     def _move_selected_pill(self, bounds) -> None:
-        x1, y1, x2, y2 = bounds
-        pill_w = max(1, int(round(x2 - x1)))
-        pill_h = max(1, int(round(y2 - y1)))
-        photo = _selected_pill_image(
-            pill_w, pill_h, int(self._pill_h / 2), theme.PRIMARY
-        )
+        x1, y1, _x2, _y2 = bounds
         if self._selected_pill_item is None:
             self._redraw()
             return
-        self._canvas.itemconfigure(self._selected_pill_item, image=photo)
         self._canvas.coords(
             self._selected_pill_item, int(round(x1)), int(round(y1))
         )
