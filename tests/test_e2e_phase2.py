@@ -140,6 +140,18 @@ def test_global_token_selection_applies_to_current_cluster():
     print("  PASS: 选中的全局令牌会应用到当前服务器存档")
 
 
+def test_global_token_dialog_width_fits_current_long_token():
+    """全局令牌窗口应完整容纳四段式令牌，同时不再保持旧的超宽尺寸。"""
+    from dstools.features.cluster_config.tab import _GLOBAL_TOKEN_VISIBLE_CHARS
+
+    representative_long_token = (
+        "pds-g^" + "a" * 11 + "^" + "b" * 44 + "^" + "c" * 16
+    )
+    assert len(representative_long_token) == 79
+    assert len(representative_long_token) <= _GLOBAL_TOKEN_VISIBLE_CHARS < 112
+    print("  PASS: 全局令牌窗口宽度可完整显示当前四段式长令牌")
+
+
 def test_single_instance_contract():
     from dstools import __version__
     from dstools.shared.single_instance import (
@@ -460,6 +472,7 @@ def main():
         test_exe_entry_imports,
         test_gui_imports,
         test_global_token_selection_applies_to_current_cluster,
+        test_global_token_dialog_width_fits_current_long_token,
         test_single_instance_contract,
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,

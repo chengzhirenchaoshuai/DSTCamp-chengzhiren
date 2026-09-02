@@ -35,6 +35,10 @@ _SUB_TAB_H = 32
 _SUB_PILL_H = 24
 _SUB_FONT_SIZE = 10
 
+# 当前较长的四段式 Klei 服务器令牌为 79 个字符；多留 3 列避免字体边界
+# 显得拥挤。异常的更长内容仍可通过列表下方的横向滚动条完整查看。
+_GLOBAL_TOKEN_VISIBLE_CHARS = 82
+
 # DST 权限名单中的用户 ID：在线认证用户使用 KU_，离线/LAN 用户使用 OU_。
 # 后半段只做宽松的字母数字与长度检查，用于拦截明显手误；OU_ 常见为较长
 # 的平台数字 ID，因此上限不能沿用原来只按 KU_ 样本设置的 16 位。
@@ -213,11 +217,12 @@ class _GlobalTokensDialog:
         win.configure(background=theme.BG_SOFT)
 
         ttk.Label(win, text=t("token.global_hint"), font=theme.font_tuple(theme.FONT_SIZE_SM),
-                  wraplength=930, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
+                  wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
         list_frame = ttk.Frame(win)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
         self.listbox = tk.Listbox(
-            list_frame, height=8, width=112, font=("Consolas", 10),
+            list_frame, height=8, width=_GLOBAL_TOKEN_VISIBLE_CHARS,
+            font=("Consolas", 10),
             exportselection=False,
         )
         self.listbox.pack(fill=tk.BOTH, expand=True)
@@ -246,7 +251,7 @@ class _GlobalTokensDialog:
         win.bind("<Escape>", lambda _event: self._close())
 
         root = parent_widget.winfo_toplevel()
-        center_over_parent(win, root, min_width=980)
+        center_over_parent(win, root)
         win.transient(root)
         win.deiconify()
         win.grab_set()
