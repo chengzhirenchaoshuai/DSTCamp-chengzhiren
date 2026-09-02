@@ -194,14 +194,17 @@ class _IdInputDialog:
 
 
 class _GlobalTokensDialog:
-    """管理全局令牌池（增/删），关掉即保存——不需要单独的"确定/取消"，
-    每次增删都直接写 app_settings，跟 admin/blocklist 面板的"点一下立
-    即生效"是同一个交互习惯，不用在这里维护一份额外的"未保存改动"状
-    态。列表里只显示脱敏后的值（mask_token()），管理时不需要看到明文，
-    真要核对内容用"当前服务器令牌"那边的"显示"按钮。"""
+    """管理全局令牌池，并可把选中令牌返回给当前服务器存档。
+
+    增删仍然即时写入 app_settings；"使用"只负责返回当前选中项，由调用
+    方写入当前存档的 cluster_token.txt。令牌默认脱敏，需要时可一次切换
+    为完整显示。
+    """
 
     def __init__(self, parent_widget):
+        self.result: str | None = None
         self._tokens = app_settings.get_global_tokens()
+        self._tokens_visible = False
         win = tk.Toplevel(parent_widget)
         self.win = win
         win.withdraw()
@@ -210,32 +213,75 @@ class _GlobalTokensDialog:
         win.configure(background=theme.BG_SOFT)
 
         ttk.Label(win, text=t("token.global_hint"), font=theme.font_tuple(theme.FONT_SIZE_SM),
-                  wraplength=380, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
-        self.listbox = tk.Listbox(win, height=8, width=40, font=("Consolas", 10))
-        self.listbox.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
+                  wraplength=780, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
+        list_frame = ttk.Frame(win)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
+        self.listbox = tk.Listbox(
+            list_frame, height=8, width=92, font=("Consolas", 10),
+            exportselection=False,
+        )
+        self.listbox.pack(fill=tk.BOTH, expand=True)
+        x_scroll = ttk.Scrollbar(
+            list_frame, orient=tk.HORIZONTAL, command=self.listbox.xview,
+        )
+        x_scroll.pack(fill=tk.X)
+        self.listbox.configure(xscrollcommand=x_scroll.set)
+        self.listbox.bind("<<ListboxSelect>>", self._update_use_state)
 
         btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=(0, 20))
         ttk.Button(btn_row, text=t("admin.add"), command=self._add).pack(side=tk.LEFT)
         ttk.Button(btn_row, text=t("admin.remove"), command=self._remove).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Button(btn_row, text=t("dlg.confirm_btn"), command=self._close).pack(side=tk.RIGHT)
+        self._visibility_btn = ttk.Button(
+            btn_row, text=t("token.show"), command=self._toggle_visibility,
+        )
+        self._visibility_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self._use_btn = ttk.Button(
+            btn_row, text=t("token.global_use"), command=self._use,
+            state=tk.DISABLED,
+        )
+        self._use_btn.pack(side=tk.RIGHT)
 
         self._refresh_listbox()
         win.protocol("WM_DELETE_WINDOW", self._close)
+        win.bind("<Escape>", lambda _event: self._close())
 
         root = parent_widget.winfo_toplevel()
-        center_over_parent(win, root, min_width=440)
+        center_over_parent(win, root, min_width=820)
         win.transient(root)
         win.deiconify()
         win.grab_set()
         win.wait_window()
 
-    def _refresh_listbox(self):
+    def _refresh_listbox(self, select_index: int | None = None):
+        previous = self.listbox.curselection()
+        if select_index is None and previous:
+            select_index = previous[0]
         self.listbox.delete(0, tk.END)
         if not self._tokens:
             self.listbox.insert(tk.END, t("token.global_empty"))
+            self._update_use_state()
             return
         for tok in self._tokens:
-            self.listbox.insert(tk.END, mask_token(tok))
+            self.listbox.insert(
+                tk.END, tok if self._tokens_visible else mask_token(tok),
+            )
+        if select_index is not None:
+            select_index = min(select_index, len(self._tokens) - 1)
+            self.listbox.selection_set(select_index)
+            self.listbox.activate(select_index)
+            self.listbox.see(select_index)
+        self._update_use_state()
+
+    def _update_use_state(self, _event=None):
+        can_use = bool(self._tokens and self.listbox.curselection())
+        self._use_btn.configure(state=tk.NORMAL if can_use else tk.DISABLED)
+
+    def _toggle_visibility(self):
+        self._tokens_visible = not self._tokens_visible
+        self._visibility_btn.configure(
+            text=t("token.hide") if self._tokens_visible else t("token.show")
+        )
+        self._refresh_listbox()
 
     def _add(self):
         input_dlg = _TokenInputDialog(self.win, title=t("token.global_add_title"))
@@ -246,7 +292,7 @@ class _GlobalTokensDialog:
             return
         self._tokens.append(input_dlg.result)
         app_settings.set_global_tokens(self._tokens)
-        self._refresh_listbox()
+        self._refresh_listbox(select_index=len(self._tokens) - 1)
 
     def _remove(self):
         sel = self.listbox.curselection()
@@ -257,7 +303,17 @@ class _GlobalTokensDialog:
             return
         del self._tokens[idx]
         app_settings.set_global_tokens(self._tokens)
-        self._refresh_listbox()
+        self._refresh_listbox(select_index=idx if self._tokens else None)
+
+    def _use(self):
+        sel = self.listbox.curselection()
+        if not sel or not self._tokens:
+            return
+        idx = sel[0]
+        if idx >= len(self._tokens):
+            return
+        self.result = self._tokens[idx]
+        self.win.destroy()
 
     def _close(self):
         self.win.destroy()
@@ -612,11 +668,15 @@ class ClusterConfigTab:
         self._global_tokens_hint_lbl.pack(anchor=tk.W, pady=(4, 0))
 
     def _open_global_tokens_dialog(self):
-        _GlobalTokensDialog(self.frame)
+        token_dialog = _GlobalTokensDialog(self.frame)
+        c = self._get_cluster()
+        if token_dialog.result is not None and c:
+            token_path = c.token_path or (c.path / "cluster_token.txt")
+            write_token(token_path, token_dialog.result)
+            c.token_path = token_path
         # 关掉弹窗后，如果当前正显示着的服务器存档还缺令牌，_load_token()
         # 会顺手从刚设置好的全局令牌池自动补上（见 _load_token() 的说
         # 明）——不用等用户重新切一次存档下拉框才生效。
-        c = self._get_cluster()
         if c:
             self._load_token(c)
 

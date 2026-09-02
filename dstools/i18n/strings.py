@@ -380,6 +380,7 @@ STRINGS = {
         "token.global_add_title": "添加全局令牌",
         "token.global_empty": "暂无全局令牌",
         "token.global_duplicate": "这个令牌已经在列表里了。",
+        "token.global_use": "使用",
         # 樱花映射
         "sakura.token_label": "API Token:",
         "sakura.token_prompt": "输入樱花内网穿透 API Token:",
@@ -1212,6 +1213,7 @@ STRINGS = {
         "token.global_add_title": "Add Global Token",
         "token.global_empty": "No global tokens yet",
         "token.global_duplicate": "This token is already in the list.",
+        "token.global_use": "Use",
         # 樱花映射
         "sakura.token_label": "API Token:",
         "sakura.token_prompt": "Enter your SakuraFrp API Token:",

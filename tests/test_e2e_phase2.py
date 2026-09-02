@@ -5,9 +5,11 @@ model 字段的默认值本身不需要单独测——那是 dataclass 声明上
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 from string import Formatter
 from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -109,6 +111,33 @@ def test_gui_imports():
     from dstools.features.cluster_config.tab import ClusterConfigTab
     assert DSToolsApp and ModManagerTab and ClusterConfigTab
     print("  PASS: GUI imports OK")
+
+
+def test_global_token_selection_applies_to_current_cluster():
+    """全局令牌窗口的“使用”结果应写入当前存档，而不只是关闭窗口。"""
+    from dstools.features.cluster_config import tab as cluster_tab
+    from dstools.features.cluster_config.tab import ClusterConfigTab
+    from dstools.shared.token_manager import read_token
+
+    selected_token = "pds-g^" + "a" * 96
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = SimpleNamespace(path=Path(tmp), token_path=None)
+        app = ClusterConfigTab.__new__(ClusterConfigTab)
+        app.frame = object()
+        app._get_cluster = Mock(return_value=cluster)
+        app._load_token = Mock()
+        fake_dialog = SimpleNamespace(result=selected_token)
+
+        with patch.object(
+            cluster_tab, "_GlobalTokensDialog", return_value=fake_dialog,
+        ):
+            app._open_global_tokens_dialog()
+
+        expected_path = Path(tmp) / "cluster_token.txt"
+        assert cluster.token_path == expected_path
+        assert read_token(expected_path) == selected_token
+        app._load_token.assert_called_once_with(cluster)
+    print("  PASS: 选中的全局令牌会应用到当前服务器存档")
 
 
 def test_single_instance_contract():
@@ -430,6 +459,7 @@ def main():
         test_i18n_basic,
         test_exe_entry_imports,
         test_gui_imports,
+        test_global_token_selection_applies_to_current_cluster,
         test_single_instance_contract,
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
