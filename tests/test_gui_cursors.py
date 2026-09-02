@@ -3,15 +3,12 @@
 import os
 import sys
 import tkinter as tk
-import time
 from types import SimpleNamespace
 from tkinter import ttk
-from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.shared.gui.image_scroll import ImageScrollPanel
-from dstools.shared.gui import pill_tabs as pill_tabs_module
 from dstools.shared.gui.interaction_cursor import (
     install_interactive_cursors,
     refresh_notebook_cursor,
@@ -48,11 +45,7 @@ def test_native_action_cursors(root):
 
 def test_pill_tab_hit_cursor(root):
     print("Test Cursor-2: 自绘页签命中区域")
-    bar = PillTabBar(
-        root,
-        [("a", "页签 A"), ("b", "较宽的页签 B"), ("c", "页签 C")],
-        lambda _key: None,
-    )
+    bar = PillTabBar(root, [("a", "页签 A"), ("b", "页签 B")], lambda _key: None)
     bar.pack(fill=tk.X)
     root.update_idletasks()
     bar._redraw()
@@ -66,38 +59,11 @@ def test_pill_tab_hit_cursor(root):
 
     selected = []
     bar._on_select = selected.append
-    with patch.object(
-        pill_tabs_module,
-        "_selected_pill_image",
-        wraps=pill_tabs_module._selected_pill_image,
-    ) as image_factory:
-        target_x1, target_x2, target_key = bar._regions[1]
-        bar._on_click(SimpleNamespace(x=(target_x1 + target_x2) / 2))
-        assert selected == []
-        assert bar._selection_after_id is not None
-        assert bar._selection_current_bounds is not None
-
-        # 动画未结束时再次点击，只应在最终动画完成后切换到最后一个页签，
-        # 避免被前一页的同步加载阻塞 Tk 动画。
-        final_x1, final_x2, final_key = bar._regions[2]
-        target_bounds = bar._pill_bounds[final_key]
-        bar._on_click(SimpleNamespace(x=(final_x1 + final_x2) / 2))
-        assert selected == []
-
-        deadline = time.monotonic() + 0.6
-        while bar._selection_after_id is not None and time.monotonic() < deadline:
-            root.update()
-            time.sleep(0.01)
-
-        # 两次点击各生成一次目标尺寸图片；动画帧本身不得再做 PIL 缩放。
-        assert image_factory.call_count == 2
-    assert bar._selection_after_id is None
-    assert bar._selection_current_bounds is None
-    assert selected == [final_key]
-    pill_x, pill_y = bar._canvas.coords(bar._selected_pill_item)
-    assert round(pill_x) == round(target_bounds[0])
-    assert round(pill_y) == round(target_bounds[1])
-    print("  PASS: 页签动画先完成再切页，连续点击只切换到最终页签")
+    target_x1, target_x2, target_key = bar._regions[1]
+    bar._on_click(SimpleNamespace(x=(target_x1 + target_x2) / 2))
+    assert selected == [target_key]
+    assert bar._selected == target_key
+    print("  PASS: 页签点击后立即切换，不创建延迟动画")
 
 
 def test_native_notebook_tab_cursor(root):

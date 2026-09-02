@@ -40,8 +40,6 @@ _HPAD = 18  # 药丸内部左右留白（围绕文字标签）
 
 _PILL_IMG_CACHE: dict[tuple, "ImageTk.PhotoImage"] = {}
 _PILL_SUPERSAMPLE = 4
-_SELECTION_FRAME_MS = 16
-_SELECTION_STEPS = 9  # 9 帧 * 16ms ≈ 144ms
 
 
 def _selected_pill_image(w: int, h: int, radius: int, color: str) -> "ImageTk.PhotoImage":
@@ -131,16 +129,6 @@ class PillTabBar(tk.Frame):
         self._canvas.pack(fill=tk.BOTH, expand=True)
         self._bg_photo = None
         self._redraw_after_id = None
-        self._selection_after_id = None
-        self._selection_step = 0
-        self._selection_from = None
-        self._selection_to = None
-        self._selection_current_bounds = None
-        self._selection_text_key = None
-        self._pending_select_key = None
-        self._pill_bounds = {}
-        self._text_items = {}
-        self._selected_pill_item = None
         self._canvas.bind("<Configure>", lambda e: self._request_redraw())
         self._canvas.bind("<Button-1>", self._on_click)
         self._canvas.bind("<Motion>", self._on_motion)
@@ -213,106 +201,10 @@ class PillTabBar(tk.Frame):
         for x1, x2, key in self._regions:
             if x1 <= event.x <= x2:
                 if key != self._selected:
-                    old_key = self._selected
-                    start_bounds = (
-                        self._selection_current_bounds
-                        or self._pill_bounds.get(old_key)
-                    )
-                    target_bounds = self._pill_bounds.get(key)
-                    self._cancel_selection_animation()
                     self._selected = key
-                    self._pending_select_key = key
-                    self._selection_current_bounds = start_bounds
-                    self._selection_text_key = old_key
-                    if start_bounds is not None and target_bounds is not None:
-                        self._start_selection_animation(start_bounds, target_bounds)
-                    else:
-                        self._pending_select_key = None
-                        self._on_select(key)
+                    self._redraw()
+                    self._on_select(key)
                 return
-
-    def _cancel_selection_animation(self) -> None:
-        if self._selection_after_id is None:
-            return
-        try:
-            self._canvas.after_cancel(self._selection_after_id)
-        except tk.TclError:
-            pass
-        self._selection_after_id = None
-
-    def _start_selection_animation(self, start_bounds, target_bounds) -> None:
-        """预先生成目标药丸，后续每帧只移动 Canvas 坐标。"""
-        target_w = max(1, int(round(target_bounds[2] - target_bounds[0])))
-        target_h = max(1, int(round(target_bounds[3] - target_bounds[1])))
-        start_cx = (start_bounds[0] + start_bounds[2]) / 2
-        start_cy = (start_bounds[1] + start_bounds[3]) / 2
-        self._selection_from = (
-            start_cx - target_w / 2,
-            start_cy - target_h / 2,
-        )
-        self._selection_to = (target_bounds[0], target_bounds[1])
-        self._selection_step = 0
-        if self._selected_pill_item is not None:
-            photo = _selected_pill_image(
-                target_w, target_h, int(self._pill_h / 2), theme.PRIMARY
-            )
-            self._canvas.itemconfigure(self._selected_pill_item, image=photo)
-        self._animate_selection()
-
-    def _animate_selection(self) -> None:
-        self._selection_after_id = None
-        start = self._selection_from
-        target = self._selection_to
-        if start is None or target is None:
-            return
-        progress = min(1.0, self._selection_step / _SELECTION_STEPS)
-        eased = 1.0 - (1.0 - progress) ** 3
-        x, y = (
-            start_value + (target_value - start_value) * eased
-            for start_value, target_value in zip(start, target)
-        )
-        target_bounds = self._pill_bounds.get(self._selected)
-        if target_bounds is None:
-            return
-        target_w = target_bounds[2] - target_bounds[0]
-        target_h = target_bounds[3] - target_bounds[1]
-        bounds = (x, y, x + target_w, y + target_h)
-        self._selection_current_bounds = bounds
-        if progress >= 0.45 and self._selection_text_key != self._selected:
-            old_item = self._text_items.get(self._selection_text_key)
-            new_item = self._text_items.get(self._selected)
-            if old_item is not None:
-                self._canvas.itemconfigure(old_item, fill=theme.TEXT_MUTED)
-            if new_item is not None:
-                self._canvas.itemconfigure(new_item, fill="#FFFFFF")
-            self._selection_text_key = self._selected
-        try:
-            self._move_selected_pill(bounds)
-        except tk.TclError:
-            return
-        if progress < 1.0:
-            self._selection_step += 1
-            self._selection_after_id = self._canvas.after(
-                _SELECTION_FRAME_MS, self._animate_selection
-            )
-            return
-        self._selection_current_bounds = None
-        self._selection_from = None
-        self._selection_to = None
-        self._selection_text_key = None
-        pending_key = self._pending_select_key
-        self._pending_select_key = None
-        if pending_key == self._selected:
-            self._on_select(pending_key)
-
-    def _move_selected_pill(self, bounds) -> None:
-        x1, y1, _x2, _y2 = bounds
-        if self._selected_pill_item is None:
-            self._redraw()
-            return
-        self._canvas.coords(
-            self._selected_pill_item, int(round(x1)), int(round(y1))
-        )
 
     def _on_motion(self, event):
         interactive = any(x1 <= event.x <= x2 for x1, x2, _key in self._regions)
@@ -332,9 +224,6 @@ class PillTabBar(tk.Frame):
         c = self._canvas
         c.delete("all")
         self._regions = []
-        self._pill_bounds = {}
-        self._text_items = {}
-        self._selected_pill_item = None
         w = max(1, c.winfo_width())
         h = max(self._height, self.winfo_height())
         cy = h / 2
@@ -349,36 +238,18 @@ class PillTabBar(tk.Frame):
         self._bg_photo = photo if photo is not None else theme.gradient_image(w, h)
         c.create_image(0, 0, image=self._bg_photo, anchor=tk.NW)
 
-        layout = []
         x = self._gap
         for key, label in self._tabs:
             text_w = self._font.measure(label)
             pill_w = text_w + 2 * self._hpad
             x1, y1, x2, y2 = x, cy - self._pill_h / 2, x + pill_w, cy + self._pill_h / 2
-            bounds = (x1, y1, x2, y2)
-            self._pill_bounds[key] = bounds
+            selected = key == self._selected
+            if selected:
+                pill_w = int(round(x2 - x1))
+                pill_h = int(round(y2 - y1))
+                photo = _selected_pill_image(pill_w, pill_h, int(self._pill_h / 2), theme.PRIMARY)
+                c.create_image(int(round(x1)), int(round(y1)), image=photo, anchor=tk.NW)
+            fg = "#FFFFFF" if selected else theme.TEXT_MUTED
+            c.create_text((x1 + x2) / 2, cy, text=label, fill=fg, font=self._font)
             self._regions.append((x1, x2, key))
-            layout.append((key, label, bounds))
             x = x2 + self._gap
-
-        selected_bounds = (
-            self._selection_current_bounds
-            or self._pill_bounds.get(self._selected)
-        )
-        if selected_bounds is not None:
-            x1, y1, x2, y2 = selected_bounds
-            pill_w = max(1, int(round(x2 - x1)))
-            pill_h = max(1, int(round(y2 - y1)))
-            photo = _selected_pill_image(
-                pill_w, pill_h, int(self._pill_h / 2), theme.PRIMARY
-            )
-            self._selected_pill_item = c.create_image(
-                int(round(x1)), int(round(y1)), image=photo, anchor=tk.NW
-            )
-
-        active_text_key = self._selection_text_key or self._selected
-        for key, label, (x1, _y1, x2, _y2) in layout:
-            fg = "#FFFFFF" if key == active_text_key else theme.TEXT_MUTED
-            self._text_items[key] = c.create_text(
-                (x1 + x2) / 2, cy, text=label, fill=fg, font=self._font
-            )
