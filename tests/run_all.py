@@ -14,6 +14,7 @@ TEST_SCRIPTS = (
     "test_mod_shared.py",
     "test_multi_cluster_ports.py",
     "test_server_diagnostics.py",
+    "test_token_scheduling.py",
     "test_server_mod_status.py",
     "test_world_mod_compat.py",
     "test_gui_cursors.py",

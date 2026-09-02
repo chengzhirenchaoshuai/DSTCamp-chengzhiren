@@ -618,3 +618,31 @@ def detect_external_shard_processes(cluster) -> dict[str, dict]:
                     break
         result[shard.name] = info
     return result
+
+
+def detect_external_running_clusters(clusters) -> set[str]:
+    """一次系统扫描识别所有有 DST 世界真实绑定端口的存档路径。
+
+    用于令牌独占预检；与逐个调用 detect_external_shard_processes() 相比，
+    不会为每个存档重复执行 tasklist/netstat。
+    """
+    pid_mem = _find_dst_process_pids()
+    if not pid_mem:
+        return set()
+    pid_ports = _udp_ports_by_pid()
+    dst_ports = {
+        port for pid, ports in pid_ports.items() if pid in pid_mem for port in ports
+    }
+    result = set()
+    for cluster in clusters:
+        for shard in getattr(cluster, "shards", ()):
+            config = load_shard_config(shard.path)
+            raw_port = get_shard_option(config, "NETWORK", "server_port")
+            try:
+                port = int(raw_port)
+            except (TypeError, ValueError):
+                continue
+            if port in dst_ports:
+                result.add(str(cluster.path))
+                break
+    return result

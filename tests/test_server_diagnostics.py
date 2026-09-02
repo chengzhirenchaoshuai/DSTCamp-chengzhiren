@@ -12,6 +12,10 @@ from dstools.features.local_service.server_diagnostics import (
 
 def main() -> None:
     cases = [
+        ("token_conflict", [
+            "[Http] Curl failed[1] with HTTP_500. Response: E_ROWID_EXIST",
+            "[Error] Master Server Broadcast Error: E_ROWID_EXIST",
+        ]),
         ("runtime", ["The code execution cannot proceed because VCRUNTIME140.dll was not found."]),
         ("permission", ["PermissionError: [WinError 5] Access is denied."]),
         ("permission", ["Check for write access: FALSE", "Unable to write to config directory."]),
@@ -130,6 +134,9 @@ def main() -> None:
     assert report is not None and report.category == "port"
     assert contains_startup_failure(["[Error] Server failed to start!"])
     assert contains_startup_failure(["Details: SOCKET_PORT_ALREADY_IN_USE"])
+    assert contains_startup_failure([
+        "[Error] Master Server Broadcast Error: E_ROWID_EXIST"
+    ])
     assert not contains_startup_failure(["Starting Dedicated Server Game"])
 
     assert diagnose_server_failure(

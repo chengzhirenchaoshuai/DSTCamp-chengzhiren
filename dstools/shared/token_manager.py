@@ -1,6 +1,35 @@
-"""DST 服务器 cluster_token.txt 令牌文件的读写工具。"""
+"""DST 服务器 cluster_token.txt 令牌的分类、脱敏与文件读写。"""
 
+import hashlib
+from enum import Enum
 from pathlib import Path
+
+
+class ServerTokenKind(str, Enum):
+    """Klei 服务器令牌格式。
+
+    这里只识别已经实测过的三段式与四段式结构；未知格式仍可由用户手动
+    使用，但不会被自动调度，避免 Klei 再次调整格式时误套并发规则。
+    """
+
+    OLD = "old"
+    NEW = "new"
+    UNKNOWN = "unknown"
+
+
+def classify_token(token: str) -> ServerTokenKind:
+    """按结构区分旧三段式、新四段式令牌，不依赖具体账号或总长度。"""
+    parts = token.strip().split("^")
+    if not parts or parts[0] != "pds-g" or any(not part for part in parts[1:]):
+        return ServerTokenKind.UNKNOWN
+    if len(parts) not in (3, 4) or not parts[1].startswith(("KU_", "OU_")):
+        return ServerTokenKind.UNKNOWN
+    return ServerTokenKind.OLD if len(parts) == 3 else ServerTokenKind.NEW
+
+
+def token_fingerprint(token: str) -> str:
+    """返回只用于本机占用状态关联的不可逆指纹，不暴露令牌正文。"""
+    return hashlib.sha256(token.strip().encode("utf-8")).hexdigest()
 
 
 def read_token(path: Path) -> str:

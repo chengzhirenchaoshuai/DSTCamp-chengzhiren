@@ -16,7 +16,15 @@ from dstools.features.cluster_config.ini_field_info import (
     ALWAYS_READONLY_FIELDS, get_enum_choices, get_field_info, get_range_limits,
 )
 from dstools.shared import app_settings
-from dstools.shared.token_manager import is_valid_token, mask_token, read_token, write_token
+from dstools.shared.token_manager import (
+    ServerTokenKind,
+    classify_token,
+    is_valid_token,
+    mask_token,
+    read_token,
+    token_fingerprint,
+    write_token,
+)
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.card_frame import CardFrame
@@ -205,9 +213,11 @@ class _GlobalTokensDialog:
     为完整显示。
     """
 
-    def __init__(self, parent_widget):
+    def __init__(self, parent_widget, token_uses=()):
         self.result: str | None = None
         self._tokens = app_settings.get_global_tokens()
+        self._token_uses = tuple(token_uses)
+        self._holds = app_settings.get_token_holds()
         self._tokens_visible = False
         win = tk.Toplevel(parent_widget)
         self.win = win
@@ -220,18 +230,29 @@ class _GlobalTokensDialog:
                   wraplength=680, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
         list_frame = ttk.Frame(win)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
-        self.listbox = tk.Listbox(
-            list_frame, height=8, width=_GLOBAL_TOKEN_VISIBLE_CHARS,
-            font=("Consolas", 10),
-            exportselection=False,
+        self.tree = ttk.Treeview(
+            list_frame,
+            columns=("token", "kind", "status"),
+            show="headings",
+            height=8,
+            selectmode="browse",
         )
-        self.listbox.pack(fill=tk.BOTH, expand=True)
+        self.tree.heading("token", text=t("token.column_token"))
+        self.tree.heading("kind", text=t("token.column_kind"))
+        self.tree.heading("status", text=t("token.column_status"))
+        self.tree.column(
+            "token", width=_GLOBAL_TOKEN_VISIBLE_CHARS * 6,
+            minwidth=260, stretch=True,
+        )
+        self.tree.column("kind", width=80, minwidth=70, stretch=False, anchor=tk.CENTER)
+        self.tree.column("status", width=210, minwidth=140, stretch=True)
+        self.tree.pack(fill=tk.BOTH, expand=True)
         x_scroll = ttk.Scrollbar(
-            list_frame, orient=tk.HORIZONTAL, command=self.listbox.xview,
+            list_frame, orient=tk.HORIZONTAL, command=self.tree.xview,
         )
         x_scroll.pack(fill=tk.X)
-        self.listbox.configure(xscrollcommand=x_scroll.set)
-        self.listbox.bind("<<ListboxSelect>>", self._update_use_state)
+        self.tree.configure(xscrollcommand=x_scroll.set)
+        self.tree.bind("<<TreeviewSelect>>", self._update_use_state)
 
         btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=(0, 20))
         ttk.Button(btn_row, text=t("admin.add"), command=self._add).pack(side=tk.LEFT)
@@ -240,13 +261,18 @@ class _GlobalTokensDialog:
             btn_row, text=t("token.show"), command=self._toggle_visibility,
         )
         self._visibility_btn.pack(side=tk.LEFT, padx=(6, 0))
+        self._release_btn = ttk.Button(
+            btn_row, text=t("token.clear_hold"), command=self._clear_hold,
+            state=tk.DISABLED,
+        )
+        self._release_btn.pack(side=tk.LEFT, padx=(6, 0))
         self._use_btn = ttk.Button(
             btn_row, text=t("token.global_use"), command=self._use,
             state=tk.DISABLED,
         )
         self._use_btn.pack(side=tk.RIGHT)
 
-        self._refresh_listbox()
+        self._refresh_tree()
         win.protocol("WM_DELETE_WINDOW", self._close)
         win.bind("<Escape>", lambda _event: self._close())
 
@@ -257,36 +283,96 @@ class _GlobalTokensDialog:
         win.grab_set()
         win.wait_window()
 
-    def _refresh_listbox(self, select_index: int | None = None):
-        previous = self.listbox.curselection()
-        if select_index is None and previous:
-            select_index = previous[0]
-        self.listbox.delete(0, tk.END)
+    def _token_row(self, token: str) -> tuple[str, str, str]:
+        kind_key = {
+            ServerTokenKind.OLD: "token.kind_old",
+            ServerTokenKind.NEW: "token.kind_new",
+            ServerTokenKind.UNKNOWN: "token.kind_unknown",
+        }[classify_token(token)]
+        fingerprint = token_fingerprint(token)
+        users = sorted({
+            use.cluster_name for use in self._token_uses
+            if token_fingerprint(use.token) == fingerprint
+        })
+        hold = self._holds.get(fingerprint)
+        if not is_valid_token(token):
+            status = t("token.status_invalid")
+        elif hold:
+            status_key = (
+                "token.status_conflict"
+                if hold["state"] == "conflict"
+                else "token.status_waiting"
+            )
+            status = t(status_key, name=hold.get("cluster_name") or "-")
+        elif users:
+            status = t("token.status_in_use", names="、".join(users))
+        else:
+            status = t("token.status_available")
+        shown = token if self._tokens_visible else mask_token(token)
+        return shown, t(kind_key), status
+
+    def _selected_index(self) -> int | None:
+        selected = self.tree.selection()
+        if not selected:
+            return None
+        try:
+            return int(selected[0])
+        except (TypeError, ValueError):
+            return None
+
+    def _refresh_tree(self, select_index: int | None = None):
+        if select_index is None:
+            select_index = self._selected_index()
+        self._holds = app_settings.get_token_holds()
+        self.tree.delete(*self.tree.get_children())
         if not self._tokens:
-            self.listbox.insert(tk.END, t("token.global_empty"))
+            self.tree.insert("", tk.END, iid="empty", values=(t("token.global_empty"), "", ""))
             self._update_use_state()
             return
-        for tok in self._tokens:
-            self.listbox.insert(
-                tk.END, tok if self._tokens_visible else mask_token(tok),
-            )
+        for index, tok in enumerate(self._tokens):
+            self.tree.insert("", tk.END, iid=str(index), values=self._token_row(tok))
         if select_index is not None:
             select_index = min(select_index, len(self._tokens) - 1)
-            self.listbox.selection_set(select_index)
-            self.listbox.activate(select_index)
-            self.listbox.see(select_index)
+            iid = str(select_index)
+            self.tree.selection_set(iid)
+            self.tree.focus(iid)
+            self.tree.see(iid)
         self._update_use_state()
 
     def _update_use_state(self, _event=None):
-        can_use = bool(self._tokens and self.listbox.curselection())
+        index = self._selected_index()
+        can_use = bool(self._tokens and index is not None)
         self._use_btn.configure(state=tk.NORMAL if can_use else tk.DISABLED)
+        can_clear = False
+        if index is not None and index < len(self._tokens):
+            fingerprint = token_fingerprint(self._tokens[index])
+            held = fingerprint in self._holds
+            active = any(
+                token_fingerprint(use.token) == fingerprint
+                for use in self._token_uses
+            )
+            can_clear = held and not active
+        self._release_btn.configure(state=tk.NORMAL if can_clear else tk.DISABLED)
+
+    def _clear_hold(self):
+        index = self._selected_index()
+        if index is None or index >= len(self._tokens):
+            return
+        if not dlg.ask_yes_no(
+            self.win,
+            t("token.clear_hold"),
+            t("token.clear_hold_confirm"),
+        ):
+            return
+        app_settings.clear_token_hold(token_fingerprint(self._tokens[index]))
+        self._refresh_tree(select_index=index)
 
     def _toggle_visibility(self):
         self._tokens_visible = not self._tokens_visible
         self._visibility_btn.configure(
             text=t("token.hide") if self._tokens_visible else t("token.show")
         )
-        self._refresh_listbox()
+        self._refresh_tree()
 
     def _add(self):
         input_dlg = _TokenInputDialog(self.win, title=t("token.global_add_title"))
@@ -297,24 +383,35 @@ class _GlobalTokensDialog:
             return
         self._tokens.append(input_dlg.result)
         app_settings.set_global_tokens(self._tokens)
-        self._refresh_listbox(select_index=len(self._tokens) - 1)
+        self._refresh_tree(select_index=len(self._tokens) - 1)
 
     def _remove(self):
-        sel = self.listbox.curselection()
-        if not sel or not self._tokens:
+        idx = self._selected_index()
+        if idx is None or not self._tokens:
             return
-        idx = sel[0]
         if idx >= len(self._tokens):
+            return
+        fingerprint = token_fingerprint(self._tokens[idx])
+        if any(token_fingerprint(use.token) == fingerprint for use in self._token_uses):
+            dlg.show_warning(
+                self.win, t("token.set_global_btn"), t("token.remove_in_use")
+            )
+            return
+        if fingerprint in self._holds and not dlg.ask_yes_no(
+            self.win,
+            t("token.set_global_btn"),
+            t("token.remove_held_confirm"),
+        ):
             return
         del self._tokens[idx]
         app_settings.set_global_tokens(self._tokens)
-        self._refresh_listbox(select_index=idx if self._tokens else None)
+        app_settings.prune_token_holds(self._tokens)
+        self._refresh_tree(select_index=idx if self._tokens else None)
 
     def _use(self):
-        sel = self.listbox.curselection()
-        if not sel or not self._tokens:
+        idx = self._selected_index()
+        if idx is None or not self._tokens:
             return
-        idx = sel[0]
         if idx >= len(self._tokens):
             return
         self.result = self._tokens[idx]
@@ -658,8 +755,8 @@ class ClusterConfigTab:
         # 全局令牌池——所有存档共享，"复制为服务器存档"新建存档时自动
         # 取列表第一个填上（应用户要求固定取第一个，不随机选，见
         # save_browser/cluster_copy.py），不需要每次都手动申请/填写。这
-        # 里只负责管理这个池子，跟当前存档具体用的是哪个令牌是两回事，
-        # 不需要在 on_cluster_changed()/_load_token() 里刷新。
+        # 里负责管理这个池子；真正启动时 local_service/token_scheduler.py
+        # 还会按新旧格式和占用状态重新选择，不把“第一个”当成固定分配。
         global_bf = self._layout_frame(p); global_bf.pack(fill=tk.X, pady=(15, 0))
         self._global_tokens_btn = ttk.Button(global_bf, text=t("token.set_global_btn"),
                                               command=self._open_global_tokens_dialog)
@@ -673,7 +770,11 @@ class ClusterConfigTab:
         self._global_tokens_hint_lbl.pack(anchor=tk.W, pady=(4, 0))
 
     def _open_global_tokens_dialog(self):
-        token_dialog = _GlobalTokensDialog(self.frame)
+        token_uses = ()
+        local_tab = getattr(getattr(self, "app", None), "local_tab", None)
+        if local_tab is not None:
+            token_uses = local_tab.token_usage_snapshot()
+        token_dialog = _GlobalTokensDialog(self.frame, token_uses=token_uses)
         c = self._get_cluster()
         if token_dialog.result is not None and c:
             token_path = c.token_path or (c.path / "cluster_token.txt")

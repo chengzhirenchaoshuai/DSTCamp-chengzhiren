@@ -20,6 +20,7 @@ _STARTUP_FAILURE_MARKERS = (
     "failed msimulation->reset()",
     "error during game initialization!",
     "luaerror but no error string",
+    "master server broadcast error: e_rowid_exist",
 )
 
 
@@ -156,6 +157,18 @@ def diagnose_server_failure(
 
     lower = "\n".join(lines).lower()
     related_mods = _mods(lines, enabled_mods, loaded_mods)
+
+    if "e_rowid_exist" in lower and (
+        "master server broadcast error" in lower or "http_500" in lower
+    ):
+        return DiagnosticReport(
+            "token_conflict", "令牌注册冲突",
+            f"{shard_name} 无法向 Klei 注册房间；新令牌可能正被另一存档使用，或异常退出后的注册尚未释放。",
+            ("停止使用同一新令牌的其他存档，或从全局令牌池换用可用令牌。",
+             "如果房间刚刚崩溃，请等待 Klei 释放旧注册后再重试。"),
+            _evidence(lines, ("e_rowid_exist", "master server broadcast error")),
+            (), True,
+        )
 
     if any(token in lower for token in (
         "vcruntime140.dll", "msvcp140.dll", "vcomp120.dll", "cannot find the module",

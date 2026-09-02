@@ -26,6 +26,10 @@ from dstools.features.local_service.server_diagnostics import (
     contains_startup_failure,
     diagnose_server_failure,
 )
+from dstools.features.local_service.token_scheduler import (
+    TokenUse,
+    select_token_for_cluster,
+)
 from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.shared.app_settings import (
     get_backup_auto_enabled,
@@ -36,6 +40,10 @@ from dstools.shared.app_settings import (
     get_sakura_token,
     get_selfhost_frp_mapping,
     get_selfhost_frp_server,
+    get_global_tokens,
+    get_token_holds,
+    set_token_hold,
+    clear_token_hold,
 )
 from dstools.features.local_service.backup_manager import create_backup
 from dstools.features.cluster_config.config_manager import (
@@ -50,6 +58,7 @@ from dstools.features.local_service.dedicated_server import (
     ServerManager,
     ServerStatus,
     advance_world_ready_marker,
+    detect_external_running_clusters,
     detect_external_shard_processes,
     find_bin64_dir,
     find_dedicated_server_dir,
@@ -63,7 +72,14 @@ from dstools.features.mod.parser import (
     parse_modinfo,
 )
 from dstools.features.mod.sync import get_enabled_mod_ids
-from dstools.shared.token_manager import is_valid_token, read_token
+from dstools.shared.token_manager import (
+    ServerTokenKind,
+    classify_token,
+    is_valid_token,
+    read_token,
+    token_fingerprint,
+    write_token,
+)
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
@@ -490,9 +506,14 @@ class _AnnounceDialog:
 class _ConsolePane:
     """一个正在运行的世界的控制台标签：只读日志 + 命令输入框。"""
 
-    def __init__(self, notebook, proc, on_close, on_rollback):
+    def __init__(
+        self, notebook, proc, on_close, on_rollback,
+        on_failure=None, on_ready=None,
+    ):
         self.proc = proc
         self._on_close = on_close
+        self._on_failure = on_failure
+        self._on_ready = on_ready
         self.frame = ttk.Frame(notebook)
 
         # bottom 先 pack（side=BOTTOM，固定高度）再 pack 会 expand 撑满的
@@ -592,6 +613,7 @@ class _ConsolePane:
         self._mod_check_real_start_seen = False
         self._mod_check_ready_seen = False
         self._diagnostic_reported = False
+        self._ready_reported = False
 
         body = ttk.Frame(self.frame)
         body.pack(fill=tk.BOTH, expand=True)
@@ -876,6 +898,7 @@ class _ConsolePane:
         self._mod_check_real_start_seen = False
         self._mod_check_ready_seen = False
         self._diagnostic_reported = False
+        self._ready_reported = False
         self._diagnostic_label.pack_forget()
         self.pump()
 
@@ -932,6 +955,8 @@ class _ConsolePane:
                 loaded_mods=self.proc.mods_loaded,
             )
             if report is not None:
+                if self._on_failure is not None:
+                    self._on_failure(self.proc, report)
                 self._diagnostic_label.configure(
                     text=f"⚠ {report.banner_text} 建议：{report.suggestions[0]}",
                     bg=theme.BANNER_BG,
@@ -966,6 +991,10 @@ class _ConsolePane:
                     # 的消息区域，避免长文本被挤成窄长条。
                     wraplength=1200,
                 )
+        if self.proc.world_ready and not self._ready_reported:
+            self._ready_reported = True
+            if self._on_ready is not None:
+                self._on_ready(self.proc)
         self.status_var.set(t(_STATUS_KEYS[status]))
         self.status_lbl.configure(fg=_status_color(status))
         can_send = status == ServerStatus.RUNNING
@@ -1046,6 +1075,9 @@ class LocalServiceTab:
         # 单独记住待启动键，防止用户重复点击启动同一个世界。
         self._launching_keys: set[tuple[str, str]] = set()
         self._restarting_keys: set[tuple[str, str]] = set()
+        # cluster 路径 -> 本次启动已经预占的令牌。LuaJIT 准备期间还没有
+        # Popen，也必须参与新令牌独占判断，避免快速点击两个存档时撞号。
+        self._token_reservations: dict[str, str] = {}
         self._install_dir: Path | None = None
         self._steam_update_dialog = None
         self._steam_update_mode = "install"
@@ -2576,27 +2608,120 @@ class LocalServiceTab:
 
     # ── 启动/停止 ────────────────────────────────────────────────────
 
-    def _confirm_token_ok(self, cluster) -> bool:
-        """启动前检查一下 cluster_token.txt——没有令牌/令牌格式不对，专
-        用服务器进程本身能拉起来，但连不上 Klei 账号验证，实际会在日志
-        里报错退出（真机验证过，不是"能启动但功能缺失"这种程度，是直接
-        启动失败）。"离线模式"（NETWORK.offline_cluster）是唯一不需要
-        令牌的例外（不注册到 Klei 服务器列表，见
-        ini_field_info.py 对应字段的说明），这种情况直接放行。
-        其它情况下令牌缺失/无效就弹一个"是否仍要继续"确认框——不是强制
-        拦截（万一用户就是知道自己在干什么，比如刚删了令牌准备手动重新
-        申请），返回 True 表示可以继续启动。"""
+    def token_usage_snapshot(self) -> tuple[TokenUse, ...]:
+        """返回 DSTCamp 已管理及正在预启动的存档级令牌占用快照。"""
+        names = {
+            str(cluster.path): cluster.name
+            for cluster in getattr(self.app.env, "clusters", ())
+        }
+        clusters = tuple(getattr(self.app.env, "clusters", ()))
+        paths = {
+            str(proc.cluster_path)
+            for proc in self.manager.running()
+        } | set(self._token_reservations) | detect_external_running_clusters(clusters)
+        uses = []
+        for cluster_key in sorted(paths, key=str.lower):
+            token = self._token_reservations.get(cluster_key)
+            if token is None:
+                token = read_token(Path(cluster_key) / "cluster_token.txt")
+            if is_valid_token(token):
+                uses.append(TokenUse(token, cluster_key, names.get(
+                    cluster_key, Path(cluster_key).name
+                )))
+        return tuple(uses)
+
+    def _token_unavailable_details(self) -> str:
+        active = []
+        for use in self.token_usage_snapshot():
+            if classify_token(use.token) == ServerTokenKind.NEW:
+                active.append(use.cluster_name)
+        held = [
+            item.get("cluster_name") or item.get("cluster_key") or "-"
+            for item in get_token_holds().values()
+        ]
+        lines = []
+        if active:
+            lines.append(t("local.token_active_detail", names="、".join(sorted(set(active)))))
+        if held:
+            lines.append(t("local.token_held_detail", names="、".join(sorted(set(held)))))
+        return "\n".join(lines) or t("local.token_pool_empty_detail")
+
+    def _prepare_token_for_start(self, cluster) -> bool:
+        """启动前按存档分配令牌，并为异步启动阶段建立本机预占。"""
         config = load_cluster_config(cluster.path)
         if config.network.get("offline_cluster", False):
+            self._token_reservations.pop(str(cluster.path), None)
             return True
-        token = read_token(cluster.token_path) if cluster.token_path else ""
-        if is_valid_token(token):
-            return True
-        return dlg.ask_yes_no(
-            self.app.root,
-            t("local.token_missing_title"),
-            t("local.token_missing_confirm"),
+
+        cluster_key = str(cluster.path)
+        token_path = cluster.token_path or (cluster.path / "cluster_token.txt")
+        current = read_token(token_path)
+        selection = select_token_for_cluster(
+            current_token=current,
+            pool=get_global_tokens(),
+            target_cluster_key=cluster_key,
+            active_uses=self.token_usage_snapshot(),
+            held_fingerprints=get_token_holds().keys(),
         )
+        if selection.token is None:
+            dlg.show_warning(
+                self.app.root,
+                t("local.token_unavailable_title"),
+                t(
+                    "local.token_unavailable_msg",
+                    details=self._token_unavailable_details(),
+                ),
+            )
+            return False
+
+        if selection.changed:
+            write_token(token_path, selection.token)
+            cluster.token_path = token_path
+            dlg.show_toast(
+                self.app.root,
+                t("local.token_auto_selected", cluster=cluster.name),
+            )
+        self._token_reservations[cluster_key] = selection.token
+        return True
+
+    def _release_token_reservation_if_stopped(self, cluster_path) -> None:
+        cluster_key = str(cluster_path)
+        if not any(
+            str(proc.cluster_path) == cluster_key for proc in self.manager.running()
+        ):
+            self._token_reservations.pop(cluster_key, None)
+
+    @staticmethod
+    def _process_token(proc) -> str:
+        return read_token(Path(proc.cluster_path) / "cluster_token.txt")
+
+    def _on_server_failure(self, proc, report) -> None:
+        """记录主世界异常留下的服务端令牌占用；从世界不单独占令牌。"""
+        if not getattr(proc, "is_master", True):
+            return
+        token = self._process_token(proc)
+        if classify_token(token) != ServerTokenKind.NEW:
+            return
+        set_token_hold(
+            token_fingerprint(token),
+            state="conflict" if report.category == "token_conflict" else "crashed",
+            cluster_key=str(proc.cluster_path),
+            cluster_name=getattr(proc, "cluster_name", Path(proc.cluster_path).name),
+            since=time.time(),
+        )
+        self._token_reservations.pop(str(proc.cluster_path), None)
+
+    def _on_server_ready(self, proc) -> None:
+        """主世界成功注册后，清除同一令牌此前的等待释放标记。"""
+        if not getattr(proc, "is_master", True):
+            return
+        token = self._process_token(proc)
+        if classify_token(token) == ServerTokenKind.NEW:
+            clear_token_hold(token_fingerprint(token))
+
+    def _confirm_token_ok(self, cluster) -> bool:
+        """兼容旧调用名；实际执行新的令牌池分配与独占预检。"""
+        return self._prepare_token_for_start(cluster)
 
     def _cluster_for_running_process(self, proc, current_cluster):
         """把 ServerProcess 的路径重新映射到当前 discovery 得到的 Cluster。"""
@@ -2836,6 +2961,7 @@ class LocalServiceTab:
         if not self._confirm_token_ok(cluster):
             return
         if not self._preflight_start(cluster, [shard]):
+            self._release_token_reservation_if_stopped(cluster.path)
             return
         self._do_start_shard(cluster, shard)
 
@@ -2856,15 +2982,18 @@ class LocalServiceTab:
         # 启动子进程的方式在这个平台上做不到，只能引导用户去 WeGame 客户
         # 端自己点启动（按钮本身已经在 UI 上禁用，这里是双重保险）。
         if cluster.platform == Platform.WEGAME:
+            self._release_token_reservation_if_stopped(cluster.path)
             return
         if self._install_dir is None:
             self._detect_install_dir()
             if self._install_dir is None:
                 _show_not_found_warning(self.app.root)
+                self._release_token_reservation_if_stopped(cluster.path)
                 return
         try:
             conf_dir_arg = resolve_conf_dir_arg(self.app.env.klei_root)
         except ConfDirCrossDriveError:
+            self._release_token_reservation_if_stopped(cluster.path)
             dlg.show_error(
                 self.app.root,
                 t("local.install_title"),
@@ -2883,6 +3012,7 @@ class LocalServiceTab:
                 t("local.luajit_regenerate_title"),
                 t("local.luajit_regenerate_confirm_msg"),
             ):
+                self._release_token_reservation_if_stopped(cluster.path)
                 return
             self._launching_keys.add((str(cluster.path), shard.name))
             self._regenerate_luajit_then_start(cluster, shard, conf_dir_arg)
@@ -2954,6 +3084,8 @@ class LocalServiceTab:
                         )
                         if on_failure is not None:
                             on_failure()
+                        else:
+                            self._release_token_reservation_if_stopped(cluster.path)
                 finally:
                     for target in shards:
                         self._launching_keys.discard((str(cluster.path), target.name))
@@ -2994,6 +3126,7 @@ class LocalServiceTab:
                 extra_args=get_dedicated_server_extra_args(),
             )
         except (OSError, ValueError) as exc:
+            self._release_token_reservation_if_stopped(cluster.path)
             dlg.show_error(
                 self.app.root,
                 t("local.install_title"),
@@ -3018,6 +3151,8 @@ class LocalServiceTab:
                 proc,
                 on_close=lambda: self._close_console_pane(key, cluster, shard),
                 on_rollback=self._open_rollback_dialog,
+                on_failure=self._on_server_failure,
+                on_ready=self._on_server_ready,
             )
             self._console_panes[key] = pane
             self._console_nb.add(pane.frame, text=shard.name)
@@ -3198,6 +3333,7 @@ class LocalServiceTab:
         # 联动），只有这个 cluster 名下所有世界都真正停下来之后备份才是一
         # 个一致的快照——不是每停一个世界就各自备份一次。
         running = self.manager.running()
+        self._release_token_reservation_if_stopped(cluster.path)
         if get_backup_auto_enabled() and not any(
             str(p.cluster_path) == str(cluster.path) for p in running
         ):
@@ -3229,16 +3365,22 @@ class LocalServiceTab:
             proc = self.manager.get(c.path, s.name)
             if proc is None or proc.status not in _RUNNING_LIKE:
                 targets.append(s)
-        if not targets or not self._preflight_start(c, targets):
+        if not targets:
+            self._release_token_reservation_if_stopped(c.path)
+            return
+        if not self._preflight_start(c, targets):
+            self._release_token_reservation_if_stopped(c.path)
             return
         if self._install_dir is None:
             self._detect_install_dir()
             if self._install_dir is None:
                 _show_not_found_warning(self.app.root)
+                self._release_token_reservation_if_stopped(c.path)
                 return
         try:
             conf_dir_arg = resolve_conf_dir_arg(self.app.env.klei_root)
         except ConfDirCrossDriveError:
+            self._release_token_reservation_if_stopped(c.path)
             dlg.show_error(
                 self.app.root,
                 t("local.install_title"),
@@ -3253,6 +3395,7 @@ class LocalServiceTab:
                 t("local.luajit_regenerate_title"),
                 t("local.luajit_regenerate_confirm_msg"),
             ):
+                self._release_token_reservation_if_stopped(c.path)
                 return
             self._launching_keys.update((str(c.path), s.name) for s in targets)
             self._regenerate_luajit_then_start(c, targets, conf_dir_arg)

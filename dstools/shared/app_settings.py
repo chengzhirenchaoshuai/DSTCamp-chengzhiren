@@ -36,6 +36,7 @@ _KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
 _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
 _KEY_GLOBAL_TOKENS = "global_tokens"
+_KEY_TOKEN_HOLDS = "token_holds"
 _KEY_MOD_PRESETS = "mod_presets"
 _KEY_DEDICATED_SERVER_EXTRA_ARGS = "dedicated_server_extra_args"
 
@@ -456,8 +457,8 @@ def set_selfhost_ssh_connection(host: str, port: int, username: str) -> None:
 def get_global_tokens() -> list[str]:
     """全局令牌池——所有存档共享，"复制为服务器存档"新建出来的存档如果
     还没有 cluster_token.txt，会固定取列表第一个自动填上（见
-    features/save_browser/cluster_copy.py），不用每次都去 Klei 后台重新
-    申请一个。"""
+    features/save_browser/cluster_copy.py）；真正启动时会再根据新旧格式和
+    占用状态选择可用项（见 local_service/token_scheduler.py）。"""
     tokens = load_settings().get(_KEY_GLOBAL_TOKENS) or []
     return [tok for tok in tokens if isinstance(tok, str) and tok]
 
@@ -465,6 +466,80 @@ def get_global_tokens() -> list[str]:
 def set_global_tokens(tokens: list[str]) -> None:
     data = load_settings()
     data[_KEY_GLOBAL_TOKENS] = list(tokens)
+    save_settings(data)
+
+
+def get_token_holds() -> dict[str, dict]:
+    """读取新令牌在 Klei 端疑似尚未释放的本机记录。"""
+    raw = load_settings().get(_KEY_TOKEN_HOLDS) or {}
+    if not isinstance(raw, dict):
+        return {}
+    result = {}
+    for fingerprint, item in raw.items():
+        if (
+            isinstance(fingerprint, str)
+            and isinstance(item, dict)
+            and item.get("state") in ("crashed", "conflict")
+        ):
+            try:
+                since = float(item.get("since", 0) or 0)
+            except (TypeError, ValueError):
+                since = 0.0
+            result[fingerprint] = {
+                "state": item["state"],
+                "cluster_key": str(item.get("cluster_key", "")),
+                "cluster_name": str(item.get("cluster_name", "")),
+                "since": since,
+            }
+    return result
+
+
+def set_token_hold(
+    fingerprint: str, *, state: str, cluster_key: str,
+    cluster_name: str, since: float,
+) -> None:
+    if state not in ("crashed", "conflict"):
+        raise ValueError(f"unsupported token hold state: {state}")
+    data = load_settings()
+    holds = get_token_holds()
+    holds[fingerprint] = {
+        "state": state,
+        "cluster_key": cluster_key,
+        "cluster_name": cluster_name,
+        "since": float(since),
+    }
+    data[_KEY_TOKEN_HOLDS] = holds
+    save_settings(data)
+
+
+def clear_token_hold(fingerprint: str) -> None:
+    data = load_settings()
+    holds = get_token_holds()
+    if fingerprint not in holds:
+        return
+    del holds[fingerprint]
+    if holds:
+        data[_KEY_TOKEN_HOLDS] = holds
+    else:
+        data.pop(_KEY_TOKEN_HOLDS, None)
+    save_settings(data)
+
+
+def prune_token_holds(tokens: list[str]) -> None:
+    """删除已经不在令牌池中的等待状态，避免列表长期积累孤儿记录。"""
+    from dstools.shared.token_manager import token_fingerprint
+
+    allowed = {token_fingerprint(token) for token in tokens if token}
+    data = load_settings()
+    holds = {
+        fingerprint: item
+        for fingerprint, item in get_token_holds().items()
+        if fingerprint in allowed
+    }
+    if holds:
+        data[_KEY_TOKEN_HOLDS] = holds
+    else:
+        data.pop(_KEY_TOKEN_HOLDS, None)
     save_settings(data)
 
 
