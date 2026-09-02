@@ -213,11 +213,11 @@ class _GlobalTokensDialog:
         win.configure(background=theme.BG_SOFT)
 
         ttk.Label(win, text=t("token.global_hint"), font=theme.font_tuple(theme.FONT_SIZE_SM),
-                  wraplength=780, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
+                  wraplength=930, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
         list_frame = ttk.Frame(win)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
         self.listbox = tk.Listbox(
-            list_frame, height=8, width=92, font=("Consolas", 10),
+            list_frame, height=8, width=112, font=("Consolas", 10),
             exportselection=False,
         )
         self.listbox.pack(fill=tk.BOTH, expand=True)
@@ -246,7 +246,7 @@ class _GlobalTokensDialog:
         win.bind("<Escape>", lambda _event: self._close())
 
         root = parent_widget.winfo_toplevel()
-        center_over_parent(win, root, min_width=820)
+        center_over_parent(win, root, min_width=980)
         win.transient(root)
         win.deiconify()
         win.grab_set()
