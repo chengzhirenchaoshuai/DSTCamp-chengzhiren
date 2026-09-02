@@ -43,9 +43,9 @@ _SUB_TAB_H = 32
 _SUB_PILL_H = 24
 _SUB_FONT_SIZE = 10
 
-# 当前较长的四段式 Klei 服务器令牌为 79 个字符；多留 3 列避免字体边界
-# 显得拥挤。异常的更长内容仍可通过列表下方的横向滚动条完整查看。
-_GLOBAL_TOKEN_VISIBLE_CHARS = 82
+# 令牌正文默认脱敏，完整值改由悬停渐进展示，因此这一列不再为 79 字符
+# 的完整令牌长期占位；横向空间优先留给“类型”和“占用状态”。
+_GLOBAL_TOKEN_COLUMN_WIDTH = 320
 
 # DST 权限名单中的用户 ID：在线认证用户使用 KU_，离线/LAN 用户使用 OU_。
 # 后半段只做宽松的字母数字与长度检查，用于拦截明显手误；OU_ 常见为较长
@@ -209,8 +209,8 @@ class _GlobalTokensDialog:
     """管理全局令牌池，并可把选中令牌返回给当前服务器存档。
 
     增删仍然即时写入 app_settings；"使用"只负责返回当前选中项，由调用
-    方写入当前存档的 cluster_token.txt。令牌默认脱敏，需要时可一次切换
-    为完整显示。
+    方写入当前存档的 cluster_token.txt。令牌始终脱敏显示；悬停令牌单元
+    格临时显示完整值，单击同一单元格即可复制。
     """
 
     def __init__(self, parent_widget, token_uses=()):
@@ -218,7 +218,9 @@ class _GlobalTokensDialog:
         self._tokens = app_settings.get_global_tokens()
         self._token_uses = tuple(token_uses)
         self._holds = app_settings.get_token_holds()
-        self._tokens_visible = False
+        self._hover_index: int | None = None
+        self._hover_after_id = None
+        self._hover_tip = None
         win = tk.Toplevel(parent_widget)
         self.win = win
         win.withdraw()
@@ -241,8 +243,8 @@ class _GlobalTokensDialog:
         self.tree.heading("kind", text=t("token.column_kind"))
         self.tree.heading("status", text=t("token.column_status"))
         self.tree.column(
-            "token", width=_GLOBAL_TOKEN_VISIBLE_CHARS * 6,
-            minwidth=260, stretch=True,
+            "token", width=_GLOBAL_TOKEN_COLUMN_WIDTH,
+            minwidth=220, stretch=True,
         )
         self.tree.column("kind", width=80, minwidth=70, stretch=False, anchor=tk.CENTER)
         self.tree.column("status", width=210, minwidth=140, stretch=True)
@@ -253,14 +255,14 @@ class _GlobalTokensDialog:
         x_scroll.pack(fill=tk.X)
         self.tree.configure(xscrollcommand=x_scroll.set)
         self.tree.bind("<<TreeviewSelect>>", self._update_use_state)
+        self.tree.bind("<Motion>", self._on_tree_motion, add="+")
+        self.tree.bind("<Leave>", self._hide_token_tip, add="+")
+        self.tree.bind("<Button-1>", self._copy_token_cell, add="+")
+        self.tree.bind("<Destroy>", self._hide_token_tip, add="+")
 
         btn_row = ttk.Frame(win); btn_row.pack(fill=tk.X, padx=20, pady=(0, 20))
         ttk.Button(btn_row, text=t("admin.add"), command=self._add).pack(side=tk.LEFT)
         ttk.Button(btn_row, text=t("admin.remove"), command=self._remove).pack(side=tk.LEFT, padx=(6, 0))
-        self._visibility_btn = ttk.Button(
-            btn_row, text=t("token.show"), command=self._toggle_visibility,
-        )
-        self._visibility_btn.pack(side=tk.LEFT, padx=(6, 0))
         self._release_btn = ttk.Button(
             btn_row, text=t("token.clear_hold"), command=self._clear_hold,
             state=tk.DISABLED,
@@ -308,8 +310,85 @@ class _GlobalTokensDialog:
             status = t("token.status_in_use", names="、".join(users))
         else:
             status = t("token.status_available")
-        shown = token if self._tokens_visible else mask_token(token)
-        return shown, t(kind_key), status
+        return mask_token(token), t(kind_key), status
+
+    def _token_index_at(self, x: int, y: int) -> int | None:
+        if self.tree.identify_region(x, y) != "cell":
+            return None
+        if self.tree.identify_column(x) != "#1":
+            return None
+        iid = self.tree.identify_row(y)
+        try:
+            index = int(iid)
+        except (TypeError, ValueError):
+            return None
+        return index if 0 <= index < len(self._tokens) else None
+
+    def _on_tree_motion(self, event):
+        index = self._token_index_at(event.x, event.y)
+        self.tree.configure(cursor="hand2" if index is not None else "")
+        if index == self._hover_index:
+            return
+        self._hide_token_tip()
+        self._hover_index = index
+        if index is not None:
+            self._hover_after_id = self.tree.after(
+                350, lambda expected=index: self._show_token_tip(expected)
+            )
+
+    def _show_token_tip(self, expected_index: int):
+        self._hover_after_id = None
+        if expected_index != self._hover_index or not self.tree.winfo_exists():
+            return
+        tip = tk.Toplevel(self.tree)
+        self._hover_tip = tip
+        tip.wm_overrideredirect(True)
+        try:
+            tip.attributes("-topmost", True)
+        except tk.TclError:
+            pass
+        label = tk.Label(
+            tip,
+            text=self._tokens[expected_index],
+            justify=tk.LEFT,
+            background="#ffffe0",
+            relief=tk.SOLID,
+            borderwidth=1,
+            font=("Consolas", 10),
+        )
+        label.pack(ipadx=4, ipady=2)
+        tip.update_idletasks()
+        x = min(
+            self.tree.winfo_pointerx() + 12,
+            self.tree.winfo_screenwidth() - tip.winfo_reqwidth() - 8,
+        )
+        y = min(
+            self.tree.winfo_pointery() + 18,
+            self.tree.winfo_screenheight() - tip.winfo_reqheight() - 8,
+        )
+        tip.wm_geometry(f"+{max(0, x)}+{max(0, y)}")
+
+    def _hide_token_tip(self, _event=None):
+        if self._hover_after_id is not None:
+            try:
+                self.tree.after_cancel(self._hover_after_id)
+            except tk.TclError:
+                pass
+            self._hover_after_id = None
+        if self._hover_tip is not None:
+            self._hover_tip.destroy()
+            self._hover_tip = None
+        self._hover_index = None
+
+    def _copy_token_cell(self, event):
+        index = self._token_index_at(event.x, event.y)
+        if index is None:
+            return
+        self._hide_token_tip()
+        self.win.clipboard_clear()
+        self.win.clipboard_append(self._tokens[index])
+        self.win.update()
+        dlg.show_toast(self.win, t("token.copied"))
 
     def _selected_index(self) -> int | None:
         selected = self.tree.selection()
@@ -366,13 +445,6 @@ class _GlobalTokensDialog:
             return
         app_settings.clear_token_hold(token_fingerprint(self._tokens[index]))
         self._refresh_tree(select_index=index)
-
-    def _toggle_visibility(self):
-        self._tokens_visible = not self._tokens_visible
-        self._visibility_btn.configure(
-            text=t("token.hide") if self._tokens_visible else t("token.show")
-        )
-        self._refresh_tree()
 
     def _add(self):
         input_dlg = _TokenInputDialog(self.win, title=t("token.global_add_title"))

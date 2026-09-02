@@ -140,16 +140,47 @@ def test_global_token_selection_applies_to_current_cluster():
     print("  PASS: 选中的全局令牌会应用到当前服务器存档")
 
 
-def test_global_token_dialog_width_fits_current_long_token():
-    """全局令牌窗口应完整容纳四段式令牌，同时不再保持旧的超宽尺寸。"""
-    from dstools.features.cluster_config.tab import _GLOBAL_TOKEN_VISIBLE_CHARS
+def test_global_token_dialog_uses_compact_masked_column():
+    """完整令牌改由悬停展示后，表格默认列宽应保持紧凑。"""
+    from dstools.features.cluster_config.tab import _GLOBAL_TOKEN_COLUMN_WIDTH
 
-    representative_long_token = (
-        "pds-g^" + "a" * 11 + "^" + "b" * 44 + "^" + "c" * 16
+    assert 260 <= _GLOBAL_TOKEN_COLUMN_WIDTH <= 360
+    print("  PASS: 全局令牌窗口默认使用紧凑的脱敏令牌列")
+
+
+def test_global_token_cell_click_copies_exact_token():
+    """只有令牌列单元格可触发复制，复制内容必须是未脱敏原值。"""
+    from dstools.features.cluster_config import tab as cluster_tab
+
+    token = "pds-g^KU_" + "a" * 24 + "^" + "b" * 28 + "^" + "c" * 16
+    dialog = cluster_tab._GlobalTokensDialog.__new__(
+        cluster_tab._GlobalTokensDialog
     )
-    assert len(representative_long_token) == 79
-    assert len(representative_long_token) <= _GLOBAL_TOKEN_VISIBLE_CHARS < 112
-    print("  PASS: 全局令牌窗口宽度可完整显示当前四段式长令牌")
+    dialog._tokens = [token]
+    dialog._hover_after_id = None
+    dialog._hover_tip = None
+    dialog._hover_index = None
+    hit = {"column": "#2"}
+    dialog.tree = SimpleNamespace(
+        identify_region=lambda _x, _y: "cell",
+        identify_column=lambda _x: hit["column"],
+        identify_row=lambda _y: "0",
+        configure=Mock(),
+    )
+    clipboard = {}
+    dialog.win = SimpleNamespace(
+        clipboard_clear=lambda: clipboard.clear(),
+        clipboard_append=lambda value: clipboard.update(value=value),
+        update=lambda: None,
+    )
+    with patch.object(cluster_tab.dlg, "show_toast") as toast:
+        dialog._copy_token_cell(SimpleNamespace(x=5, y=5))
+        assert clipboard == {}
+        hit["column"] = "#1"
+        dialog._copy_token_cell(SimpleNamespace(x=5, y=5))
+    assert clipboard["value"] == token
+    toast.assert_called_once()
+    print("  PASS: 单击令牌单元格会复制完整令牌并显示反馈")
 
 
 def test_single_instance_contract():
@@ -472,7 +503,8 @@ def main():
         test_exe_entry_imports,
         test_gui_imports,
         test_global_token_selection_applies_to_current_cluster,
-        test_global_token_dialog_width_fits_current_long_token,
+        test_global_token_dialog_uses_compact_masked_column,
+        test_global_token_cell_click_copies_exact_token,
         test_single_instance_contract,
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
