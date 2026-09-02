@@ -129,9 +129,6 @@ class PillTabBar(tk.Frame):
         self._canvas.pack(fill=tk.BOTH, expand=True)
         self._bg_photo = None
         self._redraw_after_id = None
-        self._pill_bounds = {}
-        self._text_items = {}
-        self._selected_pill_item = None
         self._canvas.bind("<Configure>", lambda e: self._request_redraw())
         self._canvas.bind("<Button-1>", self._on_click)
         self._canvas.bind("<Motion>", self._on_motion)
@@ -204,35 +201,10 @@ class PillTabBar(tk.Frame):
         for x1, x2, key in self._regions:
             if x1 <= event.x <= x2:
                 if key != self._selected:
-                    old_key = self._selected
                     self._selected = key
-                    self._update_selection_visual(old_key, key)
+                    self._redraw()
                     self._on_select(key)
                 return
-
-    def _update_selection_visual(self, old_key, new_key) -> None:
-        """只更新选中药丸和两处文字颜色，不重建整条渐变背景。"""
-        bounds = self._pill_bounds.get(new_key)
-        if bounds is None or self._selected_pill_item is None:
-            self._redraw()
-            return
-        x1, y1, x2, y2 = bounds
-        photo = _selected_pill_image(
-            max(1, int(round(x2 - x1))),
-            max(1, int(round(y2 - y1))),
-            int(self._pill_h / 2),
-            theme.PRIMARY,
-        )
-        self._canvas.itemconfigure(self._selected_pill_item, image=photo)
-        self._canvas.coords(
-            self._selected_pill_item, int(round(x1)), int(round(y1))
-        )
-        old_item = self._text_items.get(old_key)
-        new_item = self._text_items.get(new_key)
-        if old_item is not None:
-            self._canvas.itemconfigure(old_item, fill=theme.TEXT_MUTED)
-        if new_item is not None:
-            self._canvas.itemconfigure(new_item, fill="#FFFFFF")
 
     def _on_motion(self, event):
         interactive = any(x1 <= event.x <= x2 for x1, x2, _key in self._regions)
@@ -252,9 +224,6 @@ class PillTabBar(tk.Frame):
         c = self._canvas
         c.delete("all")
         self._regions = []
-        self._pill_bounds = {}
-        self._text_items = {}
-        self._selected_pill_item = None
         w = max(1, c.winfo_width())
         h = max(self._height, self.winfo_height())
         cy = h / 2
@@ -274,18 +243,13 @@ class PillTabBar(tk.Frame):
             text_w = self._font.measure(label)
             pill_w = text_w + 2 * self._hpad
             x1, y1, x2, y2 = x, cy - self._pill_h / 2, x + pill_w, cy + self._pill_h / 2
-            self._pill_bounds[key] = (x1, y1, x2, y2)
             selected = key == self._selected
             if selected:
                 pill_w = int(round(x2 - x1))
                 pill_h = int(round(y2 - y1))
                 photo = _selected_pill_image(pill_w, pill_h, int(self._pill_h / 2), theme.PRIMARY)
-                self._selected_pill_item = c.create_image(
-                    int(round(x1)), int(round(y1)), image=photo, anchor=tk.NW
-                )
+                c.create_image(int(round(x1)), int(round(y1)), image=photo, anchor=tk.NW)
             fg = "#FFFFFF" if selected else theme.TEXT_MUTED
-            self._text_items[key] = c.create_text(
-                (x1 + x2) / 2, cy, text=label, fill=fg, font=self._font
-            )
+            c.create_text((x1 + x2) / 2, cy, text=label, fill=fg, font=self._font)
             self._regions.append((x1, x2, key))
             x = x2 + self._gap

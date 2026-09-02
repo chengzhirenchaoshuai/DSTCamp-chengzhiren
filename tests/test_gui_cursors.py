@@ -5,12 +5,10 @@ import sys
 import tkinter as tk
 from types import SimpleNamespace
 from tkinter import ttk
-from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.shared.gui.image_scroll import ImageScrollPanel
-from dstools.shared.gui import pill_tabs as pill_tabs_module
 from dstools.shared.gui.interaction_cursor import (
     install_interactive_cursors,
     refresh_notebook_cursor,
@@ -62,13 +60,7 @@ def test_pill_tab_hit_cursor(root):
     selected = []
     bar._on_select = selected.append
     target_x1, target_x2, target_key = bar._regions[1]
-    with patch.object(
-        pill_tabs_module.theme,
-        "gradient_image",
-        wraps=pill_tabs_module.theme.gradient_image,
-    ) as gradient_factory:
-        bar._on_click(SimpleNamespace(x=(target_x1 + target_x2) / 2))
-        assert gradient_factory.call_count == 0
+    bar._on_click(SimpleNamespace(x=(target_x1 + target_x2) / 2))
     assert selected == [target_key]
     assert bar._selected == target_key
     print("  PASS: 页签点击后立即切换，不创建延迟动画")

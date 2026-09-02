@@ -322,85 +322,6 @@ def test_main_tab_refresh_contract():
     print("  PASS: 六个主页签均提供刷新接口，且全量刷新可正确回退")
 
 
-def test_main_tab_cached_visual_switch():
-    """已显示主页签应保持映射，后续切换只提升窗口层级。"""
-    from dstools.gui.app import DSToolsApp
-    from dstools.shared.gui import theme
-
-    events = []
-    app = DSToolsApp.__new__(DSToolsApp)
-
-    class Card:
-        def __init__(self, key):
-            self.key = key
-            self._w = f".{key}"
-            self.tk = self
-
-        def __str__(self):
-            return self._w
-
-        def place(self, **kw):
-            events.append(("place", self.key, kw))
-
-        def call(self, operation, path):
-            events.append((operation, path))
-
-    class TabArea:
-        def winfo_width(self):
-            return 800
-
-        def winfo_height(self):
-            return 600
-
-    local_card = Card("local")
-    world_card = Card("world")
-    app._tab_area = TabArea()
-    app._cluster_bar = SimpleNamespace(winfo_ismapped=lambda: True)
-    app._tab_cards = {"local": local_card, "world": world_card}
-    app._current_tab_key = "local"
-    expected_geometry = (
-        theme.CARD_MARGIN,
-        theme.CARD_MARGIN,
-        800 - 2 * theme.CARD_MARGIN,
-        600 - 2 * theme.CARD_MARGIN,
-    )
-    app._tab_card_geometries = {
-        "local": expected_geometry,
-    }
-    app._shared_bg_key = ("background", 1)
-    app._tab_card_bg_keys = {
-        "local": (app._shared_bg_key, theme.BG_SOFT),
-    }
-    app._bg_surfaces = []
-    app._stale_cluster_tabs = set()
-    app._full_refresh_tabs = set()
-    app.mod_tab = SimpleNamespace(refresh_sync_button_state=lambda: None)
-
-    app._on_tab_select("world")
-
-    assert app._current_tab_key == "world"
-    assert any(event[:2] == ("place", "world") for event in events)
-    assert ("raise", ".world") in events
-
-    events.clear()
-    app._on_tab_select("local")
-    assert events == [("raise", ".local")]
-
-    class Surface:
-        def __init__(self, path):
-            self.path = path
-
-        def __str__(self):
-            return self.path
-
-    assert app._is_surface_on_active_main_tab(Surface(".local.body"))
-    assert not app._is_surface_on_active_main_tab(Surface(".world.body"))
-
-    app._current_tab_key = "world"
-    assert app._is_surface_on_active_main_tab(Surface(".world.body"))
-    print("  PASS: 已加载主页签仅提升层级，隐藏页不参与可见背景刷新")
-
-
 def test_background_refresh_contract():
     """背景缓存必须感知位置变化，强刷必须使表面缓存失效。"""
     import weakref
@@ -555,7 +476,6 @@ def main():
         test_single_instance_contract,
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
-        test_main_tab_cached_visual_switch,
         test_background_refresh_contract,
         test_selfhost_worker_ui_dispatch_contract,
     ]

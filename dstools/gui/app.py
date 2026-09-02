@@ -150,6 +150,13 @@ class DSToolsApp:
 
         def _make_card():
             card = CardFrame(self._tab_area, self)
+            card.grid(
+                row=0,
+                column=0,
+                sticky="nsew",
+                padx=theme.CARD_MARGIN,
+                pady=theme.CARD_MARGIN,
+            )
             return card
 
         self._tab_cards = {k: _make_card() for k in self._tab_keys}
@@ -334,11 +341,6 @@ class DSToolsApp:
         # 的存档切换/主题切换仍只需要各页签的常规 refresh()。
         self._full_refresh_tabs: set[str] = set()
         self._current_tab_key = "local"
-        # 主页签首次显示后不再解除映射，而是叠放在同一位置，切换时只提
-        # 升目标卡片的窗口层级。隐藏卡片保留最后尺寸，窗口缩放只调整当
-        # 前页，避免所有复杂控件树同时参与布局。
-        self._tab_card_geometries: dict[str, tuple[int, int, int, int]] = {}
-        self._tab_card_bg_keys: dict[str, tuple] = {}
 
         self._tabs = [
             self.local_tab,
@@ -350,8 +352,15 @@ class DSToolsApp:
         ]
         for key, tab in zip(self._tab_keys, self._tabs):
             tab.frame.pack(fill=tk.BOTH, expand=True)
-        self._tab_area.bind("<Configure>", self._on_tab_area_configure, add="+")
-        self._show_tab_card("local")
+        # 只留 "local" 参与布局，其余 5 个先 grid_remove() 掉——之前是全部
+        # 5 个一直 grid() 着、只用 tkraise() 切换可见性，导致拖动窗口时
+        # Tk 要重新布局全部 5 个页签的完整控件树（实测 315 个控件），没在
+        # 看的页签里的 ImageScrollPanel 也在后台白白重新裁切缩放，是窗口
+        # 缩放卡顿的主要根因之一（实测去掉这个之后单次压测耗时降到约
+        # 1/4）。_on_tab_select 负责切换时改用同样的 grid()/grid_remove()。
+        for key, card in self._tab_cards.items():
+            if key != "local":
+                card.grid_remove()
         self._refresh_tab_labels()
 
         # 状态栏用 BgFrame + create_text（不用 ttk.Label——TLabel 样式背
@@ -521,12 +530,17 @@ class DSToolsApp:
             self._cluster_bar.pack(
                 fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6)
             )
-        self._show_tab_card(key)
+        for k, card in self._tab_cards.items():
+            if k == key:
+                card.grid()
+            else:
+                card.grid_remove()
         self._current_tab_key = key
 
-        # 首次显示会完成正常布局和背景绘制；后续尺寸未变时这里只发生一
-        # 次原生窗口 raise，不再 Unmap/Map 整棵控件树，因此不会丢文字，
-        # 也不会触发所有子 Canvas 重绘。
+        # card.grid()/grid_remove() 本身就是一次真正的几何变化（"未托管"
+        # 变"已托管"），会级联触发自己和所有子控件的 <Configure>，各
+        # BgFrame 自己就能用上正确的屏幕坐标，不需要在这里强制补刷。61
+        # 个背景表面全量重刷一次要 200ms+，每次切页签都做的话会很卡。
 
         # 只有被标脏过的页签（见 _apply_global_cluster_change）才需要在
         # 这里补一次刷新——这可能是真正的重活（Lua 沙箱扫描/PIL 面板重
@@ -560,52 +574,6 @@ class DSToolsApp:
         # 但"同步mod文件到服务器"按钮的可用状态需要跟着重新判一次。
         if key == "mods":
             self.mod_tab.refresh_sync_button_state()
-
-    def _show_tab_card(
-        self, key: str, *, area_width: int | None = None,
-        area_height: int | None = None,
-    ) -> None:
-        """首次放置主页签；后续同尺寸切换只提升原生窗口层级。"""
-        card = self._tab_cards[key]
-        margin = theme.CARD_MARGIN
-        area_width = area_width or self._tab_area.winfo_width()
-        area_height = area_height or self._tab_area.winfo_height()
-        geometry = (
-            margin,
-            margin,
-            max(1, area_width - 2 * margin),
-            max(1, area_height - 2 * margin),
-        )
-        if self._tab_card_geometries.get(key) != geometry:
-            x, y, width, height = geometry
-            card.place(x=x, y=y, width=width, height=height)
-            self._tab_card_geometries[key] = geometry
-        # CardFrame 是 tk.Frame；显式调用 Tcl 的窗口 raise，避免 Canvas 的
-        # tkraise() 被解析成画布 item raise（该问题在其它覆盖层复现过）。
-        card.tk.call("raise", card._w)
-        bg_key = (self._shared_bg_key, theme.BG_SOFT)
-        if self._tab_card_bg_keys.get(key) != bg_key:
-            self._tab_card_bg_keys[key] = bg_key
-            self._request_tab_card_backgrounds(key)
-
-    def _request_tab_card_backgrounds(self, key: str) -> None:
-        """背景版本变化时，只通知即将显示的主页签重绘背景。"""
-        def request_if_owned(surface) -> None:
-            if (
-                self._main_tab_key_for_surface(surface) == key
-                and surface.winfo_ismapped()
-            ):
-                surface.request_render()
-
-        self._for_each_alive_bg_surface(request_if_owned)
-
-    def _on_tab_area_configure(self, event) -> None:
-        """窗口缩放只调整当前主页签，隐藏页保持上次尺寸。"""
-        key = getattr(self, "_current_tab_key", None)
-        if key in getattr(self, "_tab_cards", {}):
-            self._show_tab_card(
-                key, area_width=event.width, area_height=event.height
-            )
 
     def _dismiss_entry_focus(self, event):
         """点击到的控件本身不是输入框时，如果当前焦点停在某个 Entry/Text
@@ -1117,10 +1085,16 @@ class DSToolsApp:
         self._titlebar.apply_theme(bg=theme.CARD_BG)
         self._build_menu()
         self._tab_area.apply_theme()
-        for card in self._tab_cards.values():
+        # 6 张卡片叠在 _tab_area 同一个 grid 格子里，只有当前那张真的
+        # grid() 着，其余 grid_remove() 隐藏——Tk 的 grid_configure() 对
+        # 已经 grid_remove() 的控件调用会把它重新映射回可见状态（哪怕只
+        # 改 padx/pady），所以每次 configure 后要对非当前页签立刻再
+        # grid_remove() 一次，纯几何管理器批处理，不会闪。
+        for key, card in self._tab_cards.items():
             card.apply_theme()
-        self._tab_card_geometries.pop(self._current_tab_key, None)
-        self._show_tab_card(self._current_tab_key)
+            card.grid_configure(padx=theme.CARD_MARGIN, pady=theme.CARD_MARGIN)
+            if key != self._current_tab_key:
+                card.grid_remove()
         self._pill_bar.apply_theme()
         self._retheme_cluster_bar()
         self._root_bg.apply_theme()
@@ -1153,7 +1127,7 @@ class DSToolsApp:
         几十毫秒，中间状态本来就不会画到屏幕上。调用方须在 try/finally
         里调这个方法，保证中途异常也不会卡在"暂停重绘"状态。"""
         self._theme_switch_suppressed = False
-        # 上面 _build_menu()/card.place() 这类几何变化，Tk 不保
+        # 上面 _build_menu()/card.grid_configure() 这类几何变化，Tk 不保
         # 证同步跑完就已经传播到每一层子控件——先 update_idletasks() 强
         # 制排布完，不然深层嵌套的 BgFrame 会按旧坐标裁出错位的背景图。
         self.root.update_idletasks()
@@ -1518,9 +1492,10 @@ class DSToolsApp:
         _refresh_all_bg_surfaces()/_begin_bg_drag_suppress() 共用这段清
         理逻辑，避免两处各自维护一份一样的存活性判断。
 
-        visible_only=True 时在遍历层就滤掉不可见表面。主页签为了快速切换
-        会保持映射并层叠放置，因此还要按控件路径排除非当前主页签；内部
-        Notebook.hide() 等真正未映射的表面仍由 winfo_ismapped() 排除。"""
+        visible_only=True 时在遍历层就滤掉不可见（未映射）的表面——
+        render_now() 内部本来也会 skip，但这里提前滤掉省掉逐个
+        winfo_ismapped()+early return 的无谓调用；隐藏页签（grid_remove/
+        Notebook.hide）的表面刷了也没人看得到。"""
         alive = []
         for ref in self._bg_surfaces:
             surf = ref()
@@ -1530,29 +1505,12 @@ class DSToolsApp:
                 if not surf.winfo_exists():
                     continue
                 alive.append(ref)
-                if visible_only:
-                    if not surf.winfo_ismapped():
-                        continue
-                    if not self._is_surface_on_active_main_tab(surf):
-                        continue
+                if visible_only and not surf.winfo_ismapped():
+                    continue
                 fn(surf)
             except tk.TclError:
                 pass
         self._bg_surfaces = alive
-
-    def _is_surface_on_active_main_tab(self, surface) -> bool:
-        """层叠主页签保持映射时，只把最上层页签视为可见。"""
-        key = self._main_tab_key_for_surface(surface)
-        return key is None or key == self._current_tab_key
-
-    def _main_tab_key_for_surface(self, surface) -> str | None:
-        """返回背景表面所属主页签；主页签外表面返回 None。"""
-        surface_path = str(surface)
-        for key, card in getattr(self, "_tab_cards", {}).items():
-            card_path = str(card)
-            if surface_path == card_path or surface_path.startswith(card_path + "."):
-                return key
-        return None
 
     def _refresh_all_bg_surfaces(
         self, throttle: bool = False, *, force: bool = False
