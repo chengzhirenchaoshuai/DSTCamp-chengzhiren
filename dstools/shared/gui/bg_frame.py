@@ -86,7 +86,11 @@ class BgFrame(tk.Canvas):
         # 刷新一次（见 DSToolsApp._end_bg_drag_suppress()），这里提前排
         # 队反而会拿拖拽中途、还没稳定下来的共享大图去裁，产生错位。切
         # 主题期间同理跳过，见 render_now() 的说明。
-        if getattr(self._app, "_bg_drag_suppressed", False) or getattr(self._app, "_theme_switch_suppressed", False):
+        if (
+            getattr(self._app, "_bg_drag_suppressed", False)
+            or getattr(self._app, "_theme_switch_suppressed", False)
+            or getattr(self._app, "_tab_switch_suppressed", False)
+        ):
             return
         if self._render_after_id is None:
             self._render_after_id = self.after(16, self._do_throttled_render)

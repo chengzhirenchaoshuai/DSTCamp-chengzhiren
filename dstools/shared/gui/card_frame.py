@@ -53,6 +53,8 @@ class CardFrame(tk.Frame):
         # 真实拖拽缩放窗口时触发的 <Configure> 事件远比屏幕能重绘的次数
         # 多，每次都重画卡片多边形（乘以 4，每个页签卡片各一份）是拖拽
         # 卡顿的一个实际来源，这里节流到约 60fps。
+        if getattr(self._app, "_tab_switch_suppressed", False):
+            return
         if self._redraw_after_id is None:
             self._redraw_after_id = self._canvas.after(16, self._do_throttled_redraw)
 

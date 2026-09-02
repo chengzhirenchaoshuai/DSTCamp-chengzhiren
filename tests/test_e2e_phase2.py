@@ -322,6 +322,67 @@ def test_main_tab_refresh_contract():
     print("  PASS: 六个主页签均提供刷新接口，且全量刷新可正确回退")
 
 
+def test_main_tab_cached_visual_switch():
+    """已显示且视觉版本未变的主页签切换不得重复安排背景重绘。"""
+    from dstools.gui.app import DSToolsApp
+    from dstools.shared.gui import theme
+
+    events = []
+    app = DSToolsApp.__new__(DSToolsApp)
+
+    class Card:
+        def __init__(self, key):
+            self.key = key
+
+        def winfo_width(self):
+            return 800
+
+        def winfo_height(self):
+            return 600
+
+        def grid(self):
+            events.append(("grid", self.key, app._tab_switch_suppressed))
+
+        def grid_remove(self):
+            events.append(("hide", self.key, app._tab_switch_suppressed))
+
+    class Root:
+        def update_idletasks(self):
+            events.append(("idle", app._tab_switch_suppressed))
+
+    local_card = Card("local")
+    world_card = Card("world")
+    app.root = Root()
+    app._cluster_bar = SimpleNamespace(winfo_ismapped=lambda: True)
+    app._tab_cards = {"local": local_card, "world": world_card}
+    app._current_tab_key = "local"
+    app._shared_bg_key = ("background", 1)
+    app._tab_visual_cache = {
+        "world": (800, 600, app._shared_bg_key, theme.BG_SOFT),
+    }
+    app._tab_switch_suppressed = False
+    app._stale_cluster_tabs = set()
+    app._full_refresh_tabs = set()
+    app.mod_tab = SimpleNamespace(refresh_sync_button_state=lambda: None)
+
+    app._on_tab_select("world")
+
+    assert app._current_tab_key == "world"
+    assert app._tab_switch_suppressed is False
+    assert app._tab_visual_cache["local"] == (
+        800, 600, app._shared_bg_key, theme.BG_SOFT,
+    )
+    assert ("grid", "world", True) in events
+    assert ("idle", True) in events
+
+    events.clear()
+    app._shared_bg_key = ("background", 2)
+    app._on_tab_select("local")
+    assert ("grid", "local", False) in events
+    assert not any(event[0] == "idle" for event in events)
+    print("  PASS: 已加载主页签复用缓存画面，不重复安排背景重绘")
+
+
 def test_background_refresh_contract():
     """背景缓存必须感知位置变化，强刷必须使表面缓存失效。"""
     import weakref
@@ -476,6 +537,7 @@ def main():
         test_single_instance_contract,
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
+        test_main_tab_cached_visual_switch,
         test_background_refresh_contract,
         test_selfhost_worker_ui_dispatch_contract,
     ]

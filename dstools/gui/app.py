@@ -341,6 +341,10 @@ class DSToolsApp:
         # 的存档切换/主题切换仍只需要各页签的常规 refresh()。
         self._full_refresh_tabs: set[str] = set()
         self._current_tab_key = "local"
+        # 已经完整显示过的主页签记录其最后一次可复用的视觉状态。普通切
+        # 换回同尺寸、同背景版本的页签时，Canvas 上已有的内容仍然保留，
+        # 不必因为 grid() 重新映射就把整棵控件树的背景再画一遍。
+        self._tab_visual_cache: dict[str, tuple] = {}
 
         self._tabs = [
             self.local_tab,
@@ -530,17 +534,39 @@ class DSToolsApp:
             self._cluster_bar.pack(
                 fill=tk.X, side=tk.TOP, before=self._tab_area, pady=(0, 6)
             )
-        for k, card in self._tab_cards.items():
-            if k == key:
-                card.grid()
-            else:
-                card.grid_remove()
+        previous_key = self._current_tab_key
+        previous_card = self._tab_cards.get(previous_key)
+        if previous_key != key and previous_card is not None:
+            self._tab_visual_cache[previous_key] = self._tab_visual_signature(
+                previous_card
+            )
+
+        # 只有确实显示过、尺寸和背景版本都没变化的页面才能直接复用。
+        # 首次打开、窗口缩放、主题/背景变化都会自然落回正常重绘路径。
+        expected_signature = (
+            self._tab_visual_signature(previous_card)
+            if previous_card is not None else None
+        )
+        reuse_visual = self._tab_visual_cache.get(key) == expected_signature
+        self._tab_switch_suppressed = reuse_visual
+        try:
+            for k, card in self._tab_cards.items():
+                if k == key:
+                    card.grid()
+                else:
+                    card.grid_remove()
+            if reuse_visual:
+                # 在抑制标志仍为 True 时完成 Map/Configure；否则这些空闲事
+                # 件会在方法返回后重新排队重画，缓存复用就失去意义。
+                self.root.update_idletasks()
+        finally:
+            self._tab_switch_suppressed = False
         self._current_tab_key = key
 
-        # card.grid()/grid_remove() 本身就是一次真正的几何变化（"未托管"
-        # 变"已托管"），会级联触发自己和所有子控件的 <Configure>，各
-        # BgFrame 自己就能用上正确的屏幕坐标，不需要在这里强制补刷。61
-        # 个背景表面全量重刷一次要 200ms+，每次切页签都做的话会很卡。
+        # 首次显示或缓存签名变化时，grid() 仍按原路径触发布局/背景重绘；
+        # 缓存可复用时，真实 Tk 烟测确认只产生 Map、不产生子 Canvas 的
+        # Configure，现有画面可直接呈现。这里始终不做 61 个背景表面的全
+        # 量强刷——单次要 200ms+，正是已加载页面反复切换卡顿的来源。
 
         # 只有被标脏过的页签（见 _apply_global_cluster_change）才需要在
         # 这里补一次刷新——这可能是真正的重活（Lua 沙箱扫描/PIL 面板重
@@ -574,6 +600,15 @@ class DSToolsApp:
         # 但"同步mod文件到服务器"按钮的可用状态需要跟着重新判一次。
         if key == "mods":
             self.mod_tab.refresh_sync_button_state()
+
+    def _tab_visual_signature(self, card) -> tuple:
+        """主页签缓存签名：布局尺寸或共享背景变化后禁止复用旧画面。"""
+        return (
+            card.winfo_width(),
+            card.winfo_height(),
+            self._shared_bg_key,
+            theme.BG_SOFT,
+        )
 
     def _dismiss_entry_focus(self, event):
         """点击到的控件本身不是输入框时，如果当前焦点停在某个 Entry/Text
@@ -1193,6 +1228,7 @@ class DSToolsApp:
         # 跟客户区宽高有关，记住最近尺寸即可跳过标题栏拖动产生的无效调度。
         self._bg_root_size = None
         self._bg_drag_suppressed = False  # ResizeGrips 拖拽期间为 True，见下
+        self._tab_switch_suppressed = False  # 复用已绘制主页签时短暂为 True
         self._resize_preview_source = None
         self._resize_preview_photo = None
         self._resize_preview_after_id = None
