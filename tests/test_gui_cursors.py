@@ -3,6 +3,7 @@
 import os
 import sys
 import tkinter as tk
+import time
 from types import SimpleNamespace
 from tkinter import ttk
 
@@ -56,7 +57,26 @@ def test_pill_tab_hit_cursor(root):
     assert str(bar._canvas.cget("cursor")) == "hand2"
     bar._on_motion(SimpleNamespace(x=max(x2 + 1, bar._canvas.winfo_width() - 1)))
     assert str(bar._canvas.cget("cursor")) == ""
-    print("  PASS: 页签内为手型，空白区域为普通光标")
+
+    selected = []
+    bar._on_select = selected.append
+    target_x1, target_x2, target_key = bar._regions[1]
+    target_bounds = bar._pill_bounds[target_key]
+    bar._on_click(SimpleNamespace(x=(target_x1 + target_x2) / 2))
+    assert selected == [target_key]
+    assert bar._selection_after_id is not None
+    assert bar._selection_current_bounds is not None
+
+    deadline = time.monotonic() + 0.6
+    while bar._selection_after_id is not None and time.monotonic() < deadline:
+        root.update()
+        time.sleep(0.01)
+    assert bar._selection_after_id is None
+    assert bar._selection_current_bounds is None
+    pill_x, pill_y = bar._canvas.coords(bar._selected_pill_item)
+    assert round(pill_x) == round(target_bounds[0])
+    assert round(pill_y) == round(target_bounds[1])
+    print("  PASS: 页签命中光标正确，选中药丸会平滑移到新页签")
 
 
 def test_native_notebook_tab_cursor(root):
