@@ -323,7 +323,7 @@ def test_main_tab_refresh_contract():
 
 
 def test_main_tab_cached_visual_switch():
-    """已显示且视觉版本未变的主页签切换不得重复安排背景重绘。"""
+    """已显示主页签应保持映射，后续切换只提升窗口层级。"""
     from dstools.gui.app import DSToolsApp
     from dstools.shared.gui import theme
 
@@ -333,34 +333,45 @@ def test_main_tab_cached_visual_switch():
     class Card:
         def __init__(self, key):
             self.key = key
+            self._w = f".{key}"
+            self.tk = self
 
+        def __str__(self):
+            return self._w
+
+        def place(self, **kw):
+            events.append(("place", self.key, kw))
+
+        def call(self, operation, path):
+            events.append((operation, path))
+
+    class TabArea:
         def winfo_width(self):
             return 800
 
         def winfo_height(self):
             return 600
 
-        def grid(self):
-            events.append(("grid", self.key, app._tab_switch_suppressed))
-
-        def grid_remove(self):
-            events.append(("hide", self.key, app._tab_switch_suppressed))
-
-    class Root:
-        def update_idletasks(self):
-            events.append(("idle", app._tab_switch_suppressed))
-
     local_card = Card("local")
     world_card = Card("world")
-    app.root = Root()
+    app._tab_area = TabArea()
     app._cluster_bar = SimpleNamespace(winfo_ismapped=lambda: True)
     app._tab_cards = {"local": local_card, "world": world_card}
     app._current_tab_key = "local"
-    app._shared_bg_key = ("background", 1)
-    app._tab_visual_cache = {
-        "world": (800, 600, app._shared_bg_key, theme.BG_SOFT),
+    expected_geometry = (
+        theme.CARD_MARGIN,
+        theme.CARD_MARGIN,
+        800 - 2 * theme.CARD_MARGIN,
+        600 - 2 * theme.CARD_MARGIN,
+    )
+    app._tab_card_geometries = {
+        "local": expected_geometry,
     }
-    app._tab_switch_suppressed = False
+    app._shared_bg_key = ("background", 1)
+    app._tab_card_bg_keys = {
+        "local": (app._shared_bg_key, theme.BG_SOFT),
+    }
+    app._bg_surfaces = []
     app._stale_cluster_tabs = set()
     app._full_refresh_tabs = set()
     app.mod_tab = SimpleNamespace(refresh_sync_button_state=lambda: None)
@@ -368,19 +379,26 @@ def test_main_tab_cached_visual_switch():
     app._on_tab_select("world")
 
     assert app._current_tab_key == "world"
-    assert app._tab_switch_suppressed is False
-    assert app._tab_visual_cache["local"] == (
-        800, 600, app._shared_bg_key, theme.BG_SOFT,
-    )
-    assert ("grid", "world", True) in events
-    assert ("idle", True) in events
+    assert any(event[:2] == ("place", "world") for event in events)
+    assert ("raise", ".world") in events
 
     events.clear()
-    app._shared_bg_key = ("background", 2)
     app._on_tab_select("local")
-    assert ("grid", "local", False) in events
-    assert not any(event[0] == "idle" for event in events)
-    print("  PASS: 已加载主页签复用缓存画面，不重复安排背景重绘")
+    assert events == [("raise", ".local")]
+
+    class Surface:
+        def __init__(self, path):
+            self.path = path
+
+        def __str__(self):
+            return self.path
+
+    assert app._is_surface_on_active_main_tab(Surface(".local.body"))
+    assert not app._is_surface_on_active_main_tab(Surface(".world.body"))
+
+    app._current_tab_key = "world"
+    assert app._is_surface_on_active_main_tab(Surface(".world.body"))
+    print("  PASS: 已加载主页签仅提升层级，隐藏页不参与可见背景刷新")
 
 
 def test_background_refresh_contract():

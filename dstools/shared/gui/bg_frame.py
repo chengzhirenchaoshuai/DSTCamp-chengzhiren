@@ -89,7 +89,6 @@ class BgFrame(tk.Canvas):
         if (
             getattr(self._app, "_bg_drag_suppressed", False)
             or getattr(self._app, "_theme_switch_suppressed", False)
-            or getattr(self._app, "_tab_switch_suppressed", False)
         ):
             return
         if self._render_after_id is None:
