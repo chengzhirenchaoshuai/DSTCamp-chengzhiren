@@ -161,7 +161,8 @@ def show_error(parent, title, message, wraplength=420, min_width=460):
           wraplength=wraplength, min_width=min_width)
 
 
-def show_file_location(parent, title, path):
+def show_file_location(parent, title, path, *, location_label=None,
+                       copied_message=None):
     """显示可点击的文件位置，并保留统一的主题弹窗样式。"""
     path = Path(path).resolve()
     win = tk.Toplevel(parent)
@@ -179,7 +180,8 @@ def show_file_location(parent, title, path):
              bg=theme.CARD_BG).pack(side=tk.LEFT, padx=(0, 14), anchor="n")
     body = tk.Frame(row, background=theme.CARD_BG)
     body.pack(side=tk.LEFT, fill=tk.X, expand=True)
-    tk.Label(body, text="日志位置：", font=theme.font_tuple(theme.FONT_SIZE_BASE),
+    tk.Label(body, text=location_label or "日志位置：",
+             font=theme.font_tuple(theme.FONT_SIZE_BASE),
              fg=theme.TEXT, bg=theme.CARD_BG, anchor="w").pack(anchor="w")
     link_font = tkfont.Font(root=win, font=theme.font_tuple(theme.FONT_SIZE_BASE))
     link_font.configure(underline=True)
@@ -198,7 +200,7 @@ def show_file_location(parent, title, path):
                     bg=theme.CARD_BG, cursor="hand2", anchor="w")
     link.pack(anchor="w")
     link.bind("<Button-1>", open_location)
-    tk.Label(body, text="\n文件复制到剪贴板，可直接粘贴到聊天窗。",
+    tk.Label(body, text=copied_message or "\n文件复制到剪贴板，可直接粘贴到聊天窗。",
              font=theme.font_tuple(theme.FONT_SIZE_BASE), fg=theme.TEXT,
              bg=theme.CARD_BG, justify=tk.LEFT, anchor="w").pack(anchor="w")
     btn_row = tk.Frame(card, background=theme.CARD_BG)

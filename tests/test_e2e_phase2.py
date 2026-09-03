@@ -6,6 +6,7 @@ model 字段的默认值本身不需要单独测——那是 dataclass 声明上
 import os
 import sys
 import tempfile
+import tkinter as tk
 from pathlib import Path
 from string import Formatter
 from types import SimpleNamespace
@@ -353,6 +354,54 @@ def test_main_tab_refresh_contract():
     print("  PASS: 六个主页签均提供刷新接口，且全量刷新可正确回退")
 
 
+def test_save_bundle_action_copies_file_after_worker_finishes():
+    """后台打包完成后，应在主线程路径中复制 ZIP 并恢复按钮状态。"""
+    from dstools.features.save_browser import tab as save_tab
+    from dstools.features.save_browser.tab import SaveBrowserTab
+
+    bundle_path = Path(tempfile.gettempdir()) / "DSTCamp_存档_Cluster_1.zip"
+
+    class ImmediateThread:
+        def __init__(self, *, target, **_kwargs):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    button = Mock()
+    frame = SimpleNamespace(after=lambda _delay, callback: callback())
+    tab = SaveBrowserTab.__new__(SaveBrowserTab)
+    tab.app = SimpleNamespace(root=object())
+    tab.frame = frame
+    tab._bundle_btn = button
+    tab._bundle_in_progress = False
+    tab._get_cluster = Mock(
+        return_value=SimpleNamespace(path=Path("C:/Klei/Cluster_1"))
+    )
+
+    with (
+        patch.object(save_tab, "create_save_bundle", return_value=bundle_path),
+        patch.object(save_tab, "copy_file_to_clipboard", return_value=True),
+        patch.object(save_tab.threading, "Thread", ImmediateThread),
+        patch.object(save_tab.dlg, "show_file_location") as show_result,
+    ):
+        tab._on_bundle_save()
+
+    assert tab._bundle_in_progress is False
+    assert button.configure.call_args_list[0].kwargs == {
+        "text": t("save.bundle_running"), "state": tk.DISABLED,
+    }
+    assert button.configure.call_args_list[-1].kwargs == {
+        "text": t("save.bundle_btn"), "state": tk.NORMAL,
+    }
+    show_result.assert_called_once_with(
+        tab.app.root, t("save.bundle_title"), bundle_path,
+        location_label=t("save.bundle_location_label"),
+        copied_message=t("save.bundle_clipboard_hint"),
+    )
+    print("  PASS: 完整存档在后台打包，完成后复制文件并恢复按钮")
+
+
 def test_background_refresh_contract():
     """背景缓存必须感知位置变化，强刷必须使表面缓存失效。"""
     import weakref
@@ -508,6 +557,7 @@ def main():
         test_single_instance_contract,
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
+        test_save_bundle_action_copies_file_after_worker_finishes,
         test_background_refresh_contract,
         test_selfhost_worker_ui_dispatch_contract,
     ]

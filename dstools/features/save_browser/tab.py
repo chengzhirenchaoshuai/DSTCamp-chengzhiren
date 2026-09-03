@@ -14,6 +14,7 @@ from PIL import Image, ImageTk
 from dstools.shared.app_settings import get_player_note, set_player_note
 from dstools.features.local_service.backup_manager import create_backup, get_backup_summary, list_backups, restore_backup
 from dstools.features.save_browser.character_icons import resolve_character
+from dstools.features.save_browser.save_bundle import create_save_bundle
 from dstools.features.cluster_config.config_manager import load_cluster_config
 from dstools.features.cluster_config.ini_field_info import get_enum_choices
 from dstools.features.mod.manager import list_mods, load_mod_overrides
@@ -28,6 +29,7 @@ from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.toggle_switch import ToggleSwitch
 from dstools.shared.gui.toolbar_widgets import make_toolbar_label
+from dstools.shared.clipboard import copy_file_to_clipboard
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
@@ -362,6 +364,7 @@ class SaveBrowserTab:
         # local_service_tab.py 已经验证过的思路，让控件间的留白透出自定
         # 义背景图。
         self.app = app; self.frame = BgFrame(parent, app, bg=theme.CARD_BG)
+        self._bundle_in_progress = False
         # 构建顺序即页面从上到下的顺序（应用户要求）：存档概览（原"存
         # 档概览"子页签的内容）-> 世界选择器 -> 世界信息 / 每个玩家角
         # 色状态（原"会话详情"子页签的内容）。页面级"存档信息"标题应用
@@ -906,6 +909,10 @@ class SaveBrowserTab:
         self._backup_btn.configure(text=t("save.backup_now"))
         self._restore_btn.configure(text=t("save.restore_backup"))
         self._backup_policy_btn.configure(text=t("save.backup_policy_btn"))
+        self._bundle_btn.configure(
+            text=t("save.bundle_running") if self._bundle_in_progress
+            else t("save.bundle_btn")
+        )
         self._create_save_btn.configure(text=t("save.create_server_save"))
 
     def retheme(self):
@@ -942,12 +949,16 @@ class SaveBrowserTab:
         self._backup_btn.pack(side=tk.RIGHT, padx=(0, 2))
         self._backup_policy_btn = ttk.Button(env_header_row, text=t("save.backup_policy_btn"), command=self._on_backup_policy)
         self._backup_policy_btn.pack(side=tk.RIGHT, padx=(0, 2))
+        self._bundle_btn = ttk.Button(
+            env_header_row, text=t("save.bundle_btn"), command=self._on_bundle_save,
+        )
+        self._bundle_btn.pack(side=tk.RIGHT, padx=(0, 10))
         # "创建服务器存档"是这一行按钮组里最靠左、最靠近"基本信息"标题的
         # 主要操作（最后一个 side=RIGHT pack，排在已 pack 按钮的左边），用
         # 稍大的右边距跟右侧备份相关按钮做视觉分组。
         self._create_save_btn = ttk.Button(env_header_row, text=t("save.create_server_save"),
                                            command=self._on_create_server_save)
-        self._create_save_btn.pack(side=tk.RIGHT, padx=(0, 10))
+        self._create_save_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
         # 不再是"全部存档"的可滚动列表——顶部全局选择栏已经选了具体是哪
         # 个存档，这里只需要现查、现画那一个存档自己的详情（存档位置/
@@ -973,6 +984,55 @@ class SaveBrowserTab:
 
     def _on_backup_policy(self):
         _BackupPolicyDialog(self.app.root)
+
+    def _on_bundle_save(self):
+        """后台打包当前完整存档，完成后把 ZIP 文件放入系统剪贴板。"""
+        c = self._get_cluster()
+        if c is None or self._bundle_in_progress:
+            return
+        self._bundle_in_progress = True
+        self._bundle_btn.configure(text=t("save.bundle_running"), state=tk.DISABLED)
+        result_queue: "queue.Queue" = queue.Queue(maxsize=1)
+
+        def worker():
+            try:
+                result_queue.put((create_save_bundle(c.path), None))
+            except Exception as exc:  # noqa: BLE001 - 原始错误需回传界面
+                result_queue.put((None, exc))
+
+        def poll_result():
+            try:
+                zip_path, error = result_queue.get_nowait()
+            except queue.Empty:
+                self.frame.after(100, poll_result)
+                return
+            self._bundle_in_progress = False
+            self._bundle_btn.configure(text=t("save.bundle_btn"), state=tk.NORMAL)
+            if error is not None:
+                dlg.show_error(
+                    self.app.root, t("save.bundle_title"),
+                    t("save.bundle_failed", error=str(error)),
+                )
+                return
+            copied = copy_file_to_clipboard(zip_path)
+            if copied:
+                dlg.show_file_location(
+                    self.app.root, t("save.bundle_title"), zip_path,
+                    location_label=t("save.bundle_location_label"),
+                    copied_message=t("save.bundle_clipboard_hint"),
+                )
+                return
+            self.frame.clipboard_clear()
+            self.frame.clipboard_append(str(zip_path))
+            dlg.show_warning(
+                self.app.root, t("save.bundle_title"),
+                t("save.bundle_path_copied", path=str(zip_path)),
+            )
+
+        threading.Thread(
+            target=worker, name="dstcamp-save-bundle", daemon=True,
+        ).start()
+        self.frame.after(100, poll_result)
 
     def _on_backup_now(self):
         c = self._get_cluster()
@@ -1020,6 +1080,10 @@ class SaveBrowserTab:
     def _refresh_env(self):
         for w in self._selected_cluster_frame.winfo_children(): w.destroy()
         c = self._get_cluster()
+        self._bundle_btn.configure(
+            state=tk.DISABLED
+            if c is None or self._bundle_in_progress else tk.NORMAL
+        )
         if c is not None:
             self._build_selected_cluster_row(self._selected_cluster_frame, c)
 

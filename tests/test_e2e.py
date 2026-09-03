@@ -7,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,6 +39,7 @@ from dstools.features.save_browser.reader import (
     get_save_summary,
     list_session_players,
 )
+from dstools.features.save_browser.save_bundle import create_save_bundle
 from dstools.features.cluster_config.config_manager import (
     set_cluster_option,
     backfill_cluster_defaults,
@@ -2584,6 +2586,36 @@ def test_backup_manager_restore_clears_stale_slots():
         print("  PASS: restored config files match the backed-up content")
 
 
+def test_save_bundle_contains_complete_cluster():
+    """分享包应保留存档根目录，并包含备份功能会主动跳过的日志等文件。"""
+    print("\n" + "=" * 60)
+    print("Test 26b: Complete Save Bundle")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        cluster = root / "Cluster_Share"
+        session = cluster / "Master" / "save" / "session" / "ABC"
+        empty_dir = cluster / "Caves" / "save" / "empty"
+        session.mkdir(parents=True)
+        empty_dir.mkdir(parents=True)
+        (cluster / "cluster.ini").write_text("[NETWORK]\ncluster_name=Share\n")
+        (cluster / "cluster_token.txt").write_text("secret-token")
+        (cluster / "Master" / "server_log.txt").write_text("complete log")
+        (session / "0000000001").write_bytes(b"save data")
+
+        bundle = create_save_bundle(cluster, root / "exports")
+        assert bundle.is_file()
+        with zipfile.ZipFile(bundle) as archive:
+            names = set(archive.namelist())
+            assert "Cluster_Share/cluster.ini" in names
+            assert "Cluster_Share/cluster_token.txt" in names
+            assert "Cluster_Share/Master/server_log.txt" in names
+            assert "Cluster_Share/Master/save/session/ABC/0000000001" in names
+            assert "Cluster_Share/Caves/save/empty/" in names
+            assert archive.read("Cluster_Share/Master/server_log.txt") == b"complete log"
+        print("  PASS: 完整存档、日志、敏感配置和空目录均保留在存档根目录下")
+
+
 def test_backup_manager_prune_retention_boundary():
     """备份保留份数（app_settings.get_backup_retention()）超过时自动删
     掉最旧的。用手工构造、时间戳互不相同的旧备份文件模拟"已经攒了很多
@@ -3477,6 +3509,7 @@ def main():
         test_workshop_snapshot_uses_one_steam_session,
         test_dst_mod_manifest_verification,
         test_workshop_download_precheck_uses_physical_files,
+        test_save_bundle_contains_complete_cluster,
         test_backup_manager_restore_clears_stale_slots,
         test_backup_manager_prune_retention_boundary,
         test_backfill_cluster_defaults_only_fills_missing,
