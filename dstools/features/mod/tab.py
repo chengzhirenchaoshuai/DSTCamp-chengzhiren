@@ -423,16 +423,22 @@ class ModManagerTab:
             self.show_var,
             self._render_list,
         )
-        # "订阅推荐模组"放在"已禁用"筛选项右侧（filter chips 之后、重新扫描
-        # 之前），跟筛选功能挤在同一行，不再占 mod 列表顶部工具栏。
+        # "订阅推荐模组"放在筛选项右侧，和搜索/筛选功能保持在同一行。
         self._md_recommend = ttk.Button(
             ff, text=t("mod.recommend_btn"), command=self._open_recommend_mods
         )
         self._md_recommend.pack(side=tk.LEFT, padx=(8, 0))
+
+        # 扫描结果原来用固定 310px 宽度跟搜索框、筛选项和多个按钮挤在
+        # 同一行；字体放大或统计数字变长时，右对齐文字会从左侧被裁掉。
+        # 单独拆成一条状态栏，让结果文字占满“重新扫描”左侧的剩余宽度，
+        # 不缩短文案，也不需要按某组数字猜一个新的固定宽度。
+        scan_status_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        scan_status_row.pack(fill=tk.X, padx=5, pady=(3, 0))
         self._md_br = ttk.Button(
-            ff, text=t("mod.reload_full"), command=self._reload_full
+            scan_status_row, text=t("mod.reload_full"), command=self._reload_full
         )
-        self._md_br.pack(side=tk.RIGHT, padx=(6, 0))
+        self._md_br.pack(side=tk.RIGHT)
         Tooltip(self._md_br, lambda: t("mod.reload_full_hover"))
         self._workshop_update_running = False
         self._workshop_status_cache = {}
@@ -445,8 +451,10 @@ class ModManagerTab:
         self._mod_update_hint_var = tk.StringVar(value="")
         self._mod_update_hint_kind = "idle"
         self._md_update_status = make_transparent_status(
-            ff, app, self._mod_scan_status_var, width=310
+            scan_status_row, app, self._mod_scan_status_var, width=310,
+            side=tk.LEFT, padx=(0, 10),
         )
+        self._md_update_status.pack_configure(fill=tk.X, expand=True)
 
         # 本地存档选中时显示的醒目提示——本地存档的 mod 启用/配置实际由
         # 客户端账号级 modindex 决定，这里只读查看，默认不 show()。
