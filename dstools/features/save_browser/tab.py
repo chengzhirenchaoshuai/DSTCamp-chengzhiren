@@ -932,7 +932,6 @@ class SaveBrowserTab:
             text=t("save.bundle_running") if self._bundle_in_progress
             else t("save.bundle_btn")
         )
-        self._create_save_btn.configure(text=t("save.create_server_save"))
 
     def retheme(self):
         """主题切换时调用——make_toolbar_label() 画的说明文字、以及
@@ -996,12 +995,6 @@ class SaveBrowserTab:
         )
         self._bundle_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
-        # “创建服务器存档”属于页面级入口，紧跟标题放在左侧；当前存档的
-        # 维护操作统一靠右，两组职责和视觉层级不再混在一起。
-        self._create_save_btn = ttk.Button(env_header_row, text=t("save.create_server_save"),
-                                           command=self._on_create_server_save)
-        self._create_save_btn.pack(side=tk.LEFT, padx=(10, 0))
-
         # 不再是"全部存档"的可滚动列表——顶部全局选择栏已经选了具体是哪
         # 个存档，这里只需要现查、现画那一个存档自己的详情（存档位置/
         # 游戏模式/最大玩家数/存档名称/各世界 Mod 数与存档会话数），不
@@ -1012,7 +1005,7 @@ class SaveBrowserTab:
         self._selected_cluster_frame = BgFrame(env_section, self.app, bg=theme.CARD_BG)
         self._selected_cluster_frame.pack(fill=tk.X, padx=10, pady=(0,4))
 
-    def _on_create_server_save(self):
+    def open_creation_wizard(self):
         """打开"创建服务器存档"的独立向导（世界模板/服务器配置/Mod 元数
         据都在独立窗口里按需加载）。复用 WorldCreationEntryTab 的窗口启
         动逻辑——它原本是主页签上的轻量入口，现在入口挪到这里，只剩

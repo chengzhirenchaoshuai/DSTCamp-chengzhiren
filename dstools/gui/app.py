@@ -297,6 +297,16 @@ class DSToolsApp:
         self._global_cluster_menu_btn.pack(
             side=tk.LEFT, padx=(12 + self._archive_label_w + 6, 10), ipady=3
         )
+        # “创建服务器存档”是针对整个存档集合的入口，不属于某一个已选
+        # 存档的基本信息。放在全局存档选择器右侧，既和操作对象靠在一起，
+        # 也避免挤占“存档信息”页签内部的标题行。
+        self._create_save_btn = ttk.Button(
+            cluster_bar_inner,
+            text=t("save.create_server_save"),
+            command=self._open_create_server_save,
+            style="Big.TButton",
+        )
+        self._create_save_btn.pack(side=tk.LEFT, padx=(0, 10))
         ttk.Button(
             cluster_bar_inner,
             text=t("save.refresh"),
@@ -1010,6 +1020,7 @@ class DSToolsApp:
         self._titlebar._redraw()
         self._build_menu()
         self._refresh_tab_labels()
+        self._create_save_btn.configure(text=t("save.create_server_save"))
         self._update_status()
         # get_selected_cluster() 现在直接存的是 Cluster 对象引用（见
         # __init__ 里 self._global_selected_cluster 的注释），不再靠反解析
@@ -1032,6 +1043,10 @@ class DSToolsApp:
         entry = getattr(self.save_tab, "_creation_entry", None)
         if entry is not None:
             entry.refresh_language()
+
+    def _open_create_server_save(self) -> None:
+        """从顶部全局存档栏打开服务器存档创建向导。"""
+        self.save_tab.open_creation_wizard()
 
     def _switch_theme(self, name: str) -> None:
         """颜色主题切换立即生效、不需要重启——具体的"重新套用样式+逐 tab

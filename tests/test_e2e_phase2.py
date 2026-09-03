@@ -416,6 +416,18 @@ def test_save_more_menu_entry_keeps_button_style_configure_contract():
     print("  PASS: 更多操作菜单条目兼容原按钮状态更新接口")
 
 
+def test_global_create_save_entry_delegates_to_save_page():
+    """顶部存档栏的创建入口应复用存档页原有向导启动能力。"""
+    from dstools.gui.app import DSToolsApp
+
+    app = DSToolsApp.__new__(DSToolsApp)
+    app.save_tab = SimpleNamespace(open_creation_wizard=Mock())
+    app._open_create_server_save()
+
+    app.save_tab.open_creation_wizard.assert_called_once_with()
+    print("  PASS: 顶部存档栏入口复用服务器存档创建向导")
+
+
 def test_background_refresh_contract():
     """背景缓存必须感知位置变化，强刷必须使表面缓存失效。"""
     import weakref
@@ -573,6 +585,7 @@ def main():
         test_main_tab_refresh_contract,
         test_save_bundle_action_copies_file_after_worker_finishes,
         test_save_more_menu_entry_keeps_button_style_configure_contract,
+        test_global_create_save_entry_delegates_to_save_page,
         test_background_refresh_contract,
         test_selfhost_worker_ui_dispatch_contract,
     ]
