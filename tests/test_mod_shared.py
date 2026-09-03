@@ -130,6 +130,28 @@ def test_shared_rows_keep_filter_and_sort_consistent():
     assert rows[0]["has_link"] is False
 
 
+def test_luajit_mod_is_first_only_when_prioritized():
+    luajit_id = "workshop-3444078585"
+    infos = {
+        "workshop-1": ModInfo(name="A Mod"),
+        luajit_id: ModInfo(name="Z LuaJIT"),
+        "workshop-2": ModInfo(name="Disabled Mod"),
+    }
+    entries = {
+        "workshop-1": ModEntry("workshop-1", enabled=True),
+        luajit_id: ModEntry(luajit_id, enabled=True),
+        "workshop-2": ModEntry("workshop-2", enabled=False),
+    }
+
+    normal = list(sort_mod_data(entries, infos))
+    prioritized = list(
+        sort_mod_data(entries, infos, priority_mod_id=luajit_id)
+    )
+
+    assert normal == ["workshop-1", luajit_id, "workshop-2"]
+    assert prioritized == [luajit_id, "workshop-1", "workshop-2"]
+
+
 def test_visible_mod_ids_include_enabled_missing_references_only():
     configured = {
         "workshop-20": ModEntry("workshop-20", enabled=True),
@@ -544,6 +566,7 @@ if __name__ == "__main__":
     test_catalog_does_not_store_page_state()
     test_catalog_icons_and_platform_invalidation()
     test_shared_rows_keep_filter_and_sort_consistent()
+    test_luajit_mod_is_first_only_when_prioritized()
     test_visible_mod_ids_include_enabled_missing_references_only()
     test_missing_mod_scan_summary_stays_compact()
     test_mod_update_hint_click_rules()

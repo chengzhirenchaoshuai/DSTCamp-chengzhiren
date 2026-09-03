@@ -78,8 +78,10 @@ def localize_mod_name(mod_id: str, name: str) -> str:
         return name
 
 
-def sort_mod_data(mod_data: dict, mod_infos: dict) -> dict:
-    """按统一名称规则自然排序，再把当前页面自己的启用项置顶。"""
+def sort_mod_data(
+    mod_data: dict, mod_infos: dict, *, priority_mod_id: str | None = None,
+) -> dict:
+    """按启用状态和名称排序，并可把一个页面级优先项固定到最前。"""
 
     def name_of(mod_id):
         info = mod_infos.get(mod_id)
@@ -91,6 +93,8 @@ def sort_mod_data(mod_data: dict, mod_infos: dict) -> dict:
         key=functools.cmp_to_key(lambda a, b: mod_name_cmp(name_of(a), name_of(b))),
     )
     ordered.sort(key=lambda mod_id: not mod_data[mod_id].enabled)
+    if priority_mod_id is not None:
+        ordered.sort(key=lambda mod_id: mod_id != priority_mod_id)
     return {mod_id: mod_data[mod_id] for mod_id in ordered}
 
 

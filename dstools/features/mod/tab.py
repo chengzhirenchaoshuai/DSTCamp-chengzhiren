@@ -2947,10 +2947,15 @@ class ModManagerTab:
             self.app.mod_catalog.publish(
                 platform, mod_infos, mod_paths, icon_imgs, wegame_client_mods_dir
             )
-            # 列表最终会按“当前页面启用项优先 + 名称自然排序”展示；图标和
-            # 版本后台任务也必须复用同一顺序。否则它们仍按文件系统扫描
-            # 顺序执行，用户看到的前几行反而可能最后才补出图标。
-            ordered_ids = tuple(sort_mod_data(mod_data, mod_infos))
+            # 列表最终会按“LuaJIT 配套 Mod（补丁开启时）+ 当前页面启用项
+            # + 名称自然排序”展示；图标和版本后台任务也必须复用同一顺
+            # 序。否则配套 Mod 虽在第一行，图标却可能最后才加载出来。
+            priority_mod_id = (
+                luajit_injector.WORKSHOP_MOD_KEY if luajit_active else None
+            )
+            ordered_ids = tuple(sort_mod_data(
+                mod_data, mod_infos, priority_mod_id=priority_mod_id,
+            ))
             load_order = {wid: index for index, wid in enumerate(ordered_ids)}
             fallback_order = len(load_order)
             icon_targets.sort(
@@ -3108,7 +3113,12 @@ class ModManagerTab:
         # （_save_mods 非静默保存会调 _refresh_mods）才应该跳到新位置。
         # dict 本身的插入顺序就是后面 _build_rows() 遍历的顺序，这里排
         # 好之后不需要在每次渲染时都重新排一遍。
-        mod_data = sort_mod_data(mod_data, mod_infos)
+        priority_mod_id = (
+            luajit_injector.WORKSHOP_MOD_KEY if luajit_active else None
+        )
+        mod_data = sort_mod_data(
+            mod_data, mod_infos, priority_mod_id=priority_mod_id,
+        )
         self._mod_data = mod_data
         self._mod_infos = mod_infos
         self._mod_paths = mod_paths
