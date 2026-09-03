@@ -1,6 +1,8 @@
 # CLAUDE.md
 
-DSTCamp（包名 `dstools`，当前版本 `1.3.1`）是 Windows 上的《饥荒：联机版》本地服务器管理工具，GUI 入口为 `dst-gui`。支持 Steam/WeGame 存档、Mod、世界设置、服务器配置、本地专服和内网穿透。
+DSTCamp（包名 `dstools`，当前版本 `1.3.2`）是 Windows 上的《饥荒：联机版》本地服务器管理工具，GUI 入口为 `dst-gui`。支持 Steam/WeGame 存档、Mod、世界设置、服务器配置、本地专服和内网穿透。
+
+1.3.2 新增完整存档打包分享，并优化存档操作入口、令牌复制与冲突诊断、页签切换和 Mod 扫描展示。
 
 ## 结构
 
