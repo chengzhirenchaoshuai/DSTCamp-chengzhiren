@@ -44,6 +44,24 @@ _PAGE_PADX = 15
 _DEFAULT_AVATAR_PATH = bundled_resource_dir() / "icons" / "ui" / "character_icon_default.png"
 
 
+class _MenuEntryControl:
+    """给原生 ``tk.Menu`` 条目提供与按钮相同的 ``configure`` 接口。
+
+    打包存档原先是独立按钮，后台任务会通过 ``configure(text=..., state=...)``
+    更新它的忙碌状态。收进“更多操作”菜单后仍保留这个小接口，既不用把
+    异步流程和菜单实现耦合在一起，也能继续只禁用正在执行的那一项。
+    """
+
+    def __init__(self, menu: tk.Menu, index: int):
+        self._menu = menu
+        self._index = index
+
+    def configure(self, **options):
+        if "text" in options:
+            options["label"] = options.pop("text")
+        self._menu.entryconfigure(self._index, **options)
+
+
 class _CopyToServerDialog:
     """"复制为服务器存档"点击后弹出的目标文件夹名输入框——只有一个字段
     （目标文件夹名，预填 cluster_copy.suggest_new_cluster_name 给的建
@@ -909,6 +927,7 @@ class SaveBrowserTab:
         self._backup_btn.configure(text=t("save.backup_now"))
         self._restore_btn.configure(text=t("save.restore_backup"))
         self._backup_policy_btn.configure(text=t("save.backup_policy_btn"))
+        self._more_actions_btn.configure(text=t("save.more_actions"))
         self._bundle_btn.configure(
             text=t("save.bundle_running") if self._bundle_in_progress
             else t("save.bundle_btn")
@@ -943,22 +962,44 @@ class SaveBrowserTab:
         self._env_header_label = make_toolbar_label(env_header_row, self.app,
                                                        lambda: t("save.basic_info"),
                                                        bold=True)
-        self._restore_btn = ttk.Button(env_header_row, text=t("save.restore_backup"), command=self._on_restore_backup)
-        self._restore_btn.pack(side=tk.RIGHT, padx=(0, 2))
+
+        # 当前存档最常用的操作只保留“立即备份”；恢复、策略和打包收进
+        # “更多操作”，避免标题右侧同时堆五个同权重按钮。使用原生
+        # Menubutton/Menu，不增加动画或额外刷新，也能保持键盘访问能力。
+        self._more_actions_btn = ttk.Menubutton(
+            env_header_row, text=t("save.more_actions"), direction="below",
+        )
+        self._more_actions_menu = tk.Menu(self._more_actions_btn, tearoff=0)
+        self._more_actions_menu.add_command(
+            label=t("save.backup_policy_btn"), command=self._on_backup_policy,
+        )
+        self._backup_policy_btn = _MenuEntryControl(
+            self._more_actions_menu, self._more_actions_menu.index("end"),
+        )
+        self._more_actions_menu.add_command(
+            label=t("save.restore_backup"), command=self._on_restore_backup,
+        )
+        self._restore_btn = _MenuEntryControl(
+            self._more_actions_menu, self._more_actions_menu.index("end"),
+        )
+        self._more_actions_menu.add_separator()
+        self._more_actions_menu.add_command(
+            label=t("save.bundle_btn"), command=self._on_bundle_save,
+        )
+        self._bundle_btn = _MenuEntryControl(
+            self._more_actions_menu, self._more_actions_menu.index("end"),
+        )
+        self._more_actions_btn.configure(menu=self._more_actions_menu)
+        self._more_actions_btn.pack(side=tk.RIGHT, padx=(2, 10))
+
         self._backup_btn = ttk.Button(env_header_row, text=t("save.backup_now"), command=self._on_backup_now)
         self._backup_btn.pack(side=tk.RIGHT, padx=(0, 2))
-        self._backup_policy_btn = ttk.Button(env_header_row, text=t("save.backup_policy_btn"), command=self._on_backup_policy)
-        self._backup_policy_btn.pack(side=tk.RIGHT, padx=(0, 2))
-        self._bundle_btn = ttk.Button(
-            env_header_row, text=t("save.bundle_btn"), command=self._on_bundle_save,
-        )
-        self._bundle_btn.pack(side=tk.RIGHT, padx=(0, 10))
-        # "创建服务器存档"是这一行按钮组里最靠左、最靠近"基本信息"标题的
-        # 主要操作（最后一个 side=RIGHT pack，排在已 pack 按钮的左边），用
-        # 稍大的右边距跟右侧备份相关按钮做视觉分组。
+
+        # “创建服务器存档”属于页面级入口，紧跟标题放在左侧；当前存档的
+        # 维护操作统一靠右，两组职责和视觉层级不再混在一起。
         self._create_save_btn = ttk.Button(env_header_row, text=t("save.create_server_save"),
                                            command=self._on_create_server_save)
-        self._create_save_btn.pack(side=tk.RIGHT, padx=(0, 2))
+        self._create_save_btn.pack(side=tk.LEFT, padx=(10, 0))
 
         # 不再是"全部存档"的可滚动列表——顶部全局选择栏已经选了具体是哪
         # 个存档，这里只需要现查、现画那一个存档自己的详情（存档位置/

@@ -402,6 +402,20 @@ def test_save_bundle_action_copies_file_after_worker_finishes():
     print("  PASS: 完整存档在后台打包，完成后复制文件并恢复按钮")
 
 
+def test_save_more_menu_entry_keeps_button_style_configure_contract():
+    """菜单条目应兼容原按钮的文字与禁用状态更新接口。"""
+    from dstools.features.save_browser.tab import _MenuEntryControl
+
+    menu = Mock()
+    entry = _MenuEntryControl(menu, 3)
+    entry.configure(text="正在打包…", state=tk.DISABLED)
+
+    menu.entryconfigure.assert_called_once_with(
+        3, label="正在打包…", state=tk.DISABLED,
+    )
+    print("  PASS: 更多操作菜单条目兼容原按钮状态更新接口")
+
+
 def test_background_refresh_contract():
     """背景缓存必须感知位置变化，强刷必须使表面缓存失效。"""
     import weakref
@@ -558,6 +572,7 @@ def main():
         test_window_drag_event_coalescing,
         test_main_tab_refresh_contract,
         test_save_bundle_action_copies_file_after_worker_finishes,
+        test_save_more_menu_entry_keeps_button_style_configure_contract,
         test_background_refresh_contract,
         test_selfhost_worker_ui_dispatch_contract,
     ]
