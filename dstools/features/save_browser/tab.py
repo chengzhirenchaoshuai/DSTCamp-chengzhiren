@@ -927,7 +927,7 @@ class SaveBrowserTab:
         self._backup_btn.configure(text=t("save.backup_now"))
         self._restore_btn.configure(text=t("save.restore_backup"))
         self._backup_policy_btn.configure(text=t("save.backup_policy_btn"))
-        self._more_actions_btn.configure(text=t("save.more_actions"))
+        self._more_actions_btn.configure(text=t("save.backup_management"))
         self._bundle_btn.configure(
             text=t("save.bundle_running") if self._bundle_in_progress
             else t("save.bundle_btn")
@@ -963,13 +963,19 @@ class SaveBrowserTab:
                                                        lambda: t("save.basic_info"),
                                                        bold=True)
 
-        # 当前存档最常用的操作只保留“立即备份”；恢复、策略和打包收进
-        # “更多操作”，避免标题右侧同时堆五个同权重按钮。使用原生
+        # “打包存档”保留为标题行直接操作；立即备份、恢复和策略统一收进
+        # “备份管理”，避免标题右侧同时堆五个同权重按钮。使用原生
         # Menubutton/Menu，不增加动画或额外刷新，也能保持键盘访问能力。
         self._more_actions_btn = ttk.Menubutton(
-            env_header_row, text=t("save.more_actions"), direction="below",
+            env_header_row, text=t("save.backup_management"), direction="below",
         )
         self._more_actions_menu = tk.Menu(self._more_actions_btn, tearoff=0)
+        self._more_actions_menu.add_command(
+            label=t("save.backup_now"), command=self._on_backup_now,
+        )
+        self._backup_btn = _MenuEntryControl(
+            self._more_actions_menu, self._more_actions_menu.index("end"),
+        )
         self._more_actions_menu.add_command(
             label=t("save.backup_policy_btn"), command=self._on_backup_policy,
         )
@@ -982,18 +988,13 @@ class SaveBrowserTab:
         self._restore_btn = _MenuEntryControl(
             self._more_actions_menu, self._more_actions_menu.index("end"),
         )
-        self._more_actions_menu.add_separator()
-        self._more_actions_menu.add_command(
-            label=t("save.bundle_btn"), command=self._on_bundle_save,
-        )
-        self._bundle_btn = _MenuEntryControl(
-            self._more_actions_menu, self._more_actions_menu.index("end"),
-        )
         self._more_actions_btn.configure(menu=self._more_actions_menu)
         self._more_actions_btn.pack(side=tk.RIGHT, padx=(2, 10))
 
-        self._backup_btn = ttk.Button(env_header_row, text=t("save.backup_now"), command=self._on_backup_now)
-        self._backup_btn.pack(side=tk.RIGHT, padx=(0, 2))
+        self._bundle_btn = ttk.Button(
+            env_header_row, text=t("save.bundle_btn"), command=self._on_bundle_save,
+        )
+        self._bundle_btn.pack(side=tk.RIGHT, padx=(0, 2))
 
         # “创建服务器存档”属于页面级入口，紧跟标题放在左侧；当前存档的
         # 维护操作统一靠右，两组职责和视觉层级不再混在一起。
