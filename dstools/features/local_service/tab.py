@@ -23,7 +23,9 @@ from dstools.features.local_service import luajit_injector
 from dstools.features.local_service import steam_client_updater
 from dstools.features.local_service.server_diagnostics import (
     analyze_mod_loading,
+    contains_server_registration_success,
     contains_startup_failure,
+    contains_token_conflict,
     diagnose_server_failure,
 )
 from dstools.features.local_service.token_scheduler import (
@@ -508,12 +510,12 @@ class _ConsolePane:
 
     def __init__(
         self, notebook, proc, on_close, on_rollback,
-        on_failure=None, on_ready=None,
+        on_failure=None, on_registered=None,
     ):
         self.proc = proc
         self._on_close = on_close
         self._on_failure = on_failure
-        self._on_ready = on_ready
+        self._on_registered = on_registered
         self.frame = ttk.Frame(notebook)
 
         # bottom 先 pack（side=BOTTOM，固定高度）再 pack 会 expand 撑满的
@@ -613,7 +615,7 @@ class _ConsolePane:
         self._mod_check_real_start_seen = False
         self._mod_check_ready_seen = False
         self._diagnostic_reported = False
-        self._ready_reported = False
+        self._registration_reported = False
 
         body = ttk.Frame(self.frame)
         body.pack(fill=tk.BOTH, expand=True)
@@ -898,7 +900,7 @@ class _ConsolePane:
         self._mod_check_real_start_seen = False
         self._mod_check_ready_seen = False
         self._diagnostic_reported = False
-        self._ready_reported = False
+        self._registration_reported = False
         self._diagnostic_label.pack_forget()
         self.pump()
 
@@ -930,6 +932,10 @@ class _ConsolePane:
                 self.text.see(tk.END)
             self.text.configure(state=tk.DISABLED)
 
+        token_conflict_now = (
+            not self._diagnostic_reported
+            and contains_token_conflict(lines)
+        )
         startup_failed_now = (
             not self.proc.world_ready
             and not self._diagnostic_reported
@@ -944,7 +950,9 @@ class _ConsolePane:
             self.proc.status = ServerStatus.CRASHED
             status = ServerStatus.CRASHED
             crashed_now = True
-        if (crashed_now or startup_failed_now) and not self._diagnostic_reported:
+        if (
+            crashed_now or startup_failed_now or token_conflict_now
+        ) and not self._diagnostic_reported:
             self._diagnostic_reported = True
             report = diagnose_server_failure(
                 shard_name=getattr(self.proc, "shard_name", "当前世界"),
@@ -991,10 +999,16 @@ class _ConsolePane:
                     # 的消息区域，避免长文本被挤成窄长条。
                     wraplength=1200,
                 )
-        if self.proc.world_ready and not self._ready_reported:
-            self._ready_reported = True
-            if self._on_ready is not None:
-                self._on_ready(self.proc)
+        registration_succeeded_now = (
+            getattr(self.proc, "is_master", True)
+            and not self._registration_reported
+            and not token_conflict_now
+            and contains_server_registration_success(lines)
+        )
+        if registration_succeeded_now:
+            self._registration_reported = True
+            if self._on_registered is not None:
+                self._on_registered(self.proc)
         self.status_var.set(t(_STATUS_KEYS[status]))
         self.status_lbl.configure(fg=_status_color(status))
         can_send = status == ServerStatus.RUNNING
@@ -2696,8 +2710,11 @@ class LocalServiceTab:
         return read_token(Path(proc.cluster_path) / "cluster_token.txt")
 
     def _on_server_failure(self, proc, report) -> None:
-        """记录主世界异常留下的服务端令牌占用；从世界不单独占令牌。"""
-        if not getattr(proc, "is_master", True):
+        """记录异常遗留的令牌占用；任一世界的注册冲突都属于存档级冲突。"""
+        if (
+            not getattr(proc, "is_master", True)
+            and report.category != "token_conflict"
+        ):
             return
         token = self._process_token(proc)
         if classify_token(token) != ServerTokenKind.NEW:
@@ -2711,8 +2728,8 @@ class LocalServiceTab:
         )
         self._token_reservations.pop(str(proc.cluster_path), None)
 
-    def _on_server_ready(self, proc) -> None:
-        """主世界成功注册后，清除同一令牌此前的等待释放标记。"""
+    def _on_server_registered(self, proc) -> None:
+        """主世界明确完成 Klei 注册后，清除同一令牌此前的等待标记。"""
         if not getattr(proc, "is_master", True):
             return
         token = self._process_token(proc)
@@ -3152,7 +3169,7 @@ class LocalServiceTab:
                 on_close=lambda: self._close_console_pane(key, cluster, shard),
                 on_rollback=self._open_rollback_dialog,
                 on_failure=self._on_server_failure,
-                on_ready=self._on_server_ready,
+                on_registered=self._on_server_registered,
             )
             self._console_panes[key] = pane
             self._console_nb.add(pane.frame, text=shard.name)

@@ -6,7 +6,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dstools.features.local_service.server_diagnostics import (
-    analyze_mod_loading, contains_startup_failure, diagnose_server_failure,
+    analyze_mod_loading,
+    contains_server_registration_success,
+    contains_startup_failure,
+    contains_token_conflict,
+    diagnose_server_failure,
 )
 
 
@@ -134,9 +138,26 @@ def main() -> None:
     assert report is not None and report.category == "port"
     assert contains_startup_failure(["[Error] Server failed to start!"])
     assert contains_startup_failure(["Details: SOCKET_PORT_ALREADY_IN_USE"])
-    assert contains_startup_failure([
+    conflict_lines = [
+        '[Http] Curl failed[1] with HTTP_500, retrying (0 times). '
+        'Response: {"Error":{"Code":"E_ROWID_EXIST"}}',
         "[Error] Master Server Broadcast Error: E_ROWID_EXIST"
+    ]
+    assert contains_token_conflict(conflict_lines)
+    assert not contains_startup_failure(conflict_lines)
+    live_conflict = diagnose_server_failure(
+        shard_name="Caves",
+        exit_code=None,
+        world_ready=True,
+        log_lines=conflict_lines,
+    )
+    assert live_conflict is not None
+    assert live_conflict.category == "token_conflict"
+    assert "地上与洞穴" in live_conflict.summary
+    assert contains_server_registration_success([
+        "[Steam] Server registered via geo DNS in ap-east-1"
     ])
+    assert not contains_server_registration_success(["Sim paused"])
     assert not contains_startup_failure(["Starting Dedicated Server Game"])
 
     assert diagnose_server_failure(

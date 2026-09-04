@@ -1,4 +1,4 @@
-"""专服异常退出的离线日志诊断。
+"""专服启动和运行期错误的离线日志诊断。
 
 这里只做保守的证据归类，不修改存档、Mod 或服务器配置。诊断结果区分
 “明确错误”和“疑似原因”，避免把任意一行 Lua Error 都武断地说成 Mod
@@ -11,6 +11,10 @@ from typing import Iterable
 
 
 _WORKSHOP_RE = re.compile(r"workshop-\d+", re.IGNORECASE)
+_TOKEN_CONFLICT_MARKER = "e_rowid_exist"
+_SERVER_REGISTRATION_SUCCESS_MARKERS = (
+    "server registered via geo dns",
+)
 _STARTUP_FAILURE_MARKERS = (
     "server failed to start!",
     "unhandled exception during server startup:",
@@ -20,7 +24,6 @@ _STARTUP_FAILURE_MARKERS = (
     "failed msimulation->reset()",
     "error during game initialization!",
     "luaerror but no error string",
-    "master server broadcast error: e_rowid_exist",
 )
 
 
@@ -143,32 +146,33 @@ def diagnose_server_failure(
     loaded_mods: Iterable[str] = (),
     intentional_stop: bool = False,
 ) -> DiagnosticReport | None:
-    """根据一次世界进程退出前的日志生成保守诊断报告。
+    """根据一次世界启动或运行期日志生成保守诊断报告。
 
-    ``None`` 表示没有异常退出需要提醒；正常停止和已经进入世界后由用户
-    主动停止的进程不会生成报告。规则顺序从证据最明确的系统错误到一般
-    Lua/Mod 错误，避免通用规则抢走更具体的分类。
+    ``None`` 表示没有错误需要提醒；正常停止不会生成报告。令牌注册冲突
+    不会让进程退出，也可能发生在本地世界已经就绪之后，因此必须先于
+    “进程仍在运行”的快速返回进行判断。其它规则仍按异常退出处理。
     """
     lines = [str(line) for line in log_lines]
     if intentional_stop:
-        return None
-    if exit_code in (None, 0) and world_ready:
         return None
 
     lower = "\n".join(lines).lower()
     related_mods = _mods(lines, enabled_mods, loaded_mods)
 
-    if "e_rowid_exist" in lower and (
+    if _TOKEN_CONFLICT_MARKER in lower and (
         "master server broadcast error" in lower or "http_500" in lower
     ):
         return DiagnosticReport(
             "token_conflict", "令牌注册冲突",
-            f"{shard_name} 无法向 Klei 注册房间；新令牌可能正被另一存档使用，或异常退出后的注册尚未释放。",
+            f"{shard_name} 无法向 Klei 注册房间；这会导致该世界持续重试，地上与洞穴也可能无法完成建联。",
             ("停止使用同一新令牌的其他存档，或从全局令牌池换用可用令牌。",
              "如果房间刚刚崩溃，请等待 Klei 释放旧注册后再重试。"),
             _evidence(lines, ("e_rowid_exist", "master server broadcast error")),
             (), True,
         )
+
+    if exit_code in (None, 0) and world_ready:
+        return None
 
     if any(token in lower for token in (
         "vcruntime140.dll", "msvcp140.dll", "vcomp120.dll", "cannot find the module",
@@ -233,3 +237,15 @@ def contains_startup_failure(lines: Iterable[str]) -> bool:
     """
     text = "\n".join(str(line) for line in lines).lower()
     return any(marker in text for marker in _STARTUP_FAILURE_MARKERS)
+
+
+def contains_token_conflict(lines: Iterable[str]) -> bool:
+    """判断本批日志是否出现不会主动结束进程的令牌注册冲突。"""
+    text = "\n".join(str(line) for line in lines).lower()
+    return _TOKEN_CONFLICT_MARKER in text
+
+
+def contains_server_registration_success(lines: Iterable[str]) -> bool:
+    """判断 Master 是否已经明确完成 Klei 房间注册。"""
+    text = "\n".join(str(line) for line in lines).lower()
+    return any(marker in text for marker in _SERVER_REGISTRATION_SUCCESS_MARKERS)

@@ -140,7 +140,7 @@ def main() -> None:
         from dstools.features.local_service.tab import LocalServiceTab
         crash_service = LocalServiceTab.__new__(LocalServiceTab)
         crash_service._token_reservations = {str(crash_cluster): NEW_A}
-        # 验证诊断回调会持久化，并在后续成功注册后清除。
+        # 验证 Master 诊断回调会持久化，并在后续明确注册成功后清除。
         proc = SimpleNamespace(
             is_master=True,
             cluster_path=crash_cluster,
@@ -148,8 +148,20 @@ def main() -> None:
         )
         crash_service._on_server_failure(proc, SimpleNamespace(category="token_conflict"))
         assert app_settings.get_token_holds()[token_fingerprint(NEW_A)]["state"] == "conflict"
-        crash_service._on_server_ready(proc)
+        crash_service._on_server_registered(proc)
         assert app_settings.get_token_holds() == {}
+
+        # E_ROWID_EXIST 也可能只出现在洞穴；它仍然表示整个存档使用的
+        # 令牌发生注册冲突，不能因为不是 Master 就漏记。
+        cave_proc = SimpleNamespace(
+            is_master=False,
+            cluster_path=crash_cluster,
+            cluster_name="Cluster_Crash",
+        )
+        crash_service._on_server_failure(
+            cave_proc, SimpleNamespace(category="token_conflict")
+        )
+        assert app_settings.get_token_holds()[token_fingerprint(NEW_A)]["state"] == "conflict"
 
     # LocalServiceTab 的启动入口应在 Popen 前写入替代令牌并建立预占。
     from dstools.features.local_service import tab as local_module
