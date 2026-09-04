@@ -324,7 +324,25 @@ class _GlobalTokensDialog:
             index = int(iid)
         except (TypeError, ValueError):
             return None
-        return index if 0 <= index < len(self._tokens) else None
+        if not 0 <= index < len(self._tokens):
+            return None
+
+        # Treeview 的第一列通常比脱敏令牌本身宽很多；命中区域只覆盖
+        # 实际显示的文字，避免点击单元格右侧空白也触发复制。
+        # 旧版/测试替身可能没有 bbox；此时沿用整格命中，真实 Treeview
+        # 始终提供 bbox 并走下面的精确文字区域判断。
+        if not hasattr(self.tree, "bbox"):
+            return index
+        cell_box = self.tree.bbox(iid, "#1")
+        if not cell_box:
+            return None
+        cell_x, _cell_y, cell_width, _cell_height = cell_box
+        display_text = mask_token(self._tokens[index])
+        display_width = tkfont.nametofont("TkDefaultFont").measure(display_text)
+        padding = 4
+        text_left = cell_x + max(0, (cell_width - display_width) // 2) - padding
+        text_right = cell_x + min(cell_width, (cell_width + display_width) // 2 + padding)
+        return index if text_left <= x <= text_right else None
 
     def _on_tree_motion(self, event):
         index = self._token_index_at(event.x, event.y)
