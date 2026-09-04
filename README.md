@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.3.2-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.3.3-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
@@ -34,8 +34,9 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.3.2.exe`：工具与资源全部内嵌，单文件运行。
-- `DSTCamp-1.3.2.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
+- `DSTCamp-1.3.3.exe`：工具与资源全部内嵌，单文件运行。
+- `DSTCamp-1.3.3.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
+- `DSTCamp-1.3.3.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
 
 源码运行：
 
@@ -80,7 +81,7 @@ scripts/                    启动、诊断与打包脚本
 tests/                      脚本式自动化测试
 ```
 
-运行全部 8 套测试：
+运行全部 12 套测试：
 
 ```powershell
 python tests/run_all.py
@@ -94,6 +95,14 @@ python scripts/build_exe.py
 ```
 
 构建脚本使用固定工具白名单，不打包 `cache/`、`data/`、`security/`、`reference/` 或旧版 `dist/`；两个 EXE 都会在生成后执行冻结入口和资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+
+## 1.3.3 更新
+
+- 新增自动更新：优先从 Gitee 获取版本和安装包，失败时回退 GitHub。
+- 自动更新严格校验文件大小与 SHA-256，并在替换前实际执行新 EXE 冒烟测试。
+- 更新时安全关闭仍在运行的专用服务器，通过独立辅助进程替换并重启程序；替换失败自动恢复旧 EXE。
+- 单文件版与 ZIP 解压版统一更新为内嵌工具的完整 EXE，避免程序与外置工具版本不一致。
+- 发布构建新增 `sha256.json` 校验清单，Gitee 镜像自动保留最近 3 个正式版本。
 
 ## 1.3.2 更新
 
