@@ -12,6 +12,10 @@ from typing import Iterable
 
 _WORKSHOP_RE = re.compile(r"workshop-\d+", re.IGNORECASE)
 _TOKEN_CONFLICT_MARKER = "e_rowid_exist"
+_RUNTIME_LUA_ERROR_MARKERS = (
+    "lua error",
+    "stack traceback",
+)
 _SERVER_REGISTRATION_SUCCESS_MARKERS = (
     "server registered via geo dns",
 )
@@ -136,6 +140,22 @@ def _mods(lines: list[str], enabled: Iterable[str], loaded: Iterable[str]) -> tu
     return ()
 
 
+def _lua_report(
+    shard_name: str,
+    world_ready: bool,
+    lines: list[str],
+    related_mods: tuple[str, ...],
+) -> DiagnosticReport:
+    phase = "运行中" if world_ready else "启动阶段"
+    return DiagnosticReport(
+        "mod_conflict", "疑似 Mod 冲突",
+        f"{shard_name} 在{phase}检测到 Lua 运行时错误，可能由 Mod Bug 或兼容性冲突导致。",
+        ("优先禁用日志中列出的疑似 Mod，并重新启动服务器。",
+         "如果禁用后恢复，再逐个启用最近更新或新增的 Mod。"),
+        _lua_evidence(lines), related_mods, False,
+    )
+
+
 def diagnose_server_failure(
     *,
     shard_name: str,
@@ -171,7 +191,11 @@ def diagnose_server_failure(
             (), True,
         )
 
+    # 已就绪且仍存活的世界通常不属于“启动/退出诊断”，但 Lua 错误可能只
+    # 让当前世界停止模拟或持续刷堆栈，并不保证操作系统进程退出。
     if exit_code in (None, 0) and world_ready:
+        if any(marker in lower for marker in _RUNTIME_LUA_ERROR_MARKERS):
+            return _lua_report(shard_name, world_ready, lines, related_mods)
         return None
 
     if any(token in lower for token in (
@@ -212,15 +236,8 @@ def diagnose_server_failure(
             _evidence(lines, ("task set", "worldgen_main.lua")), related_mods, True,
         )
 
-    if "lua error" in lower or "lua error stack traceback" in lower or "stack traceback" in lower:
-        phase = "运行中" if world_ready else "启动阶段"
-        return DiagnosticReport(
-            "mod_conflict", "疑似 Mod 冲突",
-            f"{shard_name} 在{phase}检测到 Lua 运行时错误，可能由 Mod Bug 或兼容性冲突导致。",
-            ("优先禁用日志中列出的疑似 Mod，并重新启动服务器。",
-             "如果禁用后恢复，再逐个启用最近更新或新增的 Mod。"),
-            _lua_evidence(lines), related_mods, False,
-        )
+    if any(marker in lower for marker in _RUNTIME_LUA_ERROR_MARKERS):
+        return _lua_report(shard_name, world_ready, lines, related_mods)
 
     return DiagnosticReport(
         "unknown", "服务器启动失败", "服务器进程异常退出，但暂时无法从日志确定单一原因。",
@@ -243,6 +260,12 @@ def contains_token_conflict(lines: Iterable[str]) -> bool:
     """判断本批日志是否出现不会主动结束进程的令牌注册冲突。"""
     text = "\n".join(str(line) for line in lines).lower()
     return _TOKEN_CONFLICT_MARKER in text
+
+
+def contains_runtime_lua_error(lines: Iterable[str]) -> bool:
+    """判断本批运行期日志是否出现 Lua 错误堆栈。"""
+    text = "\n".join(str(line) for line in lines).lower()
+    return any(marker in text for marker in _RUNTIME_LUA_ERROR_MARKERS)
 
 
 def contains_server_registration_success(lines: Iterable[str]) -> bool:

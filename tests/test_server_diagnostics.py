@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dstools.features.local_service.server_diagnostics import (
     analyze_mod_loading,
+    contains_runtime_lua_error,
     contains_server_registration_success,
     contains_startup_failure,
     contains_token_conflict,
@@ -58,6 +59,37 @@ def main() -> None:
     assert "运行中" in report.summary
     assert report.related_mods == ("workshop-3662240568",)
     assert any("bigbag.lua:1487" in line for line in report.evidence)
+
+    # 416756019/Caves 的真实形态：世界已经就绪，Lua 错误不会保证进程
+    # 退出，仍应立即生成诊断而不是等待 poll() 返回退出码。
+    cave_runtime_lines = [
+        "[string \"scripts/components/inventory.lua\"]:770: "
+        "attempt to index field 'isexternallyinsulated' (a nil value)",
+        "LUA ERROR stack traceback:",
+        "scripts/components/inventory.lua:770 in (method) IsInsulated",
+        "../mods/workshop-1991746508/main/pills.lua:145",
+        "../mods/workshop-375850593/modmain.lua:72",
+        "../mods/workshop-661253977/modmain.lua:40",
+    ]
+    assert contains_runtime_lua_error(cave_runtime_lines)
+    live_lua = diagnose_server_failure(
+        shard_name="Caves",
+        exit_code=None,
+        world_ready=True,
+        log_lines=cave_runtime_lines,
+        enabled_mods=[
+            "workshop-1991746508",
+            "workshop-375850593",
+            "workshop-661253977",
+        ],
+    )
+    assert live_lua is not None and live_lua.category == "mod_conflict"
+    assert "运行中" in live_lua.summary
+    assert live_lua.related_mods == (
+        "workshop-1991746508",
+        "workshop-375850593",
+        "workshop-661253977",
+    )
 
     samples = (
         (

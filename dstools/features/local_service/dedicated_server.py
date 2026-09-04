@@ -375,10 +375,10 @@ class ServerProcess:
         """返回进程退出前的有限日志快照，供诊断模块只读使用。"""
         return tuple(getattr(self, "_recent_log_lines", ()))
 
-    def read_available_lines(self) -> list[str]:
-        """非阻塞取出目前已经读到的全部行，供 GUI 轮询时调用。"""
+    def read_available_lines(self, max_lines: int | None = None) -> list[str]:
+        """非阻塞读取日志；可限制单批数量，避免错误风暴长期占住 Tk。"""
         lines = []
-        while True:
+        while max_lines is None or len(lines) < max_lines:
             try:
                 lines.append(self._out_queue.get_nowait())
             except queue.Empty:

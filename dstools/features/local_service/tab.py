@@ -23,6 +23,7 @@ from dstools.features.local_service import luajit_injector
 from dstools.features.local_service import steam_client_updater
 from dstools.features.local_service.server_diagnostics import (
     analyze_mod_loading,
+    contains_runtime_lua_error,
     contains_server_registration_success,
     contains_startup_failure,
     contains_token_conflict,
@@ -103,6 +104,8 @@ from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
 _POLL_MS = 150
+_CONSOLE_LOG_BATCH_SIZE = 500
+_CONSOLE_MAX_LINES = 20_000
 _STEAM_REMOTE_BUILD_TTL = 300.0
 _LUAJIT_VCREDIST_DOWNLOAD_URL = "https://wwwu.lanzoub.com/b0nyns22d"
 _PUBLIC_IP_URLS = (
@@ -752,6 +755,11 @@ class _ConsolePane:
         """显示异常条对应的完整诊断，正文可滚动、可选中复制。"""
         if not self._diagnostic_detail:
             return "break"
+        try:
+            if not self.frame.winfo_exists():
+                return "break"
+        except tk.TclError:
+            return "break"
         if (
             self._diagnostic_detail_win is not None
             and self._diagnostic_detail_win.winfo_exists()
@@ -822,9 +830,9 @@ class _ConsolePane:
         center_over_parent(win, parent, min_width=560)
         win.deiconify()
         close_btn.focus_set()
-        win.grab_set()
-        win.wait_window()
-        self._diagnostic_detail_win = None
+        # 诊断来自后台世界，详情窗口不能 grab/wait 阻断整个应用；否则窗口
+        # 被其它程序或全屏游戏遮住时，主界面会表现得像彻底卡死。
+        win.lift()
         return "break"
 
     def _close_search(self, event=None):
@@ -1002,7 +1010,9 @@ class _ConsolePane:
 
     def pump(self):
         """轮询一次：把新到的输出行追加到 Text，同步状态徽标/命令框可用性。"""
-        lines = self.proc.read_available_lines()
+        # 错误堆栈可能高速刷屏。每轮只搬运有限行，让 Tk 有机会继续处理
+        # 点击、重绘和其它世界的轮询；队列中的剩余日志留到后续轮次。
+        lines = self.proc.read_available_lines(max_lines=_CONSOLE_LOG_BATCH_SIZE)
         if lines:
             for line in lines:
                 self._mod_check_real_start_seen, ready_now = advance_world_ready_marker(
@@ -1024,6 +1034,10 @@ class _ConsolePane:
             # 无缝衔接，末尾不会再多出空行。
             prefix = "\n" if self.text.index("end-1c") != "1.0" else ""
             self.text.insert(tk.END, prefix + "\n".join(lines))
+            last_line = int(self.text.index("end-1c").split(".", 1)[0])
+            excess = last_line - _CONSOLE_MAX_LINES
+            if excess > 0:
+                self.text.delete("1.0", f"{excess + 1}.0")
             if at_bottom:
                 self.text.see(tk.END)
             self.text.configure(state=tk.DISABLED)
@@ -1031,6 +1045,11 @@ class _ConsolePane:
         token_conflict_now = (
             not self._diagnostic_reported
             and contains_token_conflict(lines)
+        )
+        runtime_lua_error_now = (
+            self.proc.world_ready
+            and not self._diagnostic_reported
+            and contains_runtime_lua_error(lines)
         )
         startup_failed_now = (
             not self.proc.world_ready
@@ -1047,7 +1066,10 @@ class _ConsolePane:
             status = ServerStatus.CRASHED
             crashed_now = True
         if (
-            crashed_now or startup_failed_now or token_conflict_now
+            crashed_now
+            or startup_failed_now
+            or token_conflict_now
+            or runtime_lua_error_now
         ) and not self._diagnostic_reported:
             self._diagnostic_reported = True
             report = diagnose_server_failure(
@@ -1089,6 +1111,9 @@ class _ConsolePane:
                     detail += "\n\n日志证据：\n" + "\n".join(report.evidence)
                 self._diagnostic_detail_title = report.title
                 self._diagnostic_detail = detail
+                # 等本轮日志/状态刷新结束后再展示；详情窗口是非模态的，
+                # 即使用户暂时不处理，服务器轮询和主界面也不会被锁住。
+                self.frame.after_idle(self._show_diagnostic_detail)
         registration_succeeded_now = (
             getattr(self.proc, "is_master", True)
             and not self._registration_reported

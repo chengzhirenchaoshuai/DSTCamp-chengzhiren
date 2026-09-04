@@ -136,12 +136,28 @@ def test_mod_syntax_error_is_failed_but_world_can_be_ready() -> None:
     assert process.missing_mods == ["CommonModSets"]
 
 
+def test_console_log_reads_are_bounded_during_error_storm() -> None:
+    process = ServerProcess.__new__(ServerProcess)
+    process._out_queue = queue.Queue()
+    for index in range(1_200):
+        process._out_queue.put(f"LUA ERROR stack traceback #{index}")
+
+    first = process.read_available_lines(max_lines=500)
+    second = process.read_available_lines(max_lines=500)
+    third = process.read_available_lines(max_lines=500)
+    assert len(first) == 500
+    assert len(second) == 500
+    assert len(third) == 200
+    assert process.read_available_lines(max_lines=500) == []
+
+
 def main() -> None:
     tests = (
         test_luajit_companion_is_checked_but_not_counted,
         test_missing_mods_are_reported_only_after_world_ready,
         test_presentation_waits_until_ready_line_is_consumed,
         test_mod_syntax_error_is_failed_but_world_can_be_ready,
+        test_console_log_reads_are_bounded_during_error_storm,
     )
     for test in tests:
         test()
