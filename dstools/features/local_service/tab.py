@@ -44,6 +44,7 @@ from dstools.shared.app_settings import (
     get_selfhost_frp_server,
     get_global_tokens,
     get_token_holds,
+    prune_token_holds,
     set_token_hold,
     clear_token_hold,
 )
@@ -2759,9 +2760,13 @@ class LocalServiceTab:
         cluster_key = str(cluster.path)
         token_path = cluster.token_path or (cluster.path / "cluster_token.txt")
         current = read_token(token_path)
+        pool = get_global_tokens()
+        # 冲突/等待标记只属于全局令牌池。旧版本可能为存档私有令牌留下
+        # 不可见的孤立标记，启动前清掉，避免池外令牌仍被自动替换。
+        prune_token_holds(pool)
         selection = select_token_for_cluster(
             current_token=current,
-            pool=get_global_tokens(),
+            pool=pool,
             target_cluster_key=cluster_key,
             active_uses=self.token_usage_snapshot(),
             held_fingerprints=get_token_holds().keys(),
@@ -2808,8 +2813,16 @@ class LocalServiceTab:
         token = self._process_token(proc)
         if classify_token(token) != ServerTokenKind.NEW:
             return
+        fingerprint = token_fingerprint(token)
+        if not any(
+            token_fingerprint(candidate) == fingerprint
+            for candidate in get_global_tokens()
+        ):
+            # 池外令牌由存档自行管理：保留诊断提醒，但不建立全局锁定，
+            # 否则用户既无法在令牌池看到它，也无法解除标记。
+            return
         set_token_hold(
-            token_fingerprint(token),
+            fingerprint,
             state="conflict" if report.category == "token_conflict" else "crashed",
             cluster_key=str(proc.cluster_path),
             cluster_name=getattr(proc, "cluster_name", Path(proc.cluster_path).name),

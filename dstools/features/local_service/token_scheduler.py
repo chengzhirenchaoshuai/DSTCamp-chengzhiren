@@ -38,11 +38,22 @@ def select_token_for_cluster(
 ) -> TokenSelection:
     """为一个存档选择令牌；新令牌独占，旧令牌可跨存档复用。
 
-    同一存档的多个分片视为同一使用者。未知格式只保留当前手动配置，
-    不会从全局池自动分配。
+    同一存档的多个分片视为同一使用者。不在全局池中的有效当前令牌视为
+    存档私有配置：保留原值，不受全局占用或等待标记影响，也不会被池中
+    令牌自动替换。未知格式同样只保留当前手动配置。
     """
     uses = tuple(active_uses)
     held = set(held_fingerprints)
+
+    candidates = []
+    managed_fingerprints = set()
+    for candidate in pool:
+        candidate = str(candidate).strip()
+        fingerprint = token_fingerprint(candidate) if candidate else ""
+        if not is_valid_token(candidate) or fingerprint in managed_fingerprints:
+            continue
+        managed_fingerprints.add(fingerprint)
+        candidates.append(candidate)
 
     def can_use(token: str) -> bool:
         kind = classify_token(token)
@@ -69,16 +80,15 @@ def select_token_for_cluster(
     current = current_token.strip()
     if is_valid_token(current):
         kind = classify_token(current)
-        if kind == ServerTokenKind.UNKNOWN or can_use(current):
+        current_is_managed = token_fingerprint(current) in managed_fingerprints
+        if (
+            kind == ServerTokenKind.UNKNOWN
+            or not current_is_managed
+            or can_use(current)
+        ):
             return TokenSelection(current, False)
 
-    seen = set()
-    for candidate in pool:
-        candidate = str(candidate).strip()
-        fingerprint = token_fingerprint(candidate) if candidate else ""
-        if not is_valid_token(candidate) or fingerprint in seen:
-            continue
-        seen.add(fingerprint)
+    for candidate in candidates:
         if can_use(candidate):
             return TokenSelection(candidate, candidate != current)
     return TokenSelection(None, False)

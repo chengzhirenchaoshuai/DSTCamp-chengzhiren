@@ -84,6 +84,17 @@ def main() -> None:
         current_token="", pool=[UNKNOWN], target_cluster_key="A"
     ).token is None
 
+    # 池外有效令牌属于存档私有配置，即使曾有冲突标记或被另一存档手工
+    # 使用，也不能被全局池中的令牌静默替换。
+    private = select_token_for_cluster(
+        current_token=NEW_A,
+        pool=[NEW_B],
+        target_cluster_key="B",
+        active_uses=[TokenUse(NEW_A, "A", "Cluster_A")],
+        held_fingerprints=[token_fingerprint(NEW_A)],
+    )
+    assert private.token == NEW_A and not private.changed
+
     # DSTCamp 之外启动的进程也应通过真实 UDP 绑定映射到存档。
     from dstools.features.local_service import dedicated_server
 
@@ -140,6 +151,7 @@ def main() -> None:
         from dstools.features.local_service.tab import LocalServiceTab
         crash_service = LocalServiceTab.__new__(LocalServiceTab)
         crash_service._token_reservations = {str(crash_cluster): NEW_A}
+        app_settings.set_global_tokens([NEW_A])
         # 验证 Master 诊断回调会持久化，并在后续明确注册成功后清除。
         proc = SimpleNamespace(
             is_master=True,
@@ -162,6 +174,16 @@ def main() -> None:
             cave_proc, SimpleNamespace(category="token_conflict")
         )
         assert app_settings.get_token_holds()[token_fingerprint(NEW_A)]["state"] == "conflict"
+        crash_service._on_server_registered(proc)
+        assert app_settings.get_token_holds() == {}
+
+        # 池外私有令牌仍会显示冲突诊断，但不能形成界面不可见、启动又会
+        # 读取的孤立锁定标记。
+        write_token(crash_cluster / "cluster_token.txt", NEW_B)
+        crash_service._on_server_failure(
+            cave_proc, SimpleNamespace(category="token_conflict")
+        )
+        assert token_fingerprint(NEW_B) not in app_settings.get_token_holds()
 
     # LocalServiceTab 的启动入口应在 Popen 前写入替代令牌并建立预占。
     from dstools.features.local_service import tab as local_module
@@ -188,11 +210,13 @@ def main() -> None:
             patch.object(local_module, "load_cluster_config", return_value=SimpleNamespace(network={})),
             patch.object(local_module, "get_global_tokens", return_value=[NEW_A, NEW_B]),
             patch.object(local_module, "get_token_holds", return_value={}),
+            patch.object(local_module, "prune_token_holds") as prune_holds,
             patch.object(local_module.dlg, "show_toast") as toast,
         ):
             assert service._prepare_token_for_start(cluster)
         assert read_token(token_path) == NEW_B
         assert service._token_reservations[str(cluster_path)] == NEW_B
+        prune_holds.assert_called_once_with([NEW_A, NEW_B])
         toast.assert_called_once()
 
         # 没有替代令牌时必须阻止启动，且不能改写存档当前令牌。
@@ -202,12 +226,31 @@ def main() -> None:
             patch.object(local_module, "load_cluster_config", return_value=SimpleNamespace(network={})),
             patch.object(local_module, "get_global_tokens", return_value=[NEW_A]),
             patch.object(local_module, "get_token_holds", return_value={}),
+            patch.object(local_module, "prune_token_holds"),
             patch.object(local_module.dlg, "show_warning") as warning,
         ):
             assert not service._prepare_token_for_start(cluster)
         assert read_token(token_path) == NEW_A
         assert service._token_reservations == {}
         warning.assert_called_once()
+
+        # 当前令牌不属于池时保持原值，并在启动前清理历史孤立标记。
+        write_token(token_path, NEW_A)
+        with (
+            patch.object(local_module, "load_cluster_config", return_value=SimpleNamespace(network={})),
+            patch.object(local_module, "get_global_tokens", return_value=[NEW_B]),
+            patch.object(
+                local_module,
+                "get_token_holds",
+                return_value={token_fingerprint(NEW_A): {"state": "conflict"}},
+            ),
+            patch.object(local_module, "prune_token_holds") as prune_holds,
+            patch.object(local_module.dlg, "show_toast") as toast,
+        ):
+            assert service._prepare_token_for_start(cluster)
+        assert read_token(token_path) == NEW_A
+        prune_holds.assert_called_once_with([NEW_B])
+        toast.assert_not_called()
 
     print("服务器令牌分类与调度测试全部通过")
 
