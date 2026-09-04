@@ -4,7 +4,7 @@
 
 import re
 import tkinter as tk
-from tkinter import ttk
+from tkinter import font as tkfont, ttk
 
 from dstools.features.cluster_config.admin_manager import add_admin, read_adminlist, remove_admin
 from dstools.features.cluster_config.config_manager import (
