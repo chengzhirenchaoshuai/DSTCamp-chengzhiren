@@ -616,6 +616,9 @@ class _ConsolePane:
         self._mod_check_ready_seen = False
         self._diagnostic_reported = False
         self._registration_reported = False
+        self._diagnostic_detail = ""
+        self._diagnostic_detail_title = ""
+        self._diagnostic_detail_win = None
 
         body = ttk.Frame(self.frame)
         body.pack(fill=tk.BOTH, expand=True)
@@ -724,7 +727,12 @@ class _ConsolePane:
             borderwidth=0,
             highlightthickness=0,
             font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+            cursor="hand2",
+            takefocus=True,
         )
+        self._diagnostic_label.bind("<Button-1>", self._show_diagnostic_detail)
+        self._diagnostic_label.bind("<Return>", self._show_diagnostic_detail)
+        self._diagnostic_label.bind("<space>", self._show_diagnostic_detail)
 
         self.pump()
 
@@ -737,6 +745,85 @@ class _ConsolePane:
         self._search_entry.focus_set()
         self._search_entry.select_range(0, tk.END)
         self._run_search()
+        return "break"
+
+    def _show_diagnostic_detail(self, _event=None):
+        """显示异常条对应的完整诊断，正文可滚动、可选中复制。"""
+        if not self._diagnostic_detail:
+            return "break"
+        if (
+            self._diagnostic_detail_win is not None
+            and self._diagnostic_detail_win.winfo_exists()
+        ):
+            self._diagnostic_detail_win.deiconify()
+            self._diagnostic_detail_win.lift()
+            self._diagnostic_detail_win.focus_force()
+            return "break"
+
+        parent = self.frame.winfo_toplevel()
+        win = tk.Toplevel(parent)
+        self._diagnostic_detail_win = win
+        win.withdraw()
+        win.title(self._diagnostic_detail_title or "世界异常详情")
+        win.transient(parent)
+        win.resizable(True, True)
+        win.configure(background=theme.CARD_BORDER)
+
+        card = tk.Frame(win, background=theme.CARD_BG)
+        card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+        tk.Label(
+            card,
+            text=self._diagnostic_detail_title or "世界异常详情",
+            anchor=tk.W,
+            font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
+            fg=theme.HEADING,
+            bg=theme.CARD_BG,
+        ).pack(fill=tk.X, padx=18, pady=(16, 8))
+
+        content = tk.Frame(card, background=theme.CARD_BG)
+        content.pack(fill=tk.BOTH, expand=True, padx=18)
+        scrollbar = ttk.Scrollbar(content, orient=tk.VERTICAL)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        text = tk.Text(
+            content,
+            width=88,
+            height=20,
+            wrap=tk.WORD,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+            bg=theme.BG_SOFT,
+            fg=theme.TEXT,
+            relief=tk.FLAT,
+            borderwidth=0,
+            padx=10,
+            pady=8,
+            yscrollcommand=scrollbar.set,
+        )
+        text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.configure(command=text.yview)
+        text.insert("1.0", self._diagnostic_detail)
+        text.configure(state=tk.DISABLED)
+
+        def close_detail(_event=None):
+            if win.winfo_exists():
+                win.destroy()
+            self._diagnostic_detail_win = None
+            return "break"
+
+        btn_row = tk.Frame(card, background=theme.CARD_BG)
+        btn_row.pack(fill=tk.X, padx=18, pady=(10, 16))
+        close_btn = ttk.Button(
+            btn_row, text=t("dlg.confirm_btn"), command=close_detail
+        )
+        close_btn.pack(side=tk.RIGHT)
+
+        win.protocol("WM_DELETE_WINDOW", close_detail)
+        win.bind("<Escape>", close_detail)
+        center_over_parent(win, parent, min_width=560)
+        win.deiconify()
+        close_btn.focus_set()
+        win.grab_set()
+        win.wait_window()
+        self._diagnostic_detail_win = None
         return "break"
 
     def _close_search(self, event=None):
@@ -902,6 +989,14 @@ class _ConsolePane:
         self._diagnostic_reported = False
         self._registration_reported = False
         self._diagnostic_label.pack_forget()
+        self._diagnostic_detail = ""
+        self._diagnostic_detail_title = ""
+        if (
+            self._diagnostic_detail_win is not None
+            and self._diagnostic_detail_win.winfo_exists()
+        ):
+            self._diagnostic_detail_win.destroy()
+        self._diagnostic_detail_win = None
         self.pump()
 
     def pump(self):
@@ -966,7 +1061,7 @@ class _ConsolePane:
                 if self._on_failure is not None:
                     self._on_failure(self.proc, report)
                 self._diagnostic_label.configure(
-                    text=f"⚠ {report.banner_text} 建议：{report.suggestions[0]}",
+                    text=f"⚠ {report.title} · 点击查看详细诊断",
                     bg=theme.BANNER_BG,
                     fg=theme.BANNER_TEXT,
                 )
@@ -991,14 +1086,8 @@ class _ConsolePane:
                         detail += f"\n……另有 {len(related_mods) - max_related} 个 Mod 未展开。"
                 if report.evidence:
                     detail += "\n\n日志证据：\n" + "\n".join(report.evidence)
-                dlg.show_warning(
-                    self.frame.winfo_toplevel(),
-                    report.title,
-                    detail,
-                    # 异常诊断通常包含建议、Mod 列表和日志证据；使用更宽
-                    # 的消息区域，避免长文本被挤成窄长条。
-                    wraplength=1200,
-                )
+                self._diagnostic_detail_title = report.title
+                self._diagnostic_detail = detail
         registration_succeeded_now = (
             getattr(self.proc, "is_master", True)
             and not self._registration_reported
