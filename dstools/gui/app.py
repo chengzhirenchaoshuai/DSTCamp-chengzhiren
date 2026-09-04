@@ -32,7 +32,11 @@ from dstools.shared.app_settings import (
 from dstools.shared.custom_background import get_custom_bg_path, render_background
 from dstools.shared.discovery import discover_environment
 from dstools.shared.tex_convert import launch_vcredist_installer
-from dstools.shared.update_check import check_latest_version, is_newer_version
+from dstools.shared.update_check import (
+    UpdateRelease,
+    check_latest_release,
+    is_newer_version,
+)
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.background_dialog import BackgroundImageDialog
 from dstools.shared.gui.bg_frame import BgFrame
@@ -405,9 +409,9 @@ class DSToolsApp:
         # 有新版本时才出现的提示——右对齐画在状态栏同一张 Canvas 上，跟左
         # 边的 status_text 共用一行，不额外占高度；没有更新时这个 tag 不
         # 存在，状态栏观感跟以前完全一样。self._update_notice 是
-        # (version, url) 或 None，只由 _start_update_check() 的后台线程
+        # UpdateRelease 或 None，只由 _start_update_check() 的后台线程
         # 通过 root.after(0, ...) 设置一次。
-        self._update_notice: tuple[str, str] | None = None
+        self._update_notice: UpdateRelease | None = None
 
         def _redraw_status_bar():
             self._status_font.configure(
@@ -430,7 +434,7 @@ class DSToolsApp:
                 tags="status_text",
             )
             if self._update_notice is not None:
-                version, _url = self._update_notice
+                version = self._update_notice.version
                 w = self._status_bar.winfo_width()
                 self._status_bar.create_text(
                     w - 240,
@@ -1756,7 +1760,7 @@ class DSToolsApp:
         # "检查更新"结果展示行——初始为空，点了按钮才有内容。found_url 用
         # 一个可变容器装"这次查到的 release 网页地址"，只有查到确实更新
         # 时才非 None，点这行文字直接跳转（跟状态栏那条提示同样的交互）。
-        found = {"url": None}
+        found = {"release": None}
         update_var = tk.StringVar(value="")
         update_label = tk.Label(
             card,
@@ -1770,10 +1774,8 @@ class DSToolsApp:
         update_label.pack(fill=tk.X, padx=24, pady=(10, 0))
 
         def _open_found_url(_event=None):
-            if found["url"]:
-                import webbrowser
-
-                webbrowser.open(found["url"])
+            if found["release"]:
+                self._show_update_prompt(found["release"], win)
 
         update_label.bind("<Button-1>", _open_found_url)
 
@@ -1781,31 +1783,33 @@ class DSToolsApp:
             check_btn.configure(state=tk.DISABLED)
             update_var.set(t("about.checking_update"))
             update_label.configure(fg=theme.TEXT_MUTED, cursor="")
+            state = {"done": False, "result": None}
 
             def _worker():
-                result = check_latest_version()
+                state["result"] = check_latest_release()
+                state["done"] = True
 
-                def _apply():
-                    if not win.winfo_exists():
-                        return
-                    check_btn.configure(state=tk.NORMAL)
-                    if result is None:
-                        update_var.set(t("about.check_update_failed"))
-                        return
-                    latest_version, url = result
-                    if is_newer_version(__version__, latest_version):
-                        found["url"] = url
-                        update_var.set(
-                            t("app.update_available", version=latest_version)
-                        )
-                        update_label.configure(fg=theme.PRIMARY, cursor="hand2")
-                        self._show_update_notice(latest_version, url)
-                    else:
-                        update_var.set(t("about.up_to_date"))
-
-                win.after(0, _apply)
+            def _apply_or_poll():
+                if not win.winfo_exists():
+                    return
+                if not state["done"]:
+                    win.after(100, _apply_or_poll)
+                    return
+                check_btn.configure(state=tk.NORMAL)
+                result = state["result"]
+                if result is None:
+                    update_var.set(t("about.check_update_failed"))
+                    return
+                if is_newer_version(__version__, result.version):
+                    found["release"] = result
+                    update_var.set(t("app.update_available", version=result.version))
+                    update_label.configure(fg=theme.PRIMARY, cursor="hand2")
+                    self._show_update_notice(result)
+                else:
+                    update_var.set(t("about.up_to_date"))
 
             threading.Thread(target=_worker, daemon=True).start()
+            win.after(100, _apply_or_poll)
 
         btn_row = tk.Frame(card, background=theme.CARD_BG)
         btn_row.pack(fill=tk.X, padx=24, pady=(18, 24))
@@ -2074,26 +2078,124 @@ class DSToolsApp:
         跑；查不到/没有更新就什么都不做，不弹窗、不重试，只在确实有更新
         时通过 root.after(0, ...) 回到主线程点亮状态栏右侧那行提示。"""
 
+        state = {"done": False, "result": None}
+
         def _worker():
-            result = check_latest_version()
-            if result is None:
+            state["result"] = check_latest_release()
+            state["done"] = True
+
+        def _apply_or_poll():
+            if not state["done"]:
+                self.root.after(100, _apply_or_poll)
                 return
-            latest_version, url = result
-            if is_newer_version(__version__, latest_version):
-                self.root.after(0, self._show_update_notice, latest_version, url)
+            result = state["result"]
+            if result is not None and is_newer_version(__version__, result.version):
+                self._show_update_notice(result)
 
         threading.Thread(target=_worker, daemon=True).start()
+        self.root.after(100, _apply_or_poll)
 
-    def _show_update_notice(self, version: str, url: str) -> None:
-        self._update_notice = (version, url)
+    def _show_update_notice(self, release: UpdateRelease) -> None:
+        self._update_notice = release
         self._redraw_status_bar()
 
     def _open_update_url(self, _event=None) -> None:
         if self._update_notice is None:
             return
-        import webbrowser
+        self._show_update_prompt(self._update_notice, self.root)
 
-        webbrowser.open(self._update_notice[1])
+    def _show_update_prompt(self, release: UpdateRelease, parent: tk.Misc) -> None:
+        choices = []
+        if release.can_auto_update and getattr(sys, "frozen", False):
+            choices.append((t("update.install_now"), "install"))
+        choices.extend(
+            [
+                (t("update.open_download"), "manual"),
+                (t("dlg.cancel_btn"), "cancel"),
+            ]
+        )
+        choice = dlg.ask_choice(
+            parent,
+            t("update.title"),
+            t(
+                "update.prompt"
+                if release.can_auto_update
+                else "update.manual_only",
+                version=release.version,
+            ),
+            choices,
+            default="install" if release.can_auto_update else "manual",
+        )
+        if choice == "manual":
+            import webbrowser
+
+            webbrowser.open(release.page_url)
+        elif choice == "install":
+            self._download_and_install_update(release, self.root)
+
+    def _download_and_install_update(
+        self, release: UpdateRelease, parent: tk.Misc
+    ) -> None:
+        from dstools.shared.auto_update import (
+            download_update,
+            ensure_install_dir_writable,
+            launch_update_helper,
+            validate_staged_executable,
+        )
+
+        state = {"done": False, "path": None, "error": None, "downloaded": 0}
+        self.status_var.set(t("update.downloading", version=release.version, percent=0))
+
+        def progress(downloaded: int, _total: int) -> None:
+            state["downloaded"] = downloaded
+
+        def worker() -> None:
+            try:
+                path = download_update(release, progress)
+                validate_staged_executable(path)
+                ensure_install_dir_writable()
+                state["path"] = path
+            except Exception as exc:
+                state["error"] = exc
+            finally:
+                state["done"] = True
+
+        def install() -> None:
+            try:
+                launch_update_helper(state["path"])
+            except Exception as exc:
+                dlg.show_error(parent, t("update.title"), t("update.failed", error=exc))
+                return
+            self._quit_app()
+
+        def finish_or_poll() -> None:
+            if not state["done"]:
+                percent = min(99, int(state["downloaded"] * 100 / release.size))
+                self.status_var.set(
+                    t("update.downloading", version=release.version, percent=percent)
+                )
+                self.root.after(150, finish_or_poll)
+                return
+            if state["error"] is not None:
+                self.status_var.set(t("app.ready"))
+                dlg.show_error(
+                    parent,
+                    t("update.title"),
+                    t("update.failed", error=state["error"]),
+                )
+                return
+            if self.local_tab.has_running_servers():
+                if not dlg.ask_yes_no(
+                    parent, t("local.confirm_close_title"), t("update.close_servers")
+                ):
+                    self.status_var.set(t("app.ready"))
+                    return
+                self.local_tab.confirm_and_shutdown_all(on_done=install)
+                return
+            install()
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.root.after(150, finish_or_poll)
 
     def _update_status(self):
         """状态栏跟着顶部"存档类型"筛选器切换——WeGame 根目录/用户 ID 是

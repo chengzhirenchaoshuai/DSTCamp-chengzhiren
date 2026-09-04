@@ -19,6 +19,7 @@ TEST_SCRIPTS = (
     "test_world_mod_compat.py",
     "test_gui_cursors.py",
     "test_steam_client_updater.py",
+    "test_auto_update.py",
 )
 
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import shutil
 import subprocess
 import sys
@@ -161,8 +163,20 @@ def build() -> None:
             if path.is_file():
                 archive.write(path, path.relative_to(zip_stage))
 
+    manifest_path = dist_root / f"{exe_name}.sha256.json"
+    manifest = {"version": __version__, "files": {}}
+    for artifact in (onefile_exe, zip_path):
+        manifest["files"][artifact.name] = {
+            "size": artifact.stat().st_size,
+            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
     print(f"构建及冒烟测试完成：{onefile_exe}")
     print(f"构建及冒烟测试完成：{zip_path}")
+    print(f"更新校验清单：{manifest_path}")
 
 
 if __name__ == "__main__":
