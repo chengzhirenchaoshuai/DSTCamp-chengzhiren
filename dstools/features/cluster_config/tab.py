@@ -239,15 +239,17 @@ class _GlobalTokensDialog:
             height=8,
             selectmode="browse",
         )
-        self.tree.heading("token", text=t("token.column_token"))
+        self.tree.heading("token", text=t("token.column_token"), anchor=tk.CENTER)
         self.tree.heading("kind", text=t("token.column_kind"))
-        self.tree.heading("status", text=t("token.column_status"))
+        self.tree.heading("status", text=t("token.column_status"), anchor=tk.CENTER)
         self.tree.column(
             "token", width=_GLOBAL_TOKEN_COLUMN_WIDTH,
-            minwidth=220, stretch=True,
+            minwidth=220, stretch=True, anchor=tk.CENTER,
         )
         self.tree.column("kind", width=80, minwidth=70, stretch=False, anchor=tk.CENTER)
-        self.tree.column("status", width=210, minwidth=140, stretch=True)
+        self.tree.column(
+            "status", width=210, minwidth=140, stretch=True, anchor=tk.CENTER,
+        )
         self.tree.pack(fill=tk.BOTH, expand=True)
         x_scroll = ttk.Scrollbar(
             list_frame, orient=tk.HORIZONTAL, command=self.tree.xview,
