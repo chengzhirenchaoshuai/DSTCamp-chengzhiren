@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import os
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
 import zipfile
 from pathlib import Path
-
 
 TOOL_FILES = (
     "fonts/AUTHORS.txt",
@@ -42,6 +41,22 @@ TOOL_FILES = (
     "vcredist/VC++ 2013 x86.exe",
 )
 
+ICON_PATTERNS = {
+    "app": ("*.png", "*.ico"),
+    "ui": ("*.png",),
+    "world": ("*.png",),
+    "recommended": ("*.png",),
+}
+
+REQUIRED_ICON_FILES = (
+    "app/icon.ico",
+    "app/icon.png",
+    "ui/character_icon_default.png",
+    "ui/mod_icon_default.png",
+)
+
+FORBIDDEN_PACKAGE_DIRS = {"build", "cache", "data", "dist", "reference", "security"}
+
 
 def _stage_tools(project_root: Path, cache_root: Path) -> Path:
     """按白名单复制发布工具，避免未跟踪文件混入产物。"""
@@ -63,15 +78,66 @@ def _stage_icons(project_root: Path, cache_root: Path) -> Path:
     source_root = project_root / "icons"
     target_root = cache_root / "bundled_icons"
     shutil.rmtree(target_root, ignore_errors=True)
-    patterns = {"app": ("*.png", "*.ico"), "ui": ("*.png",),
-                "world": ("*.png",), "recommended": ("*.png",)}
-    for folder, globs in patterns.items():
+    for relative in REQUIRED_ICON_FILES:
+        source = source_root / relative
+        if not source.is_file():
+            raise FileNotFoundError(f"缺少必要发布图标：{source}")
+    for folder, globs in ICON_PATTERNS.items():
+        copied = 0
         for pattern in globs:
             for source in (source_root / folder).glob(pattern):
                 target = target_root / folder / source.name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, target)
+                copied += 1
+        if not copied:
+            raise FileNotFoundError(f"发布图标目录为空：{source_root / folder}")
     return target_root
+
+
+def _write_sha256_manifest(
+    manifest_path: Path, version: str, artifacts: tuple[Path, ...]
+) -> None:
+    """为自动更新写入可复核的文件大小与 SHA-256 清单。"""
+    manifest = {"version": version, "files": {}}
+    for artifact in artifacts:
+        manifest["files"][artifact.name] = {
+            "size": artifact.stat().st_size,
+            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        }
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def _verify_zip_archive(zip_path: Path, exe_name: str) -> None:
+    """验证 ZIP 只包含入口、固定工具和解压提示，不混入可写目录。"""
+    with zipfile.ZipFile(zip_path) as archive:
+        names = set(archive.namelist())
+        for name in names:
+            path = Path(name)
+            if path.is_absolute() or ".." in path.parts:
+                raise RuntimeError(f"ZIP 包含不安全路径：{name}")
+            if FORBIDDEN_PACKAGE_DIRS.intersection(path.parts):
+                raise RuntimeError(f"ZIP 混入非发布目录：{name}")
+
+    required = {"0-先解压再运行.txt", f"{exe_name}.exe"}
+    missing = required - names
+    if missing:
+        raise RuntimeError(f"ZIP 缺少必要文件：{sorted(missing)}")
+
+    packaged_tools = {
+        Path(name).relative_to("tools").as_posix()
+        for name in names
+        if Path(name).parts and Path(name).parts[0] == "tools" and not name.endswith("/")
+    }
+    expected_tools = set(TOOL_FILES)
+    if packaged_tools != expected_tools:
+        raise RuntimeError(
+            "ZIP 工具清单不一致："
+            f"缺少 {sorted(expected_tools - packaged_tools)}，"
+            f"多出 {sorted(packaged_tools - expected_tools)}"
+        )
 
 
 def _run_smoke_test(executable: Path) -> None:
@@ -100,7 +166,7 @@ def build() -> None:
 
     exe_name = f"DSTCamp-{__version__}"
     dist_root = project_root / "dist"
-    cache_root = project_root / "reference" / "_cache"
+    cache_root = project_root / "build"
     shutil.rmtree(dist_root, ignore_errors=True)
     dist_root.mkdir(parents=True)
     cache_root.mkdir(parents=True, exist_ok=True)
@@ -162,17 +228,10 @@ def build() -> None:
         for path in sorted(zip_stage.rglob("*")):
             if path.is_file():
                 archive.write(path, path.relative_to(zip_stage))
+    _verify_zip_archive(zip_path, exe_name)
 
     manifest_path = dist_root / f"{exe_name}.sha256.json"
-    manifest = {"version": __version__, "files": {}}
-    for artifact in (onefile_exe, zip_path):
-        manifest["files"][artifact.name] = {
-            "size": artifact.stat().st_size,
-            "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
-        }
-    manifest_path.write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    _write_sha256_manifest(manifest_path, __version__, (onefile_exe, zip_path))
 
     print(f"构建及冒烟测试完成：{onefile_exe}")
     print(f"构建及冒烟测试完成：{zip_path}")

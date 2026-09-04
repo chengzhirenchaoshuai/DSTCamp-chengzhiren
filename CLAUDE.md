@@ -12,8 +12,9 @@ DSTCamp（包名 `dstools`，当前版本 `1.3.3`）是 Windows 上的《饥荒�
 - `dstools/i18n/strings.py`：中英文案唯一来源。
 - `icons/`、`tools/`：必须随发布保留的固定资源。
 - `reference/`：开发核对资料，不是运行时依赖。
+- `build/`、`dist/`：可重新生成的构建中间目录与发布产物，不进入 Git。
 
-运行时目录位于 `%APPDATA%/DSTCamp/`：`cache/` 仅放可重建结果，`data/` 放背景、端口备份、frpc 配置与长驻工具副本，`security/` 放 SSH 私钥与 `known_hosts`。不要把后两类重新放回缓存。
+运行时目录位于 `%APPDATA%/DSTCamp/`：`cache/` 仅放可重建结果，`data/` 放背景、端口备份、frpc 配置、更新包与长驻工具副本，`security/` 放 SSH 私钥与 `known_hosts`。不要把后两类重新放回缓存。
 
 ## 常用命令
 
@@ -25,7 +26,7 @@ pip install -e ".[build]"
 python scripts/build_exe.py
 ```
 
-发布时同步修改 `pyproject.toml` 与 `dstools/__init__.py`，验证两个产物后再提交、推送、打 `vX.Y.Z` 标签并创建 Release。
+`tests/run_all.py` 自动发现 `tests/test_*.py` 并用隔离子进程执行。发布时同步修改 `pyproject.toml` 与 `dstools/__init__.py`，验证 EXE、ZIP、`sha256.json` 后再提交、推送、打 `vX.Y.Z` 标签并创建 Release。
 
 ## 近期实现重点
 
@@ -33,6 +34,7 @@ python scripts/build_exe.py
 - 单文件版支持 GUI 单实例激活；重启时注意 PyInstaller 临时目录竞争和 Windows 路径编码。
 - 专服启动前必须完成更新预检；无界面检查与实际启动条件保持一致。
 - V1 Legacy Mod 更新使用安全包校验、临时解压、原子替换、回滚和部署后校验。
+- 构建资源暂存在 `build/`；`reference/` 只能存人工核对材料，不能作为构建缓存。
 
 ## 关键约束
 

@@ -47,7 +47,7 @@ python -m dstools.gui.app
 
 当前源码安装方式面向开发环境；普通 wheel 不包含仓库外部的 `icons/` 和 `tools/`，正式使用请优先选择 Release 产物。
 
-## 数据与目录
+## 文件与数据边界
 
 仓库中的固定发布资源：
 
@@ -55,18 +55,20 @@ python -m dstools.gui.app
 icons/       窗口、UI、世界设置和推荐 Mod 图标
 tools/       ktech、frpc/frps、VC++ 运行库和内置字体
 reference/   开发核对资料，不参与运行或打包
+build/       可删除的 PyInstaller 中间产物与资源暂存
+dist/        可重新构建的 EXE、ZIP 和 SHA-256 清单
 ```
 
 用户目录默认位于 `%APPDATA%/DSTCamp/`：
 
 ```text
-settings.json   界面与功能偏好
-cache/          可重建：Mod/角色图标、沙箱解析和翻译结果
-data/           需保留：自定义背景、端口备份、frpc 配置与长驻工具副本
+settings.json   界面、缓存路径和功能偏好
+cache/          可重建：Mod/角色/世界图标、解析结果、版本与翻译缓存
+data/           需保留：自定义背景、端口备份、frpc 配置、更新包与长驻工具
 security/       敏感材料：SSH 私钥与 known_hosts
 ```
 
-只有 `cache/` 可在设置中改到 EXE 同级目录；`data/` 与 `security/` 始终保留在用户目录，清理缓存不会删除它们。
+`cache/` 可在设置中指定位置，内容随时可重建；`data/` 与 `security/` 始终保留在用户目录，清理缓存不会删除它们。源码和发布包只读取 `icons/`、`tools/` 中的固定资源，不会把运行时可写目录当作内置资源。
 
 ## 开发与测试
 
@@ -81,20 +83,22 @@ scripts/                    启动、诊断与打包脚本
 tests/                      脚本式自动化测试
 ```
 
-运行全部 12 套测试：
+运行全部测试脚本：
 
 ```powershell
 python tests/run_all.py
 ```
 
-构建两个发布产物：
+测试入口会自动发现 `tests/test_*.py`，在相互隔离的子进程中从仓库根目录执行；新增测试无需手工登记。
+
+构建三个发布产物：
 
 ```powershell
 pip install -e ".[build]"
 python scripts/build_exe.py
 ```
 
-构建脚本使用固定工具白名单，不打包 `cache/`、`data/`、`security/`、`reference/` 或旧版 `dist/`；两个 EXE 都会在生成后执行冻结入口和资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+构建脚本在 `build/` 暂存固定工具和图标，只向 `dist/` 输出单文件 EXE、外置工具 ZIP 与 `sha256.json`。ZIP 会校验工具清单并拒绝 `build/`、`cache/`、`data/`、`dist/`、`reference/`、`security/`；两个 EXE 都会执行冻结入口与资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
 
 ## 1.3.3 更新
 

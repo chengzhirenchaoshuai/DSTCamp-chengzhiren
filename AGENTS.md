@@ -23,6 +23,7 @@ DSTCamp（包名 `dstools`）通过 Tkinter GUI 管理 Steam/WeGame 存档、Mod
 - `dstools/i18n/strings.py`：中英文案唯一来源。
 - `icons/`、`tools/`：固定发布资源，受版本控制。
 - `reference/`：人工核对资料，不进入运行时或发布包。
+- `build/`、`dist/`：可重新生成的构建中间目录和发布产物，不进入 Git。
 
 运行时目录：
 
@@ -40,7 +41,7 @@ pip install -e ".[build]"
 python scripts/build_exe.py
 ```
 
-开发依赖使用 `pip install -e .`；构建依赖使用 `pip install -e ".[build]"`。测试脚本不使用 pytest/unittest。
+开发依赖使用 `pip install -e .`；构建依赖使用 `pip install -e ".[build]"`。测试脚本不使用 pytest/unittest，`tests/run_all.py` 自动发现全部 `test_*.py` 并在隔离子进程中执行。
 
 测试是脚本式整体测试，不使用 pytest/unittest。打包完成后必须实际启动生成的 EXE；静态导入和冒烟测试不能替代 GUI、Steam、frpc 或游戏内验证。
 
@@ -65,7 +66,7 @@ python scripts/build_exe.py
 - V1 Legacy 包必须校验 ZIP/CRC/路径与链接，临时解压后原子替换并支持回滚；保留客户端 `mods` junction，V2 流程独立。
 - 不联网下载 frp、vcredist、ktech；Linux 二进制使用 `sftp.putfo()`。
 - WeGame 不支持一键启动专服，不实现绕过方案。
-- 发布同步版本号，构建脚本只收固定资源白名单且不包含缓存；验证后提交、推送、打标签并附产物创建 Release。
+- 发布同步版本号，构建脚本只收固定资源白名单并在 `build/` 暂存，禁止包含缓存、持久数据、安全材料和 `reference/`；验证后提交、推送、打标签并附产物创建 Release。
 
 ## 1.3.3 维护重点
 
@@ -75,5 +76,6 @@ python scripts/build_exe.py
 - 创建存档配置集、背景刷新、跨线程 Tk 回调、单实例窗口置前和远程版本检测属于近期修复重点。
 - 完整存档分享必须保持数据完整性；存档页入口调整、令牌复制/冲突诊断、页签层级和 Mod 扫描展示属于近期 UI 重点。
 - 自动更新发布必须同时上传 EXE、ZIP 和 `sha256.json`；Gitee 为优先源、GitHub 为回退源，替换前保持哈希、冒烟测试和旧 EXE 回滚保护。
+- 固定资源只能放在 `icons/`、`tools/`；可重建运行时结果放 `cache/`，需保留数据放 `data/`，凭据放 `security/`，构建中间产物放仓库 `build/`。
 
 若代码知识图谱可用，优先使用符号搜索与调用追踪；字面量、配置和图谱不足时再用 `rg`。

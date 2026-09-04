@@ -25,11 +25,11 @@
     `always`=大量/Tons）。
 - `带注释版本的cluster.ini`：`cluster.ini` 字段说明的带注释参考。
 - `新型mod配置项适配.docx`：新型 mod 配置项适配记录（人工核对参考）。
-- `_cache/`：开发/打包缓存集中目录（Python 字节码缓存 `pycache/`、PyInstaller
-  中间产物 `build/`），由 `dstools/__init__.py` 和 `scripts/build_exe.py` 自动
-  生成，可随时整删，已 gitignore。
+- `mod更新流程.png`：Workshop Mod 更新状态、V1/V2 分支、校验和回滚流程图。
 - `icon_source.png`：生成 `icons/app/icon.ico`/`icon.png` 用的高分辨率源图，
   仅供人工重新导出图标时使用，代码不会读取，不参与打包。
+
+PyInstaller 中间产物统一写入仓库根目录 `build/`；本目录不再存放构建缓存。
 
 ## 核对方法
 

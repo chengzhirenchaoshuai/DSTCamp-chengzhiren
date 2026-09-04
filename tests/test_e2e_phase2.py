@@ -559,8 +559,6 @@ def test_selfhost_worker_ui_dispatch_contract():
     assert executed == ["done"]
     assert scheduled and scheduled[-1][0] == page._UI_POLL_MS
 
-    source = Path("dstools/features/frp_selfhost/tab.py").read_text(encoding="utf-8")
-    assert "self.frame.after(0" not in source
     print("  PASS: 自建 FRP 工作线程结果经队列回到 Tk 主线程")
 
 

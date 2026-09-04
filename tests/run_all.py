@@ -2,33 +2,31 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-
-TEST_SCRIPTS = (
-    "test_e2e.py",
-    "test_e2e_phase2.py",
-    "test_legacy_v1.py",
-    "test_mod_shared.py",
-    "test_multi_cluster_ports.py",
-    "test_server_diagnostics.py",
-    "test_token_scheduling.py",
-    "test_server_mod_status.py",
-    "test_world_mod_compat.py",
-    "test_gui_cursors.py",
-    "test_steam_client_updater.py",
-    "test_auto_update.py",
-)
+TESTS_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = TESTS_DIR.parent
+TEST_SCRIPTS = tuple(path.name for path in sorted(TESTS_DIR.glob("test_*.py")))
 
 
 def main() -> int:
-    tests_dir = Path(__file__).resolve().parent
     failed = []
+    environment = os.environ.copy()
+    current_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = str(PROJECT_ROOT)
+    if current_pythonpath:
+        environment["PYTHONPATH"] += os.pathsep + current_pythonpath
     for name in TEST_SCRIPTS:
         print(f"\n===== {name} =====", flush=True)
-        result = subprocess.run([sys.executable, str(tests_dir / name)], check=False)
+        result = subprocess.run(
+            [sys.executable, str(TESTS_DIR / name)],
+            cwd=PROJECT_ROOT,
+            env=environment,
+            check=False,
+        )
         if result.returncode:
             failed.append(name)
     if failed:

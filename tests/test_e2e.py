@@ -14,10 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 from dstools.shared.lua_parser import (
-    LuaTableParser,
     parse_lua_table,
     serialize_lua_table,
-    parse_lua_file,
 )
 from dstools.shared.ini_parser import (
     parse_cluster_ini,
@@ -33,7 +31,7 @@ from dstools.features.mod.manager import (
     list_mods,
     sync_mods,
 )
-from dstools.shared.discovery import find_klei_root, discover_environment
+from dstools.shared.discovery import discover_environment
 from dstools.features.save_browser.reader import (
     list_save_sessions,
     get_save_summary,
@@ -210,168 +208,105 @@ def test_lua_parser_roundtrip():
     print("  PASS: Round-trip preserves all data")
 
 
-def test_lua_parser_real_data():
-    """测试解析真实的 DST modoverrides.lua 文件。"""
-    print("Test 4: Lua Parser - Real DST Data")
-    klei_root = find_klei_root()
-    if not klei_root:
-        print("  SKIP: No DST data found")
-        return
-
-    mod_path = klei_root / "Cluster_3" / "Master" / "modoverrides.lua"
-    if not mod_path.exists():
-        print(f"  SKIP: {mod_path} not found")
-        return
-
-    # 解析
-    data = parse_lua_file(mod_path)
-    assert len(data) >= 30, f"Expected 30+ mods, got {len(data)}"
-    print(f"  PASS: Parsed {len(data)} mods from real modoverrides.lua")
-
-    # 往返
-    serialized = serialize_lua_table(data)
-    re_parsed = LuaTableParser(serialized).parse()
-
-    # 校验 key 集合一致
-    original_keys = set(data.keys())
-    re_keys = set(re_parsed.keys())
-    assert original_keys == re_keys, (
-        f"Key mismatch: {original_keys - re_keys}, {re_keys - original_keys}"
-    )
-
-    # 校验每个 mod 都有 enabled 和 configuration_options 字段
-    for wid, entry in data.items():
-        assert "enabled" in entry, f"Missing 'enabled' in {wid}"
-        assert "configuration_options" in entry, (
-            f"Missing 'configuration_options' in {wid}"
-        )
-
-    print(f"  PASS: Round-trip verified ({len(data)} mods)")
-    print("  PASS: All mods have required fields")
-
-
 def test_ini_parser():
-    """测试 INI 配置解析。"""
+    """用临时夹具验证 cluster.ini/server.ini，不读取用户真实存档。"""
     print("\n" + "=" * 60)
-    print("Test 5: INI Parser")
+    print("Test 4: INI Parser")
 
-    klei_root = find_klei_root()
-    if not klei_root:
-        print("  SKIP: No DST data found")
-        return
-
-    # 测试 cluster.ini
-    cluster_ini = klei_root / "Cluster_3" / "cluster.ini"
-    if cluster_ini.exists():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        cluster_ini = root / "cluster.ini"
+        cluster_ini.write_text(
+            "[GAMEPLAY]\n"
+            "game_mode = survival\n"
+            "max_players = 6\n\n"
+            "[NETWORK]\n"
+            "cluster_name = Test Cluster\n\n"
+            "[SHARD]\n"
+            "shard_enabled = true\n",
+            encoding="utf-8",
+        )
         config = parse_cluster_ini(cluster_ini)
         assert config.gameplay["game_mode"] == "survival"
-        assert "max_players" in config.gameplay
-        assert "cluster_name" in config.network
-        assert "shard_enabled" in config.shard
-        print(
-            f"  PASS: cluster.ini parsed - mode={config.gameplay['game_mode']}, "
-            f"players={config.gameplay['max_players']}"
-        )
+        assert config.gameplay["max_players"] == 6
+        assert config.network["cluster_name"] == "Test Cluster"
+        assert config.shard["shard_enabled"] is True
 
-        # 测试 INI 往返
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = Path(tmpdir) / "cluster.ini"
-            write_cluster_ini(config, tmp_path)
-            re_parsed = parse_cluster_ini(tmp_path)
-            assert config.gameplay == re_parsed.gameplay
-            assert config.network == re_parsed.network
-            print("  PASS: cluster.ini round-trip verified")
+        roundtrip = root / "cluster-roundtrip.ini"
+        write_cluster_ini(config, roundtrip)
+        reparsed = parse_cluster_ini(roundtrip)
+        assert config.gameplay == reparsed.gameplay
+        assert config.network == reparsed.network
+        assert config.shard == reparsed.shard
 
-    # 测试 server.ini
-    server_ini = klei_root / "Cluster_3" / "Master" / "server.ini"
-    if server_ini.exists():
-        config = parse_server_ini(server_ini)
-        assert "server_port" in config.network
-        assert config.shard.get("is_master") is True
-        print(
-            f"  PASS: server.ini parsed - port={config.network['server_port']}, "
-            f"is_master={config.shard['is_master']}"
+        server_ini = root / "server.ini"
+        server_ini.write_text(
+            "[NETWORK]\nserver_port = 10999\n\n"
+            "[SHARD]\nis_master = true\nname = Master\n",
+            encoding="utf-8",
         )
+        server = parse_server_ini(server_ini)
+        assert server.network["server_port"] == 10999
+        assert server.shard["is_master"] is True
+    print("  PASS: INI fixtures parse and cluster.ini round-trips")
 
 
 def test_discovery():
-    """测试路径发现。"""
+    """用临时目录验证服务器/本地同名存档发现，不依赖本机环境。"""
     print("\n" + "=" * 60)
-    print("Test 6: Discovery")
+    print("Test 5: Discovery")
 
-    klei_root = find_klei_root()
-    if not klei_root:
-        print("  SKIP: No DST data found")
-        return
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir) / "DoNotStarveTogether"
+        for cluster in (root / "Shared", root / "123456" / "Shared"):
+            (cluster / "Master").mkdir(parents=True)
+            (cluster / "cluster.ini").write_text("[NETWORK]\n", encoding="utf-8")
+            (cluster / "Master" / "server.ini").write_text(
+                "[SHARD]\nis_master = true\n", encoding="utf-8"
+            )
+        incomplete = root / "Incomplete"
+        incomplete.mkdir()
+        (incomplete / "cluster.ini").write_text("[NETWORK]\n", encoding="utf-8")
 
-    assert klei_root.exists()
-    print(f"  PASS: Found Klei root: {klei_root}")
-
-    env = discover_environment(klei_root)
-    assert env.user_id
-    assert len(env.clusters) >= 1
-    print(f"  PASS: User ID: {env.user_id}")
-    print(f"  PASS: Clusters: {[c.name for c in env.clusters]}")
-
-    for c in env.clusters:
-        assert len(c.shards) >= 1
-        assert c.source in (SaveSource.SERVER, SaveSource.LOCAL)
-        print(
-            f"  PASS: {c.name} has {len(c.shards)} shard(s), source={c.source.value}: "
-            f"{[s.name for s in c.shards]}"
+        env = discover_environment(root, root.parent / "missing-wegame")
+        assert env.user_id == "123456"
+        assert len(env.clusters) == 2
+        assert {cluster.source for cluster in env.clusters} == {
+            SaveSource.SERVER,
+            SaveSource.LOCAL,
+        }
+        assert all(cluster.name == "Shared" for cluster in env.clusters)
+        assert all(
+            [shard.name for shard in cluster.shards] == ["Master"]
+            for cluster in env.clusters
         )
-
-    # 按 SaveSource 分类计数上报——不硬性要求两边都非空（这台机器目前
-    # 两种都有，但换一台只装了专用服务器/只有本地存档的机器完全可能只
-    # 有一边，不是 bug，不该让测试失败）。
-    server_count = sum(1 for c in env.clusters if c.source == SaveSource.SERVER)
-    local_count = sum(1 for c in env.clusters if c.source == SaveSource.LOCAL)
-    assert server_count + local_count == len(env.clusters)
-    print(f"  PASS: {server_count} server + {local_count} local cluster(s)")
+    print("  PASS: server/local clusters stay separate; incomplete clusters are ignored")
 
 
 def test_save_reader():
-    """测试存档会话读取。"""
+    """用临时存档槽验证会话发现和摘要，不读取用户真实存档。"""
     print("\n" + "=" * 60)
-    print("Test 7: Save Reader")
+    print("Test 6: Save Reader")
 
-    klei_root = find_klei_root()
-    if not klei_root:
-        print("  SKIP: No DST data found")
-        return
+    with tempfile.TemporaryDirectory() as tmpdir:
+        session_dir = Path(tmpdir) / "Master" / "save" / "session" / "ABC123"
+        session_dir.mkdir(parents=True)
+        slot = session_dir / "0000000001"
+        slot.write_bytes(b"save")
+        slot.with_suffix(".meta").write_text(
+            "return {clock={cycles=12,phase=\"dusk\"},"
+            "seasons={season=\"spring\",elapseddaysinseason=3,remainingdaysinseason=17}}",
+            encoding="utf-8",
+        )
 
-    env = discover_environment(klei_root)
-    if not env.clusters:
-        print("  SKIP: No clusters found")
-        return
-
-    for c in env.clusters:
-        for s in c.shards:
-            sessions = list_save_sessions(s.path)
-            if sessions:
-                print(f"  {c.name}/{s.name}: {len(sessions)} session(s)")
-
-                for session in sessions:
-                    summary = get_save_summary(session)
-                    assert session.session_id
-                    assert session.slots
-                    assert session.source == c.source, (
-                        "会话的 source 标记应该跟它所属 cluster 的一致"
-                    )
-                    print(
-                        f"    Session {session.session_id}: {summary} (source={session.source.value})"
-                    )
-
-                    if session.metadata:
-                        assert session.metadata.day >= 0
-                        assert session.metadata.season
-                        print(
-                            f"    Metadata: day={session.metadata.day}, "
-                            f"season={session.metadata.season}, "
-                            f"phase={session.metadata.phase}"
-                        )
-                break  # 只测第一个有会话的 shard
-        break  # 只测第一个 cluster
+        sessions = list_save_sessions(Path(tmpdir) / "Master")
+        assert len(sessions) == 1
+        session = sessions[0]
+        assert session.session_id == "ABC123"
+        assert len(session.slots) == 1
+        assert session.metadata is not None and session.metadata.day == 12
+        assert get_save_summary(session) == "第12天, 春季第3天, 黄昏, [1个存档槽]"
+    print("  PASS: save session fixture and metadata summary parsed")
 
 
 def test_mod_manager():
@@ -3476,7 +3411,6 @@ def main():
         test_lua_parser_basic,
         test_lua_parser_nested,
         test_lua_parser_roundtrip,
-        test_lua_parser_real_data,
         test_ini_parser,
         test_discovery,
         test_save_reader,
