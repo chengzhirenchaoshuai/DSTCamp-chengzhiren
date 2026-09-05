@@ -11,7 +11,7 @@ import queue
 import threading
 import time
 import tkinter as tk
-from tkinter import font as tkfont, ttk
+from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.shared import app_settings
 from dstools.features.cluster_config.config_manager import (
@@ -19,6 +19,12 @@ from dstools.features.cluster_config.config_manager import (
 )
 from dstools.features.frp_selfhost import connectivity, deploy, probe, remote_deploy
 from dstools.features.frp_selfhost.client import FrpcManager, FrpcStatus, build_frpc_toml
+from dstools.features.frp_selfhost.lobby_accel import (
+    LobbyAccelCoordinator,
+    LobbyAccelError,
+    LobbyAccelStatus,
+)
+from dstools.features.frp_selfhost.mihomo import MihomoError, sha256_file
 from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.resource_paths import data_dir, runtime_tool_path
 from dstools.shared.gui import theme, themed_dialog as dlg
@@ -26,6 +32,7 @@ from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.tooltip import Tooltip
+from dstools.shared.gui.toggle_switch import ToggleSwitch
 from dstools.shared.server_ports import stable_path_key
 from dstools.i18n import t
 from dstools.models import SaveSource
@@ -219,6 +226,8 @@ class SelfHostFrpPage:
             self._UI_POLL_MS, self._poll_ui_callbacks
         )
         self.frpc = FrpcManager()
+        self.lobby_accel = LobbyAccelCoordinator()
+        self._lobby_accel_busy = False
         self._current_cluster = None
         self._any_mapped = False
 
@@ -312,6 +321,34 @@ class SelfHostFrpPage:
                                             command=self._on_frpc_toggle)
         self._frpc_toggle_btn.pack(side=tk.LEFT, padx=(10, 0))
 
+        self._lobby_accel_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._lobby_accel_row.pack(fill=tk.X, padx=10, pady=(0, 5))
+        self._lobby_accel_var = tk.BooleanVar(
+            value=app_settings.get_lobby_accel_enabled()
+        )
+        self._lobby_accel_label = self._label(
+            self._lobby_accel_row, t("selfhost.lobby_accel_label")
+        )
+        self._lobby_accel_label.pack(side=tk.LEFT)
+        self._lobby_accel_switch = ToggleSwitch(
+            self._lobby_accel_row,
+            variable=self._lobby_accel_var,
+            command=self._on_lobby_accel_toggle,
+            app=app,
+        )
+        self._lobby_accel_switch.pack(side=tk.LEFT, padx=(8, 10))
+        self._mihomo_btn = ttk.Button(
+            self._lobby_accel_row,
+            text=t("selfhost.lobby_accel_select_mihomo"),
+            command=self._select_mihomo,
+        )
+        self._mihomo_btn.pack(side=tk.LEFT)
+        self._lobby_accel_status_label = self._label(
+            self._lobby_accel_row, t("selfhost.lobby_accel_status_stopped")
+        )
+        self._lobby_accel_status_label.pack(side=tk.LEFT, padx=(10, 0))
+        Tooltip(self._lobby_accel_label, lambda: t("selfhost.lobby_accel_hint"))
+
         self._load_server_display()
         self._refresh_action_buttons()
         self._render_server_status_panel()
@@ -377,6 +414,119 @@ class SelfHostFrpPage:
         if on_done:
             on_done()
 
+    def ensure_lobby_accel(self, cluster, on_done) -> None:
+        """在后台启动大厅加速，完成后回到 Tk 主线程回调。"""
+
+        if not app_settings.get_lobby_accel_enabled():
+            on_done(True, "")
+            return
+        if self._lobby_accel_busy:
+            on_done(False, t("selfhost.lobby_accel_busy"))
+            return
+        self._lobby_accel_busy = True
+        self._refresh_lobby_accel_row()
+
+        def _worker():
+            ok, detail = True, ""
+            try:
+                self.lobby_accel.start(cluster)
+            except LobbyAccelError as exc:
+                ok, detail = False, str(exc)
+
+            def _finish():
+                self._lobby_accel_busy = False
+                self._refresh_lobby_accel_row()
+                on_done(ok, detail)
+
+            self._post_to_ui(_finish)
+
+        threading.Thread(
+            target=_worker, name="dstcamp-lobby-accel", daemon=True
+        ).start()
+
+    def stop_lobby_accel(self) -> None:
+        self.lobby_accel.stop()
+        try:
+            self._refresh_lobby_accel_row()
+        except tk.TclError:
+            pass
+
+    def stop_lobby_accel_async(self) -> None:
+        if self._lobby_accel_busy:
+            return
+        self._lobby_accel_busy = True
+        self._refresh_lobby_accel_row()
+
+        def _worker():
+            self.lobby_accel.stop()
+
+            def _finish():
+                self._lobby_accel_busy = False
+                self._refresh_lobby_accel_row()
+
+            self._post_to_ui(_finish)
+
+        threading.Thread(
+            target=_worker, name="dstcamp-lobby-accel-stop", daemon=True
+        ).start()
+
+    def poll_lobby_accel(self) -> None:
+        """由主界面轮询链路健康状态，不在后台线程触碰 Tk。"""
+
+        self._refresh_lobby_accel_row()
+
+    def _select_mihomo(self) -> None:
+        picked = filedialog.askopenfilename(
+            parent=self.app.root,
+            title=t("selfhost.lobby_accel_select_mihomo"),
+            filetypes=[("Mihomo", "mihomo.exe"), ("Executable", "*.exe")],
+        )
+        if not picked:
+            return
+        try:
+            digest = sha256_file(picked)
+        except (OSError, MihomoError) as exc:
+            dlg.show_error(
+                self.app.root, t("selfhost.lobby_accel_label"), str(exc)
+            )
+            return
+        app_settings.set_lobby_accel_mihomo_path(picked, digest)
+        self._refresh_lobby_accel_row()
+
+    def _on_lobby_accel_toggle(self) -> None:
+        enabled = bool(self._lobby_accel_var.get())
+        if self.app.local_tab.manager.running():
+            self._lobby_accel_var.set(app_settings.get_lobby_accel_enabled())
+            dlg.show_warning(
+                self.app.root,
+                t("selfhost.lobby_accel_label"),
+                t("selfhost.lobby_accel_disable_running"),
+            )
+            return
+        app_settings.set_lobby_accel_enabled(enabled)
+        if not enabled:
+            self.stop_lobby_accel_async()
+        self._refresh_lobby_accel_row()
+
+    def _refresh_lobby_accel_row(self) -> None:
+        if self._lobby_accel_busy:
+            text, color = t("selfhost.lobby_accel_status_starting"), theme.TEXT_MUTED
+        elif self.lobby_accel.is_healthy():
+            text, color = t("selfhost.lobby_accel_status_running"), theme.SERVER_COLOR
+        elif self.lobby_accel.status == LobbyAccelStatus.CRASHED:
+            text, color = t("selfhost.lobby_accel_status_failed"), theme.ERROR
+        elif not app_settings.get_lobby_accel_enabled():
+            text, color = t("selfhost.lobby_accel_status_stopped"), theme.TEXT_MUTED
+        elif app_settings.get_lobby_accel_mihomo_path():
+            text, color = t("selfhost.lobby_accel_status_ready"), theme.TEXT_MUTED
+        else:
+            text, color = t("selfhost.lobby_accel_status_no_mihomo"), theme.TEXT_MUTED
+        font = tkfont.nametofont("TkDefaultFont")
+        self._lobby_accel_status_label.configure(width=font.measure(text) + 4)
+        self._lobby_accel_status_label.itemconfig(
+            "label_text", text=text, fill=color
+        )
+
     # ── 页签生命周期 ─────────────────────────────────────────────────
 
     def on_cluster_changed(self, cluster=None):
@@ -391,6 +541,7 @@ class SelfHostFrpPage:
         self._maybe_start_probe_cycle()
         if self._is_authenticated():
             self._run_probe(reschedule=False)
+        self._refresh_lobby_accel_row()
 
     def _post_to_ui(self, callback) -> None:
         """可从工作线程调用：只入队，不触碰任何 Tk 对象。"""
@@ -428,11 +579,15 @@ class SelfHostFrpPage:
         标签/按钮。"""
         for frame in (self.frame, self._top, self._row1, self._row2, self._row3,
                       self._server_status_panel, self._status_frame,
-                      self._shards_frame, self._action_row, self._frpc_row):
+                      self._shards_frame, self._action_row, self._frpc_row,
+                      self._lobby_accel_row):
             frame.apply_theme()
         for label in (self._host_label, self._bind_port_label, self._token_label,
-                      self._token_display, self._frpc_status_label):
+                      self._token_display, self._frpc_status_label,
+                      self._lobby_accel_label, self._lobby_accel_status_label):
             label.redraw()
+        self._lobby_accel_switch.apply_theme()
+        self._refresh_lobby_accel_row()
 
     # ── 服务器连接信息 ───────────────────────────────────────────────
 

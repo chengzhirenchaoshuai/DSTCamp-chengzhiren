@@ -44,6 +44,7 @@ from dstools.shared.app_settings import (
     get_selfhost_frp_mapping,
     get_selfhost_frp_server,
     get_global_tokens,
+    get_lobby_accel_enabled,
     get_token_holds,
     prune_token_holds,
     set_token_hold,
@@ -3187,7 +3188,35 @@ class LocalServiceTab:
         if not self._preflight_start(cluster, [shard]):
             self._release_token_reservation_if_stopped(cluster.path)
             return
-        self._do_start_shard(cluster, shard)
+        key = (str(cluster.path), shard.name)
+        self._launching_keys.add(key)
+
+        def _after_accel(ok, detail):
+            self._launching_keys.discard(key)
+            if not ok:
+                self._release_token_reservation_if_stopped(cluster.path)
+                dlg.show_error(
+                    self.app.root,
+                    t("selfhost.lobby_accel_label"),
+                    t("selfhost.lobby_accel_start_failed", detail=detail),
+                )
+                self._refresh_shard_rows(self._get_cluster())
+                return
+            self._do_start_shard(cluster, shard)
+
+        self._ensure_lobby_accel(cluster, _after_accel)
+
+    def _ensure_lobby_accel(self, cluster, on_done) -> None:
+        """关闭功能时保持旧启动路径，开启时才依赖穿透页协调器。"""
+
+        if not get_lobby_accel_enabled():
+            on_done(True, "")
+            return
+        sakura_tab = getattr(self.app, "sakura_tab", None)
+        if sakura_tab is None:
+            on_done(False, "内网穿透管理器尚未就绪")
+            return
+        sakura_tab.ensure_lobby_accel(cluster, on_done)
 
     def _do_start_shard(self, cluster, shard):
         # 真机反馈过的 bug：单独点某个世界的"启动"之后，再点"全部启动"，
@@ -3476,6 +3505,20 @@ class LocalServiceTab:
             return
         if not self._preflight_start(cluster, targets, restarting=True):
             return
+
+        def _after_accel(ok, detail):
+            if not ok:
+                dlg.show_error(
+                    self.app.root,
+                    t("selfhost.lobby_accel_label"),
+                    t("selfhost.lobby_accel_start_failed", detail=detail),
+                )
+                return
+            self._restart_shards_after_lobby_accel(cluster, targets, keys)
+
+        self._ensure_lobby_accel(cluster, _after_accel)
+
+    def _restart_shards_after_lobby_accel(self, cluster, targets, keys):
         if self._install_dir is None:
             self._detect_install_dir()
             if self._install_dir is None:
@@ -3557,6 +3600,8 @@ class LocalServiceTab:
         # 联动），只有这个 cluster 名下所有世界都真正停下来之后备份才是一
         # 个一致的快照——不是每停一个世界就各自备份一次。
         running = self.manager.running()
+        if not running and (sakura_tab := getattr(self.app, "sakura_tab", None)):
+            sakura_tab.stop_lobby_accel_async()
         self._release_token_reservation_if_stopped(cluster.path)
         if get_backup_auto_enabled() and not any(
             str(p.cluster_path) == str(cluster.path) for p in running
@@ -3595,6 +3640,25 @@ class LocalServiceTab:
         if not self._preflight_start(c, targets):
             self._release_token_reservation_if_stopped(c.path)
             return
+        accel_keys = {(str(c.path), shard.name) for shard in targets}
+        self._launching_keys.update(accel_keys)
+
+        def _after_accel(ok, detail):
+            self._launching_keys.difference_update(accel_keys)
+            if not ok:
+                self._release_token_reservation_if_stopped(c.path)
+                dlg.show_error(
+                    self.app.root,
+                    t("selfhost.lobby_accel_label"),
+                    t("selfhost.lobby_accel_start_failed", detail=detail),
+                )
+                self._refresh_shard_rows(self._get_cluster())
+                return
+            self._start_all_after_lobby_accel(c, targets)
+
+        self._ensure_lobby_accel(c, _after_accel)
+
+    def _start_all_after_lobby_accel(self, c, targets):
         if self._install_dir is None:
             self._detect_install_dir()
             if self._install_dir is None:
@@ -3687,6 +3751,7 @@ class LocalServiceTab:
         self._update_restart_all_btn_state(self._get_cluster())
         self._update_logs_btn_state(self._get_cluster())
         self._update_luajit_row(self._get_cluster())
+        self.app.sakura_tab.poll_lobby_accel()
         # 直连代码状态随服务器/frpc 进程启停实时刷新——局域网查主世界进程、
         # 内网穿透查 frpc，都是本地同步判断；只在服务器存档可见时刷新（本地
         # 存档不显示这块，省掉无谓重画）。

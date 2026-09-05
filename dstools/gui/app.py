@@ -725,6 +725,7 @@ class DSToolsApp:
         # __init__ 里 _compute_startup_position() 的说明）。放在这里
         # （唯一真正退出的出口）而不是绑 <Configure>/窗口拖拽事件—— 没
         # 必要每拖一下就写一次磁盘，只要退出前这一次是准的就够了。
+        self.sakura_tab.stop_lobby_accel()
         set_window_position(self.root.winfo_x(), self.root.winfo_y())
         self._tray.hide()
         self.root.quit()

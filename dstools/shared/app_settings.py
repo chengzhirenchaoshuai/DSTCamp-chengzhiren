@@ -35,6 +35,9 @@ _KEY_LAST_CLUSTER_PATH = "last_cluster_path"
 _KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
 _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
+_KEY_LOBBY_ACCEL_ENABLED = "lobby_accel_enabled"
+_KEY_LOBBY_ACCEL_MIHOMO_PATH = "lobby_accel_mihomo_path"
+_KEY_LOBBY_ACCEL_MIHOMO_SHA256 = "lobby_accel_mihomo_sha256"
 _KEY_GLOBAL_TOKENS = "global_tokens"
 _KEY_TOKEN_HOLDS = "token_holds"
 _KEY_MOD_PRESETS = "mod_presets"
@@ -451,6 +454,42 @@ def get_selfhost_ssh_connection() -> dict | None:
 def set_selfhost_ssh_connection(host: str, port: int, username: str) -> None:
     data = load_settings()
     data[_KEY_SELFHOST_SSH_CONNECTION] = {"host": host, "port": int(port), "username": username}
+    save_settings(data)
+
+
+def get_lobby_accel_enabled() -> bool:
+    """是否启用自建 frps 的实验性大厅加速。"""
+    return bool(load_settings().get(_KEY_LOBBY_ACCEL_ENABLED, False))
+
+
+def set_lobby_accel_enabled(value: bool) -> None:
+    data = load_settings()
+    data[_KEY_LOBBY_ACCEL_ENABLED] = bool(value)
+    save_settings(data)
+
+
+def get_lobby_accel_mihomo_path() -> Path | None:
+    """用户自行提供的 Mihomo 可执行文件；第三方二进制不随设置复制。"""
+    raw = load_settings().get(_KEY_LOBBY_ACCEL_MIHOMO_PATH)
+    return Path(raw) if raw else None
+
+
+def get_lobby_accel_mihomo_sha256() -> str | None:
+    raw = load_settings().get(_KEY_LOBBY_ACCEL_MIHOMO_SHA256)
+    return str(raw).lower() if raw else None
+
+
+def set_lobby_accel_mihomo_path(path: Path | None, sha256: str | None = None) -> None:
+    data = load_settings()
+    if path is None:
+        data.pop(_KEY_LOBBY_ACCEL_MIHOMO_PATH, None)
+        data.pop(_KEY_LOBBY_ACCEL_MIHOMO_SHA256, None)
+    else:
+        data[_KEY_LOBBY_ACCEL_MIHOMO_PATH] = str(path)
+        if sha256:
+            data[_KEY_LOBBY_ACCEL_MIHOMO_SHA256] = str(sha256).lower()
+        else:
+            data.pop(_KEY_LOBBY_ACCEL_MIHOMO_SHA256, None)
     save_settings(data)
 
 

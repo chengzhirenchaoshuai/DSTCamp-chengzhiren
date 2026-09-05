@@ -493,6 +493,18 @@ class SakuraTab:
         else:
             self.selfhost_page.stop_frpc_for_shard(cluster, shard, on_done=on_done)
 
+    def ensure_lobby_accel(self, cluster, on_done) -> None:
+        self.selfhost_page.ensure_lobby_accel(cluster, on_done)
+
+    def stop_lobby_accel(self) -> None:
+        self.selfhost_page.stop_lobby_accel()
+
+    def stop_lobby_accel_async(self) -> None:
+        self.selfhost_page.stop_lobby_accel_async()
+
+    def poll_lobby_accel(self) -> None:
+        self.selfhost_page.poll_lobby_accel()
+
     # ── 页签生命周期 ─────────────────────────────────────────────────
 
     def _get_cluster(self):
