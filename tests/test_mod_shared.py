@@ -25,6 +25,7 @@ from dstools.features.mod.parser import (
 )
 from dstools.features.mod.tab import (
     ModManagerTab,
+    RECOMMENDED_MODS,
     _can_open_mod_update_hint,
     _referenced_missing_status_text,
     _workshop_actionable_update_ids,
@@ -74,6 +75,17 @@ def test_catalog_does_not_store_page_state():
     creation = ModEntry("mod-a", enabled=False, configuration_options={"x": 2})
     assert homepage.enabled is True and creation.enabled is False
     assert homepage.configuration_options != creation.configuration_options
+
+
+def test_recommended_mods_include_ping_server_with_icon():
+    items = {workshop_id: (name, desc) for workshop_id, name, desc in RECOMMENDED_MODS}
+    assert len(items) == len(RECOMMENDED_MODS)
+    assert items["2998347052"] == (
+        "Say about your ping(Server)",
+        "显示 Ping、网络与服务器性能及丢包率，并支持聊天播报",
+    )
+    icon = Path(__file__).resolve().parents[1] / "icons" / "recommended" / "2998347052.png"
+    assert icon.is_file()
 
 
 def test_catalog_icons_and_platform_invalidation():
@@ -564,6 +576,7 @@ def test_residual_cleanup_deletes_and_rejects_steam_managed_items():
 
 if __name__ == "__main__":
     test_catalog_does_not_store_page_state()
+    test_recommended_mods_include_ping_server_with_icon()
     test_catalog_icons_and_platform_invalidation()
     test_shared_rows_keep_filter_and_sort_consistent()
     test_luajit_mod_is_first_only_when_prioritized()

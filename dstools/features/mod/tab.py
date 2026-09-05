@@ -274,6 +274,11 @@ RECOMMENDED_MODS = [
         "Chinese++ Pro",
         "汉化其它模组的名称与配置项，Mod 列表和设置直接显示中文",
     ),
+    (
+        "2998347052",
+        "Say about your ping(Server)",
+        "显示 Ping、网络与服务器性能及丢包率，并支持聊天播报",
+    ),
 ]
 
 
