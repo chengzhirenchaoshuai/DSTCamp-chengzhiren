@@ -163,6 +163,23 @@ def test_stun_only_is_not_reported_as_game_acceleration() -> None:
     assert not report.through_vps
 
 
+def test_wireguard_counter_delta_alone_is_not_reported_as_signal() -> None:
+    evidence = DiagnosticEvidence(
+        mapped_ports={10006},
+        remote=RemoteEvidence(
+            remote_available=True,
+            wg_capture_ready=True,
+            wg_rx_before=1000,
+            wg_tx_before=2000,
+            wg_rx_after=1064,
+            wg_tx_after=2000,
+        ),
+    )
+    report = decide_route(evidence)
+    assert report.route == DiagnosticRoute.INCONCLUSIVE
+    assert not report.through_vps
+
+
 def test_server_and_tcpdump_lines_are_classified() -> None:
     evidence = DiagnosticEvidence(mapped_ports={10006})
     for line in (
@@ -204,6 +221,7 @@ def main() -> int:
         test_frp_route_requires_log_and_remote_port_evidence,
         test_wireguard_game_route_requires_api_and_inner_capture,
         test_stun_only_is_not_reported_as_game_acceleration,
+        test_wireguard_counter_delta_alone_is_not_reported_as_signal,
         test_server_and_tcpdump_lines_are_classified,
     ]
     for test in tests:

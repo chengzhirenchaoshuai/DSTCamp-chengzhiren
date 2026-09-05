@@ -128,11 +128,11 @@ def decide_route(evidence: DiagnosticEvidence) -> LobbyDiagnosticReport:
         and api_wg_game
         and capture_wg_game
     )
+    # WireGuard 总计数可能包含保活、TCP、ICMP 或诊断窗口边界上的其它
+    # 小流量，不能据此声称“已确认大厅信令”。只有 Mihomo 或隧道内抓包
+    # 明确识别到 STUN UDP 时，才给出 SIGNAL_ONLY 结论。
     wg_signal = (
-        evidence.mihomo_wg_stun_bytes > 0
-        or remote.wg_stun_packets > 0
-        or remote.wg_rx_delta > 0
-        or remote.wg_tx_delta > 0
+        evidence.mihomo_wg_stun_bytes > 0 or remote.wg_stun_packets > 0
     )
 
     if frp_confirmed:

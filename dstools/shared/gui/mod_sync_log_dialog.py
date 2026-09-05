@@ -25,6 +25,7 @@ class ModSyncLogDialog:
         cancel_text: str | None = None,
         allow_close_while_running: bool = False,
         text_width: int = 64,
+        text_height: int = 22,
     ):
         """`on_cancel`：给需要中途能取消的耗时操作用（目前只有
         features/frp_selfhost 的 SSH 远程部署）——传了才会多显示一个
@@ -84,7 +85,7 @@ class ModSyncLogDialog:
         self.text = tk.Text(
             body,
             wrap=tk.WORD,
-            height=22,
+            height=max(12, int(text_height)),
             width=max(40, int(text_width)),
             font=theme.font_tuple(theme.FONT_SIZE_SM),
             state=tk.DISABLED,
@@ -94,6 +95,54 @@ class ModSyncLogDialog:
             highlightthickness=1,
             highlightbackground=theme.CARD_BORDER,
             highlightcolor=theme.ACCENT,
+        )
+        # 日志默认明确左对齐；诊断类调用方可以通过这些语义标签建立稳定
+        # 的“标题—结论—明细—说明”层级，普通调用方不传 tag 时行为不变。
+        self.text.tag_configure("left", justify=tk.LEFT)
+        self.text.tag_configure(
+            "section",
+            justify=tk.LEFT,
+            font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
+            foreground=theme.HEADING,
+            spacing1=10,
+            spacing3=3,
+        )
+        self.text.tag_configure(
+            "result_success",
+            justify=tk.LEFT,
+            font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
+            foreground=theme.SERVER_COLOR,
+            spacing3=5,
+        )
+        self.text.tag_configure(
+            "result_warning",
+            justify=tk.LEFT,
+            font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
+            foreground=theme.ACCENT,
+            spacing3=5,
+        )
+        self.text.tag_configure(
+            "result_error",
+            justify=tk.LEFT,
+            font=theme.font_tuple(theme.FONT_SIZE_MD, bold=True),
+            foreground=theme.ERROR,
+            spacing3=5,
+        )
+        self.text.tag_configure(
+            "detail",
+            justify=tk.LEFT,
+            lmargin1=12,
+            lmargin2=12,
+            spacing1=2,
+        )
+        self.text.tag_configure(
+            "note",
+            justify=tk.LEFT,
+            lmargin1=12,
+            lmargin2=12,
+            foreground=theme.TEXT,
+            spacing1=2,
+            spacing3=4,
         )
         vsb = ttk.Scrollbar(body, orient=tk.VERTICAL, command=self.text.yview)
         self.text.configure(yscrollcommand=vsb.set)
@@ -144,13 +193,27 @@ class ModSyncLogDialog:
         if self._on_cancel is not None:
             self._on_cancel()
 
-    def append(self, line: str) -> None:
+    def append(self, line: str, tag: str | None = None) -> None:
         if not self.win.winfo_exists():
             return
         self.text.configure(state=tk.NORMAL)
-        self.text.insert(tk.END, line + "\n")
+        tags = ("left", tag) if tag else ("left",)
+        self.text.insert(tk.END, line + "\n", tags)
         self.text.see(tk.END)
         self.text.configure(state=tk.DISABLED)
+
+    def clear(self) -> None:
+        """清空过程日志，供调用方在完成后展示结构化最终结果。"""
+        if not self.win.winfo_exists():
+            return
+        self.text.configure(state=tk.NORMAL)
+        self.text.delete("1.0", tk.END)
+        self.text.configure(state=tk.DISABLED)
+
+    def scroll_to_start(self) -> None:
+        """把最终报告定位到开头，避免连续 append 后停留在末尾。"""
+        if self.win.winfo_exists():
+            self.text.see("1.0")
 
     def finish(self) -> None:
         if not self.win.winfo_exists():

@@ -698,6 +698,7 @@ class SelfHostFrpPage:
             on_cancel=_cancel,
             cancel_text=t("selfhost.lobby_diag_stop_btn"),
             text_width=76,
+            text_height=32,
         )
         progress.append(t("selfhost.lobby_diag_preparing"))
         self._diagnostic_busy = True
@@ -741,52 +742,139 @@ class SelfHostFrpPage:
         self._diagnostic_session = None
         evidence = report.evidence
         remote = evidence.remote
+        route = report.route
+        effective = route in {DiagnosticRoute.FRP, DiagnosticRoute.WIREGUARD}
+        status_key = (
+            "selfhost.lobby_diag_status_effective"
+            if effective
+            else "selfhost.lobby_diag_status_not_confirmed"
+        )
+        if route == DiagnosticRoute.INCONCLUSIVE:
+            status_key = "selfhost.lobby_diag_status_inconclusive"
         route_key = {
-            DiagnosticRoute.FRP: "selfhost.lobby_diag_result_frp",
-            DiagnosticRoute.WIREGUARD: "selfhost.lobby_diag_result_wireguard",
-            DiagnosticRoute.SIGNAL_ONLY: "selfhost.lobby_diag_result_signal_only",
-            DiagnosticRoute.BYPASS: "selfhost.lobby_diag_result_bypass",
-            DiagnosticRoute.INCONCLUSIVE: "selfhost.lobby_diag_result_inconclusive",
-        }[report.route]
-        progress.append("")
-        progress.append(t("selfhost.lobby_diag_result_title"))
-        progress.append(t(route_key))
-        progress.append(
-            t(
-                "selfhost.lobby_diag_evidence_connection",
-                authenticated=t("dlg.yes_btn") if evidence.authenticated else t("dlg.no_btn"),
-                loopback=t("dlg.yes_btn") if evidence.loopback_connection else t("dlg.no_btn"),
-                ports=", ".join(str(port) for port in sorted(evidence.external_ports))
-                or "-",
+            DiagnosticRoute.FRP: "selfhost.lobby_diag_route_frp",
+            DiagnosticRoute.WIREGUARD: "selfhost.lobby_diag_route_wireguard",
+            DiagnosticRoute.SIGNAL_ONLY: "selfhost.lobby_diag_route_signal_only",
+            DiagnosticRoute.BYPASS: "selfhost.lobby_diag_route_bypass",
+            DiagnosticRoute.INCONCLUSIVE: "selfhost.lobby_diag_route_inconclusive",
+        }[route]
+        judgment_key = {
+            DiagnosticRoute.FRP: "selfhost.lobby_diag_judgment_frp",
+            DiagnosticRoute.WIREGUARD: "selfhost.lobby_diag_judgment_wireguard",
+            DiagnosticRoute.SIGNAL_ONLY: "selfhost.lobby_diag_judgment_signal_only",
+            DiagnosticRoute.BYPASS: "selfhost.lobby_diag_judgment_bypass",
+            DiagnosticRoute.INCONCLUSIVE: "selfhost.lobby_diag_judgment_inconclusive",
+        }[route]
+        confidence_key = {
+            "high": "selfhost.lobby_diag_confidence_high",
+            "medium": "selfhost.lobby_diag_confidence_medium",
+            "low": "selfhost.lobby_diag_confidence_low",
+        }.get(report.confidence, "selfhost.lobby_diag_confidence_low")
+        connection_key = (
+            "selfhost.lobby_diag_connection_loopback"
+            if evidence.loopback_connection
+            else (
+                "selfhost.lobby_diag_connection_p2p"
+                if evidence.p2p_connection
+                else "selfhost.lobby_diag_connection_unknown"
             )
         )
+        external_ports = (
+            ", ".join(str(port) for port in sorted(evidence.external_ports))
+            or t("selfhost.lobby_diag_not_observed")
+        )
+
+        def _count(value) -> str:
+            return f"{max(0, int(value)):,}"
+
+        def _section(key: str) -> None:
+            progress.append(t(key), "section")
+
+        def _detail(key: str, **values) -> None:
+            progress.append(t(key, **values), "detail")
+
+        # 过程状态在等待阶段有价值；完成后改为独立的结构化报告，确保
+        # 用户打开结果时第一眼看到结论，而不是停留在滚动区中部。
+        progress.clear()
+        _section("selfhost.lobby_diag_result_title")
         progress.append(
-            t(
-                "selfhost.lobby_diag_evidence_frp",
-                packets=remote.frp_packets,
-                bytes=remote.frp_bytes,
-            )
+            t(status_key), "result_success" if effective else "result_warning"
         )
         progress.append(
-            t(
-                "selfhost.lobby_diag_evidence_wg",
-                rx=remote.wg_rx_delta,
-                tx=remote.wg_tx_delta,
-                inner=remote.wg_non_stun_bytes,
-                api=evidence.mihomo_wg_non_stun_bytes,
+            t("selfhost.lobby_diag_confidence", value=t(confidence_key)), "note"
+        )
+
+        _section("selfhost.lobby_diag_route_title")
+        progress.append(t(route_key), "detail")
+
+        _section("selfhost.lobby_diag_connection_title")
+        _detail(
+            "selfhost.lobby_diag_player_auth",
+            value=t("dlg.yes_btn") if evidence.authenticated else t("dlg.no_btn"),
+        )
+        _detail("selfhost.lobby_diag_connection_type", value=t(connection_key))
+        _detail(
+            "selfhost.lobby_diag_loopback",
+            value=(
+                t("dlg.yes_btn")
+                if evidence.loopback_connection
+                else t("dlg.no_btn")
+            ),
+        )
+        _detail("selfhost.lobby_diag_external_ports", value=external_ports)
+
+        _section("selfhost.lobby_diag_wg_title")
+        _detail("selfhost.lobby_diag_wg_rx", bytes=_count(remote.wg_rx_delta))
+        _detail("selfhost.lobby_diag_wg_tx", bytes=_count(remote.wg_tx_delta))
+        _detail("selfhost.lobby_diag_wg_stun", bytes=_count(remote.wg_stun_bytes))
+        _detail(
+            "selfhost.lobby_diag_wg_non_stun",
+            bytes=_count(remote.wg_non_stun_bytes),
+        )
+        _detail(
+            "selfhost.lobby_diag_mihomo_stun",
+            bytes=_count(evidence.mihomo_wg_stun_bytes),
+        )
+        _detail(
+            "selfhost.lobby_diag_mihomo_non_stun",
+            bytes=_count(evidence.mihomo_wg_non_stun_bytes),
+        )
+
+        _section("selfhost.lobby_diag_frp_title")
+        _detail(
+            "selfhost.lobby_diag_frp_packets",
+            packets=_count(remote.frp_packets),
+        )
+        _detail("selfhost.lobby_diag_frp_bytes", bytes=_count(remote.frp_bytes))
+
+        _section("selfhost.lobby_diag_judgment_title")
+        progress.append(t(judgment_key), "note")
+        identified_wg_traffic = any(
+            (
+                remote.wg_stun_bytes,
+                remote.wg_non_stun_bytes,
+                evidence.mihomo_wg_stun_bytes,
+                evidence.mihomo_wg_non_stun_bytes,
             )
         )
+        if (remote.wg_rx_delta or remote.wg_tx_delta) and not identified_wg_traffic:
+            progress.append(t("selfhost.lobby_diag_counter_only_note"), "note")
+
+        warnings = []
         if remote.error:
-            progress.append(
-                t("selfhost.lobby_diag_remote_error", detail=remote.error)
-            )
+            warnings.append(t("selfhost.lobby_diag_remote_error", detail=remote.error))
         if evidence.mihomo_api_error and not evidence.mihomo_api_available:
-            progress.append(
+            warnings.append(
                 t(
                     "selfhost.lobby_diag_mihomo_error",
                     detail=evidence.mihomo_api_error,
                 )
             )
+        if warnings:
+            _section("selfhost.lobby_diag_warning_title")
+            for warning in warnings:
+                progress.append(warning, "result_error")
+        progress.scroll_to_start()
         progress.finish()
         self._refresh_lobby_accel_row()
 
