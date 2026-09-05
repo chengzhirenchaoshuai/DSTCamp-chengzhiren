@@ -240,6 +240,7 @@ def test_atomic_port_rewrite() -> None:
 
 def test_atomic_lan_port_rewrite_is_focused() -> None:
     from dstools.shared.ini_parser import parse_cluster_ini, parse_server_ini
+    from dstools.shared import server_ports
 
     with tempfile.TemporaryDirectory() as tmp:
         cluster = _write_cluster(
@@ -252,9 +253,13 @@ def test_atomic_lan_port_rewrite_is_focused() -> None:
             shard.name: parse_server_ini(shard.path / "server.ini")
             for shard in cluster.shards
         }
-        values = rewrite_lan_server_ports_atomic(
-            cluster, {LAN_SERVER_PORT_MIN}, create_backup=False,
-        )
+        with patch.object(
+            server_ports, "data_dir",
+            side_effect=AssertionError("LAN 调整不应创建持久备份"),
+        ):
+            values = rewrite_lan_server_ports_atomic(
+                cluster, {LAN_SERVER_PORT_MIN},
+            )
         assert values["Master"] == LAN_SERVER_PORT_FALLBACK
         assert len(set(values.values())) == len(cluster.shards)
         after_cluster = parse_cluster_ini(cluster.path / "cluster.ini")
@@ -296,7 +301,7 @@ def test_atomic_lan_port_rewrite_rolls_back() -> None:
         with patch.object(server_ports.os, "replace", side_effect=fail_second_temp_replace):
             try:
                 rewrite_lan_server_ports_atomic(
-                    cluster, set(), create_backup=False,
+                    cluster, set(),
                     cluster_config_override=proposed,
                 )
             except OSError:

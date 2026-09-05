@@ -314,7 +314,7 @@ STRINGS = {
         "cluster.allocate_lan_ports_btn": "分配局域网兼容端口",
         "cluster.lan_port_repair_locked": "当前配置不符合局域网端口要求，但存档正在运行或存在端口映射，不能自动调整。请先停止服务器并关闭该存档的映射：\n\n{details}",
         "cluster.lan_port_scan_failed": "无法读取系统 UDP 端口占用，为避免分配出冲突端口，本次没有保存。\n\n详细信息：{detail}",
-        "cluster.lan_port_repair_done": "已保存“仅限局域网”设置，并只调整各世界的游戏端口；原配置已备份：\n\n{details}",
+        "cluster.lan_port_repair_done": "已保存“仅限局域网”设置，并调整了各世界的游戏端口：\n\n{details}",
         "cluster.lan_shard_port_invalid": "当前存档启用了“仅限局域网”，游戏端口必须位于 10998~11018。请修改后再保存：\n\n{details}",
         # 状态栏
         "status.klei": "Klei",
@@ -705,6 +705,7 @@ STRINGS = {
         "local.launch_already_pending": "以下世界正在准备启动，请勿重复操作：{shards}",
         "local.port_repair_title": "自动调整服务器端口",
         "local.port_repair_done": "端口配置已更新，原配置已备份到 DSTCamp 缓存目录的 port_backups 中。将重新执行启动检查：\n\n{details}",
+        "local.lan_port_repair_done": "局域网端口配置已更新，将重新执行启动检查：\n\n{details}",
         "local.port_repair_failed": "端口配置更新失败，原文件已恢复。\n\n详细信息：{detail}",
         "local.no_shards": "该存档下未找到任何世界",
         "local.start_failed": "世界“{shard}”启动失败：{detail}",
@@ -1192,7 +1193,7 @@ STRINGS = {
         "cluster.allocate_lan_ports_btn": "Allocate LAN-compatible Ports",
         "cluster.lan_port_repair_locked": "These settings do not meet the LAN port requirements, but the save is running or has active port mappings, so its ports cannot be adjusted automatically. Stop the server and disable its mappings first:\n\n{details}",
         "cluster.lan_port_scan_failed": "Local UDP port usage could not be read, so the settings were not saved to avoid allocating a conflicting port.\n\nDetails: {detail}",
-        "cluster.lan_port_repair_done": "LAN Only was saved and only the game ports for each shard were adjusted. The original settings were backed up:\n\n{details}",
+        "cluster.lan_port_repair_done": "LAN Only was saved and the game ports for each shard were adjusted:\n\n{details}",
         "cluster.lan_shard_port_invalid": "This save has LAN Only enabled, so its game port must be between 10998 and 11018. Fix it before saving:\n\n{details}",
         # 状态栏
         "status.klei": "Klei",
@@ -1583,6 +1584,7 @@ STRINGS = {
         "local.launch_already_pending": "These shards are already being prepared for launch: {shards}",
         "local.port_repair_title": "Automatically Adjust Server Ports",
         "local.port_repair_done": "Port settings were updated; the originals were saved under port_backups in the DSTCamp cache. The launch check will run again:\n\n{details}",
+        "local.lan_port_repair_done": "LAN port settings were updated. The launch check will run again:\n\n{details}",
         "local.port_repair_failed": "Port settings could not be updated; the original files were restored.\n\nDetails: {detail}",
         "local.no_shards": "No shards found for this save",
         "local.start_failed": 'Failed to start shard "{shard}": {detail}',

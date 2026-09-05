@@ -383,10 +383,10 @@ def _write_configs_atomic(
 
 
 def rewrite_lan_server_ports_atomic(
-        cluster: Cluster, used: Iterable[int], *, create_backup: bool = True,
+        cluster: Cluster, used: Iterable[int], *,
         cluster_config_override: ClusterConfig | None = None,
 ) -> dict[str, int]:
-    """只调整各世界的 server_port，并保证全部值位于 LAN 专用范围。"""
+    """只调整各世界的 server_port，不生成持久备份。"""
     shard_configs = {
         shard.name: copy.deepcopy(_shard_config(shard)) for shard in cluster.shards
     }
@@ -404,7 +404,9 @@ def rewrite_lan_server_ports_atomic(
         (shard.path / "server.ini", shard_configs[shard.name], write_server_ini)
         for shard in cluster.shards
     )
-    _write_configs_atomic(cluster, targets, create_backup=create_backup)
+    # LAN 调整由用户当场确认，且只改 server_port；不在 port_backups 中
+    # 额外保留副本。原子写入失败时的内存回滚仍由底层负责。
+    _write_configs_atomic(cluster, targets, create_backup=False)
     return values
 
 

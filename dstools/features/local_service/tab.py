@@ -3006,7 +3006,7 @@ class LocalServiceTab:
                         dlg.show_info(
                             self.app.root,
                             t("local.port_repair_title"),
-                            t("local.port_repair_done", details=summary),
+                            t("local.lan_port_repair_done", details=summary),
                         )
                         return self._preflight_start(
                             cluster, shards, allow_repair=False,
