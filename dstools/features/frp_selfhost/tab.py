@@ -30,6 +30,10 @@ from dstools.features.frp_selfhost.lobby_accel import (
     LobbyAccelError,
     LobbyAccelStatus,
 )
+from dstools.features.frp_selfhost.lobby_diagnostics import (
+    DiagnosticRoute,
+    LobbyDiagnosticSession,
+)
 from dstools.features.frp_selfhost.mihomo import MihomoError, sha256_file
 from dstools.features.frp_selfhost.wireguard import (
     DEFAULT_WIREGUARD_PORT,
@@ -239,6 +243,8 @@ class SelfHostFrpPage:
         self.lobby_accel = LobbyAccelCoordinator()
         self._lobby_accel_busy = False
         self._wireguard_deploying = False
+        self._diagnostic_busy = False
+        self._diagnostic_session = None
         self._current_cluster = None
         self._any_mapped = False
 
@@ -370,6 +376,12 @@ class SelfHostFrpPage:
             command=self._deploy_wireguard,
         )
         self._wireguard_deploy_btn.pack(side=tk.LEFT)
+        self._diagnostic_btn = ttk.Button(
+            self._lobby_accel_row,
+            text=t("selfhost.lobby_diag_btn"),
+            command=self._start_lobby_diagnostic,
+        )
+        self._diagnostic_btn.pack(side=tk.LEFT, padx=(8, 0))
         self._lobby_accel_status_label = self._label(
             self._lobby_accel_row, t("selfhost.lobby_accel_status_stopped")
         )
@@ -472,6 +484,8 @@ class SelfHostFrpPage:
         ).start()
 
     def stop_lobby_accel(self) -> None:
+        if self._diagnostic_session is not None:
+            self._diagnostic_session.cancel()
         self.lobby_accel.stop()
         try:
             self._refresh_lobby_accel_row()
@@ -615,9 +629,185 @@ class SelfHostFrpPage:
             self.stop_lobby_accel_async()
         self._refresh_lobby_accel_row()
 
+    def _start_lobby_diagnostic(self) -> None:
+        if self._diagnostic_busy:
+            return
+        cluster = self._current_cluster
+        if cluster is None or not self._running_shard_names(cluster):
+            dlg.show_warning(
+                self.app.root,
+                t("selfhost.lobby_diag_title"),
+                t("selfhost.lobby_diag_needs_server"),
+            )
+            return
+        if not self.lobby_accel.is_healthy():
+            dlg.show_warning(
+                self.app.root,
+                t("selfhost.lobby_diag_title"),
+                t("selfhost.lobby_diag_needs_accel"),
+            )
+            return
+        ssh = app_settings.get_selfhost_ssh_connection()
+        mapped_ports = {
+            int(port)
+            for shard in cluster.shards
+            if (
+                port := app_settings.get_selfhost_frp_mapping(
+                    cluster.path, shard.name
+                )
+            )
+            is not None
+        }
+        if not ssh or not mapped_ports:
+            dlg.show_warning(
+                self.app.root,
+                t("selfhost.lobby_diag_title"),
+                t("selfhost.lobby_diag_needs_mapping"),
+            )
+            return
+        if not self.lobby_accel.mihomo.controller_port:
+            dlg.show_warning(
+                self.app.root,
+                t("selfhost.lobby_diag_title"),
+                t("selfhost.lobby_diag_needs_restart"),
+            )
+            return
+        if not dlg.ask_yes_no(
+            self.app.root,
+            t("selfhost.lobby_diag_title"),
+            t("selfhost.lobby_diag_confirm"),
+        ):
+            return
+        session = LobbyDiagnosticSession(
+            cluster,
+            self.lobby_accel.mihomo,
+            ssh,
+            mapped_ports,
+        )
+        self._diagnostic_session = session
+
+        def _cancel():
+            session.cancel()
+            self._post_to_ui(
+                lambda: progress.append(t("selfhost.lobby_diag_canceling"))
+            )
+
+        progress = ModSyncLogDialog(
+            self.frame,
+            title=t("selfhost.lobby_diag_title"),
+            on_cancel=_cancel,
+            cancel_text=t("selfhost.lobby_diag_stop_btn"),
+            text_width=76,
+        )
+        progress.append(t("selfhost.lobby_diag_preparing"))
+        self._diagnostic_busy = True
+        self._refresh_lobby_accel_row()
+
+        def _on_progress(event, detail):
+            key_by_event = {
+                "remote_ready": "selfhost.lobby_diag_remote_ready",
+                "capture_started": "selfhost.lobby_diag_capture_started",
+                "player_authenticated": "selfhost.lobby_diag_player_authenticated",
+                "mihomo_matched": "selfhost.lobby_diag_mihomo_matched",
+            }
+            if event == "remote_error":
+                line = t("selfhost.lobby_diag_remote_error", detail=detail)
+            else:
+                key = key_by_event.get(event)
+                if key is None:
+                    return
+                line = t(key)
+            self._post_to_ui(lambda value=line: progress.append(value))
+
+        def _worker():
+            try:
+                report = session.run(_on_progress)
+                self._post_to_ui(
+                    lambda value=report: self._finish_lobby_diagnostic(
+                        progress, value
+                    )
+                )
+            except (OSError, ValueError) as exc:
+                self._post_to_ui(
+                    lambda error=exc: self._fail_lobby_diagnostic(progress, error)
+                )
+
+        threading.Thread(
+            target=_worker, name="dstcamp-lobby-diagnostic", daemon=True
+        ).start()
+
+    def _finish_lobby_diagnostic(self, progress, report) -> None:
+        self._diagnostic_busy = False
+        self._diagnostic_session = None
+        evidence = report.evidence
+        remote = evidence.remote
+        route_key = {
+            DiagnosticRoute.FRP: "selfhost.lobby_diag_result_frp",
+            DiagnosticRoute.WIREGUARD: "selfhost.lobby_diag_result_wireguard",
+            DiagnosticRoute.SIGNAL_ONLY: "selfhost.lobby_diag_result_signal_only",
+            DiagnosticRoute.BYPASS: "selfhost.lobby_diag_result_bypass",
+            DiagnosticRoute.INCONCLUSIVE: "selfhost.lobby_diag_result_inconclusive",
+        }[report.route]
+        progress.append("")
+        progress.append(t("selfhost.lobby_diag_result_title"))
+        progress.append(t(route_key))
+        progress.append(
+            t(
+                "selfhost.lobby_diag_evidence_connection",
+                authenticated=t("dlg.yes_btn") if evidence.authenticated else t("dlg.no_btn"),
+                loopback=t("dlg.yes_btn") if evidence.loopback_connection else t("dlg.no_btn"),
+                ports=", ".join(str(port) for port in sorted(evidence.external_ports))
+                or "-",
+            )
+        )
+        progress.append(
+            t(
+                "selfhost.lobby_diag_evidence_frp",
+                packets=remote.frp_packets,
+                bytes=remote.frp_bytes,
+            )
+        )
+        progress.append(
+            t(
+                "selfhost.lobby_diag_evidence_wg",
+                rx=remote.wg_rx_delta,
+                tx=remote.wg_tx_delta,
+                inner=remote.wg_non_stun_bytes,
+                api=evidence.mihomo_wg_non_stun_bytes,
+            )
+        )
+        if remote.error:
+            progress.append(
+                t("selfhost.lobby_diag_remote_error", detail=remote.error)
+            )
+        if evidence.mihomo_api_error and not evidence.mihomo_api_available:
+            progress.append(
+                t(
+                    "selfhost.lobby_diag_mihomo_error",
+                    detail=evidence.mihomo_api_error,
+                )
+            )
+        progress.finish()
+        self._refresh_lobby_accel_row()
+
+    def _fail_lobby_diagnostic(self, progress, error) -> None:
+        self._diagnostic_busy = False
+        self._diagnostic_session = None
+        progress.append(t("selfhost.lobby_diag_failed", detail=str(error)))
+        progress.finish()
+        self._refresh_lobby_accel_row()
+
     def _refresh_lobby_accel_row(self) -> None:
         self._wireguard_deploy_btn.configure(
             state=tk.DISABLED if self._wireguard_deploying else tk.NORMAL
+        )
+        diagnostic_ready = (
+            not self._diagnostic_busy
+            and self._current_cluster is not None
+            and self.lobby_accel.is_healthy()
+        )
+        self._diagnostic_btn.configure(
+            state=tk.NORMAL if diagnostic_ready else tk.DISABLED
         )
         if self._lobby_accel_busy:
             text, color = t("selfhost.lobby_accel_status_starting"), theme.TEXT_MUTED

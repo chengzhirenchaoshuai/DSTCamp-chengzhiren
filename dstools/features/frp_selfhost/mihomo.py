@@ -7,6 +7,8 @@ import hashlib
 import json
 import os
 import queue
+import secrets
+import socket
 import subprocess
 import threading
 import time
@@ -45,7 +47,12 @@ def is_windows_admin() -> bool:
         return False
 
 
-def build_mihomo_config(wireguard: WireGuardClientConfig) -> str:
+def build_mihomo_config(
+    wireguard: WireGuardClientConfig,
+    *,
+    controller_port: int | None = None,
+    controller_secret: str | None = None,
+) -> str:
     """把 DST 专服的 TCP/UDP 都交给 WireGuard，其它进程保持直连。"""
 
     port = int(wireguard.port)
@@ -55,12 +62,26 @@ def build_mihomo_config(wireguard: WireGuardClientConfig) -> str:
         f"  - PROCESS-NAME,{name},DST-WG"
         for name in _SERVER_EXE_NAMES
     ]
-    return "\n".join(
-        [
+    lines = [
             "mode: rule",
             "log-level: info",
             "find-process-mode: always",
             "ipv6: false",
+    ]
+    if controller_port is not None:
+        if not 1 <= int(controller_port) <= 65535:
+            raise ValueError("Mihomo 控制端口必须在 1..65535")
+        if not controller_secret:
+            raise ValueError("Mihomo 控制接口必须设置访问密钥")
+        lines.extend(
+            [
+                f"external-controller: 127.0.0.1:{int(controller_port)}",
+                f"secret: {json.dumps(controller_secret)}",
+            ]
+        )
+    return "\n".join(
+        [
+            *lines,
             "",
             "tun:",
             "  enable: true",
@@ -119,7 +140,15 @@ class MihomoProcess:
         self.error: str | None = None
         self.proc: subprocess.Popen | None = None
         self.config_path: Path | None = None
+        self.controller_port: int | None = None
+        self.controller_secret: str | None = None
         self._out_queue: "queue.Queue[str]" = queue.Queue()
+
+    @staticmethod
+    def _pick_controller_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
 
     def _work_dir(self) -> Path:
         target = cache_dir("lobby_accel_mihomo")
@@ -161,11 +190,20 @@ class MihomoProcess:
             raise MihomoError("Mihomo TUN 需要管理员权限，请以管理员身份运行 DSTCamp")
         self.status = MihomoStatus.STARTING
         self.error = None
+        self.controller_port = self._pick_controller_port()
+        self.controller_secret = secrets.token_urlsafe(32)
         work_dir = self._work_dir()
         config_dir = self._config_dir()
         config_path = config_dir / "config.yaml"
         temporary = config_dir / f".config.{os.getpid()}.tmp"
-        temporary.write_text(build_mihomo_config(wireguard), encoding="utf-8")
+        temporary.write_text(
+            build_mihomo_config(
+                wireguard,
+                controller_port=self.controller_port,
+                controller_secret=self.controller_secret,
+            ),
+            encoding="utf-8",
+        )
         try:
             os.chmod(temporary, 0o600)
         except OSError:
@@ -235,6 +273,8 @@ class MihomoProcess:
         proc = self.proc
         if proc is None:
             self.status = MihomoStatus.STOPPED
+            self.controller_port = None
+            self.controller_secret = None
             return
         self.status = MihomoStatus.STOPPING
         try:
@@ -254,3 +294,5 @@ class MihomoProcess:
             self.proc = None
             self.status = MihomoStatus.STOPPED
             self.error = None
+            self.controller_port = None
+            self.controller_secret = None
