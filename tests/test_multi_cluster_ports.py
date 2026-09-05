@@ -807,6 +807,40 @@ def test_connect_results_return_through_main_thread_poll() -> None:
     ]
 
 
+def test_public_ipv4_falls_back_to_cip_cc_plain_text() -> None:
+    """前两个服务失败时，cip.cc 命令行响应仍能提供严格 IPv4。"""
+    from dstools.features.local_service import tab as local_tab
+
+    calls = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        @staticmethod
+        def read(size):
+            assert size == 256
+            return "IP\t: 203.0.113.42\n地址\t: 中国 广东".encode("utf-8")
+
+    def fake_urlopen(request, *, timeout, context):
+        calls.append((request.full_url, request.get_header("User-agent"), timeout))
+        if request.full_url != "https://cip.cc/":
+            raise local_tab.urllib.error.URLError("不可用")
+        return FakeResponse()
+
+    with patch.object(local_tab.urllib.request, "urlopen", fake_urlopen):
+        assert local_tab.LocalServiceTab._fetch_public_ipv4() == "203.0.113.42"
+
+    assert [call[0] for call in calls] == [
+        source[0] for source in local_tab._PUBLIC_IP_SOURCES
+    ]
+    assert calls[-1][1] == "curl/8.0"
+    assert all(call[2] == 4 for call in calls)
+
+
 def main() -> None:
     tests = [
         test_effective_defaults_and_internal_ports,
@@ -831,6 +865,7 @@ def main() -> None:
         test_connect_code_display_masks_secrets,
         test_local_refresh_redetects_server_tool,
         test_connect_results_return_through_main_thread_poll,
+        test_public_ipv4_falls_back_to_cip_cc_plain_text,
     ]
     for test in tests:
         test()

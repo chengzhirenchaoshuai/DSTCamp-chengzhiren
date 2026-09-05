@@ -110,9 +110,12 @@ _CONSOLE_LOG_BATCH_SIZE = 500
 _CONSOLE_MAX_LINES = 20_000
 _STEAM_REMOTE_BUILD_TTL = 300.0
 _LUAJIT_VCREDIST_DOWNLOAD_URL = "https://wwwu.lanzoub.com/b0nyns22d"
-_PUBLIC_IP_URLS = (
-    "https://myip.ipip.net",
-    "https://cdid.c-ctrip.com/model-poc2/h",
+_PUBLIC_IP_SOURCES = (
+    ("https://myip.ipip.net", "DSTCamp/1.0"),
+    ("https://cdid.c-ctrip.com/model-poc2/h", "DSTCamp/1.0"),
+    # cip.cc 会按 User-Agent 区分网页与命令行响应；使用 curl 标识可直接
+    # 获取短纯文本，避免公网 IP 落在仅读取的前 256 字节之外。
+    ("https://cip.cc/", "curl/8.0"),
 )
 
 _STATUS_KEYS = {
@@ -1545,17 +1548,17 @@ class LocalServiceTab:
     @staticmethod
     def _fetch_public_ipv4() -> str | None:
         """依次查询公网 IPv4 地址；严格拒绝 IPv6 和无效响应。"""
-        for url in _PUBLIC_IP_URLS:
+        for url, user_agent in _PUBLIC_IP_SOURCES:
             try:
                 request = urllib.request.Request(
-                    url, headers={"User-Agent": "DSTCamp/1.0"}
+                    url, headers={"User-Agent": user_agent}
                 )
                 with urllib.request.urlopen(
                     request, timeout=4, context=default_ssl_context()
                 ) as response:
                     body = response.read(256).decode("ascii", errors="ignore")
-                # 两个接口目前返回纯文本；正则同时兼容包裹在 JSON/提示
-                # 文字中的 IPv4，再交给 ipaddress 做严格校验。
+                # 正则同时兼容纯文本以及包裹在 JSON/提示文字中的 IPv4，
+                # 再交给 ipaddress 做严格校验。
                 for candidate in re.findall(
                     r"(?<![\da-fA-F:])(?:\d{1,3}\.){3}\d{1,3}(?![\da-fA-F:])", body
                 ):
