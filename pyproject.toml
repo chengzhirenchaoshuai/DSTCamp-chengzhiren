@@ -13,6 +13,7 @@ dependencies = [
     "Pillow>=10.0",
     "pystray>=0.19",
     "paramiko>=3.4",
+    "cryptography>=41.0",
 ]
 license = {text = "MIT"}
 readme = "README.md"

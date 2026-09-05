@@ -13,11 +13,9 @@ from enum import Enum
 from pathlib import Path
 
 from dstools.features.frp_selfhost.mihomo import MihomoError, MihomoProcess, sha256_file
-from dstools.features.frp_selfhost.remote_deploy import KNOWN_HOSTS_PATH, SSH_KEY_PATH
-from dstools.features.frp_selfhost.ssh_socks import (
-    SshConnectionSpec,
-    SshSocksError,
-    SshSocksGateway,
+from dstools.features.frp_selfhost.wireguard import (
+    WireGuardClientConfig,
+    load_client_private_key,
 )
 from dstools.shared import app_settings
 
@@ -58,11 +56,9 @@ def validate_environment(cluster) -> LobbyAccelCheck:
     server = app_settings.get_selfhost_frp_server()
     if not server:
         return LobbyAccelCheck(False, "尚未配置自建 frps 服务器")
-    ssh = app_settings.get_selfhost_ssh_connection()
-    if not ssh:
-        return LobbyAccelCheck(False, "尚未完成自建 frps 的 SSH 初次鉴权")
-    if not SSH_KEY_PATH.is_file() or not KNOWN_HOSTS_PATH.is_file():
-        return LobbyAccelCheck(False, "SSH 私钥或主机信任记录不存在，请重新完成初次鉴权")
+    wireguard = app_settings.get_lobby_accel_wireguard()
+    if not wireguard or not load_client_private_key():
+        return LobbyAccelCheck(False, "尚未在 VPS 部署大厅加速 WireGuard")
     mihomo_path = app_settings.get_lobby_accel_mihomo_path()
     if not mihomo_path or not Path(mihomo_path).is_file():
         return LobbyAccelCheck(False, "尚未选择有效的 mihomo.exe")
@@ -79,10 +75,9 @@ def validate_environment(cluster) -> LobbyAccelCheck:
 
 
 class LobbyAccelCoordinator:
-    """按 SOCKS → Mihomo 顺序启动，失败时按反序完整清理。"""
+    """启动 Mihomo TUN + WireGuard，并串行处理启动/停止。"""
 
-    def __init__(self, *, socks=None, mihomo=None):
-        self.socks = socks or SshSocksGateway()
+    def __init__(self, *, mihomo=None):
         self.mihomo = mihomo or MihomoProcess()
         self.status = LobbyAccelStatus.STOPPED
         self.error: str | None = None
@@ -90,10 +85,10 @@ class LobbyAccelCoordinator:
         self._operation_lock = threading.Lock()
 
     def is_healthy(self) -> bool:
-        healthy = self.socks.is_healthy() and self.mihomo.is_healthy()
+        healthy = self.mihomo.is_healthy()
         if self.status == LobbyAccelStatus.RUNNING and not healthy:
             self.status = LobbyAccelStatus.CRASHED
-            self.error = self.socks.error or self.mihomo.error or "大厅加速链路已断开"
+            self.error = self.mihomo.error or "大厅加速链路已断开"
         return self.status == LobbyAccelStatus.RUNNING and healthy
 
     def start(self, cluster) -> None:
@@ -117,20 +112,21 @@ class LobbyAccelCoordinator:
             self.status = LobbyAccelStatus.STARTING
             self.error = None
 
-        ssh = app_settings.get_selfhost_ssh_connection()
+        server = app_settings.get_selfhost_frp_server()
+        wireguard = app_settings.get_lobby_accel_wireguard()
+        private_key = load_client_private_key()
+        config = WireGuardClientConfig(
+            server=str(server["host"]),
+            port=int(wireguard["port"]),
+            private_key=private_key,
+            server_public_key=str(wireguard["server_public_key"]),
+        )
         try:
-            # 上次若是 SSH 断线或 Mihomo 崩溃，另一半可能仍留在运
-            # 行状态。先反序收拢再重建，避免复用已失效的 SOCKS 端口。
             if needs_cleanup:
                 self.mihomo.stop()
-                self.socks.stop()
-            socks_port = self.socks.start(
-                SshConnectionSpec(ssh["host"], int(ssh["port"]), ssh["username"])
-            )
-            self.mihomo.start(app_settings.get_lobby_accel_mihomo_path(), socks_port)
-        except (SshSocksError, MihomoError, OSError, ValueError) as exc:
+            self.mihomo.start(app_settings.get_lobby_accel_mihomo_path(), config)
+        except (MihomoError, OSError, ValueError) as exc:
             self.mihomo.stop()
-            self.socks.stop()
             self.status = LobbyAccelStatus.CRASHED
             self.error = str(exc)
             raise LobbyAccelError(self.error) from exc
@@ -146,7 +142,6 @@ class LobbyAccelCoordinator:
                 return
             self.status = LobbyAccelStatus.STOPPING
         self.mihomo.stop()
-        self.socks.stop()
         self.status = LobbyAccelStatus.STOPPED
         self.error = None
 

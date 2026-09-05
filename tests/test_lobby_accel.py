@@ -1,17 +1,17 @@
-"""Mihomo TUN 大厅加速的离线协议与生命周期测试。"""
+"""Mihomo TUN + WireGuard 大厅加速的离线配置与生命周期测试。"""
 
 from __future__ import annotations
 
-import socket
+import base64
 import sys
 import tempfile
-import threading
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from dstools.features.frp_selfhost import wireguard as wireguard_module
 from dstools.features.frp_selfhost.lobby_accel import (
     LobbyAccelCheck,
     LobbyAccelCoordinator,
@@ -23,22 +23,73 @@ from dstools.features.frp_selfhost.mihomo import (
     build_mihomo_config,
     sha256_file,
 )
-from dstools.features.frp_selfhost.ssh_socks import handle_socks5_client
+from dstools.features.frp_selfhost.wireguard import (
+    WireGuardClientConfig,
+    ensure_client_keypair,
+)
+from dstools.features.frp_selfhost.wireguard_deploy import build_install_script
 from dstools.shared import app_settings
 
 
-def test_mihomo_config_is_tcp_only() -> None:
-    config = build_mihomo_config(23456)
-    assert "find-process-mode: always" in config
+PRIVATE_KEY = base64.b64encode(bytes(range(32))).decode("ascii")
+PUBLIC_KEY = base64.b64encode(bytes(reversed(range(32)))).decode("ascii")
+
+
+def _wireguard_config() -> WireGuardClientConfig:
+    return WireGuardClientConfig(
+        server="203.0.113.8",
+        port=51820,
+        private_key=PRIVATE_KEY,
+        server_public_key=PUBLIC_KEY,
+    )
+
+
+def test_mihomo_config_routes_server_tcp_and_udp() -> None:
+    config = build_mihomo_config(_wireguard_config())
+    assert "type: wireguard" in config
+    assert "server: \"203.0.113.8\"" in config
+    assert "udp: true" in config
+    assert "allowed-ips: ['0.0.0.0/0']" in config
     assert "dontstarve_dedicated_server_nullrenderer_x64.exe" in config
     assert "dontstarve_dedicated_server_nullrenderer.exe" in config
-    assert config.count("(NETWORK,TCP)") == 2
-    assert "udp: false" in config
+    assert config.count("PROCESS-NAME") == 2
+    assert "NETWORK,TCP" not in config
     assert "MATCH,DIRECT" in config
-    assert "NETWORK,UDP" not in config
 
 
-def test_mihomo_selection_persists_hash() -> None:
+def test_wireguard_keypair_is_valid_and_stable() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        private_path = root / "private.key"
+        public_path = root / "public.key"
+        with (
+            patch.object(wireguard_module, "_SECURITY_DIR", root),
+            patch.object(wireguard_module, "CLIENT_PRIVATE_KEY_PATH", private_path),
+            patch.object(wireguard_module, "CLIENT_PUBLIC_KEY_PATH", public_path),
+        ):
+            first = ensure_client_keypair()
+            second = ensure_client_keypair()
+        assert first == second
+        assert len(base64.b64decode(first[0], validate=True)) == 32
+        assert len(base64.b64decode(first[1], validate=True)) == 32
+        assert first[0] != first[1]
+
+
+def test_wireguard_install_script_is_scoped_and_idempotent() -> None:
+    script = build_install_script(51820, PUBLIC_KEY)
+    assert "dstcamp-wg" in script
+    assert "10.77.0.0/24" in script
+    assert "net.ipv4.ip_forward=1" in script
+    assert "MASQUERADE" in script
+    assert "systemctl enable --now" in script
+    assert "ROLLBACK_NEEDED=1" in script
+    assert "CURRENT_PORT=" in script
+    assert "apt-get install -y wireguard-tools iptables" in script
+    assert PRIVATE_KEY not in script, "客户端私钥绝不能上传到 VPS"
+    assert PUBLIC_KEY in script
+
+
+def test_mihomo_selection_persists_hash_and_wireguard_metadata() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         executable = root / "mihomo.exe"
@@ -46,10 +97,13 @@ def test_mihomo_selection_persists_hash() -> None:
         digest = sha256_file(executable)
         with patch.object(app_settings, "get_settings_dir", return_value=root):
             app_settings.set_lobby_accel_mihomo_path(executable, digest)
+            app_settings.set_lobby_accel_wireguard(51820, PUBLIC_KEY)
             assert app_settings.get_lobby_accel_mihomo_path() == executable
             assert app_settings.get_lobby_accel_mihomo_sha256() == digest
-            app_settings.set_lobby_accel_enabled(True)
-            assert app_settings.get_lobby_accel_enabled()
+            assert app_settings.get_lobby_accel_wireguard() == {
+                "port": 51820,
+                "server_public_key": PUBLIC_KEY,
+            }
 
 
 def test_all_shards_must_be_mapped() -> None:
@@ -67,58 +121,8 @@ def test_all_shards_must_be_mapped() -> None:
     assert "Caves" in result.detail
 
 
-def test_socks5_connect_and_bidirectional_relay() -> None:
-    client, accepted = socket.socketpair()
-    ssh_channel, remote_peer = socket.socketpair()
-    stop_event = threading.Event()
-    opened = []
-
-    def open_channel(destination, origin):
-        opened.append((destination, origin))
-        return ssh_channel
-
-    worker = threading.Thread(
-        target=handle_socks5_client,
-        args=(accepted, ("127.0.0.1", 54321), open_channel, stop_event),
-        daemon=True,
-    )
-    worker.start()
-    try:
-        client.sendall(b"\x05\x01\x00")
-        assert client.recv(2) == b"\x05\x00"
-        host = b"example.com"
-        client.sendall(
-            b"\x05\x01\x00\x03" + bytes([len(host)]) + host + (443).to_bytes(2, "big")
-        )
-        assert client.recv(10) == b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00"
-        assert opened[0][0] == ("example.com", 443)
-        client.sendall(b"ping")
-        assert remote_peer.recv(4) == b"ping"
-        remote_peer.sendall(b"pong")
-        assert client.recv(4) == b"pong"
-    finally:
-        stop_event.set()
-        client.close()
-        remote_peer.close()
-        accepted.close()
-        worker.join(timeout=2)
-
-
-def test_coordinator_rolls_back_in_reverse_order() -> None:
+def test_coordinator_passes_wireguard_config_and_rolls_back() -> None:
     events = []
-
-    class FakeSocks:
-        error = None
-
-        def is_healthy(self):
-            return False
-
-        def start(self, _spec):
-            events.append("socks-start")
-            return 23456
-
-        def stop(self):
-            events.append("socks-stop")
 
     class FakeMihomo:
         error = None
@@ -126,14 +130,14 @@ def test_coordinator_rolls_back_in_reverse_order() -> None:
         def is_healthy(self):
             return False
 
-        def start(self, _path, _port):
-            events.append("mihomo-start")
+        def start(self, path, config):
+            events.append(("start", path, config))
             raise MihomoError("boom")
 
         def stop(self):
-            events.append("mihomo-stop")
+            events.append(("stop",))
 
-    coordinator = LobbyAccelCoordinator(socks=FakeSocks(), mihomo=FakeMihomo())
+    coordinator = LobbyAccelCoordinator(mihomo=FakeMihomo())
     cluster = SimpleNamespace(path=Path("Cluster_1"), shards=[])
     with (
         patch(
@@ -142,13 +146,22 @@ def test_coordinator_rolls_back_in_reverse_order() -> None:
         ),
         patch.object(
             app_settings,
-            "get_selfhost_ssh_connection",
-            return_value={"host": "vps.example", "port": 22, "username": "root"},
+            "get_selfhost_frp_server",
+            return_value={"host": "vps.example"},
+        ),
+        patch.object(
+            app_settings,
+            "get_lobby_accel_wireguard",
+            return_value={"port": 51820, "server_public_key": PUBLIC_KEY},
         ),
         patch.object(
             app_settings,
             "get_lobby_accel_mihomo_path",
             return_value=Path("mihomo.exe"),
+        ),
+        patch(
+            "dstools.features.frp_selfhost.lobby_accel.load_client_private_key",
+            return_value=PRIVATE_KEY,
         ),
     ):
         try:
@@ -157,16 +170,20 @@ def test_coordinator_rolls_back_in_reverse_order() -> None:
             pass
         else:
             raise AssertionError("Mihomo 启动失败时必须上抛")
-    assert events == ["socks-start", "mihomo-start", "mihomo-stop", "socks-stop"]
+    assert events[0][0] == "start"
+    assert events[0][2].server == "vps.example"
+    assert events[0][2].private_key == PRIVATE_KEY
+    assert events[-1] == ("stop",)
 
 
 def main() -> int:
     tests = [
-        test_mihomo_config_is_tcp_only,
-        test_mihomo_selection_persists_hash,
+        test_mihomo_config_routes_server_tcp_and_udp,
+        test_wireguard_keypair_is_valid_and_stable,
+        test_wireguard_install_script_is_scoped_and_idempotent,
+        test_mihomo_selection_persists_hash_and_wireguard_metadata,
         test_all_shards_must_be_mapped,
-        test_socks5_connect_and_bidirectional_relay,
-        test_coordinator_rolls_back_in_reverse_order,
+        test_coordinator_passes_wireguard_config_and_rolls_back,
     ]
     for test in tests:
         test()

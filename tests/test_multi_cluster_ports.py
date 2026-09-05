@@ -710,7 +710,9 @@ def test_restart_prepares_legacy_after_stop() -> None:
 
         with patch.object(
             local_tab.luajit_injector, "needs_regeneration", return_value=False
-        ), patch.object(local_tab, "resolve_conf_dir_arg", return_value=None):
+        ), patch.object(
+            local_tab, "resolve_conf_dir_arg", return_value=None
+        ), patch.object(local_tab, "get_lobby_accel_enabled", return_value=False):
             service._restart_shards(cluster, [shard])
 
         assert events == [

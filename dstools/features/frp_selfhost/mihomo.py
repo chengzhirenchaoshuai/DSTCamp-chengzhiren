@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import json
 import os
 import queue
 import subprocess
@@ -12,7 +13,8 @@ import time
 from enum import Enum
 from pathlib import Path
 
-from dstools.shared.resource_paths import cache_dir
+from dstools.features.frp_selfhost.wireguard import WireGuardClientConfig
+from dstools.shared.resource_paths import cache_dir, security_dir
 
 
 _SUBPROCESS_FLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -43,14 +45,14 @@ def is_windows_admin() -> bool:
         return False
 
 
-def build_mihomo_config(socks_port: int) -> str:
-    """只代理 DST 专服 TCP；所有 UDP 与其它进程保持直连。"""
+def build_mihomo_config(wireguard: WireGuardClientConfig) -> str:
+    """把 DST 专服的 TCP/UDP 都交给 WireGuard，其它进程保持直连。"""
 
-    port = int(socks_port)
+    port = int(wireguard.port)
     if not 1 <= port <= 65535:
-        raise ValueError("SOCKS 端口必须在 1..65535")
+        raise ValueError("WireGuard 端口必须在 1..65535")
     rules = [
-        f"  - AND,((PROCESS-NAME,{name}),(NETWORK,TCP)),DST-SSH"
+        f"  - PROCESS-NAME,{name},DST-WG"
         for name in _SERVER_EXE_NAMES
     ]
     return "\n".join(
@@ -69,11 +71,17 @@ def build_mihomo_config(socks_port: int) -> str:
             "  device: DSTCampMihomo",
             "",
             "proxies:",
-            "  - name: DST-SSH",
-            "    type: socks5",
-            "    server: 127.0.0.1",
+            "  - name: DST-WG",
+            "    type: wireguard",
+            f"    server: {json.dumps(wireguard.server)}",
             f"    port: {port}",
-            "    udp: false",
+            f"    ip: {wireguard.address}",
+            f"    private-key: {wireguard.private_key}",
+            f"    public-key: {wireguard.server_public_key}",
+            "    allowed-ips: ['0.0.0.0/0']",
+            "    persistent-keepalive: 25",
+            f"    mtu: {int(wireguard.mtu)}",
+            "    udp: true",
             "",
             "rules:",
             *rules,
@@ -118,6 +126,11 @@ class MihomoProcess:
         target.mkdir(parents=True, exist_ok=True)
         return target
 
+    def _config_dir(self) -> Path:
+        target = security_dir("lobby_accel_mihomo")
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
     def _validate_config(self, executable: Path, config_path: Path) -> None:
         completed = subprocess.run(
             [str(executable), "-t", "-f", str(config_path)],
@@ -136,7 +149,11 @@ class MihomoProcess:
             detail = completed.stdout.strip()[-1200:]
             raise MihomoError(f"Mihomo 配置检查失败：{detail or completed.returncode}")
 
-    def start(self, executable_path: str | Path, socks_port: int) -> None:
+    def start(
+        self,
+        executable_path: str | Path,
+        wireguard: WireGuardClientConfig,
+    ) -> None:
         if self.status == MihomoStatus.RUNNING and self.poll_exit_code() is None:
             return
         executable = validate_mihomo_executable(executable_path)
@@ -145,9 +162,14 @@ class MihomoProcess:
         self.status = MihomoStatus.STARTING
         self.error = None
         work_dir = self._work_dir()
-        config_path = work_dir / "config.yaml"
-        temporary = work_dir / f".config.{os.getpid()}.tmp"
-        temporary.write_text(build_mihomo_config(socks_port), encoding="utf-8")
+        config_dir = self._config_dir()
+        config_path = config_dir / "config.yaml"
+        temporary = config_dir / f".config.{os.getpid()}.tmp"
+        temporary.write_text(build_mihomo_config(wireguard), encoding="utf-8")
+        try:
+            os.chmod(temporary, 0o600)
+        except OSError:
+            pass
         os.replace(temporary, config_path)
         self.config_path = config_path
         try:

@@ -17,7 +17,13 @@ from dstools.shared import app_settings
 from dstools.features.cluster_config.config_manager import (
     get_cluster_option, load_cluster_config, load_shard_config, save_shard_config, set_shard_option,
 )
-from dstools.features.frp_selfhost import connectivity, deploy, probe, remote_deploy
+from dstools.features.frp_selfhost import (
+    connectivity,
+    deploy,
+    probe,
+    remote_deploy,
+    wireguard_deploy,
+)
 from dstools.features.frp_selfhost.client import FrpcManager, FrpcStatus, build_frpc_toml
 from dstools.features.frp_selfhost.lobby_accel import (
     LobbyAccelCoordinator,
@@ -25,6 +31,10 @@ from dstools.features.frp_selfhost.lobby_accel import (
     LobbyAccelStatus,
 )
 from dstools.features.frp_selfhost.mihomo import MihomoError, sha256_file
+from dstools.features.frp_selfhost.wireguard import (
+    DEFAULT_WIREGUARD_PORT,
+    ensure_client_keypair,
+)
 from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.resource_paths import data_dir, runtime_tool_path
 from dstools.shared.gui import theme, themed_dialog as dlg
@@ -228,6 +238,7 @@ class SelfHostFrpPage:
         self.frpc = FrpcManager()
         self.lobby_accel = LobbyAccelCoordinator()
         self._lobby_accel_busy = False
+        self._wireguard_deploying = False
         self._current_cluster = None
         self._any_mapped = False
 
@@ -343,6 +354,22 @@ class SelfHostFrpPage:
             command=self._select_mihomo,
         )
         self._mihomo_btn.pack(side=tk.LEFT)
+        saved_wireguard = app_settings.get_lobby_accel_wireguard() or {}
+        self._wireguard_port_var = tk.StringVar(
+            value=str(saved_wireguard.get("port", DEFAULT_WIREGUARD_PORT))
+        )
+        self._wireguard_port_entry = ttk.Entry(
+            self._lobby_accel_row,
+            textvariable=self._wireguard_port_var,
+            width=7,
+        )
+        self._wireguard_port_entry.pack(side=tk.LEFT, padx=(8, 2))
+        self._wireguard_deploy_btn = ttk.Button(
+            self._lobby_accel_row,
+            text=t("selfhost.lobby_accel_deploy_wireguard"),
+            command=self._deploy_wireguard,
+        )
+        self._wireguard_deploy_btn.pack(side=tk.LEFT)
         self._lobby_accel_status_label = self._label(
             self._lobby_accel_row, t("selfhost.lobby_accel_status_stopped")
         )
@@ -493,6 +520,86 @@ class SelfHostFrpPage:
         app_settings.set_lobby_accel_mihomo_path(picked, digest)
         self._refresh_lobby_accel_row()
 
+    def _deploy_wireguard(self) -> None:
+        if self._wireguard_deploying:
+            return
+        if self.app.local_tab.manager.running():
+            dlg.show_warning(
+                self.app.root,
+                t("selfhost.lobby_accel_label"),
+                t("selfhost.lobby_accel_disable_running"),
+            )
+            return
+        server = app_settings.get_selfhost_frp_server()
+        ssh = app_settings.get_selfhost_ssh_connection()
+        if not server or not ssh or not self._is_authenticated():
+            dlg.show_warning(
+                self.app.root,
+                t("selfhost.lobby_accel_label"),
+                t("selfhost.lobby_accel_needs_auth"),
+            )
+            return
+        port = self._validated_port(self._wireguard_port_var.get().strip())
+        if port is None:
+            dlg.show_warning(
+                self.app.root,
+                t("selfhost.lobby_accel_label"),
+                t("selfhost.invalid_port"),
+            )
+            return
+        if not dlg.ask_yes_no(
+            self.app.root,
+            t("selfhost.lobby_accel_deploy_wireguard"),
+            t("selfhost.lobby_accel_deploy_confirm", port=port),
+        ):
+            return
+        try:
+            _private_key, client_public_key = ensure_client_keypair()
+        except (OSError, ValueError) as exc:
+            dlg.show_error(self.app.root, t("selfhost.lobby_accel_label"), str(exc))
+            return
+        progress = ModSyncLogDialog(
+            self.frame, title=t("selfhost.lobby_accel_deploy_wireguard")
+        )
+        self._wireguard_deploying = True
+        self._refresh_lobby_accel_row()
+
+        def _on_log(line):
+            self._post_to_ui(lambda value=line: progress.append(value))
+
+        def _worker():
+            try:
+                public_key = wireguard_deploy.deploy_wireguard_via_ssh(
+                    ssh["host"],
+                    int(ssh["port"]),
+                    ssh["username"],
+                    port,
+                    client_public_key,
+                    _on_log,
+                )
+                app_settings.set_lobby_accel_wireguard(port, public_key)
+                self._post_to_ui(lambda: self._on_wireguard_deploy_done(progress))
+            except (remote_deploy.RemoteDeployError, OSError, ValueError) as exc:
+                self._post_to_ui(
+                    lambda error=exc: self._on_wireguard_deploy_error(progress, error)
+                )
+
+        threading.Thread(
+            target=_worker, name="dstcamp-wireguard-deploy", daemon=True
+        ).start()
+
+    def _on_wireguard_deploy_done(self, progress) -> None:
+        self._wireguard_deploying = False
+        progress.append(t("selfhost.lobby_accel_deploy_done"))
+        progress.finish()
+        self._refresh_lobby_accel_row()
+
+    def _on_wireguard_deploy_error(self, progress, error) -> None:
+        self._wireguard_deploying = False
+        progress.append(t("selfhost.lobby_accel_deploy_failed", detail=str(error)))
+        progress.finish()
+        self._refresh_lobby_accel_row()
+
     def _on_lobby_accel_toggle(self) -> None:
         enabled = bool(self._lobby_accel_var.get())
         if self.app.local_tab.manager.running():
@@ -509,6 +616,9 @@ class SelfHostFrpPage:
         self._refresh_lobby_accel_row()
 
     def _refresh_lobby_accel_row(self) -> None:
+        self._wireguard_deploy_btn.configure(
+            state=tk.DISABLED if self._wireguard_deploying else tk.NORMAL
+        )
         if self._lobby_accel_busy:
             text, color = t("selfhost.lobby_accel_status_starting"), theme.TEXT_MUTED
         elif self.lobby_accel.is_healthy():
@@ -517,10 +627,12 @@ class SelfHostFrpPage:
             text, color = t("selfhost.lobby_accel_status_failed"), theme.ERROR
         elif not app_settings.get_lobby_accel_enabled():
             text, color = t("selfhost.lobby_accel_status_stopped"), theme.TEXT_MUTED
+        elif not app_settings.get_lobby_accel_mihomo_path():
+            text, color = t("selfhost.lobby_accel_status_no_mihomo"), theme.TEXT_MUTED
+        elif not app_settings.get_lobby_accel_wireguard():
+            text, color = t("selfhost.lobby_accel_status_no_wireguard"), theme.TEXT_MUTED
         elif app_settings.get_lobby_accel_mihomo_path():
             text, color = t("selfhost.lobby_accel_status_ready"), theme.TEXT_MUTED
-        else:
-            text, color = t("selfhost.lobby_accel_status_no_mihomo"), theme.TEXT_MUTED
         font = tkfont.nametofont("TkDefaultFont")
         self._lobby_accel_status_label.configure(width=font.measure(text) + 4)
         self._lobby_accel_status_label.itemconfig(

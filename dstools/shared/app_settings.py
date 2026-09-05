@@ -38,6 +38,8 @@ _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
 _KEY_LOBBY_ACCEL_ENABLED = "lobby_accel_enabled"
 _KEY_LOBBY_ACCEL_MIHOMO_PATH = "lobby_accel_mihomo_path"
 _KEY_LOBBY_ACCEL_MIHOMO_SHA256 = "lobby_accel_mihomo_sha256"
+_KEY_LOBBY_ACCEL_WG_PORT = "lobby_accel_wireguard_port"
+_KEY_LOBBY_ACCEL_WG_SERVER_PUBLIC_KEY = "lobby_accel_wireguard_server_public_key"
 _KEY_GLOBAL_TOKENS = "global_tokens"
 _KEY_TOKEN_HOLDS = "token_holds"
 _KEY_MOD_PRESETS = "mod_presets"
@@ -490,6 +492,30 @@ def set_lobby_accel_mihomo_path(path: Path | None, sha256: str | None = None) ->
             data[_KEY_LOBBY_ACCEL_MIHOMO_SHA256] = str(sha256).lower()
         else:
             data.pop(_KEY_LOBBY_ACCEL_MIHOMO_SHA256, None)
+    save_settings(data)
+
+
+def get_lobby_accel_wireguard() -> dict | None:
+    data = load_settings()
+    public_key = data.get(_KEY_LOBBY_ACCEL_WG_SERVER_PUBLIC_KEY)
+    if not public_key:
+        return None
+    try:
+        port = int(data.get(_KEY_LOBBY_ACCEL_WG_PORT, 51820))
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= port <= 65535:
+        return None
+    return {"port": port, "server_public_key": str(public_key)}
+
+
+def set_lobby_accel_wireguard(port: int, server_public_key: str) -> None:
+    port = int(port)
+    if not 1 <= port <= 65535:
+        raise ValueError("WireGuard 端口必须在 1..65535")
+    data = load_settings()
+    data[_KEY_LOBBY_ACCEL_WG_PORT] = port
+    data[_KEY_LOBBY_ACCEL_WG_SERVER_PUBLIC_KEY] = server_public_key.strip()
     save_settings(data)
 
 
