@@ -1047,25 +1047,33 @@ class _ConsolePane:
                 self.text.see(tk.END)
             self.text.configure(state=tk.DISABLED)
 
+        expected_shutdown = getattr(self.proc, "intentional_shutdown", False)
         token_conflict_now = (
-            not self._diagnostic_reported
+            not expected_shutdown
+            and not self._diagnostic_reported
             and contains_token_conflict(lines)
         )
         runtime_lua_error_now = (
-            self.proc.world_ready
+            not expected_shutdown
+            and self.proc.world_ready
             and not self._diagnostic_reported
             and contains_runtime_lua_error(lines)
         )
         startup_failed_now = (
-            not self.proc.world_ready
+            not expected_shutdown
+            and not self.proc.world_ready
             and not self._diagnostic_reported
             and contains_startup_failure(lines)
         )
+        # 用户可直接在控制台输入 c_shutdown()。send_command() 已将其标为
+        # STOPPING，这里在进程真正退出后收口到 STOPPED；否则状态会永远停
+        # 在“正在停止”。预期关闭不会进入下面的崩溃诊断路径。
+        exit_code = self.proc.sync_expected_exit()
         status = self.proc.status
         crashed_now = False
         if (
             status in (ServerStatus.STARTING, ServerStatus.RUNNING)
-            and self.proc.poll_exit_code() is not None
+            and exit_code is not None
         ):
             self.proc.status = ServerStatus.CRASHED
             status = ServerStatus.CRASHED
@@ -1079,7 +1087,7 @@ class _ConsolePane:
             self._diagnostic_reported = True
             report = diagnose_server_failure(
                 shard_name=getattr(self.proc, "shard_name", "当前世界"),
-                exit_code=self.proc.poll_exit_code(),
+                exit_code=exit_code,
                 world_ready=self.proc.world_ready,
                 log_lines=self._diagnostic_log_lines(),
                 enabled_mods=self.proc.mods_enabled,

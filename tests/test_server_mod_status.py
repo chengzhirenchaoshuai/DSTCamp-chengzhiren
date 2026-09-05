@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from dstools.features.local_service.dedicated_server import (  # noqa: E402
     ServerProcess,
+    ServerStatus,
     advance_world_ready_marker,
 )
 
@@ -151,6 +152,84 @@ def test_console_log_reads_are_bounded_during_error_storm() -> None:
     assert process.read_available_lines(max_lines=500) == []
 
 
+def test_console_shutdown_command_is_an_expected_exit() -> None:
+    class _FakeStdin:
+        closed = False
+
+        def __init__(self) -> None:
+            self.writes = []
+
+        def write(self, text: str) -> None:
+            self.writes.append(text)
+
+        def flush(self) -> None:
+            pass
+
+    class _FakeProc:
+        def __init__(self) -> None:
+            self.stdin = _FakeStdin()
+            self.exit_code = None
+
+        def poll(self):
+            return self.exit_code
+
+    process = ServerProcess.__new__(ServerProcess)
+    process.proc = _FakeProc()
+    process.status = ServerStatus.RUNNING
+    process.intentional_shutdown = False
+
+    assert process.send_command(" c_shutdown(1); ") is True
+    assert process.proc.stdin.writes == [" c_shutdown(1); \n"]
+    assert process.intentional_shutdown is True
+    assert process.status == ServerStatus.STOPPING
+    assert process.sync_expected_exit() is None
+    assert process.status == ServerStatus.STOPPING
+
+    process.proc.exit_code = 0
+    assert process.sync_expected_exit() == 0
+    assert process.status == ServerStatus.STOPPED
+
+
+def test_shutdown_text_inside_other_command_does_not_hide_crash() -> None:
+    class _FakeStdin:
+        closed = False
+
+        def write(self, _text: str) -> None:
+            pass
+
+        def flush(self) -> None:
+            pass
+
+    process = ServerProcess.__new__(ServerProcess)
+    process.proc = type("_FakeProc", (), {"stdin": _FakeStdin()})()
+    process.status = ServerStatus.RUNNING
+    process.intentional_shutdown = False
+
+    assert process.send_command('c_announce("c_shutdown()")') is True
+    assert process.intentional_shutdown is False
+    assert process.status == ServerStatus.RUNNING
+
+
+def test_stop_blocking_prefers_shutdown_command_over_force() -> None:
+    process = ServerProcess.__new__(ServerProcess)
+    process.status = ServerStatus.RUNNING
+    calls = []
+
+    def _request_shutdown() -> bool:
+        calls.append("shutdown")
+        return True
+
+    process.request_shutdown = _request_shutdown
+    process.poll_exit_code = lambda: 0
+    process.terminate = lambda: calls.append("terminate")
+    process.kill = lambda: calls.append("kill")
+
+    process.stop_blocking(graceful_timeout=0.01, term_timeout=0.01)
+
+    assert calls == ["shutdown"]
+    assert process.status == ServerStatus.STOPPED
+
+
 def main() -> None:
     tests = (
         test_luajit_companion_is_checked_but_not_counted,
@@ -158,6 +237,9 @@ def main() -> None:
         test_presentation_waits_until_ready_line_is_consumed,
         test_mod_syntax_error_is_failed_but_world_can_be_ready,
         test_console_log_reads_are_bounded_during_error_storm,
+        test_console_shutdown_command_is_an_expected_exit,
+        test_shutdown_text_inside_other_command_does_not_hide_crash,
+        test_stop_blocking_prefers_shutdown_command_over_force,
     )
     for test in tests:
         test()

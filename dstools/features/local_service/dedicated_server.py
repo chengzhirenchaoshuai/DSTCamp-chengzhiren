@@ -243,6 +243,11 @@ _MOD_LOADING_RE = re.compile(r"loading mod:\s*(\S+)\s*\(", re.IGNORECASE)
 _MOD_REGISTER_RE = re.compile(r"Registering Mod\s+(\S+)", re.IGNORECASE)
 _MOD_CONTEXT_RE = re.compile(r"Mod:\s+(\S+)\s+\(", re.IGNORECASE)
 _MOD_DISABLED_RE = re.compile(r"Disabling\s+(\S+)(?:\s+\([^)]*\))?\s+because it had an error", re.IGNORECASE)
+# c_shutdown 的参数在实际用法中会出现空参数、布尔值或 0/1。只识别完整
+# 命令，避免聊天/公告文字里恰好包含这段文本时把进程误标为正在停止。
+_SHUTDOWN_COMMAND_RE = re.compile(
+    r"^\s*c_shutdown\s*\(\s*(?:(?:true|false|[01])\s*)?\)\s*;?\s*$"
+)
 
 
 class ServerProcess:
@@ -267,6 +272,10 @@ class ServerProcess:
         # 层判断（_any_running_for_bin64() 之类）依据的安装根目录。
         self.bin64_override = bin64_override
         self.status = ServerStatus.STARTING
+        # 只要用户或界面明确请求过关服，退出及随后到达的尾部日志都不应
+        # 再触发崩溃诊断。不能只看 STOPPING：进程退出后状态会变 STOPPED，
+        # stdout 读取线程仍可能晚一轮把最后几行送进界面队列。
+        self.intentional_shutdown = False
         self.world_ready = False
         self.proc: subprocess.Popen | None = None
         self._out_queue: "queue.Queue[str]" = queue.Queue()
@@ -391,6 +400,12 @@ class ServerProcess:
         try:
             self.proc.stdin.write(text + "\n")
             self.proc.stdin.flush()
+            # 用户在控制台手动输入 c_shutdown() 与界面“停止”语义相同：
+            # 进程接下来退出属于预期关闭，不能被轮询器归类为崩溃并弹诊断。
+            # 必须等写入成功后再改状态，否则管道已断时会把真实异常隐藏掉。
+            if _SHUTDOWN_COMMAND_RE.fullmatch(text):
+                self.intentional_shutdown = True
+                self.status = ServerStatus.STOPPING
             return True
         except (OSError, ValueError):
             return False
@@ -400,6 +415,17 @@ class ServerProcess:
 
     def poll_exit_code(self) -> int | None:
         return self.proc.poll() if self.proc else None
+
+    def sync_expected_exit(self) -> int | None:
+        """同步预期关服的最终状态，并返回当前退出码。
+
+        界面按钮由 stop_blocking() 等待并置为 STOPPED；用户直接在控制台
+        输入 c_shutdown() 没有等待线程，只能由控制台轮询在进程退出后收口。
+        """
+        exit_code = self.poll_exit_code()
+        if exit_code is not None and self.status == ServerStatus.STOPPING:
+            self.status = ServerStatus.STOPPED
+        return exit_code
 
     def terminate(self) -> None:
         if self.proc:
@@ -415,17 +441,21 @@ class ServerProcess:
             except OSError:
                 pass
 
-    def stop_blocking(self, graceful_timeout: float = 5.0, term_timeout: float = 5.0) -> None:
+    def stop_blocking(self, graceful_timeout: float = 30.0, term_timeout: float = 5.0) -> None:
         """依次尝试优雅关服(c_shutdown)->terminate->kill，会阻塞调用方所在线程
         直到进程退出，调用方必须放到后台线程跑，不要在 Tk 主线程直接调用。"""
+        self.intentional_shutdown = True
         self.status = ServerStatus.STOPPING
-        self.request_shutdown()
-        deadline = time.monotonic() + graceful_timeout
-        while time.monotonic() < deadline:
-            if self.poll_exit_code() is not None:
-                self.status = ServerStatus.STOPPED
-                return
-            time.sleep(0.2)
+        if self.request_shutdown():
+            # c_shutdown() 会保存世界再退出。大型/多 Mod 存档可能明显超过
+            # 旧的 5 秒，给每个分片 30 秒；stop_all() 会并行等待所有分片，
+            # 不会按世界数量线性叠加等待时间。
+            deadline = time.monotonic() + graceful_timeout
+            while time.monotonic() < deadline:
+                if self.poll_exit_code() is not None:
+                    self.status = ServerStatus.STOPPED
+                    return
+                time.sleep(0.2)
         self.terminate()
         deadline = time.monotonic() + term_timeout
         while time.monotonic() < deadline:
