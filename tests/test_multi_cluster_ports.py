@@ -13,11 +13,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from dstools.models import Cluster, Shard
 from dstools.shared.server_ports import (
     DEFAULT_MASTER_PORT,
+    LAN_SERVER_PORT_FALLBACK,
+    LAN_SERVER_PORT_MAX,
+    LAN_SERVER_PORT_MIN,
     allocate_cluster_port_values,
+    allocate_lan_server_ports,
     collect_cluster_port_claims,
     find_port_conflicts,
     next_free_port,
     rewrite_cluster_ports_atomic,
+    rewrite_lan_server_ports_atomic,
     stable_path_key,
     UdpPortScan,
 )
@@ -26,10 +31,13 @@ from dstools.shared.server_ports import (
 def _write_cluster(root: Path, name: str, *, master_port: int = 10888,
                    master_server_port: int | None = None,
                    master_auth_port: int | None = None,
-                   caves: bool = True) -> Cluster:
+                   caves: bool = True, lan_only: bool = False,
+                   master_game_port: int = 10999,
+                   caves_game_port: int = 10998) -> Cluster:
     path = root / name
     path.mkdir()
     (path / "cluster.ini").write_text(
+        f"[NETWORK]\nlan_only_cluster={str(lan_only).lower()}\n\n"
         "[SHARD]\nshard_enabled=true\n"
         f"master_port={master_port}\nbind_ip=127.0.0.1\n",
         encoding="utf-8",
@@ -44,7 +52,7 @@ def _write_cluster(root: Path, name: str, *, master_port: int = 10888,
         if master_auth_port is not None:
             steam += f"authentication_port={master_auth_port}\n"
     (master / "server.ini").write_text(
-        "[NETWORK]\nserver_port=10999\n\n[SHARD]\nis_master=true\n" + steam,
+        f"[NETWORK]\nserver_port={master_game_port}\n\n[SHARD]\nis_master=true\n" + steam,
         encoding="utf-8",
     )
     shards = [Shard("Master", master)]
@@ -52,7 +60,7 @@ def _write_cluster(root: Path, name: str, *, master_port: int = 10888,
         cave = path / "Caves"
         cave.mkdir()
         (cave / "server.ini").write_text(
-            "[NETWORK]\nserver_port=10998\n\n[SHARD]\nis_master=false\n"
+            f"[NETWORK]\nserver_port={caves_game_port}\n\n[SHARD]\nis_master=false\n"
             "name=Caves\n\n[STEAM]\nmaster_server_port=27017\n"
             "authentication_port=8767\n",
             encoding="utf-8",
@@ -133,6 +141,45 @@ def test_shard_override_and_invalid_values() -> None:
         assert master.port == 12001, "server.ini 的分片覆盖值应优先于 cluster.ini"
 
 
+def test_lan_only_effective_ports_and_ranges() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        cluster = _write_cluster(
+            root, "LAN_Invalid", lan_only=True,
+            master_game_port=10002, caves_game_port=10001,
+        )
+        claims, issues = collect_cluster_port_claims(cluster)
+        lan_issues = [issue for issue in issues if issue.code == "lan_server_port_range"]
+        assert len(lan_issues) == 2
+        fallback_claims = [
+            claim for claim in claims if claim.field == "server_port"
+        ]
+        assert all(claim.port == LAN_SERVER_PORT_FALLBACK for claim in fallback_claims)
+        assert all(claim.source == "lan_fallback" for claim in fallback_claims)
+        assert any(
+            conflict.port == LAN_SERVER_PORT_FALLBACK
+            for conflict in find_port_conflicts(claims)
+        ), "应按游戏实际回退后的 10999 识别冲突"
+
+        valid = _write_cluster(
+            root, "LAN_Valid", lan_only=True,
+            master_game_port=LAN_SERVER_PORT_MAX,
+            caves_game_port=LAN_SERVER_PORT_MIN,
+        )
+        _, valid_issues = collect_cluster_port_claims(valid)
+        assert not valid_issues
+
+        ordinary = _write_cluster(
+            root, "Ordinary", lan_only=False,
+            master_game_port=10002, caves_game_port=10001,
+        )
+        ordinary_claims, ordinary_issues = collect_cluster_port_claims(ordinary)
+        assert not ordinary_issues
+        assert {claim.port for claim in ordinary_claims if claim.field == "server_port"} == {
+            10001, 10002,
+        }
+
+
 def test_helpers() -> None:
     assert next_free_port(100, {100, 101, 103}) == 102
     assert stable_path_key(Path("C:/root-a/Cluster_1")) != stable_path_key(Path("D:/root-b/Cluster_1"))
@@ -142,6 +189,24 @@ def test_helpers() -> None:
     values = [master_port] + [value for ports in shards.values() for value in ports.values()]
     assert len(values) == len(set(values))
     assert not set(values) & {10888, 10998, 10999, 27016, 27017, 8766, 8767}
+    lan_ports = allocate_lan_server_ports(
+        ["Master", "Caves", "Hamlet"], {LAN_SERVER_PORT_MIN},
+    )
+    assert lan_ports["Master"] == LAN_SERVER_PORT_FALLBACK
+    assert len(set(lan_ports.values())) == 3
+    assert all(
+        LAN_SERVER_PORT_MIN <= port <= LAN_SERVER_PORT_MAX
+        for port in lan_ports.values()
+    )
+    try:
+        allocate_lan_server_ports(
+            ["Master", "Caves"],
+            range(LAN_SERVER_PORT_MIN, LAN_SERVER_PORT_MAX + 1),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("LAN 端口耗尽时必须失败，不能分配到 11018 以上")
     from dstools.features.sakura.api import sanitize_tunnel_name, find_dstcamp_tunnel
     old_name = sanitize_tunnel_name("Cluster_1", "Master", "server", "steam")
     new_a = sanitize_tunnel_name(
@@ -171,6 +236,74 @@ def test_atomic_port_rewrite() -> None:
         }
         assert actual == expected
         assert not find_port_conflicts(claims)
+
+
+def test_atomic_lan_port_rewrite_is_focused() -> None:
+    from dstools.shared.ini_parser import parse_cluster_ini, parse_server_ini
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(
+            Path(tmp), "Cluster_A", lan_only=True,
+            master_game_port=10002, caves_game_port=10001,
+            master_server_port=27020, master_auth_port=8770,
+        )
+        before_cluster = parse_cluster_ini(cluster.path / "cluster.ini")
+        before_shards = {
+            shard.name: parse_server_ini(shard.path / "server.ini")
+            for shard in cluster.shards
+        }
+        values = rewrite_lan_server_ports_atomic(
+            cluster, {LAN_SERVER_PORT_MIN}, create_backup=False,
+        )
+        assert values["Master"] == LAN_SERVER_PORT_FALLBACK
+        assert len(set(values.values())) == len(cluster.shards)
+        after_cluster = parse_cluster_ini(cluster.path / "cluster.ini")
+        assert after_cluster == before_cluster, "LAN 专项修复不应改写 cluster.ini"
+        for shard in cluster.shards:
+            after = parse_server_ini(shard.path / "server.ini")
+            before = before_shards[shard.name]
+            assert after.network["server_port"] == values[shard.name]
+            assert after.steam == before.steam
+            assert after.shard == before.shard
+
+
+def test_atomic_lan_port_rewrite_rolls_back() -> None:
+    from dstools.features.cluster_config.config_manager import load_cluster_config
+    from dstools.shared import server_ports
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(
+            Path(tmp), "Cluster_A", lan_only=False,
+            master_game_port=10002, caves_game_port=10001,
+        )
+        proposed = load_cluster_config(cluster.path)
+        proposed.network["lan_only_cluster"] = True
+        targets = [cluster.path / "cluster.ini"] + [
+            shard.path / "server.ini" for shard in cluster.shards
+        ]
+        originals = {path: path.read_bytes() for path in targets}
+        real_replace = server_ports.os.replace
+        temp_replaces = 0
+
+        def fail_second_temp_replace(source, target):
+            nonlocal temp_replaces
+            if str(source).endswith(".tmp"):
+                temp_replaces += 1
+                if temp_replaces == 2:
+                    raise OSError("simulated replace failure")
+            return real_replace(source, target)
+
+        with patch.object(server_ports.os, "replace", side_effect=fail_second_temp_replace):
+            try:
+                rewrite_lan_server_ports_atomic(
+                    cluster, set(), create_backup=False,
+                    cluster_config_override=proposed,
+                )
+            except OSError:
+                pass
+            else:
+                raise AssertionError("部分替换失败时必须向调用方报告")
+        assert all(path.read_bytes() == originals[path] for path in targets)
 
 
 def test_local_service_batch_preflight() -> None:
@@ -233,6 +366,97 @@ def test_local_service_batch_preflight() -> None:
         finally:
             local_tab.scan_udp_ports = old_scan
             local_tab.dlg.ask_choice = old_ask_choice
+
+
+def test_local_service_lan_preflight_repair() -> None:
+    from dstools.features.local_service import tab as local_tab
+    from dstools.shared.ini_parser import parse_server_ini
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(
+            Path(tmp), "LAN_Invalid", lan_only=True,
+            master_game_port=10002, caves_game_port=10001,
+        )
+        manager = SimpleNamespace(running=lambda: [])
+        app = SimpleNamespace(
+            root=None,
+            env=SimpleNamespace(clusters=[cluster]),
+            sakura_tab=SimpleNamespace(has_active_mapping=lambda *_args: False),
+        )
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service.app = app
+        service.manager = manager
+        service._launching_keys = set()
+        service._prepare_legacy_mods_for_start = lambda _cluster: True
+
+        with patch.object(local_tab, "scan_udp_ports", return_value=UdpPortScan(True, {})), \
+                patch.object(local_tab.dlg, "ask_choice", return_value="allocate"), \
+                patch.object(local_tab.dlg, "show_info"):
+            assert service._preflight_start(cluster, cluster.shards)
+
+        ports = {
+            parse_server_ini(shard.path / "server.ini").network["server_port"]
+            for shard in cluster.shards
+        }
+        assert ports == {LAN_SERVER_PORT_MIN, LAN_SERVER_PORT_FALLBACK}
+
+
+def test_config_editor_lan_port_repair_and_lock() -> None:
+    from dstools.features.cluster_config import tab as cluster_tab
+    from dstools.features.cluster_config.config_manager import load_cluster_config
+    from dstools.shared.ini_parser import parse_server_ini
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(
+            Path(tmp), "LAN_Invalid", lan_only=False,
+            master_game_port=10002, caves_game_port=10001,
+        )
+        editor = cluster_tab.ClusterConfigTab.__new__(cluster_tab.ClusterConfigTab)
+        manager = SimpleNamespace(running=lambda: [])
+        mapping = SimpleNamespace(has_active_mapping=lambda *_args: False)
+        editor.app = SimpleNamespace(
+            root=None,
+            env=SimpleNamespace(clusters=[cluster]),
+            local_tab=SimpleNamespace(manager=manager),
+            sakura_tab=mapping,
+        )
+        editor._load_config = lambda: None
+        proposed = load_cluster_config(cluster.path)
+        proposed.network["lan_only_cluster"] = True
+        _, issues = collect_cluster_port_claims(
+            cluster, cluster_config_override=proposed,
+        )
+        lan_issues = [issue for issue in issues if issue.code == "lan_server_port_range"]
+
+        with patch.object(cluster_tab, "scan_udp_ports", return_value=UdpPortScan(True, {})), \
+                patch.object(cluster_tab.dlg, "ask_choice", return_value="allocate"), \
+                patch.object(cluster_tab.dlg, "show_info"):
+            assert editor._repair_lan_ports_while_saving(
+                cluster, proposed, lan_issues,
+            )
+        assert load_cluster_config(cluster.path).network["lan_only_cluster"] is True
+        ports = {
+            parse_server_ini(shard.path / "server.ini").network["server_port"]
+            for shard in cluster.shards
+        }
+        assert ports == {LAN_SERVER_PORT_MIN, LAN_SERVER_PORT_FALLBACK}
+
+        # 存档运行或映射存在时，配置页不得跨文件重写端口。
+        before = {
+            shard.path: (shard.path / "server.ini").read_bytes()
+            for shard in cluster.shards
+        }
+        editor.app.sakura_tab = SimpleNamespace(
+            has_active_mapping=lambda *_args: True
+        )
+        with patch.object(cluster_tab.dlg, "show_error"):
+            assert not editor._repair_lan_ports_while_saving(
+                cluster, proposed, lan_issues,
+            )
+        assert all(
+            (path / "server.ini").read_bytes() == content
+            for path, content in before.items()
+        )
 
 
 def test_config_editor_effective_conflicts() -> None:
@@ -494,11 +718,14 @@ def test_restart_prepares_legacy_after_stop() -> None:
 
 def test_connect_code_display_masks_secrets() -> None:
     from dstools.features.local_service import tab as local_tab
+    from dstools.shared.ini_parser import parse_cluster_ini, write_cluster_ini
 
     with tempfile.TemporaryDirectory() as tmp:
         cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
-        with (cluster.path / "cluster.ini").open("a", encoding="utf-8") as stream:
-            stream.write("\n[NETWORK]\ncluster_password=secret123\n")
+        cluster_ini = cluster.path / "cluster.ini"
+        config = parse_cluster_ini(cluster_ini)
+        config.network["cluster_password"] = "secret123"
+        write_cluster_ini(config, cluster_ini)
         service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
 
         original, display = service._build_connect_strings(
@@ -579,11 +806,16 @@ def main() -> None:
         test_multi_shard_default_steam_ports_no_conflict,
         test_cross_cluster_and_cross_field_conflicts,
         test_shard_override_and_invalid_values,
+        test_lan_only_effective_ports_and_ranges,
         test_helpers,
         test_atomic_port_rewrite,
+        test_atomic_lan_port_rewrite_is_focused,
+        test_atomic_lan_port_rewrite_rolls_back,
         test_local_service_batch_preflight,
+        test_local_service_lan_preflight_repair,
         test_config_editor_effective_conflicts,
         test_config_editor_port_ranges,
+        test_config_editor_lan_port_repair_and_lock,
         test_world_creation_port_conflict_choices,
         test_server_manager_rejects_duplicate_start,
         test_restart_all_preserves_stopped_shards_and_rejects_transitions,

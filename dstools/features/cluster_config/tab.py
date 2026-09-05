@@ -33,7 +33,12 @@ from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.menu_combo import MenuCombo
 from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.shared.gui.toolbar_widgets import ReadonlyBanner
-from dstools.shared.server_ports import collect_cluster_port_claims, find_port_conflicts
+from dstools.shared.server_ports import (
+    collect_cluster_port_claims,
+    find_port_conflicts,
+    rewrite_lan_server_ports_atomic,
+    scan_udp_ports,
+)
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 
@@ -1699,6 +1704,17 @@ class ClusterConfigTab:
         for section, key in self._REMOVED_CLUSTER_FIELDS:
             getattr(config, section.lower()).pop(key, None)
 
+        _, port_issues = collect_cluster_port_claims(
+            c, cluster_config_override=config,
+        )
+        lan_issues = [
+            issue for issue in port_issues
+            if issue.code == "lan_server_port_range"
+        ]
+        if lan_issues:
+            self._repair_lan_ports_while_saving(c, config, lan_issues)
+            return
+
         conflict = self._find_cluster_port_conflict(c, config)
         if conflict:
             dlg.show_error(self.app.root, t("dlg.save_fail"), conflict)
@@ -1726,6 +1742,101 @@ class ClusterConfigTab:
     # 互相抢占端口。
     _SHARD_PORT_FIELDS = [("NETWORK", "server_port"), ("STEAM", "master_server_port"),
                           ("STEAM", "authentication_port")]
+
+    @staticmethod
+    def _format_port_issues(issues) -> str:
+        return "\n".join(
+            f"{issue.cluster_name}/{issue.shard_name or '-'} "
+            f"{issue.field}={issue.value!r}：{issue.message}"
+            for issue in issues
+        )
+
+    def _cluster_ports_locked(self, cluster) -> bool:
+        local_tab = getattr(self.app, "local_tab", None)
+        if local_tab is not None and any(
+            str(proc.cluster_path) == str(cluster.path)
+            for proc in local_tab.manager.running()
+        ):
+            return True
+        sakura_tab = getattr(self.app, "sakura_tab", None)
+        return bool(sakura_tab and any(
+            sakura_tab.has_active_mapping(cluster, shard)
+            for shard in cluster.shards
+        ))
+
+    def _used_ports_for_lan_repair(self, cluster, scan) -> set[int]:
+        used = {
+            port
+            for ports in scan.ports_by_pid.values()
+            for port in ports
+        }
+        own_claims, _ = collect_cluster_port_claims(cluster)
+        used.update(
+            claim.port for claim in own_claims if claim.field != "server_port"
+        )
+        for other in self.app.env.clusters:
+            if (
+                other.source != SaveSource.SERVER
+                or str(other.path) == str(cluster.path)
+            ):
+                continue
+            claims, _ = collect_cluster_port_claims(other)
+            used.update(claim.port for claim in claims)
+        return used
+
+    def _repair_lan_ports_while_saving(
+            self, cluster, cluster_config, issues,
+    ) -> bool:
+        """保存 LAN 开关时修复全部世界端口；成功时已完成整组写入。"""
+        details = self._format_port_issues(issues)
+        if self._cluster_ports_locked(cluster):
+            dlg.show_error(
+                self.app.root, t("dlg.save_fail"),
+                t("cluster.lan_port_repair_locked", details=details),
+            )
+            return False
+        scan = scan_udp_ports()
+        if not scan.ok:
+            dlg.show_error(
+                self.app.root, t("dlg.save_fail"),
+                t("cluster.lan_port_scan_failed", detail=scan.error),
+            )
+            return False
+        choice = dlg.ask_choice(
+            self.app.root,
+            t("cluster.lan_port_title"),
+            t("cluster.lan_port_confirm", details=details),
+            [
+                (t("cluster.allocate_lan_ports_btn"), "allocate"),
+                (t("dlg.cancel_btn"), "cancel"),
+            ],
+            default="cancel",
+            wraplength=780,
+            min_width=840,
+        )
+        if choice != "allocate":
+            return False
+        try:
+            values = rewrite_lan_server_ports_atomic(
+                cluster,
+                self._used_ports_for_lan_repair(cluster, scan),
+                cluster_config_override=cluster_config,
+            )
+        except (OSError, ValueError) as exc:
+            dlg.show_error(
+                self.app.root, t("dlg.save_fail"),
+                t("local.port_repair_failed", detail=f"{type(exc).__name__}: {exc}"),
+            )
+            return False
+        details = "\n".join(
+            f"{name}: server_port={port}" for name, port in values.items()
+        )
+        dlg.show_info(
+            self.app.root, t("dlg.save_ok"),
+            t("cluster.lan_port_repair_done", details=details),
+        )
+        self._load_config()
+        return True
 
     @staticmethod
     def _server_ini_port_claims(cluster, shard, shard_config):
@@ -1849,6 +1960,27 @@ class ClusterConfigTab:
         if shard_config.shard.get("is_master", True):
             for section, key in self._SHARD_SLAVE_ONLY_FIELDS:
                 getattr(shard_config, section.lower()).pop(key, None)
+
+        cluster_config = load_cluster_config(c.path)
+        _, port_issues = collect_cluster_port_claims(
+            c,
+            cluster_config_override=cluster_config,
+            shard_config_overrides={target.name: shard_config},
+        )
+        lan_issues = [
+            issue for issue in port_issues
+            if issue.code == "lan_server_port_range"
+            and issue.shard_name == target.name
+        ]
+        if lan_issues:
+            dlg.show_error(
+                self.app.root, t("dlg.save_fail"),
+                t(
+                    "cluster.lan_shard_port_invalid",
+                    details=self._format_port_issues(lan_issues),
+                ),
+            )
+            return
 
         conflict = self._find_port_conflict(c, target, shard_config)
         if conflict:

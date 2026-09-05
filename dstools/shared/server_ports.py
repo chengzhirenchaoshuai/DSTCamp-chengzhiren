@@ -29,6 +29,9 @@ DEFAULT_MASTER_PORT = 10888
 DEFAULT_SERVER_PORT = 10999
 DEFAULT_STEAM_MASTER_PORT = 27016
 DEFAULT_STEAM_AUTH_PORT = 8766
+LAN_SERVER_PORT_MIN = 10998
+LAN_SERVER_PORT_MAX = 11018
+LAN_SERVER_PORT_FALLBACK = 10999
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,7 @@ class PortIssue:
     field: str
     value: object
     message: str
+    code: str = ""
 
 
 @dataclass(frozen=True)
@@ -122,6 +126,27 @@ def _effective_port(raw: object, default: int, *, cluster: Cluster,
     return port, "explicit"
 
 
+def _effective_server_port(raw: object, *, cluster: Cluster, shard: Shard,
+                           lan_only: bool,
+                           issues: list[PortIssue]) -> tuple[int | None, str]:
+    """解析游戏端口，并复现 DST 在 LAN 模式下的实际回退规则。"""
+    port, source = _effective_port(
+        raw, DEFAULT_SERVER_PORT, cluster=cluster, shard=shard,
+        field="server_port", issues=issues,
+    )
+    if port is None or not lan_only:
+        return port, source
+    if LAN_SERVER_PORT_MIN <= port <= LAN_SERVER_PORT_MAX:
+        return port, source
+    issues.append(PortIssue(
+        str(cluster.path), cluster.name, shard.name, "server_port", raw,
+        f"仅限局域网模式要求端口在 {LAN_SERVER_PORT_MIN}..{LAN_SERVER_PORT_MAX} "
+        f"之间；游戏会把当前值回退为 {LAN_SERVER_PORT_FALLBACK}",
+        "lan_server_port_range",
+    ))
+    return LAN_SERVER_PORT_FALLBACK, "lan_fallback"
+
+
 def collect_cluster_port_claims(
         cluster: Cluster, shard_names: Iterable[str] | None = None, *,
         cluster_config_override: ClusterConfig | None = None,
@@ -135,6 +160,7 @@ def collect_cluster_port_claims(
     """
     selected = set(shard_names) if shard_names is not None else None
     cluster_config = cluster_config_override or _cluster_config(cluster)
+    lan_only = bool(cluster_config.network.get("lan_only_cluster", False))
     config_overrides = shard_config_overrides or {}
     claims: list[PortClaim] = []
     issues: list[PortIssue] = []
@@ -151,8 +177,17 @@ def collect_cluster_port_claims(
         # binding=False 让冲突检测跳过，避免多世界存档（岛屿冒险的 Master/
         # Caves/Hamlet/Shipwrecked/Volcano 五个世界都留空、取默认 27016/8766）
         # 被误判成冲突。
+        server_port, server_source = _effective_server_port(
+            config.network.get("server_port"), cluster=cluster, shard=shard,
+            lan_only=lan_only, issues=issues,
+        )
+        if server_port is not None:
+            claims.append(PortClaim(
+                str(cluster.path), cluster.name, shard.name, "server_port",
+                server_port, server_source,
+            ))
+
         fields = (
-            ("server_port", config.network.get("server_port"), DEFAULT_SERVER_PORT, True),
             ("master_server_port", config.steam.get("master_server_port"), DEFAULT_STEAM_MASTER_PORT, False),
             ("authentication_port", config.steam.get("authentication_port"), DEFAULT_STEAM_AUTH_PORT, False),
         )
@@ -280,32 +315,30 @@ def allocate_cluster_port_values(shard_names: Iterable[str], used: Iterable[int]
     return master_port, result
 
 
-def rewrite_cluster_ports_atomic(cluster: Cluster, used: Iterable[int], *,
-                                 create_backup: bool = True) -> tuple[int, dict[str, dict[str, int]]]:
-    """把一个已停止存档的整组端口原子改成不冲突值。
-
-    调用方负责取得用户确认，并保证目标存档没有进程或端口映射正在运行。
-    多个 INI 无法由文件系统提供真正的跨文件事务，因此这里保留每个原文件
-    的字节；任一替换失败就逐个恢复，避免只改成功一半。
-    """
-    cluster_path = cluster.path / "cluster.ini"
-    cluster_config = copy.deepcopy(_cluster_config(cluster))
-    shard_configs = {shard.name: copy.deepcopy(_shard_config(shard)) for shard in cluster.shards}
-    master_port, values = allocate_cluster_port_values(shard_configs, used)
-    cluster_config.shard["master_port"] = master_port
-    for shard_name, ports in values.items():
-        config = shard_configs[shard_name]
-        config.network["server_port"] = ports["server_port"]
-        config.steam["master_server_port"] = ports["master_server_port"]
-        config.steam["authentication_port"] = ports["authentication_port"]
-
-    targets: list[tuple[Path, object, object]] = [
-        (cluster_path, cluster_config, write_cluster_ini),
+def allocate_lan_server_ports(
+        shard_names: Iterable[str], used: Iterable[int],
+) -> dict[str, int]:
+    """在 DST 的 LAN 专用范围内为各世界分配互不冲突的游戏端口。"""
+    occupied = set(used)
+    candidates = [
+        LAN_SERVER_PORT_FALLBACK,
+        LAN_SERVER_PORT_MIN,
+        *range(LAN_SERVER_PORT_MIN + 2, LAN_SERVER_PORT_MAX + 1),
     ]
-    targets.extend(
-        (shard.path / "server.ini", shard_configs[shard.name], write_server_ini)
-        for shard in cluster.shards
-    )
+    available = [port for port in candidates if port not in occupied]
+    ordered = sorted(set(shard_names), key=lambda name: name != "Master")
+    if len(available) < len(ordered):
+        raise ValueError(
+            f"{LAN_SERVER_PORT_MIN}..{LAN_SERVER_PORT_MAX} 中没有足够的可用端口"
+        )
+    return dict(zip(ordered, available))
+
+
+def _write_configs_atomic(
+        cluster: Cluster, targets: list[tuple[Path, object, object]], *,
+        create_backup: bool,
+) -> None:
+    """原子写入一组配置文件；失败时恢复每个文件的原始字节。"""
     originals = {path: path.read_bytes() if path.exists() else None for path, _, _ in targets}
     if create_backup:
         backup_root = (
@@ -347,6 +380,61 @@ def rewrite_cluster_ports_atomic(cluster: Cluster, used: Iterable[int], *,
     finally:
         for temp_path, _ in prepared:
             temp_path.unlink(missing_ok=True)
+
+
+def rewrite_lan_server_ports_atomic(
+        cluster: Cluster, used: Iterable[int], *, create_backup: bool = True,
+        cluster_config_override: ClusterConfig | None = None,
+) -> dict[str, int]:
+    """只调整各世界的 server_port，并保证全部值位于 LAN 专用范围。"""
+    shard_configs = {
+        shard.name: copy.deepcopy(_shard_config(shard)) for shard in cluster.shards
+    }
+    values = allocate_lan_server_ports(shard_configs, used)
+    for shard_name, port in values.items():
+        shard_configs[shard_name].network["server_port"] = port
+
+    targets: list[tuple[Path, object, object]] = []
+    if cluster_config_override is not None:
+        targets.append((
+            cluster.path / "cluster.ini", copy.deepcopy(cluster_config_override),
+            write_cluster_ini,
+        ))
+    targets.extend(
+        (shard.path / "server.ini", shard_configs[shard.name], write_server_ini)
+        for shard in cluster.shards
+    )
+    _write_configs_atomic(cluster, targets, create_backup=create_backup)
+    return values
+
+
+def rewrite_cluster_ports_atomic(cluster: Cluster, used: Iterable[int], *,
+                                 create_backup: bool = True) -> tuple[int, dict[str, dict[str, int]]]:
+    """把一个已停止存档的整组端口原子改成不冲突值。
+
+    调用方负责取得用户确认，并保证目标存档没有进程或端口映射正在运行。
+    多个 INI 无法由文件系统提供真正的跨文件事务，因此这里保留每个原文件
+    的字节；任一替换失败就逐个恢复，避免只改成功一半。
+    """
+    cluster_path = cluster.path / "cluster.ini"
+    cluster_config = copy.deepcopy(_cluster_config(cluster))
+    shard_configs = {shard.name: copy.deepcopy(_shard_config(shard)) for shard in cluster.shards}
+    master_port, values = allocate_cluster_port_values(shard_configs, used)
+    cluster_config.shard["master_port"] = master_port
+    for shard_name, ports in values.items():
+        config = shard_configs[shard_name]
+        config.network["server_port"] = ports["server_port"]
+        config.steam["master_server_port"] = ports["master_server_port"]
+        config.steam["authentication_port"] = ports["authentication_port"]
+
+    targets: list[tuple[Path, object, object]] = [
+        (cluster_path, cluster_config, write_cluster_ini),
+    ]
+    targets.extend(
+        (shard.path / "server.ini", shard_configs[shard.name], write_server_ini)
+        for shard in cluster.shards
+    )
+    _write_configs_atomic(cluster, targets, create_backup=create_backup)
     return master_port, values
 
 

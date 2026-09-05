@@ -98,6 +98,7 @@ from dstools.shared.server_ports import (
     stable_path_key,
     system_port_claims,
     rewrite_cluster_ports_atomic,
+    rewrite_lan_server_ports_atomic,
 )
 from dstools.shared.ssl_context import default_ssl_context
 from dstools.i18n import t
@@ -2933,6 +2934,85 @@ class LocalServiceTab:
                 f"{issue.value!r}：{issue.message}"
                 for issue in issues
             ]
+            lan_issues = [
+                issue for issue in issues
+                if issue.code == "lan_server_port_range"
+            ]
+            if len(lan_issues) == len(issues):
+                target_running = any(
+                    str(proc.cluster_path) == str(cluster.path)
+                    for proc in self.manager.running()
+                )
+                has_mapping = any(
+                    self.app.sakura_tab.has_active_mapping(cluster, shard)
+                    for shard in cluster.shards
+                )
+                if allow_repair and not target_running and not has_mapping:
+                    scan = scan_udp_ports()
+                    if not scan.ok:
+                        dlg.show_error(
+                            self.app.root,
+                            t("local.port_preflight_title"),
+                            t("local.port_preflight_scan_failed", detail=scan.error),
+                        )
+                        return False
+                    choice = dlg.ask_choice(
+                        self.app.root,
+                        t("local.port_preflight_title"),
+                        t("local.lan_port_invalid_confirm", details="\n".join(lines)),
+                        [
+                            (t("cluster.allocate_lan_ports_btn"), "allocate"),
+                            (t("dlg.cancel_btn"), "cancel"),
+                        ],
+                        default="cancel",
+                        wraplength=780,
+                        min_width=840,
+                    )
+                    if choice == "allocate":
+                        used = {
+                            port
+                            for ports in scan.ports_by_pid.values()
+                            for port in ports
+                        }
+                        own_claims, _ = collect_cluster_port_claims(cluster)
+                        used.update(
+                            claim.port for claim in own_claims
+                            if claim.field != "server_port"
+                        )
+                        for other in self.app.env.clusters:
+                            if (
+                                other.source != SaveSource.SERVER
+                                or str(other.path) == str(cluster.path)
+                            ):
+                                continue
+                            claims, _ = collect_cluster_port_claims(other)
+                            used.update(claim.port for claim in claims)
+                        try:
+                            values = rewrite_lan_server_ports_atomic(cluster, used)
+                        except (OSError, ValueError) as exc:
+                            dlg.show_error(
+                                self.app.root,
+                                t("local.port_repair_title"),
+                                t(
+                                    "local.port_repair_failed",
+                                    detail=f"{type(exc).__name__}: {exc}",
+                                ),
+                            )
+                            return False
+                        summary = "\n".join(
+                            f"{name}: server_port={port}"
+                            for name, port in values.items()
+                        )
+                        dlg.show_info(
+                            self.app.root,
+                            t("local.port_repair_title"),
+                            t("local.port_repair_done", details=summary),
+                        )
+                        return self._preflight_start(
+                            cluster, shards, allow_repair=False,
+                            restarting=restarting,
+                        )
+                    return False
             dlg.show_error(
                 self.app.root,
                 t("local.port_preflight_title"),
