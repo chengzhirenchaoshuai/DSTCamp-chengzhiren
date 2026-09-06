@@ -733,8 +733,9 @@ class ClusterConfigTab:
     def _pack_sub_page(self, key):
         page = self._sub_pages[key]
         if key == "shard":
-            # 固定 server.ini 页签宽度，窗口放大时只扩展外层背景，不拉伸输入框和世界设置列。
-            page.pack(fill=tk.Y, expand=False, anchor=tk.NW)
+            # 横向保持固定宽度，纵向使用主窗口当前全部可用高度；默认
+            # 窗口通常可完整展示，只有窗口确实更矮时才需要滚动。
+            page.pack(fill=tk.Y, expand=True, anchor=tk.NW)
         else:
             page.pack(fill=tk.BOTH, expand=True)
 
