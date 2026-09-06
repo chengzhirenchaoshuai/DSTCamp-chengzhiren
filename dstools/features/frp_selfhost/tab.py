@@ -1394,30 +1394,30 @@ class SelfHostFrpPage:
         color = theme.ACCENT if active and enabled else theme.TEXT_MUTED
         if self._server_ip_visible:
             button.create_line(
-                5, 12, 8, 8, 11, 6, 14, 6,
-                17, 6, 20, 8, 23, 12,
-                20, 16, 17, 18, 14, 18,
-                11, 18, 8, 16, 5, 12,
+                5, 13, 8, 9, 11, 7, 14, 7,
+                17, 7, 20, 9, 23, 13,
+                20, 17, 17, 19, 14, 19,
+                11, 19, 8, 17, 5, 13,
                 smooth=True, splinesteps=24,
                 fill=color, width=1.7, tags=("eye_icon", "eye_open"),
             )
             button.create_oval(
-                11, 9, 17, 15,
+                11, 10, 17, 16,
                 fill="", outline=color, width=1.7,
                 tags=("eye_icon", "eye_pupil"),
             )
         else:
             # 脱敏时直接画闭合眼睑，不再用斜线覆盖眼睛。
             button.create_line(
-                6, 11, 9, 14, 14, 16, 19, 14, 22, 11,
+                6, 12, 9, 15, 14, 17, 19, 15, 22, 12,
                 smooth=True, splinesteps=24,
                 fill=color, width=1.7, capstyle=tk.ROUND,
                 tags=("eye_icon", "eye_closed"),
             )
             for x1, y1, x2, y2 in (
-                (9, 14, 8, 17),
-                (14, 16, 14, 19),
-                (19, 14, 20, 17),
+                (9, 15, 8, 18),
+                (14, 17, 14, 20),
+                (19, 15, 20, 18),
             ):
                 button.create_line(
                     x1, y1, x2, y2,
