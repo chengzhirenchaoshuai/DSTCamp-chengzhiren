@@ -628,9 +628,42 @@ def test_selfhost_status_card_layout_contract():
     assert 'state="readonly"' in token_source
 
     settings_source = inspect.getsource(SelfHostFrpPage._open_node_settings)
+    assert 'state="readonly"' in settings_source
     assert "_node_settings_status_label" not in settings_source
     assert "selfhost.probe_now_btn" not in settings_source
     print("  PASS: 自建节点状态卡位于功能页签上方，Token 为不透明只读输入框")
+
+
+def test_selfhost_host_display_uses_authenticated_address():
+    """服务器地址只展示 SSH 鉴权目标，不能沿用可编辑的 FRP 配置值。"""
+    import inspect
+
+    from dstools.features.frp_selfhost import tab as selfhost_tab
+    from dstools.features.frp_selfhost.tab import SelfHostFrpPage
+
+    page = SelfHostFrpPage.__new__(SelfHostFrpPage)
+    page._host_display_var = Mock()
+    page._bind_port_var = Mock()
+    page._token_var = Mock()
+    with (
+        patch.object(
+            selfhost_tab.app_settings,
+            "get_selfhost_frp_server",
+            return_value={"host": "old.example", "bind_port": 11000, "token": "abc"},
+        ),
+        patch.object(
+            selfhost_tab.app_settings,
+            "get_selfhost_ssh_connection",
+            return_value={"host": "47.101.2.3", "port": 22, "username": "root"},
+        ),
+    ):
+        page._load_server_display()
+    page._host_display_var.set.assert_called_once_with("47.101.2.3")
+
+    deploy_source = inspect.getsource(SelfHostFrpPage._start_deploy)
+    assert "_host_display_var.get" not in deploy_source
+    assert 'conn.get("host", "")' in deploy_source
+    print("  PASS: 服务器地址只读展示鉴权 IP，部署也使用鉴权连接地址")
 
 
 
@@ -660,6 +693,7 @@ def main():
         test_id_remove_button_requires_real_selection,
         test_selfhost_worker_ui_dispatch_contract,
         test_selfhost_status_card_layout_contract,
+        test_selfhost_host_display_uses_authenticated_address,
     ]
 
     for test in tests:

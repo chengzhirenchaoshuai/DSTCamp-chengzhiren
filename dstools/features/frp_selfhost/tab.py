@@ -246,7 +246,7 @@ class SelfHostFrpPage:
         self._probing = False
         self._probe_cycle_started = False
 
-        self._host_raw_var = tk.StringVar()
+        self._host_display_var = tk.StringVar(value=t("selfhost.host_pending_auth"))
         self._bind_port_var = tk.StringVar(value=str(deploy.DEFAULT_BIND_PORT))
         self._token_var = tk.StringVar()
         saved_wireguard = app_settings.get_lobby_accel_wireguard() or {}
@@ -603,7 +603,9 @@ class SelfHostFrpPage:
         ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 12))
 
         ttk.Label(body, text=t("selfhost.host_label")).grid(row=1, column=0, sticky=tk.E, padx=(0, 8), pady=4)
-        host_entry = ttk.Entry(body, textvariable=self._host_raw_var, width=28)
+        host_entry = ttk.Entry(
+            body, textvariable=self._host_display_var, width=28, state="readonly"
+        )
         host_entry.grid(row=1, column=1, columnspan=2, sticky=tk.EW, pady=4)
         ttk.Label(body, text=t("selfhost.bind_port_label")).grid(row=2, column=0, sticky=tk.E, padx=(0, 8), pady=4)
         port_entry = ttk.Entry(body, textvariable=self._bind_port_var, width=10)
@@ -647,7 +649,7 @@ class SelfHostFrpPage:
         win.update_idletasks()
         center_over_parent(win, self.app.root)
         win.deiconify()
-        host_entry.focus_set()
+        auth_btn.focus_set()
 
     def _close_node_settings(self) -> None:
         win = self._node_settings_win
@@ -1236,11 +1238,16 @@ class SelfHostFrpPage:
     def _load_server_display(self):
         server = app_settings.get_selfhost_frp_server()
         if server:
-            self._host_raw_var.set(server.get("host", ""))
             self._bind_port_var.set(str(server.get("bind_port", deploy.DEFAULT_BIND_PORT)))
             self._token_var.set(server.get("token", ""))
         else:
             self._token_var.set(deploy.generate_token())
+        self._refresh_authenticated_host_display()
+
+    def _refresh_authenticated_host_display(self) -> None:
+        conn = app_settings.get_selfhost_ssh_connection()
+        host = str(conn.get("host", "")).strip() if conn else ""
+        self._host_display_var.set(host or t("selfhost.host_pending_auth"))
 
     def _refresh_server_status_card(self) -> None:
         if not self._is_authenticated():
@@ -1305,7 +1312,7 @@ class SelfHostFrpPage:
         if saved_conn:
             default_host, default_port, default_user = saved_conn["host"], saved_conn["port"], saved_conn["username"]
         else:
-            default_host, default_port, default_user = self._host_raw_var.get().strip(), 22, "root"
+            default_host, default_port, default_user = "", 22, "root"
 
         auth_dlg = _SSHAuthSetupDialog(self.frame, default_host, default_port, default_user)
         if auth_dlg.result is None:
@@ -1334,6 +1341,7 @@ class SelfHostFrpPage:
     def _on_ssh_auth_done(self, progress):
         progress.append(t("selfhost.ssh_auth_done"))
         progress.finish()
+        self._refresh_authenticated_host_display()
         self._refresh_action_buttons()
         self._maybe_start_probe_cycle()
 
@@ -1364,7 +1372,8 @@ class SelfHostFrpPage:
         if not self._is_authenticated():
             dlg.show_warning(self.app.root, t("selfhost.ssh_deploy_btn"), t("selfhost.deploy_needs_auth_hint"))
             return
-        host = self._host_raw_var.get().strip()
+        conn = app_settings.get_selfhost_ssh_connection()
+        host = str(conn.get("host", "")).strip() if conn else ""
         if not host:
             dlg.show_warning(self.app.root, t("selfhost.ssh_deploy_btn"), t("selfhost.host_missing"))
             return
@@ -1379,7 +1388,6 @@ class SelfHostFrpPage:
         # 之后使用。
         app_settings.set_selfhost_frp_server(host, port, token)
 
-        conn = app_settings.get_selfhost_ssh_connection()
         redeploying = self._is_service_active()
         confirm_msg = t("selfhost.redeploy_confirm_msg") if redeploying \
             else t("selfhost.deploy_confirm_msg", host=conn["host"])
