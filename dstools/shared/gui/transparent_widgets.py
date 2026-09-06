@@ -234,16 +234,16 @@ class TransparentIdList(BgFrame):
                         self._rounded_points(6, cy - self._row_height / 2 + 2,
                                              width - 6, cy + self._row_height / 2 - 2,
                                              min(8, self._row_height // 3)),
-                        smooth=True, fill=theme.PRIMARY, outline="",
+                        smooth=True, fill=theme.PRIMARY_LIGHT,
+                        outline=theme.PRIMARY,
                         tags="id_list_shape",
                     )
                 self.create_text(
                     14, cy, text=item, anchor=tk.W,
-                    fill=theme.CARD_BG if index == self._selected else theme.TEXT,
+                    fill=theme.HEADING if index == self._selected else theme.TEXT,
                     font=self._font, tags="id_list_text",
                 )
             self.tag_lower("bg_image")
-            self.tag_lower("id_list_shape")
         finally:
             self._redrawing = False
 
