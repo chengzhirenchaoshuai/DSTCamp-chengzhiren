@@ -603,9 +603,11 @@ class ClusterConfigTab:
                 page.configure(width=self._shard_fixed_width)
                 page.pack_propagate(False)
             scroll_area = self._layout_frame(page)
-            scroll_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
             footer = self._surface_frame(page)
-            footer.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
+            # 固定操作区必须先从父容器底部占位；否则先 pack 的 expand
+            # 内容会在部分 Tk/DPI 组合下吃完可用高度，把保存按钮挤出视口。
+            footer.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 0))
+            scroll_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
             save_cmd = self._save_cluster_ini if tab_key == "Cluster" else self._save_shard_ini
             save_btn = ttk.Button(footer, text=t("cluster.save_btn"), command=save_cmd)
             save_btn.pack(side=tk.RIGHT)
@@ -638,11 +640,9 @@ class ClusterConfigTab:
             canvas.configure(yscrollcommand=scrollbar.set)
             win_id = canvas.create_window((0,0), window=frame, anchor=tk.NW)
 
-            def _on_frame_configure(e, c=canvas, key=tab_key):
+            def _on_frame_configure(e, c=canvas):
                 bbox = c.bbox("all")
                 c.configure(scrollregion=bbox)
-                if bbox:
-                    c.configure(height=max(bbox[3], self._section_content_heights.get(key, 0)))
 
             frame.bind("<Configure>", _on_frame_configure)
             # 不做这步的话内嵌 frame 会钉死在自然宽度上，放大窗口只会
@@ -1204,7 +1204,6 @@ class ClusterConfigTab:
         outer.configure(height=content_height)
         cluster_canvas = self._section_canvases["Cluster"]
         cluster_canvas.itemconfigure(self._section_window_ids["Cluster"], height=content_height)
-        cluster_canvas.configure(height=content_height)
 
         # 保存按钮固定在页签底部，这里只更新是否可点，不重建按钮。
         self._section_save_btns["Cluster"].configure(state=tk.NORMAL if is_server else tk.DISABLED)
@@ -1421,10 +1420,6 @@ class ClusterConfigTab:
             frame.configure(height=content_height)
             self._section_content_heights["Shard Config"] = content_height
             canvas.itemconfigure(window_id, height=content_height)
-            canvas.configure(height=content_height)
-            page = self._sub_pages.get("shard")
-            if page is not None and page.winfo_exists():
-                page.configure(height=content_height)
         finally:
             self._shard_layout_updating = False
 
