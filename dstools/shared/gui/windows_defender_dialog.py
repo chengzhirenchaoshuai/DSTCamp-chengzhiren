@@ -14,6 +14,7 @@ from dstools.shared.windows_defender import (
     DefenderState,
     change_defender_exclusion,
     check_defender_exclusion,
+    check_defender_exclusion_elevated,
     defender_target_is_safe,
     resolve_defender_target,
 )
@@ -120,13 +121,20 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
             else ["disabled"]
         )
         refresh_button.state(["!disabled"] if actionable else ["disabled"])
+        refresh_button.configure(
+            text=t("settings.defender_admin_check")
+            if state and state.status in {"unknown", "cancelled"}
+            else t("settings.defender_refresh")
+        )
 
     def show_state(state: DefenderState) -> None:
         current["state"] = state
         labels = {
             "excluded": ("settings.defender_excluded", theme.ACCENT),
             "not_excluded": ("settings.defender_not_excluded", theme.TEXT),
+            "unknown": ("settings.defender_unknown", theme.TEXT_MUTED),
             "unavailable": ("settings.defender_unavailable", theme.TEXT_MUTED),
+            "cancelled": ("settings.defender_check_cancelled", theme.TEXT_MUTED),
             "unsafe": ("settings.defender_unsafe_target", theme.ERROR),
             "error": ("settings.defender_check_failed", theme.ERROR),
         }
@@ -135,7 +143,7 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
         status_label.configure(fg=color)
         set_buttons()
 
-    def start_check() -> None:
+    def start_check(*, elevated: bool = False) -> None:
         if not target_is_safe or current["busy"]:
             return
         current["busy"] = True
@@ -144,7 +152,12 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
         set_buttons()
 
         def worker() -> None:
-            results.put(("check", check_defender_exclusion(target)))
+            check = (
+                check_defender_exclusion_elevated
+                if elevated
+                else check_defender_exclusion
+            )
+            results.put(("check", check(target)))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -177,7 +190,11 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
 
         def worker() -> None:
             changed = change_defender_exclusion(target, enabled=enabled)
-            state = check_defender_exclusion(target) if changed.success else None
+            state = (
+                DefenderState("excluded" if enabled else "not_excluded")
+                if changed.success
+                else None
+            )
             results.put(("change", enabled, changed, state))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -195,7 +212,14 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
     )
     remove_button.pack(side=tk.LEFT, padx=(8, 0))
     refresh_button = ttk.Button(
-        actions, text=t("settings.defender_refresh"), command=start_check
+        actions,
+        text=t("settings.defender_refresh"),
+        command=lambda: start_check(
+            elevated=bool(
+                current["state"]
+                and current["state"].status in {"unknown", "cancelled"}
+            )
+        ),
     )
     refresh_button.pack(side=tk.LEFT, padx=(8, 0))
     ttk.Button(actions, text=t("dlg.close_btn"), command=win.destroy).pack(

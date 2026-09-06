@@ -61,8 +61,22 @@ def test_check_parses_only_its_private_status_marker() -> None:
         defender,
         "_run_powershell",
         return_value=_completed(stdout="warning\nDSTCAMP_DEFENDER:excluded\n"),
-    ):
+    ), patch.object(defender, "is_process_elevated", return_value=False):
         assert defender.check_defender_exclusion(target).status == "excluded"
+
+    with patch.object(
+        defender,
+        "_run_powershell",
+        return_value=_completed(stdout="DSTCAMP_DEFENDER:not_excluded\n"),
+    ), patch.object(defender, "is_process_elevated", return_value=False):
+        assert defender.check_defender_exclusion(target).status == "unknown"
+
+    with patch.object(
+        defender,
+        "_run_powershell",
+        return_value=_completed(stdout="DSTCAMP_DEFENDER:not_excluded\n"),
+    ), patch.object(defender, "is_process_elevated", return_value=True):
+        assert defender.check_defender_exclusion(target).status == "not_excluded"
 
     with patch.object(
         defender,
@@ -80,6 +94,22 @@ def test_check_parses_only_its_private_status_marker() -> None:
         assert state.status == "error" and state.detail == "access denied"
 
 
+def test_elevated_check_maps_verified_state_and_uac_cancel() -> None:
+    target = defender.DefenderTarget(Path("C:/DSTCamp"), "folder")
+    for returncode, expected in (
+        (10, "excluded"),
+        (11, "not_excluded"),
+        (12, "unavailable"),
+        (1223, "cancelled"),
+    ):
+        with patch.object(
+            defender,
+            "_run_elevated_powershell",
+            return_value=_completed(returncode=returncode),
+        ):
+            assert defender.check_defender_exclusion_elevated(target).status == expected
+
+
 def test_change_uses_encoded_path_and_reports_uac_cancellation() -> None:
     target = defender.DefenderTarget(
         Path("C:/DSTCamp/it's; Write-Output unsafe"), "folder"
@@ -94,6 +124,8 @@ def test_change_uses_encoded_path_and_reports_uac_cancellation() -> None:
         result = defender.change_defender_exclusion(target, enabled=True)
     assert result.success is True
     assert "Add-MpPreference -ExclusionPath $target" in captured[0]
+    assert "Get-MpPreference -ErrorAction Stop" in captured[0]
+    assert "if ($excluded -ne $true)" in captured[0]
     assert "Write-Output unsafe" not in captured[0]
 
     with patch.object(
@@ -121,6 +153,7 @@ def main() -> None:
         test_packaged_targets_are_scoped_to_release_shape,
         test_broad_folders_are_never_safe_exclusion_targets,
         test_check_parses_only_its_private_status_marker,
+        test_elevated_check_maps_verified_state_and_uac_cancel,
         test_change_uses_encoded_path_and_reports_uac_cancellation,
     ]
     for test in tests:

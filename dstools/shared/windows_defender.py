@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import base64
+import ctypes
 import os
 import subprocess
 import sys
@@ -31,7 +32,7 @@ class DefenderTarget:
 class DefenderState:
     """Defender 当前对目标的精确排除状态。"""
 
-    status: str  # excluded / not_excluded / unavailable / error
+    status: str  # excluded / not_excluded / unknown / unavailable / cancelled / error
     detail: str = ""
 
 
@@ -81,6 +82,16 @@ def defender_target_is_safe(target: DefenderTarget) -> bool:
     return candidate not in {
         os.path.normcase(str(path).rstrip("\\/")) for path in blocked
     }
+
+
+def is_process_elevated() -> bool:
+    """当前进程是否已经取得 Windows 管理员令牌。"""
+    if sys.platform != "win32":
+        return False
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
 
 
 def _encoded_command(script: str) -> str:
@@ -162,6 +173,10 @@ if ($excluded) {{
         if line.startswith(_MARKER_PREFIX):
             status = line.removeprefix(_MARKER_PREFIX).strip()
             if status in {"excluded", "not_excluded", "unavailable"}:
+                # 普通用户可能被 Defender 策略隐藏全部排除项；空列表与真正
+                # 未排除无法区分，不能把它误报成“未加入”。
+                if status == "not_excluded" and not is_process_elevated():
+                    return DefenderState("unknown")
                 return DefenderState(status)
     detail = (result.stderr or result.stdout).strip()
     return DefenderState("error", detail or f"PowerShell exit {result.returncode}")
@@ -187,6 +202,39 @@ try {{
     return _run_powershell(outer, timeout=120)
 
 
+def check_defender_exclusion_elevated(target: DefenderTarget) -> DefenderState:
+    """经用户确认的 UAC 只读检测，返回可验证的精确排除状态。"""
+    script = f"""
+$ErrorActionPreference = 'Stop'
+{_target_assignment(target.path)}
+if (-not (Get-Command Get-MpPreference -ErrorAction SilentlyContinue)) {{ exit 12 }}
+if (Get-Command Get-MpComputerStatus -ErrorAction SilentlyContinue) {{
+    $computer = Get-MpComputerStatus -ErrorAction Stop
+    if (-not $computer.AMServiceEnabled) {{ exit 12 }}
+}}
+$wanted = [IO.Path]::GetFullPath($target).TrimEnd([char[]]'\\/')
+foreach ($item in @((Get-MpPreference -ErrorAction Stop).ExclusionPath)) {{
+    try {{
+        $expanded = [Environment]::ExpandEnvironmentVariables([string]$item)
+        $candidate = [IO.Path]::GetFullPath($expanded).TrimEnd([char[]]'\\/')
+        if ($candidate -ieq $wanted) {{ exit 10 }}
+    }} catch {{}}
+}}
+exit 11
+"""
+    try:
+        result = _run_elevated_powershell(script)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return DefenderState("error", str(exc))
+    statuses = {10: "excluded", 11: "not_excluded", 12: "unavailable"}
+    if result.returncode in statuses:
+        return DefenderState(statuses[result.returncode])
+    if result.returncode == 1223:
+        return DefenderState("cancelled")
+    detail = (result.stderr or result.stdout).strip()
+    return DefenderState("error", detail or f"PowerShell exit {result.returncode}")
+
+
 def change_defender_exclusion(
     target: DefenderTarget, *, enabled: bool
 ) -> DefenderChangeResult:
@@ -199,6 +247,16 @@ $ErrorActionPreference = 'Stop'
 {_target_assignment(target.path)}
 if (-not (Get-Command {command} -ErrorAction SilentlyContinue)) {{ exit 2 }}
 {command} -ExclusionPath $target -ErrorAction Stop
+$wanted = [IO.Path]::GetFullPath($target).TrimEnd([char[]]'\\/')
+$excluded = $false
+foreach ($item in @((Get-MpPreference -ErrorAction Stop).ExclusionPath)) {{
+    try {{
+        $expanded = [Environment]::ExpandEnvironmentVariables([string]$item)
+        $candidate = [IO.Path]::GetFullPath($expanded).TrimEnd([char[]]'\\/')
+        if ($candidate -ieq $wanted) {{ $excluded = $true; break }}
+    }} catch {{}}
+}}
+if ($excluded -ne ${str(enabled).lower()}) {{ exit 3 }}
 """
     try:
         result = _run_elevated_powershell(script)
