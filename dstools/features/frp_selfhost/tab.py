@@ -153,12 +153,6 @@ class _SSHAuthSetupDialog:
 class SelfHostFrpPage:
     _UI_POLL_MS = 50
 
-    @staticmethod
-    def _masked_host(host: str) -> str:
-        """非编辑状态仅显示 IPv4 前两段，避免完整暴露服务器地址。"""
-        parts = host.strip().split(".")
-        return ".".join(parts[:2] + ["xx", "xx"]) if len(parts) == 4 and all(p.isdigit() for p in parts) else host
-
     def _label(self, parent, text, *, fg=None, font=None):
         """照抄 sakura/tab.py 的同名方法——BgFrame + create_text，不用
         ttk.Label（会挡住自定义背景图）。返回的 BgFrame 挂了 `redraw()`
@@ -275,35 +269,13 @@ class SelfHostFrpPage:
         self._mihomo_path_value = None
         self._wireguard_settings_value = None
 
-        # 共享节点概览：主页面只保留一个管理入口，避免主机、Token、鉴权和
-        # 部署按钮与日常的映射/诊断操作争抢视觉层级。
-        self._node_summary = BgFrame(self.frame, app, bg=theme.CARD_BG)
-        self._node_summary.pack(fill=tk.X, padx=10, pady=(10, 6))
-        self._node_summary_head = BgFrame(self._node_summary, app, bg=theme.CARD_BG)
-        self._node_summary_head.pack(fill=tk.X)
-        self._node_title_label = self._label(
-            self._node_summary_head,
-            t("selfhost.node_title"),
-        )
-        self._node_title_label.pack(side=tk.LEFT)
-        self._manage_node_btn = ttk.Button(
-            self._node_summary_head,
-            text=t("selfhost.node_manage_btn"),
-            command=self._open_node_settings,
-        )
-        self._manage_node_btn.pack(side=tk.RIGHT)
-        self._node_detail_label = self._label(
-            self._node_summary, t("selfhost.node_not_configured"), fg=theme.TEXT_MUTED
-        )
-        self._node_detail_label.pack(anchor=tk.W, pady=(4, 0))
-
         # 服务器运行状态是 FRP 映射和大厅加速共同依赖的信息，放在两个
         # 功能页签上方统一展示；圆角描边与“房间设置”中的设置卡片一致。
         self._server_status_card = CardFrame(
             self.frame, app, padding=10, bg=theme.CARD_BG,
             border=theme.CARD_BORDER, body_follows_bg=True,
         )
-        self._server_status_card.pack(fill=tk.X, padx=10, pady=(0, 6))
+        self._server_status_card.pack(fill=tk.X, padx=10, pady=(10, 6))
         self._server_status_head = BgFrame(
             self._server_status_card.body, app, bg=theme.CARD_BG
         )
@@ -314,11 +286,17 @@ class SelfHostFrpPage:
             font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
         )
         self._server_status_title_label.pack(side=tk.LEFT)
+        self._manage_node_btn = ttk.Button(
+            self._server_status_head,
+            text=t("selfhost.node_manage_btn"),
+            command=self._open_node_settings,
+        )
+        self._manage_node_btn.pack(side=tk.RIGHT)
         self._node_probe_btn = ttk.Button(
             self._server_status_head,
             text=t("selfhost.probe_now_btn"), command=self._run_probe_manual,
         )
-        self._node_probe_btn.pack(side=tk.RIGHT)
+        self._node_probe_btn.pack(side=tk.RIGHT, padx=(0, 8))
 
         self._server_status_line = BgFrame(
             self._server_status_card.body, app, bg=theme.CARD_BG
@@ -1225,8 +1203,7 @@ class SelfHostFrpPage:
         `_shards_frame`/`_status_frame` 内部内容会在刷新时重建；其余常驻
         概览标签则显式重画，避免主题切换后仍保留旧色。"""
         for frame in (
-            self.frame, self._node_summary, self._node_summary_head,
-            self._server_status_head, self._server_status_line,
+            self.frame, self._server_status_head, self._server_status_line,
             self._server_status_meta,
             self._feature_content, self._frp_page, self._lobby_page,
             self._status_frame, self._shards_frame, self._action_row,
@@ -1235,7 +1212,6 @@ class SelfHostFrpPage:
         ):
             frame.apply_theme()
         for label in (
-            self._node_title_label, self._node_detail_label,
             self._server_status_title_label, self._server_status_label,
             self._server_permission_label, self._server_resource_label,
             self._server_checked_label,
@@ -1265,19 +1241,6 @@ class SelfHostFrpPage:
             self._token_var.set(server.get("token", ""))
         else:
             self._token_var.set(deploy.generate_token())
-        self._refresh_node_summary()
-
-    def _refresh_node_summary(self) -> None:
-        server = app_settings.get_selfhost_frp_server()
-        if server:
-            detail = t(
-                "selfhost.node_detail",
-                host=self._masked_host(server.get("host", "")),
-                port=server.get("bind_port", deploy.DEFAULT_BIND_PORT),
-            )
-        else:
-            detail = t("selfhost.node_not_configured")
-        self._node_detail_label.set_text(detail, theme.TEXT_MUTED)
 
     def _refresh_server_status_card(self) -> None:
         if not self._is_authenticated():
@@ -1395,7 +1358,6 @@ class SelfHostFrpPage:
                 text=t("selfhost.ssh_redeploy_btn") if self._is_service_active()
                 else t("selfhost.ssh_deploy_btn")
             )
-        self._refresh_node_summary()
         self._refresh_server_status_card()
 
     def _start_deploy(self):
@@ -1416,7 +1378,6 @@ class SelfHostFrpPage:
         # 示"这就是我要用的服务器"，顺手把这三项存下来，供 _enable_mapping()
         # 之后使用。
         app_settings.set_selfhost_frp_server(host, port, token)
-        self._refresh_node_summary()
 
         conn = app_settings.get_selfhost_ssh_connection()
         redeploying = self._is_service_active()
@@ -1564,8 +1525,7 @@ class SelfHostFrpPage:
         return t("selfhost.last_checked", time=time.strftime("%H:%M:%S", time.localtime(status.checked_at)))
 
     def _render_server_status_panel(self):
-        """兼容既有探测调用点，把结果投影到节点概览和状态卡片。"""
-        self._refresh_node_summary()
+        """兼容既有探测调用点，把结果投影到服务器状态卡片。"""
         self._refresh_server_status_card()
 
     # ── 世界状态区渲染（结构照抄 sakura/tab.py 的 _render_shard_rows） ──

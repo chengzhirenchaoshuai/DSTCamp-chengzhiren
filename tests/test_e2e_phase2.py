@@ -620,6 +620,8 @@ def test_selfhost_status_card_layout_contract():
         "self._feature_tab_bar.pack"
     )
     assert "CardFrame(" in init_source
+    assert "self._node_summary" not in init_source
+    assert "self._manage_node_btn.pack(side=tk.RIGHT)" in init_source
 
     token_source = inspect.getsource(SelfHostFrpPage._make_token_display)
     assert "ttk.Entry(" in token_source
