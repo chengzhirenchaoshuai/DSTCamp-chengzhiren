@@ -707,6 +707,7 @@ def test_selfhost_server_ip_eye_uses_closed_and_open_states():
     assert 'tags=("eye_icon", "eye_pupil")' in source
     assert 'tags=("eye_icon", "eye_closed")' in source
     assert 'tags=("eye_icon", "eye_lashes")' in source
+    assert "6, 11, 9, 14, 14, 16, 19, 14, 22, 11" in source
     assert "eye_slash" not in source
     print("  PASS: 服务器 IP 使用小尺寸闭眼/睁眼状态")
 

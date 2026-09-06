@@ -1409,15 +1409,15 @@ class SelfHostFrpPage:
         else:
             # 脱敏时直接画闭合眼睑，不再用斜线覆盖眼睛。
             button.create_line(
-                6, 9, 9, 12, 14, 14, 19, 12, 22, 9,
+                6, 11, 9, 14, 14, 16, 19, 14, 22, 11,
                 smooth=True, splinesteps=24,
                 fill=color, width=1.7, capstyle=tk.ROUND,
                 tags=("eye_icon", "eye_closed"),
             )
             for x1, y1, x2, y2 in (
-                (9, 12, 8, 15),
-                (14, 14, 14, 17),
-                (19, 12, 20, 15),
+                (9, 14, 8, 17),
+                (14, 16, 14, 19),
+                (19, 14, 20, 17),
             ):
                 button.create_line(
                     x1, y1, x2, y2,
