@@ -908,6 +908,9 @@ class DSToolsApp:
         sm.add_command(
             label=t("settings.cache_dir_label"), command=self._show_cache_dir_dialog
         )
+        sm.add_command(
+            label=t("settings.defender_label"), command=self._show_defender_dialog
+        )
 
         # 语言/主题切换都会重新调一次这个方法，旧的触发条要先拆掉再重
         # 建，不然会在 root 里留一条重复的。
@@ -2056,6 +2059,14 @@ class DSToolsApp:
         win.deiconify()
         win.grab_set()
         win.wait_window()
+
+    def _show_defender_dialog(self) -> None:
+        """打开用户主动控制的 Microsoft Defender 精确排除项窗口。"""
+        from dstools.shared.gui.windows_defender_dialog import (
+            show_windows_defender_dialog,
+        )
+
+        show_windows_defender_dialog(self.root)
 
     def _show_custom_bg_dialog(self) -> None:
         """ "主题"菜单里的"背景图设置…"——背景图是跟主题解耦的全局功能，
