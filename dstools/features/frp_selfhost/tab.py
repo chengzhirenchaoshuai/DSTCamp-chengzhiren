@@ -608,7 +608,6 @@ class SelfHostFrpPage:
             body,
             textvariable=self._host_display_var,
             anchor=tk.W,
-            font=theme.font_tuple(theme.FONT_SIZE_BASE),
         )
         self._node_host_display.grid(
             row=1, column=1, columnspan=2, sticky=tk.EW, pady=4

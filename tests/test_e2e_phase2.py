@@ -630,6 +630,10 @@ def test_selfhost_status_card_layout_contract():
     settings_source = inspect.getsource(SelfHostFrpPage._open_node_settings)
     assert "self._node_host_display = ttk.Label(" in settings_source
     assert "textvariable=self._host_display_var" in settings_source
+    host_display_source = settings_source.split(
+        "self._node_host_display = ttk.Label(", 1
+    )[1].split(")", 1)[0]
+    assert "font=" not in host_display_source
     assert "host_entry = ttk.Entry(" not in settings_source
     assert "_node_settings_status_label" not in settings_source
     assert "selfhost.probe_now_btn" not in settings_source
