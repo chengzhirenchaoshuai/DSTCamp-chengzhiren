@@ -622,6 +622,8 @@ def test_selfhost_status_card_layout_contract():
     assert "CardFrame(" in init_source
     assert "self._node_summary" not in init_source
     assert "self._manage_node_btn.pack(side=tk.RIGHT)" in init_source
+    assert "self._server_ip_line.pack" in init_source
+    assert "self._server_ip_eye_btn" in init_source
 
     token_source = inspect.getsource(SelfHostFrpPage._make_token_display)
     assert "ttk.Entry(" in token_source
@@ -649,6 +651,7 @@ def test_selfhost_host_display_uses_authenticated_address():
 
     page = SelfHostFrpPage.__new__(SelfHostFrpPage)
     page._host_display_var = Mock()
+    page._refresh_server_ip_display = Mock()
     page._bind_port_var = Mock()
     page._token_var = Mock()
     with (
@@ -665,11 +668,32 @@ def test_selfhost_host_display_uses_authenticated_address():
     ):
         page._load_server_display()
     page._host_display_var.set.assert_called_once_with("47.101.2.3")
+    assert page._authenticated_host == "47.101.2.3"
+    assert page._server_ip_visible is False
+    page._refresh_server_ip_display.assert_called_once_with()
 
     deploy_source = inspect.getsource(SelfHostFrpPage._start_deploy)
     assert "_host_display_var.get" not in deploy_source
     assert 'conn.get("host", "")' in deploy_source
     print("  PASS: 服务器地址只读展示鉴权 IP，部署也使用鉴权连接地址")
+
+
+def test_selfhost_server_ip_mask_and_visibility():
+    """状态卡默认隐藏服务器 IP，只有显式点击眼睛后才展示完整值。"""
+    from dstools.features.frp_selfhost.tab import SelfHostFrpPage
+
+    assert SelfHostFrpPage._mask_server_host("47.101.2.3") == "47.101.xx.xx"
+    assert SelfHostFrpPage._mask_server_host("203.0.113.42") == "203.0.xx.xx"
+    assert SelfHostFrpPage._mask_server_host("") == ""
+
+    page = SelfHostFrpPage.__new__(SelfHostFrpPage)
+    page._authenticated_host = "47.101.2.3"
+    page._server_ip_visible = False
+    page._refresh_server_ip_display = Mock()
+    page._toggle_server_ip_visibility()
+    assert page._server_ip_visible is True
+    page._refresh_server_ip_display.assert_called_once_with()
+    print("  PASS: 状态卡服务器 IP 默认脱敏，并可通过眼睛按钮显隐")
 
 
 
@@ -700,6 +724,7 @@ def main():
         test_selfhost_worker_ui_dispatch_contract,
         test_selfhost_status_card_layout_contract,
         test_selfhost_host_display_uses_authenticated_address,
+        test_selfhost_server_ip_mask_and_visibility,
     ]
 
     for test in tests:

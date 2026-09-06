@@ -247,6 +247,8 @@ class SelfHostFrpPage:
         self._probe_cycle_started = False
 
         self._host_display_var = tk.StringVar(value=t("selfhost.host_pending_auth"))
+        self._server_ip_visible = False
+        self._authenticated_host = ""
         self._bind_port_var = tk.StringVar(value=str(deploy.DEFAULT_BIND_PORT))
         self._token_var = tk.StringVar()
         saved_wireguard = app_settings.get_lobby_accel_wireguard() or {}
@@ -314,6 +316,41 @@ class SelfHostFrpPage:
         )
         self._server_permission_label.pack(side=tk.LEFT, padx=(18, 0))
 
+        self._server_ip_line = BgFrame(
+            self._server_status_card.body, app, bg=theme.CARD_BG
+        )
+        self._server_ip_line.pack(fill=tk.X, pady=(3, 0))
+        self._server_ip_title_label = self._label(
+            self._server_ip_line, t("selfhost.server_ip_label"), fg=theme.TEXT_MUTED,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        )
+        self._server_ip_title_label.pack(side=tk.LEFT)
+        self._server_ip_value_label = self._label(
+            self._server_ip_line, t("selfhost.host_pending_auth"), fg=theme.TEXT_MUTED,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        )
+        self._server_ip_value_label.pack(side=tk.LEFT)
+        self._server_ip_eye_btn = BgFrame(
+            self._server_ip_line, app, bg=theme.CARD_BG,
+            width=28, height=24, cursor="arrow", takefocus=True,
+        )
+        self._server_ip_eye_btn.pack(side=tk.LEFT, padx=(4, 0))
+        self._server_ip_eye_btn.bind("<Button-1>", self._toggle_server_ip_visibility)
+        self._server_ip_eye_btn.bind("<Return>", self._toggle_server_ip_visibility)
+        self._server_ip_eye_btn.bind("<space>", self._toggle_server_ip_visibility)
+        self._server_ip_eye_btn.bind("<Enter>", lambda _event: self._draw_server_ip_eye(True))
+        self._server_ip_eye_btn.bind("<Leave>", lambda _event: self._draw_server_ip_eye(False))
+        self._server_ip_eye_btn.bind("<FocusIn>", lambda _event: self._draw_server_ip_eye(True))
+        self._server_ip_eye_btn.bind("<FocusOut>", lambda _event: self._draw_server_ip_eye(False))
+        Tooltip(
+            self._server_ip_eye_btn,
+            lambda: t(
+                "selfhost.server_ip_hide" if self._server_ip_visible
+                else "selfhost.server_ip_show"
+            ),
+        )
+        self._draw_server_ip_eye()
+
         self._server_status_meta = BgFrame(
             self._server_status_card.body, app, bg=theme.CARD_BG
         )
@@ -336,6 +373,7 @@ class SelfHostFrpPage:
         status_card_height = (
             self._server_status_head.winfo_reqheight()
             + self._server_status_line.winfo_reqheight()
+            + self._server_ip_line.winfo_reqheight()
             + self._server_status_meta.winfo_reqheight()
             + 28
         )
@@ -1212,7 +1250,7 @@ class SelfHostFrpPage:
         概览标签则显式重画，避免主题切换后仍保留旧色。"""
         for frame in (
             self.frame, self._server_status_head, self._server_status_line,
-            self._server_status_meta,
+            self._server_ip_line, self._server_ip_eye_btn, self._server_status_meta,
             self._feature_content, self._frp_page, self._lobby_page,
             self._status_frame, self._shards_frame, self._action_row,
             self._frpc_row, self._lobby_accel_row, self._lobby_detail_frame,
@@ -1222,13 +1260,15 @@ class SelfHostFrpPage:
         for label in (
             self._server_status_title_label, self._server_status_label,
             self._server_permission_label, self._server_resource_label,
-            self._server_checked_label,
+            self._server_checked_label, self._server_ip_title_label,
+            self._server_ip_value_label,
             self._frpc_status_label, self._lobby_accel_label,
             self._lobby_accel_status_label, self._lobby_mihomo_summary_label,
             self._lobby_wireguard_summary_label, self._lobby_route_label,
         ):
             label.redraw()
         self._server_status_card.apply_theme()
+        self._draw_server_ip_eye()
         self._feature_tab_bar.relabel({
             "frp": t("selfhost.feature_tab_frp"),
             "lobby": t("selfhost.feature_tab_lobby"),
@@ -1253,7 +1293,63 @@ class SelfHostFrpPage:
     def _refresh_authenticated_host_display(self) -> None:
         conn = app_settings.get_selfhost_ssh_connection()
         host = str(conn.get("host", "")).strip() if conn else ""
+        self._authenticated_host = host
+        self._server_ip_visible = False
         self._host_display_var.set(host or t("selfhost.host_pending_auth"))
+        self._refresh_server_ip_display()
+
+    @staticmethod
+    def _mask_server_host(host: str) -> str:
+        """隐藏服务器地址细节；IPv4 只保留前两段。"""
+        parts = host.split(".")
+        if len(parts) == 4:
+            try:
+                if all(0 <= int(part) <= 255 for part in parts):
+                    return f"{parts[0]}.{parts[1]}.xx.xx"
+            except ValueError:
+                pass
+        if ":" in host:
+            groups = [part for part in host.split(":") if part]
+            return ":".join(groups[:2] + ["xxxx", "xxxx"])
+        return "••••••" if host else ""
+
+    def _refresh_server_ip_display(self) -> None:
+        host = self._authenticated_host
+        if not host:
+            display = t("selfhost.host_pending_auth")
+            color = theme.TEXT_MUTED
+            self._server_ip_eye_btn.configure(cursor="arrow")
+        else:
+            display = host if self._server_ip_visible else self._mask_server_host(host)
+            color = theme.TEXT
+            self._server_ip_eye_btn.configure(cursor="hand2")
+        self._server_ip_value_label.set_text(display, color)
+        self._draw_server_ip_eye()
+
+    def _toggle_server_ip_visibility(self, _event=None) -> None:
+        if not self._authenticated_host:
+            return
+        self._server_ip_visible = not self._server_ip_visible
+        self._refresh_server_ip_display()
+
+    def _draw_server_ip_eye(self, active: bool = False) -> None:
+        """绘制随主题缩放的线性眼睛图标，避免使用平台相关 Emoji。"""
+        button = self._server_ip_eye_btn
+        button.delete("eye_icon")
+        enabled = bool(self._authenticated_host)
+        color = theme.ACCENT if active and enabled else theme.TEXT_MUTED
+        button.create_line(
+            4, 12, 9, 7, 14, 6, 19, 7, 24, 12,
+            smooth=True, fill=color, width=2, tags="eye_icon",
+        )
+        button.create_line(
+            4, 12, 9, 17, 14, 18, 19, 17, 24, 12,
+            smooth=True, fill=color, width=2, tags="eye_icon",
+        )
+        button.create_oval(11, 9, 17, 15, fill=color, outline="", tags="eye_icon")
+        if self._server_ip_visible and enabled:
+            button.create_line(5, 19, 23, 5, fill=color, width=2, tags="eye_icon")
+        button._restore_bg_layer_order()
 
     def _refresh_server_status_card(self) -> None:
         if not self._is_authenticated():
