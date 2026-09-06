@@ -1362,33 +1362,43 @@ class SelfHostFrpPage:
         self._refresh_server_ip_display()
 
     def _draw_server_ip_eye(self, active: bool = False) -> None:
-        """绘制 Fluent 风格的线性眼睛图标，避免使用平台相关 Emoji。"""
+        """绘制小尺寸闭眼/睁眼图标，避免使用平台相关 Emoji。"""
         button = self._server_ip_eye_btn
         button.delete("eye_icon")
         enabled = bool(self._authenticated_host)
         color = theme.ACCENT if active and enabled else theme.TEXT_MUTED
-        # 单一闭合曲线比上下两条弧线更接近 Fluent 的圆润眼形，也不会
-        # 在眼角留下接缝；空心瞳孔在小尺寸下比实心圆更轻、更清晰。
-        button.create_line(
-            3, 12, 7, 7, 10, 5, 14, 5,
-            18, 5, 21, 7, 25, 12,
-            21, 17, 18, 19, 14, 19,
-            10, 19, 7, 17, 3, 12,
-            smooth=True, splinesteps=24,
-            fill=color, width=2, tags=("eye_icon", "eye_outline"),
-        )
-        button.create_oval(
-            10, 8, 18, 16,
-            fill="", outline=color, width=2,
-            tags=("eye_icon", "eye_pupil"),
-        )
-        # 图标表达当前状态：脱敏时为 eye-off，显示完整 IP 时为 eye。
-        if not self._server_ip_visible:
+        if self._server_ip_visible:
             button.create_line(
-                5, 4, 23, 20,
-                fill=color, width=2, capstyle=tk.ROUND,
-                tags=("eye_icon", "eye_slash"),
+                5, 12, 8, 8, 11, 6, 14, 6,
+                17, 6, 20, 8, 23, 12,
+                20, 16, 17, 18, 14, 18,
+                11, 18, 8, 16, 5, 12,
+                smooth=True, splinesteps=24,
+                fill=color, width=1.7, tags=("eye_icon", "eye_open"),
             )
+            button.create_oval(
+                11, 9, 17, 15,
+                fill="", outline=color, width=1.7,
+                tags=("eye_icon", "eye_pupil"),
+            )
+        else:
+            # 脱敏时直接画闭合眼睑，不再用斜线覆盖眼睛。
+            button.create_line(
+                6, 9, 9, 12, 14, 14, 19, 12, 22, 9,
+                smooth=True, splinesteps=24,
+                fill=color, width=1.7, capstyle=tk.ROUND,
+                tags=("eye_icon", "eye_closed"),
+            )
+            for x1, y1, x2, y2 in (
+                (9, 12, 8, 15),
+                (14, 14, 14, 17),
+                (19, 12, 20, 15),
+            ):
+                button.create_line(
+                    x1, y1, x2, y2,
+                    fill=color, width=1.4, capstyle=tk.ROUND,
+                    tags=("eye_icon", "eye_lashes"),
+                )
         button._restore_bg_layer_order()
 
     def _refresh_server_status_card(self) -> None:

@@ -696,18 +696,19 @@ def test_selfhost_server_ip_mask_and_visibility():
     print("  PASS: 状态卡服务器 IP 默认脱敏，并可通过眼睛按钮显隐")
 
 
-def test_selfhost_server_ip_eye_uses_fluent_states():
-    """脱敏状态显示 eye-off，完整地址状态显示无斜线的睁眼图标。"""
+def test_selfhost_server_ip_eye_uses_closed_and_open_states():
+    """方案 A：脱敏状态显示闭眼，完整地址状态显示小尺寸睁眼。"""
     import inspect
 
     from dstools.features.frp_selfhost.tab import SelfHostFrpPage
 
     source = inspect.getsource(SelfHostFrpPage._draw_server_ip_eye)
-    assert 'tags=("eye_icon", "eye_outline")' in source
+    assert 'tags=("eye_icon", "eye_open")' in source
     assert 'tags=("eye_icon", "eye_pupil")' in source
-    assert "if not self._server_ip_visible:" in source
-    assert 'tags=("eye_icon", "eye_slash")' in source
-    print("  PASS: 服务器 IP 使用 Fluent 风格的 eye/eye-off 状态")
+    assert 'tags=("eye_icon", "eye_closed")' in source
+    assert 'tags=("eye_icon", "eye_lashes")' in source
+    assert "eye_slash" not in source
+    print("  PASS: 服务器 IP 使用小尺寸闭眼/睁眼状态")
 
 
 
@@ -739,7 +740,7 @@ def main():
         test_selfhost_status_card_layout_contract,
         test_selfhost_host_display_uses_authenticated_address,
         test_selfhost_server_ip_mask_and_visibility,
-        test_selfhost_server_ip_eye_uses_fluent_states,
+        test_selfhost_server_ip_eye_uses_closed_and_open_states,
     ]
 
     for test in tests:
