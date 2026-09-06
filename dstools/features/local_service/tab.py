@@ -108,6 +108,7 @@ from dstools.models import Platform, SaveSource
 _POLL_MS = 150
 _CONSOLE_LOG_BATCH_SIZE = 500
 _CONSOLE_MAX_LINES = 20_000
+_COMMAND_HISTORY_LIMIT = 100
 _STEAM_REMOTE_BUILD_TTL = 300.0
 _LUAJIT_VCREDIST_DOWNLOAD_URL = "https://wwwu.lanzoub.com/b0nyns22d"
 _PUBLIC_IP_SOURCES = (
@@ -544,6 +545,11 @@ class _ConsolePane:
         self.cmd_entry = ttk.Entry(bottom, textvariable=self.cmd_var)
         self.cmd_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
         self.cmd_entry.bind("<Return>", self._send)
+        self.cmd_entry.bind("<Up>", lambda event: self._browse_command_history(-1))
+        self.cmd_entry.bind("<Down>", lambda event: self._browse_command_history(1))
+        self._command_history: list[str] = []
+        self._command_history_index = 0
+        self._command_draft = ""
         Tooltip(self.cmd_entry, t("local.console_placeholder"))
         self.send_btn = ttk.Button(
             bottom, text=t("local.console_send_btn"), command=self._send
@@ -926,7 +932,36 @@ class _ConsolePane:
     def _send(self, event=None):
         cmd = self.cmd_var.get().strip()
         if cmd and self.proc.send_command(cmd):
+            if not self._command_history or self._command_history[-1] != cmd:
+                self._command_history.append(cmd)
+                del self._command_history[:-_COMMAND_HISTORY_LIMIT]
+            self._command_history_index = len(self._command_history)
+            self._command_draft = ""
             self.cmd_var.set("")
+
+    def _browse_command_history(self, direction: int):
+        """用上下键浏览当前世界本次运行期间发送成功的控制台命令。"""
+        if not self._command_history:
+            return "break"
+
+        history_len = len(self._command_history)
+        if direction < 0:
+            if self._command_history_index >= history_len:
+                self._command_draft = self.cmd_var.get()
+            if self._command_history_index > 0:
+                self._command_history_index -= 1
+        elif self._command_history_index < history_len - 1:
+            self._command_history_index += 1
+        elif self._command_history_index == history_len - 1:
+            self._command_history_index = history_len
+
+        if self._command_history_index < history_len:
+            value = self._command_history[self._command_history_index]
+        else:
+            value = self._command_draft
+        self.cmd_var.set(value)
+        self.cmd_entry.icursor(tk.END)
+        return "break"
 
     def _announce(self):
         text = _AnnounceDialog(self.frame).result

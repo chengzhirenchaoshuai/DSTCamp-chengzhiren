@@ -210,6 +210,46 @@ def test_shutdown_text_inside_other_command_does_not_hide_crash() -> None:
     assert process.status == ServerStatus.RUNNING
 
 
+def test_console_command_history_supports_up_down_and_draft() -> None:
+    from dstools.features.local_service.tab import _ConsolePane
+
+    class _FakeVar:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def get(self) -> str:
+            return self.value
+
+        def set(self, value: str) -> None:
+            self.value = value
+
+    pane = _ConsolePane.__new__(_ConsolePane)
+    pane.cmd_var = _FakeVar()
+    pane.cmd_entry = type("_FakeEntry", (), {"icursor": lambda *_args: None})()
+    pane.proc = type(
+        "_FakeServer",
+        (),
+        {"send_command": lambda _self, _command: True},
+    )()
+    pane._command_history = []
+    pane._command_history_index = 0
+    pane._command_draft = ""
+
+    for command in ("c_save()", "c_listallplayers()"):
+        pane.cmd_var.set(command)
+        pane._send()
+
+    pane.cmd_var.set("c_announce(\"草稿\")")
+    assert pane._browse_command_history(-1) == "break"
+    assert pane.cmd_var.get() == "c_listallplayers()"
+    pane._browse_command_history(-1)
+    assert pane.cmd_var.get() == "c_save()"
+    pane._browse_command_history(1)
+    assert pane.cmd_var.get() == "c_listallplayers()"
+    pane._browse_command_history(1)
+    assert pane.cmd_var.get() == 'c_announce("草稿")'
+
+
 def test_stop_blocking_prefers_shutdown_command_over_force() -> None:
     process = ServerProcess.__new__(ServerProcess)
     process.status = ServerStatus.RUNNING
@@ -239,6 +279,7 @@ def main() -> None:
         test_console_log_reads_are_bounded_during_error_storm,
         test_console_shutdown_command_is_an_expected_exit,
         test_shutdown_text_inside_other_command_does_not_hide_crash,
+        test_console_command_history_supports_up_down_and_draft,
         test_stop_blocking_prefers_shutdown_command_over_force,
     )
     for test in tests:
