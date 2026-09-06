@@ -230,17 +230,23 @@ class TransparentIdList(BgFrame):
             for index, item in enumerate(self._items):
                 cy = 8 + index * self._row_height + self._row_height / 2
                 if index == self._selected:
+                    top = cy - self._row_height / 2 + 2
+                    bottom = cy + self._row_height / 2 - 2
                     self.create_polygon(
-                        self._rounded_points(6, cy - self._row_height / 2 + 2,
-                                             width - 6, cy + self._row_height / 2 - 2,
+                        self._rounded_points(6, top,
+                                             width - 6, bottom,
                                              min(8, self._row_height // 3)),
-                        smooth=True, fill=theme.PRIMARY_LIGHT,
-                        outline=theme.PRIMARY,
+                        smooth=True, fill="", outline=theme.PRIMARY, width=2,
                         tags="id_list_shape",
+                    )
+                    self.create_line(
+                        9, top + 5, 9, bottom - 5,
+                        fill=theme.PRIMARY_DARK, width=3,
+                        capstyle=tk.ROUND, tags="id_list_shape",
                     )
                 self.create_text(
                     14, cy, text=item, anchor=tk.W,
-                    fill=theme.HEADING if index == self._selected else theme.TEXT,
+                    fill=theme.PRIMARY_DARK if index == self._selected else theme.TEXT,
                     font=self._font, tags="id_list_text",
                 )
             self.tag_lower("bg_image")
