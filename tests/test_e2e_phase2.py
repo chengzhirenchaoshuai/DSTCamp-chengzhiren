@@ -628,7 +628,9 @@ def test_selfhost_status_card_layout_contract():
     assert 'state="readonly"' in token_source
 
     settings_source = inspect.getsource(SelfHostFrpPage._open_node_settings)
-    assert 'state="readonly"' in settings_source
+    assert "self._node_host_display = ttk.Label(" in settings_source
+    assert "textvariable=self._host_display_var" in settings_source
+    assert "host_entry = ttk.Entry(" not in settings_source
     assert "_node_settings_status_label" not in settings_source
     assert "selfhost.probe_now_btn" not in settings_source
     print("  PASS: 自建节点状态卡位于功能页签上方，Token 为不透明只读输入框")

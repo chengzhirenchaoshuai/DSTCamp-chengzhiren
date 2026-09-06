@@ -262,6 +262,7 @@ class SelfHostFrpPage:
         self._deploy_btn = None
         self._regen_token_btn = None
         self._node_probe_btn = None
+        self._node_host_display = None
         self._node_token_display = None
         self._lobby_settings_win = None
         self._mihomo_btn = None
@@ -603,10 +604,15 @@ class SelfHostFrpPage:
         ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 12))
 
         ttk.Label(body, text=t("selfhost.host_label")).grid(row=1, column=0, sticky=tk.E, padx=(0, 8), pady=4)
-        host_entry = ttk.Entry(
-            body, textvariable=self._host_display_var, width=28, state="readonly"
+        self._node_host_display = ttk.Label(
+            body,
+            textvariable=self._host_display_var,
+            anchor=tk.W,
+            font=theme.font_tuple(theme.FONT_SIZE_BASE),
         )
-        host_entry.grid(row=1, column=1, columnspan=2, sticky=tk.EW, pady=4)
+        self._node_host_display.grid(
+            row=1, column=1, columnspan=2, sticky=tk.EW, pady=4
+        )
         ttk.Label(body, text=t("selfhost.bind_port_label")).grid(row=2, column=0, sticky=tk.E, padx=(0, 8), pady=4)
         port_entry = ttk.Entry(body, textvariable=self._bind_port_var, width=10)
         port_entry.grid(row=2, column=1, sticky=tk.W, pady=4)
@@ -656,6 +662,7 @@ class SelfHostFrpPage:
         self._node_settings_win = None
         self._deploy_btn = None
         self._regen_token_btn = None
+        self._node_host_display = None
         self._node_token_display = None
         if win is not None and win.winfo_exists():
             win.destroy()
