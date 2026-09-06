@@ -1,10 +1,9 @@
-"""自建 frps 服务器映射——"樱花映射"页签下的第二个子页签（见
-features/sakura/tab.py 的 PillTabBar 设置）。跟樱花映射效果一样（把本
-地专用服务器映射到公网），区别是没有远程 API：服务器由用户自己的云主
-机跑，DSTCamp 只管生成配置/部署脚本，"这个世界分到了哪个远程端口"这
-类状态只能在本地记账（见 shared/app_settings.py 的
-get_selfhost_frp_mapping 等函数），不像樱花那样能现查 list_tunnels()
-拿到权威数据。
+"""自建节点——"樱花映射"页签下的第二个子页签（见
+features/sakura/tab.py 的 PillTabBar 设置）。页面内部把共用同一台 VPS
+的能力拆为 FRP 内网穿透和实验性大厅加速：前者把本地专服端口映射到公
+网，后者让专服流量经 Mihomo TUN + WireGuard 从 VPS 出口发出。自建 FRP
+没有远程 API，DSTCamp 生成配置/部署脚本并在本地记录端口分配（见
+shared/app_settings.py 的 get_selfhost_frp_mapping 等函数）。
 """
 
 import queue
@@ -45,6 +44,7 @@ from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
+from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.shared.gui.tooltip import Tooltip
 from dstools.shared.gui.toggle_switch import ToggleSwitch
 from dstools.shared.server_ports import stable_path_key
@@ -82,7 +82,8 @@ class _SSHAuthSetupDialog:
         win.title(t("selfhost.ssh_auth_dialog_title"))
         win.configure(background=theme.BG_SOFT)
 
-        body = ttk.Frame(win); body.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
+        body = ttk.Frame(win)
+        body.pack(fill=tk.BOTH, expand=True, padx=15, pady=15)
         ttk.Label(body, text=t("selfhost.ssh_auth_dialog_hint"), wraplength=440, justify=tk.LEFT,
                   font=theme.font_tuple(theme.FONT_SIZE_SM)).grid(
             row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
@@ -168,23 +169,25 @@ class SelfHostFrpPage:
         f = tkfont.nametofont("TkDefaultFont") if font is None else tkfont.Font(font=font)
         label_h = f.metrics("linespace") + 4
         label = BgFrame(parent, self.app, bg=theme.CARD_BG)
+        label._display_text = text
+        label._display_fg = fg
         label.configure(height=label_h, width=f.measure(text) + 4)
 
         def _redraw():
             label.delete("label_text")
-            label.create_text(2, label_h / 2, text=text, anchor=tk.W,
-                               fill=fg or theme.TEXT, font=f, tags="label_text")
+            label.create_text(2, label_h / 2, text=label._display_text, anchor=tk.W,
+                               fill=label._display_fg or theme.TEXT, font=f, tags="label_text")
+
+        def _set_text(value, color=None):
+            label._display_text = value
+            label._display_fg = color
+            label.configure(width=f.measure(value) + 4)
+            _redraw()
 
         label.redraw = _redraw
+        label.set_text = _set_text
         _redraw()
         return label
-
-    def _reveal_host(self, _event=None):
-        self._host_var.set(self._host_raw_var.get())
-
-    def _mask_host(self, _event=None):
-        self._host_raw_var.set(self._host_var.get().strip())
-        self._host_var.set(self._masked_host(self._host_raw_var.get()))
 
     def _make_token_display(self, parent):
         """Token 展示——跟 `_label()` 一样用 BgFrame + create_text（真正
@@ -212,7 +215,19 @@ class SelfHostFrpPage:
 
         display.bind("<Button-1>", _on_click)
         display.redraw = _redraw
-        self._token_var.trace_add("write", _redraw)
+        trace_id = self._token_var.trace_add("write", _redraw)
+
+        def _remove_trace(event):
+            if event.widget is not display:
+                return
+            try:
+                self._token_var.trace_remove("write", trace_id)
+            except (tk.TclError, ValueError):
+                pass
+
+        # 节点设置现在是可反复打开的弹窗。关闭时必须移除 StringVar trace，
+        # 否则下次重新生成 Token 会回调已经销毁的 Canvas 并抛 TclError。
+        display.bind("<Destroy>", _remove_trace, add="+")
         _redraw()
         return display
 
@@ -256,71 +271,90 @@ class SelfHostFrpPage:
         self._probing = False
         self._probe_cycle_started = False
 
-        self._top = top = BgFrame(self.frame, app, bg=theme.CARD_BG)
-        top.pack(fill=tk.X, padx=10, pady=(10, 5))
-
-        self._row1 = row1 = BgFrame(top, app, bg=theme.CARD_BG); row1.pack(fill=tk.X, pady=3)
-        self._host_label = self._label(row1, t("selfhost.host_label"))
-        self._host_label.pack(side=tk.LEFT)
         self._host_raw_var = tk.StringVar()
-        self._host_var = tk.StringVar()
-        self._host_entry = ttk.Entry(row1, textvariable=self._host_var, width=24)
-        self._host_entry.pack(side=tk.LEFT, padx=(4, 12))
-        self._host_entry.bind("<FocusIn>", self._reveal_host, add="+")
-        self._host_entry.bind("<FocusOut>", self._mask_host, add="+")
-        bind_port_label = self._bind_port_label = self._label(row1, t("selfhost.bind_port_label"))
-        bind_port_label.pack(side=tk.LEFT)
         self._bind_port_var = tk.StringVar(value=str(deploy.DEFAULT_BIND_PORT))
-        bind_port_entry = ttk.Entry(row1, textvariable=self._bind_port_var, width=8)
-        bind_port_entry.pack(side=tk.LEFT, padx=(4, 0))
-        Tooltip(bind_port_label, t("selfhost.bind_port_hint"))
-        Tooltip(bind_port_entry, t("selfhost.bind_port_hint"))
-
-        self._row2 = row2 = BgFrame(top, app, bg=theme.CARD_BG); row2.pack(fill=tk.X, pady=3)
-        token_label = self._token_label = self._label(row2, t("selfhost.token_label"))
-        token_label.pack(side=tk.LEFT)
         self._token_var = tk.StringVar()
-        # Token 应该始终是随机生成的，不给编辑入口——手改成好记的弱口令
-        # 反而不安全，真要换新的走旁边"重新生成Token"按钮。
-        self._token_display = token_display = self._make_token_display(row2)
-        token_display.pack(side=tk.LEFT, padx=(4, 6))
-        Tooltip(token_label, t("selfhost.token_hint"))
-        Tooltip(token_display, t("selfhost.token_hint"))
-        self._regen_token_btn = regen_token_btn = ttk.Button(
-            row2, text=t("selfhost.regen_token_btn"), command=self._regenerate_token)
-        regen_token_btn.pack(side=tk.LEFT)
-        # 映射开着时这个按钮会被禁用（见 _render_shard_rows() 的说
-        # 明），提示气泡文字要跟着这个状态实时变——Tooltip 支持传一个不
-        # 带参数的可调用对象现查当前该显示什么文字（见 tooltip.py 的说
-        # 明），只挂一次，不要在 _render_shard_rows() 每次刷新时重新
-        # Tooltip(...) 一遍，那样每刷新一次就会多叠一层 <Enter> 绑定。
-        Tooltip(regen_token_btn, lambda: t("selfhost.regen_token_disabled_hint") if self._any_mapped
-                else t("selfhost.regen_token_hint"))
+        saved_wireguard = app_settings.get_lobby_accel_wireguard() or {}
+        self._wireguard_port_var = tk.StringVar(
+            value=str(saved_wireguard.get("port", DEFAULT_WIREGUARD_PORT))
+        )
+        self._lobby_accel_var = tk.BooleanVar(
+            value=app_settings.get_lobby_accel_enabled()
+        )
 
-        self._row3 = row3 = BgFrame(top, app, bg=theme.CARD_BG); row3.pack(fill=tk.X, pady=3)
-        self._auth_btn = ttk.Button(row3, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog)
-        self._auth_btn.pack(side=tk.LEFT, padx=(0, 2))
-        self._deploy_btn = ttk.Button(row3, text=t("selfhost.ssh_deploy_btn"), command=self._start_deploy)
-        self._deploy_btn.pack(side=tk.LEFT, padx=2)
-        # 未完成"初次鉴权"之前这个按钮是只读的——点击本身在 _start_deploy
-        # 里也会拦一次，这里的 Tooltip 用可调用对象实时反映当前状态，不
-        # 需要在每次鉴权状态变化时手动去重新绑定文字。
-        Tooltip(self._deploy_btn,
-                lambda: "" if self._is_authenticated() else t("selfhost.deploy_needs_auth_hint"))
+        # 低频配置只在弹窗内创建。保存引用是为了部署、探测等异步状态变化
+        # 时，若弹窗仍打开就同步刷新；关闭后引用归零，主页面不依赖它们。
+        self._node_settings_win = None
+        self._deploy_btn = None
+        self._regen_token_btn = None
+        self._node_probe_btn = None
+        self._node_settings_status_label = None
+        self._node_settings_resource_label = None
+        self._node_settings_checked_label = None
+        self._lobby_settings_win = None
+        self._mihomo_btn = None
+        self._wireguard_deploy_btn = None
+        self._mihomo_path_value = None
+        self._wireguard_settings_value = None
 
-        self._server_status_panel = BgFrame(self.frame, app, bg=theme.CARD_BG)
-        self._server_status_panel.pack(fill=tk.X, padx=10, pady=(3, 0))
+        # 共享节点概览：主页面只保留一个管理入口，避免主机、Token、鉴权和
+        # 部署按钮与日常的映射/诊断操作争抢视觉层级。
+        self._node_summary = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._node_summary.pack(fill=tk.X, padx=10, pady=(10, 6))
+        self._node_summary_head = BgFrame(self._node_summary, app, bg=theme.CARD_BG)
+        self._node_summary_head.pack(fill=tk.X)
+        self._node_title_label = self._label(
+            self._node_summary_head,
+            t("selfhost.node_title"),
+        )
+        self._node_title_label.pack(side=tk.LEFT)
+        self._node_status_label = self._label(
+            self._node_summary_head, t("selfhost.node_status_unconfigured"), fg=theme.TEXT_MUTED
+        )
+        self._node_status_label.pack(side=tk.LEFT, padx=(12, 0))
+        self._manage_node_btn = ttk.Button(
+            self._node_summary_head,
+            text=t("selfhost.node_manage_btn"),
+            command=self._open_node_settings,
+        )
+        self._manage_node_btn.pack(side=tk.RIGHT)
+        self._node_detail_label = self._label(
+            self._node_summary, t("selfhost.node_not_configured"), fg=theme.TEXT_MUTED
+        )
+        self._node_detail_label.pack(anchor=tk.W, pady=(4, 0))
+
+        self._feature_tab_bar = PillTabBar(
+            self.frame,
+            [
+                ("frp", t("selfhost.feature_tab_frp")),
+                ("lobby", t("selfhost.feature_tab_lobby")),
+            ],
+            on_select=self._on_feature_tab_select,
+            app=app,
+            bg=theme.CARD_BG,
+            height=36,
+            pill_h=28,
+            font_size=10,
+            initial="frp",
+        )
+        self._feature_tab_bar.pack(fill=tk.X, padx=10, pady=(0, 4))
+        self._feature_content = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._feature_content.pack(fill=tk.BOTH, expand=True)
+        self._frp_page = BgFrame(self._feature_content, app, bg=theme.CARD_BG)
+        self._lobby_page = BgFrame(self._feature_content, app, bg=theme.CARD_BG)
+        self._frp_page.pack(fill=tk.BOTH, expand=True)
 
         # 不在这里立即 pack()——空 Canvas 在没有子控件时会向 Tk 请求一个
         # 很大的默认高度（实测 265px，不是 0），只有真的要显示提示文字
         # 时才由 _set_status() 按需 pack()/pack_forget()，否则平时这里
         # 会凭空多出一大块空白，把下面的世界状态区挤到窗口外面去。
-        self._status_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._status_frame = BgFrame(self._frp_page, app, bg=theme.CARD_BG)
 
-        self._shards_frame = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._shards_frame = BgFrame(self._frp_page, app, bg=theme.CARD_BG)
         self._shards_frame.pack(fill=tk.X, padx=10, pady=5)
 
-        self._action_row = action_row = BgFrame(self.frame, app, bg=theme.CARD_BG); action_row.pack(fill=tk.X, padx=10, pady=5)
+        self._action_row = action_row = BgFrame(self._frp_page, app, bg=theme.CARD_BG)
+        action_row.pack(fill=tk.X, padx=10, pady=5)
         self._action_btn = ttk.Button(action_row, text=t("selfhost.enable_btn"), command=self._on_action_btn)
         self._action_btn.pack(side=tk.LEFT)
         self._conn_check_btn = ttk.Button(action_row, text=t("selfhost.conn_check_btn"),
@@ -330,7 +364,7 @@ class SelfHostFrpPage:
         Tooltip(self._conn_check_btn,
                 lambda: "" if self._any_mapped else t("selfhost.conn_check_needs_mapping_hint"))
 
-        self._frpc_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        self._frpc_row = BgFrame(self._frp_page, app, bg=theme.CARD_BG)
         self._frpc_status_label = self._label(self._frpc_row, self._frpc_status_text(False))
         self._frpc_status_label.pack(side=tk.LEFT)
         Tooltip(self._frpc_status_label, lambda: self._frpc_failed_error(self._current_cluster) or "")
@@ -338,13 +372,10 @@ class SelfHostFrpPage:
                                             command=self._on_frpc_toggle)
         self._frpc_toggle_btn.pack(side=tk.LEFT, padx=(10, 0))
 
-        self._lobby_accel_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
-        self._lobby_accel_row.pack(fill=tk.X, padx=10, pady=(0, 5))
-        self._lobby_accel_var = tk.BooleanVar(
-            value=app_settings.get_lobby_accel_enabled()
-        )
+        self._lobby_accel_row = BgFrame(self._lobby_page, app, bg=theme.CARD_BG)
+        self._lobby_accel_row.pack(fill=tk.X, padx=10, pady=(8, 5))
         self._lobby_accel_label = self._label(
-            self._lobby_accel_row, t("selfhost.lobby_accel_label")
+            self._lobby_accel_row, t("selfhost.lobby_enable_label")
         )
         self._lobby_accel_label.pack(side=tk.LEFT)
         self._lobby_accel_switch = ToggleSwitch(
@@ -353,40 +384,48 @@ class SelfHostFrpPage:
             command=self._on_lobby_accel_toggle,
             app=app,
         )
-        self._lobby_accel_switch.pack(side=tk.LEFT, padx=(8, 10))
-        self._mihomo_btn = ttk.Button(
+        self._lobby_accel_switch.pack(side=tk.LEFT, padx=(8, 12))
+        self._lobby_settings_btn = ttk.Button(
             self._lobby_accel_row,
-            text=t("selfhost.lobby_accel_select_mihomo"),
-            command=self._select_mihomo,
+            text=t("selfhost.lobby_settings_btn"),
+            command=self._open_lobby_settings,
         )
-        self._mihomo_btn.pack(side=tk.LEFT)
-        saved_wireguard = app_settings.get_lobby_accel_wireguard() or {}
-        self._wireguard_port_var = tk.StringVar(
-            value=str(saved_wireguard.get("port", DEFAULT_WIREGUARD_PORT))
-        )
-        self._wireguard_port_entry = ttk.Entry(
-            self._lobby_accel_row,
-            textvariable=self._wireguard_port_var,
-            width=7,
-        )
-        self._wireguard_port_entry.pack(side=tk.LEFT, padx=(8, 2))
-        self._wireguard_deploy_btn = ttk.Button(
-            self._lobby_accel_row,
-            text=t("selfhost.lobby_accel_deploy_wireguard"),
-            command=self._deploy_wireguard,
-        )
-        self._wireguard_deploy_btn.pack(side=tk.LEFT)
+        self._lobby_settings_btn.pack(side=tk.RIGHT)
         self._diagnostic_btn = ttk.Button(
             self._lobby_accel_row,
             text=t("selfhost.lobby_diag_btn"),
             command=self._start_lobby_diagnostic,
         )
-        self._diagnostic_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self._diagnostic_btn.pack(side=tk.RIGHT, padx=(0, 8))
         self._lobby_accel_status_label = self._label(
             self._lobby_accel_row, t("selfhost.lobby_accel_status_stopped")
         )
-        self._lobby_accel_status_label.pack(side=tk.LEFT, padx=(10, 0))
+        self._lobby_accel_status_label.pack(side=tk.LEFT)
         Tooltip(self._lobby_accel_label, lambda: t("selfhost.lobby_accel_hint"))
+
+        self._lobby_detail_frame = BgFrame(self._lobby_page, app, bg=theme.CARD_BG)
+        self._lobby_detail_frame.pack(fill=tk.X, padx=10, pady=(6, 0))
+        self._lobby_mihomo_row = BgFrame(self._lobby_detail_frame, app, bg=theme.CARD_BG)
+        self._lobby_mihomo_row.pack(fill=tk.X, pady=2)
+        self._label(self._lobby_mihomo_row, t("selfhost.lobby_mihomo_label")).pack(side=tk.LEFT)
+        self._lobby_mihomo_summary_label = self._label(
+            self._lobby_mihomo_row, t("selfhost.lobby_mihomo_not_selected"), fg=theme.TEXT_MUTED
+        )
+        self._lobby_mihomo_summary_label.pack(side=tk.LEFT, padx=(10, 0))
+        self._lobby_wireguard_row = BgFrame(self._lobby_detail_frame, app, bg=theme.CARD_BG)
+        self._lobby_wireguard_row.pack(fill=tk.X, pady=2)
+        self._label(self._lobby_wireguard_row, t("selfhost.lobby_wireguard_label")).pack(side=tk.LEFT)
+        self._lobby_wireguard_summary_label = self._label(
+            self._lobby_wireguard_row, t("selfhost.lobby_wireguard_not_deployed"), fg=theme.TEXT_MUTED
+        )
+        self._lobby_wireguard_summary_label.pack(side=tk.LEFT, padx=(10, 0))
+        self._lobby_route_label = self._label(
+            self._lobby_detail_frame,
+            t("selfhost.lobby_route_summary"),
+            fg=theme.TEXT_MUTED,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        )
+        self._lobby_route_label.pack(anchor=tk.W, pady=(10, 0))
 
         self._load_server_display()
         self._refresh_action_buttons()
@@ -516,6 +555,192 @@ class SelfHostFrpPage:
 
         self._refresh_lobby_accel_row()
 
+    def _on_feature_tab_select(self, key: str) -> None:
+        """在同一 VPS 节点下切换两种相互独立的使用方式。"""
+        self._frp_page.pack_forget()
+        self._lobby_page.pack_forget()
+        page = self._lobby_page if key == "lobby" else self._frp_page
+        page.pack(fill=tk.BOTH, expand=True)
+
+    def _open_node_settings(self) -> None:
+        if self._node_settings_win is not None and self._node_settings_win.winfo_exists():
+            self._node_settings_win.lift()
+            self._node_settings_win.focus_force()
+            return
+
+        win = tk.Toplevel(self.frame)
+        self._node_settings_win = win
+        win.withdraw()
+        win.title(t("selfhost.node_settings_title"))
+        win.configure(background=theme.BG_SOFT)
+        win.transient(self.app.root)
+
+        body = ttk.Frame(win, padding=15)
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            body,
+            text=t("selfhost.node_settings_hint"),
+            justify=tk.LEFT,
+            wraplength=520,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 12))
+
+        ttk.Label(body, text=t("selfhost.host_label")).grid(row=1, column=0, sticky=tk.E, padx=(0, 8), pady=4)
+        host_entry = ttk.Entry(body, textvariable=self._host_raw_var, width=28)
+        host_entry.grid(row=1, column=1, columnspan=2, sticky=tk.EW, pady=4)
+        ttk.Label(body, text=t("selfhost.bind_port_label")).grid(row=2, column=0, sticky=tk.E, padx=(0, 8), pady=4)
+        port_entry = ttk.Entry(body, textvariable=self._bind_port_var, width=10)
+        port_entry.grid(row=2, column=1, sticky=tk.W, pady=4)
+        Tooltip(port_entry, t("selfhost.bind_port_hint"))
+
+        ttk.Label(body, text=t("selfhost.token_label")).grid(row=3, column=0, sticky=tk.E, padx=(0, 8), pady=4)
+        token_display = self._make_token_display(body)
+        token_display.grid(row=3, column=1, sticky=tk.W, pady=4)
+        self._regen_token_btn = ttk.Button(
+            body, text=t("selfhost.regen_token_btn"), command=self._regenerate_token
+        )
+        self._regen_token_btn.grid(row=3, column=2, sticky=tk.W, padx=(8, 0), pady=4)
+        Tooltip(
+            self._regen_token_btn,
+            lambda: t("selfhost.regen_token_disabled_hint") if self._any_mapped
+            else t("selfhost.regen_token_hint"),
+        )
+
+        ttk.Separator(body).grid(row=4, column=0, columnspan=3, sticky=tk.EW, pady=12)
+        self._node_settings_status_label = ttk.Label(body, justify=tk.LEFT, wraplength=520)
+        self._node_settings_status_label.grid(row=5, column=0, columnspan=3, sticky=tk.W, pady=2)
+        self._node_settings_resource_label = ttk.Label(
+            body, justify=tk.LEFT, wraplength=520, font=theme.font_tuple(theme.FONT_SIZE_SM)
+        )
+        self._node_settings_resource_label.grid(row=6, column=0, columnspan=3, sticky=tk.W, pady=2)
+        self._node_settings_checked_label = ttk.Label(
+            body, justify=tk.LEFT, wraplength=520, font=theme.font_tuple(theme.FONT_SIZE_SM)
+        )
+        self._node_settings_checked_label.grid(row=7, column=0, columnspan=3, sticky=tk.W, pady=2)
+
+        actions = ttk.Frame(body)
+        actions.grid(row=8, column=0, columnspan=3, sticky=tk.EW, pady=(14, 0))
+        auth_btn = ttk.Button(
+            actions, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog
+        )
+        auth_btn.pack(side=tk.LEFT)
+        self._deploy_btn = ttk.Button(
+            actions, text=t("selfhost.ssh_deploy_btn"), command=self._start_deploy
+        )
+        self._deploy_btn.pack(side=tk.LEFT, padx=(8, 0))
+        Tooltip(
+            self._deploy_btn,
+            lambda: "" if self._is_authenticated() else t("selfhost.deploy_needs_auth_hint"),
+        )
+        self._node_probe_btn = ttk.Button(
+            actions, text=t("selfhost.probe_now_btn"), command=self._run_probe_manual
+        )
+        self._node_probe_btn.pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(actions, text=t("dlg.close_btn"), command=self._close_node_settings).pack(side=tk.RIGHT)
+        body.columnconfigure(1, weight=1)
+
+        self._refresh_action_buttons()
+        self._refresh_node_settings_status()
+        win.protocol("WM_DELETE_WINDOW", self._close_node_settings)
+        win.bind("<Escape>", lambda _event: self._close_node_settings())
+        win.update_idletasks()
+        center_over_parent(win, self.app.root)
+        win.deiconify()
+        host_entry.focus_set()
+
+    def _close_node_settings(self) -> None:
+        win = self._node_settings_win
+        self._node_settings_win = None
+        self._deploy_btn = None
+        self._regen_token_btn = None
+        self._node_probe_btn = None
+        self._node_settings_status_label = None
+        self._node_settings_resource_label = None
+        self._node_settings_checked_label = None
+        if win is not None and win.winfo_exists():
+            win.destroy()
+
+    def _open_lobby_settings(self) -> None:
+        if self._lobby_settings_win is not None and self._lobby_settings_win.winfo_exists():
+            self._lobby_settings_win.lift()
+            self._lobby_settings_win.focus_force()
+            return
+
+        win = tk.Toplevel(self.frame)
+        self._lobby_settings_win = win
+        win.withdraw()
+        win.title(t("selfhost.lobby_settings_title"))
+        win.configure(background=theme.BG_SOFT)
+        win.transient(self.app.root)
+        body = ttk.Frame(win, padding=15)
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            body,
+            text=t("selfhost.lobby_settings_hint"),
+            justify=tk.LEFT,
+            wraplength=520,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        ).grid(row=0, column=0, columnspan=3, sticky=tk.W, pady=(0, 12))
+
+        ttk.Label(body, text=t("selfhost.lobby_mihomo_label")).grid(row=1, column=0, sticky=tk.W, pady=4)
+        self._mihomo_path_value = ttk.Label(body, justify=tk.LEFT)
+        self._mihomo_path_value.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(0, 6))
+        self._mihomo_btn = ttk.Button(
+            body, text=t("selfhost.lobby_accel_select_mihomo"), command=self._select_mihomo
+        )
+        self._mihomo_btn.grid(row=2, column=2, sticky=tk.E, padx=(12, 0), pady=(0, 6))
+
+        ttk.Separator(body).grid(row=3, column=0, columnspan=3, sticky=tk.EW, pady=10)
+        ttk.Label(body, text=t("selfhost.lobby_wireguard_label")).grid(row=4, column=0, sticky=tk.W, pady=4)
+        self._wireguard_settings_value = ttk.Label(body, justify=tk.LEFT)
+        self._wireguard_settings_value.grid(row=5, column=0, sticky=tk.W, pady=4)
+        ttk.Label(body, text=t("selfhost.lobby_wireguard_port_label")).grid(row=5, column=1, sticky=tk.E, padx=(16, 6), pady=4)
+        ttk.Entry(body, textvariable=self._wireguard_port_var, width=8).grid(row=5, column=2, sticky=tk.W, pady=4)
+        self._wireguard_deploy_btn = ttk.Button(
+            body, text=t("selfhost.lobby_accel_deploy_wireguard"), command=self._deploy_wireguard
+        )
+        self._wireguard_deploy_btn.grid(row=6, column=0, sticky=tk.W, pady=(8, 0))
+        ttk.Button(body, text=t("dlg.close_btn"), command=self._close_lobby_settings).grid(
+            row=6, column=2, sticky=tk.E, pady=(8, 0)
+        )
+        body.columnconfigure(0, weight=1)
+
+        self._refresh_lobby_settings()
+        win.protocol("WM_DELETE_WINDOW", self._close_lobby_settings)
+        win.bind("<Escape>", lambda _event: self._close_lobby_settings())
+        win.update_idletasks()
+        center_over_parent(win, self.app.root)
+        win.deiconify()
+
+    def _close_lobby_settings(self) -> None:
+        win = self._lobby_settings_win
+        self._lobby_settings_win = None
+        self._mihomo_btn = None
+        self._wireguard_deploy_btn = None
+        self._mihomo_path_value = None
+        self._wireguard_settings_value = None
+        if win is not None and win.winfo_exists():
+            win.destroy()
+
+    def _refresh_lobby_settings(self) -> None:
+        mihomo_path = app_settings.get_lobby_accel_mihomo_path()
+        wireguard = app_settings.get_lobby_accel_wireguard()
+        if self._mihomo_path_value is not None:
+            self._mihomo_path_value.configure(
+                text=str(mihomo_path) if mihomo_path else t("selfhost.lobby_mihomo_not_selected")
+            )
+        if self._wireguard_settings_value is not None:
+            self._wireguard_settings_value.configure(
+                text=t("selfhost.lobby_wireguard_deployed") if wireguard
+                else t("selfhost.lobby_wireguard_not_deployed")
+            )
+        if self._wireguard_deploy_btn is not None:
+            self._wireguard_deploy_btn.configure(
+                state=tk.DISABLED if self._wireguard_deploying else tk.NORMAL,
+                text=t("selfhost.lobby_accel_redeploy_wireguard") if wireguard
+                else t("selfhost.lobby_accel_deploy_wireguard"),
+            )
+
     def _select_mihomo(self) -> None:
         picked = filedialog.askopenfilename(
             parent=self.app.root,
@@ -533,6 +758,7 @@ class SelfHostFrpPage:
             return
         app_settings.set_lobby_accel_mihomo_path(picked, digest)
         self._refresh_lobby_accel_row()
+        self._refresh_lobby_settings()
 
     def _deploy_wireguard(self) -> None:
         if self._wireguard_deploying:
@@ -886,9 +1112,6 @@ class SelfHostFrpPage:
         self._refresh_lobby_accel_row()
 
     def _refresh_lobby_accel_row(self) -> None:
-        self._wireguard_deploy_btn.configure(
-            state=tk.DISABLED if self._wireguard_deploying else tk.NORMAL
-        )
         diagnostic_ready = (
             not self._diagnostic_busy
             and self._current_cluster is not None
@@ -911,11 +1134,28 @@ class SelfHostFrpPage:
             text, color = t("selfhost.lobby_accel_status_no_wireguard"), theme.TEXT_MUTED
         elif app_settings.get_lobby_accel_mihomo_path():
             text, color = t("selfhost.lobby_accel_status_ready"), theme.TEXT_MUTED
-        font = tkfont.nametofont("TkDefaultFont")
-        self._lobby_accel_status_label.configure(width=font.measure(text) + 4)
-        self._lobby_accel_status_label.itemconfig(
-            "label_text", text=text, fill=color
-        )
+        self._lobby_accel_status_label.set_text(text, color)
+
+        mihomo_path = app_settings.get_lobby_accel_mihomo_path()
+        if mihomo_path:
+            mihomo_text = t("selfhost.lobby_mihomo_selected", name=mihomo_path.name)
+            mihomo_color = theme.SERVER_COLOR
+        else:
+            mihomo_text = t("selfhost.lobby_mihomo_not_selected")
+            mihomo_color = theme.TEXT_MUTED
+        self._lobby_mihomo_summary_label.set_text(mihomo_text, mihomo_color)
+
+        wireguard = app_settings.get_lobby_accel_wireguard()
+        if wireguard:
+            wireguard_text = t(
+                "selfhost.lobby_wireguard_summary", port=wireguard["port"]
+            )
+            wireguard_color = theme.SERVER_COLOR
+        else:
+            wireguard_text = t("selfhost.lobby_wireguard_not_deployed")
+            wireguard_color = theme.TEXT_MUTED
+        self._lobby_wireguard_summary_label.set_text(wireguard_text, wireguard_color)
+        self._refresh_lobby_settings()
 
     # ── 页签生命周期 ─────────────────────────────────────────────────
 
@@ -962,21 +1202,31 @@ class SelfHostFrpPage:
         切主题前的旧内容（真机反馈过的 bug：背景图错位，且不会自己恢
         复，只有碰巧触发一次 <Configure> 才会重画）。
 
-        `_shards_frame`/`_server_status_panel`/`_status_frame` 内部的具
-        体内容是每次刷新/探测时重新整个销毁重建的（`_render_shard_
-        rows()`/`_render_server_status_panel()`），下次任何一次刷新自
-        然就会用上新主题的颜色，这里只需要处理容器本身和常驻不重建的
-        标签/按钮。"""
-        for frame in (self.frame, self._top, self._row1, self._row2, self._row3,
-                      self._server_status_panel, self._status_frame,
-                      self._shards_frame, self._action_row, self._frpc_row,
-                      self._lobby_accel_row):
+        `_shards_frame`/`_status_frame` 内部内容会在刷新时重建；其余常驻
+        概览标签则显式重画，避免主题切换后仍保留旧色。"""
+        for frame in (
+            self.frame, self._node_summary, self._node_summary_head,
+            self._feature_content, self._frp_page, self._lobby_page,
+            self._status_frame, self._shards_frame, self._action_row,
+            self._frpc_row, self._lobby_accel_row, self._lobby_detail_frame,
+            self._lobby_mihomo_row, self._lobby_wireguard_row,
+        ):
             frame.apply_theme()
-        for label in (self._host_label, self._bind_port_label, self._token_label,
-                      self._token_display, self._frpc_status_label,
-                      self._lobby_accel_label, self._lobby_accel_status_label):
+        for label in (
+            self._node_title_label, self._node_status_label, self._node_detail_label,
+            self._frpc_status_label, self._lobby_accel_label,
+            self._lobby_accel_status_label, self._lobby_mihomo_summary_label,
+            self._lobby_wireguard_summary_label, self._lobby_route_label,
+        ):
             label.redraw()
+        self._feature_tab_bar.relabel({
+            "frp": t("selfhost.feature_tab_frp"),
+            "lobby": t("selfhost.feature_tab_lobby"),
+        })
+        self._feature_tab_bar.apply_theme()
         self._lobby_accel_switch.apply_theme()
+        self._lobby_route_label.set_text(t("selfhost.lobby_route_summary"), theme.TEXT_MUTED)
+        self._render_server_status_panel()
         self._refresh_lobby_accel_row()
 
     # ── 服务器连接信息 ───────────────────────────────────────────────
@@ -985,11 +1235,57 @@ class SelfHostFrpPage:
         server = app_settings.get_selfhost_frp_server()
         if server:
             self._host_raw_var.set(server.get("host", ""))
-            self._host_var.set(self._masked_host(self._host_raw_var.get()))
             self._bind_port_var.set(str(server.get("bind_port", deploy.DEFAULT_BIND_PORT)))
             self._token_var.set(server.get("token", ""))
         else:
             self._token_var.set(deploy.generate_token())
+        self._refresh_node_summary()
+
+    def _refresh_node_summary(self) -> None:
+        server = app_settings.get_selfhost_frp_server()
+        if server:
+            detail = t(
+                "selfhost.node_detail",
+                host=self._masked_host(server.get("host", "")),
+                port=server.get("bind_port", deploy.DEFAULT_BIND_PORT),
+            )
+        else:
+            detail = t("selfhost.node_not_configured")
+        self._node_detail_label.set_text(detail, theme.TEXT_MUTED)
+
+        if not server:
+            status_text, color = t("selfhost.node_status_unconfigured"), theme.TEXT_MUTED
+        elif not self._is_authenticated():
+            status_text, color = t("selfhost.node_status_unauthenticated"), theme.TEXT_MUTED
+        elif self._probing:
+            status_text, color = t("selfhost.node_status_checking"), theme.TEXT_MUTED
+        else:
+            status_text, color = self._service_status_text(), self._service_status_color()
+        self._node_status_label.set_text(status_text, color)
+
+    def _refresh_node_settings_status(self) -> None:
+        if self._node_settings_status_label is None:
+            return
+        if not self._is_authenticated():
+            status_text = t("selfhost.node_settings_unauthenticated")
+        elif self._probing:
+            status_text = t("selfhost.node_status_checking")
+        else:
+            status_text = t(
+                "selfhost.node_settings_status",
+                service=self._service_status_text(),
+                permission=self._permission_text(),
+            )
+        self._node_settings_status_label.configure(text=status_text)
+        self._node_settings_resource_label.configure(text=self._resource_text())
+        checked = self._checked_at_text()
+        if self._last_status and self._last_status.error:
+            checked = f"{checked}\n{self._last_status.error}"
+        self._node_settings_checked_label.configure(text=checked)
+        if self._node_probe_btn is not None:
+            self._node_probe_btn.configure(
+                state=tk.DISABLED if self._probing or not self._is_authenticated() else tk.NORMAL
+            )
 
     def _validated_port(self, raw: str) -> int | None:
         try:
@@ -1080,9 +1376,14 @@ class SelfHostFrpPage:
 
     def _refresh_action_buttons(self):
         authed = self._is_authenticated()
-        self._deploy_btn.configure(state=tk.NORMAL if authed else tk.DISABLED)
-        self._deploy_btn.configure(
-            text=t("selfhost.ssh_redeploy_btn") if self._is_service_active() else t("selfhost.ssh_deploy_btn"))
+        if self._deploy_btn is not None:
+            self._deploy_btn.configure(state=tk.NORMAL if authed else tk.DISABLED)
+            self._deploy_btn.configure(
+                text=t("selfhost.ssh_redeploy_btn") if self._is_service_active()
+                else t("selfhost.ssh_deploy_btn")
+            )
+        self._refresh_node_summary()
+        self._refresh_node_settings_status()
 
     def _start_deploy(self):
         if not self._is_authenticated():
@@ -1102,6 +1403,7 @@ class SelfHostFrpPage:
         # 示"这就是我要用的服务器"，顺手把这三项存下来，供 _enable_mapping()
         # 之后使用。
         app_settings.set_selfhost_frp_server(host, port, token)
+        self._refresh_node_summary()
 
         conn = app_settings.get_selfhost_ssh_connection()
         redeploying = self._is_service_active()
@@ -1248,31 +1550,10 @@ class SelfHostFrpPage:
             return t("selfhost.last_checked", time=t("selfhost.check_failed"))
         return t("selfhost.last_checked", time=time.strftime("%H:%M:%S", time.localtime(status.checked_at)))
 
-    def _clear_server_status_panel(self):
-        for child in self._server_status_panel.winfo_children():
-            child.destroy()
-
     def _render_server_status_panel(self):
-        self._clear_server_status_panel()
-        if not self._is_authenticated():
-            self._server_status_panel.pack_forget()
-            return
-        self._server_status_panel.pack(fill=tk.X, padx=10, pady=(3, 0))
-
-        row_a = BgFrame(self._server_status_panel, self.app, bg=theme.CARD_BG); row_a.pack(fill=tk.X, pady=2)
-        self._label(row_a, self._service_status_text(), fg=self._service_status_color()).pack(side=tk.LEFT)
-        self._label(row_a, self._permission_text()).pack(side=tk.LEFT, padx=(14, 0))
-        probe_btn = ttk.Button(row_a, text=t("selfhost.probe_now_btn"), command=self._run_probe_manual)
-        probe_btn.configure(state=tk.DISABLED if self._probing else tk.NORMAL)
-        probe_btn.pack(side=tk.LEFT, padx=(14, 0))
-
-        row_b = BgFrame(self._server_status_panel, self.app, bg=theme.CARD_BG); row_b.pack(fill=tk.X, pady=(0, 2))
-        self._label(row_b, self._resource_text(), fg=theme.TEXT_MUTED).pack(side=tk.LEFT)
-        self._label(row_b, self._checked_at_text(), fg=theme.TEXT_MUTED).pack(side=tk.LEFT, padx=(14, 0))
-
-        if self._last_status and self._last_status.error:
-            self._label(self._server_status_panel, self._last_status.error, fg=theme.ERROR,
-                        font=theme.font_tuple(theme.FONT_SIZE_SM)).pack(anchor=tk.W, pady=(0, 2))
+        """兼容既有探测调用点，把结果投影到概览和管理弹窗。"""
+        self._refresh_node_summary()
+        self._refresh_node_settings_status()
 
     # ── 世界状态区渲染（结构照抄 sakura/tab.py 的 _render_shard_rows） ──
 
@@ -1359,7 +1640,8 @@ class SelfHostFrpPage:
         # 点，所以映射开着时直接禁用，逼着用户先关映射再换 token。提示
         # 气泡文字跟着这个状态动态变，用的是构造时挂好的那一个 Tooltip
         # （见 __init__ 里的说明），这里不需要重新 Tooltip(...) 一遍。
-        self._regen_token_btn.configure(state=tk.DISABLED if any_mapped else tk.NORMAL)
+        if self._regen_token_btn is not None:
+            self._regen_token_btn.configure(state=tk.DISABLED if any_mapped else tk.NORMAL)
 
         if any_mapped:
             self._frpc_row.pack(fill=tk.X, padx=10, pady=(0, 5))
