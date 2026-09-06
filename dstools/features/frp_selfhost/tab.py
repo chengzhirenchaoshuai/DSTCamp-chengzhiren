@@ -1362,22 +1362,33 @@ class SelfHostFrpPage:
         self._refresh_server_ip_display()
 
     def _draw_server_ip_eye(self, active: bool = False) -> None:
-        """绘制随主题缩放的线性眼睛图标，避免使用平台相关 Emoji。"""
+        """绘制 Fluent 风格的线性眼睛图标，避免使用平台相关 Emoji。"""
         button = self._server_ip_eye_btn
         button.delete("eye_icon")
         enabled = bool(self._authenticated_host)
         color = theme.ACCENT if active and enabled else theme.TEXT_MUTED
+        # 单一闭合曲线比上下两条弧线更接近 Fluent 的圆润眼形，也不会
+        # 在眼角留下接缝；空心瞳孔在小尺寸下比实心圆更轻、更清晰。
         button.create_line(
-            4, 12, 9, 7, 14, 6, 19, 7, 24, 12,
-            smooth=True, fill=color, width=2, tags="eye_icon",
+            3, 12, 7, 7, 10, 5, 14, 5,
+            18, 5, 21, 7, 25, 12,
+            21, 17, 18, 19, 14, 19,
+            10, 19, 7, 17, 3, 12,
+            smooth=True, splinesteps=24,
+            fill=color, width=2, tags=("eye_icon", "eye_outline"),
         )
-        button.create_line(
-            4, 12, 9, 17, 14, 18, 19, 17, 24, 12,
-            smooth=True, fill=color, width=2, tags="eye_icon",
+        button.create_oval(
+            10, 8, 18, 16,
+            fill="", outline=color, width=2,
+            tags=("eye_icon", "eye_pupil"),
         )
-        button.create_oval(11, 9, 17, 15, fill=color, outline="", tags="eye_icon")
-        if self._server_ip_visible and enabled:
-            button.create_line(5, 19, 23, 5, fill=color, width=2, tags="eye_icon")
+        # 图标表达当前状态：脱敏时为 eye-off，显示完整 IP 时为 eye。
+        if not self._server_ip_visible:
+            button.create_line(
+                5, 4, 23, 20,
+                fill=color, width=2, capstyle=tk.ROUND,
+                tags=("eye_icon", "eye_slash"),
+            )
         button._restore_bg_layer_order()
 
     def _refresh_server_status_card(self) -> None:
