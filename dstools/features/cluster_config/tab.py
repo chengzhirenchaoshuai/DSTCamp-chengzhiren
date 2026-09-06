@@ -883,39 +883,40 @@ class ClusterConfigTab:
         self._entries.clear()
 
     def _position_cluster_save_row(self):
-        """把 cluster.ini 保存按钮定位到第三列卡片正下方。"""
+        """按三列卡片的最终尺寸同步 cluster.ini 内容区高度。"""
         if getattr(self, "_cluster_save_positioning", False):
             return
         row = getattr(self, "_cluster_save_row", None)
         cards = getattr(self, "_cluster_cards", None)
         outer = self._section_frames.get("Cluster")
-        if row is None or cards is None or outer is None or not row.winfo_exists():
+        if cards is None or outer is None or not outer.winfo_exists():
             return
         self._cluster_save_positioning = True
         try:
             outer.update_idletasks()
-            col3 = cards[2]
-            if not col3.winfo_exists():
+            live_cards = [card for card in cards if card.winfo_exists()]
+            if not live_cards:
                 return
-            width = max(1, col3.winfo_width())
-            x = col3.winfo_x()
-            y = col3.winfo_y() + col3.winfo_height() + 8
-            row.place(x=x, y=y, width=width,
-                      height=max(1, row.winfo_reqheight()))
-            # NETWORK 卡片通常比第三列更高；保存行定位的延迟回调可能
-            # 先于第一列完成几何传播，必须每次都把所有卡片底部纳入
-            # 外层高度，避免后续把最高卡片裁掉。
             cards_bottom = max(
                 card.winfo_y() + card.winfo_height() + 8
-                for card in cards
-                if card.winfo_exists()
+                for card in live_cards
             )
-            required_height = max(
-                cards_bottom,
-                y + row.winfo_height() + 8,
-            )
+            required_height = cards_bottom
+            # 兼容旧布局：若调用方仍提供内嵌保存行，也把它纳入内容高度。
+            if row is not None and row.winfo_exists():
+                col3 = cards[2]
+                width = max(1, col3.winfo_width())
+                x = col3.winfo_x()
+                y = col3.winfo_y() + col3.winfo_height() + 8
+                row.place(
+                    x=x, y=y, width=width,
+                    height=max(1, row.winfo_reqheight()),
+                )
+                required_height = max(
+                    required_height, y + row.winfo_height() + 8,
+                )
             current_height = self._section_content_heights.get("Cluster", 0)
-            if required_height > current_height:
+            if required_height != current_height:
                 self._section_content_heights["Cluster"] = required_height
                 outer.configure(height=required_height)
                 canvas = self._section_canvases.get("Cluster")
@@ -927,11 +928,11 @@ class ClusterConfigTab:
             self._cluster_save_positioning = False
 
     def _schedule_cluster_save_position(self):
-        """等卡片完成一次 grid 传播后再定位保存行。"""
+        """等卡片完成一次 grid 传播后再同步内容高度。"""
         self._position_cluster_save_row()
-        row = getattr(self, "_cluster_save_row", None)
-        if row is not None and row.winfo_exists():
-            row.after_idle(self._position_cluster_save_row)
+        outer = self._section_frames.get("Cluster")
+        if outer is not None and outer.winfo_exists():
+            outer.after_idle(self._position_cluster_save_row)
 
     # 用 @property 而不是类属性/模块级常量，是因为要每次现查
     # theme.FONT_FAMILY（类属性在类定义时算一次就冻住，字体样式切换后
