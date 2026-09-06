@@ -23,6 +23,7 @@ from dstools.features.frp_selfhost.mihomo import (
     build_mihomo_config,
     sha256_file,
 )
+from dstools.features.frp_selfhost.tab import MIHOMO_RELEASES_URL, SelfHostFrpPage
 from dstools.features.frp_selfhost.wireguard import (
     WireGuardClientConfig,
     ensure_client_keypair,
@@ -106,6 +107,17 @@ def test_mihomo_selection_persists_hash_and_wireguard_metadata() -> None:
             }
 
 
+def test_mihomo_download_opens_official_release_page() -> None:
+    page = object.__new__(SelfHostFrpPage)
+    with patch(
+        "dstools.features.frp_selfhost.tab.webbrowser.open",
+        return_value=True,
+    ) as open_browser:
+        page._open_mihomo_download()
+    open_browser.assert_called_once_with(MIHOMO_RELEASES_URL)
+    assert MIHOMO_RELEASES_URL == "https://github.com/MetaCubeX/mihomo/releases"
+
+
 def test_all_shards_must_be_mapped() -> None:
     cluster = SimpleNamespace(
         path=Path("Cluster_1"),
@@ -182,6 +194,7 @@ def main() -> int:
         test_wireguard_keypair_is_valid_and_stable,
         test_wireguard_install_script_is_scoped_and_idempotent,
         test_mihomo_selection_persists_hash_and_wireguard_metadata,
+        test_mihomo_download_opens_official_release_page,
         test_all_shards_must_be_mapped,
         test_coordinator_passes_wireguard_config_and_rolls_back,
     ]

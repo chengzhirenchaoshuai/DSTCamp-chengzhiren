@@ -10,6 +10,7 @@ import queue
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from tkinter import filedialog, font as tkfont, ttk
 
 from dstools.shared import app_settings
@@ -53,6 +54,7 @@ from dstools.i18n import t
 from dstools.models import SaveSource
 
 _FRPC_CONFIG_CACHE_NAME = "frp_selfhost_config"
+MIHOMO_RELEASES_URL = "https://github.com/MetaCubeX/mihomo/releases"
 
 _UDP_CHECK_KEY_BY_STATUS = {
     "captured": "selfhost.conn_udp_captured",
@@ -729,10 +731,21 @@ class SelfHostFrpPage:
         ttk.Label(body, text=t("selfhost.lobby_mihomo_label")).grid(row=1, column=0, sticky=tk.W, pady=4)
         self._mihomo_path_value = ttk.Label(body, justify=tk.LEFT)
         self._mihomo_path_value.grid(row=2, column=0, columnspan=2, sticky=tk.W, pady=(0, 6))
-        self._mihomo_btn = ttk.Button(
-            body, text=t("selfhost.lobby_accel_select_mihomo"), command=self._select_mihomo
+        mihomo_actions = ttk.Frame(body)
+        mihomo_actions.grid(row=2, column=2, sticky=tk.E, padx=(12, 0), pady=(0, 6))
+        download_btn = ttk.Button(
+            mihomo_actions,
+            text=t("selfhost.lobby_accel_download_mihomo"),
+            command=self._open_mihomo_download,
         )
-        self._mihomo_btn.grid(row=2, column=2, sticky=tk.E, padx=(12, 0), pady=(0, 6))
+        download_btn.pack(side=tk.LEFT)
+        Tooltip(download_btn, t("selfhost.lobby_accel_download_mihomo_hint"))
+        self._mihomo_btn = ttk.Button(
+            mihomo_actions,
+            text=t("selfhost.lobby_accel_select_mihomo"),
+            command=self._select_mihomo,
+        )
+        self._mihomo_btn.pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Separator(body).grid(row=3, column=0, columnspan=3, sticky=tk.EW, pady=10)
         ttk.Label(body, text=t("selfhost.lobby_wireguard_label")).grid(row=4, column=0, sticky=tk.W, pady=4)
@@ -783,6 +796,22 @@ class SelfHostFrpPage:
                 state=tk.DISABLED if self._wireguard_deploying else tk.NORMAL,
                 text=t("selfhost.lobby_accel_redeploy_wireguard") if wireguard
                 else t("selfhost.lobby_accel_deploy_wireguard"),
+            )
+
+    def _open_mihomo_download(self) -> None:
+        """用系统默认浏览器打开 Mihomo 官方 GitHub 发布页。"""
+        try:
+            opened = webbrowser.open(MIHOMO_RELEASES_URL)
+        except OSError:
+            opened = False
+        if not opened:
+            dlg.show_warning(
+                self.app.root,
+                t("selfhost.lobby_accel_download_mihomo"),
+                t(
+                    "selfhost.lobby_accel_download_mihomo_failed",
+                    url=MIHOMO_RELEASES_URL,
+                ),
             )
 
     def _select_mihomo(self) -> None:
