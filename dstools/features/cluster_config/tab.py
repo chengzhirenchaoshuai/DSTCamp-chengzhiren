@@ -596,15 +596,14 @@ class ClusterConfigTab:
         # 复用同一个默认宽度基准，因此内外层行为一致。
         self._shard_fixed_width = max(560, round(getattr(app, "WINDOW_BASE_W", 1600) * 0.5))
         for tab_key in ("Cluster", "Shard Config"):
-            # 每个页签一个 page，装可滚动的 canvas。保存按钮由两个页签
-            # 各自放到设置卡片下方；footer 只保留为构造阶段兼容占位，随后
-            # 会被隐藏并销毁其按钮。
+            # 每个页签一个 page，装可滚动的 canvas；保存按钮固定在页签
+            # 底部，避免高 DPI 下内容超出默认客户区后按钮被裁掉。
             page = self._surface_frame(self._sub_content)
             if tab_key == "Shard Config":
                 page.configure(width=self._shard_fixed_width)
                 page.pack_propagate(False)
             scroll_area = self._layout_frame(page)
-            scroll_area.pack(side=tk.TOP, fill=tk.X)
+            scroll_area.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
             footer = self._surface_frame(page)
             footer.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
             save_cmd = self._save_cluster_ini if tab_key == "Cluster" else self._save_shard_ini
@@ -613,10 +612,6 @@ class ClusterConfigTab:
             self._section_save_btns[tab_key] = save_btn
 
             canvas = self._surface_canvas(scroll_area)
-            # 没有 pack 出来——在这次按钮/footer 重构之前它也从没显示/
-            # pack 过（原来是 canvas 直接交给 notebook.add()，会自动填
-            # 满整个页签；这里从来就没有可见的滚动条或滚轮绑定，两栏布
-            # 局实际内容够短，用不上）。
             scrollbar = ttk.Scrollbar(scroll_area, orient=tk.VERTICAL, command=canvas.yview)
             # 这里的 expand=True 只影响*水平*方向（对一个单独
             # side=LEFT 的子控件来说，expand 唯一能起作用的维度——纵向
@@ -625,6 +620,7 @@ class ClusterConfigTab:
             # 在下面通过 canvas.configure(height=...) 跟踪内容自身尺
             # 寸来处理，不靠纵向的 expand/fill。
             canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             frame = self._surface_frame(canvas)
             frame.grid_columnconfigure(0, weight=1)
             frame.grid_columnconfigure(1, weight=1)
@@ -633,32 +629,12 @@ class ClusterConfigTab:
             frame.grid_propagate(False)
 
             if tab_key == "Cluster":
-                # 房间设置保存按钮不再固定在整个页签最底部，而是由
-                # _load_config() 放到第三列（多层世界/Steam 群组）卡片
-                # 下方。先拆掉旧 footer 按钮，避免页面保留一个不可见的
-                # 重复控件。
-                footer.pack_forget()
-                save_btn.destroy()
-                self._cluster_save_row = self._layout_frame(frame)
-                self._cluster_save_row.place_forget()
-                save_btn = ttk.Button(
-                    self._cluster_save_row, text=t("cluster.save_btn"),
-                    command=save_cmd,
-                )
-                save_btn.pack(side=tk.RIGHT)
-                self._section_save_btns[tab_key] = save_btn
+                # 兼容旧的定位回调，但不再把按钮放进 Canvas 内容区。
+                self._cluster_save_row = None
                 self._cluster_save_positioning = False
-                frame.bind(
-                    "<Configure>",
-                    lambda _e: self._schedule_cluster_save_position(), add="+",
-                )
             else:
-                # 世界设置页签也把保存按钮放到动态设置卡片下方；旧
-                # footer 仅作为构造阶段占位，真正按钮在 _load_config()
-                # 里创建到 server.ini 内容框中。
-                footer.pack_forget()
-                save_btn.destroy()
-                self._section_save_btns[tab_key] = None
+                # server.ini 也使用页签底部的固定保存按钮。
+                self._shard_save_row = None
             canvas.configure(yscrollcommand=scrollbar.set)
             win_id = canvas.create_window((0,0), window=frame, anchor=tk.NW)
 
@@ -1224,22 +1200,13 @@ class ClusterConfigTab:
             card.winfo_y() + card.winfo_height() + 8
             for card in (col1, col2, col3)
         )
-        self._schedule_cluster_save_position()
-        self._cluster_save_row.update_idletasks()
-        save_bottom = (
-            self._cluster_save_row.winfo_y()
-            + self._cluster_save_row.winfo_height()
-            + 8
-        )
-        content_height = max(content_height, save_bottom)
         self._section_content_heights["Cluster"] = content_height
         outer.configure(height=content_height)
         cluster_canvas = self._section_canvases["Cluster"]
         cluster_canvas.itemconfigure(self._section_window_ids["Cluster"], height=content_height)
         cluster_canvas.configure(height=content_height)
 
-        # 房间设置按钮常驻在第三列卡片下方，这里每次重新加载只更新
-        # 是否可点，不重建按钮。
+        # 保存按钮固定在页签底部，这里只更新是否可点，不重建按钮。
         self._section_save_btns["Cluster"].configure(state=tk.NORMAL if is_server else tk.DISABLED)
 
         # 世界配置带一个世界选择器——SERVER 和 LOCAL 现在共用完全一样
@@ -1273,8 +1240,7 @@ class ClusterConfigTab:
             shard_sel.pack(side=tk.LEFT)
             shard_sel.bind("<<ComboboxSelected>>", self._load_shard_config)
             row += 1
-            # server.ini 字段也放进和 cluster.ini 三列相同的圆角设置
-            # 卡片；卡片下方单独留出保存行，按钮固定在右下角。
+            # server.ini 字段放进圆角设置卡片；保存按钮固定在页签底部。
             self._shard_card = CardFrame(
                 frame, self.app, padding=8,
                 bg=theme.BG_SOFT, border=theme.CARD_BORDER,
@@ -1288,17 +1254,6 @@ class ClusterConfigTab:
             self._shard_config_frame = self._layout_frame(self._shard_card.body)
             self._shard_config_frame.pack(fill=tk.BOTH, expand=True)
             row += 1
-            self._shard_save_row = self._layout_frame(frame)
-            self._shard_save_row.grid(
-                row=row, column=0, columnspan=2,
-                sticky=tk.E, padx=8, pady=(0, 8),
-            )
-            save_btn = ttk.Button(
-                self._shard_save_row, text=t("cluster.save_btn"),
-                command=self._save_shard_ini,
-            )
-            save_btn.pack(side=tk.RIGHT)
-            self._section_save_btns["Shard Config"] = save_btn
             self._load_shard_config()
         if self._section_save_btns["Shard Config"] is not None:
             self._section_save_btns["Shard Config"].configure(
@@ -1431,32 +1386,29 @@ class ClusterConfigTab:
                         # 把开关自己所在的行销毁重建——这在 Tk 里不安全。
                         var.trace_add("write", lambda *a: self.app.root.after(1, self._on_is_master_toggle))
 
-        # 动态字段完成后再按内容高度撑开圆角卡片；保存行在卡片下方，
-        # 不会随着字段数量变化跑到卡片内部。
+        # 动态字段完成后再按内容高度撑开圆角卡片；保存按钮固定在页签底部。
         card = getattr(self, "_shard_card", None)
         if card is not None and card.winfo_exists():
             self._shard_config_frame.update_idletasks()
             card.configure(height=max(48, self._shard_config_frame.winfo_reqheight() + 16))
             self._update_shard_layout()
             # CardFrame 的最终 y/height 要等 grid 和 Canvas window 完成一
-            # 轮几何传播后才可靠；立即计算时可能只得到 1px 请求高度，
-            # 导致保存行被裁在 Canvas 外面。
+            # 轮几何传播后才可靠；立即计算时可能只得到 1px 请求高度。
             self._shard_config_frame.after_idle(self._update_shard_layout)
             self._shard_config_frame.after(120, self._update_shard_layout)
 
     def _update_shard_layout(self):
-        """让 server.ini 卡片和其下方保存行完整纳入滚动内容高度。"""
+        """让 server.ini 卡片完整纳入滚动内容高度。"""
         if getattr(self, "_shard_layout_updating", False):
             return
         card = getattr(self, "_shard_card", None)
-        save_row = getattr(self, "_shard_save_row", None)
         frame = self._section_frames.get("Shard Config")
         canvas = self._section_canvases.get("Shard Config")
         window_id = self._section_window_ids.get("Shard Config")
-        if not all((card, save_row, frame, canvas, window_id)):
+        if not all((card, frame, canvas, window_id)):
             return
         try:
-            if not card.winfo_exists() or not save_row.winfo_exists():
+            if not card.winfo_exists():
                 return
         except tk.TclError:
             return
@@ -1464,11 +1416,7 @@ class ClusterConfigTab:
         try:
             frame.update_idletasks()
             card.update_idletasks()
-            save_row.update_idletasks()
-            bottom = max(
-                card.winfo_y() + card.winfo_height(),
-                save_row.winfo_y() + save_row.winfo_height(),
-            ) + 8
+            bottom = card.winfo_y() + card.winfo_height() + 8
             content_height = max(1, bottom)
             frame.configure(height=content_height)
             self._section_content_heights["Shard Config"] = content_height
