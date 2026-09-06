@@ -609,6 +609,28 @@ def test_selfhost_worker_ui_dispatch_contract():
     print("  PASS: 自建 FRP 工作线程结果经队列回到 Tk 主线程")
 
 
+def test_selfhost_status_card_layout_contract():
+    """服务器状态应在功能页签上方，Token 使用不透明只读输入框。"""
+    import inspect
+
+    from dstools.features.frp_selfhost.tab import SelfHostFrpPage
+
+    init_source = inspect.getsource(SelfHostFrpPage.__init__)
+    assert init_source.index("self._server_status_card.pack") < init_source.index(
+        "self._feature_tab_bar.pack"
+    )
+    assert "CardFrame(" in init_source
+
+    token_source = inspect.getsource(SelfHostFrpPage._make_token_display)
+    assert "ttk.Entry(" in token_source
+    assert 'state="readonly"' in token_source
+
+    settings_source = inspect.getsource(SelfHostFrpPage._open_node_settings)
+    assert "_node_settings_status_label" not in settings_source
+    assert "selfhost.probe_now_btn" not in settings_source
+    print("  PASS: 自建节点状态卡位于功能页签上方，Token 为不透明只读输入框")
+
+
 
 def main():
     """Run all Phase 2 tests."""
@@ -635,6 +657,7 @@ def main():
         test_transparent_id_list_keeps_background_above_fallback,
         test_id_remove_button_requires_real_selection,
         test_selfhost_worker_ui_dispatch_contract,
+        test_selfhost_status_card_layout_contract,
     ]
 
     for test in tests:

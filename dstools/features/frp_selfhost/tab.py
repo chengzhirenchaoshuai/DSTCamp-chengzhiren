@@ -42,6 +42,7 @@ from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.resource_paths import data_dir, runtime_tool_path
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
+from dstools.shared.gui.card_frame import CardFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.pill_tabs import PillTabBar
@@ -190,20 +191,15 @@ class SelfHostFrpPage:
         return label
 
     def _make_token_display(self, parent):
-        """Token 展示——跟 `_label()` 一样用 BgFrame + create_text（真正
-        透出自定义背景图，不像 ttk.Entry 那样会画一块不透明的纯色底），
-        代价是画布文字没法用鼠标拖拽选中，改成点一下直接复制到剪贴板。
-        `deploy.generate_token()` 固定生成 32 位十六进制，宽度按这个长
-        度写死，重新生成 token 不会引起布局跳动。"""
-        font = tkfont.Font(family="Consolas", size=10)
-        label_h = font.metrics("linespace") + 4
-        display = BgFrame(parent, self.app, bg=theme.CARD_BG, cursor="hand2")
-        display.configure(height=label_h, width=font.measure("0" * 32) + 4)
-
-        def _redraw(*_args):
-            display.delete("token_text")
-            display.create_text(2, label_h / 2, text=self._token_var.get(), anchor=tk.W,
-                                 fill=theme.TEXT, font=font, tags="token_text")
+        """用只读输入框展示 Token，保持与主机、端口字段一致的不透明外观。"""
+        display = ttk.Entry(
+            parent,
+            textvariable=self._token_var,
+            width=34,
+            state="readonly",
+            cursor="hand2",
+            font=("Consolas", 10),
+        )
 
         def _on_click(_event):
             token = self._token_var.get()
@@ -214,21 +210,6 @@ class SelfHostFrpPage:
             dlg.show_info(self.app.root, "", t("token.copied"))
 
         display.bind("<Button-1>", _on_click)
-        display.redraw = _redraw
-        trace_id = self._token_var.trace_add("write", _redraw)
-
-        def _remove_trace(event):
-            if event.widget is not display:
-                return
-            try:
-                self._token_var.trace_remove("write", trace_id)
-            except (tk.TclError, ValueError):
-                pass
-
-        # 节点设置现在是可反复打开的弹窗。关闭时必须移除 StringVar trace，
-        # 否则下次重新生成 Token 会回调已经销毁的 Canvas 并抛 TclError。
-        display.bind("<Destroy>", _remove_trace, add="+")
-        _redraw()
         return display
 
     _SHARD_ROW_PADY = (6, 6)
@@ -264,7 +245,7 @@ class SelfHostFrpPage:
         self._any_mapped = False
 
         # _last_status：最近一次探测结果（None=还没探测）。_probing：防
-        # 止"立即检测"连点堆出并发线程。_probe_cycle_started：保证后台
+        # 止"刷新"连点堆出并发线程。_probe_cycle_started：保证后台
         # 定时探测的 self-rescheduling after() 链只启动一次（照抄
         # local_service/tab.py 的 _poll() 写法）。
         self._last_status: probe.ServerStatus | None = None
@@ -282,15 +263,12 @@ class SelfHostFrpPage:
             value=app_settings.get_lobby_accel_enabled()
         )
 
-        # 低频配置只在弹窗内创建。保存引用是为了部署、探测等异步状态变化
-        # 时，若弹窗仍打开就同步刷新；关闭后引用归零，主页面不依赖它们。
+        # 低频配置只在弹窗内创建；刷新按钮则常驻主页面的服务器状态卡。
         self._node_settings_win = None
         self._deploy_btn = None
         self._regen_token_btn = None
         self._node_probe_btn = None
-        self._node_settings_status_label = None
-        self._node_settings_resource_label = None
-        self._node_settings_checked_label = None
+        self._node_token_display = None
         self._lobby_settings_win = None
         self._mihomo_btn = None
         self._wireguard_deploy_btn = None
@@ -308,10 +286,6 @@ class SelfHostFrpPage:
             t("selfhost.node_title"),
         )
         self._node_title_label.pack(side=tk.LEFT)
-        self._node_status_label = self._label(
-            self._node_summary_head, t("selfhost.node_status_unconfigured"), fg=theme.TEXT_MUTED
-        )
-        self._node_status_label.pack(side=tk.LEFT, padx=(12, 0))
         self._manage_node_btn = ttk.Button(
             self._node_summary_head,
             text=t("selfhost.node_manage_btn"),
@@ -322,6 +296,71 @@ class SelfHostFrpPage:
             self._node_summary, t("selfhost.node_not_configured"), fg=theme.TEXT_MUTED
         )
         self._node_detail_label.pack(anchor=tk.W, pady=(4, 0))
+
+        # 服务器运行状态是 FRP 映射和大厅加速共同依赖的信息，放在两个
+        # 功能页签上方统一展示；圆角描边与“房间设置”中的设置卡片一致。
+        self._server_status_card = CardFrame(
+            self.frame, app, padding=10, bg=theme.CARD_BG,
+            border=theme.CARD_BORDER, body_follows_bg=True,
+        )
+        self._server_status_card.pack(fill=tk.X, padx=10, pady=(0, 6))
+        self._server_status_head = BgFrame(
+            self._server_status_card.body, app, bg=theme.CARD_BG
+        )
+        self._server_status_head.pack(fill=tk.X)
+        self._server_status_title_label = self._label(
+            self._server_status_head,
+            t("selfhost.server_status_title"),
+            font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True),
+        )
+        self._server_status_title_label.pack(side=tk.LEFT)
+        self._node_probe_btn = ttk.Button(
+            self._server_status_head,
+            text=t("selfhost.probe_now_btn"), command=self._run_probe_manual,
+        )
+        self._node_probe_btn.pack(side=tk.RIGHT)
+
+        self._server_status_line = BgFrame(
+            self._server_status_card.body, app, bg=theme.CARD_BG
+        )
+        self._server_status_line.pack(fill=tk.X, pady=(5, 0))
+        self._server_status_label = self._label(
+            self._server_status_line, t("selfhost.status_unknown")
+        )
+        self._server_status_label.pack(side=tk.LEFT)
+        self._server_permission_label = self._label(
+            self._server_status_line,
+            t("selfhost.permission_display", permission=t("selfhost.permission_unknown")),
+            fg=theme.TEXT_MUTED,
+        )
+        self._server_permission_label.pack(side=tk.LEFT, padx=(18, 0))
+
+        self._server_status_meta = BgFrame(
+            self._server_status_card.body, app, bg=theme.CARD_BG
+        )
+        self._server_status_meta.pack(fill=tk.X, pady=(3, 0))
+        self._server_resource_label = self._label(
+            self._server_status_meta, t("selfhost.resource_unknown"), fg=theme.TEXT_MUTED,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        )
+        self._server_resource_label.pack(side=tk.LEFT)
+        self._server_checked_label = self._label(
+            self._server_status_meta, t("selfhost.never_checked"), fg=theme.TEXT_MUTED,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        )
+        self._server_checked_label.pack(side=tk.LEFT, padx=(18, 0))
+        Tooltip(
+            self._server_status_label,
+            lambda: self._last_status.error if self._last_status and self._last_status.error else "",
+        )
+        self._server_status_card.body.update_idletasks()
+        status_card_height = (
+            self._server_status_head.winfo_reqheight()
+            + self._server_status_line.winfo_reqheight()
+            + self._server_status_meta.winfo_reqheight()
+            + 28
+        )
+        self._server_status_card.configure(height=max(88, status_card_height))
 
         self._feature_tab_bar = PillTabBar(
             self.frame,
@@ -594,8 +633,8 @@ class SelfHostFrpPage:
         Tooltip(port_entry, t("selfhost.bind_port_hint"))
 
         ttk.Label(body, text=t("selfhost.token_label")).grid(row=3, column=0, sticky=tk.E, padx=(0, 8), pady=4)
-        token_display = self._make_token_display(body)
-        token_display.grid(row=3, column=1, sticky=tk.W, pady=4)
+        self._node_token_display = self._make_token_display(body)
+        self._node_token_display.grid(row=3, column=1, sticky=tk.EW, pady=4)
         self._regen_token_btn = ttk.Button(
             body, text=t("selfhost.regen_token_btn"), command=self._regenerate_token
         )
@@ -606,20 +645,8 @@ class SelfHostFrpPage:
             else t("selfhost.regen_token_hint"),
         )
 
-        ttk.Separator(body).grid(row=4, column=0, columnspan=3, sticky=tk.EW, pady=12)
-        self._node_settings_status_label = ttk.Label(body, justify=tk.LEFT, wraplength=520)
-        self._node_settings_status_label.grid(row=5, column=0, columnspan=3, sticky=tk.W, pady=2)
-        self._node_settings_resource_label = ttk.Label(
-            body, justify=tk.LEFT, wraplength=520, font=theme.font_tuple(theme.FONT_SIZE_SM)
-        )
-        self._node_settings_resource_label.grid(row=6, column=0, columnspan=3, sticky=tk.W, pady=2)
-        self._node_settings_checked_label = ttk.Label(
-            body, justify=tk.LEFT, wraplength=520, font=theme.font_tuple(theme.FONT_SIZE_SM)
-        )
-        self._node_settings_checked_label.grid(row=7, column=0, columnspan=3, sticky=tk.W, pady=2)
-
         actions = ttk.Frame(body)
-        actions.grid(row=8, column=0, columnspan=3, sticky=tk.EW, pady=(14, 0))
+        actions.grid(row=4, column=0, columnspan=3, sticky=tk.EW, pady=(14, 0))
         auth_btn = ttk.Button(
             actions, text=t("selfhost.ssh_auth_btn"), command=self._open_ssh_auth_dialog
         )
@@ -632,15 +659,11 @@ class SelfHostFrpPage:
             self._deploy_btn,
             lambda: "" if self._is_authenticated() else t("selfhost.deploy_needs_auth_hint"),
         )
-        self._node_probe_btn = ttk.Button(
-            actions, text=t("selfhost.probe_now_btn"), command=self._run_probe_manual
-        )
-        self._node_probe_btn.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text=t("dlg.close_btn"), command=self._close_node_settings).pack(side=tk.RIGHT)
         body.columnconfigure(1, weight=1)
 
         self._refresh_action_buttons()
-        self._refresh_node_settings_status()
+        self._refresh_server_status_card()
         win.protocol("WM_DELETE_WINDOW", self._close_node_settings)
         win.bind("<Escape>", lambda _event: self._close_node_settings())
         win.update_idletasks()
@@ -653,10 +676,7 @@ class SelfHostFrpPage:
         self._node_settings_win = None
         self._deploy_btn = None
         self._regen_token_btn = None
-        self._node_probe_btn = None
-        self._node_settings_status_label = None
-        self._node_settings_resource_label = None
-        self._node_settings_checked_label = None
+        self._node_token_display = None
         if win is not None and win.winfo_exists():
             win.destroy()
 
@@ -1206,6 +1226,8 @@ class SelfHostFrpPage:
         概览标签则显式重画，避免主题切换后仍保留旧色。"""
         for frame in (
             self.frame, self._node_summary, self._node_summary_head,
+            self._server_status_head, self._server_status_line,
+            self._server_status_meta,
             self._feature_content, self._frp_page, self._lobby_page,
             self._status_frame, self._shards_frame, self._action_row,
             self._frpc_row, self._lobby_accel_row, self._lobby_detail_frame,
@@ -1213,12 +1235,16 @@ class SelfHostFrpPage:
         ):
             frame.apply_theme()
         for label in (
-            self._node_title_label, self._node_status_label, self._node_detail_label,
+            self._node_title_label, self._node_detail_label,
+            self._server_status_title_label, self._server_status_label,
+            self._server_permission_label, self._server_resource_label,
+            self._server_checked_label,
             self._frpc_status_label, self._lobby_accel_label,
             self._lobby_accel_status_label, self._lobby_mihomo_summary_label,
             self._lobby_wireguard_summary_label, self._lobby_route_label,
         ):
             label.redraw()
+        self._server_status_card.apply_theme()
         self._feature_tab_bar.relabel({
             "frp": t("selfhost.feature_tab_frp"),
             "lobby": t("selfhost.feature_tab_lobby"),
@@ -1253,39 +1279,26 @@ class SelfHostFrpPage:
             detail = t("selfhost.node_not_configured")
         self._node_detail_label.set_text(detail, theme.TEXT_MUTED)
 
-        if not server:
-            status_text, color = t("selfhost.node_status_unconfigured"), theme.TEXT_MUTED
-        elif not self._is_authenticated():
-            status_text, color = t("selfhost.node_status_unauthenticated"), theme.TEXT_MUTED
-        elif self._probing:
-            status_text, color = t("selfhost.node_status_checking"), theme.TEXT_MUTED
-        else:
-            status_text, color = self._service_status_text(), self._service_status_color()
-        self._node_status_label.set_text(status_text, color)
-
-    def _refresh_node_settings_status(self) -> None:
-        if self._node_settings_status_label is None:
-            return
+    def _refresh_server_status_card(self) -> None:
         if not self._is_authenticated():
             status_text = t("selfhost.node_settings_unauthenticated")
+            status_color = theme.TEXT_MUTED
         elif self._probing:
             status_text = t("selfhost.node_status_checking")
+            status_color = theme.TEXT_MUTED
         else:
-            status_text = t(
-                "selfhost.node_settings_status",
-                service=self._service_status_text(),
-                permission=self._permission_text(),
-            )
-        self._node_settings_status_label.configure(text=status_text)
-        self._node_settings_resource_label.configure(text=self._resource_text())
-        checked = self._checked_at_text()
-        if self._last_status and self._last_status.error:
-            checked = f"{checked}\n{self._last_status.error}"
-        self._node_settings_checked_label.configure(text=checked)
-        if self._node_probe_btn is not None:
-            self._node_probe_btn.configure(
-                state=tk.DISABLED if self._probing or not self._is_authenticated() else tk.NORMAL
-            )
+            status_text = self._service_status_text()
+            status_color = self._service_status_color()
+        self._server_status_label.set_text(status_text, status_color)
+        self._server_permission_label.set_text(
+            t("selfhost.permission_display", permission=self._permission_text()),
+            theme.TEXT_MUTED,
+        )
+        self._server_resource_label.set_text(self._resource_text(), theme.TEXT_MUTED)
+        self._server_checked_label.set_text(self._checked_at_text(), theme.TEXT_MUTED)
+        self._node_probe_btn.configure(
+            state=tk.DISABLED if self._probing or not self._is_authenticated() else tk.NORMAL
+        )
 
     def _validated_port(self, raw: str) -> int | None:
         try:
@@ -1383,7 +1396,7 @@ class SelfHostFrpPage:
                 else t("selfhost.ssh_deploy_btn")
             )
         self._refresh_node_summary()
-        self._refresh_node_settings_status()
+        self._refresh_server_status_card()
 
     def _start_deploy(self):
         if not self._is_authenticated():
@@ -1491,7 +1504,7 @@ class SelfHostFrpPage:
         if not conn:
             return
         self._probing = True
-        self._render_server_status_panel()  # 让"立即检测"按钮马上变灰
+        self._render_server_status_panel()  # 让“刷新”按钮马上变灰
 
         def _worker():
             status = probe.probe_server_status(conn["host"], conn["port"], conn["username"])
@@ -1551,9 +1564,9 @@ class SelfHostFrpPage:
         return t("selfhost.last_checked", time=time.strftime("%H:%M:%S", time.localtime(status.checked_at)))
 
     def _render_server_status_panel(self):
-        """兼容既有探测调用点，把结果投影到概览和管理弹窗。"""
+        """兼容既有探测调用点，把结果投影到节点概览和状态卡片。"""
         self._refresh_node_summary()
-        self._refresh_node_settings_status()
+        self._refresh_server_status_card()
 
     # ── 世界状态区渲染（结构照抄 sakura/tab.py 的 _render_shard_rows） ──
 
