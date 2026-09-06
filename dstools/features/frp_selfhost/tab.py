@@ -55,6 +55,8 @@ from dstools.models import SaveSource
 
 _FRPC_CONFIG_CACHE_NAME = "frp_selfhost_config"
 MIHOMO_RELEASES_URL = "https://github.com/MetaCubeX/mihomo/releases"
+MIHOMO_LANZOU_URL = "https://wwblt.lanzout.com/iN5Vd4714e6h"
+MIHOMO_LANZOU_CODE = "c0mu"
 
 _UDP_CHECK_KEY_BY_STATUS = {
     "captured": "selfhost.conn_udp_captured",
@@ -799,9 +801,32 @@ class SelfHostFrpPage:
             )
 
     def _open_mihomo_download(self) -> None:
-        """用系统默认浏览器打开 Mihomo 官方 GitHub 发布页。"""
+        """选择下载源；蓝奏云与主程序更新一致，先复制提取码再打开。"""
+        choice = dlg.ask_choice(
+            self.app.root,
+            t("selfhost.lobby_accel_download_mihomo"),
+            t("selfhost.lobby_accel_download_source_hint"),
+            [
+                (t("selfhost.lobby_accel_download_official"), "official"),
+                (t("selfhost.lobby_accel_download_lanzou"), "lanzou"),
+            ],
+            layout="vertical",
+        )
+        if choice is None:
+            return
+        if choice == "lanzou":
+            self.app.root.clipboard_clear()
+            self.app.root.clipboard_append(MIHOMO_LANZOU_CODE)
+            self.app.root.update()
+            dlg.show_toast(
+                self.app.root,
+                t("selfhost.lobby_accel_download_code_copied"),
+            )
+            url = MIHOMO_LANZOU_URL
+        else:
+            url = MIHOMO_RELEASES_URL
         try:
-            opened = webbrowser.open(MIHOMO_RELEASES_URL)
+            opened = webbrowser.open(url)
         except OSError:
             opened = False
         if not opened:
@@ -810,7 +835,7 @@ class SelfHostFrpPage:
                 t("selfhost.lobby_accel_download_mihomo"),
                 t(
                     "selfhost.lobby_accel_download_mihomo_failed",
-                    url=MIHOMO_RELEASES_URL,
+                    url=url,
                 ),
             )
 

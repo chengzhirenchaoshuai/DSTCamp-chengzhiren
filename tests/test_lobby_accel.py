@@ -23,7 +23,12 @@ from dstools.features.frp_selfhost.mihomo import (
     build_mihomo_config,
     sha256_file,
 )
-from dstools.features.frp_selfhost.tab import MIHOMO_RELEASES_URL, SelfHostFrpPage
+from dstools.features.frp_selfhost.tab import (
+    MIHOMO_LANZOU_CODE,
+    MIHOMO_LANZOU_URL,
+    MIHOMO_RELEASES_URL,
+    SelfHostFrpPage,
+)
 from dstools.features.frp_selfhost.wireguard import (
     WireGuardClientConfig,
     ensure_client_keypair,
@@ -109,13 +114,55 @@ def test_mihomo_selection_persists_hash_and_wireguard_metadata() -> None:
 
 def test_mihomo_download_opens_official_release_page() -> None:
     page = object.__new__(SelfHostFrpPage)
-    with patch(
-        "dstools.features.frp_selfhost.tab.webbrowser.open",
-        return_value=True,
-    ) as open_browser:
+    page.app = SimpleNamespace(root=object())
+    with (
+        patch(
+            "dstools.features.frp_selfhost.tab.dlg.ask_choice",
+            return_value="official",
+        ),
+        patch(
+            "dstools.features.frp_selfhost.tab.webbrowser.open",
+            return_value=True,
+        ) as open_browser,
+    ):
         page._open_mihomo_download()
     open_browser.assert_called_once_with(MIHOMO_RELEASES_URL)
     assert MIHOMO_RELEASES_URL == "https://github.com/MetaCubeX/mihomo/releases"
+
+
+def test_mihomo_download_lanzou_copies_code_before_opening() -> None:
+    page = object.__new__(SelfHostFrpPage)
+    events = []
+    root = SimpleNamespace(
+        clipboard_clear=lambda: events.append(("clipboard_clear",)),
+        clipboard_append=lambda value: events.append(("clipboard_append", value)),
+        update=lambda: events.append(("update",)),
+    )
+    page.app = SimpleNamespace(root=root)
+    with (
+        patch(
+            "dstools.features.frp_selfhost.tab.dlg.ask_choice",
+            return_value="lanzou",
+        ),
+        patch(
+            "dstools.features.frp_selfhost.tab.dlg.show_toast",
+            side_effect=lambda *_args: events.append(("toast",)),
+        ),
+        patch(
+            "dstools.features.frp_selfhost.tab.webbrowser.open",
+            side_effect=lambda url: events.append(("open", url)) or True,
+        ),
+    ):
+        page._open_mihomo_download()
+    assert events == [
+        ("clipboard_clear",),
+        ("clipboard_append", MIHOMO_LANZOU_CODE),
+        ("update",),
+        ("toast",),
+        ("open", MIHOMO_LANZOU_URL),
+    ]
+    assert MIHOMO_LANZOU_CODE == "c0mu"
+    assert MIHOMO_LANZOU_URL == "https://wwblt.lanzout.com/iN5Vd4714e6h"
 
 
 def test_all_shards_must_be_mapped() -> None:
@@ -195,6 +242,7 @@ def main() -> int:
         test_wireguard_install_script_is_scoped_and_idempotent,
         test_mihomo_selection_persists_hash_and_wireguard_metadata,
         test_mihomo_download_opens_official_release_page,
+        test_mihomo_download_lanzou_copies_code_before_opening,
         test_all_shards_must_be_mapped,
         test_coordinator_passes_wireguard_config_and_rolls_back,
     ]
