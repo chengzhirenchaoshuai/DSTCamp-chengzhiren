@@ -1832,6 +1832,31 @@ class LocalServiceTab:
             and proc.world_ready
         )
 
+    def _lan_only_cluster(self) -> bool:
+        """读取当前存档的 LAN 限制，并按配置文件签名缓存解析结果。
+
+        直连状态每 150ms 刷新一次，不能每次都完整解析 cluster.ini；但在
+        服务器配置页保存后又必须立即反映新值，不能要求用户手动刷新。
+        """
+        cluster = self._get_cluster()
+        if not cluster:
+            return False
+        path = cluster.path / "cluster.ini"
+        try:
+            stat = path.stat()
+            key = (str(path), stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            return False
+        if key != getattr(self, "_lan_only_cache_key", None):
+            try:
+                config = load_cluster_config(cluster.path)
+                value = bool(config.network.get("lan_only_cluster", False))
+            except (OSError, ValueError):
+                value = False
+            self._lan_only_cache_key = key
+            self._lan_only_cache_value = value
+        return bool(getattr(self, "_lan_only_cache_value", False))
+
     def _refresh_lan_status(self):
         """局域网直连状态：主世界启动完成才「已就绪」，否则「未就绪」+ 原因。
         状态没变就跳过（_poll 每 150ms 调一次，重复重画会闪）。"""
@@ -1853,7 +1878,9 @@ class LocalServiceTab:
         """公网代码状态：公网 IPv4、端口和主世界进程都满足才算就绪。"""
         if ip_available is None:
             ip_available = self._public_code is not None
-        if not ip_available or self._public_code is None:
+        if self._lan_only_cluster():
+            key = "lan_only"
+        elif not ip_available or self._public_code is None:
             key = "noip"
         elif not self._master_ready():
             key = "nostart"
@@ -1864,6 +1891,12 @@ class LocalServiceTab:
         self._public_status_key = key
         if key == "ready":
             self._public_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
+        elif key == "lan_only":
+            self._public_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.external_lan_only_reason"),
+            )
         elif key == "nostart":
             self._public_set_status(
                 f"● {t('local.connect_not_ready')}",
@@ -1927,6 +1960,13 @@ class LocalServiceTab:
                 theme.TEXT_MUTED,
                 t("local.nat_not_mapped"),
             )
+        elif self._lan_only_cluster():
+            self._nat_status_key = "lan_only"
+            self._nat_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.external_lan_only_reason"),
+            )
         elif not self._master_ready():
             self._nat_status_key = "nostart"
             self._nat_set_status(
@@ -1952,7 +1992,9 @@ class LocalServiceTab:
         状态没变就跳过，避免 poll 每 150ms 重复重画。"""
         if self._nat_code is None:
             return
-        if not self._master_ready():
+        if self._lan_only_cluster():
+            key = "lan_only"
+        elif not self._master_ready():
             key = "nostart"
         elif not self._nat_frpc_ready():
             key = "nofrpc"
@@ -1961,7 +2003,13 @@ class LocalServiceTab:
         if key == self._nat_status_key:
             return
         self._nat_status_key = key
-        if key == "nostart":
+        if key == "lan_only":
+            self._nat_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.external_lan_only_reason"),
+            )
+        elif key == "nostart":
             self._nat_set_status(
                 f"● {t('local.connect_not_ready')}",
                 theme.TEXT_MUTED,

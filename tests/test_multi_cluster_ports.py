@@ -775,6 +775,65 @@ def test_connect_code_waits_for_master_world_ready() -> None:
         assert service._master_ready() is False
 
 
+def test_external_connect_status_rejects_lan_only() -> None:
+    """仅局域网存档即使服务、IP 和 frpc 都正常，外部直连仍必须显示未就绪。"""
+    from dstools.features.local_service import tab as local_tab
+    from dstools.i18n import t
+    from dstools.shared.ini_parser import parse_cluster_ini, write_cluster_ini
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(
+            Path(tmp), "Cluster_A", caves=False, lan_only=True,
+        )
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service._get_cluster = lambda: cluster
+        service._master_ready = lambda: True
+        service._nat_frpc_ready = lambda: True
+        service._public_code = "public-code"
+        service._nat_code = "nat-code"
+        service._public_status_key = None
+        service._nat_status_key = None
+        public_status = []
+        nat_status = []
+        service._public_set_status = lambda *args: public_status.append(args)
+        service._nat_set_status = lambda *args: nat_status.append(args)
+
+        service._refresh_public_status(ip_available=True)
+        service._refresh_nat_status()
+
+        assert service._public_status_key == "lan_only"
+        assert service._nat_status_key == "lan_only"
+        assert t("local.connect_not_ready") in public_status[-1][0]
+        assert t("local.external_lan_only_reason") == public_status[-1][2]
+        assert t("local.connect_not_ready") in nat_status[-1][0]
+        assert t("local.external_lan_only_reason") == nat_status[-1][2]
+
+        # 穿透映射的异步结果首次回填时也要直接显示 LAN 限制，不能先短暂
+        # 闪成“已就绪”，等下一次轮询才纠正。
+        service._connect_row = SimpleNamespace(winfo_ismapped=lambda: True)
+        service._nat_set_text = lambda *_args: None
+        service._nat_status_key = None
+        service._apply_nat_result(
+            ("c_connect('example.com', 11000)", "masked"),
+            str(cluster.path),
+        )
+        assert service._nat_status_key == "lan_only"
+        assert t("local.external_lan_only_reason") == nat_status[-1][2]
+
+        # 同一路径保存关闭 LAN 后，mtime/大小签名变化应让状态立即恢复，
+        # 不能要求用户再手动刷新一次本地服务页。
+        path = cluster.path / "cluster.ini"
+        config = parse_cluster_ini(path)
+        config.network["lan_only_cluster"] = False
+        write_cluster_ini(config, path)
+        service._public_status_key = None
+        service._nat_status_key = None
+        service._refresh_public_status(ip_available=True)
+        service._refresh_nat_status()
+        assert service._public_status_key == "ready"
+        assert service._nat_status_key == "ready"
+
+
 def test_local_refresh_redetects_server_tool() -> None:
     """顶部刷新必须重新探测专用服务器工具，而不只刷新存档列表。"""
     from dstools.features.local_service import tab as local_tab
@@ -890,6 +949,7 @@ def main() -> None:
         test_restart_prepares_legacy_after_stop,
         test_connect_code_display_masks_secrets,
         test_connect_code_waits_for_master_world_ready,
+        test_external_connect_status_rejects_lan_only,
         test_local_refresh_redetects_server_tool,
         test_connect_results_return_through_main_thread_poll,
         test_public_ipv4_falls_back_to_cip_cc_plain_text,
