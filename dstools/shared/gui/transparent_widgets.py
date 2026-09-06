@@ -232,13 +232,6 @@ class TransparentIdList(BgFrame):
                 if index == self._selected:
                     top = cy - self._row_height / 2 + 2
                     bottom = cy + self._row_height / 2 - 2
-                    self.create_polygon(
-                        self._rounded_points(6, top,
-                                             width - 6, bottom,
-                                             min(8, self._row_height // 3)),
-                        smooth=True, fill="", outline=theme.PRIMARY, width=2,
-                        tags="id_list_shape",
-                    )
                     self.create_line(
                         9, top + 5, 9, bottom - 5,
                         fill=theme.PRIMARY_DARK, width=3,
