@@ -22,7 +22,14 @@ from dstools.features.cluster_config.config_manager import (
     save_shard_config, set_shard_option,
 )
 from dstools.features.sakura.frpc import FrpcManager, FrpcStatus
-from dstools.shared.resource_paths import data_dir, runtime_tool_path
+from dstools.features.sakura.frpc_recovery import (
+    SakuraFrpcHealth,
+    inspect_sakura_frpc,
+)
+from dstools.features.sakura.frpc_recovery_dialog import (
+    show_sakura_frpc_recovery_dialog,
+)
+from dstools.shared.resource_paths import data_dir
 from dstools.shared.token_manager import is_valid_token, mask_token
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
@@ -40,10 +47,6 @@ from dstools.models import SaveSource
 _FALLBACK_MAX_TUNNELS = 2
 _FRPC_CACHE_NAME = "frpc_config"
 _NODE_GRID_COLS = 3
-
-
-def _frpc_exe_path():
-    return runtime_tool_path("frpc-sakura/sakura-frpc.exe")
 
 
 def _format_bytes_adaptive(num_bytes: float) -> str:
@@ -274,7 +277,8 @@ class SakuraTab:
         # 透明的实色容器，一层层叠上去会把自定义背景图整个挡住（跟
         # local_service_tab.py 里"专用服务器工具:"那段文字是同一个问题），
         # BgFrame 才是这个项目里"容器要透出背景图"的标准做法。
-        self._row1 = row1 = BgFrame(top, app, bg=theme.CARD_BG); row1.pack(fill=tk.X, pady=3)
+        self._row1 = row1 = BgFrame(top, app, bg=theme.CARD_BG)
+        row1.pack(fill=tk.X, pady=3)
         self._token_label = self._label(row1, t("sakura.token_label"))
         self._token_label.pack(side=tk.LEFT)
         self._token_display = tk.Text(row1, height=1, width=40, wrap=tk.NONE,
@@ -291,7 +295,8 @@ class SakuraTab:
 
         # 节点行——节点数量多（几十上百个），下拉框展开会长得很难用，改
         # 成一个按钮，点击弹一个多列网格的选择窗口（_NodeSelectDialog）。
-        self._row2 = row2 = BgFrame(top, app, bg=theme.CARD_BG); row2.pack(fill=tk.X, pady=3)
+        self._row2 = row2 = BgFrame(top, app, bg=theme.CARD_BG)
+        row2.pack(fill=tk.X, pady=3)
         self._node_label = self._label(row2, t("sakura.node_label"))
         self._node_label.pack(side=tk.LEFT)
         self._node_display_var = tk.StringVar(value=t("sakura.node_none_selected"))
@@ -379,6 +384,7 @@ class SakuraTab:
 
         self._token_raw = ""
         self._current_cluster = None
+        self._frpc_health: SakuraFrpcHealth | None = None
         self._load_token_display()
 
         self.selfhost_page = SelfHostFrpPage(self._sub_content, app,
@@ -474,17 +480,31 @@ class SakuraTab:
         return self._frpc_pointer_path(cluster.path, shard.name).exists() \
             or self.selfhost_page.has_active_mapping(cluster, shard)
 
-    def maybe_start_frpc(self, cluster, shard) -> None:
+    def maybe_start_frpc(self, cluster, shard, frpc_exe=None) -> None:
         pointer_path = self._frpc_pointer_path(cluster.path, shard.name)
         if pointer_path.exists():
-            exe = _frpc_exe_path()
-            if not self.frpc.get(cluster.path, shard.name):
+            health = (
+                SakuraFrpcHealth("ready", frpc_exe)
+                if frpc_exe is not None
+                else inspect_sakura_frpc()
+            )
+            self._frpc_health = health
+            existing = self.frpc.get(cluster.path, shard.name)
+            restartable = existing is None or existing.status in {
+                FrpcStatus.CRASHED,
+                FrpcStatus.STOPPED,
+            }
+            if health.ready and restartable:
                 token = app_settings.get_sakura_token()
                 tunnel_id = pointer_path.read_text(encoding="utf-8").strip()
                 if token and tunnel_id:
-                    # FrpcProcess.start() 内部检查 exe 是否存在——被隔离/删除
-                    # 时记 CRASHED+error，状态行据此显示"启动失败"。
-                    self.frpc.start(cluster.path, shard.name, exe, token, int(tunnel_id))
+                    self.frpc.start(
+                        cluster.path,
+                        shard.name,
+                        health.path,
+                        token,
+                        int(tunnel_id),
+                    )
         self.selfhost_page.maybe_start_frpc(cluster, shard)
 
     def stop_frpc_for_shard(self, cluster, shard, on_done=None) -> None:
@@ -951,9 +971,11 @@ class SakuraTab:
         self._action_btn.configure(text=t("sakura.disable_btn") if any_mapped else t("sakura.enable_btn"))
         self._any_mapped = any_mapped
         if any_mapped:
+            self._frpc_health = inspect_sakura_frpc()
             self._frpc_row.pack(fill=tk.X, padx=10, pady=(0, 5))
             self._refresh_frpc_row()
         else:
+            self._frpc_health = None
             self._frpc_row.pack_forget()
         # 账号隧道配额已经用满（已用 >= 上限）时，"开启映射"点了也只会在
         # 创建隧道那一步直接报 API 错误——提前在按钮这一步挡住，不用等
@@ -1020,10 +1042,32 @@ class SakuraTab:
     def _frpc_failed_error(self, cluster) -> str | None:
         """某个 shard 的 frpc 启动失败原因（frpc.exe 被隔离/删除等），都没有
         返回 None。"""
+        health = self._frpc_health
+        if health is not None and not health.ready:
+            key = {
+                "missing": "sakura.frpc_recovery_missing",
+                "blocked": "sakura.frpc_recovery_blocked",
+                "unreadable": "sakura.frpc_recovery_unreadable",
+            }[health.status]
+            return t(key, error=health.detail)
         for s in self._mapped_shards(cluster):
             proc = self.frpc.get(cluster.path, s.name)
             if proc is not None and proc.status == FrpcStatus.CRASHED and proc.error:
                 return proc.error
+        return None
+
+    def _ensure_frpc_available(self) -> SakuraFrpcHealth | None:
+        """交互操作的启动前预检；恢复动作始终由用户在安全中心完成。"""
+        health = inspect_sakura_frpc()
+        self._frpc_health = health
+        if health.ready:
+            return health
+        restored = show_sakura_frpc_recovery_dialog(self.app.root, health)
+        self._frpc_health = inspect_sakura_frpc()
+        if getattr(self, "_any_mapped", False):
+            self._refresh_frpc_row()
+        if restored and self._frpc_health.ready:
+            return self._frpc_health
         return None
 
     def _refresh_frpc_row(self) -> None:
@@ -1031,7 +1075,10 @@ class SakuraTab:
         running = bool(cluster) and self._frpc_all_running(cluster)
         error = self._frpc_failed_error(cluster) if cluster else None
         if error:
-            status_text = t("sakura.frpc_status_failed")
+            if self._frpc_health is not None and not self._frpc_health.ready:
+                status_text = t("sakura.frpc_status_file_missing")
+            else:
+                status_text = t("sakura.frpc_status_failed")
             color = theme.ERROR
         elif running:
             status_text = t("sakura.frpc_status_running")
@@ -1043,8 +1090,13 @@ class SakuraTab:
         f = tkfont.nametofont("TkDefaultFont")
         self._frpc_status_label.configure(width=f.measure(status_text) + 4)
         self._frpc_status_label.itemconfig("label_text", text=status_text, fill=color)
-        self._frpc_toggle_btn.configure(
-            text=t("sakura.frpc_stop_btn") if running else t("sakura.frpc_start_btn"))
+        if self._frpc_health is not None and not self._frpc_health.ready:
+            button_text = t("sakura.frpc_recovery_btn")
+        else:
+            button_text = t(
+                "sakura.frpc_stop_btn" if running else "sakura.frpc_start_btn"
+            )
+        self._frpc_toggle_btn.configure(text=button_text)
 
     def _on_frpc_toggle(self):
         cluster = self._current_cluster
@@ -1064,8 +1116,11 @@ class SakuraTab:
             for s in shards:
                 self.stop_frpc_for_shard(cluster, s, on_done=lambda: self.frame.after(0, _one_done))
         else:
+            health = self._ensure_frpc_available()
+            if health is None:
+                return
             for s in shards:
-                self.maybe_start_frpc(cluster, s)
+                self.maybe_start_frpc(cluster, s, frpc_exe=health.path)
             self._refresh_frpc_row()
 
     def _running_shard_names(self, cluster) -> list[str]:
@@ -1096,6 +1151,11 @@ class SakuraTab:
         if conflicting:
             dlg.show_warning(self.app.root, t("sakura.enable_btn"),
                               t("sakura.other_mapping_conflict_msg", shards="、".join(conflicting)))
+            return
+
+        # 必须在创建樱花隧道和回写 server_port 之前确认本地客户端可用；
+        # 否则用户最后才发现文件已被隔离，还留下半配置状态。
+        if self._ensure_frpc_available() is None:
             return
 
         progress = ModSyncLogDialog(self.frame, title=t("sakura.setup_progress_title"))
