@@ -64,6 +64,9 @@ def _helper_script() -> Path:
 $ErrorActionPreference = 'Stop'
 $LogFile = Join-Path (Split-Path -Parent $NewExe) 'apply_update.log'
 Wait-Process -Id $ParentPid -ErrorAction SilentlyContinue
+# PyInstaller 6.9+ 默认让同一 onefile EXE 的子进程复用父进程 _MEI。
+# 更新后的程序必须独立解压；否则旧进程清理临时目录后会找不到 python DLL。
+$env:PYINSTALLER_RESET_ENVIRONMENT = '1'
 $MovedCurrent = $false
 try {
     if (Test-Path -LiteralPath $BackupExe) { Remove-Item -LiteralPath $BackupExe -Force }
@@ -126,10 +129,15 @@ def launch_update_helper(staged_exe: Path) -> None:
         str(_helper_script()), "-ParentPid", str(os.getpid()), "-CurrentExe",
         str(current), "-NewExe", str(local_staged), "-BackupExe", str(backup),
     ]
+    helper_env = os.environ.copy()
+    # PowerShell 更新助手会比当前 onefile 进程活得更久，并继续启动替换后的
+    # EXE。让整条子进程链继承重置标记，避免新版复用即将被删除的旧 _MEI。
+    helper_env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
     try:
         subprocess.Popen(
             command,
             cwd=str(current.parent),
+            env=helper_env,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except Exception:

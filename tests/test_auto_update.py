@@ -95,6 +95,15 @@ def test_launch_helper_stages_on_exe_volume() -> None:
         local_staged = Path(command[command.index("-NewExe") + 1])
         assert local_staged.parent.resolve() == current.parent.resolve()
         assert local_staged.read_bytes() == b"new"
+        assert (
+            popen.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+        )
+
+        helper_script = Path(command[command.index("-File") + 1])
+        helper_content = helper_script.read_text(encoding="utf-8-sig")
+        reset_at = helper_content.index("PYINSTALLER_RESET_ENVIRONMENT")
+        start_at = helper_content.index("Start-Process -FilePath $CurrentExe")
+        assert reset_at < start_at
 
 
 def main() -> None:
