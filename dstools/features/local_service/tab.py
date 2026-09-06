@@ -1816,9 +1816,9 @@ class LocalServiceTab:
             self._public_set_text(t("local.connect_unavailable"))
         self._refresh_public_status(ip_available)
 
-    def _master_running(self) -> bool:
-        """主世界服务器进程是否在跑——局域网和内网穿透就绪都依赖它（世界
-        没跑，就算 frpc 在转发、本地也没服务监听，直连一样连不进）。"""
+    def _master_ready(self) -> bool:
+        """主世界是否已完成启动——直连代码不能只看进程已经创建；必须等
+        专服日志出现世界就绪标记后，玩家才真正能够加入。"""
         cluster = self._get_cluster()
         if not cluster:
             return False
@@ -1826,12 +1826,16 @@ class LocalServiceTab:
         if not master:
             return False
         proc = self.manager.get(cluster.path, master.name)
-        return proc is not None and proc.status in _RUNNING_LIKE
+        return bool(
+            proc is not None
+            and proc.status in _RUNNING_LIKE
+            and proc.world_ready
+        )
 
     def _refresh_lan_status(self):
-        """局域网直连状态：主世界在跑就「已就绪」，否则「未就绪」+ 原因。
+        """局域网直连状态：主世界启动完成才「已就绪」，否则「未就绪」+ 原因。
         状态没变就跳过（_poll 每 150ms 调一次，重复重画会闪）。"""
-        ready = self._master_running()
+        ready = self._master_ready()
         key = "ready" if ready else "not_ready"
         if key == self._lan_status_key:
             return
@@ -1851,7 +1855,7 @@ class LocalServiceTab:
             ip_available = self._public_code is not None
         if not ip_available or self._public_code is None:
             key = "noip"
-        elif not self._master_running():
+        elif not self._master_ready():
             key = "nostart"
         else:
             key = "ready"
@@ -1923,7 +1927,7 @@ class LocalServiceTab:
                 theme.TEXT_MUTED,
                 t("local.nat_not_mapped"),
             )
-        elif not self._master_running():
+        elif not self._master_ready():
             self._nat_status_key = "nostart"
             self._nat_set_status(
                 f"● {t('local.connect_not_ready')}",
@@ -1948,7 +1952,7 @@ class LocalServiceTab:
         状态没变就跳过，避免 poll 每 150ms 重复重画。"""
         if self._nat_code is None:
             return
-        if not self._master_running():
+        if not self._master_ready():
             key = "nostart"
         elif not self._nat_frpc_ready():
             key = "nofrpc"

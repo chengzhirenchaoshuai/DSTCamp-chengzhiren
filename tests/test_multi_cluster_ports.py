@@ -749,6 +749,32 @@ def test_connect_code_display_masks_secrets() -> None:
         assert "secret123" not in display
 
 
+def test_connect_code_waits_for_master_world_ready() -> None:
+    """主世界进程刚创建时仍不可直连，消费到世界就绪标记后才算就绪。"""
+    from dstools.features.local_service import tab as local_tab
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
+        proc = SimpleNamespace(
+            status=local_tab.ServerStatus.STARTING,
+            world_ready=False,
+        )
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service._get_cluster = lambda: cluster
+        service.manager = SimpleNamespace(get=lambda *_args: proc)
+
+        assert service._master_ready() is False
+
+        proc.status = local_tab.ServerStatus.RUNNING
+        assert service._master_ready() is False
+
+        proc.world_ready = True
+        assert service._master_ready() is True
+
+        proc.status = local_tab.ServerStatus.STOPPED
+        assert service._master_ready() is False
+
+
 def test_local_refresh_redetects_server_tool() -> None:
     """顶部刷新必须重新探测专用服务器工具，而不只刷新存档列表。"""
     from dstools.features.local_service import tab as local_tab
@@ -863,6 +889,7 @@ def main() -> None:
         test_restart_stop_barrier_waits_for_every_shard,
         test_restart_prepares_legacy_after_stop,
         test_connect_code_display_masks_secrets,
+        test_connect_code_waits_for_master_world_ready,
         test_local_refresh_redetects_server_tool,
         test_connect_results_return_through_main_thread_poll,
         test_public_ipv4_falls_back_to_cip_cc_plain_text,
