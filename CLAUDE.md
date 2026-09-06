@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-DSTCamp（包名 `dstools`，当前版本 `1.3.3`）是 Windows 上的《饥荒：联机版》本地服务器管理工具，GUI 入口为 `dst-gui`。支持 Steam/WeGame 存档、Mod、世界设置、服务器配置、本地专服和内网穿透。
+DSTCamp（包名 `dstools`，当前版本 `1.3.5`）是 Windows 上的《饥荒：联机版》本地服务器管理工具，GUI 入口为 `dst-gui`。支持 Steam/WeGame 存档、Mod、世界设置、服务器配置、本地专服、内网穿透和大厅加速。
 
-1.3.3 新增 Gitee 优先、GitHub 回退的安全自动更新，发布包使用 SHA-256 清单校验，并在替换失败时回滚旧 EXE。
+1.3.5 新增 Mihomo TUN/WireGuard 大厅加速、线路诊断、Windows Defender 排除管理和 SakuraFrp 缺失恢复，并修复局域网端口与专服状态判断问题。
 
 ## 结构
 
@@ -35,6 +35,8 @@ python scripts/build_exe.py
 - 专服启动前必须完成更新预检；无界面检查与实际启动条件保持一致。
 - V1 Legacy Mod 更新使用安全包校验、临时解压、原子替换、回滚和部署后校验。
 - 构建资源暂存在 `build/`；`reference/` 只能存人工核对材料，不能作为构建缓存。
+- 大厅加速由 `frp_selfhost/lobby_accel.py`、`mihomo.py`、`wireguard.py` 及诊断模块协作；下载、TUN、路由和恢复路径需分别验证。
+- Windows Defender 检测与设置必须区分普通权限查询、管理员操作和真实系统结果，不能仅凭界面状态判断成功。
 
 ## 关键约束
 

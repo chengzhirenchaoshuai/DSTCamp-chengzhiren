@@ -1,6 +1,6 @@
 # DSTCamp
 
-DSTCamp is a Windows desktop manager for local *Don't Starve Together* servers. It brings save management, world configuration, Workshop Mods, dedicated-server operations, backups, and tunneling into one Tkinter interface.
+DSTCamp is a Windows desktop manager for local *Don't Starve Together* servers. It brings save management, world configuration, Workshop Mods, dedicated-server operations, backups, tunneling, and lobby acceleration into one Tkinter interface.
 
 ## Features
 
@@ -8,18 +8,18 @@ DSTCamp is a Windows desktop manager for local *Don't Starve Together* servers. 
 - Manage Steam and WeGame saves, Mods, presets, administrators, blocklists, and cluster tokens.
 - Configure Forest, Caves, and supported Mod worlds independently.
 - Back up, restore, copy, and package complete saves for sharing.
-- Use SakuraFrp or a self-hosted frps server with port-conflict checks.
+- Use SakuraFrp or a self-hosted frps server, with optional Mihomo TUN/WireGuard lobby acceleration and route diagnostics.
 - Receive verified application updates from Gitee with GitHub fallback, SHA-256 validation, smoke testing, and rollback.
 
 WeGame does not provide one-click dedicated-server launching. DSTCamp does not bypass platform restrictions.
 
 ## Download and run
 
-Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases):
+Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
 
-- `DSTCamp-1.3.3.exe`: single-file build with all required resources embedded.
-- `DSTCamp-1.3.3.zip`: executable plus an external `tools/` directory; extract the complete archive before running it.
-- `DSTCamp-1.3.3.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
+- `DSTCamp-1.3.5.exe`: single-file build with all required resources embedded.
+- `DSTCamp-1.3.5.zip`: executable plus an external `tools/` directory; extract the complete archive before running it.
+- `DSTCamp-1.3.5.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
 
 To run from source:
 
@@ -67,6 +67,15 @@ python scripts/build_exe.py
 ```
 
 The build uses an explicit tool allowlist, stages resources under `build/`, rejects writable or reference directories from the ZIP, and smoke-tests both frozen executables. Real Windows GUI, Steam, frpc, and game behavior still require manual validation.
+
+## 1.3.5 highlights
+
+- Added Mihomo TUN/WireGuard lobby acceleration, dual download sources, route diagnostics, and public-IP fallback checks.
+- Added Windows Defender exclusion management and network-state Mod recommendations.
+- Fixed LAN port conflicts, command-triggered shutdown reporting, connection readiness, and active token-conflict detection.
+- Added SakuraFrp client recovery guidance and refined self-hosted node status and masked-address presentation.
+- Improved high-DPI configuration layouts, world settings sizing, console command history, and address visibility controls.
+- Strengthened test isolation, resource boundaries, ZIP allowlist checks, and release checksum validation.
 
 ## License
 

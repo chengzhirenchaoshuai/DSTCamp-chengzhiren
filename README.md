@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.3.3-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.3.5-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
@@ -24,7 +24,7 @@
 | 世界设置 | 森林/洞穴独立配置、图标与取值说明、岛屿冒险/猪镇等 Mod 世界设置 |
 | 服务器配置 | `cluster.ini`、`server.ini`、Token、管理员和黑名单 |
 | 存档信息 | 玩家状态、手动/自动备份、恢复、复制为服务器存档、创建多世界存档 |
-| 内网穿透 | SakuraFrp 与自建 frps，包含冲突保护、SSH 部署和连通性检查 |
+| 内网穿透与加速 | SakuraFrp、自建 frps、Mihomo TUN/WireGuard 大厅加速，包含冲突保护、SSH 部署和线路诊断 |
 
 其它能力包括中英文切换、五套主题、三种字体、自定义背景、系统托盘、窗口状态记忆和启动更新检查。
 
@@ -32,11 +32,11 @@
 
 ## 下载与运行
 
-推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 下载：
+推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 或 [Gitee 发行版](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.3.3.exe`：工具与资源全部内嵌，单文件运行。
-- `DSTCamp-1.3.3.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
-- `DSTCamp-1.3.3.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
+- `DSTCamp-1.3.5.exe`：工具与资源全部内嵌，单文件运行。
+- `DSTCamp-1.3.5.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
+- `DSTCamp-1.3.5.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
 
 源码运行：
 
@@ -99,6 +99,16 @@ python scripts/build_exe.py
 ```
 
 构建脚本在 `build/` 暂存固定工具和图标，只向 `dist/` 输出单文件 EXE、外置工具 ZIP 与 `sha256.json`。ZIP 会校验工具清单并拒绝 `build/`、`cache/`、`data/`、`dist/`、`reference/`、`security/`；两个 EXE 都会执行冻结入口与资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+
+## 1.3.5 更新
+
+- 新增 Mihomo TUN 大厅加速链路，使用 WireGuard 承载流量，并提供双下载源与官方下载入口。
+- 新增大厅加速线路诊断、公网 IP 回退查询和网络状态推荐 Mod，定位无法直连或大厅异常更直观。
+- 新增 Windows Defender 排除项检测与设置入口，兼容普通权限状态检查。
+- 修复局域网模式端口冲突、命令关服误报、直连代码就绪时机及运行中令牌冲突漏报。
+- 增加 SakuraFrp 客户端缺失恢复引导，优化自建节点状态、脱敏地址显示和仅局域网提示。
+- 优化配置页高 DPI/自适应布局、世界设置高度、用户 ID 选中态、控制台历史命令与服务器地址显隐交互。
+- 整理测试、固定资源和缓存边界；构建过程增加 ZIP 内容、工具白名单及 SHA-256 清单校验。
 
 ## 1.3.3 更新
 
