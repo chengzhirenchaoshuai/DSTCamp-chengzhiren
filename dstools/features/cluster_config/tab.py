@@ -796,6 +796,11 @@ class ClusterConfigTab:
         bf = self._layout_frame(lf); bf.pack(fill=tk.X)
         add_btn = ttk.Button(bf, text=t("admin.add")); add_btn.pack(side=tk.LEFT, padx=2)
         remove_btn = ttk.Button(bf, text=t("admin.remove")); remove_btn.pack(side=tk.LEFT, padx=2)
+        listbox.bind(
+            "<<ListboxSelect>>",
+            lambda _event: self._sync_id_remove_state(listbox, remove_btn),
+            add="+",
+        )
         status = TransparentLabel(lf, self.app, text="", font=self._ROW_VALUE_FONT,
                                   foreground=theme.TEXT_MUTED, padx=5, pady=2)
         status.pack(anchor=tk.W, pady=(5,0))
@@ -1499,10 +1504,19 @@ class ClusterConfigTab:
         for a in ids: listbox.insert(tk.END, a)
         if not ids: listbox.insert(tk.END, empty_text)
         # 添加按钮始终可用 -- 对应的文件不存在时 add_admin() 会自己创建，
-        # 不需要先有文件才能添加。只有"删除"在没有任何条目时才应该是灰
-        # 的（没有可删的东西）。
+        # 不需要先有文件才能添加。重新加载会清空选择，因此删除按钮必须
+        # 保持禁用，直到用户明确选中一个真实 ID。
         add_btn.configure(state=tk.NORMAL)
-        remove_btn.configure(state=tk.NORMAL if ids else tk.DISABLED)
+        self._sync_id_remove_state(listbox, remove_btn)
+
+    @staticmethod
+    def _sync_id_remove_state(listbox, remove_btn):
+        selection = listbox.curselection()
+        removable = bool(selection)
+        if removable:
+            selected_text = listbox.get(selection[0])
+            removable = selected_text not in (t("admin.empty"), t("blocklist.empty"))
+        remove_btn.configure(state=tk.NORMAL if removable else tk.DISABLED)
 
     def _add_id_entry(self, path_attr, default_filename, listbox, status, add_btn, remove_btn):
         # 跟 _load_config 一样，现查全局选择器——不用可能过时的缓存

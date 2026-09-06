@@ -556,6 +556,29 @@ def test_transparent_id_list_keeps_background_above_fallback():
     print("  PASS: 用户 ID 选中重画不会让兜底色覆盖背景图")
 
 
+def test_id_remove_button_requires_real_selection():
+    """管理员和黑名单未选中真实 ID 时，删除按钮必须保持只读。"""
+    from dstools.features.cluster_config.tab import ClusterConfigTab
+
+    button = Mock()
+    listbox = Mock()
+    listbox.curselection.return_value = ()
+    ClusterConfigTab._sync_id_remove_state(listbox, button)
+    button.configure.assert_called_with(state=tk.DISABLED)
+
+    button.reset_mock()
+    listbox.curselection.return_value = (0,)
+    listbox.get.return_value = t("admin.empty")
+    ClusterConfigTab._sync_id_remove_state(listbox, button)
+    button.configure.assert_called_with(state=tk.DISABLED)
+
+    button.reset_mock()
+    listbox.get.return_value = "KU_example"
+    ClusterConfigTab._sync_id_remove_state(listbox, button)
+    button.configure.assert_called_with(state=tk.NORMAL)
+    print("  PASS: 管理员/黑名单删除按钮只在选中真实 ID 后启用")
+
+
 def test_selfhost_worker_ui_dispatch_contract():
     """自建 FRP 工作线程只入队，不得跨线程调用 Tk.after()。"""
     import queue
@@ -610,6 +633,7 @@ def main():
         test_global_create_save_entry_delegates_to_save_page,
         test_background_refresh_contract,
         test_transparent_id_list_keeps_background_above_fallback,
+        test_id_remove_button_requires_real_selection,
         test_selfhost_worker_ui_dispatch_contract,
     ]
 

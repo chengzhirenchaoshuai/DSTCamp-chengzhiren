@@ -202,6 +202,7 @@ class TransparentIdList(BgFrame):
         if index < len(self._items):
             self._selected = index
             self._redraw()
+            self.event_generate("<<ListboxSelect>>")
 
     @staticmethod
     def _rounded_points(x1, y1, x2, y2, radius):
