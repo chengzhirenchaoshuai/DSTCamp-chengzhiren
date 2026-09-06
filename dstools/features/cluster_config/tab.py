@@ -622,7 +622,8 @@ class ClusterConfigTab:
             # 在下面通过 canvas.configure(height=...) 跟踪内容自身尺
             # 寸来处理，不靠纵向的 expand/fill。
             canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-            scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+            if tab_key == "Cluster":
+                scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
             frame = self._surface_frame(canvas)
             frame.grid_columnconfigure(0, weight=1)
             frame.grid_columnconfigure(1, weight=1)
