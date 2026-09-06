@@ -242,7 +242,9 @@ class TransparentIdList(BgFrame):
                     fill=theme.PRIMARY_DARK if index == self._selected else theme.TEXT,
                     font=self._font, tags="id_list_text",
                 )
-            self.tag_lower("bg_image")
+            # 点击选中会重建前景项；背景图必须继续位于不透明兜底色之上，
+            # 否则 bg_fill 会盖住图片，直到窗口重新映射后才恢复。
+            self._restore_bg_layer_order()
         finally:
             self._redrawing = False
 

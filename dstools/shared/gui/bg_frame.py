@@ -99,6 +99,17 @@ class BgFrame(tk.Canvas):
         self._render_after_id = None
         self.render_now()
 
+    def _restore_bg_layer_order(self) -> None:
+        """保持兜底色在最底层、背景图在前景控件之下。
+
+        Canvas 前景内容被删除后重新创建时，不能简单地把 ``bg_image``
+        降到最底层，否则它会落到不透明的 ``bg_fill`` 下面。动态绘制的
+        子类可在重画前景后调用此方法恢复统一层级。
+        """
+        self.tag_lower("bg_fill")
+        if self.find_withtag("bg_fill") and self.find_withtag("bg_image"):
+            self.tag_raise("bg_image", "bg_fill")
+
     def render_now(self) -> None:
         """便宜的一步：从共享大图裁一块贴上去。真正的重活（读盘/裁剪比
         例/缩放/混合）由 DSToolsApp 在窗口停顿后单独触发一次，这里从不
@@ -164,7 +175,7 @@ class BgFrame(tk.Canvas):
         photo = self._app._get_bg_slice(self, w, h)
         self._photo = photo  # 必须留一份引用，否则 PhotoImage 会被 GC 掉
         if photo is None:
-            self.tag_lower("bg_fill")
+            self._restore_bg_layer_order()
             # 动态创建的配置文字可能在共享背景图完成前先收到 Configure。
             # 延迟一次重试，避免偶发地永久停留在纯色矩形背景。
             if not self._bg_retry_done and self._bg_retry_after_id is None:
@@ -179,8 +190,7 @@ class BgFrame(tk.Canvas):
             self._bg_retry_after_id = None
         self._bg_retry_done = False
         self.create_image(0, 0, image=photo, anchor=tk.NW, tags="bg_image")
-        self.tag_lower("bg_image")
-        self.tag_lower("bg_fill")
+        self._restore_bg_layer_order()
 
     def invalidate_bg_cache(self) -> None:
         """让下一次 render_now() 无条件重新裁剪当前背景。"""

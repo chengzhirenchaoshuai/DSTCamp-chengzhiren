@@ -532,6 +532,30 @@ def test_background_refresh_contract():
     print("  PASS: 背景切片与独立窗口均能失效缓存并节流刷新")
 
 
+def test_transparent_id_list_keeps_background_above_fallback():
+    """点击重画 ID 选中态后，背景图不能被不透明兜底色盖住。"""
+    import inspect
+
+    from dstools.shared.gui.bg_frame import BgFrame
+    from dstools.shared.gui.transparent_widgets import TransparentIdList
+
+    calls = []
+    surface = BgFrame.__new__(BgFrame)
+    surface.tag_lower = lambda tag: calls.append(("lower", tag))
+    surface.tag_raise = lambda tag, above: calls.append(("raise", tag, above))
+    surface.find_withtag = lambda tag: (1,) if tag in {"bg_fill", "bg_image"} else ()
+    surface._restore_bg_layer_order()
+    assert calls == [
+        ("lower", "bg_fill"),
+        ("raise", "bg_image", "bg_fill"),
+    ]
+
+    redraw_source = inspect.getsource(TransparentIdList._redraw)
+    assert 'tag_lower("bg_image")' not in redraw_source
+    assert "self._restore_bg_layer_order()" in redraw_source
+    print("  PASS: 用户 ID 选中重画不会让兜底色覆盖背景图")
+
+
 def test_selfhost_worker_ui_dispatch_contract():
     """自建 FRP 工作线程只入队，不得跨线程调用 Tk.after()。"""
     import queue
@@ -585,6 +609,7 @@ def main():
         test_save_more_menu_entry_keeps_button_style_configure_contract,
         test_global_create_save_entry_delegates_to_save_page,
         test_background_refresh_contract,
+        test_transparent_id_list_keeps_background_above_fallback,
         test_selfhost_worker_ui_dispatch_contract,
     ]
 
