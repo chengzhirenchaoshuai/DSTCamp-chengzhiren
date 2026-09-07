@@ -112,11 +112,11 @@ _COMMAND_HISTORY_LIMIT = 100
 _STEAM_REMOTE_BUILD_TTL = 300.0
 _LUAJIT_VCREDIST_DOWNLOAD_URL = "https://wwwu.lanzoub.com/b0nyns22d"
 _PUBLIC_IP_SOURCES = (
-    ("https://myip.ipip.net", "DSTCamp/1.0"),
-    ("https://cdid.c-ctrip.com/model-poc2/h", "DSTCamp/1.0"),
     # cip.cc 会按 User-Agent 区分网页与命令行响应；使用 curl 标识可直接
     # 获取短纯文本，避免公网 IP 落在仅读取的前 256 字节之外。
     ("https://cip.cc/", "curl/8.0"),
+    ("https://myip.ipip.net", "DSTCamp/1.0"),
+    ("https://cdid.c-ctrip.com/model-poc2/h", "DSTCamp/1.0"),
 )
 
 _STATUS_KEYS = {

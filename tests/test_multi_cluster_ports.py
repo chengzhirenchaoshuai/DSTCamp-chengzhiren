@@ -969,8 +969,8 @@ def test_nat_without_matching_sakura_tunnel_skips_nodes_request() -> None:
         list_nodes.assert_not_called()
 
 
-def test_public_ipv4_falls_back_to_cip_cc_plain_text() -> None:
-    """前两个服务失败时，cip.cc 命令行响应仍能提供严格 IPv4。"""
+def test_public_ipv4_prefers_cip_cc_plain_text() -> None:
+    """优先使用响应更快的 cip.cc，并采用它的命令行纯文本格式。"""
     from dstools.features.local_service import tab as local_tab
 
     calls = []
@@ -989,18 +989,18 @@ def test_public_ipv4_falls_back_to_cip_cc_plain_text() -> None:
 
     def fake_urlopen(request, *, timeout, context):
         calls.append((request.full_url, request.get_header("User-agent"), timeout))
-        if request.full_url != "https://cip.cc/":
-            raise local_tab.urllib.error.URLError("不可用")
+        assert request.full_url == "https://cip.cc/"
         return FakeResponse()
 
     with patch.object(local_tab.urllib.request, "urlopen", fake_urlopen):
         assert local_tab.LocalServiceTab._fetch_public_ipv4() == "203.0.113.42"
 
-    assert [call[0] for call in calls] == [
-        source[0] for source in local_tab._PUBLIC_IP_SOURCES
+    assert [source[0] for source in local_tab._PUBLIC_IP_SOURCES] == [
+        "https://cip.cc/",
+        "https://myip.ipip.net",
+        "https://cdid.c-ctrip.com/model-poc2/h",
     ]
-    assert calls[-1][1] == "curl/8.0"
-    assert all(call[2] == 4 for call in calls)
+    assert calls == [("https://cip.cc/", "curl/8.0", 4)]
 
 
 def main() -> None:
@@ -1032,7 +1032,7 @@ def main() -> None:
         test_nat_without_configuration_skips_loading_and_network_thread,
         test_saved_sakura_token_without_local_mapping_skips_lookup,
         test_nat_without_matching_sakura_tunnel_skips_nodes_request,
-        test_public_ipv4_falls_back_to_cip_cc_plain_text,
+        test_public_ipv4_prefers_cip_cc_plain_text,
     ]
     for test in tests:
         test()
