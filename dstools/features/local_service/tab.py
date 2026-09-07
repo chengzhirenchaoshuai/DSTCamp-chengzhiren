@@ -1507,6 +1507,9 @@ class LocalServiceTab:
 
         self._detect_install_dir()
         self.on_cluster_changed(self.app.get_selected_cluster())
+        # SakuraTab 在 LocalServiceTab 之后才构造。等应用装配完成再用它的
+        # 本地映射指针复查一次，避免初始化阶段仅因保存过 Token 就发 API。
+        self.frame.after_idle(self._refresh_nat_after_app_init)
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 
     # ── Cluster/世界选择 ────────────────────────────────────────────
@@ -1629,7 +1632,6 @@ class LocalServiceTab:
         if token:
             try:
                 tunnels = sakura_frp.list_tunnels(token)
-                nodes = sakura_frp.list_nodes(token)
                 tunnel = sakura_frp.find_dstcamp_tunnel(
                     tunnels,
                     cluster.path.name,
@@ -1639,6 +1641,10 @@ class LocalServiceTab:
                     cluster_identity=stable_path_key(cluster.path),
                 )
                 if tunnel:
+                    # 只有当前存档确实存在樱花隧道时才需要节点地址。无映射
+                    # 是主页最常见的路径，不能再为无用的 /nodes 请求多等
+                    # 一个网络超时。
+                    nodes = sakura_frp.list_nodes(token)
                     node = nodes.get(str(tunnel.get("node")), {})
                     return node.get("host", ""), tunnel.get("remote", "")
             except Exception:
@@ -1649,6 +1655,49 @@ class LocalServiceTab:
             if remote:
                 return server.get("host", ""), remote
         return None, None
+
+    def _nat_lookup_needed(self, cluster) -> bool:
+        """当前存档是否存在值得异步查询的穿透配置。
+
+        SakuraTab 会用本地隧道 ID 指针统一判断樱花/自建映射，不需要访问
+        API；应用初始化期间该页尚未构造，则只检查本地的自建映射记账。
+        """
+        if not cluster:
+            return False
+        master = self._master_shard(cluster)
+        if not master:
+            return False
+        sakura_tab = getattr(getattr(self, "app", None), "sakura_tab", None)
+        if sakura_tab is not None:
+            try:
+                return bool(sakura_tab.has_active_mapping(cluster, master))
+            except (OSError, ValueError):
+                pass
+        server = get_selfhost_frp_server()
+        return bool(
+            server and get_selfhost_frp_mapping(cluster.path, master.name)
+        )
+
+    def _refresh_nat_after_app_init(self) -> None:
+        """应用装配完成后，仅为本地确有记录的映射启动首次异步查询。"""
+        if getattr(self.app, "sakura_tab", None) is None:
+            return
+        cluster = self._get_cluster()
+        if (
+            not cluster
+            or cluster.source != SaveSource.SERVER
+            or not self._connect_row.winfo_ismapped()
+            or not self._nat_lookup_needed(cluster)
+        ):
+            return
+        self._nat_code = None
+        self._nat_set_text(t("local.connect_loading"))
+        self._nat_set_status("")
+        threading.Thread(
+            target=self._fetch_nat_connect_async,
+            args=(cluster, str(cluster.path), self._connect_fetch_generation),
+            daemon=True,
+        ).start()
 
     def _copy_nat_connect(self, event=None):
         if self._nat_code:
@@ -1807,18 +1856,27 @@ class LocalServiceTab:
         self._public_set_text(t("local.connect_loading"))
         self._public_set_status("")
         self._nat_code = None
-        self._nat_set_text(t("local.connect_loading"))
-        self._nat_set_status("")
         threading.Thread(
             target=self._fetch_public_connect_async,
             args=(cluster, cluster_key, generation),
             daemon=True,
         ).start()
-        threading.Thread(
-            target=self._fetch_nat_connect_async,
-            args=(cluster, cluster_key, generation),
-            daemon=True,
-        ).start()
+        if self._nat_lookup_needed(cluster):
+            self._nat_set_text(t("local.connect_loading"))
+            self._nat_set_status("")
+            threading.Thread(
+                target=self._fetch_nat_connect_async,
+                args=(cluster, cluster_key, generation),
+                daemon=True,
+            ).start()
+        else:
+            self._nat_set_text(t("local.nat_not_mapped_short"))
+            self._nat_status_key = "nomap"
+            self._nat_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.nat_not_mapped"),
+            )
 
     def _fetch_public_connect_async(self, cluster, cluster_key, generation):
         public_ip = self._fetch_public_ipv4()

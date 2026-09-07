@@ -892,6 +892,83 @@ def test_connect_results_return_through_main_thread_poll() -> None:
     ]
 
 
+def test_nat_without_configuration_skips_loading_and_network_thread() -> None:
+    """没有樱花 Token 和自建映射时应立即显示未映射。"""
+    from dstools.features.local_service import tab as local_tab
+    from dstools.i18n import t
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service._get_cluster = lambda: cluster
+        service._connect_fetch_generation = 0
+        service._lan_status_key = None
+        service._public_status_key = None
+        service._nat_status_key = None
+        service._lan_connect_code = lambda: None
+        service._refresh_lan_status = lambda: None
+        service._lan_set_text = lambda *_args: None
+        service._public_set_text = lambda *_args: None
+        service._public_set_status = lambda *_args: None
+        nat_text = []
+        nat_status = []
+        service._nat_set_text = lambda *args: nat_text.append(args)
+        service._nat_set_status = lambda *args: nat_status.append(args)
+        started_targets = []
+
+        class _FakeThread:
+            def __init__(self, *, target, args, daemon):
+                self.target = target
+                assert args
+                assert daemon is True
+
+            def start(self):
+                started_targets.append(self.target)
+
+        with patch.object(local_tab, "get_sakura_token", return_value=None), \
+                patch.object(local_tab, "get_selfhost_frp_server", return_value=None), \
+                patch.object(local_tab.threading, "Thread", _FakeThread):
+            service._refresh_connect_labels()
+
+        assert nat_text[-1] == (t("local.nat_not_mapped_short"),)
+        assert t("local.connect_not_ready") in nat_status[-1][0]
+        assert service._nat_status_key == "nomap"
+        assert started_targets == [service._fetch_public_connect_async]
+
+
+def test_saved_sakura_token_without_local_mapping_skips_lookup() -> None:
+    """仅保存过 Token 不代表当前存档有映射，不能因此进入网络等待。"""
+    from dstools.features.local_service import tab as local_tab
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service.app = SimpleNamespace(
+            sakura_tab=SimpleNamespace(has_active_mapping=lambda *_args: False)
+        )
+
+        with patch.object(local_tab, "get_sakura_token", return_value="old-token"), \
+                patch.object(local_tab, "get_selfhost_frp_server", return_value=None):
+            assert service._nat_lookup_needed(cluster) is False
+
+
+def test_nat_without_matching_sakura_tunnel_skips_nodes_request() -> None:
+    """樱花隧道列表没有当前存档时，不应继续等待节点列表。"""
+    from dstools.features.local_service import tab as local_tab
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+
+        with patch.object(local_tab, "get_sakura_token", return_value="token"), \
+                patch.object(local_tab.sakura_frp, "list_tunnels", return_value=[]), \
+                patch.object(local_tab.sakura_frp, "list_nodes") as list_nodes, \
+                patch.object(local_tab, "get_selfhost_frp_server", return_value=None):
+            assert service._nat_connect_info(cluster) == (None, None)
+
+        list_nodes.assert_not_called()
+
+
 def test_public_ipv4_falls_back_to_cip_cc_plain_text() -> None:
     """前两个服务失败时，cip.cc 命令行响应仍能提供严格 IPv4。"""
     from dstools.features.local_service import tab as local_tab
@@ -952,6 +1029,9 @@ def main() -> None:
         test_external_connect_status_rejects_lan_only,
         test_local_refresh_redetects_server_tool,
         test_connect_results_return_through_main_thread_poll,
+        test_nat_without_configuration_skips_loading_and_network_thread,
+        test_saved_sakura_token_without_local_mapping_skips_lookup,
+        test_nat_without_matching_sakura_tunnel_skips_nodes_request,
         test_public_ipv4_falls_back_to_cip_cc_plain_text,
     ]
     for test in tests:
