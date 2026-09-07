@@ -3836,6 +3836,17 @@ class LocalServiceTab:
 
     # ── 轮询 ────────────────────────────────────────────────────────
 
+    def _poll_lobby_accel_if_ready(self) -> None:
+        """刷新大厅加速状态，但不假定穿透页已经完成构造。
+
+        LocalServiceTab 比 SakuraTab 先创建，并会在 150ms 后启动轮询；应用
+        初始化较慢时，这个回调可能早于 ``app.sakura_tab`` 赋值。此时跳过
+        一轮即可，下轮会在页面构造完成后正常刷新。
+        """
+        sakura_tab = getattr(self.app, "sakura_tab", None)
+        if sakura_tab is not None:
+            sakura_tab.poll_lobby_accel()
+
     def _poll(self):
         self._drain_steam_remote_build_result()
         self._refresh_steam_remote_build_async()
@@ -3849,7 +3860,7 @@ class LocalServiceTab:
         self._update_restart_all_btn_state(self._get_cluster())
         self._update_logs_btn_state(self._get_cluster())
         self._update_luajit_row(self._get_cluster())
-        self.app.sakura_tab.poll_lobby_accel()
+        self._poll_lobby_accel_if_ready()
         # 直连代码状态随服务器/frpc 进程启停实时刷新——局域网查主世界进程、
         # 内网穿透查 frpc，都是本地同步判断；只在服务器存档可见时刷新（本地
         # 存档不显示这块，省掉无谓重画）。
