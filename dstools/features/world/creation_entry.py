@@ -27,6 +27,7 @@ class _CreationWindowChrome:
         self._aspect = entry.app.WINDOW_BASE_W / entry.app.WINDOW_BASE_H
         self._bg_surfaces: list = []
         self._bg_image = None
+        self._bg_photo = None
         self._bg_image_key = None
         self._local_bg_drag_suppressed = False
         self._is_pseudo_maximized = False
@@ -73,6 +74,33 @@ class _CreationWindowChrome:
         from PIL import ImageTk
         return ImageTk.PhotoImage(self._bg_image.crop((x0, y0, x1, y1)))
 
+    def _get_bg_photo_placement(self, widget, width, height):
+        """让向导内所有背景表面共用一张整窗 Tk 位图。"""
+        bg_path = get_custom_bg_path()
+        if bg_path is None:
+            return None
+        top = widget.winfo_toplevel()
+        tw = max(1, top.winfo_width())
+        th = max(1, top.winfo_height())
+        opacity = self.entry.app._get_active_custom_bg_opacity()
+        key = (str(bg_path), opacity, tw, th, theme.BG_SOFT)
+        if self._bg_image is None or self._bg_image_key != key:
+            self._bg_image = render_background(
+                bg_path, tw, th, opacity, theme.BG_SOFT
+            )
+            self._bg_photo = None
+            self._bg_image_key = key
+        if self._bg_photo is None:
+            from PIL import ImageTk
+
+            self._bg_photo = ImageTk.PhotoImage(self._bg_image, master=top)
+        ox = widget.winfo_rootx() - top.winfo_rootx()
+        oy = widget.winfo_rooty() - top.winfo_rooty()
+        if (ox >= self._bg_image.width or oy >= self._bg_image.height
+                or ox + width <= 0 or oy + height <= 0):
+            return None
+        return self._bg_photo, -ox, -oy
+
     def _begin_bg_drag_suppress(self):
         self._local_bg_drag_suppressed = True
         for ref in self._bg_surfaces:
@@ -111,6 +139,7 @@ class _CreationWindowChrome:
     ) -> None:
         """跟随主窗口的背景图/透明度变化，只重画当前可见表面。"""
         self._bg_image = None
+        self._bg_photo = None
         self._bg_image_key = None
         alive = []
         for ref in self._bg_surfaces:
@@ -151,6 +180,7 @@ class _CreationWindowChrome:
                 return
             self.window.update_idletasks()
             self._bg_image = None
+            self._bg_photo = None
             self._bg_image_key = None
             self.refresh_bg_surfaces_deep()
         except tk.TclError:

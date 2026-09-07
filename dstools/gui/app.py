@@ -1204,13 +1204,18 @@ class DSToolsApp:
         # 它们各自失效缓存并刷新当前可见表面。
         self._bg_refresh_hosts: list = []
         self._shared_bg_image = None  # PIL Image，跟 root 客户区同尺寸
+        # 所有属于主窗口的 BgFrame 共用这一张 Tk 图片；各 Canvas 只通过
+        # 负坐标偏移显示自己的区域，避免把同一批背景像素复制几十份。
+        self._shared_bg_photo = None
         self._shared_bg_key = None
         # 拖动不透明度滑块时只在内存中保留最新预览值，松手再
         # 写 settings.json，避免高频原子替换跟 Tk 主线程抢时间。
         self._custom_bg_opacity_preview: float | None = None
         # 独立创建向导等 Toplevel 不属于 root 客户区，不能直接从 root
         # 共享图裁剪；按每个独立窗口尺寸惰性生成一份背景图。
-        self._secondary_bg_images: dict[str, tuple[tuple, object]] = {}
+        # 普通 Toplevel 也按窗口共用一张 PIL/Tk 背景。弱键保证窗口销毁后
+        # 缓存能自动释放，不会因反复打开临时窗口而长期保留整窗位图。
+        self._secondary_bg_images = weakref.WeakKeyDictionary()
         self._bg_settle_after_id = None
         # root 的 <Configure> 同时表示尺寸改变和纯位置移动。背景共享图只
         # 跟客户区宽高有关，记住最近尺寸即可跳过标题栏拖动产生的无效调度。
@@ -1441,8 +1446,8 @@ class DSToolsApp:
         一张连续的图"，比每个表面自己抠自己的颜色更重要。
 
         返回 True 表示这次真的重建/更新了共享大图（尺寸或背景设置变了），
-        False 表示跟上次完全一样、无需重建——调用方据此决定要不要再花
-        250ms+ 把 90 个表面全刷一遍。"""
+        False 表示跟上次完全一样、无需重建——调用方据此决定是否通知可见
+        表面统一换用新的共享 Tk 图片。"""
         w, h = self.root.winfo_width(), self.root.winfo_height()
         bg_path = get_custom_bg_path()
         opacity = self._get_active_custom_bg_opacity()
@@ -1457,11 +1462,58 @@ class DSToolsApp:
             return False
         if bg_path is None:
             self._shared_bg_image = None
+            self._shared_bg_photo = None
             self._shared_bg_key = key
             return True
         self._shared_bg_image = render_background(bg_path, w, h, opacity, theme.BG_SOFT)
+        self._shared_bg_photo = ImageTk.PhotoImage(
+            self._shared_bg_image, master=self.root
+        )
         self._shared_bg_key = key
         return True
+
+    def _get_secondary_bg_assets(self, top):
+        """返回普通 Toplevel 共用的 ``(PIL Image, PhotoImage)``。"""
+        bg_path = get_custom_bg_path()
+        if bg_path is None:
+            return None
+        tw = max(1, top.winfo_width())
+        th = max(1, top.winfo_height())
+        opacity = self._get_active_custom_bg_opacity()
+        key = (bg_path, opacity, tw, th, theme.BG_SOFT)
+        cached = self._secondary_bg_images.get(top)
+        if cached is None or cached[0] != key:
+            big = render_background(bg_path, tw, th, opacity, theme.BG_SOFT)
+            photo = ImageTk.PhotoImage(big, master=top)
+            self._secondary_bg_images[top] = (key, big, photo)
+            return big, photo
+        return cached[1], cached[2]
+
+    def _get_bg_photo_placement(self, widget, w: int, h: int):
+        """返回共享 Tk 背景及其在 ``widget`` Canvas 内的放置坐标。
+
+        Canvas 会裁掉自身边界外的图像，因此把所属顶层窗口的整张背景放在
+        ``(-ox, -oy)`` 就等价于先裁剪再放到 ``(0, 0)``，但所有表面只需
+        引用同一个 PhotoImage，不再分别复制像素。
+        """
+        top = widget.winfo_toplevel()
+        if top is self.root:
+            big = self._shared_bg_image
+            photo = self._shared_bg_photo
+            origin = self.root
+        else:
+            assets = self._get_secondary_bg_assets(top)
+            if assets is None:
+                return None
+            big, photo = assets
+            origin = top
+        if big is None or photo is None:
+            return None
+        ox = widget.winfo_rootx() - origin.winfo_rootx()
+        oy = widget.winfo_rooty() - origin.winfo_rooty()
+        if ox >= big.width or oy >= big.height or ox + w <= 0 or oy + h <= 0:
+            return None
+        return photo, -ox, -oy
 
     def _get_bg_slice_image(self, widget, w: int, h: int):
         """从共享大图里按 widget 相对 root 客户区的屏幕偏移量裁一块出来
@@ -1475,20 +1527,10 @@ class DSToolsApp:
         if top is not self.root:
             # Toplevel 可能比主窗口更大或位于主窗口之外，不能再把坐标
             # 强行裁到 root 的共享图边界，否则背景会出现缺块/纯色边。
-            bg_path = get_custom_bg_path()
-            if bg_path is None:
+            assets = self._get_secondary_bg_assets(top)
+            if assets is None:
                 return None
-            tw = max(1, top.winfo_width())
-            th = max(1, top.winfo_height())
-            opacity = self._get_active_custom_bg_opacity()
-            key = (bg_path, opacity, tw, th, theme.BG_SOFT)
-            cache_key = str(top)
-            cached = self._secondary_bg_images.get(cache_key)
-            if cached is None or cached[0] != key:
-                big = render_background(bg_path, tw, th, opacity, theme.BG_SOFT)
-                self._secondary_bg_images[cache_key] = (key, big)
-            else:
-                big = cached[1]
+            big, _photo = assets
             ox = widget.winfo_rootx() - top.winfo_rootx()
             oy = widget.winfo_rooty() - top.winfo_rooty()
         else:

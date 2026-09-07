@@ -433,7 +433,7 @@ def test_background_refresh_contract():
     import weakref
 
     from dstools.gui.app import DSToolsApp
-    from dstools.shared.gui.bg_frame import _relative_bg_offset
+    from dstools.shared.gui.bg_frame import BgFrame, _relative_bg_offset
 
     root = SimpleNamespace(winfo_rootx=lambda: 100, winfo_rooty=lambda: 200)
     position = [130, 260]
@@ -445,6 +445,48 @@ def test_background_refresh_contract():
     assert _relative_bg_offset(widget, root) == (30, 60)
     position[:] = [150, 280]
     assert _relative_bg_offset(widget, root) == (50, 80)
+
+    # 支持共享背景的宿主返回整窗 PhotoImage 与负坐标偏移；BgFrame 不应再
+    # 为每个表面调用旧的裁剪接口生成独立图片。
+    shared_photo = object()
+    created = []
+    shared_surface = BgFrame.__new__(BgFrame)
+    shared_surface._app = SimpleNamespace(
+        _bg_drag_suppressed=False,
+        _theme_switch_suppressed=False,
+        _shared_bg_key=("shared",),
+        root=root,
+        _get_bg_photo_placement=lambda _widget, _w, _h: (
+            shared_photo, -50, -80
+        ),
+        _get_bg_slice=Mock(side_effect=AssertionError("不应生成独立背景切片")),
+    )
+    shared_surface._last_render_key = None
+    shared_surface._bg_retry_after_id = None
+    shared_surface._bg_retry_done = False
+    shared_surface.winfo_ismapped = lambda: True
+    shared_surface.winfo_width = lambda: 300
+    shared_surface.winfo_height = lambda: 200
+    shared_surface.winfo_toplevel = lambda: root
+    shared_surface.winfo_rootx = lambda: 150
+    shared_surface.winfo_rooty = lambda: 280
+    shared_surface.find_withtag = lambda _tag: ()
+    shared_surface.delete = lambda *_tags: None
+    shared_surface.create_rectangle = lambda *_args, **_kwargs: None
+    shared_surface.create_image = lambda *args, **kwargs: created.append(
+        (args, kwargs)
+    )
+    shared_surface._restore_bg_layer_order = lambda: None
+    shared_surface._resolve_color = lambda: "#ffffff"
+    shared_surface.render_now()
+    assert created == [
+        ((-50, -80), {
+            "image": shared_photo,
+            "anchor": tk.NW,
+            "tags": "bg_image",
+        })
+    ]
+    assert shared_surface._photo is shared_photo
 
     calls = []
 
@@ -497,9 +539,14 @@ def test_background_refresh_contract():
     chrome = _CreationWindowChrome.__new__(_CreationWindowChrome)
     chrome._bg_surfaces = [weakref.ref(surface), weakref.ref(hidden_surface)]
     chrome._bg_image = object()
+    chrome._bg_photo = object()
     chrome._bg_image_key = ("old",)
     chrome.refresh_custom_background(throttle=True, force=True)
-    assert chrome._bg_image is None and chrome._bg_image_key is None
+    assert (
+        chrome._bg_image is None
+        and chrome._bg_photo is None
+        and chrome._bg_image_key is None
+    )
     assert calls == [
         ("invalidate", True),
         ("request", True),

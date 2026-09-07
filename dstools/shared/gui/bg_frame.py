@@ -5,13 +5,13 @@
 背景图渲染分两层，直接照搬 image_scroll.py 里 ImageScrollPanel 已经验证
 过的"拖拽中便宜、停顿后精细"节流手法（这是本项目处理"resize 时的重
 活"的既有规范，不是新发明的一套）：
-- 拖拽缩放过程中：只从"当前已有的共享大图"（DSToolsApp._shared_bg_image，
-  由 DSToolsApp 统一维护、跟当前窗口客户区同尺寸）里裁一小块出来贴上
-  去，纯内存 crop，不做任何读盘/裁剪比例/LANCZOS 缩放/颜色混合，足够
-  便宜，可以跟 <Configure> 一样频繁触发（节流到约 60fps）。
+- 拖拽缩放过程中：只引用"当前已有的共享大图"（DSToolsApp._shared_bg_photo，
+  由 DSToolsApp 统一维护、跟当前窗口客户区同尺寸），通过 Canvas 负坐标
+  偏移显示自己所在区域；不复制像素，也不做读盘/裁剪比例/LANCZOS 缩放/
+  颜色混合，可以跟 <Configure> 一样频繁触发（节流到约 60fps）。
 - 停顿超过 DSToolsApp._BG_SETTLE_MS（150ms，跟 image_scroll.py 的
   SETTLE_DELAY_MS 保持一致）之后：DSToolsApp 才重新生成一张跟当前窗口
-  客户区同尺寸的新大图（真正的重活），再通知所有 BgFrame 重新裁一次。
+  客户区同尺寸的新大图（真正的重活），再通知所有 BgFrame 换用新引用。
   这一步只在停顿后做一次，绝不会在拖拽过程中跟 win_aspect_lock.py 的
   原生 WM_SIZING 钩子抢时间——上一版每个背景表面都各自独立做这套重
   活、且没有防抖，就是在这里出的问题：真实拖拽缩放窗口时布局错位/
@@ -39,8 +39,9 @@ def _relative_bg_offset(widget, root) -> tuple[int, int]:
 
 class BgFrame(tk.Canvas):
     """app 必须实现 `_register_bg_surface(self)` 和
-    `_get_bg_slice(widget, w, h) -> ImageTk.PhotoImage | None`（见
-    gui/app.py 的 DSToolsApp）。bg=None 表示背景色现查 theme.BG_SOFT；
+    `_get_bg_slice(widget, w, h) -> ImageTk.PhotoImage | None`，并可选实现
+    `_get_bg_photo_placement(widget, w, h) -> (PhotoImage, x, y) | None`
+    以便多个表面共用整窗位图（见 gui/app.py 的 DSToolsApp）。bg=None 表示背景色现查 theme.BG_SOFT；
     传具体颜色（比如 theme.CARD_BG）则固定用那个颜色跟背景图混合/兜底。"""
 
     def __init__(self, parent, app, bg: str | None = None, **kw):
@@ -111,15 +112,13 @@ class BgFrame(tk.Canvas):
             self.tag_raise("bg_image", "bg_fill")
 
     def render_now(self) -> None:
-        """便宜的一步：从共享大图裁一块贴上去。真正的重活（读盘/裁剪比
-        例/缩放/混合）由 DSToolsApp 在窗口停顿后单独触发一次，这里从不
-        做。
+        """便宜的一步：引用共享大图并偏移到当前位置。真正的重活（读盘/
+        裁剪比例/缩放/混合）由 DSToolsApp 在窗口停顿后单独触发一次，这里
+        从不做。
 
-        真机实测过：DSToolsApp._refresh_all_bg_surfaces() 对全部注册过
-        的表面（这台机器上有 90 个，含隐藏标签页/未选中存档的控制台面
-        板等）逐个做这一步，单次就要 250ms+，是"自定义背景图"弹窗拖不
-        透明度滑块卡顿的真正瓶颈（不是共享大图本身的裁剪/缩放/混合，那
-        一步只要 10ms 量级）。当前不可见（`Notebook.hide()`/未选中的标
+        旧实现给每个表面裁剪并创建独立 PhotoImage，既重复像素又让批量
+        刷新变慢；现在所有表面共用一张整窗 Tk 图片，只更新 Canvas 图元
+        的引用和坐标。当前不可见（`Notebook.hide()`/未选中的标
         签页）的表面在这里跳过——不是不刷新，是现在刷新了也没人看得
         见：这类表面重新可见时，Tk 自己的几何管理会先触发一次真正的
         `<Configure>`（页签内容从"未托管/隐藏"变成"已托管/显示"本身就
@@ -172,7 +171,13 @@ class BgFrame(tk.Canvas):
             0, 0, w, h, fill=self._resolve_color(), outline="",
             tags="bg_fill",
         )
-        photo = self._app._get_bg_slice(self, w, h)
+        get_placement = getattr(self._app, "_get_bg_photo_placement", None)
+        placement = get_placement(self, w, h) if callable(get_placement) else None
+        if placement is None:
+            photo = self._app._get_bg_slice(self, w, h)
+            image_x = image_y = 0
+        else:
+            photo, image_x, image_y = placement
         self._photo = photo  # 必须留一份引用，否则 PhotoImage 会被 GC 掉
         if photo is None:
             self._restore_bg_layer_order()
@@ -189,7 +194,9 @@ class BgFrame(tk.Canvas):
                 pass
             self._bg_retry_after_id = None
         self._bg_retry_done = False
-        self.create_image(0, 0, image=photo, anchor=tk.NW, tags="bg_image")
+        self.create_image(
+            image_x, image_y, image=photo, anchor=tk.NW, tags="bg_image"
+        )
         self._restore_bg_layer_order()
 
     def invalidate_bg_cache(self) -> None:

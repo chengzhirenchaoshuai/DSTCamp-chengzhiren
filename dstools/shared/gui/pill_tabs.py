@@ -229,14 +229,23 @@ class PillTabBar(tk.Frame):
         cy = h / 2
 
         # 背景图是跟主题无关的全局功能，任意主题下只要用户设置过图片就画
-        # ——从 DSToolsApp 统一维护的共享大图里按自己在 root 里的屏幕位置
-        # 裁一小块（纯内存 crop，足够便宜，可以跟着 <Configure> 一起触
-        # 发）。没设置过图/拿不到共享大图都还是原来那条"模拟玻璃感"的薄荷
+        # ——引用 DSToolsApp 统一维护的共享大图，按自己在 root 里的屏幕位置
+        # 用负坐标偏移显示对应区域（不复制像素，可以跟着 <Configure> 一起
+        # 触发）。没设置过图/拿不到共享大图都还是原来那条"模拟玻璃感"的薄荷
         # 到白渐变。真正的读盘/裁剪比例/缩放/混合这套重活由 DSToolsApp 在
         # 窗口停顿后统一算一次，这里从不做。
-        photo = self._app._get_bg_slice(c, w, h) if self._app else None
-        self._bg_photo = photo if photo is not None else theme.gradient_image(w, h)
-        c.create_image(0, 0, image=self._bg_photo, anchor=tk.NW)
+        placement = None
+        if self._app:
+            get_placement = getattr(self._app, "_get_bg_photo_placement", None)
+            if callable(get_placement):
+                placement = get_placement(c, w, h)
+        if placement is None:
+            photo = self._app._get_bg_slice(c, w, h) if self._app else None
+            self._bg_photo = photo if photo is not None else theme.gradient_image(w, h)
+            image_x = image_y = 0
+        else:
+            self._bg_photo, image_x, image_y = placement
+        c.create_image(image_x, image_y, image=self._bg_photo, anchor=tk.NW)
 
         x = self._gap
         for key, label in self._tabs:
