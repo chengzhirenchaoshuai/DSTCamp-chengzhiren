@@ -68,6 +68,28 @@ class BgFrame(tk.Canvas):
     def _resolve_color(self) -> str:
         return self._bg_color_override if self._bg_color_override is not None else theme.BG_SOFT
 
+    def _content_item_ids(self) -> tuple[int, ...]:
+        """返回真正的内容图元，不包含铺底矩形和共享背景图。
+
+        ``BgFrame`` 也会被当成滚动画布使用。共享整窗背景采用负坐标放置，
+        如果让 Canvas 原生的 ``bbox("all")`` 把它算进滚动区域，初始视口会
+        从背景图顶端开始，位于 ``(0, 0)`` 的真实内容反而被推到首屏之外。
+        """
+        background_tags = {"bg_fill", "bg_image"}
+        return tuple(
+            item_id
+            for item_id in self.find_all()
+            if background_tags.isdisjoint(self.gettags(item_id))
+        )
+
+    def bbox(self, *args):
+        """让 ``bbox("all")`` 只描述内容，背景装饰不参与滚动范围。"""
+        if args == ("all",):
+            args = self._content_item_ids()
+            if not args:
+                return None
+        return super().bbox(*args)
+
     def apply_theme(self, bg: str | None = None) -> None:
         """主题切换时调用——background 色是构造时焊死的，需要显式重新
         configure 一次（跟 CardFrame/PillTabBar 是同一条既有规则）。无参

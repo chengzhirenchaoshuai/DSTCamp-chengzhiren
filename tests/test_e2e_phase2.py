@@ -488,6 +488,18 @@ def test_background_refresh_contract():
     ]
     assert shared_surface._photo is shared_photo
 
+    # 共享整窗背景使用负坐标放置，但滚动画布的 bbox("all") 只能包含真正
+    # 的内容窗口；否则初始视口会停在背景顶部，角色状态要下滚才看得到。
+    shared_surface.find_all = lambda: (1, 2, 3, 4)
+    item_tags = {
+        1: ("bg_fill",),
+        2: ("bg_image",),
+        3: ("player_rows",),
+        4: (),
+    }
+    shared_surface.gettags = lambda item_id: item_tags[item_id]
+    assert shared_surface._content_item_ids() == (3, 4)
+
     calls = []
 
     class Surface:
