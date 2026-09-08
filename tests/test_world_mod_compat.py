@@ -52,6 +52,7 @@ from dstools.features.world.icons import get_pil_icon  # noqa: E402
 from dstools.features.world.render import (  # noqa: E402
     _wrap_text_to_width,
     render_world_panel,
+    world_panel_height,
 )
 from dstools.features.world.value_sets import get_value_set  # noqa: E402
 from dstools.features.world.reader import WorldOverride  # noqa: E402
@@ -62,7 +63,7 @@ from dstools.features.world.tab import WorldSettingsTab  # noqa: E402
 from dstools.features.world.creation_tab import WorldCreationTab  # noqa: E402
 from dstools.features.cluster_config.config_manager import load_shard_config  # noqa: E402
 from dstools.models import ModEntry, SaveSource  # noqa: E402
-from PIL import Image, ImageDraw  # noqa: E402
+from PIL import Image, ImageChops, ImageDraw  # noqa: E402
 from dstools.shared.gui.fonts import get_font  # noqa: E402
 from dstools.shared.lua_parser import (  # noqa: E402
     parse_lua_file,
@@ -319,6 +320,50 @@ def test_world_setting_name_wrap_keeps_full_text() -> None:
     )
     assert len(wrapped_value.splitlines()) > 1
     assert "".join(wrapped_value.splitlines()) == "五个汉字取值"
+
+
+def test_world_panel_viewport_matches_full_image_crop() -> None:
+    overrides = [
+        WorldOverride(
+            "autumn" if index % 2 == 0 else "winter",
+            "default",
+            name=f"季节设置 {index}",
+        )
+        for index in range(30)
+    ]
+    categories = [("seasons", "季节")]
+    grouped = {"seasons": overrides}
+    colors = {"seasons": "#336699"}
+    clicked = []
+    full, _full_hits = render_world_panel(
+        categories,
+        grouped,
+        colors,
+        editable=True,
+        on_click=lambda key, delta: clicked.append((key, delta)),
+        ref_width=1300,
+    )
+    view_y = 373
+    view_height = 421
+    viewport, hits = render_world_panel(
+        categories,
+        grouped,
+        colors,
+        editable=True,
+        on_click=lambda key, delta: clicked.append((key, delta)),
+        ref_width=1300,
+        viewport_y=view_y,
+        viewport_height=view_height,
+    )
+
+    assert full.height == world_panel_height(categories, grouped, 1300)
+    assert viewport.size == (1300, view_height)
+    expected = full.crop((0, view_y, 1300, view_y + view_height))
+    assert ImageChops.difference(viewport, expected).getbbox() is None
+    assert hits
+    assert all(y2 >= view_y and y1 <= view_y + view_height for _, y1, _, y2, _ in hits)
+    hits[0][4]()
+    assert clicked
 
 
 class _StatusProbe:
@@ -720,6 +765,7 @@ def main() -> None:
         test_en_zh_mod_metadata,
         test_world_setting_icon_rendering,
         test_world_setting_name_wrap_keeps_full_text,
+        test_world_panel_viewport_matches_full_image_crop,
         test_creation_dependency_confirmation,
         test_main_mod_dependency_confirmation,
         test_creation_error_dialog_uses_wizard_parent,

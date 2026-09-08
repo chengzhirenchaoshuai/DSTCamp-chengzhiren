@@ -1,8 +1,8 @@
-"""把"世界设置"的分类面板整个渲染成一张 PIL 图片。
+"""把“世界设置”的分类面板渲染成 PIL 图片。
 
 配合 ImageScrollPanel 供 WorldSettingsTab 使用：不用几百个 ttk 控件
-（缩放时重新布局很慢），整个面板一次性画成像素图。原因详见
-image_scroll.py。
+（缩放时重新布局很慢）。主页只按需绘制当前视口，创建向导仍可生成完整
+图片；原因详见 image_scroll.py。
 
 render_world_panel() 接收一个 `ref_width`——图片要画成的精确像素宽度。
 下面所有布局常量都是按 BASE_REF_WIDTH 定义、再乘以 `ref_width /
@@ -322,10 +322,44 @@ def _wrap_text_to_width(draw, text: str, font, max_width: float) -> str:
     return "\n".join(lines)
 
 
+def _world_panel_layout(categories, grouped, ref_width=None):
+    """计算完整内容高度和各分类的绝对纵向坐标，不创建像图。"""
+    rw = int(ref_width) if ref_width else BASE_REF_WIDTH
+    s = rw / BASE_REF_WIDTH
+    pad_x = PAD_X * s
+    icon_size = max(14, round(ICON_SIZE * s))
+    row_h = icon_size + ROW_GAP + 2 * 14 * s
+    cat_header_h = CAT_HEADER_H * s
+    cat_header_item_gap = CAT_HEADER_ITEM_GAP + 14 * s
+
+    layouts = []
+    y = pad_x
+    for cat_key, cat_name in categories:
+        items = grouped.get(cat_key)
+        if not items:
+            continue
+        y += CAT_GAP_BEFORE * s
+        cat_box_top = y
+        items_top = y + cat_header_h + cat_header_item_gap
+        rows = (len(items) + COLS - 1) // COLS
+        cat_box_bottom = items_top + rows * row_h
+        layouts.append(
+            (cat_key, cat_name, items, cat_box_top, items_top, cat_box_bottom)
+        )
+        y = cat_box_bottom + CAT_GAP_AFTER * s
+    return max(int(y), int(40 * s)), layouts
+
+
+def world_panel_height(categories, grouped, ref_width=None) -> int:
+    """返回世界设置面板的完整高度，不分配完整长图。"""
+    return _world_panel_layout(categories, grouped, ref_width)[0]
+
+
 def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                         ref_width=None, flash=None, location="forest", mod_settings=None,
-                        mod_icons=None, is_rule=True):
-    """把一个分类面板渲染成一张 PIL 图片。
+                        mod_icons=None, is_rule=True, viewport_y=0,
+                        viewport_height=None):
+    """把一个分类面板的完整内容或指定视口渲染成 PIL 图片。
 
     参数：
         categories: (cat_key, cat_name) 列表
@@ -345,9 +379,11 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             图标（调用方在 tab.py 里按需解析好传进来，这里不做任何 I/O，
             只负责按 key 查表+按需缩放）。原版设置的图标仍然走
             get_pil_icon()；一个 key 两边都查不到就退回纯色块占位。
+        viewport_y/viewport_height: 只渲染这段纵向参照坐标；点击区域仍使用
+            完整面板坐标，供 ``ImageScrollPanel`` 做命中换算。
 
     返回：
-        (PIL.Image, hit_regions)，hit_regions 是图片自身像素坐标系下的
+        (PIL.Image, hit_regions)，hit_regions 是完整面板参照坐标系下的
         (x1, y1, x2, y2, callback) 元组列表
     """
     rw = int(ref_width) if ref_width else BASE_REF_WIDTH
@@ -356,8 +392,6 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     pad_x = PAD_X * s
     icon_size = max(14, round(ICON_SIZE * s))
     cat_header_h = CAT_HEADER_H * s
-    cat_gap_before = CAT_GAP_BEFORE * s
-    cat_gap_after = CAT_GAP_AFTER * s
     cols = COLS
     content_margin = CONTENT_MARGIN * s
     #
@@ -394,48 +428,58 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     name_font = get_font(round(16 * s))
     val_font = get_font(round(16 * s))
     hdr_font = get_font(round(22 * s))
-    # 只需要补偿下面第一行自己的 block_pad_v（标题条本身不会向下探出任
-    # 何 padding），跟 ROW_GAP/col_gutter 是同一个思路，见 CAT_HEADER_
-    # ITEM_GAP 定义处的说明。
-    cat_header_item_gap = CAT_HEADER_ITEM_GAP + block_pad_v
+    total_h, category_layouts = _world_panel_layout(categories, grouped, rw)
+    requested_y = max(0, int(viewport_y))
+    requested_h = total_h if viewport_height is None else max(1, int(viewport_height))
+    requested_bottom = requested_y + requested_h
+    # 以固定 256px 分块原点绘制，再裁出真正视口。原点总是偶数整数，Pillow
+    # 对半像素圆角和字体基线的舍入会与完整图保持一致，不会滚一下抖 1px。
+    if viewport_height is None:
+        draw_layouts = category_layouts
+        render_origin = 0
+        render_end = total_h
+    else:
+        draw_layouts = [
+            layout
+            for layout in category_layouts
+            if layout[5] >= requested_y and layout[3] <= requested_bottom
+        ]
+        # 把与视口相交的分类完整纳入临时画布，避免 Pillow 在圆角外框上下
+        # 边界落到画布外时改变裁剪算法。这里只扩展一两个分类，不会退回
+        # 整页长图；绘制完成后仍只把真正视口交给 Tk。
+        needed_top = min([requested_y, *(layout[3] for layout in draw_layouts)])
+        needed_bottom = max(
+            [requested_bottom, *(layout[5] for layout in draw_layouts)]
+        )
+        render_origin = (int(needed_top) // 256) * 256
+        render_end = int(needed_bottom + 1)
+    crop_top = requested_y - render_origin
+    canvas_h = max(1, render_end - render_origin)
 
-    # 第一遍：先算出总高度
-    total_h = pad_x
-    visible_cats = [(k, n) for k, n in categories if grouped.get(k)]
-    for cat_key, _ in visible_cats:
-        items = grouped[cat_key]
-        rows = (len(items) + cols - 1) // cols
-        total_h += (cat_gap_before + cat_header_h + cat_header_item_gap
-                    + rows * row_h + cat_gap_after)
-    total_h = max(total_h, 40 * s)
-
-    img = Image.new("RGB", (rw, int(total_h)), theme.CARD_BG)
+    img = Image.new("RGB", (rw, canvas_h), theme.CARD_BG)
     draw = ImageDraw.Draw(img)
     hit_regions = []
 
-    y = pad_x
-    for cat_key, cat_name in visible_cats:
-        items = grouped[cat_key]
+    for cat_key, cat_name, items, cat_box_top, items_top, cat_box_bottom in draw_layouts:
         color = cat_colors.get(cat_key, theme.TEXT_MUTED)
-
-        y += cat_gap_before
-        cat_box_top = y
+        header_y = cat_box_top - render_origin
         # 标题条跟下面的圆角外框共用同一左右边界和顶边，直角会从外框圆
         # 角顶点里"戳出来"一小截——顶部两角用跟外框一样的半径提前圆掉，
         # 底部两角保持直角（下面紧接的是设置项背景，不需要圆）。
-        draw.rounded_rectangle([pad_x, y, rw - pad_x, y + cat_header_h],
+        draw.rounded_rectangle([pad_x, header_y, rw - pad_x, header_y + cat_header_h],
                                radius=10 * s, corners=(True, True, False, False),
                                fill=theme.CARD_BG_ALT, outline=theme.CARD_BORDER)
-        draw.text((pad_x + 10 * s, y + cat_header_h / 2), f"{cat_name} ({len(items)})",
+        draw.text((pad_x + 10 * s, header_y + cat_header_h / 2), f"{cat_name} ({len(items)})",
                   font=hdr_font, fill=color, anchor="lm")
-        y += cat_header_h + cat_header_item_gap
 
         for idx, ov in enumerate(items):
             col = idx % cols
-            if col == 0 and idx > 0:
-                y += row_h
+            global_cy = items_top + (idx // cols) * row_h
+            if (global_cy + icon_size + block_pad_v < requested_y
+                    or global_cy - block_pad_v > requested_bottom):
+                continue
             cx = col_area_x0 + col * (col_w + col_gutter)
-            cy = y
+            cy = global_cy - render_origin
             icon_cy = cy + icon_size / 2
 
             vlbl = get_value_label(ov.key, ov.value)
@@ -524,7 +568,8 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                 _draw_button(img, draw, bx1, icon_cy, arrow_h, "left",
                             disabled=at_min, pressed=(flash == (ov.key, -1)))
                 if on_click and not at_min:
-                    hit_regions.append((bx1 - arrow_h / 2, cy, bx1 + arrow_h / 2, cy + icon_size,
+                    hit_regions.append((bx1 - arrow_h / 2, global_cy,
+                                        bx1 + arrow_h / 2, global_cy + icon_size,
                                         _mk_cb(on_click, ov.key, -1)))
                 draw.multiline_text(
                     (val_x, icon_cy), wrapped_value, font=val_font,
@@ -534,7 +579,8 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                 _draw_button(img, draw, bx2, icon_cy, arrow_h, "right",
                             disabled=at_max, pressed=(flash == (ov.key, 1)))
                 if on_click and not at_max:
-                    hit_regions.append((bx2 - arrow_h / 2, cy, bx2 + arrow_h / 2, cy + icon_size,
+                    hit_regions.append((bx2 - arrow_h / 2, global_cy,
+                                        bx2 + arrow_h / 2, global_cy + icon_size,
                                         _mk_cb(on_click, ov.key, 1)))
             else:
                 draw.multiline_text(
@@ -543,15 +589,21 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                     spacing=max(1, round(2 * s)),
                 )
 
-        y += row_h
         # 只画轮廓线的外框，把标题条 + 这个分类下所有设置项行框成一个视
         # 觉上的整体（对应"层次感"这个需求——原来标题条下面没有边界，看
         # 起来跟自己的设置项行是脱节的）。放在最后画、只画轮廓，不会盖
         # 住标题条的填充色或任何设置项自己的背景卡片。
-        draw.rounded_rectangle([pad_x, cat_box_top, rw - pad_x, y],
+        draw.rounded_rectangle([pad_x, cat_box_top - render_origin,
+                                rw - pad_x, cat_box_bottom - render_origin],
                                radius=10 * s, outline=color, width=2)
-        y += cat_gap_after
 
+    if viewport_height is not None:
+        img = img.crop((0, crop_top, rw, crop_top + requested_h))
+        hit_regions = [
+            region
+            for region in hit_regions
+            if region[3] >= requested_y and region[1] <= requested_bottom
+        ]
     return img, hit_regions
 
 

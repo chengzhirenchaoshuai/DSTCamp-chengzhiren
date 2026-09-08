@@ -22,9 +22,8 @@ _SUB_FONT_SIZE = 10
 class WorldSettingsTab:
     """世界规则/生成查看器。
 
-    内容一次性渲染成一张 PIL 图片（见 render.py），通过 ImageScrollPanel
-    显示，所以缩放窗口就像缩放一张图片一样平滑，没有逐控件重新布局的
-    开销。原因详见 image_scroll.py。
+    内容通过 PIL 按需渲染当前视口（见 render.py），再由 ImageScrollPanel
+    显示，所以没有几百个原生控件常驻和逐控件重新布局的开销。
     """
 
     def __init__(self, parent, app):
@@ -120,8 +119,8 @@ class WorldSettingsTab:
         self._rules_rendered = False; self._gen_rendered = False  # 懒渲染标记
         self._page_visible = False
         self._flash_key = None; self._flash_after_id = None
-        # 不在这里现场 on_cluster_changed()——那会同步渲染两大张 PIL 面板
-        # （世界规则/世界生成），是这个页签最重的部分。这个页签在
+        # 不在这里现场 on_cluster_changed()——那会同步解析并渲染世界设置，
+        # 是这个页签最重的部分。这个页签在
         # DSToolsApp.__init__ 里跟其它 4 个页签一起建，构造这一刻默认页
         # 签是"本地服务器"不是"世界设置"，在这里现场加载就是"用户还没点
         # 进来，应用刚启动就要为一个看不见的页签白等这份重活"（真机反馈
@@ -186,8 +185,8 @@ class WorldSettingsTab:
     def _on_shard_select(self, e=None): self._load_world()
 
     def _load_world(self):
-        # 重新加载时旧世界的两张长图已经失效；先解除引用，避免只重画当前
-        # 子页后，另一个不可见子页仍长期保留旧世界的像素数据。
+        # 重新加载时旧世界的两份渲染结果和视口回调已经失效；先解除引用，
+        # 避免不可见子页继续引用旧世界模型与像素数据。
         self._rules_panel.release_image()
         self._gen_panel.release_image()
         self._dirty = False; self._wl_bs.configure(state=tk.DISABLED)
@@ -294,9 +293,13 @@ class WorldSettingsTab:
                 break
 
     def _render_rules(self, ref_width=None):
-        """（重新）渲染规则面板图片，保留滚动位置。"""
+        """（重新）建立规则面板视口渲染器，保留滚动位置。"""
         from dstools.features.world.categories import CATEGORY_COLORS
-        from dstools.features.world.render import REF_WIDTH, render_world_panel
+        from dstools.features.world.render import (
+            REF_WIDTH,
+            render_world_panel,
+            world_panel_height,
+        )
         if not self._rules_cats:
             return
         if ref_width is None:
@@ -306,33 +309,58 @@ class WorldSettingsTab:
         # editable=False 渲染（不画 < > 按钮，也不注册点击区域）。
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
-        img, hits = render_world_panel(self._rules_cats, self._rules_by_cat, CATEGORY_COLORS,
-                                       editable=is_server,
-                                       on_click=self._on_rule_click if is_server else None,
-                                       ref_width=ref_width, flash=self._flash_key,
-                                       location=loc, mod_settings=self._mod_settings,
-                                       mod_icons=self._mod_icons, is_rule=True)
-        self._rules_panel.set_image(img, hits, keep_scroll=True)
+        def render_viewport(view_y, view_height):
+            img, hits = render_world_panel(
+                self._rules_cats, self._rules_by_cat, CATEGORY_COLORS,
+                editable=is_server,
+                on_click=self._on_rule_click if is_server else None,
+                ref_width=ref_width, flash=self._flash_key,
+                location=loc, mod_settings=self._mod_settings,
+                mod_icons=self._mod_icons, is_rule=True,
+                viewport_y=view_y, viewport_height=view_height,
+            )
+            return img, hits, []
+
+        self._rules_panel.set_virtual_image(
+            ref_width,
+            world_panel_height(self._rules_cats, self._rules_by_cat, ref_width),
+            render_viewport,
+            keep_scroll=True,
+        )
         self._rules_rendered = True
 
     def _render_gen(self, ref_width=None):
-        """（重新）渲染只读的生成面板图片。"""
+        """（重新）建立只读生成面板的视口渲染器。"""
         from dstools.features.world.categories import CATEGORY_COLORS
-        from dstools.features.world.render import REF_WIDTH, render_world_panel
+        from dstools.features.world.render import (
+            REF_WIDTH,
+            render_world_panel,
+            world_panel_height,
+        )
         if not self._gen_cats:
             return
         if ref_width is None:
             ref_width = self._gen_panel.current_width(REF_WIDTH)
         loc = getattr(self._wl_preset, 'location', 'forest') or 'forest'
-        img, hits = render_world_panel(self._gen_cats, self._gen_by_cat, CATEGORY_COLORS,
-                                       editable=False, ref_width=ref_width, location=loc,
-                                       mod_settings=self._mod_settings, mod_icons=self._mod_icons,
-                                       is_rule=False)
-        self._gen_panel.set_image(img, hits, keep_scroll=True)
+        def render_viewport(view_y, view_height):
+            img, hits = render_world_panel(
+                self._gen_cats, self._gen_by_cat, CATEGORY_COLORS,
+                editable=False, ref_width=ref_width, location=loc,
+                mod_settings=self._mod_settings, mod_icons=self._mod_icons,
+                is_rule=False, viewport_y=view_y, viewport_height=view_height,
+            )
+            return img, hits, []
+
+        self._gen_panel.set_virtual_image(
+            ref_width,
+            world_panel_height(self._gen_cats, self._gen_by_cat, ref_width),
+            render_viewport,
+            keep_scroll=True,
+        )
         self._gen_rendered = True
 
     def on_hidden(self):
-        """离开世界设置页后释放两个不可见的长图。"""
+        """离开世界设置页后释放两套视口图片和渲染回调。"""
         self._page_visible = False
         if self._flash_after_id is not None:
             self.frame.after_cancel(self._flash_after_id)
