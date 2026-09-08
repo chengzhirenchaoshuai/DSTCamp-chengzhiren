@@ -15,8 +15,6 @@ from pathlib import Path
 from tkinter import filedialog, font as tkfont, ttk
 from typing import Any
 
-from PIL import Image
-
 from dstools.shared import app_settings, tex_convert
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.dedicated_server import (
@@ -24,7 +22,11 @@ from dstools.features.local_service.dedicated_server import (
     find_bin64_dir,
 )
 from dstools.features.mod import chs_translation, presets
-from dstools.features.mod.icons import get_cached_mod_icon_path, get_mod_icon_path
+from dstools.features.mod.icons import (
+    get_cached_mod_icon_path,
+    get_mod_icon_path,
+    load_mod_icon_image,
+)
 from dstools.features.mod.manager import (
     enable_mod,
     load_mod_overrides,
@@ -317,6 +319,8 @@ class ModManagerTab:
         # 后台版本/图标可能在很短时间内回传十几个批次。每批都重画一张
         # 154+ 行长图会堵住 Tk 消息循环，因此统一合并为一次尾随刷新。
         self._async_render_after_id = None
+        self._list_image_released = False
+        self._page_visible = False
         self._loading = False
         self._loading_key = None
         self._mods_loaded = False
@@ -2950,7 +2954,7 @@ class ModManagerTab:
                             )
                             if cached_icon is not None:
                                 try:
-                                    icon_imgs[wid] = Image.open(cached_icon).convert("RGBA")
+                                    icon_imgs[wid] = load_mod_icon_image(cached_icon)
                                 except Exception:
                                     icon_targets.append((wid, mod_info, mod_folder))
                             else:
@@ -3001,7 +3005,7 @@ class ModManagerTab:
                 try:
                     icon_path = get_mod_icon_path(mod_info, mod_folder, platform)
                     if icon_path:
-                        image = Image.open(icon_path).convert("RGBA")
+                        image = load_mod_icon_image(icon_path)
                         icon_imgs[wid] = image
                         icon_batch[wid] = image
                     if not full and (index % 12 == 0 or index == len(icon_targets)):
@@ -3109,7 +3113,7 @@ class ModManagerTab:
             try:
                 icon_path = get_mod_icon_path(info, folder, self._catalog_platform)
                 if icon_path:
-                    icons[wid] = Image.open(icon_path).convert("RGBA")
+                    icons[wid] = load_mod_icon_image(icon_path)
             except Exception:
                 continue
         if icons:
@@ -3277,6 +3281,8 @@ class ModManagerTab:
     def _render_list(self, ref_width=None):
         from dstools.features.mod.render import REF_WIDTH, render_mod_list
 
+        if not self._page_visible and self._list_image_released:
+            return
         if ref_width is None:
             ref_width = self.list_panel.current_width(REF_WIDTH)
         if getattr(self, "_loading", False):
@@ -3315,6 +3321,22 @@ class ModManagerTab:
             icon_thumb_cache=self._icon_thumb_cache,
         )
         self.list_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
+        self._list_image_released = False
+
+    def on_hidden(self):
+        """离开 Mod 页时释放不可见的整页长图。"""
+        self._page_visible = False
+        if self._list_image_released:
+            return
+        self._on_mod_list_hover(None, 0, 0)
+        self.list_panel.release_image()
+        self._list_image_released = True
+
+    def on_shown(self):
+        """返回 Mod 页时按已有模型重建列表，不重新扫描磁盘。"""
+        self._page_visible = True
+        if self._list_image_released:
+            self._render_list()
 
     def _on_mod_list_hover(self, payload, x_root, y_root):
         """list_panel.on_hover_change 的回调——payload 是
@@ -3360,6 +3382,7 @@ class ModManagerTab:
                 (w / 2, 30), text, font=get_font(16), fill=theme.TEXT_MUTED, anchor="mm"
             )
         self.list_panel.set_image(img, [], keep_scroll=True)
+        self._list_image_released = False
 
     def _on_toggle(self, workshop_id):
         # 只读兜底：_render_list() 已经不会在本地存档下给开关注册点击

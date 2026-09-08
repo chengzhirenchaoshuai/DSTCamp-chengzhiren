@@ -6,6 +6,8 @@ import tkinter as tk
 from types import SimpleNamespace
 from tkinter import ttk
 
+from PIL import Image
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dstools.shared.gui.image_scroll import ImageScrollPanel
@@ -112,6 +114,14 @@ def test_image_panel_hit_cursor(root):
     assert str(panel.canvas.cget("cursor")) == "hand2"
     panel._on_motion(SimpleNamespace(x=100, y=100, x_root=100, y_root=100))
     assert str(panel.canvas.cget("cursor")) == ""
+    panel.master_img = Image.new("RGB", (200, 5000), "white")
+    panel._photo = object()
+    panel._img_id = panel.canvas.create_rectangle(0, 0, 10, 10)
+    panel.scroll_y = 120.0
+    panel.release_image()
+    assert panel.master_img.size == (200, 1)
+    assert panel._photo is None and panel._img_id is None
+    assert panel.scroll_y == 120.0
     print("  PASS: 仅真实点击热点显示手型")
 
 

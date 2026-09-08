@@ -12,6 +12,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dstools.features.mod.catalog import ModCatalogStore
+from dstools.features.mod.icons import load_mod_icon_image
 from dstools.features.mod.list_model import (
     build_mod_rows,
     merge_visible_mod_ids,
@@ -112,6 +113,48 @@ def test_catalog_icons_and_platform_invalidation():
         store.invalidate(Platform.STEAM)
         assert store.get(Platform.STEAM) is None
         assert store.get(Platform.WEGAME, wegame_root) is not None
+
+
+def test_loaded_mod_icons_have_a_resident_size_limit():
+    with tempfile.TemporaryDirectory() as tmp:
+        large_path = Path(tmp) / "large.png"
+        small_path = Path(tmp) / "small.png"
+        Image.new("RGB", (512, 256), "red").save(large_path)
+        Image.new("RGB", (64, 32), "blue").save(small_path)
+
+        large = load_mod_icon_image(large_path)
+        small = load_mod_icon_image(small_path)
+
+        assert large.mode == "RGBA" and large.size == (192, 96)
+        assert small.mode == "RGBA" and small.size == (64, 32)
+
+
+def test_mod_tab_releases_and_rebuilds_hidden_list_image():
+    tab = object.__new__(ModManagerTab)
+    released = []
+    rendered = []
+    tab._mods_loaded = True
+    tab._loading = False
+    tab._list_image_released = False
+    tab._page_visible = True
+    tab._on_mod_list_hover = lambda *_args: None
+    tab.list_panel = SimpleNamespace(release_image=lambda: released.append(True))
+    tab._render_list = lambda: rendered.append(True)
+
+    tab.on_hidden()
+    assert released == [True] and tab._list_image_released is True
+    assert tab._page_visible is False
+    tab.on_hidden()
+    assert released == [True]
+
+    tab.on_shown()
+    assert rendered == [True] and tab._page_visible is True
+
+    tab._page_visible = False
+    tab._list_image_released = True
+    tab._loading = True
+    tab.on_shown()
+    assert rendered == [True, True]
 
 
 def test_shared_rows_keep_filter_and_sort_consistent():
@@ -578,6 +621,8 @@ if __name__ == "__main__":
     test_catalog_does_not_store_page_state()
     test_recommended_mods_include_ping_server_with_icon()
     test_catalog_icons_and_platform_invalidation()
+    test_loaded_mod_icons_have_a_resident_size_limit()
+    test_mod_tab_releases_and_rebuilds_hidden_list_image()
     test_shared_rows_keep_filter_and_sort_consistent()
     test_luajit_mod_is_first_only_when_prioritized()
     test_visible_mod_ids_include_enabled_missing_references_only()

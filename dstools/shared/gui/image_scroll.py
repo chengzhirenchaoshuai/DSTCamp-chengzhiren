@@ -109,6 +109,38 @@ class ImageScrollPanel:
         self._set_hit_cursor(False)
         self._render()
 
+    def release_image(self) -> None:
+        """释放当前内容长图和 Tk 位图，保留滚动坐标供稍后重建。
+
+        隐藏页签没有可见内容，却可能继续持有几十 MiB 的整页长图。用同宽
+        的 1px 占位图替换它可以立即解除引用；调用方重新 ``set_image()``
+        时仍能利用保留下来的 ``scroll_y`` 回到原先位置。
+        """
+        for attr in ("_render_after_id", "_settle_after_id"):
+            after_id = getattr(self, attr)
+            if after_id is not None:
+                try:
+                    self.canvas.after_cancel(after_id)
+                except tk.TclError:
+                    pass
+                setattr(self, attr, None)
+        self.master_img = Image.new("RGB", (max(1, self.ref_width), 1), self.bg)
+        self.hit_regions = []
+        self.hover_regions = []
+        for attr in ("_render_after_id", "_settle_after_id"):
+            after_id = getattr(self, attr)
+            if after_id is not None:
+                try:
+                    self.canvas.after_cancel(after_id)
+                except tk.TclError:
+                    pass
+                setattr(self, attr, None)
+        self._photo = None
+        if self._img_id is not None:
+            self.canvas.delete(self._img_id)
+            self._img_id = None
+        self._set_hit_cursor(False)
+
     def _on_configure(self, event):
         self._request_render()
         if self.on_settle:

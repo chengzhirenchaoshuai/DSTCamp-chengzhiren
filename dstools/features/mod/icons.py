@@ -18,6 +18,27 @@ from dstools.shared.tex_convert import tex_to_png
 from dstools.models import Platform
 
 
+# Mod 列表在 1600px 窗口下的实际图标边长约 100px，即使放大到常见的
+# 2K 窗口也远低于 192px。磁盘缓存仍保留转换后的原始 PNG；这里只限制
+# 进程内的解码尺寸，避免少数 512/960px 图标长期占用数 MiB 内存。
+MAX_RESIDENT_ICON_SIZE = 192
+
+
+def load_mod_icon_image(
+    path: Path, max_size: int = MAX_RESIDENT_ICON_SIZE
+) -> Image.Image:
+    """读取供 GUI 使用的 RGBA 图标，并限制其进程内驻留尺寸。
+
+    原始转换结果继续留在磁盘缓存中，后续若需要更高分辨率仍可重新读取；
+    当前两个 Mod 列表只会把图标缩到行高以内，不需要常驻原始大图。
+    """
+    with Image.open(path) as source:
+        image = source.convert("RGBA")
+    if max(image.size) > max_size:
+        image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    return image
+
+
 def _cache_dir_for(platform: Platform) -> Path:
     """按平台分开的缓存子目录——Steam/WeGame 是两棵完全独立的目录树，
     即使某个 workshop_id 数字凑巧一样，也可能是内容完全不同的两个 mod

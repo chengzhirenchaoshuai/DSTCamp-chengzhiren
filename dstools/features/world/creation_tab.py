@@ -8,8 +8,6 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tkinter import ttk
 
-from PIL import Image
-
 from dstools.features.world.creation import (
     WorldCreationPlan,
     create_world,
@@ -37,7 +35,7 @@ from dstools.features.world.render import REF_WIDTH, render_world_panel
 from dstools.features.world.reader import WorldOverride, WorldPreset
 from dstools.features.world.value_sets import get_value_set
 from dstools.features.world.view_model import build_world_view_model
-from dstools.features.mod.icons import get_mod_icon_path
+from dstools.features.mod.icons import get_mod_icon_path, load_mod_icon_image
 from dstools.features.mod.locations import resolve_mod_open_location
 from dstools.features.mod import presets
 from dstools.features.mod.parser import (
@@ -720,8 +718,7 @@ class WorldCreationTab:
                     try:
                         icon_path = get_mod_icon_path(info, folder, platform)
                         if icon_path and icon_path.exists():
-                            with Image.open(icon_path) as source:
-                                icon = source.convert("RGBA")
+                            icon = load_mod_icon_image(icon_path)
                     except Exception:
                         pass
                 records.append((mod_id, info, icon, folder))
@@ -937,7 +934,7 @@ class WorldCreationTab:
             try:
                 icon_path = get_mod_icon_path(info, folder, self._mod_scan_platform)
                 if icon_path:
-                    icons[mod_id] = Image.open(icon_path).convert("RGBA")
+                    icons[mod_id] = load_mod_icon_image(icon_path)
             except Exception:
                 continue
         if not icons:

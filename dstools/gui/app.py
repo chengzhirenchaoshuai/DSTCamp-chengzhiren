@@ -538,6 +538,13 @@ class DSToolsApp:
         self.root.after(500, self._check_cache_dir_on_startup)
 
     def _on_tab_select(self, key: str) -> None:
+        previous_key = getattr(self, "_current_tab_key", None)
+        if previous_key != key:
+            previous_tab = self._cluster_tab_map.get(previous_key)
+            on_hidden = getattr(previous_tab, "on_hidden", None)
+            if on_hidden is not None:
+                on_hidden()
+
         # 全局存档选择栏对全部页签都常驻显示。这里保留"若之前被临时隐藏
         # 就恢复"的兜底，防止以后某个页签隐藏它之后忘了恢复。
         if not self._cluster_bar.winfo_ismapped():
@@ -582,6 +589,12 @@ class DSToolsApp:
             # 是切标脏页签卡顿的第二个来源）。保留 update_idletasks 让几何
             # 排布先完成、触发那次节流裁剪。
             self.root.update_idletasks()
+
+        if previous_key != key:
+            current_tab = self._cluster_tab_map.get(key)
+            on_shown = getattr(current_tab, "on_shown", None)
+            if on_shown is not None:
+                on_shown()
 
         # "服务器是否在运行"跟选了哪个存档无关——用户可能没切存档，只是
         # 去"本地服务器"页签启停了一下再切回来，这种情况不会被标脏，
