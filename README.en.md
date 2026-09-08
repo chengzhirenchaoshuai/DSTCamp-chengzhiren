@@ -17,9 +17,9 @@ WeGame does not provide one-click dedicated-server launching. DSTCamp does not b
 
 Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
 
-- `DSTCamp-1.3.5.exe`: single-file build with all required resources embedded.
-- `DSTCamp-1.3.5.zip`: executable plus an external `tools/` directory; extract the complete archive before running it.
-- `DSTCamp-1.3.5.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
+- `DSTCamp-1.3.6.exe`: single-file build with all required resources embedded.
+- `DSTCamp-1.3.6.zip`: executable plus an external `tools/` directory; extract the complete archive before running it.
+- `DSTCamp-1.3.6.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
 
 To run from source:
 
@@ -67,6 +67,15 @@ python scripts/build_exe.py
 ```
 
 The build uses an explicit tool allowlist, stages resources under `build/`, rejects writable or reference directories from the ZIP, and smoke-tests both frozen executables. Real Windows GUI, Steam, frpc, and game behavior still require manual validation.
+
+## 1.3.6 highlights
+
+- Virtualized the Mod list by visible viewport to reduce widget and image usage with large Mod libraries.
+- Improved Mod icon caching and reclaimed inactive page images more promptly.
+- Reduced custom-background memory usage and fixed shared-background scroll-region synchronization.
+- Released long world-setting images when their tabs are inactive to limit accumulated memory use.
+- Fixed the local-server console polling initialization race.
+- Skipped slow tunneling initialization when unconfigured and prioritized `cip.cc` for public-IP lookup with fallbacks.
 
 ## 1.3.5 highlights
 

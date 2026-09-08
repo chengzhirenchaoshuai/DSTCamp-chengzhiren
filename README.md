@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.3.5-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.3.6-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
@@ -34,9 +34,9 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 或 [Gitee 发行版](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.3.5.exe`：工具与资源全部内嵌，单文件运行。
-- `DSTCamp-1.3.5.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
-- `DSTCamp-1.3.5.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
+- `DSTCamp-1.3.6.exe`：工具与资源全部内嵌，单文件运行。
+- `DSTCamp-1.3.6.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
+- `DSTCamp-1.3.6.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
 
 源码运行：
 
@@ -99,6 +99,15 @@ python scripts/build_exe.py
 ```
 
 构建脚本在 `build/` 暂存固定工具和图标，只向 `dist/` 输出单文件 EXE、外置工具 ZIP 与 `sha256.json`。ZIP 会校验工具清单并拒绝 `build/`、`cache/`、`data/`、`dist/`、`reference/`、`security/`；两个 EXE 都会执行冻结入口与资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+
+## 1.3.6 更新
+
+- Mod 列表改为按可见视口虚拟化渲染，减少大型 Mod 库首次加载和滚动时的控件、图像占用。
+- 优化 Mod 图标缓存与页面资源释放，离开页面后及时回收不再使用的图像。
+- 降低自定义背景内存占用，修复共享背景滚动画布范围不同步的问题。
+- 非活动世界设置页主动释放长图资源，减少多页签切换后的累计内存占用。
+- 修复本地服务器控制台轮询初始化竞态，避免页面构造阶段偶发异常。
+- 未配置内网穿透时跳过耗时加载；公网 IP 查询改为优先使用 `cip.cc` 并保留回退路径。
 
 ## 1.3.5 更新
 
