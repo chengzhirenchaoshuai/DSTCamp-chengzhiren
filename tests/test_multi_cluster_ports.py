@@ -32,12 +32,14 @@ def _write_cluster(root: Path, name: str, *, master_port: int = 10888,
                    master_server_port: int | None = None,
                    master_auth_port: int | None = None,
                    caves: bool = True, lan_only: bool = False,
+                   offline: bool = False,
                    master_game_port: int = 10999,
                    caves_game_port: int = 10998) -> Cluster:
     path = root / name
     path.mkdir()
     (path / "cluster.ini").write_text(
-        f"[NETWORK]\nlan_only_cluster={str(lan_only).lower()}\n\n"
+        f"[NETWORK]\nlan_only_cluster={str(lan_only).lower()}\n"
+        f"offline_cluster={str(offline).lower()}\n\n"
         "[SHARD]\nshard_enabled=true\n"
         f"master_port={master_port}\nbind_ip=127.0.0.1\n",
         encoding="utf-8",
@@ -168,6 +170,24 @@ def test_lan_only_effective_ports_and_ranges() -> None:
         )
         _, valid_issues = collect_cluster_port_claims(valid)
         assert not valid_issues
+
+        offline = _write_cluster(
+            root, "Offline_Invalid", offline=True,
+            master_game_port=10002, caves_game_port=10001,
+        )
+        offline_claims, offline_issues = collect_cluster_port_claims(offline)
+        assert len([
+            issue for issue in offline_issues
+            if issue.code == "lan_server_port_range"
+        ]) == 2
+        assert all(
+            claim.port == LAN_SERVER_PORT_FALLBACK
+            for claim in offline_claims if claim.field == "server_port"
+        )
+        assert all(
+            "离线模式" in issue.message for issue in offline_issues
+            if issue.code == "lan_server_port_range"
+        )
 
         ordinary = _write_cluster(
             root, "Ordinary", lan_only=False,

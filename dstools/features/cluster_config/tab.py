@@ -1747,7 +1747,7 @@ class ClusterConfigTab:
     def _repair_lan_ports_while_saving(
             self, cluster, cluster_config, issues,
     ) -> bool:
-        """保存 LAN 开关时修复全部世界端口；成功时已完成整组写入。"""
+        """保存 LAN/离线开关时修复全部世界端口；成功时已完成整组写入。"""
         details = self._format_port_issues(issues)
         if self._cluster_ports_locked(cluster):
             dlg.show_error(

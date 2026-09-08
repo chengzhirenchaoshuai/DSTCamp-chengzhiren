@@ -1,4 +1,4 @@
-"""三个已核对 Mod 的世界创建与设置隔离回归测试。
+"""已核对 Mod 的世界创建与设置隔离回归测试。
 
 直接运行：``python tests/test_world_mod_compat.py``。
 测试不依赖本机存档、Steam 或网络，真实 Mod 源码的人工核对结论已固化在
@@ -55,7 +55,8 @@ from dstools.features.world.render import (  # noqa: E402
     world_panel_height,
 )
 from dstools.features.world.value_sets import get_value_set  # noqa: E402
-from dstools.features.world.reader import WorldOverride  # noqa: E402
+from dstools.features.world.reader import WorldOverride, WorldPreset  # noqa: E402
+from dstools.features.world.view_model import build_world_view_model  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
 from dstools.features.mod.presets import ModPreset  # noqa: E402
 from dstools.features.mod.tab import ModManagerTab  # noqa: E402
@@ -166,6 +167,31 @@ def test_setting_location_isolation() -> None:
     assert "poison" not in island_secondary
     assert "shipwrecked_season_start" in island_master
     assert "shipwrecked_season_start" not in island_secondary
+
+    bwb_forest = get_mod_world_settings({"3360553731"}, FOREST_LOCATION, True)
+    bwb_cave = get_mod_world_settings({"3360553731"}, CAVE_LOCATION, True)
+    bwb_secondary = get_mod_world_settings({"3360553731"}, CAVE_LOCATION, False)
+    assert len(get_mod_world_settings({"3360553731"})) == 25
+    assert {"horrorhounds", "wargwave", "lunarthrall_plant"} <= set(bwb_forest)
+    assert "nightmareclock" not in bwb_forest
+    assert {"nightmareclock", "fungusfog", "worm_megaboss_setting"} <= set(bwb_cave)
+    assert "horrorhounds" not in bwb_cave
+    assert "cave_season_start" in bwb_cave
+    assert "cave_season_start" not in bwb_secondary
+
+    # 新建存档向导的“世界设置/世界生成”子页签共用这个视图模型；两类
+    # 条目都必须进入各自面板，而不是只在已有存档的世界设置页生效。
+    creation_view = build_world_view_model(
+        WorldPreset(location=CAVE_LOCATION), bwb_cave, is_master_world=True,
+    )
+    assert any(
+        row.key == "nightmareclock"
+        for rows in creation_view.rules_by_category.values() for row in rows
+    )
+    assert any(
+        row.key == "cave_season_start"
+        for rows in creation_view.generation_by_category.values() for row in rows
+    )
 
 
 def test_island_vanilla_catalogs() -> None:
@@ -287,6 +313,8 @@ def test_world_setting_icon_rendering() -> None:
     # 原版图标仍从内置素材加载。
     assert get_pil_icon("autumn", 48, FOREST_LOCATION) is not None
     assert get_pil_icon("task_set", 48, SHIPWRECKED_LOCATION) is not None
+    assert get_pil_icon("worm_boss_setting", 48, CAVE_LOCATION) is not None
+    assert get_pil_icon("cave_season_start", 48, CAVE_LOCATION) is not None
 
     # Mod 图标由创建向导扫描线程解析后传给同一个渲染器。用唯一的洋红色
     # 合成图验证渲染器确实把传入图标画进最终面板，而不是只画占位背景。
@@ -435,6 +463,10 @@ def _main_mod_dependency_tab() -> ModManagerTab:
     }
     tab._mark_dirty = lambda: setattr(tab, "dirty_marked", True)
     tab._render_list = lambda: None
+    tab._enabled_count_var = SimpleNamespace(
+        set=lambda value: setattr(tab, "enabled_count_text", value),
+    )
+    tab.enabled_count_text = ""
     tab.dirty_marked = False
     tab.world_stale = False
     return tab
@@ -453,6 +485,7 @@ def test_main_mod_dependency_confirmation() -> None:
     assert accepted._mod_data[child_key].enabled
     assert accepted._mod_data[core_key].enabled
     assert accepted.dirty_marked and accepted.world_stale
+    assert accepted.enabled_count_text.endswith("2")
 
     declined = _main_mod_dependency_tab()
     with patch(
@@ -462,6 +495,7 @@ def test_main_mod_dependency_confirmation() -> None:
     assert not declined._mod_data[child_key].enabled
     assert not declined._mod_data[core_key].enabled
     assert not declined.dirty_marked and not declined.world_stale
+    assert declined.enabled_count_text == ""
 
 
 def test_creation_error_dialog_uses_wizard_parent() -> None:

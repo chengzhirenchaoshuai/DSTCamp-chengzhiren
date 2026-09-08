@@ -190,6 +190,10 @@ _PER_KEY_LABELS = {
     "dst_boats": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
     "ia_boats": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
     "ia_drowning": {"always": {"zh": "启用", "en": "Enabled"}, "none": {"zh": "禁用", "en": "Disabled"}},
+    "lunarthrall_plant_remove": {
+        "always": {"zh": "启用", "en": "Enabled"},
+        "none": {"zh": "禁用", "en": "Disabled"},
+    },
     # 受到的伤害：较少=always, 默认=none, 较多=more
     "lessdamagetaken": {"always": {"zh": "较少", "en": "Less"}, "none": {"zh": "默认", "en": "Default"},
                         "more": {"zh": "较多", "en": "More"}},
@@ -241,6 +245,17 @@ _PER_KEY_LABELS = {
         "humid": {"zh": "潮湿季", "en": "Humid"},
         "lush": {"zh": "繁茂季", "en": "Lush"},
         "temperate|humid|lush": {"zh": "随机", "en": "Random"},
+    },
+    "cave_season_start": {
+        "default": {"zh": "稳定季", "en": "Tranquil"},
+        "frost": {"zh": "凛冬季", "en": "Frost"},
+        "verdant": {"zh": "丰沃季", "en": "Verdant"},
+        "umbral": {"zh": "暗影季", "en": "Umbral"},
+        "tranquil|frost|verdant|umbral": {"zh": "随机", "en": "Random"},
+    },
+    "nightmareclock": {
+        "morelongseason": {"zh": "更长", "en": "Longer"},
+        "superlongseason": {"zh": "超长", "en": "Super Long"},
     },
     # 世界大小：default 档显示"大"（size_descriptions 用 SLIDESLARGE）
     "world_size": {"default": {"zh": "大", "en": "Large"}},

@@ -839,6 +839,161 @@ _set_verified_scope(
     master_controlled=True,
 )
 
+# workshop-3360553731 == Beneath the World Below（深埋之下）
+#
+# 来源（0.4.15.17，真机文件路径
+# steamapps/workshop/content/322330/3360553731/）：
+#   - 25 个无条件条目取自 scripts/mains/init/bwb_customizations.lua 的
+#     customizations 表；init_worldgen.lua 逐条调用 AddCustomizeItem。
+#   - desc 为 frequency/yesno/enableddisabled/season_length 时使用游戏对应
+#     描述表的真实值；nightmareclock/cave_season_start 使用 Mod 自己声明
+#     的 data 顺序。DSTU 联动才动态加入的 widow_setting/widow_bags 不在
+#     仅启用本 Mod 时注册，因此不静态伪造。
+#   - 中英文名取自 scripts/wormstrings.lua、wormstrings_en.lua 的
+#     RegisterWorldSettingStrings；图标元素取自 Mod 自带图集 XML。
+_BWB_ID = "3360553731"
+_BWB_FREQUENCY = ["never", "rare", "default", "often", "always"]
+_BWB_YES_NO = ["never", "default"]
+_BWB_SEASON_LENGTH = [
+    "noseason", "veryshortseason", "shortseason", "default",
+    "longseason", "verylongseason", "random",
+]
+_BWB_NIGHTMARE_LENGTH = [
+    "noseason", "veryshortseason", "shortseason", "default",
+    "longseason", "morelongseason", "verylongseason",
+    "superlongseason", "random",
+]
+
+BENEATH_WORLD_BELOW_SETTINGS: dict[str, ModWorldSetting] = {
+    "nightmareclock": ModWorldSetting(
+        "nightmareclock", True, {"zh": "梦魇循环", "en": "Nightmare Cycles"},
+        _BWB_NIGHTMARE_LENGTH, _BWB_ID, "nightmare_time.tex",
+        locations=frozenset({CAVE_LOCATION}), group="misc",
+    ),
+    "fungusfog": ModWorldSetting(
+        "fungusfog", True, {"zh": "孢子雾", "en": "Fungus Fog"},
+        _BWB_FREQUENCY, _BWB_ID, "fungusfog.tex",
+        locations=frozenset({CAVE_LOCATION}), group="misc",
+    ),
+    "tickle": ModWorldSetting(
+        "tickle", True, {"zh": "挠痒", "en": "Tickle"},
+        _BWB_FREQUENCY, _BWB_ID, "tickle.tex",
+        locations=frozenset({CAVE_LOCATION}), group="misc",
+    ),
+    "horrorhounds": ModWorldSetting(
+        "horrorhounds", True, {"zh": "恐惧猎犬群", "en": "Horror Hound Waves"},
+        _BWB_YES_NO, _BWB_ID, "horrorhounds.tex",
+        locations=frozenset({FOREST_LOCATION}), group="misc", order=3.1,
+    ),
+    "wargwave": ModWorldSetting(
+        "wargwave", True, {"zh": "狼群", "en": "Varg Waves"},
+        _BWB_FREQUENCY, _BWB_ID, "wargwave.tex",
+        locations=frozenset({FOREST_LOCATION}), group="misc", order=3.2,
+    ),
+    "lunarthrall_plant_remove": ModWorldSetting(
+        "lunarthrall_plant_remove", True,
+        {"zh": "亮茄枯萎", "en": "Brightshade No-Rift Death"},
+        ["none", "always"], _BWB_ID, "lunarthrall_plant_remove.tex",
+        initial_value="none", locations=frozenset({FOREST_LOCATION}), group="misc",
+    ),
+    "stealworms": ModWorldSetting(
+        "stealworms", True, {"zh": "贪婪蠕虫群", "en": "Greedy Worm Waves"},
+        _BWB_YES_NO, _BWB_ID, "stealworms.tex",
+        locations=frozenset({CAVE_LOCATION}), group="misc", order=2.1,
+    ),
+    "starworms": ModWorldSetting(
+        "starworms", True, {"zh": "恒星蠕虫群", "en": "Star Worm Waves"},
+        _BWB_YES_NO, _BWB_ID, "starworms.tex",
+        locations=frozenset({CAVE_LOCATION}), group="misc", order=2.2,
+    ),
+    "vineworms": ModWorldSetting(
+        "vineworms", True, {"zh": "缠藤蠕虫群", "en": "Viney Worm Waves"},
+        _BWB_YES_NO, _BWB_ID, "vineworms.tex",
+        locations=frozenset({CAVE_LOCATION}), group="misc", order=2.3,
+    ),
+    "tideworms": ModWorldSetting(
+        "tideworms", True, {"zh": "潮行蠕虫群", "en": "Tidal Worm Waves"},
+        _BWB_YES_NO, _BWB_ID, "tideworms.tex",
+        locations=frozenset({CAVE_LOCATION}), group="misc", order=2.4,
+    ),
+    "worm_ancient": ModWorldSetting(
+        "worm_ancient", True, {"zh": "远古深渊蠕虫", "en": "Ancient Abyssal Worms"},
+        _BWB_YES_NO, _BWB_ID, "worm_ancient.tex",
+        locations=frozenset({CAVE_LOCATION}), group="misc", order=2.5,
+    ),
+    "rocky_gold": ModWorldSetting(
+        "rocky_gold", True, {"zh": "镶金石虾", "en": "Gilded Rock Lobsters"},
+        _BWB_FREQUENCY, _BWB_ID, "rocky_gold.tex",
+        locations=frozenset({CAVE_LOCATION}), group="animals", order=2,
+    ),
+    "rocky_master": ModWorldSetting(
+        "rocky_master", True, {"zh": "宝缠石虾", "en": "Jeweled Rock Lobsters"},
+        _BWB_FREQUENCY, _BWB_ID, "rocky_master.tex",
+        locations=frozenset({CAVE_LOCATION}), group="animals", order=3,
+    ),
+    "worm_boss_setting": ModWorldSetting(
+        "worm_boss_setting", True, {"zh": "时令大蠕虫", "en": "Seasonal Great Worm"},
+        _BWB_FREQUENCY, _BWB_ID, locations=frozenset({CAVE_LOCATION}), group="giants",
+    ),
+    "worm_megaboss_setting": ModWorldSetting(
+        "worm_megaboss_setting", True,
+        {"zh": "巨大深渊蠕虫", "en": "Mega Depths Worm"},
+        _BWB_FREQUENCY, _BWB_ID, "wormbosshole.tex",
+        locations=frozenset({CAVE_LOCATION}), group="giants",
+    ),
+    "lunarthrall_plant": ModWorldSetting(
+        "lunarthrall_plant", True, {"zh": "致命亮茄", "en": "Deadly Brightshades"},
+        _BWB_FREQUENCY, _BWB_ID, "lunarthrall_plant.tex",
+        locations=frozenset({FOREST_LOCATION}), group="lunar_mutations",
+    ),
+    "icker": ModWorldSetting(
+        "icker", True, {"zh": "恶液", "en": "Ickers"},
+        _BWB_FREQUENCY, _BWB_ID, "icker.tex",
+        locations=frozenset({CAVE_LOCATION}), group="monsters",
+    ),
+    "lurking_shadows": ModWorldSetting(
+        "lurking_shadows", True, {"zh": "潜伏暗影", "en": "Lurking Shadows"},
+        _BWB_FREQUENCY, _BWB_ID, "ruinsshadow.tex",
+        locations=frozenset({CAVE_LOCATION}), group="monsters",
+    ),
+    "parasitehat": ModWorldSetting(
+        "parasitehat", True, {"zh": "暗域先驱", "en": "Void Masques"},
+        _BWB_FREQUENCY, _BWB_ID, "parasitehat.tex",
+        locations=frozenset({CAVE_LOCATION}), group="monsters",
+    ),
+    "inkblight": ModWorldSetting(
+        "inkblight", True, {"zh": "墨荒", "en": "Ink Blights"},
+        _BWB_FREQUENCY, _BWB_ID, "inkblight.tex",
+        locations=frozenset({CAVE_LOCATION}), group="monsters",
+    ),
+    "cave_season_start": ModWorldSetting(
+        "cave_season_start", False,
+        {"zh": "洞穴起始季节", "en": "Cave Start Season"},
+        ["default", "frost", "verdant", "umbral", "tranquil|frost|verdant|umbral"],
+        _BWB_ID, master_controlled=True, group="global", order=2,
+    ),
+    "tranquil": ModWorldSetting(
+        "tranquil", True, {"zh": "稳定季", "en": "Tranquil"},
+        _BWB_SEASON_LENGTH, _BWB_ID, "tranquil.tex",
+        master_controlled=True, group="global", order=30,
+    ),
+    "frostseason": ModWorldSetting(
+        "frostseason", True, {"zh": "冬（洞穴）", "en": "Winter (Cave)"},
+        _BWB_SEASON_LENGTH, _BWB_ID,
+        master_controlled=True, group="global", order=31,
+    ),
+    "verdant": ModWorldSetting(
+        "verdant", True, {"zh": "丰沃季", "en": "Verdant"},
+        _BWB_SEASON_LENGTH, _BWB_ID, "verdant.tex",
+        master_controlled=True, group="global", order=32,
+    ),
+    "umbral": ModWorldSetting(
+        "umbral", True, {"zh": "夏（洞穴）", "en": "Summer (Cave)"},
+        _BWB_SEASON_LENGTH, _BWB_ID,
+        master_controlled=True, group="global", order=33,
+    ),
+}
+
 
 # workshop id（不带 "workshop-" 前缀）-> 该 mod 贡献的世界设置登记表。
 MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
@@ -846,6 +1001,7 @@ MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
     _IA_CORE_ID: IA_CORE_SETTINGS,
     _IA_SHIPWRECKED_ID: IA_SHIPWRECKED_SETTINGS,
     _PORKLAND_ID: PORKLAND_SETTINGS,
+    _BWB_ID: BENEATH_WORLD_BELOW_SETTINGS,
 }
 
 # workshop id -> mod 显示名（中英文）。两个用途：1) 世界设置界面的"分类标
@@ -858,6 +1014,7 @@ MOD_DISPLAY_NAMES: dict[str, dict] = {
     _IA_CORE_ID: {"zh": "岛屿冒险 - 核心", "en": "Island Adventures - Core"},
     _IA_SHIPWRECKED_ID: {"zh": "岛屿冒险 - 海难", "en": "Island Adventures - Shipwrecked"},
     _PORKLAND_ID: {"zh": "云霄国度", "en": "Above the Clouds"},
+    _BWB_ID: {"zh": "深埋之下", "en": "Beneath the World Below"},
     "3401927745": {"zh": "山河表里", "en": "Montfluv"},
 }
 
@@ -868,6 +1025,7 @@ MOD_ICON_ATLAS: dict[str, tuple[str, str]] = {
     _IA_CORE_ID: ("images/hud/customization_core.xml", "images/hud/customization_core.tex"),
     _IA_SHIPWRECKED_ID: ("images/hud/customization_shipwrecked.xml", "images/hud/customization_shipwrecked.tex"),
     _PORKLAND_ID: ("images/hud/customization_porkland.xml", "images/hud/customization_porkland.tex"),
+    _BWB_ID: ("images/worldsettings_customization_bwb.xml", "images/worldsettings_customization_bwb.tex"),
 }
 
 

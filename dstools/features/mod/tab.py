@@ -325,6 +325,7 @@ class ModManagerTab:
         self._loading_key = None
         self._mods_loaded = False
         self._mod_scan_status_var = tk.StringVar(value="")
+        self._enabled_count_var = tk.StringVar(value=t("mod.enabled_count", count=0))
         self._refresh_gen = 0
         # 每一个曾经被完整解析过的 mod（静态解析 + 整份文件 Lua 沙箱——
         # 见 _load_mods_worker/_reload_full）都会一直保留在这里，直到应
@@ -437,6 +438,19 @@ class ModManagerTab:
             ff, text=t("mod.recommend_btn"), command=self._open_recommend_mods
         )
         self._md_recommend.pack(side=tk.LEFT, padx=(8, 0))
+
+        # 数量是当前世界完整 Mod 模型里的启用数，不受搜索词或筛选药丸影响；
+        # 放在搜索行正下方，让用户筛选后仍能分清“总启用数”和“可见行数”。
+        enabled_count_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
+        enabled_count_row.pack(fill=tk.X, padx=5, pady=(2, 0))
+        self._md_enabled_count = make_transparent_status(
+            enabled_count_row,
+            app,
+            self._enabled_count_var,
+            width=310,
+            side=tk.LEFT,
+        )
+        self._md_enabled_count.pack_configure(fill=tk.X, expand=True)
 
         # 扫描结果原来用固定 310px 宽度跟搜索框、筛选项和多个按钮挤在
         # 同一行；字体放大或统计数字变长时，右对齐文字会从左侧被裁掉。
@@ -2725,9 +2739,11 @@ class ModManagerTab:
             self._refresh_workshop_update_button_state()
             self._mod_update_hint_var.set("")
             self._mod_scan_status_var.set("已发现 0 个 Mod")
+            self._update_enabled_count(0)
             self._render_list()
             return
         self._loading = True
+        self._update_enabled_count(0)
         self._mods_loaded = False
         self._loading_full = full
         self._loading_key = loading_key
@@ -3165,6 +3181,7 @@ class ModManagerTab:
                 "mod.scan_found_breakdown", regular=regular, custom=custom
             )
         self._mod_scan_status_var.set(scan_text)
+        self._update_enabled_count()
         # 刚从磁盘（重新）加载完——在这之前的任何"未保存修改"标记都已经
         # 没有意义了，因为现在显示的状态本身就又是已保存的状态（覆盖首
         # 次加载、"重载Mod信息"、切换世界，以及 _save_mods/
@@ -3213,6 +3230,14 @@ class ModManagerTab:
         self._dirty = True
         self._md_bs.configure(state=tk.NORMAL)
         self._md_ba.configure(state=tk.NORMAL)
+
+    def _update_enabled_count(self, count=None):
+        """刷新当前世界的启用总数；搜索和显示筛选不会改变这个数字。"""
+        if not hasattr(self, "_enabled_count_var"):
+            return
+        if count is None:
+            count = sum(1 for mod in self._mod_data.values() if mod.enabled)
+        self._enabled_count_var.set(t("mod.enabled_count", count=count))
 
     def _clear_dirty(self):
         had_pending_preview = self._dirty
@@ -3444,6 +3469,7 @@ class ModManagerTab:
             if child is not None and child.enabled:
                 child.enabled = False
         self._mark_dirty()
+        self._update_enabled_count()
         # 切到世界设置时立即按尚未保存的 Mod 开关重建目录，不要求用户
         # 为了查看设置项先执行一次磁盘保存。
         self.app.mark_world_tab_stale()
@@ -4055,6 +4081,7 @@ class ModManagerTab:
         self._md_preset_apply.configure(text=t("mod.preset_apply_btn"))
         self._md_filt.redraw()
         self._md_filter_chips.redraw()
+        self._update_enabled_count()
         self._md_rl.configure(
             text=t("mod.back_to_list")
             if self.show_local_var.get()
@@ -4088,6 +4115,7 @@ class ModManagerTab:
         self._md_filter_chips.redraw()
         self._md_update_hint.redraw()
         self._md_update_status.redraw()
+        self._md_enabled_count.redraw()
 
     def refresh(self):
         self.on_cluster_changed(self.app.get_selected_cluster())

@@ -127,20 +127,20 @@ def _effective_port(raw: object, default: int, *, cluster: Cluster,
 
 
 def _effective_server_port(raw: object, *, cluster: Cluster, shard: Shard,
-                           lan_only: bool,
+                           lan_restricted: bool, restricted_mode: str,
                            issues: list[PortIssue]) -> tuple[int | None, str]:
-    """解析游戏端口，并复现 DST 在 LAN 模式下的实际回退规则。"""
+    """解析游戏端口，并复现 DST 在 LAN/离线模式下的实际回退规则。"""
     port, source = _effective_port(
         raw, DEFAULT_SERVER_PORT, cluster=cluster, shard=shard,
         field="server_port", issues=issues,
     )
-    if port is None or not lan_only:
+    if port is None or not lan_restricted:
         return port, source
     if LAN_SERVER_PORT_MIN <= port <= LAN_SERVER_PORT_MAX:
         return port, source
     issues.append(PortIssue(
         str(cluster.path), cluster.name, shard.name, "server_port", raw,
-        f"仅限局域网模式要求端口在 {LAN_SERVER_PORT_MIN}..{LAN_SERVER_PORT_MAX} "
+        f"{restricted_mode}要求端口在 {LAN_SERVER_PORT_MIN}..{LAN_SERVER_PORT_MAX} "
         f"之间；游戏会把当前值回退为 {LAN_SERVER_PORT_FALLBACK}",
         "lan_server_port_range",
     ))
@@ -161,6 +161,9 @@ def collect_cluster_port_claims(
     selected = set(shard_names) if shard_names is not None else None
     cluster_config = cluster_config_override or _cluster_config(cluster)
     lan_only = bool(cluster_config.network.get("lan_only_cluster", False))
+    offline = bool(cluster_config.network.get("offline_cluster", False))
+    lan_restricted = lan_only or offline
+    restricted_mode = "仅限局域网模式" if lan_only else "离线模式"
     config_overrides = shard_config_overrides or {}
     claims: list[PortClaim] = []
     issues: list[PortIssue] = []
@@ -179,7 +182,9 @@ def collect_cluster_port_claims(
         # 被误判成冲突。
         server_port, server_source = _effective_server_port(
             config.network.get("server_port"), cluster=cluster, shard=shard,
-            lan_only=lan_only, issues=issues,
+            lan_restricted=lan_restricted,
+            restricted_mode=restricted_mode,
+            issues=issues,
         )
         if server_port is not None:
             claims.append(PortClaim(

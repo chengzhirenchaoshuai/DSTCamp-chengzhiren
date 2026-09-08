@@ -281,6 +281,10 @@ CAVE_RULES_ICONS = {
     # 世界|world
     "earthquakes": "Earthquake_Settings_Icon.png",  # 地震
     "wormattacks_boss": "Great_Depths_Worm_Settings_Icon.png",  # 大蠕虫
+    # 深埋之下沿用原版图集元素，只是注册了新的 override key。
+    "worm_boss_setting": "Great_Depths_Worm_Settings_Icon.png",
+    "frostseason": "Winter_Settings_Icon.png",
+    "umbral": "Summer_Settings_Icon.png",
     "wormattacks": "Depths_Worm_Attacks_Settings_Icon.png",  # 洞穴蠕虫袭击
     "rifts_enabled_cave": "Shadow_Rifts_Settings_Icon.png",  # 荒野裂缝
     "rifts_frequency_cave": "Shadow_Rifts_Settings_Icon.png",  # 荒野裂缝频率
@@ -336,6 +340,7 @@ CAVE_RULES_ICONS = {
 # 洞穴-世界生成
 CAVE_GEN_ICONS = {
     # 世界|world
+    "cave_season_start": "Season_Start_Settings_Icon.png",
     "task_set": "Biomes_Settings_Icon.png",  # 生物群落
     "start_location": "Spawn_Area_Settings_Icon.png",  # 出生点
     "world_size": "World_Size_Settings_Icon.png",  # 世界大小
