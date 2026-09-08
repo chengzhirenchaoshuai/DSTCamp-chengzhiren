@@ -439,23 +439,10 @@ class ModManagerTab:
         )
         self._md_recommend.pack(side=tk.LEFT, padx=(8, 0))
 
-        # 数量是当前世界完整 Mod 模型里的启用数，不受搜索词或筛选药丸影响；
-        # 放在搜索行正下方，让用户筛选后仍能分清“总启用数”和“可见行数”。
-        enabled_count_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
-        enabled_count_row.pack(fill=tk.X, padx=5, pady=(2, 0))
-        self._md_enabled_count = make_transparent_status(
-            enabled_count_row,
-            app,
-            self._enabled_count_var,
-            width=310,
-            side=tk.LEFT,
-        )
-        self._md_enabled_count.pack_configure(fill=tk.X, expand=True)
-
         # 扫描结果原来用固定 310px 宽度跟搜索框、筛选项和多个按钮挤在
         # 同一行；字体放大或统计数字变长时，右对齐文字会从左侧被裁掉。
-        # 单独拆成一条状态栏，让结果文字占满“重新扫描”左侧的剩余宽度，
-        # 不缩短文案，也不需要按某组数字猜一个新的固定宽度。
+        # 单独拆成一条状态栏：启用数固定在最左侧并左对齐，扫描结果占满
+        # “重新扫描”左侧的剩余宽度，避免缩短文案或按某组数字猜固定宽度。
         scan_status_row = BgFrame(self.frame, app, bg=theme.CARD_BG)
         scan_status_row.pack(fill=tk.X, padx=5, pady=(3, 0))
         self._md_br = ttk.Button(
@@ -463,6 +450,16 @@ class ModManagerTab:
         )
         self._md_br.pack(side=tk.RIGHT)
         Tooltip(self._md_br, lambda: t("mod.reload_full_hover"))
+        # 数量来自当前世界完整 Mod 模型，不受搜索词或筛选药丸影响。
+        self._md_enabled_count = make_transparent_status(
+            scan_status_row,
+            app,
+            self._enabled_count_var,
+            width=220,
+            side=tk.LEFT,
+            padx=(0, 10),
+            text_anchor=tk.W,
+        )
         self._workshop_update_running = False
         self._workshop_status_cache = {}
         self._workshop_title_cache: dict[str, str] = {}

@@ -159,6 +159,7 @@ def make_transparent_status(
     command=None,
     command_enabled=None,
     color_getter=None,
+    text_anchor=tk.E,
 ) -> BgFrame:
     """在工具栏中显示一行随变量更新的透明状态文字。
 
@@ -188,10 +189,10 @@ def make_transparent_status(
             return
         clickable = _is_clickable()
         status.create_text(
-            status.winfo_width() - 2,
+            2 if text_anchor == tk.W else status.winfo_width() - 2,
             status.winfo_height() / 2,
             text=text,
-            anchor=tk.E,
+            anchor=text_anchor,
             fill=(
                 color_getter()
                 if color_getter is not None
