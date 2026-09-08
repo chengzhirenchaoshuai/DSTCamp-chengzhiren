@@ -58,6 +58,7 @@ from dstools.features.world.reader import WorldOverride  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
 from dstools.features.mod.presets import ModPreset  # noqa: E402
 from dstools.features.mod.tab import ModManagerTab  # noqa: E402
+from dstools.features.world.tab import WorldSettingsTab  # noqa: E402
 from dstools.features.world.creation_tab import WorldCreationTab  # noqa: E402
 from dstools.features.cluster_config.config_manager import load_shard_config  # noqa: E402
 from dstools.models import ModEntry, SaveSource  # noqa: E402
@@ -666,6 +667,47 @@ def test_multi_shard_mod_templates_require_enabled_mods() -> None:
         assert parse_lua_file(output / "Volcano" / "leveldataoverride.lua")["location"] == VOLCANO_LOCATION
 
 
+def test_world_tab_keeps_only_the_visible_panel_image() -> None:
+    class FakePanel:
+        def __init__(self):
+            self.releases = 0
+            self.packed = False
+            self.frame = self
+
+        def release_image(self):
+            self.releases += 1
+
+        def pack_forget(self):
+            self.packed = False
+
+        def pack(self, **_kwargs):
+            self.packed = True
+
+    tab = object.__new__(WorldSettingsTab)
+    tab._rules_panel = FakePanel()
+    tab._gen_panel = FakePanel()
+    tab._rules_panel.packed = True
+    tab._sub_tab_key = "rules"
+    tab._rules_rendered = True
+    tab._gen_rendered = False
+    tab._page_visible = True
+    tab._flash_after_id = None
+    gen_renders = []
+    tab._render_gen = lambda: gen_renders.append(True)
+    tab._render_rules = lambda: None
+
+    tab._on_sub_tab_select("gen")
+    assert tab._rules_panel.releases == 1
+    assert tab._rules_rendered is False
+    assert tab._gen_panel.packed is True and gen_renders == [True]
+
+    tab.on_hidden()
+    assert tab._rules_panel.releases == 2
+    assert tab._gen_panel.releases == 1
+    assert not tab._rules_rendered and not tab._gen_rendered
+    assert tab._page_visible is False
+
+
 def main() -> None:
     tests = (
         test_location_profiles,
@@ -689,6 +731,7 @@ def main() -> None:
         test_porkland_creation,
         test_multi_shard_creation,
         test_multi_shard_mod_templates_require_enabled_mods,
+        test_world_tab_keeps_only_the_visible_panel_image,
     )
     for test in tests:
         test()

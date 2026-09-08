@@ -118,6 +118,7 @@ class WorldSettingsTab:
         self._rules_by_cat = {}; self._rules_cats = []
         self._gen_by_cat = {}; self._gen_cats = []
         self._rules_rendered = False; self._gen_rendered = False  # 懒渲染标记
+        self._page_visible = False
         self._flash_key = None; self._flash_after_id = None
         # 不在这里现场 on_cluster_changed()——那会同步渲染两大张 PIL 面板
         # （世界规则/世界生成），是这个页签最重的部分。这个页签在
@@ -130,7 +131,16 @@ class WorldSettingsTab:
         # 首次填充，构造阶段只搭好控件壳子。
 
     def _on_sub_tab_select(self, key):
-        (self._rules_panel.frame if self._sub_tab_key == "rules" else self._gen_panel.frame).pack_forget()
+        if key == self._sub_tab_key:
+            return
+        old_is_rules = self._sub_tab_key == "rules"
+        old_panel = self._rules_panel if old_is_rules else self._gen_panel
+        old_panel.frame.pack_forget()
+        old_panel.release_image()
+        if old_is_rules:
+            self._rules_rendered = False
+        else:
+            self._gen_rendered = False
         self._sub_tab_key = key
         (self._rules_panel.frame if key == "rules" else self._gen_panel.frame).pack(fill=tk.BOTH, expand=True)
         # 懒渲染：另一个子页签在 _load_world 里没渲染（只渲染当前页），首次
@@ -176,6 +186,10 @@ class WorldSettingsTab:
     def _on_shard_select(self, e=None): self._load_world()
 
     def _load_world(self):
+        # 重新加载时旧世界的两张长图已经失效；先解除引用，避免只重画当前
+        # 子页后，另一个不可见子页仍长期保留旧世界的像素数据。
+        self._rules_panel.release_image()
+        self._gen_panel.release_image()
         self._dirty = False; self._wl_bs.configure(state=tk.DISABLED)
         self._wl_preset = None; self._wl_path = None
         self._rules_by_cat = {}; self._rules_cats = []
@@ -299,6 +313,7 @@ class WorldSettingsTab:
                                        location=loc, mod_settings=self._mod_settings,
                                        mod_icons=self._mod_icons, is_rule=True)
         self._rules_panel.set_image(img, hits, keep_scroll=True)
+        self._rules_rendered = True
 
     def _render_gen(self, ref_width=None):
         """（重新）渲染只读的生成面板图片。"""
@@ -314,6 +329,28 @@ class WorldSettingsTab:
                                        mod_settings=self._mod_settings, mod_icons=self._mod_icons,
                                        is_rule=False)
         self._gen_panel.set_image(img, hits, keep_scroll=True)
+        self._gen_rendered = True
+
+    def on_hidden(self):
+        """离开世界设置页后释放两个不可见的长图。"""
+        self._page_visible = False
+        if self._flash_after_id is not None:
+            self.frame.after_cancel(self._flash_after_id)
+            self._flash_after_id = None
+            self._flash_key = None
+        self._rules_panel.release_image()
+        self._gen_panel.release_image()
+        self._rules_rendered = False
+        self._gen_rendered = False
+
+    def on_shown(self):
+        """返回页面时只重建当前可见的世界设置子页。"""
+        self._page_visible = True
+        if self._sub_tab_key == "rules":
+            if not self._rules_rendered:
+                self._render_rules()
+        elif not self._gen_rendered:
+            self._render_gen()
 
     def _empty_image(self):
         from PIL import Image
@@ -415,11 +452,13 @@ class WorldSettingsTab:
         self._wl_desc_font.configure(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
         self._redraw_wl_info()
         self._sub_tab_bar.apply_theme()
-        # 已加载世界时，rules/gen 两张 PIL 位图是 theme.CARD_BG/CATEGORY_
-        # COLORS 画死的，切主题不会自己变——这里重新渲染一遍（_render_* 只
-        # 依赖 self 上已加载的状态，且内部有空 cats 兜底，安全）。
-        if self._wl_preset is not None:
-            self._render_rules()
-            self._render_gen()
+        # 已加载世界时，当前可见的 PIL 位图是 theme.CARD_BG/CATEGORY_
+        # COLORS 画死的，切主题不会自己变；隐藏页保持已释放状态，等真正
+        # 切过去时再按新主题重建。
+        if self._wl_preset is not None and self._page_visible:
+            if self._sub_tab_key == "rules":
+                self._render_rules()
+            else:
+                self._render_gen()
 
     def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())
