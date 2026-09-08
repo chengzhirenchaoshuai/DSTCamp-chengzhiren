@@ -80,8 +80,8 @@ def test_download_requires_matching_hash_and_size() -> None:
 def test_launch_helper_stages_on_exe_volume() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        current = root / "DSTCamp.exe"
-        staged = root / "cache" / "DSTCamp-new.exe"
+        current = root / "DSTCamp-1.3.5.exe"
+        staged = root / "cache" / "DSTCamp-1.3.6.exe"
         staged.parent.mkdir()
         current.write_bytes(b"old")
         staged.write_bytes(b"new")
@@ -93,8 +93,10 @@ def test_launch_helper_stages_on_exe_volume() -> None:
             auto_update.launch_update_helper(staged)
         command = popen.call_args.args[0]
         local_staged = Path(command[command.index("-NewExe") + 1])
+        target = Path(command[command.index("-TargetExe") + 1])
         assert local_staged.parent.resolve() == current.parent.resolve()
         assert local_staged.read_bytes() == b"new"
+        assert target.resolve() == (root / "DSTCamp-1.3.6.exe").resolve()
         assert (
             popen.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
         )
@@ -102,14 +104,77 @@ def test_launch_helper_stages_on_exe_volume() -> None:
         helper_script = Path(command[command.index("-File") + 1])
         helper_content = helper_script.read_text(encoding="utf-8-sig")
         reset_at = helper_content.index("PYINSTALLER_RESET_ENVIRONMENT")
-        start_at = helper_content.index("Start-Process -FilePath $CurrentExe")
+        start_at = helper_content.index("Start-Process -FilePath $TargetExe")
         assert reset_at < start_at
+
+
+def test_standard_exe_name_follows_release_but_custom_name_is_preserved() -> None:
+    root = Path("C:/DSTCamp")
+    staged = root / "cache" / "DSTCamp-1.3.6.exe"
+    assert auto_update.resolve_install_target(
+        root / "DSTCamp-1.3.5.exe", staged
+    ) == root / "DSTCamp-1.3.6.exe"
+    assert auto_update.resolve_install_target(
+        root / "我的开服工具.exe", staged
+    ) == root / "我的开服工具.exe"
+
+
+def test_update_progress_state_is_clamped_and_redrawn() -> None:
+    from dstools.gui.app import DSToolsApp
+
+    app = DSToolsApp.__new__(DSToolsApp)
+    redraws = []
+    app._redraw_status_bar = lambda: redraws.append(True)
+    app._update_progress_percent = None
+
+    app._set_update_progress(135)
+    assert app._update_progress_percent == 100
+    app._set_update_progress(-2)
+    assert app._update_progress_percent == 0
+    app._set_update_progress(None)
+    assert app._update_progress_percent is None
+    assert len(redraws) == 3
+
+
+def test_update_progress_replaces_notice_at_status_bar_right() -> None:
+    from dstools.gui.app import DSToolsApp
+
+    class FakeStatusBar:
+        def __init__(self):
+            self.rectangles = []
+            self.texts = []
+
+        @staticmethod
+        def winfo_width():
+            return 1000
+
+        def create_rectangle(self, *coords, **options):
+            self.rectangles.append((coords, options))
+
+        def create_text(self, *coords, **options):
+            self.texts.append((coords, options))
+
+    app = DSToolsApp.__new__(DSToolsApp)
+    app._status_bar = FakeStatusBar()
+    app._status_text_h = 24
+    app._status_font = object()
+    app._update_notice = UpdateRelease("1.3.6", "https://example", "gitee")
+    app._update_progress_percent = 42
+
+    app._draw_update_status()
+
+    assert len(app._status_bar.rectangles) == 2
+    assert app._status_bar.texts[-1][1]["text"] == "42%"
+    assert app._status_bar.texts[-1][0][0] == 992
 
 
 def main() -> None:
     test_release_manifest_enables_auto_update()
     test_download_requires_matching_hash_and_size()
     test_launch_helper_stages_on_exe_volume()
+    test_standard_exe_name_follows_release_but_custom_name_is_preserved()
+    test_update_progress_state_is_clamped_and_redrawn()
+    test_update_progress_replaces_notice_at_status_bar_right()
     print("自动更新测试通过")
 
 

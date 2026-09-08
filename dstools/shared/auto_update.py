@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,9 @@ from dstools.shared.ssl_context import default_ssl_context
 from dstools.shared.update_check import UpdateRelease
 
 ProgressCallback = Callable[[int, int], None]
+_STANDARD_EXE_NAME_RE = re.compile(
+    r"^DSTCamp-\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?\.exe$", re.IGNORECASE
+)
 
 
 def download_update(release: UpdateRelease, progress: ProgressCallback | None = None) -> Path:
@@ -59,6 +63,7 @@ def _helper_script() -> Path:
     [int]$ParentPid,
     [string]$CurrentExe,
     [string]$NewExe,
+    [string]$TargetExe,
     [string]$BackupExe
 )
 $ErrorActionPreference = 'Stop'
@@ -68,14 +73,22 @@ Wait-Process -Id $ParentPid -ErrorAction SilentlyContinue
 # 更新后的程序必须独立解压；否则旧进程清理临时目录后会找不到 python DLL。
 $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
 $MovedCurrent = $false
+$InstalledTarget = $false
 try {
     if (Test-Path -LiteralPath $BackupExe) { Remove-Item -LiteralPath $BackupExe -Force }
     Move-Item -LiteralPath $CurrentExe -Destination $BackupExe
     $MovedCurrent = $true
-    Move-Item -LiteralPath $NewExe -Destination $CurrentExe
-    Start-Process -FilePath $CurrentExe -WorkingDirectory (Split-Path -Parent $CurrentExe)
+    if (Test-Path -LiteralPath $TargetExe) {
+        throw "更新目标已存在：$TargetExe"
+    }
+    Move-Item -LiteralPath $NewExe -Destination $TargetExe
+    $InstalledTarget = $true
+    Start-Process -FilePath $TargetExe -WorkingDirectory (Split-Path -Parent $TargetExe)
 }
 catch {
+    if ($InstalledTarget -and (Test-Path -LiteralPath $TargetExe)) {
+        Remove-Item -LiteralPath $TargetExe -Force
+    }
     if ($MovedCurrent -and (Test-Path -LiteralPath $BackupExe)) {
         if (Test-Path -LiteralPath $CurrentExe) { Remove-Item -LiteralPath $CurrentExe -Force }
         Move-Item -LiteralPath $BackupExe -Destination $CurrentExe
@@ -113,21 +126,35 @@ def ensure_install_dir_writable() -> None:
         probe.unlink(missing_ok=True)
 
 
+def resolve_install_target(current_exe: Path, staged_exe: Path) -> Path:
+    """标准版本文件名随版本升级；用户自定义的 EXE 名称保持不变。"""
+    current = Path(current_exe).resolve()
+    staged = Path(staged_exe).resolve()
+    name = (
+        staged.name
+        if _STANDARD_EXE_NAME_RE.fullmatch(current.name)
+        else current.name
+    )
+    return current.with_name(name)
+
+
 def launch_update_helper(staged_exe: Path) -> None:
-    """启动独立 PowerShell，当前进程退出后原位替换并重启。"""
+    """启动独立 PowerShell，当前进程退出后替换并以新版本名称重启。"""
     if os.name != "nt" or not getattr(sys, "frozen", False):
         raise RuntimeError("自动替换仅支持 Windows 冻结版")
     current = Path(sys.executable).resolve()
     staged = staged_exe.resolve()
     if not staged.is_file() or staged == current:
         raise FileNotFoundError(staged)
+    target = resolve_install_target(current, staged)
     backup = current.with_name(current.name + ".old")
     local_staged = current.with_name(f".{current.stem}.update-{os.getpid()}.exe")
     shutil.copy2(staged, local_staged)
     command = [
         "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
         str(_helper_script()), "-ParentPid", str(os.getpid()), "-CurrentExe",
-        str(current), "-NewExe", str(local_staged), "-BackupExe", str(backup),
+        str(current), "-NewExe", str(local_staged), "-TargetExe", str(target),
+        "-BackupExe", str(backup),
     ]
     helper_env = os.environ.copy()
     # PowerShell 更新助手会比当前 onefile 进程活得更久，并继续启动替换后的

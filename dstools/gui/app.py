@@ -412,6 +412,9 @@ class DSToolsApp:
         # UpdateRelease 或 None，只由 _start_update_check() 的后台线程
         # 通过 root.after(0, ...) 设置一次。
         self._update_notice: UpdateRelease | None = None
+        # None 表示显示可点击的更新提示；下载开始后改为 0~100，并在状态
+        # 栏右下角原位绘制进度条和百分比。
+        self._update_progress_percent: int | None = None
 
         def _redraw_status_bar():
             self._status_font.configure(
@@ -423,7 +426,9 @@ class DSToolsApp:
             )
             self._status_text_h = self._status_font.metrics("linespace") + 6
             self._status_bar.configure(height=self._status_text_h)
-            self._status_bar.delete("status_text", "update_notice")
+            self._status_bar.delete(
+                "status_text", "update_notice", "update_progress"
+            )
             self._status_bar.create_text(
                 6,
                 self._status_text_h / 2,
@@ -433,31 +438,7 @@ class DSToolsApp:
                 font=self._status_font,
                 tags="status_text",
             )
-            if self._update_notice is not None:
-                version = self._update_notice.version
-                w = self._status_bar.winfo_width()
-                self._status_bar.create_text(
-                    w - 240,
-                    self._status_text_h / 2,
-                    text=t("app.update_available", version=version),
-                    anchor=tk.E,
-                    fill=theme.PRIMARY,
-                    font=self._status_font,
-                    tags=("update_notice",),
-                )
-                self._status_bar.tag_bind(
-                    "update_notice",
-                    "<Enter>",
-                    lambda e: self._status_bar.configure(cursor="hand2"),
-                )
-                self._status_bar.tag_bind(
-                    "update_notice",
-                    "<Leave>",
-                    lambda e: self._status_bar.configure(cursor=""),
-                )
-                self._status_bar.tag_bind(
-                    "update_notice", "<Button-1>", self._open_update_url
-                )
+            self._draw_update_status()
 
         self._redraw_status_bar = _redraw_status_bar
         self.status_var.trace_add("write", lambda *a: _redraw_status_bar())
@@ -2164,6 +2145,79 @@ class DSToolsApp:
 
     def _show_update_notice(self, release: UpdateRelease) -> None:
         self._update_notice = release
+        self._update_progress_percent = None
+        self._redraw_status_bar()
+
+    def _draw_update_status(self) -> None:
+        """在状态栏右端绘制更新入口，下载时原位替换为进度条。"""
+        if self._update_progress_percent is not None:
+            percent = max(0, min(100, self._update_progress_percent))
+            w = self._status_bar.winfo_width()
+            percent_x = w - 8
+            bar_right = percent_x - 42
+            bar_left = max(8, bar_right - 170)
+            cy = self._status_text_h / 2
+            bar_top = cy - 5
+            bar_bottom = cy + 5
+            self._status_bar.create_rectangle(
+                bar_left,
+                bar_top,
+                bar_right,
+                bar_bottom,
+                fill=theme.CARD_BORDER,
+                outline="",
+                tags=("update_progress",),
+            )
+            filled_right = bar_left + (bar_right - bar_left) * percent / 100
+            if filled_right > bar_left:
+                self._status_bar.create_rectangle(
+                    bar_left,
+                    bar_top,
+                    filled_right,
+                    bar_bottom,
+                    fill=theme.PRIMARY,
+                    outline="",
+                    tags=("update_progress",),
+                )
+            self._status_bar.create_text(
+                percent_x,
+                cy,
+                text=f"{percent}%",
+                anchor=tk.E,
+                fill=theme.TEXT,
+                font=self._status_font,
+                tags=("update_progress",),
+            )
+        elif self._update_notice is not None:
+            version = self._update_notice.version
+            w = self._status_bar.winfo_width()
+            self._status_bar.create_text(
+                w - 8,
+                self._status_text_h / 2,
+                text=t("app.update_available", version=version),
+                anchor=tk.E,
+                fill=theme.PRIMARY,
+                font=self._status_font,
+                tags=("update_notice",),
+            )
+            self._status_bar.tag_bind(
+                "update_notice",
+                "<Enter>",
+                lambda e: self._status_bar.configure(cursor="hand2"),
+            )
+            self._status_bar.tag_bind(
+                "update_notice",
+                "<Leave>",
+                lambda e: self._status_bar.configure(cursor=""),
+            )
+            self._status_bar.tag_bind(
+                "update_notice", "<Button-1>", self._open_update_url
+            )
+
+    def _set_update_progress(self, percent: int | None) -> None:
+        self._update_progress_percent = (
+            None if percent is None else max(0, min(100, int(percent)))
+        )
         self._redraw_status_bar()
 
     def _open_update_url(self, _event=None) -> None:
@@ -2211,7 +2265,7 @@ class DSToolsApp:
         )
 
         state = {"done": False, "path": None, "error": None, "downloaded": 0}
-        self.status_var.set(t("update.downloading", version=release.version, percent=0))
+        self._set_update_progress(0)
 
         def progress(downloaded: int, _total: int) -> None:
             state["downloaded"] = downloaded
@@ -2231,31 +2285,31 @@ class DSToolsApp:
             try:
                 launch_update_helper(state["path"])
             except Exception as exc:
+                self._set_update_progress(None)
                 dlg.show_error(parent, t("update.title"), t("update.failed", error=exc))
                 return
             self._quit_app()
 
         def finish_or_poll() -> None:
             if not state["done"]:
-                percent = min(99, int(state["downloaded"] * 100 / release.size))
-                self.status_var.set(
-                    t("update.downloading", version=release.version, percent=percent)
-                )
+                percent = min(100, int(state["downloaded"] * 100 / release.size))
+                self._set_update_progress(percent)
                 self.root.after(150, finish_or_poll)
                 return
             if state["error"] is not None:
-                self.status_var.set(t("app.ready"))
+                self._set_update_progress(None)
                 dlg.show_error(
                     parent,
                     t("update.title"),
                     t("update.failed", error=state["error"]),
                 )
                 return
+            self._set_update_progress(100)
             if self.local_tab.has_running_servers():
                 if not dlg.ask_yes_no(
                     parent, t("local.confirm_close_title"), t("update.close_servers")
                 ):
-                    self.status_var.set(t("app.ready"))
+                    self._set_update_progress(None)
                     return
                 self.local_tab.confirm_and_shutdown_all(on_done=install)
                 return
