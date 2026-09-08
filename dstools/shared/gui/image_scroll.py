@@ -4,10 +4,9 @@
 百个这种控件时，resize 就要连带销毁重建几百个控件，很慢，会有明显的卡
 顿/闪烁。
 
-这个面板反过来做：内容只渲染*一次*成一整张高图（图标/文字/按钮全部画
-成像素）。之后 resize 就变成纯粹的位图裁剪+缩放操作——跟图片查看器的手
-法一样——拖拽窗口缩放这个面板就跟拖拽一张图片一样：流畅，且零重新布局
-开销。
+这个面板反过来做：内容渲染成像素。普通页面可保存一整张高图；超长列表
+也可只按需渲染当前视口，避免常驻整张长图。之后 resize 只处理当前视口的
+位图——跟图片查看器的手法一样——不需要创建几百个原生控件。
 
 交互（<</>> 取值按钮）靠维护一份跟主图同一套参照坐标系的可点击矩形列
 表；点击时先把坐标换算回这套参照坐标系再做命中测试。
@@ -45,6 +44,8 @@ class ImageScrollPanel:
         self.vbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.master_img = Image.new("RGB", (ref_width, 10), bg)
+        self._virtual_height: int | None = None
+        self._virtual_renderer = None
         self.hit_regions: list[tuple[int, int, int, int, object]] = []
         # 跟 hit_regions 同一套坐标系/命中测试逻辑，但用于鼠标悬停而不是
         # 点击——payload 不是回调，是"当前悬停在哪个区域"的任意标识（比如
@@ -97,12 +98,43 @@ class ImageScrollPanel:
         的还是同一块内容，不会跳动。
         """
         old_width = self.ref_width
+        self._virtual_height = None
+        self._virtual_renderer = None
         self.master_img = img
         self.ref_width = img.width
         self.hit_regions = hit_regions
         self.hover_regions = hover_regions or []
         if keep_scroll and old_width:
             self.scroll_y *= img.width / old_width
+        else:
+            self.scroll_y = 0.0
+        self._clamp_scroll()
+        self._set_hit_cursor(False)
+        self._render()
+
+    def set_virtual_image(
+        self,
+        ref_width: int,
+        total_height: int,
+        renderer,
+        *,
+        keep_scroll: bool = False,
+    ) -> None:
+        """设置按需视口渲染器，不在内存中保存完整长图。
+
+        ``renderer(y, height)`` 返回当前参照坐标区间对应的
+        ``(image, hit_regions, hover_regions)``。命中区域继续使用完整内容
+        的参照坐标，因此现有点击和悬停换算逻辑无需改变。
+        """
+        old_width = self.ref_width
+        self.ref_width = max(1, int(ref_width))
+        self._virtual_height = max(1, int(total_height))
+        self._virtual_renderer = renderer
+        self.master_img = Image.new("RGB", (self.ref_width, 1), self.bg)
+        self.hit_regions = []
+        self.hover_regions = []
+        if keep_scroll and old_width:
+            self.scroll_y *= self.ref_width / old_width
         else:
             self.scroll_y = 0.0
         self._clamp_scroll()
@@ -125,16 +157,10 @@ class ImageScrollPanel:
                     pass
                 setattr(self, attr, None)
         self.master_img = Image.new("RGB", (max(1, self.ref_width), 1), self.bg)
+        self._virtual_height = None
+        self._virtual_renderer = None
         self.hit_regions = []
         self.hover_regions = []
-        for attr in ("_render_after_id", "_settle_after_id"):
-            after_id = getattr(self, attr)
-            if after_id is not None:
-                try:
-                    self.canvas.after_cancel(after_id)
-                except tk.TclError:
-                    pass
-                setattr(self, attr, None)
         self._photo = None
         if self._img_id is not None:
             self.canvas.delete(self._img_id)
@@ -193,14 +219,17 @@ class ImageScrollPanel:
         scale = cw / self.ref_width if self.ref_width else 1
         return (ch / scale) if scale > 0 else ch
 
+    def _content_height(self) -> int:
+        return self._virtual_height or self.master_img.height
+
     def _clamp_scroll(self):
         viewport_h_ref = self._viewport_h_ref()
-        max_scroll = max(0, self.master_img.height - viewport_h_ref)
+        max_scroll = max(0, self._content_height() - viewport_h_ref)
         self.scroll_y = max(0, min(self.scroll_y, max_scroll))
 
     def _on_scrollbar(self, *args):
         viewport_h_ref = self._viewport_h_ref()
-        total = max(self.master_img.height, viewport_h_ref)
+        total = max(self._content_height(), viewport_h_ref)
         if args[0] == "moveto":
             self.scroll_y = float(args[1]) * total
         elif args[0] == "scroll":
@@ -213,7 +242,7 @@ class ImageScrollPanel:
 
     def _update_scrollbar(self):
         viewport_h_ref = self._viewport_h_ref()
-        total = max(self.master_img.height, viewport_h_ref)
+        total = max(self._content_height(), viewport_h_ref)
         top = self.scroll_y / total
         bottom = (self.scroll_y + viewport_h_ref) / total
         self.vbar.set(max(0, top), min(1, bottom))
@@ -230,9 +259,22 @@ class ImageScrollPanel:
         viewport_h_ref = max(1, int(ch / scale)) if scale > 0 else ch
 
         y0 = int(self.scroll_y)
-        y1 = min(self.master_img.height, y0 + viewport_h_ref)
+        content_height = self._content_height()
+        y1 = min(content_height, y0 + viewport_h_ref)
 
-        if y1 <= y0:
+        if self._virtual_renderer is not None:
+            if self._last_hover_payload is not None:
+                self._update_hover(None, 0, 0)
+            crop, hit_regions, hover_regions = self._virtual_renderer(
+                y0, viewport_h_ref
+            )
+            self.hit_regions = hit_regions
+            self.hover_regions = hover_regions
+            if crop.size != (self.ref_width, viewport_h_ref):
+                pad = Image.new("RGB", (self.ref_width, viewport_h_ref), self.bg)
+                pad.paste(crop, (0, 0))
+                crop = pad
+        elif y1 <= y0:
             crop = Image.new("RGB", (self.ref_width, viewport_h_ref), self.bg)
         else:
             crop = self.master_img.crop((0, y0, self.ref_width, y1))

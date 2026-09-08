@@ -2,9 +2,11 @@
 
 跟 world_render.py 同一套像素画布+点击区域的做法（原因见 image_scroll.py）：
 ttk.Treeview 没法在一行里同时嵌入真实图标+多行文字+开关+按钮+链接，所以
-整个列表一次性画成像素图，同时返回一批可点击矩形供 ImageScrollPanel 做
-命中测试。
+列表画成像素图，同时返回一批可点击矩形供 ImageScrollPanel 做命中测试；
+主页的超长列表只画当前视口，创建向导仍可按需生成完整图片。
 """
+
+import math
 
 from PIL import Image, ImageDraw
 
@@ -57,6 +59,14 @@ _CFG_TEXT_DISABLED = "#90a4ae"
 _LINK_DISABLED = "#bdbdbd"
 
 
+def mod_list_height(row_count: int, ref_width: int | None = None) -> int:
+    """返回 Mod 列表在参照坐标系中的完整高度，不创建像图。"""
+    rw = int(ref_width) if ref_width else BASE_REF_WIDTH
+    scale = rw / BASE_REF_WIDTH
+    total = PAD_X * scale + row_count * (ROW_H * scale + ROW_GAP)
+    return max(int(total), 40)
+
+
 def render_mod_list(
     rows,
     icon_images,
@@ -67,8 +77,10 @@ def render_mod_list(
     on_copy_id=None,
     ref_width=None,
     icon_thumb_cache=None,
+    viewport_y=0,
+    viewport_height=None,
 ):
-    """把 mod 列表渲染成一张 PIL 图片。
+    """把 Mod 列表的完整内容或指定视口渲染成 PIL 图片。
 
     Args:
         rows: 字典列表，每个字典含以下键：
@@ -100,6 +112,8 @@ def render_mod_list(
             ModManagerTab._icon_thumb_cache）——缓存键是 workshop_id +
             目标尺寸的组合，不是按源图片本身，否则一个过期的
             icon_images 条目会一直提供旧缩略图。
+        viewport_y/viewport_height: 只渲染这段纵向参照坐标；返回的点击和
+            悬停区域仍使用完整列表坐标，供 ``ImageScrollPanel`` 换算。
     """
     rw = int(ref_width) if ref_width else BASE_REF_WIDTH
     s = rw / BASE_REF_WIDTH
@@ -117,20 +131,36 @@ def render_mod_list(
     id_font = get_font(round(17 * s))
     btn_font = get_font(round(18 * s))
 
-    total_h = pad_x + len(rows) * (row_h + row_gap)
-    total_h = max(total_h, 40)
+    total_h = mod_list_height(len(rows), rw)
+    view_y = max(0, int(viewport_y))
+    image_h = total_h if viewport_height is None else max(1, int(viewport_height))
+    view_bottom = view_y + image_h
 
-    img = Image.new("RGB", (rw, int(total_h)), theme.CARD_BG)
+    img = Image.new("RGB", (rw, image_h), theme.CARD_BG)
     draw = ImageDraw.Draw(img)
     hit_regions = []
     hover_regions = []
 
-    y = pad_x
-    for i, row in enumerate(rows):
+    row_step = row_h + row_gap
+    if viewport_height is None:
+        visible_indices = range(len(rows))
+    else:
+        first = max(0, int((view_y - pad_x) // row_step) - 1)
+        last = min(len(rows), int((view_bottom - pad_x) // row_step) + 2)
+        visible_indices = range(first, last)
+
+    for i in visible_indices:
+        row = rows[i]
+        global_y = pad_x + i * row_step
+        if global_y + row_h < view_y or global_y > view_bottom:
+            continue
+        y = global_y - view_y
         wid = row["workshop_id"]
         bg = theme.CARD_BG_ALT if i % 2 == 0 else theme.CARD_BG
         draw.rectangle([pad_x, y, rw - pad_x, y + row_h], fill=bg, outline=theme.CARD_BORDER)
-        cy = y + row_h / 2
+        # 先在完整列表坐标系中算中心点再平移，保证视口渲染与整图裁剪时
+        # Pillow 对圆角/圆形边界采用完全相同的亚像素舍入。
+        cy = global_y + row_h / 2 - view_y
         x = pad_x + 10 * s
 
         # ── 第 1 列：图标 ────────────────────────────────────────────
@@ -171,7 +201,7 @@ def render_mod_list(
             name_text = name_text[:-1]
         if name_text != full_name_text:
             name_text = name_text + "…" if name_text else "…"
-            hover_regions.append((x, y, x + name_col_w, y + row_h * 0.5,
+            hover_regions.append((x, global_y, x + name_col_w, global_y + row_h * 0.5,
                                   full_name_text))
         draw_mixed_text(draw, x, y + row_h * 0.25, name_text, name_size, theme.TEXT, anchor="lm")
         draw.text((x, y + row_h * 0.53), wid, font=id_font,
@@ -182,7 +212,7 @@ def render_mod_list(
             version_text = version_text[:-1]
         if version_text != full_version_text:
             version_text = version_text + "…" if version_text else "…"
-            hover_regions.append((x, y + row_h * 0.64, x + name_col_w, y + row_h,
+            hover_regions.append((x, global_y + row_h * 0.64, x + name_col_w, global_y + row_h,
                                   full_version_text))
         draw.text((x, y + row_h * 0.79), version_text, font=id_font,
                   fill=theme.TEXT_MUTED, anchor="lm")
@@ -192,8 +222,8 @@ def render_mod_list(
             # 量出来，不覆盖到第 3 列的开关。不注册 hover 提示——点击后
             # 已经有"已复制: xxx"的反馈，悬停再额外提示一遍是多余的。
             id_w = draw.textlength(wid, font=id_font)
-            hit_regions.append((x, y + row_h * 0.39, x + id_w + 10 * s,
-                                y + row_h * 0.66,
+            hit_regions.append((x, global_y + row_h * 0.39, x + id_w + 10 * s,
+                                global_y + row_h * 0.66,
                                 _mk_cb(on_copy_id, wid)))
 
         # ── 第 3 列：开/关开关（client_only/"本地" mod 没有实质意义上的
@@ -210,10 +240,10 @@ def render_mod_list(
             # （这个 mod 有真实的 enabled 状态，只是不让用户关）。悬停这
             # 块区域时另外注册一个提示文字区域，说明"为什么点不动"。
             if locked:
-                hover_regions.append((switch_x, y, switch_x + switch_w, y + row_h,
+                hover_regions.append((switch_x, global_y, switch_x + switch_w, global_y + row_h,
                                       t("mod.locked_switch_hover")))
             elif on_toggle:
-                hit_regions.append((switch_x, y, switch_x + switch_w, y + row_h,
+                hit_regions.append((switch_x, global_y, switch_x + switch_w, global_y + row_h,
                                     _mk_cb(on_toggle, wid)))
 
         # ── 第 4 列：配置按钮 ────────────────────────────────────────
@@ -221,7 +251,8 @@ def render_mod_list(
         _draw_pill(draw, cfg_x, cy - cfg_h / 2, cfg_w, cfg_h, t("mod.config_btn"), btn_font,
                   enabled=has_cfg)
         if has_cfg and on_config:
-            hit_regions.append((cfg_x, y, cfg_x + cfg_w, y + row_h, _mk_cb(on_config, wid)))
+            hit_regions.append((cfg_x, global_y, cfg_x + cfg_w, global_y + row_h,
+                                _mk_cb(on_config, wid)))
 
         # ── 第 5 列：workshop 链接 ───────────────────────────────────
         has_link = row.get("has_link", False)
@@ -237,16 +268,17 @@ def render_mod_list(
             draw.line([(link_x, cy + 9 * s), (link_x + tw, cy + 9 * s)],
                       fill=link_color, width=1)
             if on_link:
-                hit_regions.append((link_x, y, min(link_x + tw + 8 * s, folder_x), y + row_h,
+                hit_regions.append((link_x, global_y, min(link_x + tw + 8 * s, folder_x),
+                                    global_y + row_h,
                                     _mk_cb(on_link, wid)))
         if has_folder:
             _paste_folder_icon(img, folder_x, cy, folder_size)
             hover_regions.append(
                 (
                     folder_x - 6 * s,
-                    y,
+                    global_y,
                     folder_x + folder_size + 6 * s,
-                    y + row_h,
+                    global_y + row_h,
                     t("mod.open_location_hover"),
                 )
             )
@@ -254,15 +286,12 @@ def render_mod_list(
                 hit_regions.append(
                     (
                         folder_x - 6 * s,
-                        y,
+                        global_y,
                         folder_x + folder_size + 6 * s,
-                        y + row_h,
+                        global_y + row_h,
                         _mk_cb(on_open_folder, wid),
                     )
                 )
-
-        y += row_h + row_gap
-
     return img, hit_regions, hover_regions
 
 
@@ -304,10 +333,17 @@ def _draw_switch(draw, x, cy, w, h, on, locked=False):
         color = _CFG_DISABLED_COLOR
     else:
         color = theme.PRIMARY if on else _OFF_COLOR
-    draw.rounded_rectangle([x, cy - r, x + w, cy + r], radius=r, fill=color)
+    # 明确向外取整，避免 Pillow 对不同绝对 y 坐标的半像素边界采用不同
+    # 舍入，确保按视口绘制和完整长图裁剪的结果一致。
+    top, bottom = math.floor(cy - r), math.ceil(cy + r)
+    draw.rounded_rectangle([x, top, x + w, bottom], radius=r, fill=color)
     knob_cx = x + w - r if on else x + r
     knob_r = r - 3
-    draw.ellipse([knob_cx - knob_r, cy - knob_r, knob_cx + knob_r, cy + knob_r], fill=theme.CARD_BG)
+    knob_top, knob_bottom = math.floor(cy - knob_r), math.ceil(cy + knob_r)
+    draw.ellipse(
+        [knob_cx - knob_r, knob_top, knob_cx + knob_r, knob_bottom],
+        fill=theme.CARD_BG,
+    )
 
 
 def _draw_pill(draw, x, y, w, h, text, font, enabled=True):

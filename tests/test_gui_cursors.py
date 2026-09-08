@@ -122,6 +122,9 @@ def test_image_panel_hit_cursor(root):
     assert panel.master_img.size == (200, 1)
     assert panel._photo is None and panel._img_id is None
     assert panel.scroll_y == 120.0
+    panel.set_virtual_image(200, 5000, lambda _y, h: (Image.new("RGB", (200, h)), [], []))
+    assert panel.master_img.size == (200, 1)
+    assert panel._content_height() == 5000
     print("  PASS: 仅真实点击热点显示手型")
 
 

@@ -1,6 +1,6 @@
 """ "Mod 管理"标签页：查看/启用/禁用已安装的 Mod，编辑每个 Mod 的配置项。
 
-Mod 列表复用 world_render.py 建立的"PIL 整图渲染 + ImageScrollPanel"架构
+Mod 列表复用 world_render.py 建立的"PIL 图片渲染 + ImageScrollPanel"架构
 （见 mod_render.render_mod_list()）——ttk.Treeview 没法在一行里同时塞图
 标+名字+开关+配置按钮，跟世界设置面板是同一个理由。
 """
@@ -289,7 +289,7 @@ class ModManagerTab:
 
     跟 WorldSettingsTab 一样，每一行（图标 + 名字/workshop-id + 开关 +
     配置按钮 + workshop 链接）都通过 mod_render.render_mod_list() 画成
-    像素，画到一整张高 PIL 图片上，再用 ImageScrollPanel 显示——
+    像素，主页只按当前视口生成图片，再用 ImageScrollPanel 显示——
     ttk.Treeview 没法在一行里同时嵌入真实图标、开关和按钮，所以这里复
     用了 world_render.py 为世界设置面板建立的同一套架构。
     """
@@ -3279,7 +3279,11 @@ class ModManagerTab:
         return rows
 
     def _render_list(self, ref_width=None):
-        from dstools.features.mod.render import REF_WIDTH, render_mod_list
+        from dstools.features.mod.render import (
+            REF_WIDTH,
+            mod_list_height,
+            render_mod_list,
+        )
 
         if not self._page_visible and self._list_image_released:
             return
@@ -3309,18 +3313,27 @@ class ModManagerTab:
         # is_local(客户端模组) 那一行不接 on_toggle 是同一个套路，不用在
         # mod_render.py 里再加一套"禁用态"绘制。"配置"按钮仍然接 on_config，
         # 点开的弹窗会自己按 read_only 只显示不给改（见 _on_config）。
-        img, hits, hovers = render_mod_list(
-            rows,
-            self._icon_imgs,
-            on_toggle=self._on_toggle if is_server else None,
-            on_config=self._on_config,
-            on_link=self._on_link,
-            on_open_folder=self._on_open_mod_folder,
-            on_copy_id=self._on_copy_id,
-            ref_width=ref_width,
-            icon_thumb_cache=self._icon_thumb_cache,
+        def render_viewport(view_y, view_height):
+            return render_mod_list(
+                rows,
+                self._icon_imgs,
+                on_toggle=self._on_toggle if is_server else None,
+                on_config=self._on_config,
+                on_link=self._on_link,
+                on_open_folder=self._on_open_mod_folder,
+                on_copy_id=self._on_copy_id,
+                ref_width=ref_width,
+                icon_thumb_cache=self._icon_thumb_cache,
+                viewport_y=view_y,
+                viewport_height=view_height,
+            )
+
+        self.list_panel.set_virtual_image(
+            ref_width,
+            mod_list_height(len(rows), ref_width),
+            render_viewport,
+            keep_scroll=True,
         )
-        self.list_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
         self._list_image_released = False
 
     def on_hidden(self):

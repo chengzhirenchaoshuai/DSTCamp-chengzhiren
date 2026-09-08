@@ -7,7 +7,7 @@ import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -24,6 +24,7 @@ from dstools.features.mod.parser import (
     find_workshop_residual_dirs,
     list_installed_mod_ids,
 )
+from dstools.features.mod.render import mod_list_height, render_mod_list
 from dstools.features.mod.tab import (
     ModManagerTab,
     RECOMMENDED_MODS,
@@ -127,6 +128,47 @@ def test_loaded_mod_icons_have_a_resident_size_limit():
 
         assert large.mode == "RGBA" and large.size == (192, 96)
         assert small.mode == "RGBA" and small.size == (64, 32)
+
+
+def test_mod_list_viewport_matches_full_image_crop():
+    rows = [
+        {
+            "workshop_id": f"workshop-{index}",
+            "name": f"测试 Mod {index}",
+            "version_text": f"版本 {index}",
+            "enabled": index % 2 == 0,
+            "has_config": True,
+            "has_link": True,
+            "has_folder": False,
+        }
+        for index in range(12)
+    ]
+    toggled = []
+    full, _full_hits, _full_hovers = render_mod_list(
+        rows,
+        {},
+        on_toggle=toggled.append,
+        ref_width=650,
+    )
+    view_y = 173
+    view_height = 241
+    viewport, hits, _hovers = render_mod_list(
+        rows,
+        {},
+        on_toggle=toggled.append,
+        ref_width=650,
+        viewport_y=view_y,
+        viewport_height=view_height,
+    )
+
+    assert full.height == mod_list_height(len(rows), 650)
+    assert viewport.size == (650, view_height)
+    expected = full.crop((0, view_y, 650, view_y + view_height))
+    assert ImageChops.difference(viewport, expected).getbbox() is None
+    assert hits
+    assert all(y2 >= view_y and y1 <= view_y + view_height for _, y1, _, y2, _ in hits)
+    hits[0][4]()
+    assert toggled
 
 
 def test_mod_tab_releases_and_rebuilds_hidden_list_image():
@@ -622,6 +664,7 @@ if __name__ == "__main__":
     test_recommended_mods_include_ping_server_with_icon()
     test_catalog_icons_and_platform_invalidation()
     test_loaded_mod_icons_have_a_resident_size_limit()
+    test_mod_list_viewport_matches_full_image_crop()
     test_mod_tab_releases_and_rebuilds_hidden_list_image()
     test_shared_rows_keep_filter_and_sort_consistent()
     test_luajit_mod_is_first_only_when_prioritized()
