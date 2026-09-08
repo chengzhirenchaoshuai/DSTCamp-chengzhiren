@@ -212,6 +212,34 @@ def test_island_vanilla_catalogs() -> None:
     assert set(volcano) == IA_VOLCANO_VANILLA_KEYS
 
 
+def test_bwb_hides_and_reorders_patched_vanilla_settings() -> None:
+    vanilla = build_world_view_model(WorldPreset(location=CAVE_LOCATION), {})
+    assert any(
+        row.key == "wormattacks_boss"
+        for rows in vanilla.rules_by_category.values() for row in rows
+    )
+
+    persisted = WorldOverride("wormattacks_boss", "often")
+    bwb = build_world_view_model(
+        WorldPreset(location=CAVE_LOCATION, overrides=[persisted]),
+        get_mod_world_settings({"3360553731"}, CAVE_LOCATION, True),
+    )
+    visible_keys = {
+        row.key for rows in bwb.rules_by_category.values() for row in rows
+    }
+    assert "wormattacks_boss" not in visible_keys
+    # 隐藏只影响界面；已有存档中的值必须继续原样保留，避免保存时误删。
+    assert persisted.value == "often"
+
+    world_keys = [row.key for row in bwb.rules_by_category["world"]]
+    assert world_keys[:6] == [
+        "wormattacks", "stealworms", "starworms", "vineworms",
+        "tideworms", "worm_ancient",
+    ]
+    creature_keys = [row.key for row in bwb.rules_by_category["creatures"]]
+    assert creature_keys[:3] == ["rocky_setting", "rocky_gold", "rocky_master"]
+
+
 def test_island_creation_defaults_are_complete() -> None:
     """回归真实报错：火山没有 task_set 时 Level:ChooseTasks 会直接断言。"""
     for location, required in ISLAND_REQUIRED_OVERRIDES.items():
@@ -792,6 +820,7 @@ def main() -> None:
         test_location_profiles,
         test_setting_location_isolation,
         test_island_vanilla_catalogs,
+        test_bwb_hides_and_reorders_patched_vanilla_settings,
         test_island_creation_defaults_are_complete,
         test_island_writer_repairs_partial_legacy_plan,
         test_island_cross_shard_reuses_verified_vanilla_template,

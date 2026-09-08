@@ -13,6 +13,7 @@ from dstools.features.world.categories import (
     localized_name,
 )
 from dstools.features.world.reader import WorldOverride, WorldPreset
+from dstools.features.world.mod_settings import get_mod_vanilla_world_patches
 
 
 @dataclass
@@ -47,11 +48,17 @@ def build_world_view_model(
         key: info for key, info in mod_settings.items()
         if not hasattr(info, "visible_in") or info.visible_in(location, is_master_world)
     }
+    hidden_vanilla, rule_order, generation_order = get_mod_vanilla_world_patches(
+        visible_mod_settings, location,
+    )
     rules_by_category: dict[str, list[WorldOverride | WorldDisplayOverride]] = {}
     generation_by_category: dict[str, list[WorldOverride | WorldDisplayOverride]] = {}
     seen_keys: set[str] = set()
 
     for override in preset.overrides:
+        if override.key in hidden_vanilla:
+            seen_keys.add(override.key)
+            continue
         category, is_rule, name = get_setting_info(
             override.key, location, visible_mod_settings,
         )
@@ -68,7 +75,7 @@ def build_world_view_model(
         # hostile_spawners 三个分类，导致 mod 世界（如海难）里这三个分类只
         # 有 mod 设置、原版设置整段缺失，跟游戏"原版+mod 混排"不一致。
         for key, (category, name) in _get_settings(location, is_rule).items():
-            if key in seen_keys:
+            if key in seen_keys or key in hidden_vanilla:
                 continue
             target.setdefault(category, []).append(
                 WorldDisplayOverride(key=key, name=localized_name(name), value="default")
@@ -88,10 +95,12 @@ def build_world_view_model(
     for items in rules_by_category.values():
         items.sort(key=lambda override: get_order_key(
             override.key, override.name, location, True, visible_mod_settings,
+            rule_order,
         ))
     for items in generation_by_category.values():
         items.sort(key=lambda override: get_order_key(
             override.key, override.name, location, False, visible_mod_settings,
+            generation_order,
         ))
 
     return WorldViewModel(

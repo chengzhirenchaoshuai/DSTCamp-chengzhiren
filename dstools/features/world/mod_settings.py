@@ -1004,6 +1004,19 @@ MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
     _BWB_ID: BENEATH_WORLD_BELOW_SETTINGS,
 }
 
+# Mod 对原版世界设置目录的补丁。深埋之下不只新增设置，还会在前端直接
+# 修改 OPTIONS：隐藏原版“大蠕虫”，并让“石虾”“洞穴蠕虫袭击”排在它
+# 新增的衍生项之前。这里按同样语义登记，已有存档中的 override 仍保留，
+# 只是不再作为可编辑项展示。
+MOD_VANILLA_WORLD_PATCHES = {
+    _BWB_ID: {
+        CAVE_LOCATION: {
+            "hidden": frozenset({"wormattacks_boss"}),
+            "rule_order": {"rocky_setting": 1, "wormattacks": 2},
+        },
+    },
+}
+
 # workshop id -> mod 显示名（中英文）。两个用途：1) 世界设置界面的"分类标
 # 题"（get_mod_categories 用，只针对登记了世界设置的 mod）；2) mod 管理页
 # 签列表的 mod 名本地化（features/mod/tab.py 的 _localize_mod_name 用）。
@@ -1051,6 +1064,26 @@ def get_mod_world_settings(
             if location is None or info.visible_in(location, is_master_world):
                 merged[key] = info
     return merged
+
+
+def get_mod_vanilla_world_patches(
+    mod_settings: dict[str, ModWorldSetting], location: str,
+) -> tuple[set[str], dict[str, float], dict[str, float]]:
+    """合并当前已启用 Mod 对原版目录的隐藏和排序补丁。"""
+    active_mod_ids = {info.mod_id for info in mod_settings.values()}
+    hidden: set[str] = set()
+    rule_order: dict[str, float] = {}
+    generation_order: dict[str, float] = {}
+    for mod_id, location_patches in MOD_VANILLA_WORLD_PATCHES.items():
+        if mod_id not in active_mod_ids:
+            continue
+        patch = location_patches.get(location)
+        if not patch:
+            continue
+        hidden.update(patch.get("hidden", ()))
+        rule_order.update(patch.get("rule_order", {}))
+        generation_order.update(patch.get("generation_order", {}))
+    return hidden, rule_order, generation_order
 
 
 def filter_mod_world_settings(

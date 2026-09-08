@@ -478,12 +478,15 @@ GEN_ITEM_ORDER = {
 
 
 def get_order_key(key: str, name: str, location: str = "forest",
-                  is_rule: bool = True, mod_settings: dict | None = None):
+                  is_rule: bool = True, mod_settings: dict | None = None,
+                  order_overrides: dict[str, float] | None = None):
     """返回设置项在分类内的排序键，完全复刻官方 customize.lua 的
     GetOptionsFromGroup 排序：有 order 的按 order 升序排前面；无 order 的按
     显示名（当前语言字符串，近似引擎 stringidsorter 的 Unicode 码点比较）排
     后面。mod 设置若登记了 order 也一并参与排序。"""
-    order = (RULE_ITEM_ORDER if is_rule else GEN_ITEM_ORDER).get(key)
+    order = order_overrides.get(key) if order_overrides else None
+    if order is None:
+        order = (RULE_ITEM_ORDER if is_rule else GEN_ITEM_ORDER).get(key)
     if order is None and mod_settings:
         info = mod_settings.get(key)
         if info is not None and getattr(info, "order", None) is not None:
