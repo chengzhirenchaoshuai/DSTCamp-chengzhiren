@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.3.6-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.3.7-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
@@ -34,9 +34,9 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 或 [Gitee 发行版](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.3.6.exe`：工具与资源全部内嵌，单文件运行。
-- `DSTCamp-1.3.6.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
-- `DSTCamp-1.3.6.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
+- `DSTCamp-1.3.7.exe`：工具与资源全部内嵌，单文件运行。
+- `DSTCamp-1.3.7.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
+- `DSTCamp-1.3.7.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
 
 源码运行：
 
@@ -99,6 +99,14 @@ python scripts/build_exe.py
 ```
 
 构建脚本在 `build/` 暂存固定工具和图标，只向 `dist/` 输出单文件 EXE、外置工具 ZIP 与 `sha256.json`。ZIP 会校验工具清单并拒绝 `build/`、`cache/`、`data/`、`dist/`、`reference/`、`security/`；两个 EXE 都会执行冻结入口与资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+
+## 1.3.7 更新
+
+- 世界设置页改为视口虚拟化渲染，提高默认可见行数并统一创建存档的世界设置布局，非活动页及时释放长图资源。
+- 适配「深埋之下」与「永不妥协」Mod：同步原版设置补丁、兼容联动设置与离线端口。
+- 适配 LuaJIT 补丁新版注入布局。
+- 优化自动更新的命名与进度显示。
+- 调整 Mod 启用数在状态栏的位置，放宽管理员名单用户 ID 校验。
 
 ## 1.3.6 更新
 

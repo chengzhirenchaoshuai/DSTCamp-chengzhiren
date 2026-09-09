@@ -459,6 +459,7 @@ class ModManagerTab:
             side=tk.LEFT,
             padx=(0, 10),
             text_anchor=tk.W,
+            color_getter=lambda: theme.TEXT,
         )
         self._workshop_update_running = False
         self._workshop_status_cache = {}

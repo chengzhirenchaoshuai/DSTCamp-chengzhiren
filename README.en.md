@@ -17,9 +17,9 @@ WeGame does not provide one-click dedicated-server launching. DSTCamp does not b
 
 Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
 
-- `DSTCamp-1.3.6.exe`: single-file build with all required resources embedded.
-- `DSTCamp-1.3.6.zip`: executable plus an external `tools/` directory; extract the complete archive before running it.
-- `DSTCamp-1.3.6.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
+- `DSTCamp-1.3.7.exe`: single-file build with all required resources embedded.
+- `DSTCamp-1.3.7.zip`: executable plus an external `tools/` directory; extract the complete archive before running it.
+- `DSTCamp-1.3.7.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
 
 To run from source:
 
@@ -67,6 +67,14 @@ python scripts/build_exe.py
 ```
 
 The build uses an explicit tool allowlist, stages resources under `build/`, rejects writable or reference directories from the ZIP, and smoke-tests both frozen executables. Real Windows GUI, Steam, frpc, and game behavior still require manual validation.
+
+## 1.3.7 highlights
+
+- Virtualized world-settings viewport rendering, raised the default visible row count, and unified the world-creation settings layout; inactive tabs release long images promptly.
+- Added compatibility with the "Deep Down" and "Never Compromise" Mods: vanilla settings patches, linked settings, and offline ports.
+- Adapted the LuaJIT patch injection layout for the new version.
+- Improved auto-update naming and progress display.
+- Adjusted the Mod-enabled-count position in the status bar and relaxed admin-list user-ID validation.
 
 ## 1.3.6 highlights
 
