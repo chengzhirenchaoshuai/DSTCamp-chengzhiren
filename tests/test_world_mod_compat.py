@@ -196,6 +196,62 @@ def test_setting_location_isolation() -> None:
     )
 
 
+def test_bwb_dstu_combination_settings() -> None:
+    bwb_id = "3360553731"
+    dstu_live_id = "2039181790"
+    dstu_beta_id = "3193922031"
+
+    assert "widow_setting" not in get_mod_world_settings({bwb_id})
+    assert "widow_bags" not in get_mod_world_settings({dstu_beta_id})
+
+    for dstu_id in (dstu_live_id, dstu_beta_id):
+        combined = get_mod_world_settings({
+            f"workshop-{bwb_id}", f"workshop-{dstu_id}",
+        })
+        assert len(combined) == 27
+        assert combined["widow_setting"].name == {
+            "zh": "黑寡妇", "en": "Hooded Widow",
+        }
+        assert combined["widow_setting"].category == "bosses"
+        assert combined["widow_setting"].values == [
+            "never", "rare", "default", "often", "always",
+        ]
+        assert combined["widow_setting"].icon_element == "widow.tex"
+        assert combined["widow_bags"].name == {
+            "zh": "寡妇茧", "en": "Silky Cocoons",
+        }
+        assert combined["widow_bags"].category == "world"
+        assert combined["widow_bags"].values == [
+            "never", "rare", "default", "often", "always",
+        ]
+        assert combined["widow_bags"].icon_element == "widow_bags.tex"
+
+    assert len(get_mod_world_settings({
+        bwb_id, dstu_live_id, dstu_beta_id,
+    })) == 27
+
+    forest = get_mod_world_settings(
+        {bwb_id, dstu_beta_id}, FOREST_LOCATION, True,
+    )
+    cave = get_mod_world_settings(
+        {bwb_id, dstu_beta_id}, CAVE_LOCATION, True,
+    )
+    assert {"widow_setting", "widow_bags"} <= set(forest)
+    assert not {"widow_setting", "widow_bags"}.intersection(cave)
+
+    creation_view = build_world_view_model(
+        WorldPreset(location=FOREST_LOCATION), forest, is_master_world=True,
+    )
+    assert any(
+        row.key == "widow_setting"
+        for row in creation_view.rules_by_category["bosses"]
+    )
+    assert any(
+        row.key == "widow_bags"
+        for row in creation_view.rules_by_category["world"]
+    )
+
+
 def test_island_vanilla_catalogs() -> None:
     shipwrecked = {
         **resolve_vanilla_settings(SHIPWRECKED_LOCATION, True),
@@ -872,6 +928,7 @@ def main() -> None:
     tests = (
         test_location_profiles,
         test_setting_location_isolation,
+        test_bwb_dstu_combination_settings,
         test_island_vanilla_catalogs,
         test_bwb_hides_and_reorders_patched_vanilla_settings,
         test_island_creation_defaults_are_complete,

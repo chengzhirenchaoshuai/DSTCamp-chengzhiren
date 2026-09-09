@@ -847,8 +847,8 @@ _set_verified_scope(
 #     customizations 表；init_worldgen.lua 逐条调用 AddCustomizeItem。
 #   - desc 为 frequency/yesno/enableddisabled/season_length 时使用游戏对应
 #     描述表的真实值；nightmareclock/cave_season_start 使用 Mod 自己声明
-#     的 data 顺序。DSTU 联动才动态加入的 widow_setting/widow_bags 不在
-#     仅启用本 Mod 时注册，因此不静态伪造。
+#     的 data 顺序。widow_setting/widow_bags 只在同时启用 DSTU 正式版或
+#     测试版时动态加入，见 BENEATH_WORLD_BELOW_DSTU_SETTINGS。
 #   - 中英文名取自 scripts/wormstrings.lua、wormstrings_en.lua 的
 #     RegisterWorldSettingStrings；图标元素取自 Mod 自带图集 XML。
 _BWB_ID = "3360553731"
@@ -994,6 +994,22 @@ BENEATH_WORLD_BELOW_SETTINGS: dict[str, ModWorldSetting] = {
     ),
 }
 
+# 深埋之下通过 KnownModIndex:IsModEnabledAny() 同时兼容永不妥协正式版与
+# 测试版；只有两边同时启用时才把这两项插入 customizations 表。
+_BWB_DSTU_IDS = frozenset({"2039181790", "3193922031"})
+BENEATH_WORLD_BELOW_DSTU_SETTINGS: dict[str, ModWorldSetting] = {
+    "widow_setting": ModWorldSetting(
+        "widow_setting", True, {"zh": "黑寡妇", "en": "Hooded Widow"},
+        _BWB_FREQUENCY, _BWB_ID, "widow.tex",
+        locations=frozenset({FOREST_LOCATION}), group="giants",
+    ),
+    "widow_bags": ModWorldSetting(
+        "widow_bags", True, {"zh": "寡妇茧", "en": "Silky Cocoons"},
+        _BWB_FREQUENCY, _BWB_ID, "widow_bags.tex",
+        locations=frozenset({FOREST_LOCATION}), group="misc",
+    ),
+}
+
 
 # workshop id（不带 "workshop-" 前缀）-> 该 mod 贡献的世界设置登记表。
 MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
@@ -1061,6 +1077,10 @@ def get_mod_world_settings(
         if mod_id not in normalized:
             continue
         for key, info in settings.items():
+            if location is None or info.visible_in(location, is_master_world):
+                merged[key] = info
+    if _BWB_ID in normalized and normalized.intersection(_BWB_DSTU_IDS):
+        for key, info in BENEATH_WORLD_BELOW_DSTU_SETTINGS.items():
             if location is None or info.visible_in(location, is_master_world):
                 merged[key] = info
     return merged
