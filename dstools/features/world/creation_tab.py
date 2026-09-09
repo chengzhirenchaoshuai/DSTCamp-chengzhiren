@@ -1319,6 +1319,7 @@ class WorldCreationTab:
                 mod_settings=self._active_mod_settings,
                 mod_icons=self._mod_world_icons,
                 is_rule=is_rule,
+                compact=True,
             )
             panel.set_image(img, hits, keep_scroll=True)
 

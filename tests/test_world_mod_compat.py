@@ -469,8 +469,10 @@ def test_world_panel_compact_mode_shows_three_rows_in_default_viewport() -> None
 
     rules_source = inspect.getsource(WorldSettingsTab._render_rules)
     gen_source = inspect.getsource(WorldSettingsTab._render_gen)
+    creation_source = inspect.getsource(WorldCreationTab._render)
     assert rules_source.count("compact=True") == 2
     assert gen_source.count("compact=True") == 2
+    assert creation_source.count("compact=True") == 1
 
 
 class _StatusProbe:
