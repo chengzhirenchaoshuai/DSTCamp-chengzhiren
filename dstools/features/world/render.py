@@ -52,6 +52,14 @@ REF_WIDTH = BASE_REF_WIDTH  # 首次真实测量之前使用的默认/初始宽�
 
 PAD_X = 10
 ICON_SIZE = 110
+# 主页世界设置的视口高度明显小于创建向导；继续按宽度把图标放大时，
+# 1600×900 默认窗口扣掉分类标题后只能完整看到约两行。主页通过
+# ``compact=True`` 使用这组紧凑尺寸，创建向导仍保留上面的原尺寸。
+COMPACT_ICON_SIZE = 74
+COMPACT_BLOCK_PAD_V = 8
+COMPACT_ROW_GAP = 12
+COMPACT_CAT_HEADER_H = 38
+COMPACT_CAT_HEADER_ITEM_GAP = 12
 # 两行背景卡片之间真正看得见的空隙——固定像素值，不随窗口宽度缩放。
 # **不是直接加给 row_h 的量**：真正吃掉这段间隙的是 block_pad_v（会随
 # s 缩放），row_gap 才是拼进 row_h 时真正要用的量（ROW_GAP + 2 倍当前
@@ -337,15 +345,33 @@ def _wrap_text_to_width(draw, text: str, font, max_width: float) -> str:
     return "\n".join(lines)
 
 
-def _world_panel_layout(categories, grouped, ref_width=None):
-    """计算完整内容高度和各分类的绝对纵向坐标，不创建像图。"""
+def _world_panel_metrics(ref_width, compact=False):
+    """返回渲染与高度计算共用的纵向尺寸，避免两条路径发生偏差。"""
     rw = int(ref_width) if ref_width else BASE_REF_WIDTH
     s = rw / BASE_REF_WIDTH
+    if compact:
+        icon_size = max(14, round(COMPACT_ICON_SIZE * s))
+        block_pad_v = COMPACT_BLOCK_PAD_V * s
+        row_gap = COMPACT_ROW_GAP + 2 * block_pad_v
+        cat_header_h = COMPACT_CAT_HEADER_H * s
+        cat_header_item_gap = COMPACT_CAT_HEADER_ITEM_GAP + block_pad_v
+    else:
+        icon_size = max(14, round(ICON_SIZE * s))
+        block_pad_v = 14 * s
+        row_gap = ROW_GAP + 2 * block_pad_v
+        cat_header_h = CAT_HEADER_H * s
+        cat_header_item_gap = CAT_HEADER_ITEM_GAP + block_pad_v
+    return s, icon_size, block_pad_v, row_gap, cat_header_h, cat_header_item_gap
+
+
+def _world_panel_layout(categories, grouped, ref_width=None, compact=False):
+    """计算完整内容高度和各分类的绝对纵向坐标，不创建像图。"""
+    rw = int(ref_width) if ref_width else BASE_REF_WIDTH
+    s, icon_size, _block_pad_v, row_gap, cat_header_h, cat_header_item_gap = (
+        _world_panel_metrics(rw, compact)
+    )
+    row_h = icon_size + row_gap
     pad_x = PAD_X * s
-    icon_size = max(14, round(ICON_SIZE * s))
-    row_h = icon_size + ROW_GAP + 2 * 14 * s
-    cat_header_h = CAT_HEADER_H * s
-    cat_header_item_gap = CAT_HEADER_ITEM_GAP + 14 * s
 
     layouts = []
     y = pad_x
@@ -365,15 +391,17 @@ def _world_panel_layout(categories, grouped, ref_width=None):
     return max(int(y), int(40 * s)), layouts
 
 
-def world_panel_height(categories, grouped, ref_width=None) -> int:
+def world_panel_height(categories, grouped, ref_width=None, compact=False) -> int:
     """返回世界设置面板的完整高度，不分配完整长图。"""
-    return _world_panel_layout(categories, grouped, ref_width)[0]
+    return _world_panel_layout(
+        categories, grouped, ref_width, compact=compact,
+    )[0]
 
 
 def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
                         ref_width=None, flash=None, location="forest", mod_settings=None,
                         mod_icons=None, is_rule=True, viewport_y=0,
-                        viewport_height=None):
+                        viewport_height=None, compact=False):
     """把一个分类面板的完整内容或指定视口渲染成 PIL 图片。
 
     参数：
@@ -396,31 +424,31 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
             get_pil_icon()；一个 key 两边都查不到就退回纯色块占位。
         viewport_y/viewport_height: 只渲染这段纵向参照坐标；点击区域仍使用
             完整面板坐标，供 ``ImageScrollPanel`` 做命中换算。
+        compact: 主页使用的紧凑布局；缩小图标及纵向卡片尺寸，创建向导默认
+            保持原来的大图标布局。
 
     返回：
         (PIL.Image, hit_regions)，hit_regions 是完整面板参照坐标系下的
         (x1, y1, x2, y2, callback) 元组列表
     """
     rw = int(ref_width) if ref_width else BASE_REF_WIDTH
-    s = rw / BASE_REF_WIDTH
+    s, icon_size, block_pad_v, row_gap, cat_header_h, cat_header_item_gap = (
+        _world_panel_metrics(rw, compact)
+    )
 
     pad_x = PAD_X * s
-    icon_size = max(14, round(ICON_SIZE * s))
-    cat_header_h = CAT_HEADER_H * s
     cols = COLS
     content_margin = CONTENT_MARGIN * s
     #
     # block_pad_h/v：每个设置项自己的图标/内容跟它自己背景卡片之间的内边
     # 距（提到这里算，以前是在逐项循环内部现算的——现在这一层作用域也要
     # 用到，见下面 col_area_x0）。
-    block_pad_v = 14 * s
     block_pad_h = 16 * s
     # 真正分配给"行间距"的量：ROW_GAP（不缩放，纯给人看的空隙）+
     # 2*block_pad_v（会缩放，是这一行和下一行背景卡片各自上下要吃掉的内
     # 边距）。见上面 ROW_GAP 定义处的说明——不加这一份补偿的话，图标越大
     # （窗口越宽）block_pad_v 吃掉的越多，最终会啃光这个固定间隙，同一列
     # 里相邻两行的背景卡片就连成一片。
-    row_gap = ROW_GAP + 2 * block_pad_v
     row_h = icon_size + row_gap
     # 真正分配给"列间距"的量：COL_GAP（不缩放，纯给人看的空隙）+
     # block_pad_h（会缩放，是下一列背景卡片自己左边要吃掉的内边距）。两
@@ -443,7 +471,9 @@ def render_world_panel(categories, grouped, cat_colors, editable, on_click=None,
     name_font = get_font(round(16 * s))
     val_font = get_font(round(16 * s))
     hdr_font = get_font(round(22 * s))
-    total_h, category_layouts = _world_panel_layout(categories, grouped, rw)
+    total_h, category_layouts = _world_panel_layout(
+        categories, grouped, rw, compact=compact,
+    )
     requested_y = max(0, int(viewport_y))
     requested_h = total_h if viewport_height is None else max(1, int(viewport_height))
     requested_bottom = requested_y + requested_h

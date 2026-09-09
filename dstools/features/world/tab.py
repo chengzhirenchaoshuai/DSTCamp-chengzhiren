@@ -318,12 +318,15 @@ class WorldSettingsTab:
                 location=loc, mod_settings=self._mod_settings,
                 mod_icons=self._mod_icons, is_rule=True,
                 viewport_y=view_y, viewport_height=view_height,
+                compact=True,
             )
             return img, hits, []
 
         self._rules_panel.set_virtual_image(
             ref_width,
-            world_panel_height(self._rules_cats, self._rules_by_cat, ref_width),
+            world_panel_height(
+                self._rules_cats, self._rules_by_cat, ref_width, compact=True,
+            ),
             render_viewport,
             keep_scroll=True,
         )
@@ -348,12 +351,15 @@ class WorldSettingsTab:
                 editable=False, ref_width=ref_width, location=loc,
                 mod_settings=self._mod_settings, mod_icons=self._mod_icons,
                 is_rule=False, viewport_y=view_y, viewport_height=view_height,
+                compact=True,
             )
             return img, hits, []
 
         self._gen_panel.set_virtual_image(
             ref_width,
-            world_panel_height(self._gen_cats, self._gen_by_cat, ref_width),
+            world_panel_height(
+                self._gen_cats, self._gen_by_cat, ref_width, compact=True,
+            ),
             render_viewport,
             keep_scroll=True,
         )

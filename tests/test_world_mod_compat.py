@@ -5,6 +5,7 @@
 location_profiles.py、catalog_resolver.py 和 mod_settings.py 的登记表中。
 """
 
+import inspect
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -50,6 +51,7 @@ from dstools.features.world.location_profiles import (  # noqa: E402
 from dstools.features.world.mod_settings import get_mod_world_settings  # noqa: E402
 from dstools.features.world.icons import get_pil_icon  # noqa: E402
 from dstools.features.world.render import (  # noqa: E402
+    _world_panel_layout,
     _wrap_text_to_width,
     render_world_panel,
     world_panel_height,
@@ -420,6 +422,55 @@ def test_world_panel_viewport_matches_full_image_crop() -> None:
     assert all(y2 >= view_y and y1 <= view_y + view_height for _, y1, _, y2, _ in hits)
     hits[0][4]()
     assert clicked
+
+
+def test_world_panel_compact_mode_shows_three_rows_in_default_viewport() -> None:
+    overrides = [
+        WorldOverride("autumn", "default", name=f"季节设置 {index}")
+        for index in range(12)
+    ]
+    categories = [("seasons", "季节")]
+    grouped = {"seasons": overrides}
+    viewport_height = 428
+    ref_width = 1475
+
+    _, standard = _world_panel_layout(categories, grouped, ref_width)
+    _, compact = _world_panel_layout(
+        categories, grouped, ref_width, compact=True,
+    )
+    standard_items_top = standard[0][4]
+    compact_items_top = compact[0][4]
+    standard_row_h = (standard[0][5] - standard_items_top) / 4
+    compact_row_h = (compact[0][5] - compact_items_top) / 4
+
+    assert standard_items_top + 3 * standard_row_h > viewport_height
+    assert compact_items_top + 3 * compact_row_h <= viewport_height
+
+    full, _ = render_world_panel(
+        categories,
+        grouped,
+        {"seasons": "#8DB97D"},
+        editable=False,
+        ref_width=ref_width,
+        compact=True,
+    )
+    viewport, _ = render_world_panel(
+        categories,
+        grouped,
+        {"seasons": "#8DB97D"},
+        editable=False,
+        ref_width=ref_width,
+        viewport_y=0,
+        viewport_height=viewport_height,
+        compact=True,
+    )
+    expected = full.crop((0, 0, ref_width, viewport_height))
+    assert ImageChops.difference(viewport, expected).getbbox() is None
+
+    rules_source = inspect.getsource(WorldSettingsTab._render_rules)
+    gen_source = inspect.getsource(WorldSettingsTab._render_gen)
+    assert rules_source.count("compact=True") == 2
+    assert gen_source.count("compact=True") == 2
 
 
 class _StatusProbe:
@@ -829,6 +880,7 @@ def main() -> None:
         test_world_setting_icon_rendering,
         test_world_setting_name_wrap_keeps_full_text,
         test_world_panel_viewport_matches_full_image_crop,
+        test_world_panel_compact_mode_shows_three_rows_in_default_viewport,
         test_creation_dependency_confirmation,
         test_main_mod_dependency_confirmation,
         test_creation_error_dialog_uses_wizard_parent,
