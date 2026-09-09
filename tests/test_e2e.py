@@ -854,11 +854,12 @@ def test_admin_manager():
         print("  PASS: Missing adminlist.txt reads as empty list")
 
         assert _is_valid_dst_user_id("KU_aaaaaaaa")
+        assert _is_valid_dst_user_id("KU_D_MGSTis")
         assert _is_valid_dst_user_id("OU_76561198000000000")
         assert not _is_valid_dst_user_id("ou_76561198000000000")
         assert not _is_valid_dst_user_id("XX_aaaaaaaa")
-        assert not _is_valid_dst_user_id("OU_bad-id")
-        print("  PASS: KU_ and OU_ IDs accepted; invalid prefixes/characters rejected")
+        assert _is_valid_dst_user_id("OU_bad-id")
+        print("  PASS: KU_ and OU_ prefixes accepted; other prefixes rejected")
 
         assert add_admin(path, "KU_aaaaaaaa") is True
         assert add_admin(path, "OU_76561198000000000") is True

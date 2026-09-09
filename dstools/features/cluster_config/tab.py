@@ -2,7 +2,6 @@
 黑名单、服务器 Token。
 """
 
-import re
 import tkinter as tk
 from tkinter import font as tkfont, ttk
 
@@ -52,14 +51,9 @@ _SUB_FONT_SIZE = 10
 # 的完整令牌长期占位；横向空间优先留给“类型”和“占用状态”。
 _GLOBAL_TOKEN_COLUMN_WIDTH = 320
 
-# DST 权限名单中的用户 ID：在线认证用户使用 KU_，离线/LAN 用户使用 OU_。
-# 后半段只做宽松的字母数字与长度检查，用于拦截明显手误；OU_ 常见为较长
-# 的平台数字 ID，因此上限不能沿用原来只按 KU_ 样本设置的 16 位。
-_DST_USER_ID_RE = re.compile(r"^(?:KU|OU)_[A-Za-z0-9]{6,20}$")
-
-
 def _is_valid_dst_user_id(value: str) -> bool:
-    return bool(_DST_USER_ID_RE.match(value.strip()))
+    """只校验 DST 用户 ID 的前三位前缀，保留游戏实际 ID 的完整格式。"""
+    return value.strip()[:3] in ("KU_", "OU_")
 
 
 class _TextVar:
