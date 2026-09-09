@@ -1,6 +1,7 @@
 """dstools 端到端验证测试。"""
 
 import contextlib
+import hashlib
 import json
 import os
 import shutil
@@ -118,6 +119,7 @@ from dstools.features.local_service.luajit_injector import (
     needs_regeneration,
     plan_install,
     read_marker,
+    write_injector_path_marker,
     regenerate,
     resolve_launch_bin64_dir,
     write_marker,
@@ -2830,8 +2832,8 @@ def _fake_workshop_dir(
     模拟真实"专用服务器和创意工坊内容同属一个 Steam 库"的目录关系（
     needs_regeneration() 的组合测试需要这个前提）。
 
-    with_injector_files=True 时在 WORKSHOP_ID 对应的文件夹下现造一份假
-    的 bin64/windows/ 注入文件，够 _injector_source_dir()/apply_install()
+    with_injector_files=True 时按新版布局现造一份假注入包：Winmm.dll 在
+    bin64/windows/，Injector.dll、deps/ 留在 Mod 根目录，够安装与更新
     的测试用（不再涉及 zip/下载——作者确认过注入文件直接取自订阅内容，
     见 luajit_injector.py 顶部说明）。mod_version 给 WORKSHOP_ID 这个物
     品的 modinfo.lua 写一行 `version = "<mod_version>"`（真机验证过真实
@@ -2855,8 +2857,8 @@ def _fake_workshop_dir(
             bin64_win = d / "bin64" / "windows"
             bin64_win.mkdir(parents=True, exist_ok=True)
             (bin64_win / "Winmm.dll").write_bytes(b"fake winmm")
-            (bin64_win / "Injector.dll").write_bytes(b"fake injector")
-            deps = bin64_win / "deps"
+            (d / "Injector.dll").write_bytes(b"fake injector")
+            deps = d / "deps"
             deps.mkdir(parents=True, exist_ok=True)
             (deps / "lua_helper.dll").write_bytes(b"fake nested dependency")
 
@@ -2906,7 +2908,11 @@ def test_luajit_injector():
 
             assert detect_state(bin64) is InjectorState.NOT_INSTALLED
             luajit_dir.mkdir(parents=True)
-            (luajit_dir / "Injector.dll").write_bytes(b"x")
+            (luajit_dir / "Winmm.dll").write_bytes(b"x")
+            injector = install_dir / "fake-mod" / "Injector.dll"
+            injector.parent.mkdir()
+            injector.write_bytes(b"x")
+            write_injector_path_marker(install_dir, injector)
             assert detect_state(bin64) is InjectorState.DISABLED_LEFTOVER, (
                 "副本存在但还没启用，应该是已关闭残留"
             )
@@ -2925,7 +2931,11 @@ def test_luajit_injector():
             )
             luajit_dir = get_luajit_dir(install_dir)
             luajit_dir.mkdir(parents=True)
-            (luajit_dir / "Injector.dll").write_bytes(b"x")
+            (luajit_dir / "Winmm.dll").write_bytes(b"x")
+            injector = install_dir / "fake-mod" / "Injector.dll"
+            injector.parent.mkdir()
+            injector.write_bytes(b"x")
+            write_injector_path_marker(install_dir, injector)
             assert resolve_launch_bin64_dir(install_dir) == luajit_dir, (
                 "已启用且副本有效应该返回副本目录，给 ServerProcess 用来覆盖启动目录"
             )
@@ -2940,7 +2950,12 @@ def test_luajit_injector():
             # 落盘的 version.json 里 DST_version 应该是不带引号的数字（用户
             # 指定的格式），luajit_version 是语义化版本号字符串。
             raw = json.loads((d / "version.json").read_text(encoding="utf-8"))
-            assert raw == {"DST_version": 123, "luajit_version": "1.0.0"}, (
+            assert raw == {
+                "DST_version": 123,
+                "luajit_version": "1.0.0",
+                "layout_version": 1,
+                "trigger_sha256": "",
+            }, (
                 f"version.json 落盘格式不对: {raw}"
             )
         print(
@@ -2951,31 +2966,58 @@ def test_luajit_injector():
             root = Path(tmp)
             install_dir = _make_fake_install_dir(root, build_id="111")
             set_luajit_enabled(False)  # 上一个子测试可能留下 True，这里显式复位
-            with _fake_workshop_dir(root, [WORKSHOP_ID], mod_version="1.10.1"):
+            with _fake_workshop_dir(
+                root, [WORKSHOP_ID], with_injector_files=True, mod_version="1.10.1"
+            ) as workshop_dir:
                 assert needs_regeneration(install_dir) is False, "未启用应该是 False"
                 set_luajit_enabled(True)
-                assert needs_regeneration(install_dir) is False, (
-                    "没有标记（还没成功装过）应该是 False"
+                assert needs_regeneration(install_dir) is True, (
+                    "已启用但缺少新版运行时和标记，应该触发修复"
                 )
 
                 luajit_dir = get_luajit_dir(install_dir)
                 luajit_dir.mkdir(parents=True)
+                (luajit_dir / "Winmm.dll").write_bytes(b"fake winmm")
+                injector = workshop_dir / WORKSHOP_ID / "Injector.dll"
+                write_injector_path_marker(install_dir, injector)
+                trigger_hash = hashlib.sha256(b"fake winmm").hexdigest()
                 write_marker(
-                    luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.1")
+                    luajit_dir, LuajitMarker(
+                        DST_version="111",
+                        luajit_version="1.10.1",
+                        layout_version=2,
+                        trigger_sha256=trigger_hash,
+                    )
                 )
                 assert needs_regeneration(install_dir) is False, (
                     "游戏版本、配套 Mod 版本都一致，不需要重新生成"
                 )
 
+                legacy_injector = (
+                    workshop_dir / WORKSHOP_ID / "bin64" / "windows" / "Injector.dll"
+                )
+                legacy_injector.write_bytes(b"legacy injector")
+                write_injector_path_marker(install_dir, legacy_injector)
+                assert needs_regeneration(install_dir) is True, (
+                    "作者移动 Injector.dll 后应刷新路径标记"
+                )
+                write_injector_path_marker(install_dir, injector)
+
                 write_marker(
-                    luajit_dir, LuajitMarker(DST_version="000", luajit_version="1.10.1")
+                    luajit_dir, LuajitMarker(
+                        DST_version="000", luajit_version="1.10.1",
+                        layout_version=2, trigger_sha256=trigger_hash,
+                    )
                 )
                 assert needs_regeneration(install_dir) is True, (
                     "游戏版本不一致（被更新过），需要重新生成"
                 )
 
                 write_marker(
-                    luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.0")
+                    luajit_dir, LuajitMarker(
+                        DST_version="111", luajit_version="1.10.0",
+                        layout_version=2, trigger_sha256=trigger_hash,
+                    )
                 )
                 assert needs_regeneration(install_dir) is True, (
                     "配套 Mod 版本不一致（作者发布了新版本），也需要重新生成"
@@ -2992,12 +3034,17 @@ def test_luajit_injector():
             (bin64 / "game.exe").write_bytes(
                 b"fake game exe"
             )  # 模拟真实 bin64 里的游戏文件
+            (bin64 / "Injector.dll").write_bytes(b"manually installed legacy injector")
 
             with _fake_workshop_dir(
                 root, [WORKSHOP_ID], with_injector_files=True, mod_version="1.10.1"
             ):
                 luajit_dir = get_luajit_dir(install_dir)
                 luajit_dir.mkdir(parents=True)
+                (luajit_dir / "Injector.dll").write_bytes(b"legacy injector")
+                legacy_deps = luajit_dir / "deps"
+                legacy_deps.mkdir()
+                (legacy_deps / "old.dll").write_bytes(b"legacy dependency")
                 write_marker(
                     luajit_dir, LuajitMarker(DST_version="111", luajit_version="1.10.0")
                 )
@@ -3010,10 +3057,18 @@ def test_luajit_injector():
                 assert (luajit_dir / "Winmm.dll").read_bytes() == b"fake winmm", (
                     "注入文件应该直接取自订阅内容，不是重新联网下载"
                 )
-                assert (
-                    luajit_dir / "deps" / "lua_helper.dll"
-                ).read_bytes() == b"fake nested dependency", (
-                    "注入包里的 deps 子目录和 DLL 也必须递归复制"
+                assert not (luajit_dir / "Injector.dll").exists(), (
+                    "即使真实 bin64 曾手动安装旧载荷，新副本也不应保留 Injector.dll"
+                )
+                assert not (luajit_dir / "deps").exists(), (
+                    "迁移时应清掉旧版复制到副本中的 deps"
+                )
+                path_marker = (
+                    install_dir / "data" / "unsafedata" / "ds_luajit_injector.path"
+                )
+                marker_target = Path(path_marker.read_text(encoding="utf-8").strip())
+                assert marker_target.read_bytes() == b"fake injector", (
+                    "路径标记应指向创意工坊 Mod 目录中的 Injector.dll"
                 )
                 new_marker = read_marker(luajit_dir)
                 assert new_marker.DST_version == "222", (
@@ -3022,6 +3077,10 @@ def test_luajit_injector():
                 assert new_marker.luajit_version == "1.10.1", (
                     "luajit_version 也应该更新成当前配套 Mod 的版本"
                 )
+                assert new_marker.layout_version == 2
+                assert new_marker.trigger_sha256 == hashlib.sha256(
+                    b"fake winmm"
+                ).hexdigest()
                 print(
                     "  PASS: regenerate() 用当前配套 Mod 内容重新生成副本，标记同步更新"
                 )
@@ -3049,6 +3108,27 @@ def test_luajit_injector():
                     print(
                         "  PASS: regenerate() 只有配套 Mod 版本变了时选择性更新，不重新复制 bin64"
                     )
+
+                # 作者有时只更新二进制而不改 modinfo.lua 版本号；用壳文件
+                # 哈希检测这种更新，并继续走不重抄 bin64 的轻量路径。
+                source_trigger = (
+                    root / "steamapps" / "workshop" / "content" / "322330"
+                    / WORKSHOP_ID / "bin64" / "windows" / "Winmm.dll"
+                )
+                source_trigger.write_bytes(b"updated winmm")
+                assert needs_regeneration(install_dir) is True, (
+                    "Winmm.dll 内容变化但 Mod 版本不变时也应检测到更新"
+                )
+                result3 = regenerate(bin64)
+                assert result3.ok is True, f"应该成功: {result3.errors}"
+                assert (luajit_dir / "existing_bin64_marker.txt").exists(), (
+                    "仅 Winmm.dll 变化时不应重新复制 bin64"
+                )
+                assert (luajit_dir / "Winmm.dll").read_bytes() == b"updated winmm"
+                assert needs_regeneration(install_dir) is False
+                print(
+                    "  PASS: regenerate() 可检测未改 Mod 版本号的 Winmm.dll 更新"
+                )
 
             # 没有订阅内容时应该优雅失败，不联网、不崩溃——必须用全新的
             # workshop 根目录，不能复用上面那个 root：_fake_workshop_dir()
