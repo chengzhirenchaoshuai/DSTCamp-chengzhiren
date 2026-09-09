@@ -7,7 +7,7 @@ $owner = 'orange-blade'
 $repo = 'DSTCamp-chengzhiren'
 $githubRepo = 'chengzhirenchaoshuai/DSTCamp-chengzhiren'
 $keepCount = 3
-$tokenPath = Join-Path $env:APPDATA 'DSTCamp\security\gitee_token.txt'
+$tokenPath = Join-Path $PSScriptRoot '..\reference\gitee_token.txt'
 
 if (-not (Test-Path -LiteralPath $tokenPath -PathType Leaf)) {
     throw "未找到 Gitee 令牌文件：$tokenPath"

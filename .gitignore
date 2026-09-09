@@ -9,8 +9,8 @@ dist/
 *.spec
 .ruff_cache/
 
-# 游戏脚本参考（约 1.1GB / 5000+ 文件，仅本地核对世界设置取值用，不进仓库）
-reference/scripts-260814/
+# 开发核对资料（脚本参考、token、二进制等），仅本地使用，不进仓库
+reference/
 
 # 防止便携目录或手工迁移的数据误入仓库
 cache/
