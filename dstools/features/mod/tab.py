@@ -4650,47 +4650,20 @@ class _ApplyReportDialog:
 
 
 _OPTION_DESC_WRAP_PX = 900
-_OPTION_DESC_MAX_LINES = 2
-
-
-def _hover_line_count(text: str, font: tkfont.Font, wrap_px: int) -> int:
-    """按像素宽度估算 `text` 用 `font` 在 `wrap_px` 自动换行宽度下会占几
-    行——只用来决定 `_pack_option_desc()` 该给 1 行还是 2 行高度，不需要
-    跟 Tk 内部真正的分词换行算法逐字节对齐，纯按宽度整除近似即可（这批
-    hover 文本几乎全是中文，本来就没有单词边界可言，逐字符宽度累加已经
-    很接近 Tk 自己的换行结果）。显式 `\\n` 换行按独立段落各自估算后相
-    加，空段落算 1 行（保留空行本身占的高度）。"""
-    total = 0
-    for para in text.split("\n"):
-        if not para:
-            total += 1
-            continue
-        width = font.measure(para)
-        total += max(1, -(-width // wrap_px))  # 向上取整
-    return max(total, 1)
 
 
 def _pack_option_desc(parent, hover_text: str) -> None:
     """在设置行下方常驻显示这一项的说明文字（原来靠鼠标悬停"ⓘ"图标才弹
-    出，应用户要求改成直接显示）。按实际需要的行数给高度（最多 2 行，
-    `ttk.Label` 的 height 按文本行数算，不是像素）——只有 1 行的说明不
-    再多留一行空白，真要用到第 2 行（不少 mod 的 hover 文本本身带 \n
-    换行）时才占那份高度；超过 2 行的部分照样会被裁掉，不做省略号/展开
-    之类的额外交互。`ModConfigDialog.__init__`（下拉框行）和
+    出，应用户要求改成直接显示）。不指定固定 `height`，让 Tk 根据文本、
+    显式换行和 `wraplength` 自动计算请求高度：单行说明只占一行，多行说明
+    则完整撑开，不再裁到两行。`ModConfigDialog.__init__`（下拉框行）和
     `_render_raw_value_editor`（Configs Extended 集合/数组/文本行）共用
-    这一个函数，改字号/行数上限只需要改这一处。
+    这一个函数，改字号或换行宽度只需要改这一处。
 
-    用 `tk.Label` 而不是 `ttk.Label`——`height`（按文本行数，不是像素）
-    只有原生 `tk.Label` 支持，`ttk.Label` 传这个参数会直接抛
-    `TclError: unknown option "-height"`；因此背景色不能像 ttk 控件那样
-    自动跟主题联动，要显式给成当前行所在容器的背景色（`row`/`top` 这类
-    `ttk.Frame` 没设自定义 style，用的是 `theme.py` 里 `TFrame` 的全局
-    背景 `BG_SOFT`）。"""
+    用 `tk.Label` 是为了显式控制与设置行一致的背景色；`row`/`top` 这类
+    `ttk.Frame` 没设自定义 style，使用的是 `theme.py` 里 `TFrame` 的全局
+    背景 `BG_SOFT`。"""
     desc_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
-    lines = min(
-        _OPTION_DESC_MAX_LINES,
-        _hover_line_count(hover_text, desc_font, _OPTION_DESC_WRAP_PX),
-    )
     tk.Label(
         parent,
         text=hover_text,
@@ -4700,7 +4673,6 @@ def _pack_option_desc(parent, hover_text: str) -> None:
         justify=tk.LEFT,
         anchor=tk.NW,
         wraplength=_OPTION_DESC_WRAP_PX,
-        height=lines,
     ).pack(fill=tk.X, anchor=tk.W, pady=(4, 0))
 
 
@@ -4873,8 +4845,7 @@ class ModConfigDialog:
         # 下面的 NAME_W_PX 截断），这样每一行的顶部那条线都保持跟世界
         # 设置一样统一的网格。opt.hover 本身不再是只在悬停时弹出的
         # Tooltip 了——改成通过 _pack_option_desc() 内联显示在那条顶部
-        # 线下面，固定预留 2 行高度，让有/没有 hover 的行仍然大体对齐
-        # （见该函数的 docstring）。
+        # 线下面，高度由说明文字的实际换行数决定（见该函数的 docstring）。
         from dstools.shared.gui.tooltip import Tooltip
 
         NAME_W_PX = 520

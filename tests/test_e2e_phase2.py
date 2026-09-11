@@ -114,6 +114,37 @@ def test_gui_imports():
     print("  PASS: GUI imports OK")
 
 
+def test_mod_option_description_uses_natural_height():
+    """Mod 配置注释应按实际行数撑开，不能再固定裁成两行。"""
+    from dstools.features.mod.tab import _pack_option_desc
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        single_holder = tk.Frame(root)
+        multi_holder = tk.Frame(root)
+        wrapped_holder = tk.Frame(root)
+        single_holder.pack()
+        multi_holder.pack()
+        wrapped_holder.pack()
+        _pack_option_desc(single_holder, "单行注释")
+        _pack_option_desc(multi_holder, "第一行\n第二行\n第三行\n第四行")
+        _pack_option_desc(wrapped_holder, "这是一段需要自动换行的长注释。" * 40)
+        root.update_idletasks()
+
+        single_label = single_holder.winfo_children()[0]
+        multi_label = multi_holder.winfo_children()[0]
+        wrapped_label = wrapped_holder.winfo_children()[0]
+        assert int(single_label.cget("height")) == 0
+        assert int(multi_label.cget("height")) == 0
+        assert int(wrapped_label.cget("height")) == 0
+        assert multi_label.winfo_reqheight() > single_label.winfo_reqheight() * 2
+        assert wrapped_label.winfo_reqheight() > single_label.winfo_reqheight() * 2
+    finally:
+        root.destroy()
+    print("  PASS: Mod 配置注释按实际行数自适应并完整显示")
+
+
 def test_global_token_selection_applies_to_current_cluster():
     """全局令牌窗口的“使用”结果应写入当前存档，而不只是关闭窗口。"""
     from dstools.features.cluster_config import tab as cluster_tab
@@ -785,6 +816,7 @@ def main():
         test_i18n_basic,
         test_exe_entry_imports,
         test_gui_imports,
+        test_mod_option_description_uses_natural_height,
         test_global_token_selection_applies_to_current_cluster,
         test_global_token_dialog_uses_compact_masked_column,
         test_global_token_cell_click_copies_exact_token,
