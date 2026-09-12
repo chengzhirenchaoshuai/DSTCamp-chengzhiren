@@ -152,6 +152,7 @@ def test_mod_config_loading_feedback_is_delayed_and_animated():
     from dstools.features.mod.tab import (
         ModConfigDialog,
         ModManagerTab,
+        _CONFIG_LOADING_STEP_SECONDS,
         _ModConfigLoadingFeedback,
     )
 
@@ -179,6 +180,7 @@ def test_mod_config_loading_feedback_is_delayed_and_animated():
         assert abs(popup_center_y - parent_center_y) <= 10
         first_text = feedback.message_var.get()
         assert first_text == f"{t('mod.config_loading')}..."
+        assert _CONFIG_LOADING_STEP_SECONDS == 0.35
         feedback.last_step_at = 0
         feedback.pulse()
         assert feedback.message_var.get() != first_text
