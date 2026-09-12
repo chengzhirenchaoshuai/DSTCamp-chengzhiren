@@ -146,7 +146,7 @@ def test_mod_option_description_uses_natural_height():
 
 
 def test_mod_config_loading_feedback_is_delayed_and_animated():
-    """快速配置不闪等待窗，慢配置显示可推进的等待条。"""
+    """快速配置不闪等待窗，慢配置显示可推进的文字动画。"""
     import inspect
 
     from dstools.features.mod.tab import (
@@ -165,8 +165,10 @@ def test_mod_config_loading_feedback_is_delayed_and_animated():
 
         feedback.started_at -= 61
         feedback.pulse()
-        assert feedback.win is not None and feedback.progress is not None
+        assert feedback.win is not None and feedback.message_var is not None
+        assert feedback.message_label is not None
         assert feedback.win.winfo_exists()
+        assert feedback.message_label.winfo_ismapped()
         # geometry() 定位的是窗口外框左上角，而父窗口参考值是客户区坐标；
         # 不能把子窗口的 winfo_root*（会再加一次标题栏偏移）混进来比较。
         popup_center_x = feedback.win.winfo_x() + feedback.win.winfo_width() / 2
@@ -175,10 +177,12 @@ def test_mod_config_loading_feedback_is_delayed_and_animated():
         parent_center_y = root.winfo_rooty() + root.winfo_height() / 2
         assert abs(popup_center_x - parent_center_x) <= 10
         assert abs(popup_center_y - parent_center_y) <= 10
-        first_value = float(feedback.progress.cget("value"))
+        first_text = feedback.message_var.get()
+        assert first_text == f"{t('mod.config_loading')}..."
         feedback.last_step_at = 0
         feedback.pulse()
-        assert float(feedback.progress.cget("value")) != first_value
+        assert feedback.message_var.get() != first_text
+        assert feedback.message_var.get().startswith(t("mod.config_loading"))
 
         dialog_source = inspect.getsource(ModConfigDialog.__init__)
         open_source = inspect.getsource(ModManagerTab._on_config)
@@ -188,7 +192,7 @@ def test_mod_config_loading_feedback_is_delayed_and_animated():
     finally:
         feedback.close()
         root.destroy()
-    print("  PASS: Mod 配置等待条居中延迟出现，并在构建阶段持续推进")
+    print("  PASS: Mod 配置文字动画居中延迟出现，并在构建阶段持续推进")
 
 
 def test_global_token_selection_applies_to_current_cluster():

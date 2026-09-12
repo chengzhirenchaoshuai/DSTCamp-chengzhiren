@@ -4646,15 +4646,16 @@ class _ApplyReportDialog:
 
 _OPTION_DESC_WRAP_PX = 900
 _CONFIG_LOADING_DELAY_SECONDS = 0.3
-_CONFIG_LOADING_STEP_SECONDS = 0.04
+_CONFIG_LOADING_STEP_SECONDS = 0.12
 
 
 class _ModConfigLoadingFeedback:
     """Mod 配置构建超过阈值后才出现的轻量等待反馈。
 
     配置行必须在 Tk 主线程创建，不能为了动画强行挪到工作线程。构建代码
-    在各阶段调用 :meth:`pulse`；等待窗出现后只处理几何和绘制空闲任务，
-    手动推进进度条，不进入可重入的完整 ``update()`` 事件循环。
+    在各阶段调用 :meth:`pulse`；首次显示时只等待窗口完成可见映射，之后
+    手动推进文字末尾的圆点动画并仅处理绘制空闲任务，不进入可重入的完整
+    ``update()`` 事件循环。
     """
 
     def __init__(self, parent: tk.Misc, delay_seconds=None):
@@ -4667,7 +4668,9 @@ class _ModConfigLoadingFeedback:
         self.started_at = time.monotonic()
         self.last_step_at = self.started_at
         self.win = None
-        self.progress = None
+        self.message_var = None
+        self.message_label = None
+        self.dot_count = 3
 
     def pulse(self) -> None:
         now = time.monotonic()
@@ -4675,11 +4678,15 @@ class _ModConfigLoadingFeedback:
             if now - self.started_at < self.delay_seconds:
                 return
             self._show()
-            now = time.monotonic()
+            self.last_step_at = time.monotonic()
+            return
         if now - self.last_step_at < _CONFIG_LOADING_STEP_SECONDS:
             return
         self.last_step_at = now
-        self.progress.step(8)
+        self.dot_count = self.dot_count % 3 + 1
+        self.message_var.set(
+            f"{t('mod.config_loading')}{'.' * self.dot_count}"
+        )
         self.win.update_idletasks()
 
     def _show(self) -> None:
@@ -4693,28 +4700,35 @@ class _ModConfigLoadingFeedback:
         win.resizable(False, False)
         win.transient(self.parent)
         win.protocol("WM_DELETE_WINDOW", lambda: None)
-        body = ttk.Frame(win, padding=(24, 18))
+        win.configure(background=theme.BG_SOFT)
+        body = tk.Frame(win, background=theme.BG_SOFT, padx=28, pady=22)
         body.pack(fill=tk.BOTH, expand=True)
-        ttk.Label(
-            body,
-            text=t("mod.config_loading"),
-            font=theme.font_tuple(theme.FONT_SIZE_BASE),
-        ).pack(anchor=tk.W, pady=(0, 12))
-        self.progress = ttk.Progressbar(
-            body,
-            mode="indeterminate",
-            length=300,
-            maximum=100,
+        self.message_var = tk.StringVar(
+            value=f"{t('mod.config_loading')}..."
         )
-        self.progress.pack(fill=tk.X)
-        center_over_parent(win, self.parent, min_width=360)
+        self.message_label = tk.Label(
+            body,
+            textvariable=self.message_var,
+            font=theme.font_tuple(theme.FONT_SIZE_BASE),
+            foreground=theme.TEXT,
+            background=theme.BG_SOFT,
+            anchor=tk.CENTER,
+        )
+        self.message_label.pack(fill=tk.BOTH, expand=True)
+        center_over_parent(win, self.parent, min_width=300)
         win.deiconify()
+        # update_idletasks() 只负责尺寸计算，不能保证新顶层及其子控件已经
+        # 收到 Map 事件；这正是等待窗有外框却只显示白底的原因。先 grab
+        # 避免等待映射期间主窗口被操作，再只等待这一项可见条件完成。
+        win.grab_set()
         win.lift()
+        win.wait_visibility()
         win.update_idletasks()
 
     def close(self) -> None:
         win, self.win = self.win, None
-        self.progress = None
+        self.message_var = None
+        self.message_label = None
         if win is None:
             return
         try:
