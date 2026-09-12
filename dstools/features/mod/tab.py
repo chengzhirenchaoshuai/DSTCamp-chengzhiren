@@ -4647,7 +4647,9 @@ class _ApplyReportDialog:
 _OPTION_DESC_WRAP_PX = 900
 _CONFIG_LOADING_DELAY_SECONDS = 0.3
 _CONFIG_LOADING_STEP_SECONDS = 0.35
-_CONFIG_CLOSE_DESTROY_BATCH = 12
+_CONFIG_CLOSE_CLEANUP_DELAY_MS = 120
+_CONFIG_CLOSE_DESTROY_INTERVAL_MS = 8
+_CONFIG_CLOSE_DESTROY_BATCH = 2
 
 
 class _ModConfigLoadingFeedback:
@@ -5538,8 +5540,9 @@ class ModConfigDialog:
         """立即隐藏配置窗，再分批释放大量配置行。
 
         返回本身不保存数据；旧实现的延迟全部来自 ``destroy()`` 同步递归
-        销毁上百行 Tk 控件。先释放 grab 并 withdraw，让用户立刻回到主
-        窗口，再按小批清理行控件，避免一次长时间占住 Tk 主线程。
+        销毁上百行 Tk 控件。点击路径只释放 grab 并 withdraw；连子控件
+        列表的枚举也延后，让主窗口先获得一次完整的重绘机会。之后按很小
+        的时间片清理行控件，避免后台清理再次形成一段连续卡顿。
         """
         if getattr(self, "_closing", False):
             return
@@ -5550,6 +5553,13 @@ class ModConfigDialog:
             except tk.TclError:
                 pass
             self._poll_after_id = None
+        if getattr(self, "_cfg_scroll_after_id", None):
+            try:
+                self.win.after_cancel(self._cfg_scroll_after_id)
+            except tk.TclError:
+                pass
+            self._cfg_scroll_after_id = None
+            self._cfg_scroll_pending = None
         aspect_lock = getattr(self, "_aspect_lock", None)
         if aspect_lock:
             aspect_lock.uninstall()
@@ -5558,9 +5568,19 @@ class ModConfigDialog:
         except tk.TclError:
             pass
         self.win.withdraw()
+
+        # 不能在这里调用 winfo_children()。配置项很多时，仅枚举一整棵
+        # 控件树也会延长按钮回调；after_idle 同样会抢在窗口系统完成首轮
+        # 重绘前执行。留出几帧后再开始，返回的视觉反馈才是真正即时的。
+        self.win.after(_CONFIG_CLOSE_CLEANUP_DELAY_MS, self._begin_close_cleanup)
+
+    def _begin_close_cleanup(self):
         body = getattr(self, "_body", None)
-        self._destroy_queue = list(body.winfo_children()) if body else []
-        self.tab.frame.after_idle(self._destroy_close_batch)
+        try:
+            self._destroy_queue = list(body.winfo_children()) if body else []
+        except tk.TclError:
+            self._destroy_queue = []
+        self._destroy_close_batch()
 
     def _destroy_close_batch(self):
         for child in self._destroy_queue[:_CONFIG_CLOSE_DESTROY_BATCH]:
@@ -5570,7 +5590,9 @@ class ModConfigDialog:
                 pass
         del self._destroy_queue[:_CONFIG_CLOSE_DESTROY_BATCH]
         if self._destroy_queue:
-            self.tab.frame.after(1, self._destroy_close_batch)
+            self.win.after(
+                _CONFIG_CLOSE_DESTROY_INTERVAL_MS, self._destroy_close_batch
+            )
             return
         self.vars.clear()
         self.choice_maps.clear()

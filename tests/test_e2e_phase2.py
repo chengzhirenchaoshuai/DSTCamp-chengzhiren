@@ -203,7 +203,7 @@ def test_mod_config_close_hides_before_batched_cleanup():
 
     from dstools.features.mod.tab import (
         ModConfigDialog,
-        _CONFIG_CLOSE_DESTROY_BATCH,
+        _CONFIG_CLOSE_CLEANUP_DELAY_MS,
     )
 
     class _FakeAspectLock:
@@ -218,7 +218,7 @@ def test_mod_config_close_hides_before_batched_cleanup():
     win = tk.Toplevel(root)
     body = tk.Frame(win)
     body.pack()
-    row_count = _CONFIG_CLOSE_DESTROY_BATCH * 3
+    row_count = 120
     for row_index in range(row_count):
         row = tk.Frame(body)
         row.pack()
@@ -230,6 +230,7 @@ def test_mod_config_close_hides_before_batched_cleanup():
     dialog.win = win
     dialog._body = body
     dialog._poll_after_id = None
+    dialog._cfg_scroll_after_id = None
     dialog._aspect_lock = _FakeAspectLock()
     dialog.vars = {"option": tk.StringVar(win, "value")}
     dialog.choice_maps = {"option": {}}
@@ -247,7 +248,10 @@ def test_mod_config_close_hides_before_batched_cleanup():
         assert win.state() == "withdrawn"
         assert win.grab_current() is None
         assert dialog._aspect_lock.uninstalled
-        assert len(dialog._destroy_queue) == row_count
+        # 点击回调中连控件枚举都不做；主窗口至少先得到一轮重绘机会。
+        assert not hasattr(dialog, "_destroy_queue")
+        assert len(body.winfo_children()) == row_count
+        assert _CONFIG_CLOSE_CLEANUP_DELAY_MS >= 100
 
         deadline = time.perf_counter() + 2
         while bool(int(root.tk.call("winfo", "exists", win_path))):
