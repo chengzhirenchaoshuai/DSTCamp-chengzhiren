@@ -122,6 +122,13 @@ class TransparentLabel(BgFrame):
                 width=self._wraplength or 0, fill=self._foreground,
                 font=self._font, tags="transparent_label_text",
             )
+            # Canvas 文本在设置 width 后可能自动换成多行；先按一行创建
+            # 再根据真实文本边界回算高度，不能把带 wraplength 的提示裁成
+            # 只有第一行。对不换行的文本，bbox 高度仍等于单行高度。
+            text_bbox = self.bbox("transparent_label_text")
+            if text_bbox:
+                text_height = text_bbox[3] - text_bbox[1]
+                super().configure(height=max(1, text_height + self._pady * 2))
         finally:
             self._redrawing = False
 
