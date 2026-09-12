@@ -269,6 +269,49 @@ def test_mod_config_close_hides_before_batched_cleanup():
     print("  PASS: Mod 配置返回立即隐藏窗口，控件在空闲阶段分批释放")
 
 
+def test_ttk_buttons_follow_text_width_for_every_font_style():
+    """普通按钮应按文字自然定宽，字体切换不能继承 clam 的字符下限。"""
+    from tkinter import ttk
+
+    from dstools.shared.gui import theme
+
+    original_style = theme.FONT_STYLE_CHOICE
+    root = tk.Tk()
+    root.withdraw()
+    style = ttk.Style(root)
+    requested_widths = {}
+    requested_heights = {}
+    try:
+        style.theme_use("clam")
+        for font_style in theme.FONT_STYLE_NAMES:
+            theme.set_font_style_choice(font_style)
+            theme.apply_theme(root, style)
+            assert int(style.lookup("TButton", "width")) == 0
+
+            short_button = ttk.Button(root, text="保存")
+            long_button = ttk.Button(root, text="创建服务器存档")
+            legacy_button = ttk.Button(root, text="保存", width=-11)
+            root.update_idletasks()
+            requested_widths[font_style] = short_button.winfo_reqwidth()
+            requested_heights[font_style] = short_button.winfo_reqheight()
+            assert long_button.winfo_reqwidth() > short_button.winfo_reqwidth()
+            assert legacy_button.winfo_reqwidth() > short_button.winfo_reqwidth()
+            assert legacy_button.winfo_reqheight() == short_button.winfo_reqheight()
+            short_button.destroy()
+            long_button.destroy()
+            legacy_button.destroy()
+    finally:
+        theme.set_font_style_choice(original_style)
+        root.destroy()
+
+    assert requested_widths["cute"] <= requested_widths["default"] + 4
+    # width=0 只覆盖横向字符下限；荆南麦圆体原有的 1.2 倍字号和按钮
+    # 高度计算仍由字体 metrics 与同一份纵向 padding 决定。
+    assert theme.FONT_SIZE_SCALE_BY_STYLE["cute"] == 1.2
+    assert requested_heights["cute"] > 0
+    print("  PASS: 三款字体按钮按文字自然定宽，圆体 1.2 倍字号与高度保留")
+
+
 def test_global_token_selection_applies_to_current_cluster():
     """全局令牌窗口的“使用”结果应写入当前存档，而不只是关闭窗口。"""
     from dstools.features.cluster_config import tab as cluster_tab
@@ -943,6 +986,7 @@ def main():
         test_mod_option_description_uses_natural_height,
         test_mod_config_loading_feedback_is_delayed_and_animated,
         test_mod_config_close_hides_before_batched_cleanup,
+        test_ttk_buttons_follow_text_width_for_every_font_style,
         test_global_token_selection_applies_to_current_cluster,
         test_global_token_dialog_uses_compact_masked_column,
         test_global_token_cell_click_copies_exact_token,

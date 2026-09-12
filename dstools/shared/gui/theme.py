@@ -306,9 +306,12 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
 
     # 按钮文字固定粗体（font_tuple() 显式 bold=True），其它控件维持默认
     # 字重——项目里所有 ttk.Button 都没单独指定过 style，这里改的是 ttk
-    # 全局 "TButton" 样式，等于一次性覆盖全部按钮。
+    # 全局 "TButton" 样式，等于一次性覆盖全部按钮。clam 自带的
+    # width=-11 会给每个按钮至少预留 11 个字体字符单位；荆南麦圆体保持
+    # 1.2 倍字号时，短按钮会被无意义地横向撑宽。显式 width=0 改为按文
+    # 字实际宽度加 padding 定宽，只影响横向请求尺寸，不改变字号和高度。
     style.configure("TButton", background=PRIMARY, foreground="#FFFFFF",
-                     borderwidth=0, focusthickness=0, padding=(12, 6),
+                     borderwidth=0, focusthickness=0, padding=(12, 6), width=0,
                      font=font_tuple(default_size, bold=True))
     style.map("TButton",
               background=[("disabled", PRIMARY_LIGHT), ("pressed", PRIMARY_DARK),
