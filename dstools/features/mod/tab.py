@@ -3491,30 +3491,25 @@ class ModManagerTab:
             return
         c = self._get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
-        if mod_info.client_only:
-            # client_only 的 mod 不绑定任何存档的 modoverrides.lua，所
-            # 以没有真实的"当前已保存"配置可编辑——弹窗以只读方式打开，
-            # 显示每个选项自己的默认值。
+        read_only = mod_info.client_only or not is_server
+        read_only_reason = (
+            "client_only" if mod_info.client_only else "local_save"
+        )
+        loading_feedback = _ModConfigLoadingFeedback(
+            self.frame.winfo_toplevel()
+        )
+        try:
             ModConfigDialog(
                 self,
                 workshop_id,
                 mod,
                 mod_info,
-                read_only=True,
-                read_only_reason="client_only",
+                read_only=read_only,
+                read_only_reason=read_only_reason,
+                loading_feedback=loading_feedback,
             )
-        elif not is_server:
-            # 本地存档：只读查看，不给改（见 on_cluster_changed 顶部的说明）。
-            ModConfigDialog(
-                self,
-                workshop_id,
-                mod,
-                mod_info,
-                read_only=True,
-                read_only_reason="local_save",
-            )
-        else:
-            ModConfigDialog(self, workshop_id, mod, mod_info)
+        finally:
+            loading_feedback.close()
 
     def _on_link(self, workshop_id):
         numeric_id = workshop_id.replace("workshop-", "")
@@ -4650,6 +4645,77 @@ class _ApplyReportDialog:
 
 
 _OPTION_DESC_WRAP_PX = 900
+_CONFIG_LOADING_DELAY_SECONDS = 0.3
+_CONFIG_LOADING_STEP_SECONDS = 0.04
+
+
+class _ModConfigLoadingFeedback:
+    """Mod 配置构建超过阈值后才出现的轻量等待反馈。
+
+    配置行必须在 Tk 主线程创建，不能为了动画强行挪到工作线程。构建代码
+    在各阶段调用 :meth:`pulse`；等待窗出现后只处理几何和绘制空闲任务，
+    手动推进进度条，不进入可重入的完整 ``update()`` 事件循环。
+    """
+
+    def __init__(self, parent: tk.Misc, delay_seconds=None):
+        self.parent = parent.winfo_toplevel()
+        self.delay_seconds = (
+            _CONFIG_LOADING_DELAY_SECONDS
+            if delay_seconds is None
+            else max(0.0, float(delay_seconds))
+        )
+        self.started_at = time.monotonic()
+        self.last_step_at = self.started_at
+        self.win = None
+        self.progress = None
+
+    def pulse(self) -> None:
+        now = time.monotonic()
+        if self.win is None:
+            if now - self.started_at < self.delay_seconds:
+                return
+            self._show()
+            now = time.monotonic()
+        if now - self.last_step_at < _CONFIG_LOADING_STEP_SECONDS:
+            return
+        self.last_step_at = now
+        self.progress.step(8)
+        self.win.update_idletasks()
+
+    def _show(self) -> None:
+        win = tk.Toplevel(self.parent)
+        self.win = win
+        win.title(t("mod.config_loading_title"))
+        win.resizable(False, False)
+        win.transient(self.parent)
+        win.protocol("WM_DELETE_WINDOW", lambda: None)
+        body = ttk.Frame(win, padding=(24, 18))
+        body.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(
+            body,
+            text=t("mod.config_loading"),
+            font=theme.font_tuple(theme.FONT_SIZE_BASE),
+        ).pack(anchor=tk.W, pady=(0, 12))
+        self.progress = ttk.Progressbar(
+            body,
+            mode="indeterminate",
+            length=300,
+            maximum=100,
+        )
+        self.progress.pack(fill=tk.X)
+        center_over_parent(win, self.parent, min_width=360)
+        win.lift()
+        win.update_idletasks()
+
+    def close(self) -> None:
+        win, self.win = self.win, None
+        self.progress = None
+        if win is None:
+            return
+        try:
+            win.destroy()
+        except tk.TclError:
+            pass
 
 
 def _pack_option_desc(parent, hover_text: str) -> None:
@@ -4699,6 +4765,7 @@ class ModConfigDialog:
         mod_info,
         read_only: bool = False,
         read_only_reason: str = "client_only",
+        loading_feedback: _ModConfigLoadingFeedback | None = None,
     ):
         self.tab = tab
         self.workshop_id = workshop_id
@@ -4718,11 +4785,20 @@ class ModConfigDialog:
         self.raw_widgets: dict[str, tuple[str, dict]] = {}
 
         self._try_full_sandbox_parse(workshop_id, mod_info)
+        if loading_feedback:
+            loading_feedback.pulse()
         self._resolve_dynamic_options(mod_info)
+        if loading_feedback:
+            loading_feedback.pulse()
         self._apply_chs_translation(workshop_id, mod_info)
+        if loading_feedback:
+            loading_feedback.pulse()
 
         win = tk.Toplevel(tab.frame)
         self.win = win
+        # 大量配置行构建完成之前不展示半成品窗口；超过延迟阈值时由独立的
+        # loading_feedback 提供可见反馈，完成后再一次性切换到配置窗口。
+        win.withdraw()
         # mod_info.name 是 mod 作者自己写的、不受信任的原始文本——Windows
         # 原生标题栏没有 fonts.py 那套字体切换/回退逻辑，某个 mod 名字里
         # 混进游戏自定义图标字体的私用区码位（Private Use Area，比如实测
@@ -4840,6 +4916,8 @@ class ModConfigDialog:
         canvas.configure(yscrollcommand=vbar.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
+        if loading_feedback:
+            loading_feedback.pulse()
 
         # 名字列/下拉框宽度仍然是固定的（单行，绝不随标签长度增长——见
         # 下面的 NAME_W_PX 截断），这样每一行的顶部那条线都保持跟世界
@@ -4867,6 +4945,8 @@ class ModConfigDialog:
 
         real_options = 0
         for opt in visible_config_options(mod_info.config_options):
+            if loading_feedback:
+                loading_feedback.pulse()
             if opt.is_header:
                 # mod 作者为组织自己配置界面加的纯视觉分隔符——不是真实
                 # 设置，所以不会有对应的下拉框/vars/choice_map 条目：要
@@ -4997,6 +5077,8 @@ class ModConfigDialog:
         # 都绑一个自己的处理函数（返回 "break"）,会抢在那个默认绑定之
         # 前执行，阻止它触发。
         self._bind_mousewheel(win)
+        if loading_feedback:
+            loading_feedback.pulse()
 
         center_over_parent(
             win, self.tab.frame.winfo_toplevel(), width=DIALOG_W, height=DIALOG_H
@@ -5010,6 +5092,10 @@ class ModConfigDialog:
         self._aspect_lock = AspectLock(win, DIALOG_W, DIALOG_H)
         self._aspect_lock.install()
 
+        if loading_feedback:
+            loading_feedback.close()
+        win.deiconify()
+        win.focus_force()
         win.grab_set()
         win.protocol("WM_DELETE_WINDOW", self._close)
         self._guard_main_window()

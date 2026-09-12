@@ -145,6 +145,43 @@ def test_mod_option_description_uses_natural_height():
     print("  PASS: Mod 配置注释按实际行数自适应并完整显示")
 
 
+def test_mod_config_loading_feedback_is_delayed_and_animated():
+    """快速配置不闪等待窗，慢配置显示可推进的等待条。"""
+    import inspect
+
+    from dstools.features.mod.tab import (
+        ModConfigDialog,
+        ModManagerTab,
+        _ModConfigLoadingFeedback,
+    )
+
+    root = tk.Tk()
+    root.withdraw()
+    feedback = _ModConfigLoadingFeedback(root, delay_seconds=60)
+    try:
+        feedback.pulse()
+        assert feedback.win is None
+
+        feedback.started_at -= 61
+        feedback.pulse()
+        assert feedback.win is not None and feedback.progress is not None
+        assert feedback.win.winfo_exists()
+        first_value = float(feedback.progress.cget("value"))
+        feedback.last_step_at = 0
+        feedback.pulse()
+        assert float(feedback.progress.cget("value")) != first_value
+
+        dialog_source = inspect.getsource(ModConfigDialog.__init__)
+        open_source = inspect.getsource(ModManagerTab._on_config)
+        assert "loading_feedback.pulse()" in dialog_source
+        assert "loading_feedback.close()" in dialog_source
+        assert "_ModConfigLoadingFeedback" in open_source
+    finally:
+        feedback.close()
+        root.destroy()
+    print("  PASS: Mod 配置等待条延迟出现，并在构建阶段持续推进")
+
+
 def test_global_token_selection_applies_to_current_cluster():
     """全局令牌窗口的“使用”结果应写入当前存档，而不只是关闭窗口。"""
     from dstools.features.cluster_config import tab as cluster_tab
@@ -817,6 +854,7 @@ def main():
         test_exe_entry_imports,
         test_gui_imports,
         test_mod_option_description_uses_natural_height,
+        test_mod_config_loading_feedback_is_delayed_and_animated,
         test_global_token_selection_applies_to_current_cluster,
         test_global_token_dialog_uses_compact_masked_column,
         test_global_token_cell_click_copies_exact_token,
