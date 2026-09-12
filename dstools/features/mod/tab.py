@@ -4647,6 +4647,7 @@ class _ApplyReportDialog:
 _OPTION_DESC_WRAP_PX = 900
 _CONFIG_LOADING_DELAY_SECONDS = 0.3
 _CONFIG_LOADING_STEP_SECONDS = 0.35
+_CONFIG_CLOSE_DESTROY_BATCH = 12
 
 
 class _ModConfigLoadingFeedback:
@@ -4923,6 +4924,7 @@ class ModConfigDialog:
 
         vbar = ttk.Scrollbar(win, orient=tk.VERTICAL, command=_on_vbar)
         body = ttk.Frame(canvas)
+        self._body = body
         body.bind(
             "<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
@@ -5533,9 +5535,50 @@ class ModConfigDialog:
         self.win.after(25, lambda: self._shake(remaining - 1))
 
     def _close(self):
+        """立即隐藏配置窗，再分批释放大量配置行。
+
+        返回本身不保存数据；旧实现的延迟全部来自 ``destroy()`` 同步递归
+        销毁上百行 Tk 控件。先释放 grab 并 withdraw，让用户立刻回到主
+        窗口，再按小批清理行控件，避免一次长时间占住 Tk 主线程。
+        """
+        if getattr(self, "_closing", False):
+            return
+        self._closing = True
         if getattr(self, "_poll_after_id", None):
-            self.win.after_cancel(self._poll_after_id)
-        self.win.destroy()
+            try:
+                self.win.after_cancel(self._poll_after_id)
+            except tk.TclError:
+                pass
+            self._poll_after_id = None
+        aspect_lock = getattr(self, "_aspect_lock", None)
+        if aspect_lock:
+            aspect_lock.uninstall()
+        try:
+            self.win.grab_release()
+        except tk.TclError:
+            pass
+        self.win.withdraw()
+        body = getattr(self, "_body", None)
+        self._destroy_queue = list(body.winfo_children()) if body else []
+        self.tab.frame.after_idle(self._destroy_close_batch)
+
+    def _destroy_close_batch(self):
+        for child in self._destroy_queue[:_CONFIG_CLOSE_DESTROY_BATCH]:
+            try:
+                child.destroy()
+            except tk.TclError:
+                pass
+        del self._destroy_queue[:_CONFIG_CLOSE_DESTROY_BATCH]
+        if self._destroy_queue:
+            self.tab.frame.after(1, self._destroy_close_batch)
+            return
+        self.vars.clear()
+        self.choice_maps.clear()
+        self.raw_widgets.clear()
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass
 
     def _reset(self):
         """把每个下拉框都还原成 mod 自己的默认值（只影响界面，尚未保存）。"""

@@ -197,6 +197,74 @@ def test_mod_config_loading_feedback_is_delayed_and_animated():
     print("  PASS: Mod 配置文字动画居中延迟出现，并在构建阶段持续推进")
 
 
+def test_mod_config_close_hides_before_batched_cleanup():
+    """返回应先退出模态并隐藏窗口，再分批清理大量配置控件。"""
+    import time
+
+    from dstools.features.mod.tab import (
+        ModConfigDialog,
+        _CONFIG_CLOSE_DESTROY_BATCH,
+    )
+
+    class _FakeAspectLock:
+        def __init__(self):
+            self.uninstalled = False
+
+        def uninstall(self):
+            self.uninstalled = True
+
+    root = tk.Tk()
+    root.geometry("800x600+120+80")
+    win = tk.Toplevel(root)
+    body = tk.Frame(win)
+    body.pack()
+    row_count = _CONFIG_CLOSE_DESTROY_BATCH * 3
+    for row_index in range(row_count):
+        row = tk.Frame(body)
+        row.pack()
+        for column_index in range(4):
+            tk.Label(row, text=f"{row_index}-{column_index}").pack(side=tk.LEFT)
+    root.update_idletasks()
+
+    dialog = object.__new__(ModConfigDialog)
+    dialog.win = win
+    dialog._body = body
+    dialog._poll_after_id = None
+    dialog._aspect_lock = _FakeAspectLock()
+    dialog.vars = {"option": tk.StringVar(win, "value")}
+    dialog.choice_maps = {"option": {}}
+    dialog.raw_widgets = {"option": ("text", body)}
+    dialog.tab = SimpleNamespace(frame=root)
+    win.grab_set()
+
+    win_path = str(win)
+    try:
+        started_at = time.perf_counter()
+        dialog._close()
+        close_elapsed = time.perf_counter() - started_at
+
+        assert close_elapsed < 0.1
+        assert win.state() == "withdrawn"
+        assert win.grab_current() is None
+        assert dialog._aspect_lock.uninstalled
+        assert len(dialog._destroy_queue) == row_count
+
+        deadline = time.perf_counter() + 2
+        while bool(int(root.tk.call("winfo", "exists", win_path))):
+            assert time.perf_counter() < deadline
+            root.update()
+            time.sleep(0.002)
+
+        assert not dialog.vars
+        assert not dialog.choice_maps
+        assert not dialog.raw_widgets
+    finally:
+        if bool(int(root.tk.call("winfo", "exists", win_path))):
+            win.destroy()
+        root.destroy()
+    print("  PASS: Mod 配置返回立即隐藏窗口，控件在空闲阶段分批释放")
+
+
 def test_global_token_selection_applies_to_current_cluster():
     """全局令牌窗口的“使用”结果应写入当前存档，而不只是关闭窗口。"""
     from dstools.features.cluster_config import tab as cluster_tab
@@ -870,6 +938,7 @@ def main():
         test_gui_imports,
         test_mod_option_description_uses_natural_height,
         test_mod_config_loading_feedback_is_delayed_and_animated,
+        test_mod_config_close_hides_before_batched_cleanup,
         test_global_token_selection_applies_to_current_cluster,
         test_global_token_dialog_uses_compact_masked_column,
         test_global_token_cell_click_copies_exact_token,
