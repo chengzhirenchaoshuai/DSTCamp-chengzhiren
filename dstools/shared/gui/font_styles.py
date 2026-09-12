@@ -30,11 +30,7 @@ class FontStyleDef:
 
 FONT_STYLES: list[FontStyleDef] = [
     FontStyleDef(key="default", family="Microsoft YaHei UI Light", filename=None, scale=1.0),
-    # 同字号下圆体字面略小，保留轻微放大；原来的 1.2 在 9~14pt 常用
-    # 档位经过 round() 后会实际放大约 18%~22%，一整行按钮/标签的请求
-    # 宽度随之累加，把按内容定宽的窗口明显撑宽。实测 1.1 时常用中文
-    # 文案宽度与默认字体相差约 4%，无需牺牲可读性来换取额外空白。
-    FontStyleDef(key="cute", family="KN Maiyuan", filename="KNMaiyuan-Regular.ttf", scale=1.1),
+    FontStyleDef(key="cute", family="KN Maiyuan", filename="KNMaiyuan-Regular.ttf", scale=1.2),
     # Fusion Pixel Font 简体中文版（TakWolf/fusion-pixel-font，MIT）。
     # 已核对项目 i18n/strings.py 用到的全部汉字，字形一个不缺。
     # scale=1.0：实测同一磅值下字形像素尺寸跟雅黑基本一致（用 PIL

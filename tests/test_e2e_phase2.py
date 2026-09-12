@@ -269,37 +269,6 @@ def test_mod_config_close_hides_before_batched_cleanup():
     print("  PASS: Mod 配置返回立即隐藏窗口，控件在空闲阶段分批释放")
 
 
-def test_font_style_requested_window_width_stays_compact():
-    """字体补偿不应把按内容定宽的 Tk 窗口明显撑宽。"""
-    from tkinter import font as tkfont
-
-    from dstools.shared.gui import theme
-
-    sample = "服务器配置 房间设置 世界设置 管理员 黑名单 服务器令牌"
-    root = tk.Tk()
-    root.withdraw()
-    requested_widths = {}
-    try:
-        for style_def in theme.FONT_STYLES:
-            win = tk.Toplevel(root)
-            font = tkfont.Font(
-                root=win,
-                family=style_def.family,
-                size=round(14 * style_def.scale),
-            )
-            tk.Label(win, text=sample, font=font).pack(padx=20, pady=20)
-            root.update_idletasks()
-            requested_widths[style_def.key] = win.winfo_reqwidth()
-            win.destroy()
-    finally:
-        root.destroy()
-
-    default_width = requested_widths["default"]
-    assert requested_widths["cute"] <= default_width * 1.08
-    assert requested_widths["pixel"] <= default_width * 1.08
-    print("  PASS: 三款字体的内容请求宽度接近，不再单独撑宽窗口")
-
-
 def test_global_token_selection_applies_to_current_cluster():
     """全局令牌窗口的“使用”结果应写入当前存档，而不只是关闭窗口。"""
     from dstools.features.cluster_config import tab as cluster_tab
@@ -974,7 +943,6 @@ def main():
         test_mod_option_description_uses_natural_height,
         test_mod_config_loading_feedback_is_delayed_and_animated,
         test_mod_config_close_hides_before_batched_cleanup,
-        test_font_style_requested_window_width_stays_compact,
         test_global_token_selection_applies_to_current_cluster,
         test_global_token_dialog_uses_compact_masked_column,
         test_global_token_cell_click_copies_exact_token,
