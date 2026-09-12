@@ -3318,13 +3318,14 @@ def test_font_style_switch():
         assert theme.FONT_STYLE_CHOICE == "cute"
         print("  PASS: 切换颜色主题(set_theme())不会连带改动已选好的字体样式")
 
-        # 荆南麦圆体笔画粗壮，跟微软雅黑用一样的字号看着更拥挤，需要整
-        # 体放大——验证切到 cute 后字号阶梯按 FONT_SIZE_SCALE_BY_STYLE
-        # 放大了，且切换颜色主题不会打乱这个放大倍数。
+        # 荆南麦圆体同字号下字面略小，只需要轻微放大。原来的 1.2 经
+        # round() 后会让常用字号和按内容定宽的窗口明显膨胀；1.1 既保留
+        # 视觉补偿，也让常用中文文案宽度接近默认字体。
         theme.set_font_style_choice("default")
         default_base = theme.FONT_SIZE_BASE
         theme.set_font_style_choice("cute")
         cute_scale = theme.FONT_SIZE_SCALE_BY_STYLE["cute"]
+        assert cute_scale == 1.1, "荆南麦圆体只应做轻微字号补偿"
         assert theme.FONT_SIZE_BASE == round(default_base * cute_scale), (
             "字体样式切到 cute 后，全局字号阶梯必须按 FONT_SIZE_SCALE_BY_STYLE 整体放大"
         )
@@ -3336,7 +3337,15 @@ def test_font_style_switch():
             "切换颜色主题不应该打乱已经生效的字体样式缩放倍数"
         )
         theme.set_theme("gray")
-        print("  PASS: 字体样式切换会按比例放大全局字号阶梯，且不受颜色主题切换影响")
+        sample = "服务器配置 房间设置 世界设置 管理员 黑名单 服务器令牌"
+        fonts.set_font_style("default")
+        default_width = fonts.measure_mixed(sample, 14)
+        fonts.set_font_style("cute")
+        cute_width = fonts.measure_mixed(sample, round(14 * cute_scale))
+        assert cute_width <= default_width * 1.08, (
+            "荆南麦圆体的视觉补偿不应再把常用中文文案明显撑宽"
+        )
+        print("  PASS: 荆南麦圆体只做轻微放大，常用文案宽度接近默认字体")
 
         app_settings.set_font_style_choice("cute")
         assert app_settings.get_font_style_choice() == "cute"

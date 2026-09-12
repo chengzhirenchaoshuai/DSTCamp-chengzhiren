@@ -203,8 +203,8 @@ def set_font_style_choice(choice: str) -> None:
     时同步 PIL 侧的 fonts.set_font_style()（Tk 和 PIL 两条渲染路径必须
     用同一个样式，不然原生控件和 Mod列表/世界设置这类整块渲染成图片的
     面板会看起来不一致），并按 FONT_SIZE_SCALE_BY_STYLE 重新算一遍全局
-    字号阶梯（见 _recompute_font_sizes()——荆南麦圆体笔画粗壮，跟微软
-    雅黑同样字号看着更拥挤，需要整体放大）。不负责持久化，跟
+    字号阶梯（见 _recompute_font_sizes()——荆南麦圆体同字号下字面略
+    小，只做轻微视觉补偿，不能让请求宽度明显膨胀）。不负责持久化，跟
     set_theme() 一样是纯"应用一次"的函数，持久化由调用方（gui/app.py）
     自己调 app_settings.set_font_style_choice()。"""
     global FONT_STYLE_CHOICE, FONT_FAMILY
