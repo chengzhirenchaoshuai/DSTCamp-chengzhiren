@@ -426,16 +426,16 @@ class SaveBrowserTab:
         # pack_propagate(False) 再由 _redraw_info_text() 显式给高度。
         info_frame.pack_propagate(False)
         info_text_font = tkfont.Font(family=theme.FONT_FAMILY, size=theme.FONT_SIZE_XS)
-        # 固定按 3 行预留高度（会话ID/摘要/槽位+大小），"其它会话"提示这
-        # 第 4 行绝大多数情况为空，真出现时靠 _resync_players_section_bg()
-        # 兜底补一次背景重渲染，短暂的高度调整可以接受。
-        _INFO_MAX_LINES = 3
+        # 正常内容固定按 3 行预留高度（会话ID/摘要/槽位+大小）；
+        # "其它会话"提示出现时增加第 4 行，不能让 Canvas 把它裁掉。
+        _INFO_MIN_LINES = 3
 
         def _redraw_info_text():
             info_frame.delete("info_text")
             y0 = 8
             line_h = info_text_font.metrics("linespace") + 4
             y = y0
+            line_count = 0
             for var in (self._session_id_var, self._summary_var, self._slots_var, self._extra_sessions_var):
                 text = var.get()
                 if not text:
@@ -443,7 +443,8 @@ class SaveBrowserTab:
                 info_frame.create_text(10, y, text=text, anchor=tk.NW, fill=theme.TEXT_MUTED,
                                         font=info_text_font, tags="info_text")
                 y += line_h
-            info_frame.configure(height=y0 + _INFO_MAX_LINES * line_h + 4)
+                line_count += 1
+            info_frame.configure(height=y0 + max(_INFO_MIN_LINES, line_count) * line_h + 4)
             # 只画字/撑高度，不在这里顺带刷新下面 pf 的背景——4 个
             # StringVar 的 trace 各自独立触发这个函数，中途坐标还没稳定
             # 时重渲染反而会画出压扁的错位色块，统一交给
