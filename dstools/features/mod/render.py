@@ -26,6 +26,25 @@ _OPEN_FOLDER_ICON_PATH = (
 )
 _default_icon_cache: dict[int, Image.Image] = {}
 _open_folder_icon_cache: dict[int, Image.Image] = {}
+_SMALL_ICON_CACHE_LIMIT = 8
+_ICON_THUMB_CACHE_LIMIT = 256
+
+
+def _put_bounded(cache: dict, key, value, limit: int) -> None:
+    """写入按插入顺序淘汰的轻量缓存，避免窗口尺寸变化后无限增长。"""
+    cache.pop(key, None)
+    cache[key] = value
+    while len(cache) > limit:
+        cache.pop(next(iter(cache)))
+
+
+def _cache_icon_thumb(cache: dict, key: tuple[str, int], image: Image.Image) -> None:
+    """同一个 Mod 只保留最新尺寸的缩略图，并限制跨 Mod 的总条目数。"""
+    workshop_id = key[0]
+    for old_key in tuple(cache):
+        if old_key != key and old_key[0] == workshop_id:
+            cache.pop(old_key, None)
+    _put_bounded(cache, key, image, _ICON_THUMB_CACHE_LIMIT)
 
 
 def _get_default_icon(size: int) -> Image.Image | None:
@@ -36,7 +55,7 @@ def _get_default_icon(size: int) -> Image.Image | None:
     img = Image.open(_DEFAULT_ICON_PATH).convert("RGBA")
     if img.size != (size, size):
         img = img.resize((size, size), Image.LANCZOS)
-    _default_icon_cache[size] = img
+    _put_bounded(_default_icon_cache, size, img, _SMALL_ICON_CACHE_LIMIT)
     return img
 
 BASE_REF_WIDTH = 1300
@@ -172,7 +191,7 @@ def render_mod_list(
             if thumb is None:
                 thumb = icon.resize((icon_size, icon_size), Image.LANCZOS)
                 if icon_thumb_cache is not None:
-                    icon_thumb_cache[cache_key] = thumb
+                    _cache_icon_thumb(icon_thumb_cache, cache_key, thumb)
             img.paste(thumb, (int(x), int(icon_y)), thumb)
         else:
             default_icon = _get_default_icon(round(icon_size))
@@ -315,7 +334,12 @@ def _paste_folder_icon(image, x, cy, size):
             icon = source.convert("RGBA").resize(
                 (target_size, target_size), Image.Resampling.LANCZOS
             )
-        _open_folder_icon_cache[target_size] = icon
+        _put_bounded(
+            _open_folder_icon_cache,
+            target_size,
+            icon,
+            _SMALL_ICON_CACHE_LIMIT,
+        )
     image.paste(
         icon,
         (round(x), round(cy - target_size / 2)),

@@ -61,7 +61,9 @@ from dstools.features.world.reader import WorldOverride, WorldPreset  # noqa: E4
 from dstools.features.world.view_model import build_world_view_model  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
 from dstools.features.mod.presets import ModPreset  # noqa: E402
+from dstools.features.mod import render as mod_render  # noqa: E402
 from dstools.features.mod.tab import ModManagerTab  # noqa: E402
+from dstools.features.world import render as world_render  # noqa: E402
 from dstools.features.world.tab import WorldSettingsTab  # noqa: E402
 from dstools.features.world.creation_tab import WorldCreationTab  # noqa: E402
 from dstools.features.cluster_config.config_manager import load_shard_config  # noqa: E402
@@ -414,6 +416,50 @@ def test_world_setting_icon_rendering() -> None:
         mod_icons={"test_mod_icon": mod_icon},
     )
     assert (255, 0, 255) in set(panel.getdata())
+
+
+def test_dimension_keyed_render_caches_are_bounded() -> None:
+    icon_cache = {}
+    rows = [
+        {
+            "workshop_id": "workshop-1",
+            "name": "缓存测试",
+            "version_text": "",
+            "enabled": True,
+            "has_config": False,
+            "has_link": False,
+        }
+    ]
+    icons = {"workshop-1": Image.new("RGBA", (128, 128), "#ff00ff")}
+    for width in range(900, 1500, 20):
+        mod_render.render_mod_list(
+            rows,
+            icons,
+            ref_width=width,
+            icon_thumb_cache=icon_cache,
+            viewport_height=120,
+        )
+    assert len(icon_cache) == 1
+    assert next(iter(icon_cache))[0] == "workshop-1"
+
+    mod_render._default_icon_cache.clear()
+    for size in range(20, 60):
+        mod_render._get_default_icon(size)
+    assert len(mod_render._default_icon_cache) == mod_render._SMALL_ICON_CACHE_LIMIT
+
+    mod_render._open_folder_icon_cache.clear()
+    folder_canvas = Image.new("RGBA", (160, 160))
+    for size in range(20, 60):
+        mod_render._paste_folder_icon(folder_canvas, 20, 80, size)
+    assert (
+        len(mod_render._open_folder_icon_cache)
+        == mod_render._SMALL_ICON_CACHE_LIMIT
+    )
+
+    world_render._arrow_cache.clear()
+    for height in range(20, 80):
+        world_render._get_arrow("arrow_left", height)
+    assert len(world_render._arrow_cache) == world_render._ARROW_CACHE_LIMIT
 
 
 def test_world_setting_name_wrap_keeps_full_text() -> None:
@@ -1000,6 +1046,7 @@ def main() -> None:
         test_lua_multiline_roundtrip,
         test_en_zh_mod_metadata,
         test_world_setting_icon_rendering,
+        test_dimension_keyed_render_caches_are_bounded,
         test_world_setting_name_wrap_keeps_full_text,
         test_world_panel_viewport_matches_full_image_crop,
         test_world_panel_compact_mode_shows_three_rows_in_default_viewport,

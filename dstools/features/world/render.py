@@ -28,6 +28,15 @@ BASE_REF_WIDTH = 1300
 # 身完全对不上。
 _ARROW_DIR = bundled_resource_dir() / "icons" / "ui"
 _arrow_cache: dict[tuple[str, int], Image.Image] = {}
+_ARROW_CACHE_LIMIT = 32
+
+
+def _cache_arrow(key: tuple[str, int], image: Image.Image) -> None:
+    """保留最近使用的箭头尺寸，限制缩放窗口产生的全局缓存增长。"""
+    _arrow_cache.pop(key, None)
+    _arrow_cache[key] = image
+    while len(_arrow_cache) > _ARROW_CACHE_LIMIT:
+        _arrow_cache.pop(next(iter(_arrow_cache)))
 
 
 def _get_arrow(name: str, height: int) -> Image.Image | None:
@@ -44,7 +53,7 @@ def _get_arrow(name: str, height: int) -> Image.Image | None:
     if img.height != height:
         w = max(1, round(img.width * height / img.height))
         img = img.resize((w, height), Image.LANCZOS)
-    _arrow_cache[key] = img
+    _cache_arrow(key, img)
     return img
 
 
