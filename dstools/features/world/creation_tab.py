@@ -31,7 +31,11 @@ from dstools.features.world.location_profiles import (
 )
 from dstools.features.world.mod_settings import get_mod_world_settings
 from dstools.features.world.categories import CATEGORY_COLORS
-from dstools.features.world.render import REF_WIDTH, render_world_panel
+from dstools.features.world.render import (
+    REF_WIDTH,
+    render_world_panel,
+    world_panel_height,
+)
 from dstools.features.world.reader import WorldOverride, WorldPreset
 from dstools.features.world.value_sets import get_value_set
 from dstools.features.world.view_model import build_world_view_model
@@ -45,7 +49,7 @@ from dstools.features.mod.parser import (
     resolve_wegame_client_mods_dir,
     split_installed_mod_counts,
 )
-from dstools.features.mod.render import render_mod_list
+from dstools.features.mod.render import mod_list_height, render_mod_list
 from dstools.features.mod.list_model import build_mod_rows, sort_mod_data
 from dstools.features.mod.tab import (
     ModConfigDialog,
@@ -178,12 +182,27 @@ class WorldCreationTab:
             "world": self._world_frame,
         }
         pages[current].pack_forget()
+        self._release_page_images(current)
+        was_initialized = key in self._initialized_pages
         self._sub_tab_key = key
         pages[key].pack(fill=tk.BOTH, expand=True)
         self._ensure_page(key)
-        self._maybe_reload_world_if_stale(key)
+        reloaded = self._maybe_reload_world_if_stale(key)
+        if was_initialized and not reloaded:
+            if key == "world":
+                self._render()
+            elif key == "mod":
+                self._render_list()
 
-    def _maybe_reload_world_if_stale(self, key: str) -> None:
+    def _release_page_images(self, page_key: str) -> None:
+        """释放已隐藏页面的视口图和渲染回调，保留编辑模型与滚动坐标。"""
+        if page_key == "mod" and self._mod_panel is not None:
+            self._mod_panel.release_image()
+        elif page_key == "world" and hasattr(self, "_rules_panel"):
+            self._rules_panel.release_image()
+            self._gen_panel.release_image()
+
+    def _maybe_reload_world_if_stale(self, key: str) -> bool:
         """切到「世界设置」页时，如果之前切换过 Mod（_world_stale），这时
         才真正重新加载世界模板/渲染世界面板——把重活推迟到用户看得见的时
         刻，开关切换本身保持流畅（跟外层 mark_world_tab_stale 一个思路）。"""
@@ -193,6 +212,8 @@ class WorldCreationTab:
             # 选过世界，就按官方行为把 Master/Caves 自动切到默认的海难/火山
             # （mod 的 modservercreationmain 在启用海滩时会把两个分片切过去）。
             self._reload_template(apply_profile_defaults=True)
+            return True
+        return False
 
     def _ensure_page(self, page_key: str) -> None:
         if page_key in self._initialized_pages:
@@ -398,13 +419,17 @@ class WorldCreationTab:
         self._rules_panel.frame.pack(fill=tk.BOTH, expand=True)
 
     def _on_world_sub_tab_select(self, key: str) -> None:
+        if key == self._world_sub_tab_key:
+            return
         current = (
             self._rules_panel if self._world_sub_tab_key == "rules" else self._gen_panel
         )
         current.frame.pack_forget()
+        current.release_image()
         self._world_sub_tab_key = key
         target = self._rules_panel if key == "rules" else self._gen_panel
         target.frame.pack(fill=tk.BOTH, expand=True)
+        self._render()
 
     def _redraw_world_info(self) -> None:
         frame = getattr(self, "_world_info_frame", None)
@@ -979,6 +1004,10 @@ class WorldCreationTab:
     def _render_list(self, ref_width=None):
         if self._mod_panel is None:
             return
+        # 异步版本/图标结果可能在用户已经切走后返回。模型照常更新，但隐藏
+        # 页不重新创建 Tk 视口；返回 Mod 页时外层切页逻辑会按最新模型重建。
+        if getattr(self, "_sub_tab_key", "mod") != "mod":
+            return
         from dstools.features.mod.render import REF_WIDTH
 
         if ref_width is None:
@@ -1014,18 +1043,27 @@ class WorldCreationTab:
                 )
             self._mod_panel.set_image(img, [], keep_scroll=True)
             return
-        img, hits, hovers = render_mod_list(
-            rows,
-            self._icon_imgs,
-            on_toggle=self._toggle_mod,
-            on_config=self._open_mod_config,
-            on_link=self._open_mod_link,
-            on_open_folder=self._open_mod_folder,
-            on_copy_id=self._on_copy_id,
-            ref_width=ref_width,
-            icon_thumb_cache=self._icon_thumb_cache,
+        def render_viewport(view_y, view_height):
+            return render_mod_list(
+                rows,
+                self._icon_imgs,
+                on_toggle=self._toggle_mod,
+                on_config=self._open_mod_config,
+                on_link=self._open_mod_link,
+                on_open_folder=self._open_mod_folder,
+                on_copy_id=self._on_copy_id,
+                ref_width=ref_width,
+                icon_thumb_cache=self._icon_thumb_cache,
+                viewport_y=view_y,
+                viewport_height=view_height,
+            )
+
+        self._mod_panel.set_virtual_image(
+            ref_width,
+            mod_list_height(len(rows), ref_width),
+            render_viewport,
+            keep_scroll=True,
         )
-        self._mod_panel.set_image(img, hits, keep_scroll=True, hover_regions=hovers)
 
     def _on_mod_filter_changed(self, *_args):
         if self._mod_filter_after_id is not None:
@@ -1292,22 +1330,28 @@ class WorldCreationTab:
         )
         self._world_title_var.set(f"{plan.name} ({plan.preset_id})")
         self._world_desc_var.set(plan.description or "")
-        for panel, cats, rows, callback, is_rule in (
-            (
-                self._rules_panel,
-                self._rules_cats,
-                self._rules_by_cat,
-                self._on_click,
-                True,
-            ),
-            (
-                self._gen_panel,
-                self._gen_cats,
-                self._gen_by_cat,
-                self._on_gen_click,
-                False,
-            ),
-        ):
+        # “创建”按钮会确保所有页面模型都初始化，即使用户仍停在服务器配置
+        # 页。此时只需要计划数据，不应为隐藏的世界页分配视口图片。
+        if getattr(self, "_sub_tab_key", "world") != "world":
+            self._release_page_images("world")
+            return
+        if self._world_sub_tab_key == "rules":
+            panel = self._rules_panel
+            hidden_panel = self._gen_panel
+            cats = self._rules_cats
+            rows = self._rules_by_cat
+            callback = self._on_click
+            is_rule = True
+        else:
+            panel = self._gen_panel
+            hidden_panel = self._rules_panel
+            cats = self._gen_cats
+            rows = self._gen_by_cat
+            callback = self._on_gen_click
+            is_rule = False
+        hidden_panel.release_image()
+
+        def render_viewport(view_y, view_height):
             img, hits = render_world_panel(
                 cats,
                 rows,
@@ -1320,8 +1364,17 @@ class WorldCreationTab:
                 mod_icons=self._mod_world_icons,
                 is_rule=is_rule,
                 compact=True,
+                viewport_y=view_y,
+                viewport_height=view_height,
             )
-            panel.set_image(img, hits, keep_scroll=True)
+            return img, hits, []
+
+        panel.set_virtual_image(
+            REF_WIDTH,
+            world_panel_height(cats, rows, REF_WIDTH, compact=True),
+            render_viewport,
+            keep_scroll=True,
+        )
 
     def _on_click(self, key, delta):
         self._change_value(key, delta, True)
@@ -1573,8 +1626,20 @@ class WorldCreationTab:
             except tk.TclError:
                 pass
             self._mod_filter_after_id = None
+        if self._mod_async_render_after_id is not None:
+            try:
+                self.frame.after_cancel(self._mod_async_render_after_id)
+            except tk.TclError:
+                pass
+            self._mod_async_render_after_id = None
         self._mod_scan_generation += 1
         self._mod_scan_running = False
+        self._release_page_images("world")
+        self._release_page_images("mod")
+        self._icon_thumb_cache.clear()
+        self._icon_imgs.clear()
+        self._mod_world_icons.clear()
+        self._full_resolved_cache.clear()
         draft = getattr(self._server_config, "_draft_dir_ctx", None)
         if draft is not None:
             draft.cleanup()

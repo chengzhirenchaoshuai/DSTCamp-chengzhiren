@@ -528,7 +528,8 @@ def test_world_panel_compact_mode_shows_three_rows_in_default_viewport() -> None
     creation_source = inspect.getsource(WorldCreationTab._render)
     assert rules_source.count("compact=True") == 2
     assert gen_source.count("compact=True") == 2
-    assert creation_source.count("compact=True") == 1
+    assert creation_source.count("compact=True") == 2
+    assert "set_virtual_image" in creation_source
 
 
 class _StatusProbe:
@@ -679,9 +680,20 @@ def test_pending_mod_world_preview() -> None:
 
 def test_creation_mod_list_uses_native_canvas_width() -> None:
     captured = {}
+    virtual = {}
+
+    def set_virtual_image(ref_width, total_height, renderer, **kwargs):
+        virtual.update(
+            ref_width=ref_width,
+            total_height=total_height,
+            renderer=renderer,
+            kwargs=kwargs,
+        )
+
     panel = SimpleNamespace(
         current_width=lambda _default: 777,
         set_image=lambda *_args, **_kwargs: None,
+        set_virtual_image=set_virtual_image,
     )
     tab = WorldCreationTab.__new__(WorldCreationTab)
     tab._mod_panel = panel
@@ -700,7 +712,58 @@ def test_creation_mod_list_uses_native_canvas_width() -> None:
 
     with patch("dstools.features.world.creation_tab.render_mod_list", side_effect=render_probe):
         tab._render_list()
+        image, _hits, _hovers = virtual["renderer"](120, 60)
     assert captured["ref_width"] == 777
+    assert captured["viewport_y"] == 120
+    assert captured["viewport_height"] == 60
+    assert image.size == (777, 60)
+    assert virtual["ref_width"] == 777
+    assert virtual["kwargs"] == {"keep_scroll": True}
+
+    tab._sub_tab_key = "server"
+    virtual.clear()
+    with patch(
+        "dstools.features.world.creation_tab.render_mod_list",
+        side_effect=AssertionError("隐藏 Mod 页不应重绘"),
+    ):
+        tab._render_list()
+    assert not virtual
+
+
+def test_creation_hidden_pages_release_images() -> None:
+    class FakePanel:
+        def __init__(self):
+            self.releases = 0
+            self.packed = False
+            self.frame = self
+
+        def release_image(self):
+            self.releases += 1
+
+        def pack_forget(self):
+            self.packed = False
+
+        def pack(self, **_kwargs):
+            self.packed = True
+
+    tab = WorldCreationTab.__new__(WorldCreationTab)
+    tab._rules_panel = FakePanel()
+    tab._gen_panel = FakePanel()
+    tab._mod_panel = FakePanel()
+    tab._world_sub_tab_key = "rules"
+    renders = []
+    tab._render = lambda: renders.append(True)
+
+    tab._release_page_images("world")
+    tab._release_page_images("mod")
+    assert tab._rules_panel.releases == 1
+    assert tab._gen_panel.releases == 1
+    assert tab._mod_panel.releases == 1
+
+    tab._on_world_sub_tab_select("generation")
+    assert tab._rules_panel.releases == 2
+    assert tab._gen_panel.packed is True
+    assert renders == [True]
 
 
 def test_creation_preset_apply_refreshes_mod_list() -> None:
@@ -945,6 +1008,7 @@ def main() -> None:
         test_creation_error_dialog_uses_wizard_parent,
         test_pending_mod_world_preview,
         test_creation_mod_list_uses_native_canvas_width,
+        test_creation_hidden_pages_release_images,
         test_creation_preset_apply_refreshes_mod_list,
         test_creation_matrix,
         test_creation_rejects_invalid_combinations,
