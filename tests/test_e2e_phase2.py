@@ -156,7 +156,8 @@ def test_mod_config_loading_feedback_is_delayed_and_animated():
     )
 
     root = tk.Tk()
-    root.withdraw()
+    root.geometry("800x600+120+80")
+    root.update_idletasks()
     feedback = _ModConfigLoadingFeedback(root, delay_seconds=60)
     try:
         feedback.pulse()
@@ -166,6 +167,14 @@ def test_mod_config_loading_feedback_is_delayed_and_animated():
         feedback.pulse()
         assert feedback.win is not None and feedback.progress is not None
         assert feedback.win.winfo_exists()
+        # geometry() 定位的是窗口外框左上角，而父窗口参考值是客户区坐标；
+        # 不能把子窗口的 winfo_root*（会再加一次标题栏偏移）混进来比较。
+        popup_center_x = feedback.win.winfo_x() + feedback.win.winfo_width() / 2
+        popup_center_y = feedback.win.winfo_y() + feedback.win.winfo_height() / 2
+        parent_center_x = root.winfo_rootx() + root.winfo_width() / 2
+        parent_center_y = root.winfo_rooty() + root.winfo_height() / 2
+        assert abs(popup_center_x - parent_center_x) <= 10
+        assert abs(popup_center_y - parent_center_y) <= 10
         first_value = float(feedback.progress.cget("value"))
         feedback.last_step_at = 0
         feedback.pulse()
@@ -179,7 +188,7 @@ def test_mod_config_loading_feedback_is_delayed_and_animated():
     finally:
         feedback.close()
         root.destroy()
-    print("  PASS: Mod 配置等待条延迟出现，并在构建阶段持续推进")
+    print("  PASS: Mod 配置等待条居中延迟出现，并在构建阶段持续推进")
 
 
 def test_global_token_selection_applies_to_current_cluster():

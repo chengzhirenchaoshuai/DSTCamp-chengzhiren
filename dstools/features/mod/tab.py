@@ -4685,6 +4685,10 @@ class _ModConfigLoadingFeedback:
     def _show(self) -> None:
         win = tk.Toplevel(self.parent)
         self.win = win
+        # Toplevel 创建后如果先进入 update_idletasks()，Windows 会按默认
+        # 坐标把它短暂映射到屏幕左上角。先隐藏，完成请求尺寸和居中几何
+        # 计算后再一次性显示，避免短加载时只看到左上角闪一下。
+        win.withdraw()
         win.title(t("mod.config_loading_title"))
         win.resizable(False, False)
         win.transient(self.parent)
@@ -4704,6 +4708,7 @@ class _ModConfigLoadingFeedback:
         )
         self.progress.pack(fill=tk.X)
         center_over_parent(win, self.parent, min_width=360)
+        win.deiconify()
         win.lift()
         win.update_idletasks()
 
