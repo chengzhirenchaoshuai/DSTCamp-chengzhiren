@@ -34,8 +34,7 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 或 [Gitee 发行版](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.3.8.exe`：工具与资源全部内嵌，单文件运行。
-- `DSTCamp-1.3.8.zip`：EXE 与 `tools/` 分离；必须完整解压后运行。
+- `DSTCamp-1.3.8.exe`：工具与资源全部内嵌，单文件运行，无需安装。
 - `DSTCamp-1.3.8.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
 
 源码运行：
@@ -56,7 +55,7 @@ icons/       窗口、UI、世界设置和推荐 Mod 图标
 tools/       ktech、frpc/frps、VC++ 运行库和内置字体
 reference/   开发核对资料，不参与运行或打包
 build/       可删除的 PyInstaller 中间产物与资源暂存
-dist/        可重新构建的 EXE、ZIP 和 SHA-256 清单
+dist/        可重新构建的 EXE 和 SHA-256 清单
 ```
 
 用户目录默认位于 `%APPDATA%/DSTCamp/`：
@@ -91,14 +90,14 @@ python tests/run_all.py
 
 测试入口会自动发现 `tests/test_*.py`，在相互隔离的子进程中从仓库根目录执行；新增测试无需手工登记。
 
-构建三个发布产物：
+构建发布产物：
 
 ```powershell
 pip install -e ".[build]"
 python scripts/build_exe.py
 ```
 
-构建脚本在 `build/` 暂存固定工具和图标，只向 `dist/` 输出单文件 EXE、外置工具 ZIP 与 `sha256.json`。ZIP 会校验工具清单并拒绝 `build/`、`cache/`、`data/`、`dist/`、`reference/`、`security/`；两个 EXE 都会执行冻结入口与资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+构建脚本在 `build/` 暂存固定工具和图标，只向 `dist/` 输出单文件 EXE 与 `sha256.json`；EXE 会执行冻结入口与资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
 
 ## 1.3.8 更新
 
