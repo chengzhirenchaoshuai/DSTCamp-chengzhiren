@@ -174,6 +174,49 @@ def test_cleanup_is_noop_when_not_frozen() -> None:
         assert stale.exists()
 
 
+def test_cleanup_removes_vestigial_external_tools_once_embedded() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        install_dir = root / "install"
+        install_dir.mkdir()
+        (install_dir / "tools").mkdir()
+        (install_dir / "tools" / "leftover.txt").write_text("dead", encoding="utf-8")
+        current = install_dir / "DSTCamp.exe"
+        current.write_bytes(b"current")
+
+        meipass = root / "meipass"
+        (meipass / "tools").mkdir(parents=True)
+
+        with patch.object(auto_update.sys, "frozen", True, create=True), patch.object(
+            auto_update.sys, "executable", str(current)
+        ), patch.object(auto_update.sys, "_MEIPASS", str(meipass), create=True):
+            auto_update.cleanup_vestigial_external_tools()
+
+        assert not (install_dir / "tools").exists()
+
+
+def test_cleanup_keeps_external_tools_when_not_yet_embedded() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        install_dir = root / "install"
+        install_dir.mkdir()
+        (install_dir / "tools").mkdir()
+        needed = install_dir / "tools" / "still-needed.txt"
+        needed.write_text("in use", encoding="utf-8")
+        current = install_dir / "DSTCamp-1.3.5.exe"
+        current.write_bytes(b"current")
+
+        meipass = root / "meipass"
+        meipass.mkdir()  # 没有内嵌 tools 子目录——这份 EXE 仍需要外置 tools
+
+        with patch.object(auto_update.sys, "frozen", True, create=True), patch.object(
+            auto_update.sys, "executable", str(current)
+        ), patch.object(auto_update.sys, "_MEIPASS", str(meipass), create=True):
+            auto_update.cleanup_vestigial_external_tools()
+
+        assert needed.exists()
+
+
 def test_update_progress_state_is_clamped_and_redrawn() -> None:
     from dstools.gui.app import DSToolsApp
 
@@ -230,6 +273,8 @@ def main() -> None:
     test_standard_exe_name_is_fixed_but_custom_name_is_preserved()
     test_cleanup_removes_known_stale_artifacts()
     test_cleanup_is_noop_when_not_frozen()
+    test_cleanup_removes_vestigial_external_tools_once_embedded()
+    test_cleanup_keeps_external_tools_when_not_yet_embedded()
     test_update_progress_state_is_clamped_and_redrawn()
     test_update_progress_replaces_notice_at_status_bar_right()
     print("自动更新测试通过")

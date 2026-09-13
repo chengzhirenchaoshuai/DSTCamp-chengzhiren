@@ -66,9 +66,13 @@ class DSToolsApp:
         # 只在真正构造 GUI 的正常启动路径上跑到这里——冒烟测试、重启辅
         # 助进程、Lua/Workshop Worker 等特殊入口在 scripts/run_gui.py 里
         # 都会更早退出，不会触发这次清理。尽力清理，失败不影响启动。
-        from dstools.shared.auto_update import cleanup_stale_update_artifacts
+        from dstools.shared.auto_update import (
+            cleanup_stale_update_artifacts,
+            cleanup_vestigial_external_tools,
+        )
 
         cleanup_stale_update_artifacts()
+        cleanup_vestigial_external_tools()
 
         self.env = discover_environment(klei_path)
         self._current_shard: Shard | None = None

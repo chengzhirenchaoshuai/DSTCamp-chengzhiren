@@ -239,3 +239,26 @@ def cleanup_stale_update_artifacts() -> None:
                     _safe_unlink(entry)
     except OSError:
         pass
+
+
+def cleanup_vestigial_external_tools() -> None:
+    """清理存量 ZIP 版用户更新到内嵌版后，不再被读取的外置 tools/ 目录。
+
+    ``tool_binary_dir()`` 内嵌 tools 存在就优先用内嵌的，外置 tools/ 一旦
+    跟内嵌版共存，就已经是永远不会再被任何代码路径读取的死目录（含长
+    驻子进程用的 ``runtime_tool_path()``）——这里只在"当前 EXE 自带内嵌
+    tools 且同级还有一份外置 tools/"这个可证明安全的前提下才删除，不看
+    EXE 叫什么名字，兼容任何自定义命名。不再发布 ZIP 版之后，这里只服
+    务仍在使用旧版 ZIP 安装、尚未经历过自动更新的存量用户。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    bundled_tools = Path(getattr(sys, "_MEIPASS", "")) / "tools"
+    if not bundled_tools.is_dir():
+        return
+    try:
+        external_tools = Path(sys.executable).resolve().parent / "tools"
+        if external_tools.is_dir():
+            _safe_rmtree(external_tools)
+    except OSError:
+        pass
