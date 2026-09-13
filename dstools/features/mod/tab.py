@@ -226,6 +226,12 @@ def _workshop_modinfo_signature(
     return tuple(rows)
 
 
+def _prune_full_resolved_cache(cache, current_mod_ids):
+    """仅保留当前扫描仍存在的完整解析结果。"""
+    current = set(current_mod_ids)
+    return {mod_id: info for mod_id, info in cache.items() if mod_id in current}
+
+
 def _is_steam_context_error(error) -> bool:
     text = str(error or "")
     return "SteamAPI_Init" in text or "没有有效的 Steam/DST 应用上下文" in text
@@ -2731,6 +2737,7 @@ class ModManagerTab:
             self._mod_infos.clear()
             self._icon_imgs.clear()
             self._icon_thumb_cache.clear()
+            self._full_resolved_cache.clear()
             self._loading = False
             self._loading_key = None
             self._mods_loaded = True
@@ -2775,6 +2782,7 @@ class ModManagerTab:
                 wegame_client_mods_dir,
                 steam_runtime_mods_dir,
                 luajit_bin64_dir,
+                dict(self._full_resolved_cache),
             ),
             daemon=True,
         ).start()
@@ -2796,6 +2804,7 @@ class ModManagerTab:
         wegame_client_mods_dir,
         steam_runtime_mods_dir,
         luajit_bin64_dir,
+        full_resolved_cache,
     ):
         """跑在 Tk 主线程之外——绝不能碰任何 tkinter/Tcl 对象（包括
         PhotoImage/canvas 相关调用，但普通的 PIL Image.open()/convert()
@@ -2804,6 +2813,9 @@ class ModManagerTab:
         self._mod_data 等属性，这样一次仍在跑的、来自更早的 cluster/
         shard 切换的刷新，绝不会覆盖掉更新的一次（见 gen）。"""
         mod_data, mod_infos, mod_paths, icon_imgs = {}, {}, {}, {}
+        # 后台扫描只操作自己的副本。较旧 generation 即使晚完成，也不能
+        # 把完整解析对象遗留到当前页面缓存；只有通过主线程 generation
+        # 校验的结果才会在 _apply_loaded_mods() 中整体接管。
         icon_targets = []
         version_targets = []
         initial_applied = False
@@ -2919,7 +2931,7 @@ class ModManagerTab:
                         # workshop_id 存，从来不会因为"文件夹后来消失了"
                         # 而失效，不清掉的话名字/配置项会一直照着内容已
                         # 经不存在的旧数据显示，看起来像"删了还在"。
-                        self._full_resolved_cache.pop(wid, None)
+                        full_resolved_cache.pop(wid, None)
                     catalog_path = (
                         catalog_snapshot.paths.get(wid)
                         if catalog_snapshot is not None
@@ -2932,8 +2944,8 @@ class ModManagerTab:
                         and same_catalog_path
                     )
                     if archive is not None and not same_catalog_path:
-                        self._full_resolved_cache.pop(wid, None)
-                    cached = self._full_resolved_cache.get(wid)
+                        full_resolved_cache.pop(wid, None)
+                    cached = full_resolved_cache.get(wid)
                     if cached is not None:
                         mod_info = cached
                     elif catalog_has_info:
@@ -2952,7 +2964,7 @@ class ModManagerTab:
                                 result = resolve_full_modinfo(mod_folder)
                                 save_result(wid, result)
                             _apply_full_sandbox_result(mod_info, result)
-                            self._full_resolved_cache[wid] = mod_info
+                            full_resolved_cache[wid] = mod_info
                     mod_infos[wid] = mod_info
                     if mod_info and mod_folder:
                         if not full and mod_info.version_status == "pending":
@@ -3005,6 +3017,7 @@ class ModManagerTab:
                     mod_paths,
                     dict(icon_imgs),
                     luajit_active,
+                    full_resolved_cache,
                 )
                 if version_targets:
                     threading.Thread(
@@ -3044,6 +3057,7 @@ class ModManagerTab:
                     mod_paths,
                     icon_imgs,
                     luajit_active,
+                    full_resolved_cache,
                 )
 
     def _load_versions_worker(self, gen, targets):
@@ -3134,7 +3148,14 @@ class ModManagerTab:
             self.frame.after(0, self._apply_icon_batch, gen, icons)
 
     def _apply_loaded_mods(
-        self, gen, mod_data, mod_infos, mod_paths, icon_imgs, luajit_active
+        self,
+        gen,
+        mod_data,
+        mod_infos,
+        mod_paths,
+        icon_imgs,
+        luajit_active,
+        full_resolved_cache,
     ):
         if gen != self._refresh_gen or not self.frame.winfo_exists():
             return  # 已经被更新的一次刷新顶替（或者页签已经关闭）
@@ -3154,6 +3175,9 @@ class ModManagerTab:
         self._mod_infos = mod_infos
         self._mod_paths = mod_paths
         self._icon_imgs = icon_imgs
+        self._full_resolved_cache = _prune_full_resolved_cache(
+            full_resolved_cache, mod_infos
+        )
         self._icon_thumb_cache.clear()
         self._luajit_mod_locked = luajit_active
         self._loading = False

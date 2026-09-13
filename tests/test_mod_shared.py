@@ -29,6 +29,7 @@ from dstools.features.mod.tab import (
     ModManagerTab,
     RECOMMENDED_MODS,
     _can_open_mod_update_hint,
+    _prune_full_resolved_cache,
     _referenced_missing_status_text,
     _workshop_actionable_update_ids,
     _workshop_needs_update_count,
@@ -114,6 +115,48 @@ def test_catalog_icons_and_platform_invalidation():
         store.invalidate(Platform.STEAM)
         assert store.get(Platform.STEAM) is None
         assert store.get(Platform.WEGAME, wegame_root) is not None
+
+
+def test_catalog_releases_stale_icons_and_old_source_snapshots():
+    store = ModCatalogStore()
+    first_root = Path("C:/fake/wegame/first")
+    second_root = Path("C:/fake/wegame/second")
+    stale_icon = Image.new("RGBA", (192, 192), "red")
+    kept_icon = Image.new("RGBA", (192, 192), "green")
+
+    store.publish(
+        Platform.WEGAME,
+        {"stale": ModInfo(name="旧 Mod"), "kept": ModInfo(name="保留 Mod")},
+        {},
+        {"stale": stale_icon, "kept": kept_icon},
+        first_root,
+    )
+    refreshed = store.publish(
+        Platform.WEGAME,
+        {"kept": ModInfo(name="保留 Mod")},
+        {},
+        {"orphan": stale_icon},
+        first_root,
+    )
+    assert refreshed.icons == {"kept": kept_icon}
+
+    store.publish(
+        Platform.WEGAME,
+        {"new": ModInfo(name="新目录 Mod")},
+        {},
+        {"new": Image.new("RGBA", (1, 1))},
+        second_root,
+    )
+    assert store.get(Platform.WEGAME, first_root) is None
+    assert store.get(Platform.WEGAME, second_root) is not None
+
+
+def test_full_resolved_cache_keeps_only_current_mods():
+    kept_info = ModInfo(name="保留")
+    stale_info = ModInfo(name="已卸载")
+    assert _prune_full_resolved_cache(
+        {"kept": kept_info, "stale": stale_info}, {"kept": object()}
+    ) == {"kept": kept_info}
 
 
 def test_loaded_mod_icons_have_a_resident_size_limit():
@@ -663,6 +706,8 @@ if __name__ == "__main__":
     test_catalog_does_not_store_page_state()
     test_recommended_mods_include_ping_server_with_icon()
     test_catalog_icons_and_platform_invalidation()
+    test_catalog_releases_stale_icons_and_old_source_snapshots()
+    test_full_resolved_cache_keeps_only_current_mods()
     test_loaded_mod_icons_have_a_resident_size_limit()
     test_mod_list_viewport_matches_full_image_crop()
     test_mod_tab_releases_and_rebuilds_hidden_list_image()

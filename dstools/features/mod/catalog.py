@@ -67,9 +67,18 @@ class ModCatalogStore:
         key = catalog_source_key(platform, wegame_client_mods_dir)
         with self._lock:
             previous = self._snapshots.get(key)
-            merged_icons = dict(previous.icons) if previous else {}
+            current_ids = set(infos)
+            merged_icons = {
+                mod_id: icon
+                for mod_id, icon in (previous.icons.items() if previous else ())
+                if mod_id in current_ids
+            }
             if icons:
-                merged_icons.update(icons)
+                merged_icons.update(
+                    (mod_id, icon)
+                    for mod_id, icon in icons.items()
+                    if mod_id in current_ids
+                )
             snapshot = ModCatalogSnapshot(
                 platform=platform,
                 source_key=key,
@@ -77,6 +86,12 @@ class ModCatalogStore:
                 paths=dict(paths),
                 icons=merged_icons,
             )
+            # 每个平台只有当前内容根目录有复用价值。用户更换 Steam 库或
+            # WeGame Mod 目录后，旧路径下的大批 PIL 图标不应常驻到进程
+            # 退出；以后切回旧目录时重新扫描即可。
+            for old_key in tuple(self._snapshots):
+                if old_key != key and old_key[0] == platform.value:
+                    self._snapshots.pop(old_key, None)
             self._snapshots[key] = snapshot
             return snapshot
 
@@ -90,7 +105,11 @@ class ModCatalogStore:
         with self._lock:
             snapshot = self._snapshots.get(key)
             if snapshot is not None:
-                snapshot.icons.update(icons)
+                snapshot.icons.update(
+                    (mod_id, icon)
+                    for mod_id, icon in icons.items()
+                    if mod_id in snapshot.infos
+                )
 
     def invalidate(self, platform: Platform | None = None) -> None:
         with self._lock:
