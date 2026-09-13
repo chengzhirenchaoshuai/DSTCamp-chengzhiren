@@ -94,6 +94,7 @@ def render_mod_list(
     on_link=None,
     on_open_folder=None,
     on_copy_id=None,
+    on_copy_name=None,
     ref_width=None,
     icon_thumb_cache=None,
     viewport_y=0,
@@ -121,6 +122,10 @@ def render_mod_list(
             callable(workshop_id)——点一下把纯数字 ID（不带 "workshop-"
             前缀）复制到剪贴板，调用方（ModManagerTab._on_copy_id）负责
             剥前缀和写剪贴板，这里只管注册点击区域。
+        on_copy_name: 第 2 列 mod 名字那行文字的回调 callable(workshop_id)，
+            跟 on_copy_id 同一套点击套路——这里只按实际显示的文字宽度注
+            册点击区域，复制完整名字（不是截断后带省略号的显示文本）由
+            调用方自己按 workshop_id 解析。
         ref_width: 渲染的精确像素宽度（默认 BASE_REF_WIDTH）；所有尺寸
             按比例缩放。
         icon_thumb_cache: 可选的 dict[(workshop_id, icon_size) ->
@@ -223,6 +228,15 @@ def render_mod_list(
             hover_regions.append((x, global_y, x + name_col_w, global_y + row_h * 0.5,
                                   full_name_text))
         draw_mixed_text(draw, x, y + row_h * 0.25, name_text, name_size, theme.TEXT, anchor="lm")
+        if on_copy_name:
+            # 竖直范围卡在 id 那行的点击区域（0.39~0.66）之前，两个区域
+            # 不重叠——ImageScrollPanel._on_click() 是"第一个命中就返回"，
+            # 重叠会导致其中一个区域点不到。宽度按截断后实际显示的文字
+            # 量，跟 on_copy_id 的量法一致。
+            name_w = measure_mixed(name_text, name_size)
+            hit_regions.append((x, global_y, x + name_w + 10 * s,
+                                global_y + row_h * 0.36,
+                                _mk_cb(on_copy_name, wid)))
         draw.text((x, y + row_h * 0.53), wid, font=id_font,
                   fill=theme.TEXT_MUTED, anchor="lm")
         full_version_text = row.get("version_text", "")

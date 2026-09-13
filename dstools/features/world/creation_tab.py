@@ -50,7 +50,7 @@ from dstools.features.mod.parser import (
     split_installed_mod_counts,
 )
 from dstools.features.mod.render import mod_list_height, render_mod_list
-from dstools.features.mod.list_model import build_mod_rows, sort_mod_data
+from dstools.features.mod.list_model import build_mod_rows, localize_mod_name, sort_mod_data
 from dstools.features.mod.tab import (
     ModConfigDialog,
     _SavePresetDialog,
@@ -1052,6 +1052,7 @@ class WorldCreationTab:
                 on_link=self._open_mod_link,
                 on_open_folder=self._open_mod_folder,
                 on_copy_id=self._on_copy_id,
+                on_copy_name=self._on_copy_name,
                 ref_width=ref_width,
                 icon_thumb_cache=self._icon_thumb_cache,
                 viewport_y=view_y,
@@ -1085,6 +1086,23 @@ class WorldCreationTab:
         x_root = self.frame.winfo_pointerx()
         y_root = self.frame.winfo_pointery()
         self._show_copy_toast(t("mod.id_copied_toast", id=numeric_id), x_root, y_root)
+
+    def _resolve_mod_display_name(self, workshop_id) -> str:
+        """跟 _render_list() 里 build_mod_rows 同一套名字解析优先级，保
+        证复制到的名字和列表上显示的一致。"""
+        info = self._mod_infos.get(workshop_id)
+        mod = self._mod_data.get(workshop_id)
+        name = localize_mod_name(workshop_id, info.name if info else getattr(mod, "name", ""))
+        return name or workshop_id
+
+    def _on_copy_name(self, workshop_id):
+        """复制 Mod 的完整显示名称，并沿用主页的自动消失提示。"""
+        name = self._resolve_mod_display_name(workshop_id)
+        self.frame.clipboard_clear()
+        self.frame.clipboard_append(name)
+        x_root = self.frame.winfo_pointerx()
+        y_root = self.frame.winfo_pointery()
+        self._show_copy_toast(t("mod.name_copied_toast", name=name), x_root, y_root)
 
     def _show_copy_toast(self, text, x_root, y_root):
         tip = tk.Toplevel(self.frame)

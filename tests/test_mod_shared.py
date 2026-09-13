@@ -214,6 +214,38 @@ def test_mod_list_viewport_matches_full_image_crop():
     assert toggled
 
 
+def test_mod_list_copy_name_and_copy_id_hit_regions_do_not_overlap():
+    rows = [
+        {
+            "workshop_id": "workshop-123",
+            "name": "示例 Mod",
+            "version_text": "版本 1",
+            "enabled": True,
+            "has_config": False,
+            "has_link": False,
+            "has_folder": False,
+        }
+    ]
+    id_calls = []
+    name_calls = []
+    _img, hits, _hovers = render_mod_list(
+        rows,
+        {},
+        on_copy_id=id_calls.append,
+        on_copy_name=name_calls.append,
+        ref_width=650,
+    )
+    assert len(hits) == 2
+    (_x1a, y1a, _x2a, y2a, cb_a), (_x1b, y1b, _x2b, y2b, cb_b) = hits
+    # 两个点击区域竖直范围不能重叠——ImageScrollPanel._on_click() 命中第
+    # 一个匹配的区域就返回，重叠会导致其中一个点不到。
+    assert y2a <= y1b or y2b <= y1a
+    cb_a()
+    cb_b()
+    assert id_calls == ["workshop-123"]
+    assert name_calls == ["workshop-123"]
+
+
 def test_mod_tab_releases_and_rebuilds_hidden_list_image():
     tab = object.__new__(ModManagerTab)
     released = []
@@ -710,6 +742,7 @@ if __name__ == "__main__":
     test_full_resolved_cache_keeps_only_current_mods()
     test_loaded_mod_icons_have_a_resident_size_limit()
     test_mod_list_viewport_matches_full_image_crop()
+    test_mod_list_copy_name_and_copy_id_hit_regions_do_not_overlap()
     test_mod_tab_releases_and_rebuilds_hidden_list_image()
     test_shared_rows_keep_filter_and_sort_consistent()
     test_luajit_mod_is_first_only_when_prioritized()
