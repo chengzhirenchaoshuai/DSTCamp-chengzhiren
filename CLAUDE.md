@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-DSTCamp（包名 `dstools`，当前版本 `1.3.8`）是 Windows 上的《饥荒：联机版》本地服务器管理工具，GUI 入口为 `dst-gui`。支持 Steam/WeGame 存档、Mod、世界设置、服务器配置、本地专服、内网穿透和大厅加速。
+本仓库当前版本为 `1.3.8`。DSTCamp 是 Windows 上的《饥荒：联机版》存档、Mod、世界、专服、内网穿透和大厅加速管理工具，包名为 `dstools`，入口为 `dstools.gui.app.main`。
 
-1.3.8 重点优化 Mod 配置弹窗的加载等待反馈与响应速度、修复返回后仍卡顿的问题，并修正多行文本裁剪、图像缓存增长和字体切换下的视觉宽度问题。
+适用于本仓库的编码代理。默认中文交流、中文文档与注释；
 
 ## 工作方式
 
@@ -13,8 +13,11 @@ DSTCamp（包名 `dstools`，当前版本 `1.3.8`）是 Windows 上的《饥荒�
 - 保留已有用户改动，不顺带重构无关代码。
 - 网络、账号、Steam、SSH、真实 GUI 和游戏行为以实际文件、日志或真机结果为准，不用静态推测冒充验证。
 - 提交不等于推送、打标签或发布；仅在用户明确要求的范围内执行这些外部操作。
+- `CLAUDE.md` 与 `AGENTS.md` 保持内容一致（标题行除外）；改动其中一个时同步更新另一个。
 
-## 结构
+## 项目结构
+
+DSTCamp 通过 Tkinter GUI 管理 Steam/WeGame 存档、Mod、世界设置、专用服务器和内网穿透。
 
 - `dstools/gui/app.py`：应用装配与 `main()`。
 - `dstools/features/<feature>/`：单功能业务与 UI。
@@ -24,7 +27,11 @@ DSTCamp（包名 `dstools`，当前版本 `1.3.8`）是 Windows 上的《饥荒�
 - `reference/`：开发核对资料，不是运行时依赖。
 - `build/`、`dist/`：可重新生成的构建中间目录与发布产物，不进入 Git。
 
-运行时目录位于 `%APPDATA%/DSTCamp/`：`cache/` 仅放可重建结果，`data/` 放背景、端口备份、frpc 配置、更新包与长驻工具副本，`security/` 放 SSH 私钥与 `known_hosts`。不要把后两类重新放回缓存。
+运行时目录：
+
+- `%APPDATA%/DSTCamp/cache/`：可重建图标、解析和翻译缓存。
+- `%APPDATA%/DSTCamp/data/`：背景、端口备份、frpc 配置与长驻工具副本。
+- `%APPDATA%/DSTCamp/security/`：SSH 私钥与主机信任。
 
 ## 常用命令
 
@@ -36,7 +43,7 @@ pip install -e ".[build]"
 python scripts/build_exe.py
 ```
 
-测试脚本不使用 pytest/unittest，`tests/run_all.py` 自动发现全部 `tests/test_*.py` 并在隔离子进程中执行。发布时同步修改 `pyproject.toml` 与 `dstools/__init__.py`；构建脚本只收固定资源白名单并在 `build/` 暂存，禁止包含缓存、持久数据、安全材料和 `reference/`；验证 EXE、ZIP、`sha256.json` 后再提交、推送、打 `vX.Y.Z` 标签并创建 Release。打包完成后必须实际启动生成的 EXE；静态导入和冒烟测试不能替代 GUI、Steam、frpc 或游戏内验证。
+测试脚本不使用 pytest/unittest，`tests/run_all.py` 自动发现全部 `tests/test_*.py` 并在隔离子进程中执行。发布时同步修改 `pyproject.toml` 与 `dstools/__init__.py`；构建脚本只收固定资源白名单并在 `build/` 暂存，禁止包含缓存、持久数据、安全材料和 `reference/`；验证 EXE、ZIP、`sha256.json` 后再提交、推送、打 `vX.Y.Z` 标签并创建 Release。打包完成后实际启动生成的 EXE；静态导入和冒烟测试不能替代 GUI、Steam、frpc 或游戏内验证。
 
 ## 更新日志编写规则
 
@@ -67,5 +74,3 @@ python scripts/build_exe.py
 - V1 Legacy 包必须校验 ZIP/CRC/路径与链接，临时解压后原子替换并支持回滚；保留客户端 `mods` junction，V2 流程独立。
 
 若代码知识图谱可用，优先使用符号搜索与调用追踪；字面量、配置和图谱不足时再用 `rg`。
-
-详细跨工具约束见本地 `AGENTS.md`；若两者冲突，以用户任务和更近目录规则为准。
