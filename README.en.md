@@ -17,9 +17,9 @@ WeGame does not provide one-click dedicated-server launching. DSTCamp does not b
 
 Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
 
-- `DSTCamp-1.3.7.exe`: single-file build with all required resources embedded.
-- `DSTCamp-1.3.7.zip`: executable plus an external `tools/` directory; extract the complete archive before running it.
-- `DSTCamp-1.3.7.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
+- `DSTCamp-1.3.8.exe`: single-file build with all required resources embedded.
+- `DSTCamp-1.3.8.zip`: executable plus an external `tools/` directory; extract the complete archive before running it.
+- `DSTCamp-1.3.8.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
 
 To run from source:
 
@@ -67,6 +67,14 @@ python scripts/build_exe.py
 ```
 
 The build uses an explicit tool allowlist, stages resources under `build/`, rejects writable or reference directories from the ZIP, and smoke-tests both frozen executables. Real Windows GUI, Steam, frpc, and game behavior still require manual validation.
+
+## 1.3.8 highlights
+
+- Improved the Mod configuration dialog's loading feedback and response speed; fixed the main window still lagging after closing the config dialog.
+- Bounded the growth of size-keyed image caches, lowered image memory use on the world-creation window, and cleaned up stale Mod folder cache entries.
+- Fixed the KN Maiyuan Rounded font's width/size inflation and adjusted short buttons to a consistent four-character visual width.
+- Fixed multi-line text clipping in transparent tooltips and the save-session hint; fixed leftover state after an auxiliary button was triggered by mistake.
+- Relocated the token storage path and excluded the `reference` directory.
 
 ## 1.3.7 highlights
 
