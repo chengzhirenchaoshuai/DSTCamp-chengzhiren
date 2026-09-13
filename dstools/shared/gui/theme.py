@@ -308,10 +308,11 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     # 字重——项目里所有 ttk.Button 都没单独指定过 style，这里改的是 ttk
     # 全局 "TButton" 样式，等于一次性覆盖全部按钮。clam 自带的
     # width=-11 会给每个按钮至少预留 11 个字体字符单位；荆南麦圆体保持
-    # 1.2 倍字号时，短按钮会被无意义地横向撑宽。显式 width=0 改为按文
-    # 字实际宽度加 padding 定宽，只影响横向请求尺寸，不改变字号和高度。
+    # 1.2 倍字号时，短按钮会被无意义地横向撑宽。width=-7 给两字按钮
+    # 留出约四个中文字的视觉容量，比完全贴着文字的 width=0 舒展，同时
+    # 长文案仍会按实际内容扩展；这里只影响横向请求尺寸，不改变高度。
     style.configure("TButton", background=PRIMARY, foreground="#FFFFFF",
-                     borderwidth=0, focusthickness=0, padding=(12, 6), width=0,
+                     borderwidth=0, focusthickness=0, padding=(12, 6), width=-7,
                      font=font_tuple(default_size, bold=True))
     style.map("TButton",
               background=[("disabled", PRIMARY_LIGHT), ("pressed", PRIMARY_DARK),
