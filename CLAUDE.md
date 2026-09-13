@@ -32,7 +32,7 @@ pip install -e ".[build]"
 python scripts/build_exe.py
 ```
 
-`tests/run_all.py` 自动发现 `tests/test_*.py` 并用隔离子进程执行。发布时同步修改 `pyproject.toml` 与 `dstools/__init__.py`，验证 EXE、ZIP、`sha256.json` 后再提交、推送、打 `vX.Y.Z` 标签并创建 Release。
+`tests/run_all.py` 自动发现 `tests/test_*.py` 并用隔离子进程执行。发布时同步修改 `pyproject.toml` 与 `dstools/__init__.py`；构建脚本只收固定资源白名单并在 `build/` 暂存，禁止包含缓存、持久数据、安全材料和 `reference/`；验证 EXE、ZIP、`sha256.json` 后再提交、推送、打 `vX.Y.Z` 标签并创建 Release。
 
 ## 更新日志编写规则
 
@@ -64,14 +64,16 @@ python scripts/build_exe.py
 - 自定义背景上的只读文字用 `BgFrame` + `create_text`。
 - `Notebook`/`PanedWindow` 中插入控件时，必要时使用 `pack(before=existing_widget)`。
 - 主题值使用时读取 `theme.X`；字体只用 `theme.font_tuple()`；长期容器实现主题刷新。
+- 字体样式只在 `shared/gui/font_styles.py` 注册，字体及许可证放 `tools/fonts/`。
 - 页签构造不执行重活，使用 `_refresh()` 或 `_on_tab_select()` 懒加载。
 - `ktech.exe` 输出先落纯 ASCII 临时目录，再移动到目标路径。
 - IME 文本用 `after_idle()` 或 `trace_add()`，不要同步读取组合中的文本。
 - Mod 目录联接用 `os.path.isjunction()` 判断、`os.rmdir()` 删除，禁止 `shutil.rmtree()`。
-- `CLUSTER_INI_DEFAULTS` 只补缺失字段；密码类字段保持字符串。
-- 世界设置 key/值域必须从游戏或 Mod 实际源码确认。
+- `CLUSTER_INI_DEFAULTS` 只补缺失字段；`NO_TYPE_COERCE_FIELDS` 中的密码字段保持字符串。
+- 森林与洞穴配置独立；新增世界 key、值域或 Mod 支持前必须核对实际 Lua 源码。
 - 不联网下载 frp、vcredist、ktech；Linux 二进制用 `sftp.putfo()` 流式上传。
-- Lua 沙箱结果是动态 Mod 元数据的信任边界；缓存协议字段变化时同步递增版本并测试失效。
-- V1 `*_legacy.bin` 必须完成 ZIP 安全校验、临时解压、原子替换、回滚和部署后 Mod 校验；不得影响 V2。
+- WeGame 不支持一键启动专服，不实现绕过方案。
+- 动态 Mod 名称、版本、图标和配置以受限 Lua 5.1 沙箱结果为准；缓存校验包含内容哈希、来源路径、`folder_name` 和协议版本。
+- V1 Legacy 包必须校验 ZIP/CRC/路径与链接，临时解压后原子替换并支持回滚；保留客户端 `mods` junction，V2 流程独立。
 
 详细跨工具约束见本地 `AGENTS.md`；若两者冲突，以用户任务和更近目录规则为准。
