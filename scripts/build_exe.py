@@ -1,4 +1,11 @@
-"""构建 DSTCamp 单文件 EXE 与“EXE + tools”ZIP，并执行产物冒烟测试。"""
+"""构建 DSTCamp 单文件内嵌 EXE，并执行产物冒烟测试。
+
+不再构建外置工具 ZIP 版——ZIP 版更新后会被自动更新统一换成本文件产出
+的内嵌版 EXE，外置 tools/ 从此不再被读取，"用户可手动替换 tools 里的
+文件"这个 ZIP 版存在的初衷早已名存实亡；干脆只发布这一种形态，减少一
+套完全不会再被使用的构建/校验/发布路径。存量 ZIP 版用户的自动更新和
+兼容读取逻辑不受影响（见 auto_update.py、resource_paths.py）。
+"""
 
 from __future__ import annotations
 
@@ -8,7 +15,6 @@ import os
 import shutil
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 TOOL_FILES = (
@@ -54,8 +60,6 @@ REQUIRED_ICON_FILES = (
     "ui/character_icon_default.png",
     "ui/mod_icon_default.png",
 )
-
-FORBIDDEN_PACKAGE_DIRS = {"build", "cache", "data", "dist", "reference", "security"}
 
 
 def _stage_tools(project_root: Path, cache_root: Path) -> Path:
@@ -110,36 +114,6 @@ def _write_sha256_manifest(
     )
 
 
-def _verify_zip_archive(zip_path: Path, exe_name: str) -> None:
-    """验证 ZIP 只包含入口、固定工具和解压提示，不混入可写目录。"""
-    with zipfile.ZipFile(zip_path) as archive:
-        names = set(archive.namelist())
-        for name in names:
-            path = Path(name)
-            if path.is_absolute() or ".." in path.parts:
-                raise RuntimeError(f"ZIP 包含不安全路径：{name}")
-            if FORBIDDEN_PACKAGE_DIRS.intersection(path.parts):
-                raise RuntimeError(f"ZIP 混入非发布目录：{name}")
-
-    required = {"0-先解压再运行.txt", f"{exe_name}.exe"}
-    missing = required - names
-    if missing:
-        raise RuntimeError(f"ZIP 缺少必要文件：{sorted(missing)}")
-
-    packaged_tools = {
-        Path(name).relative_to("tools").as_posix()
-        for name in names
-        if Path(name).parts and Path(name).parts[0] == "tools" and not name.endswith("/")
-    }
-    expected_tools = set(TOOL_FILES)
-    if packaged_tools != expected_tools:
-        raise RuntimeError(
-            "ZIP 工具清单不一致："
-            f"缺少 {sorted(expected_tools - packaged_tools)}，"
-            f"多出 {sorted(packaged_tools - expected_tools)}"
-        )
-
-
 def _run_smoke_test(executable: Path) -> None:
     """实际启动冻结程序，验证入口、模块和资源可用。"""
     result = subprocess.run(
@@ -174,67 +148,35 @@ def build() -> None:
     staged_icons = _stage_icons(project_root, cache_root)
 
     sep = ";" if sys.platform == "win32" else ":"
-    common_args = [
+    args = [
         str(project_root / "scripts" / "run_gui.py"),
         "--windowed",
         "--onefile",
         "--noconfirm",
         "--clean",
+        f"--name={exe_name}",
+        f"--distpath={dist_root}",
+        f"--workpath={cache_root / ('build_' + exe_name)}",
+        f"--specpath={cache_root / ('spec_' + exe_name)}",
         f"--icon={staged_icons / 'app' / 'icon.ico'}",
         f"--add-data={staged_icons / 'world'}{sep}icons{os.sep}world",
         f"--add-data={staged_icons / 'ui'}{sep}icons{os.sep}ui",
         f"--add-data={staged_icons / 'app'}{sep}icons{os.sep}app",
         f"--add-data={staged_icons / 'recommended'}{sep}icons{os.sep}recommended",
+        f"--add-data={staged_tools}{sep}tools",
         "--hidden-import=lupa.lua51",
         "--collect-data=certifi",
         "--exclude-module=numpy",
     ]
+    PyInstaller.__main__.run(args)
 
-    def run_pyinstaller(name: str, *, embed_tools: bool, distpath: Path) -> Path:
-        args = [
-            *common_args,
-            f"--name={name}",
-            f"--distpath={distpath}",
-            f"--workpath={cache_root / ('build_' + name)}",
-            f"--specpath={cache_root / ('spec_' + name)}",
-        ]
-        if embed_tools:
-            args.append(f"--add-data={staged_tools}{sep}tools")
-        PyInstaller.__main__.run(args)
-        return distpath / f"{name}.exe"
-
-    embedded_name = f"{exe_name}-embedded"
-    embedded_exe = run_pyinstaller(
-        embedded_name, embed_tools=True, distpath=cache_root / "single_build"
-    )
     onefile_exe = dist_root / f"{exe_name}.exe"
-    shutil.move(embedded_exe, onefile_exe)
     _run_smoke_test(onefile_exe)
 
-    zip_stage = cache_root / "package_zip"
-    shutil.rmtree(zip_stage, ignore_errors=True)
-    zip_stage.mkdir(parents=True)
-    zip_exe = run_pyinstaller(exe_name, embed_tools=False, distpath=zip_stage)
-    shutil.copytree(staged_tools, zip_stage / "tools")
-    _run_smoke_test(zip_exe)
-
-    hint = (
-        "【请先解压再运行】\n\n"
-        f"完整解压后双击 {exe_name}.exe；请保持 EXE 与 tools 文件夹在一起。\n"
-    )
-    zip_path = dist_root / f"{exe_name}.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("0-先解压再运行.txt", hint)
-        for path in sorted(zip_stage.rglob("*")):
-            if path.is_file():
-                archive.write(path, path.relative_to(zip_stage))
-    _verify_zip_archive(zip_path, exe_name)
-
     manifest_path = dist_root / f"{exe_name}.sha256.json"
-    _write_sha256_manifest(manifest_path, __version__, (onefile_exe, zip_path))
+    _write_sha256_manifest(manifest_path, __version__, (onefile_exe,))
 
     print(f"构建及冒烟测试完成：{onefile_exe}")
-    print(f"构建及冒烟测试完成：{zip_path}")
     print(f"更新校验清单：{manifest_path}")
 
 
