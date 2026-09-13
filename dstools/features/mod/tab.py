@@ -3433,14 +3433,18 @@ class ModManagerTab:
     def _render_placeholder(self, text, ref_width=None):
         from PIL import Image as _Image, ImageDraw as _ImageDraw
         from dstools.shared.gui.fonts import get_font
-        from dstools.features.mod.render import REF_WIDTH
+        from dstools.features.mod.render import REF_WIDTH, BASE_REF_WIDTH
 
         w = ref_width or self.list_panel.current_width(REF_WIDTH)
-        img = _Image.new("RGB", (w, 60), theme.CARD_BG)
+        img = _Image.new("RGB", (w, 70), theme.CARD_BG)
         if text:
             draw = _ImageDraw.Draw(img)
+            # 比列表里 mod 名字（默认宽度下 24px）更大一些，加载提示是
+            # 整页唯一内容，值得比列表正文更显眼。
+            s = w / BASE_REF_WIDTH
             draw.text(
-                (w / 2, 30), text, font=get_font(16), fill=theme.TEXT_MUTED, anchor="mm"
+                (w / 2, 35), text, font=get_font(round(30 * s)),
+                fill=theme.TEXT_MUTED, anchor="mm",
             )
         self.list_panel.set_image(img, [], keep_scroll=True)
         self._list_image_released = False

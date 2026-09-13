@@ -1008,7 +1008,7 @@ class WorldCreationTab:
         # 页不重新创建 Tk 视口；返回 Mod 页时外层切页逻辑会按最新模型重建。
         if getattr(self, "_sub_tab_key", "mod") != "mod":
             return
-        from dstools.features.mod.render import REF_WIDTH
+        from dstools.features.mod.render import REF_WIDTH, BASE_REF_WIDTH
 
         if ref_width is None:
             ref_width = self._mod_panel.current_width(REF_WIDTH)
@@ -1032,12 +1032,21 @@ class WorldCreationTab:
             from dstools.shared.gui.fonts import get_font
 
             width = ref_width
-            img = _Image.new("RGB", (width, 60), theme.CARD_BG)
-            if query or show != "all":
+            img = _Image.new("RGB", (width, 70), theme.CARD_BG)
+            # 后台扫描还没出结果时列表本来就是空的，跟"筛选后没有匹配"
+            # 要分开提示，不然看着像没装 Mod，而不是还在加载。
+            if self._mod_scan_running:
+                placeholder_text = t("mod.loading")
+            elif query or show != "all":
+                placeholder_text = t("mod.no_filtered")
+            else:
+                placeholder_text = ""
+            if placeholder_text:
+                s = width / BASE_REF_WIDTH
                 _ImageDraw.Draw(img).text(
-                    (width / 2, 30),
-                    t("mod.no_filtered"),
-                    font=get_font(16),
+                    (width / 2, 35),
+                    placeholder_text,
+                    font=get_font(round(30 * s)),
                     fill=theme.TEXT_MUTED,
                     anchor="mm",
                 )
