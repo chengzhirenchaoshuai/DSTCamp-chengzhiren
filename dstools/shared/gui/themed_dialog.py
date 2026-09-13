@@ -60,7 +60,8 @@ def _show(
     button_layout="horizontal",
 ):
     """buttons: [(label, value, is_default), ...] 列表。返回被选中的
-    value，弹窗没选就关掉则返回 None。
+    value，弹窗没选就关掉则返回 None。辅助按钮只执行附加操作，保持
+    弹窗打开，不能改变返回值。
 
     wraplength/min_width 给消息比较长的调用方（比如专用服务器安装引导）
     一个要更宽卡片、而不是被挤成又高又窄一条的选项。默认值应用户反馈
@@ -115,8 +116,7 @@ def _show(
     default_btn = None
     if auxiliary_button is not None:
         label, command = auxiliary_button
-        ttk.Button(btn_row, text=label,
-                   command=lambda: (choose("auxiliary"), command())).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text=label, command=command).pack(side=tk.LEFT)
     for label, value, is_default in buttons:
         b = ttk.Button(btn_row, text=label, command=lambda v=value: choose(v))
         if button_layout == "vertical":
@@ -269,10 +269,16 @@ def show_toast(parent, message, duration_ms=2400):
 
 def ask_yes_no(parent, title, message, wraplength=420, min_width=460,
                auxiliary_button=None) -> bool:
-    return bool(_show(parent, title, message, "question",
-                       [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)],
-                       wraplength=wraplength, min_width=min_width,
-                       auxiliary_button=auxiliary_button))
+    return _show(
+        parent,
+        title,
+        message,
+        "question",
+        [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)],
+        wraplength=wraplength,
+        min_width=min_width,
+        auxiliary_button=auxiliary_button,
+    ) is True
 
 
 def ask_choice(
@@ -302,7 +308,13 @@ def ask_choice(
 def ask_yes_no_with_auxiliary(parent, title, message, auxiliary_label, auxiliary_command,
                                wraplength=420, min_width=460) -> bool:
     """确认框左下角提供不会关闭窗口的辅助操作，例如打开依赖安装说明。"""
-    return bool(_show(parent, title, message, "question",
-                       [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)],
-                       wraplength=wraplength, min_width=min_width,
-                       auxiliary_button=(auxiliary_label, auxiliary_command)))
+    return _show(
+        parent,
+        title,
+        message,
+        "question",
+        [(t("dlg.cancel_btn"), False, False), (t("dlg.confirm_btn"), True, True)],
+        wraplength=wraplength,
+        min_width=min_width,
+        auxiliary_button=(auxiliary_label, auxiliary_command),
+    ) is True

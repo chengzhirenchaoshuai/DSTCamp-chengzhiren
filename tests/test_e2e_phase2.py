@@ -7,6 +7,7 @@ import os
 import sys
 import tempfile
 import tkinter as tk
+from tkinter import ttk
 from pathlib import Path
 from string import Formatter
 from types import SimpleNamespace
@@ -112,6 +113,75 @@ def test_gui_imports():
     from dstools.features.cluster_config.tab import ClusterConfigTab
     assert DSToolsApp and ModManagerTab and ClusterConfigTab
     print("  PASS: GUI imports OK")
+
+
+def test_themed_dialog_auxiliary_action_never_confirms():
+    """辅助按钮只能执行附加操作，不能被确认框当作“确认”。"""
+    import inspect
+
+    from dstools.shared.gui import themed_dialog
+
+    show_source = inspect.getsource(themed_dialog._show)
+    assert 'command=command' in show_source
+    assert 'choose("auxiliary")' not in show_source
+
+    root = tk.Tk()
+    root.withdraw()
+    opened = []
+    interaction_errors = []
+    auxiliary_label = "打开位置"
+
+    def click_auxiliary_then_cancel():
+        win = next(
+            widget
+            for widget in root.winfo_children()
+            if isinstance(widget, tk.Toplevel)
+        )
+        try:
+            pending = list(win.winfo_children())
+            buttons = []
+            while pending:
+                widget = pending.pop()
+                if isinstance(widget, ttk.Button):
+                    buttons.append(widget)
+                pending.extend(widget.winfo_children())
+            auxiliary = next(
+                button
+                for button in buttons
+                if button.cget("text") == auxiliary_label
+            )
+            auxiliary.invoke()
+            assert win.winfo_exists(), "辅助操作后确认框必须保持打开"
+            next(
+                button
+                for button in buttons
+                if button.cget("text") == t("dlg.cancel_btn")
+            ).invoke()
+        except Exception as exc:
+            interaction_errors.append(exc)
+            win.destroy()
+
+    try:
+        root.after(50, click_auxiliary_then_cancel)
+        assert not themed_dialog.ask_yes_no(
+            root,
+            "测试",
+            "测试",
+            auxiliary_button=(auxiliary_label, lambda: opened.append(True)),
+        )
+        assert not interaction_errors, interaction_errors[0]
+        assert opened == [True]
+    finally:
+        root.destroy()
+
+    with patch.object(themed_dialog, "_show", return_value="auxiliary"):
+        assert not themed_dialog.ask_yes_no(None, "测试", "测试")
+        assert not themed_dialog.ask_yes_no_with_auxiliary(
+            None, "测试", "测试", "打开位置", lambda: None
+        )
+    with patch.object(themed_dialog, "_show", return_value=True):
+        assert themed_dialog.ask_yes_no(None, "测试", "测试")
+    print("  PASS: 辅助按钮不会被误判为确认")
 
 
 def test_mod_option_description_uses_natural_height():
@@ -989,6 +1059,7 @@ def main():
         test_i18n_basic,
         test_exe_entry_imports,
         test_gui_imports,
+        test_themed_dialog_auxiliary_action_never_confirms,
         test_mod_option_description_uses_natural_height,
         test_mod_config_loading_feedback_is_delayed_and_animated,
         test_mod_config_close_hides_before_batched_cleanup,
