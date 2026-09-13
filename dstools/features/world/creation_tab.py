@@ -712,7 +712,7 @@ class WorldCreationTab:
                 return
         self._mod_scan_running = True
         if self._mod_scan_status is not None:
-            self._mod_scan_status.set("正在后台扫描 Mod…")
+            self._mod_scan_status.set("正在扫描 Mod…")
         if self._mod_scan_btn is not None:
             self._mod_scan_btn.configure(state=tk.DISABLED)
         if self._create_btn is not None:
