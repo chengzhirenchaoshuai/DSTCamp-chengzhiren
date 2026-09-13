@@ -96,7 +96,7 @@ def test_launch_helper_stages_on_exe_volume() -> None:
         target = Path(command[command.index("-TargetExe") + 1])
         assert local_staged.parent.resolve() == current.parent.resolve()
         assert local_staged.read_bytes() == b"new"
-        assert target.resolve() == (root / "DSTCamp-1.3.6.exe").resolve()
+        assert target.resolve() == (root / auto_update.STANDARD_EXE_NAME).resolve()
         assert (
             popen.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
         )
@@ -108,15 +108,70 @@ def test_launch_helper_stages_on_exe_volume() -> None:
         assert reset_at < start_at
 
 
-def test_standard_exe_name_follows_release_but_custom_name_is_preserved() -> None:
+def test_standard_exe_name_is_fixed_but_custom_name_is_preserved() -> None:
     root = Path("C:/DSTCamp")
     staged = root / "cache" / "DSTCamp-1.3.6.exe"
+    # 旧版本号命名一次性迁移到固定名字。
     assert auto_update.resolve_install_target(
         root / "DSTCamp-1.3.5.exe", staged
-    ) == root / "DSTCamp-1.3.6.exe"
+    ) == root / auto_update.STANDARD_EXE_NAME
+    # 已经是固定名字的安装，后续更新继续保持固定名字。
+    assert auto_update.resolve_install_target(
+        root / auto_update.STANDARD_EXE_NAME, staged
+    ) == root / auto_update.STANDARD_EXE_NAME
+    # 用户自定义命名不受影响。
     assert auto_update.resolve_install_target(
         root / "我的开服工具.exe", staged
     ) == root / "我的开服工具.exe"
+
+
+def test_cleanup_removes_known_stale_artifacts() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        install_dir = root / "install"
+        install_dir.mkdir()
+        current = install_dir / "DSTCamp.exe"
+        current.write_bytes(b"current")
+        # 上一次成功更新留下的旧版本备份。
+        (install_dir / "DSTCamp-1.3.7.exe.old").write_bytes(b"old")
+        # 上一次失败更新留下的隐藏 staged 文件——用跟"当前文件名"不同的
+        # stem 生成，模拟用户在两次更新之间改过名字的场景。
+        (install_dir / ".我的旧名字.update-4321.exe").write_bytes(b"stale")
+        (install_dir / "apply_update.log").write_text("失败原因", encoding="utf-8")
+        keep_file = install_dir / "readme.txt"
+        keep_file.write_text("keep", encoding="utf-8")
+
+        updates_dir = root / "data" / "updates"
+        (updates_dir / "1.3.6").mkdir(parents=True)
+        (updates_dir / "1.3.6" / "DSTCamp-1.3.6.exe").write_bytes(b"stale-download")
+        updates_dir.joinpath("apply_update.ps1").write_text("script", encoding="utf-8")
+
+        with patch.object(auto_update.sys, "frozen", True, create=True), patch.object(
+            auto_update.sys, "executable", str(current)
+        ), patch.object(auto_update, "data_dir", return_value=updates_dir):
+            auto_update.cleanup_stale_update_artifacts()
+
+        assert not (install_dir / "DSTCamp-1.3.7.exe.old").exists()
+        assert not (install_dir / ".我的旧名字.update-4321.exe").exists()
+        assert not (install_dir / "apply_update.log").exists()
+        assert keep_file.exists()
+        assert current.exists()
+        assert not (updates_dir / "1.3.6").exists()
+        assert updates_dir.joinpath("apply_update.ps1").exists()
+
+
+def test_cleanup_is_noop_when_not_frozen() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        install_dir = root / "install"
+        install_dir.mkdir()
+        stale = install_dir / "DSTCamp.exe.old"
+        stale.write_bytes(b"old")
+        with patch.object(auto_update.sys, "frozen", False, create=True), patch.object(
+            auto_update.sys, "executable", str(install_dir / "DSTCamp.exe")
+        ):
+            auto_update.cleanup_stale_update_artifacts()
+        assert stale.exists()
 
 
 def test_update_progress_state_is_clamped_and_redrawn() -> None:
@@ -172,7 +227,9 @@ def main() -> None:
     test_release_manifest_enables_auto_update()
     test_download_requires_matching_hash_and_size()
     test_launch_helper_stages_on_exe_volume()
-    test_standard_exe_name_follows_release_but_custom_name_is_preserved()
+    test_standard_exe_name_is_fixed_but_custom_name_is_preserved()
+    test_cleanup_removes_known_stale_artifacts()
+    test_cleanup_is_noop_when_not_frozen()
     test_update_progress_state_is_clamped_and_redrawn()
     test_update_progress_replaces_notice_at_status_bar_right()
     print("自动更新测试通过")

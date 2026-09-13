@@ -17,9 +17,29 @@ from dstools.shared.ssl_context import default_ssl_context
 from dstools.shared.update_check import UpdateRelease
 
 ProgressCallback = Callable[[int, int], None]
-_STANDARD_EXE_NAME_RE = re.compile(
+
+# 标准安装固定用这个名字，不再随版本号变化——旧方案每次更新都改名
+# （DSTCamp-1.3.7.exe -> DSTCamp-1.3.8.exe），文件名一变，钉在任务栏/
+# 桌面的快捷方式就会失效，而且没法原地覆盖，必须靠"移出旧文件、移入
+# 新文件"两步替换，这正是更新残留文件的根源之一。
+STANDARD_EXE_NAME = "DSTCamp.exe"
+# 旧版本按 Release 文件名逐版本改名；识别出这类命名是为了把它们一次性
+# 迁移到固定的 STANDARD_EXE_NAME，之后不再改名。
+_LEGACY_VERSIONED_EXE_NAME_RE = re.compile(
     r"^DSTCamp-\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?\.exe$", re.IGNORECASE
 )
+# launch_update_helper() 生成隐藏 staged 文件用的命名规律；
+# cleanup_stale_update_artifacts() 复用同一模式做清理扫描，两处共用一份
+# 定义，避免以后改命名规则时漏改其中一处。
+_HIDDEN_STAGED_GLOB = ".*.update-*.exe"
+# 与 _helper_script() 里 PS1 模板内 $LogFile 的文件名保持一致。
+_UPDATE_LOG_NAME = "apply_update.log"
+# 与 _helper_script() 里的路径保持一致；清理下载缓存目录时需要跳过它。
+_HELPER_SCRIPT_NAME = "apply_update.ps1"
+
+
+def _hidden_staged_name(stem: str, pid: int) -> str:
+    return f".{stem}.update-{pid}.exe"
 
 
 def download_update(release: UpdateRelease, progress: ProgressCallback | None = None) -> Path:
@@ -57,7 +77,7 @@ def download_update(release: UpdateRelease, progress: ProgressCallback | None = 
 
 
 def _helper_script() -> Path:
-    path = data_dir("updates") / "apply_update.ps1"
+    path = data_dir("updates") / _HELPER_SCRIPT_NAME
     path.parent.mkdir(parents=True, exist_ok=True)
     content = r'''param(
     [int]$ParentPid,
@@ -127,19 +147,23 @@ def ensure_install_dir_writable() -> None:
 
 
 def resolve_install_target(current_exe: Path, staged_exe: Path) -> Path:
-    """标准版本文件名随版本升级；用户自定义的 EXE 名称保持不变。"""
+    """标准安装固定用 STANDARD_EXE_NAME；用户自定义的 EXE 名称保持不变。
+
+    staged_exe（下载产物，仍然带版本号）只用来定位新文件内容，不影响本
+    地安装名字——下载产物命名和本地安装命名是两个独立概念。旧版本号命
+    名的安装会在这次更新里一次性迁移到固定名字，之后保持不变。
+    """
+    del staged_exe  # 保留参数只为了调用方语义清晰，命名不再影响安装目标
     current = Path(current_exe).resolve()
-    staged = Path(staged_exe).resolve()
-    name = (
-        staged.name
-        if _STANDARD_EXE_NAME_RE.fullmatch(current.name)
-        else current.name
+    is_standard = current.name == STANDARD_EXE_NAME or bool(
+        _LEGACY_VERSIONED_EXE_NAME_RE.fullmatch(current.name)
     )
+    name = STANDARD_EXE_NAME if is_standard else current.name
     return current.with_name(name)
 
 
 def launch_update_helper(staged_exe: Path) -> None:
-    """启动独立 PowerShell，当前进程退出后替换并以新版本名称重启。"""
+    """启动独立 PowerShell，当前进程退出后替换并以安装目标名称重启。"""
     if os.name != "nt" or not getattr(sys, "frozen", False):
         raise RuntimeError("自动替换仅支持 Windows 冻结版")
     current = Path(sys.executable).resolve()
@@ -148,7 +172,7 @@ def launch_update_helper(staged_exe: Path) -> None:
         raise FileNotFoundError(staged)
     target = resolve_install_target(current, staged)
     backup = current.with_name(current.name + ".old")
-    local_staged = current.with_name(f".{current.stem}.update-{os.getpid()}.exe")
+    local_staged = current.with_name(_hidden_staged_name(current.stem, os.getpid()))
     shutil.copy2(staged, local_staged)
     command = [
         "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
@@ -170,3 +194,48 @@ def launch_update_helper(staged_exe: Path) -> None:
     except Exception:
         local_staged.unlink(missing_ok=True)
         raise
+
+
+def _safe_unlink(path: Path) -> None:
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def _safe_rmtree(path: Path) -> None:
+    shutil.rmtree(path, ignore_errors=True)
+
+
+def cleanup_stale_update_artifacts() -> None:
+    """尽力清理历史更新流程遗留的文件；单个文件删除失败不影响启动。
+
+    不区分"上一次更新是成功、失败、还是进程被杀掉"——只要走到这里说明
+    当前进程已经在正常启动，安装目录里任何 ``*.exe.old``、隐藏 staged
+    文件、失败日志都已经是用不上的历史残留，可以直接清掉；不依赖任何
+    持久化的更新状态，也不需要单独修补 PowerShell 助手脚本每条失败分
+    支——助手脚本失败时重新拉起的旧 EXE，下次启动一样会跑到这里清理。
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        install_dir = Path(sys.executable).resolve().parent
+        for stale in install_dir.glob("*.exe.old"):
+            _safe_unlink(stale)
+        for stale in install_dir.glob(_HIDDEN_STAGED_GLOB):
+            _safe_unlink(stale)
+        _safe_unlink(install_dir / _UPDATE_LOG_NAME)
+    except OSError:
+        pass
+    try:
+        updates_dir = data_dir("updates")
+        if updates_dir.is_dir():
+            for entry in updates_dir.iterdir():
+                if entry.name == _HELPER_SCRIPT_NAME:
+                    continue
+                if entry.is_dir():
+                    _safe_rmtree(entry)
+                else:
+                    _safe_unlink(entry)
+    except OSError:
+        pass
