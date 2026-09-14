@@ -12,18 +12,53 @@ from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.windows_defender import (
     DefenderState,
+    DefenderTarget,
     change_defender_exclusion,
     check_defender_exclusion,
     check_defender_exclusion_elevated,
     defender_target_is_safe,
-    resolve_defender_target,
+    resolve_defender_targets,
 )
+
+_TARGET_LABEL_KEYS = {
+    "file": "settings.defender_target_file",
+    "legacy_zip_folder": "settings.defender_target_legacy_zip_folder",
+    "runtime_tools": "settings.defender_target_runtime_tools",
+    "temp_wildcard": "settings.defender_target_temp_wildcard",
+}
+
+
+def _target_label(target: DefenderTarget) -> str:
+    return t(_TARGET_LABEL_KEYS.get(target.kind, "settings.defender_target_file"))
+
+
+def _aggregate_state(states: list[DefenderState]) -> DefenderState:
+    """把每个目标各自的状态合并成一个用于展示/控制按钮的整体状态。
+
+    只要有一个目标状态不确定（error/cancelled/unavailable/unknown），整体
+    就不确定——Add/Remove 按钮只在能确认全部目标真实状态时才可点，不能
+    在信息不全时让用户误以为已经处理完了。真正的"部分已排除、部分没
+    有"（每个目标都确认过，只是结果不一致）才归到新状态 ``partial``。
+    """
+    if not states:
+        return DefenderState("unavailable")
+    statuses = {state.status for state in states}
+    if statuses == {"excluded"}:
+        return DefenderState("excluded")
+    if statuses == {"not_excluded"}:
+        return DefenderState("not_excluded")
+    for uncertain in ("error", "cancelled", "unavailable", "unknown"):
+        if uncertain in statuses:
+            return next(state for state in states if state.status == uncertain)
+    return DefenderState("partial")
 
 
 def show_windows_defender_dialog(parent: tk.Misc) -> None:
     """展示可检测、可撤销且必须经用户确认的 Defender 排除项入口。"""
-    target = resolve_defender_target()
-    target_is_safe = target is not None and defender_target_is_safe(target)
+    targets = resolve_defender_targets()
+    targets_are_safe = bool(targets) and all(
+        defender_target_is_safe(target) for target in targets
+    )
     win = tk.Toplevel(parent)
     win.withdraw()
     win.title(t("settings.defender_title"))
@@ -59,15 +94,35 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
         bg=theme.CARD_BG,
         anchor=tk.W,
     ).pack(fill=tk.X, padx=24, pady=(18, 6))
-    path_var = tk.StringVar(value=str(target.path) if target else "—")
-    ttk.Entry(card, textvariable=path_var, state="readonly").pack(
-        fill=tk.X, padx=24
-    )
+
+    targets_frame = tk.Frame(card, background=theme.CARD_BG)
+    targets_frame.pack(fill=tk.X, padx=24)
+    if targets:
+        for target in targets:
+            row = tk.Frame(targets_frame, background=theme.CARD_BG)
+            row.pack(fill=tk.X, pady=(0, 4))
+            tk.Label(
+                row,
+                text=_target_label(target),
+                font=theme.font_tuple(theme.FONT_SIZE_SM),
+                fg=theme.TEXT_MUTED,
+                bg=theme.CARD_BG,
+                anchor=tk.W,
+                width=12,
+            ).pack(side=tk.LEFT)
+            ttk.Entry(
+                row, textvariable=tk.StringVar(value=str(target.path)), state="readonly"
+            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+    else:
+        ttk.Entry(
+            targets_frame, textvariable=tk.StringVar(value="—"), state="readonly"
+        ).pack(fill=tk.X)
+
     scope_key = (
         "settings.defender_folder_scope"
-        if target and target.kind == "folder"
+        if len(targets) == 1 and targets[0].kind == "legacy_zip_folder"
         else "settings.defender_file_scope"
-        if target
+        if targets
         else "settings.defender_source_scope"
     )
     tk.Label(
@@ -109,15 +164,15 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
 
     def set_buttons() -> None:
         state = current["state"]
-        actionable = target_is_safe and not current["busy"]
+        actionable = targets_are_safe and not current["busy"]
         add_button.state(
             ["!disabled"]
-            if actionable and state and state.status == "not_excluded"
+            if actionable and state and state.status in {"not_excluded", "partial"}
             else ["disabled"]
         )
         remove_button.state(
             ["!disabled"]
-            if actionable and state and state.status == "excluded"
+            if actionable and state and state.status in {"excluded", "partial"}
             else ["disabled"]
         )
         refresh_button.state(["!disabled"] if actionable else ["disabled"])
@@ -132,6 +187,7 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
         labels = {
             "excluded": ("settings.defender_excluded", theme.ACCENT),
             "not_excluded": ("settings.defender_not_excluded", theme.TEXT),
+            "partial": ("settings.defender_partial", theme.TEXT),
             "unknown": ("settings.defender_unknown", theme.TEXT_MUTED),
             "unavailable": ("settings.defender_unavailable", theme.TEXT_MUTED),
             "cancelled": ("settings.defender_check_cancelled", theme.TEXT_MUTED),
@@ -144,7 +200,7 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
         set_buttons()
 
     def start_check(*, elevated: bool = False) -> None:
-        if not target_is_safe or current["busy"]:
+        if not targets_are_safe or current["busy"]:
             return
         current["busy"] = True
         status_var.set(t("settings.defender_checking"))
@@ -157,22 +213,23 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
                 if elevated
                 else check_defender_exclusion
             )
-            results.put(("check", check(target)))
+            results.put(("check", _aggregate_state(check(targets))))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def start_change(enabled: bool) -> None:
-        if not target_is_safe or current["busy"]:
+        if not targets_are_safe or current["busy"]:
             return
         confirm_key = (
             "settings.defender_confirm_add"
             if enabled
             else "settings.defender_confirm_remove"
         )
+        joined_paths = "\n".join(str(target.path) for target in targets)
         if not dlg.ask_yes_no(
             win,
             t("settings.defender_title"),
-            t(confirm_key, path=str(target.path)),
+            t(confirm_key, path=joined_paths),
             wraplength=560,
             min_width=620,
         ):
@@ -189,7 +246,7 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
         set_buttons()
 
         def worker() -> None:
-            changed = change_defender_exclusion(target, enabled=enabled)
+            changed = change_defender_exclusion(targets, enabled=enabled)
             state = (
                 DefenderState("excluded" if enabled else "not_excluded")
                 if changed.success
@@ -274,10 +331,10 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
         except tk.TclError:
             pass
 
-    if target is None:
+    if not targets:
         show_state(DefenderState("unavailable"))
         status_var.set(t("settings.defender_source_unavailable"))
-    elif not target_is_safe:
+    elif not targets_are_safe:
         show_state(DefenderState("unsafe"))
     else:
         start_check()
