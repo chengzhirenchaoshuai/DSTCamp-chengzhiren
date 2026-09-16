@@ -163,8 +163,21 @@ def _powershell_executable() -> str:
     return str(candidate if candidate.is_file() else Path("powershell.exe"))
 
 
+def _console_output_encoding() -> str:
+    """Windows PowerShell 5.1（.NET Framework）向重定向句柄写 stdout/
+    stderr 时，走的是系统控制台代码页（``GetOEMCP()``），不是 UTF-8——
+    这跟我们往脚本里传参时用的 UTF-8 base64 编码是两回事，输出方向若
+    硬按 UTF-8 解码，中文 Windows（代码页通常是 936/GBK）下的中文错误
+    信息会被拆成一串乱码问号。取不到时退回 UTF-8。"""
+    try:
+        codepage = ctypes.windll.kernel32.GetOEMCP()
+    except (AttributeError, OSError):
+        return "utf-8"
+    return f"cp{codepage}" if codepage else "utf-8"
+
+
 def _run_powershell(script: str, *, timeout: int = 20) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+    result = subprocess.run(
         [
             _powershell_executable(),
             "-NoLogo",
@@ -174,27 +187,47 @@ def _run_powershell(script: str, *, timeout: int = 20) -> subprocess.CompletedPr
             _encoded_command(script),
         ],
         capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=timeout,
         creationflags=_CREATE_NO_WINDOW,
         check=False,
     )
+    encoding = _console_output_encoding()
+    return subprocess.CompletedProcess(
+        result.args,
+        result.returncode,
+        result.stdout.decode(encoding, errors="replace"),
+        result.stderr.decode(encoding, errors="replace"),
+    )
 
 
-_CHECK_LOOP_SNIPPET = """
+_FULLPATH_HELPER_SNIPPET = """
+function DstCamp-FullPath([string]$p) {
+    # [IO.Path]::GetFullPath() 在 Windows PowerShell 5.1（.NET Framework）
+    # 下遇到 '*' 会抛"非法字符路径"异常——temp_wildcard 目标的 '_MEI*'
+    # 恰好带星号，直接调用会让整个脚本在 $ErrorActionPreference='Stop'
+    # 下终止。星号是路径里唯一会出现的通配符，先换成安全占位符解析，
+    # 再换回来，就不会丢失匹配语义。
+    if ($p.Contains('*')) {
+        $safe = $p.Replace('*', '_DSTCAMP_WILDCARD_')
+        $resolved = [IO.Path]::GetFullPath($safe).TrimEnd([char[]]'\\/')
+        return $resolved.Replace('_DSTCAMP_WILDCARD_', '*')
+    }
+    return [IO.Path]::GetFullPath($p).TrimEnd([char[]]'\\/')
+}
+"""
+
+_CHECK_LOOP_SNIPPET = _FULLPATH_HELPER_SNIPPET + """
 if ($unavailable) {
     foreach ($t in $targets) { $lines.Add('unavailable') }
 } else {
     $exclusions = @((Get-MpPreference -ErrorAction Stop).ExclusionPath)
     foreach ($t in $targets) {
-        $wanted = [IO.Path]::GetFullPath($t).TrimEnd([char[]]'\\/')
+        $wanted = DstCamp-FullPath $t
         $found = $false
         foreach ($item in $exclusions) {
             try {
                 $expanded = [Environment]::ExpandEnvironmentVariables([string]$item)
-                $candidate = [IO.Path]::GetFullPath($expanded).TrimEnd([char[]]'\\/')
+                $candidate = DstCamp-FullPath $expanded
                 if ($candidate -ieq $wanted) { $found = $true; break }
             } catch {}
         }
@@ -361,6 +394,7 @@ def change_defender_exclusion(
     script = f"""
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+{_FULLPATH_HELPER_SNIPPET}
 {_paths_assignment(targets)}
 if (-not (Get-Command {command} -ErrorAction SilentlyContinue)) {{ exit 2 }}
 foreach ($t in $targets) {{
@@ -369,12 +403,12 @@ foreach ($t in $targets) {{
 $exclusions = @((Get-MpPreference -ErrorAction Stop).ExclusionPath)
 $allOk = $true
 foreach ($t in $targets) {{
-    $wanted = [IO.Path]::GetFullPath($t).TrimEnd([char[]]'\\/')
+    $wanted = DstCamp-FullPath $t
     $found = $false
     foreach ($item in $exclusions) {{
         try {{
             $expanded = [Environment]::ExpandEnvironmentVariables([string]$item)
-            $candidate = [IO.Path]::GetFullPath($expanded).TrimEnd([char[]]'\\/')
+            $candidate = DstCamp-FullPath $expanded
             if ($candidate -ieq $wanted) {{ $found = $true; break }}
         }} catch {{}}
     }}

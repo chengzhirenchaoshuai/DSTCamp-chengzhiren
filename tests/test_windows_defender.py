@@ -137,6 +137,28 @@ def test_all_generated_scripts_silence_progress_stream() -> None:
         assert "$ProgressPreference = 'SilentlyContinue'" in script
 
 
+def test_fullpath_helper_resolves_wildcard_target_on_real_powershell() -> None:
+    # 回归锁定（真机验证，不 mock）：[IO.Path]::GetFullPath() 在 Windows
+    # PowerShell 5.1（.NET Framework）下遇到 '*' 会抛"非法字符路径"异
+    # 常——temp_wildcard 目标的 '_MEI*' 恰好带星号，之前检测循环直接调
+    # GetFullPath 没包 try/catch，脚本在 $ErrorActionPreference='Stop'
+    # 下整段终止，异常信息当成乱码 CLIXML 糊在界面上。这里真实起一个
+    # PowerShell 子进程验证 DstCamp-FullPath 对通配符路径不再抛异常，
+    # 且解析结果保留字面 '*'。
+    script = defender._FULLPATH_HELPER_SNIPPET + r"""
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+Write-Output (DstCamp-FullPath 'C:\Users\Someone\AppData\Local\Temp\_MEI*')
+Write-Output (DstCamp-FullPath 'C:\DSTCamp\DSTCamp.exe')
+"""
+    result = defender._run_powershell(script)
+    assert result.returncode == 0, result.stderr
+    assert result.stderr.strip() == ""
+    lines = result.stdout.splitlines()
+    assert lines[0].endswith(r"\_MEI*")
+    assert lines[1].endswith(r"\DSTCamp.exe")
+
+
 def test_clean_powershell_error_strips_clixml_serialization() -> None:
     # PowerShell 非交互执行时，未捕获的终止错误会被序列化成这种 CLIXML；
     # 之前 _run_elevated_powershell() 的 catch 块里 Write-Error 会触发它
@@ -329,6 +351,7 @@ def main() -> None:
         test_broad_folders_are_never_safe_exclusion_targets,
         test_elevated_wrapper_never_calls_write_error_in_its_catch_block,
         test_all_generated_scripts_silence_progress_stream,
+        test_fullpath_helper_resolves_wildcard_target_on_real_powershell,
         test_clean_powershell_error_strips_clixml_serialization,
         test_check_parses_status_lines_in_target_order,
         test_elevated_check_reads_relay_file_and_reports_uac_cancel,
