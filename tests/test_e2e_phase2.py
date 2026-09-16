@@ -1105,6 +1105,50 @@ def test_defender_dialog_target_paths_survive_garbage_collection():
     print("  PASS: Defender 排除目标路径在 GC 之后仍完整显示")
 
 
+def test_defender_dialog_auto_escalates_to_admin_check_when_ambiguous():
+    """普通权限下检测结果是"未知"（无法确认排除项，可能被策略隐藏）
+    时，不该要求用户再点一次"管理员检测"按钮——应该直接自动转去跑
+    提权检测、弹 UAC。"""
+    from dstools.shared import windows_defender as defender
+    from dstools.shared.gui import windows_defender_dialog as dlg_mod
+
+    targets = [defender.DefenderTarget(Path("C:/DSTCamp/DSTCamp.exe"), "file")]
+
+    root = tk.Tk()
+    root.withdraw()
+    calls = []
+
+    def fake_unelevated(_targets):
+        calls.append("unelevated")
+        return [defender.DefenderState("unknown")]
+
+    def fake_elevated(_targets):
+        calls.append("elevated")
+        return [defender.DefenderState("excluded")]
+
+    def close_once_escalated(attempts=[0]):
+        win = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+        attempts[0] += 1
+        if "elevated" in calls or attempts[0] > 40:
+            win.destroy()
+        else:
+            root.after(50, close_once_escalated)
+
+    root.after(50, close_once_escalated)
+    with patch.object(
+        dlg_mod, "resolve_defender_targets", return_value=targets
+    ), patch.object(
+        dlg_mod, "check_defender_exclusion", side_effect=fake_unelevated
+    ), patch.object(
+        dlg_mod, "check_defender_exclusion_elevated", side_effect=fake_elevated
+    ):
+        dlg_mod.show_windows_defender_dialog(root)
+    root.destroy()
+
+    assert calls == ["unelevated", "elevated"]
+    print("  PASS: 普通权限检测结果未知时自动转去管理员检测，不用户额外点击")
+
+
 def main():
     """Run all Phase 2 tests."""
     print("\n" + "O" * 60)
@@ -1140,6 +1184,7 @@ def main():
         test_selfhost_server_ip_mask_and_visibility,
         test_selfhost_server_ip_eye_uses_closed_and_open_states,
         test_defender_dialog_target_paths_survive_garbage_collection,
+        test_defender_dialog_auto_escalates_to_admin_check_when_ambiguous,
     ]
 
     for test in tests:

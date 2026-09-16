@@ -227,7 +227,7 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
                 if elevated
                 else check_defender_exclusion
             )
-            results.put(("check", _aggregate_state(check(targets))))
+            results.put(("check", elevated, _aggregate_state(check(targets))))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -303,7 +303,12 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
                 item = results.get_nowait()
                 current["busy"] = False
                 if item[0] == "check":
-                    show_state(item[1])
+                    _, was_elevated, state = item
+                    show_state(state)
+                    if state.status == "unknown" and not was_elevated:
+                        # 普通权限查不准，直接自动转去提权检测、弹 UAC，
+                        # 不用用户再多点一次"管理员检测"按钮。
+                        start_check(elevated=True)
                     continue
                 _, enabled, changed, state = item
                 expected = "excluded" if enabled else "not_excluded"
