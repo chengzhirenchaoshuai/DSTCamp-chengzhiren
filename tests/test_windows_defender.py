@@ -107,6 +107,36 @@ def test_elevated_wrapper_never_calls_write_error_in_its_catch_block() -> None:
     assert "exit 1223" in captured["script"]
 
 
+def test_elevated_wrapper_launches_via_file_not_giant_encoded_command() -> None:
+    # 回归锁定（用户实测复现多次，同一个跟脚本内容无关的"PowerShell
+    # exit 1"）：之前把整段脚本内联进 -EncodedCommand 塞进
+    # Start-Process -Verb RunAs 的 -ArgumentList——这条 UAC 提升链路
+    # （AppInfo 服务的 COM 提升 moniker）对参数长度敏感，排除项修改脚
+    # 本加上重试、诊断中转文件之后编码能到七八千字符，会在真正执行逻
+    # 辑之前就失败退出，跟脚本里的 try/catch 逻辑完全无关，所以之前几
+    # 次扩大 try/catch 覆盖范围都没用。现在脚本先写到临时 .ps1 文件，
+    # -ArgumentList 里只有一个固定长度的文件路径。
+    captured = {}
+    written_paths = []
+
+    def fake_run_powershell(outer_script, *, timeout=20):
+        captured["outer"] = outer_script
+        match = re.search(r"'-File','([^']+)'", outer_script)
+        assert match, outer_script
+        script_path = Path(match.group(1))
+        written_paths.append(script_path)
+        assert script_path.exists()
+        assert script_path.read_text(encoding="utf-8-sig") == "Write-Output ok"
+        return _completed()
+
+    with patch.object(defender, "_run_powershell", fake_run_powershell):
+        defender._run_elevated_powershell("Write-Output ok")
+
+    assert "-EncodedCommand" not in captured["outer"]
+    assert "'-ExecutionPolicy','Bypass'" in captured["outer"]
+    assert not written_paths[0].exists()  # 用完即删，不留残留
+
+
 def test_all_generated_scripts_silence_progress_stream() -> None:
     # 回归锁定：非交互执行且 stderr 被重定向捕获时，Write-Progress 产
     # 生的进度流会被序列化成 CLIXML 糊进 stderr（跟未捕获错误是同一大
@@ -407,6 +437,7 @@ def main() -> None:
         test_standard_install_returns_exe_runtime_tools_and_temp_wildcard,
         test_broad_folders_are_never_safe_exclusion_targets,
         test_elevated_wrapper_never_calls_write_error_in_its_catch_block,
+        test_elevated_wrapper_launches_via_file_not_giant_encoded_command,
         test_all_generated_scripts_silence_progress_stream,
         test_fullpath_helper_resolves_wildcard_target_on_real_powershell,
         test_clean_powershell_error_strips_clixml_serialization,

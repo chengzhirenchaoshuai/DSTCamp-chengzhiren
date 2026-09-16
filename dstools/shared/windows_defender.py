@@ -309,15 +309,35 @@ $lines | ForEach-Object {{ Write-Output "{_MARKER_PREFIX}$_" }}
 
 
 def _run_elevated_powershell(script: str) -> subprocess.CompletedProcess[str]:
-    """通过系统 ``runas`` 弹出 UAC，并等待提权子进程结束。"""
-    encoded = _encoded_command(script)
+    """通过系统 ``runas`` 弹出 UAC，并等待提权子进程结束。
+
+    脚本内容先写到一个临时 ``.ps1`` 文件、用 ``-File`` 启动，不能继续
+    像之前那样把整段脚本内联进 ``-EncodedCommand`` 再塞进
+    ``Start-Process -Verb RunAs`` 的 ``-ArgumentList``——``-Verb RunAs``
+    走的是 UAC 提升链路（AppInfo 服务的 COM 提升 moniker），跟普通
+    ``CreateProcess`` 不是一回事，对参数长度敏感得多；脚本逻辑稍微复
+    杂一点（比如排除项改动脚本加上重试、诊断中转文件之后）编码后能
+    到七八千字符，提权这条路径就会在真正执行我们的逻辑之前就失败退
+    出，表现为一个跟脚本内容完全无关的 exit 1——这也是之前反复扩大
+    try/catch 覆盖范围都没能解决问题的真正原因。改成 ``-File`` 之后，
+    ``-ArgumentList`` 里只有一个固定长度的文件路径，不会再随脚本逻辑
+    变长而变得不可靠；用 ``-ExecutionPolicy Bypass`` 是因为 ``-File``
+    启动（不同于 ``-EncodedCommand``）要经过系统执行策略检查。
+    """
+    script_path = Path(tempfile.gettempdir()) / (
+        f".dstcamp-defender-run-{os.getpid()}-{secrets.token_hex(6)}.ps1"
+    )
+    # 带 BOM 的 UTF-8：Windows PowerShell 5.1 对没有 BOM 的脚本文件按
+    # 系统代码页解析，脚本里出现的中文字符串/注释会被读错。
+    script_path.write_text(script, encoding="utf-8-sig")
     executable = _powershell_executable().replace("'", "''")
+    script_path_escaped = str(script_path).replace("'", "''")
     outer = f"""
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try {{
     $process = Start-Process -FilePath '{executable}' -Verb RunAs `
-        -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand','{encoded}') `
+        -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File','{script_path_escaped}') `
         -Wait -PassThru
     exit $process.ExitCode
 }} catch {{
@@ -328,8 +348,11 @@ try {{
     exit 1223
 }}
 """
-    # 给用户足够时间阅读并处理安全桌面上的 UAC；该调用始终发生在后台线程。
-    return _run_powershell(outer, timeout=120)
+    try:
+        # 给用户足够时间阅读并处理安全桌面上的 UAC；该调用始终发生在后台线程。
+        return _run_powershell(outer, timeout=120)
+    finally:
+        script_path.unlink(missing_ok=True)
 
 
 def check_defender_exclusion_elevated(
