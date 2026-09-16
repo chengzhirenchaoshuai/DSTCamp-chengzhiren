@@ -133,15 +133,23 @@ def _paths_assignment(targets: Sequence[DefenderTarget]) -> str:
 
 
 def _clean_powershell_error(raw: str) -> str:
-    """PowerShell 非交互执行时，未捕获的终止错误会被序列化成 CLIXML 写
-    进 stderr（形如 ``#< CLIXML`` 后跟一段 ``<Objs ...>`` XML），直接把
-    这种内容显示给用户没有意义，还会因为一整行超长文本把界面撑爆。尽
-    力从 ``<S ...>...</S>`` 元素里抠出人能看的文本；抠不出来就退回一句
-    通用提示，绝不把原始 XML 糊到界面上。"""
+    """PowerShell 非交互执行、且 stderr 被重定向捕获（不是真实控制台）
+    时，未捕获的终止错误、以及 Write-Progress 产生的进度流，都会被序列
+    化成 CLIXML 写进 stderr（形如 ``#< CLIXML`` 后跟一段 ``<Objs ...>``
+    XML），直接显示给用户没有意义，还会因为超长文本把界面撑爆。这里先
+    整体丢弃进度流对象（``<Obj S="progress">...``，从来不是需要展示的
+    错误信息），再只从真正的错误流元素（``<S S="Error">...</S>``）里抠
+    出人能看的文本；抠不出来就退回一句通用提示，绝不把原始 XML 糊到界
+    面上。"""
     text = raw.strip()
     if not text or "<Objs" not in text:
         return text
-    messages = re.findall(r"<S[^>]*>(.*?)</S>", text, flags=re.DOTALL)
+    without_progress = re.sub(
+        r'<Obj S="progress"[^>]*>.*?</Obj>', "", text, flags=re.DOTALL
+    )
+    messages = re.findall(
+        r'<S S="Error"[^>]*>(.*?)</S>', without_progress, flags=re.DOTALL
+    )
     cleaned = [re.sub(r"_x000[AD]_", " ", msg).strip() for msg in messages]
     cleaned = [msg for msg in cleaned if msg]
     if cleaned:
@@ -241,6 +249,7 @@ def check_defender_exclusion(targets: Sequence[DefenderTarget]) -> list[Defender
         return []
     script = f"""
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 {_paths_assignment(targets)}
 {_unavailable_check_snippet()}
 $lines = New-Object System.Collections.Generic.List[string]
@@ -272,6 +281,7 @@ def _run_elevated_powershell(script: str) -> subprocess.CompletedProcess[str]:
     executable = _powershell_executable().replace("'", "''")
     outer = f"""
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 try {{
     $process = Start-Process -FilePath '{executable}' -Verb RunAs `
         -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand','{encoded}') `
@@ -307,6 +317,7 @@ def check_defender_exclusion_elevated(
     relay_encoded = base64.b64encode(str(relay).encode("utf-8")).decode("ascii")
     script = f"""
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 {_paths_assignment(targets)}
 $relay = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{relay_encoded}'))
 {_unavailable_check_snippet()}
@@ -349,6 +360,7 @@ def change_defender_exclusion(
     command = "Add-MpPreference" if enabled else "Remove-MpPreference"
     script = f"""
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 {_paths_assignment(targets)}
 if (-not (Get-Command {command} -ErrorAction SilentlyContinue)) {{ exit 2 }}
 foreach ($t in $targets) {{

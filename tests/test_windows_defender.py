@@ -107,6 +107,36 @@ def test_elevated_wrapper_never_calls_write_error_in_its_catch_block() -> None:
     assert "exit 1223" in captured["script"]
 
 
+def test_all_generated_scripts_silence_progress_stream() -> None:
+    # 回归锁定：非交互执行且 stderr 被重定向捕获时，Write-Progress 产
+    # 生的进度流会被序列化成 CLIXML 糊进 stderr（跟未捕获错误是同一大
+    # 类问题的另一个触发点）；四处生成脚本的地方都必须提前静音进度流。
+    targets = [defender.DefenderTarget(Path("C:/DSTCamp"), "file")]
+    captured = {}
+
+    def fake_run_powershell(script, *, timeout=20):
+        captured.setdefault("scripts", []).append(script)
+        return _completed()
+
+    with patch.object(defender, "_run_powershell", fake_run_powershell), patch.object(
+        defender, "is_process_elevated", return_value=True
+    ):
+        defender.check_defender_exclusion(targets)
+        defender._run_elevated_powershell("Write-Output ok")
+
+    with patch.object(
+        defender,
+        "_run_elevated_powershell",
+        lambda script: captured.setdefault("scripts", []).append(script) or _completed(),
+    ):
+        defender.check_defender_exclusion_elevated(targets)
+        defender.change_defender_exclusion(targets, enabled=True)
+
+    assert len(captured["scripts"]) == 4
+    for script in captured["scripts"]:
+        assert "$ProgressPreference = 'SilentlyContinue'" in script
+
+
 def test_clean_powershell_error_strips_clixml_serialization() -> None:
     # PowerShell 非交互执行时，未捕获的终止错误会被序列化成这种 CLIXML；
     # 之前 _run_elevated_powershell() 的 catch 块里 Write-Error 会触发它
@@ -132,6 +162,25 @@ def test_clean_powershell_error_strips_clixml_serialization() -> None:
     # 非 CLIXML 的普通文本原样透传。
     assert defender._clean_powershell_error("access denied") == "access denied"
     assert defender._clean_powershell_error("") == ""
+
+    # 回归锁定：Get-MpPreference 等 cmdlet 在非交互、stderr 被重定向捕获
+    # 时会把 Write-Progress 进度流也序列化成 CLIXML（S="progress" 对
+    # 象），跟真正的错误流是两回事——这里必须整段丢弃，不能被旧的
+    # "<S ...>...</S>" 正则误当成错误文本抠出来，更不能原样透出。
+    progress_clixml = (
+        "#< CLIXML\n"
+        '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+        '<Obj S="progress" RefId="3">'
+        '<TN RefId="0"><T>System.Management.Automation.PSCustomObject</T></TN>'
+        '<MS><I64 N="SourceId">4</I64><PR N="Record">'
+        "<AV>Get-MpPreference -ErrorAction Stop).ExclusionPath)</AV>"
+        "<AI>1876657570</AI><Nil/><PI>-1</PI><PC>100</PC><T>Completed</T>"
+        "<SR>0</SR><SD>1/1</SD></PR></MS></Obj>"
+        "</Objs>"
+    )
+    cleaned_progress = defender._clean_powershell_error(progress_clixml)
+    assert "<Obj" not in cleaned_progress and "ExclusionPath" not in cleaned_progress
+    assert cleaned_progress == "PowerShell 返回了无法解析的错误信息"
 
 
 def test_check_parses_status_lines_in_target_order() -> None:
@@ -279,6 +328,7 @@ def main() -> None:
         test_standard_install_returns_exe_runtime_tools_and_temp_wildcard,
         test_broad_folders_are_never_safe_exclusion_targets,
         test_elevated_wrapper_never_calls_write_error_in_its_catch_block,
+        test_all_generated_scripts_silence_progress_stream,
         test_clean_powershell_error_strips_clixml_serialization,
         test_check_parses_status_lines_in_target_order,
         test_elevated_check_reads_relay_file_and_reports_uac_cancel,
