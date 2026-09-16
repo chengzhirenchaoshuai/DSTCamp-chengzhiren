@@ -34,8 +34,8 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 或 [Gitee 发行版](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.3.8.exe`：工具与资源全部内嵌，单文件运行，无需安装。
-- `DSTCamp-1.3.8.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
+- `DSTCamp-1.3.9.exe`：工具与资源全部内嵌，单文件运行，无需安装。
+- `DSTCamp-1.3.9.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
 
 源码运行：
 
@@ -101,6 +101,7 @@ python scripts/build_exe.py
 
 ## 1.3.9 更新
 
+- 发布产物精简为单文件 EXE，不再构建和发布外置工具 ZIP 版；存量 ZIP 版用户的自动更新不受影响，会自动切换为内嵌版。
 - Windows Defender 排除项检测覆盖扩展到三个目标（含 frpc 实际运行位置），检测结果未知时自动转去管理员检测，减少一次多余点击。
 - 修复 Defender 排除项设置脚本在通配符目标崩溃、PowerShell 输出乱码、CLIXML 糊界面撑爆窗口、路径框被回收后显示空白等问题。
 - 修复 Defender 排除项修改脚本在复查抖动、未捕获异常、UAC 提权参数过长等场景下被误报为修改失败的问题。

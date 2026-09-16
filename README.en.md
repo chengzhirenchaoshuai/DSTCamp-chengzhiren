@@ -17,8 +17,8 @@ WeGame does not provide one-click dedicated-server launching. DSTCamp does not b
 
 Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
 
-- `DSTCamp-1.3.8.exe`: single-file build with all required resources embedded; no installation needed.
-- `DSTCamp-1.3.8.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
+- `DSTCamp-1.3.9.exe`: single-file build with all required resources embedded; no installation needed.
+- `DSTCamp-1.3.9.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
 
 To run from source:
 
@@ -69,6 +69,7 @@ The build uses an explicit tool allowlist, stages resources under `build/`, and 
 
 ## 1.3.9 highlights
 
+- Trimmed the release down to a single-file EXE; the external-tools ZIP build is no longer produced or published. Existing ZIP-version users are unaffected — auto-update switches them to the embedded EXE automatically.
 - Expanded Windows Defender exclusion detection to three targets (including frpc's actual run location); when the result is unknown it now falls back to an admin-level check automatically, removing an extra click.
 - Fixed the Defender exclusion script crashing on wildcard targets, garbled PowerShell output, CLIXML leaking into the UI and blowing up the window, and the path box going blank after being garbage-collected.
 - Fixed the Defender exclusion modification script being misreported as failed due to re-check jitter, an uncaught exception during re-check, and an overlong UAC elevation argument.
