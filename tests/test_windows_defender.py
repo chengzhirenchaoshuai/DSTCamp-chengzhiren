@@ -90,6 +90,50 @@ def test_broad_folders_are_never_safe_exclusion_targets() -> None:
     ) is True
 
 
+def test_elevated_wrapper_never_calls_write_error_in_its_catch_block() -> None:
+    # 回归锁定：catch 块里不能再出现 Write-Error——$ErrorActionPreference
+    # ='Stop' 会让它自己变成终止错误，'exit 1223' 永远执行不到。
+    captured = {}
+
+    def fake_run_powershell(script, *, timeout=20):
+        captured["script"] = script
+        return _completed()
+
+    with patch.object(defender, "_run_powershell", fake_run_powershell):
+        defender._run_elevated_powershell("Write-Output ok")
+    # 只断言没有真的调用 Write-Error 这个 cmdlet（旁边解释原因的中文
+    # 注释里允许提到这个名字，不用管）。
+    assert "Write-Error $_" not in captured["script"]
+    assert "exit 1223" in captured["script"]
+
+
+def test_clean_powershell_error_strips_clixml_serialization() -> None:
+    # PowerShell 非交互执行时，未捕获的终止错误会被序列化成这种 CLIXML；
+    # 之前 _run_elevated_powershell() 的 catch 块里 Write-Error 会触发它
+    # （$ErrorActionPreference='Stop' 下 Write-Error 本身变终止错误，
+    # 'exit 1223' 永远执行不到），直接把这坨 XML 糊在界面上、把窗口撑
+    # 爆挤掉按钮——这里锁定"必须抠出人话，不能透出原始 XML"。
+    clixml = (
+        "#< CLIXML\n"
+        '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
+        '<S S="Error">Start-Process : The operation was canceled by the user._x000D__x000A_</S>'
+        '<S S="Error">At line:1 char:1_x000D__x000A_</S>'
+        "</Objs>"
+    )
+    cleaned = defender._clean_powershell_error(clixml)
+    assert "<Objs" not in cleaned and "<S " not in cleaned
+    assert "The operation was canceled by the user." in cleaned
+
+    # 抠不出任何 <S> 文本时退回通用提示，也不能透出原始 XML。
+    empty_clixml = '<Objs Version="1.1.0.1"></Objs>'
+    cleaned_empty = defender._clean_powershell_error(empty_clixml)
+    assert "<Objs" not in cleaned_empty and cleaned_empty
+
+    # 非 CLIXML 的普通文本原样透传。
+    assert defender._clean_powershell_error("access denied") == "access denied"
+    assert defender._clean_powershell_error("") == ""
+
+
 def test_check_parses_status_lines_in_target_order() -> None:
     targets = [
         defender.DefenderTarget(Path("C:/DSTCamp"), "file"),
@@ -234,6 +278,8 @@ def main() -> None:
         test_legacy_zip_install_returns_single_folder_target,
         test_standard_install_returns_exe_runtime_tools_and_temp_wildcard,
         test_broad_folders_are_never_safe_exclusion_targets,
+        test_elevated_wrapper_never_calls_write_error_in_its_catch_block,
+        test_clean_powershell_error_strips_clixml_serialization,
         test_check_parses_status_lines_in_target_order,
         test_elevated_check_reads_relay_file_and_reports_uac_cancel,
         test_change_uses_encoded_paths_and_reports_uac_cancellation,

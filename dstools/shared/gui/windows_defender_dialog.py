@@ -143,7 +143,11 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
         font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
         fg=theme.TEXT_MUTED,
         bg=theme.CARD_BG,
+        justify=tk.LEFT,
         anchor=tk.W,
+        # 极端情况下（比如 PowerShell 报错信息异常长）也要在窗口内换
+        # 行，不能让这一行把固定宽高的对话框撑爆、挤掉下面的按钮。
+        wraplength=590,
     )
     status_label.pack(fill=tk.X, padx=24, pady=(18, 0))
     tk.Label(

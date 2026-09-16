@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import ctypes
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -131,6 +132,23 @@ def _paths_assignment(targets: Sequence[DefenderTarget]) -> str:
     return "$targets = @(" + ", ".join(entries) + ")"
 
 
+def _clean_powershell_error(raw: str) -> str:
+    """PowerShell 非交互执行时，未捕获的终止错误会被序列化成 CLIXML 写
+    进 stderr（形如 ``#< CLIXML`` 后跟一段 ``<Objs ...>`` XML），直接把
+    这种内容显示给用户没有意义，还会因为一整行超长文本把界面撑爆。尽
+    力从 ``<S ...>...</S>`` 元素里抠出人能看的文本；抠不出来就退回一句
+    通用提示，绝不把原始 XML 糊到界面上。"""
+    text = raw.strip()
+    if not text or "<Objs" not in text:
+        return text
+    messages = re.findall(r"<S[^>]*>(.*?)</S>", text, flags=re.DOTALL)
+    cleaned = [re.sub(r"_x000[AD]_", " ", msg).strip() for msg in messages]
+    cleaned = [msg for msg in cleaned if msg]
+    if cleaned:
+        return " ".join(cleaned)
+    return "PowerShell 返回了无法解析的错误信息"
+
+
 def _powershell_executable() -> str:
     windows = Path(os.environ.get("SystemRoot", r"C:\Windows"))
     candidate = windows / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
@@ -240,7 +258,7 @@ $lines | ForEach-Object {{ Write-Output "{_MARKER_PREFIX}$_" }}
     ]
     states = _parse_check_lines(lines, len(targets), elevated=is_process_elevated())
     if states is None:
-        detail = (result.stderr or result.stdout).strip()
+        detail = _clean_powershell_error(result.stderr or result.stdout)
         return [
             DefenderState("error", detail or f"PowerShell exit {result.returncode}")
             for _ in targets
@@ -260,7 +278,10 @@ try {{
         -Wait -PassThru
     exit $process.ExitCode
 }} catch {{
-    Write-Error $_
+    # 不能在这里再调用 Write-Error——外层 $ErrorActionPreference='Stop'
+    # 会让 Write-Error 本身变成终止性错误，'exit 1223' 永远执行不到，
+    # 未捕获的错误会被 PowerShell 序列化成 CLIXML 写进 stderr，糊在界
+    # 面上。UAC 被拒绝、RunAs 本身失败等情况统一按 1223（取消）处理。
     exit 1223
 }}
 """
@@ -302,7 +323,7 @@ Set-Content -LiteralPath $relay -Value $lines -Encoding UTF8
     try:
         lines = relay.read_text(encoding="utf-8-sig").splitlines()
     except OSError:
-        detail = (result.stderr or result.stdout).strip()
+        detail = _clean_powershell_error(result.stderr or result.stdout)
         return [
             DefenderState("error", detail or f"PowerShell exit {result.returncode}")
             for _ in targets
@@ -355,7 +376,7 @@ if (-not $allOk) {{ exit 3 }}
         return DefenderChangeResult(False, detail=str(exc))
     if result.returncode == 0:
         return DefenderChangeResult(True)
-    detail = (result.stderr or result.stdout).strip()
+    detail = _clean_powershell_error(result.stderr or result.stdout)
     return DefenderChangeResult(
         False,
         cancelled=result.returncode == 1223,
