@@ -391,61 +391,79 @@ def change_defender_exclusion(
         if not defender_target_is_safe(target):
             return DefenderChangeResult(False, detail="unsafe exclusion target")
     command = "Add-MpPreference" if enabled else "Remove-MpPreference"
+    relay = Path(tempfile.gettempdir()) / (
+        f".dstcamp-defender-change-{os.getpid()}-{secrets.token_hex(6)}.txt"
+    )
+    relay_encoded = base64.b64encode(str(relay).encode("utf-8")).decode("ascii")
     script = f"""
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 {_FULLPATH_HELPER_SNIPPET}
 {_paths_assignment(targets)}
+$relay = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{relay_encoded}'))
 if (-not (Get-Command {command} -ErrorAction SilentlyContinue)) {{ exit 2 }}
+$modifyDone = $false
 try {{
+    # 整段命令执行 + 复查都包在同一个 try 里——之前复查那段代码（尤其
+    # 是 $wanted = DstCamp-FullPath $t 这行）没被任何 try/catch 罩住，
+    # 一旦抛异常就是未捕获的终止错误，PowerShell 默认以 exit 1 退出，
+    # 界面上只能看到"PowerShell exit 1"这种没有信息量的提示，还会被
+    # 误判成"修改失败"（哪怕 Add/Remove 命令本身已经真的成功了）。这
+    # 里统一兜底：捕获后把真实异常信息写进中转文件（直接 UTF8 落盘，
+    # 不走 stderr，没有代码页乱码问题），再按 $modifyDone 是否已经为
+    # true 决定退出码——命令本身没跑完是 exit 4（真失败），命令跑完了
+    # 只是后面复查环节出错是 exit 5（当成功处理）。
     foreach ($t in $targets) {{
         {command} -ExclusionPath $t -ErrorAction Stop
     }}
-}} catch {{
-    # Add/Remove-MpPreference 本身真的失败了（比如被企业策略、篡改防
-    # 护拦截）——跟下面复查阶段的失败是两回事，专门给一个不同的退出
-    # 码，方便以后排查。
-    exit 4
-}}
-$exclusions = $null
-for ($attempt = 0; $attempt -lt 3; $attempt++) {{
-    try {{
-        $exclusions = @((Get-MpPreference -ErrorAction Stop).ExclusionPath)
-        break
-    }} catch {{
-        # Add/Remove-MpPreference 已经成功执行了，紧接着的 Get-MpPreference
-        # 复查偶发会因为 Defender 的 WMI 提供程序刚改完还没稳定而抛异
-        # 常——不是修改本身失败，重试几次通常就好。
-        Start-Sleep -Milliseconds 300
-    }}
-}}
-if ($null -eq $exclusions) {{ exit 5 }}
-$allOk = $true
-foreach ($t in $targets) {{
-    $wanted = DstCamp-FullPath $t
-    $found = $false
-    foreach ($item in $exclusions) {{
+    $modifyDone = $true
+    $exclusions = $null
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {{
         try {{
-            $expanded = [Environment]::ExpandEnvironmentVariables([string]$item)
-            $candidate = DstCamp-FullPath $expanded
-            if ($candidate -ieq $wanted) {{ $found = $true; break }}
-        }} catch {{}}
+            $exclusions = @((Get-MpPreference -ErrorAction Stop).ExclusionPath)
+            break
+        }} catch {{
+            Start-Sleep -Milliseconds 300
+        }}
     }}
-    if ($found -ne ${str(enabled).lower()}) {{ $allOk = $false }}
+    if ($null -eq $exclusions) {{ exit 5 }}
+    $allOk = $true
+    foreach ($t in $targets) {{
+        $wanted = DstCamp-FullPath $t
+        $found = $false
+        foreach ($item in $exclusions) {{
+            try {{
+                $expanded = [Environment]::ExpandEnvironmentVariables([string]$item)
+                $candidate = DstCamp-FullPath $expanded
+                if ($candidate -ieq $wanted) {{ $found = $true; break }}
+            }} catch {{}}
+        }}
+        if ($found -ne ${str(enabled).lower()}) {{ $allOk = $false }}
+    }}
+    if (-not $allOk) {{ exit 3 }}
+}} catch {{
+    Set-Content -LiteralPath $relay -Value $_.Exception.Message -Encoding UTF8
+    if ($modifyDone) {{ exit 5 }} else {{ exit 4 }}
 }}
-if (-not $allOk) {{ exit 3 }}
 """
     try:
         result = _run_elevated_powershell(script)
     except (OSError, subprocess.SubprocessError) as exc:
         return DefenderChangeResult(False, detail=str(exc))
-    if result.returncode == 5:
-        # 修改命令本身没有抛异常，只是复查查询重试 3 次都失败，不能当
-        # 成修改失败——真实场景验证过这种情况下修改其实已经生效了。
-        return DefenderChangeResult(True)
-    if result.returncode == 0:
-        return DefenderChangeResult(True)
-    detail = _clean_powershell_error(result.stderr or result.stdout)
+    relay_detail = ""
+    if relay.exists():
+        try:
+            relay_detail = relay.read_text(encoding="utf-8-sig").strip()
+        except OSError:
+            pass
+        finally:
+            relay.unlink(missing_ok=True)
+    if result.returncode in (0, 5):
+        # exit 5：命令本身没抛异常，只是复查阶段出了问题（重试查询失
+        # 败，或复查本身抛了异常），不能当成修改失败——真实场景验证过
+        # 这种情况下修改其实已经生效了。
+        return DefenderChangeResult(True, detail=relay_detail)
+    detail = relay_detail or _clean_powershell_error(result.stderr or result.stdout)
     return DefenderChangeResult(
         False,
         cancelled=result.returncode == 1223,

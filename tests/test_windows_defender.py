@@ -292,6 +292,44 @@ def test_elevated_check_reads_relay_file_and_reports_uac_cancel() -> None:
     assert defender.check_defender_exclusion_elevated([]) == []
 
 
+def test_change_outer_catch_reports_real_detail_via_relay_file() -> None:
+    # 回归锁定（用户实测复现两次，同一个报错"PowerShell exit 1"）：之
+    # 前复查阶段有一行 $wanted = DstCamp-FullPath $t 完全没被任何
+    # try/catch 罩住，一旦抛异常就是未捕获终止错误，PowerShell 默认以
+    # exit 1 退出，界面只能看到没有信息量的"PowerShell exit 1"，还被
+    # 误判成修改失败——即使 Add/Remove 命令本身已经真的成功了。现在整
+    # 段命令执行+复查都包进同一个 try/catch，异常信息直接 UTF8 落盘到
+    # 中转文件（不走 stderr，没有代码页乱码问题）。这里用真实 PowerShell
+    # 跑生成的完整脚本（只把 Add/Remove/Get-MpPreference 换成会抛中文
+    # 异常的 stub 函数，不碰真实 Defender），验证两种场景：命令本身失
+    # 败得到真实中文异常文本，命令成功后才出的异常按成功处理。
+    targets = [defender.DefenderTarget(Path("C:/DSTCamp/DSTCamp.exe"), "file")]
+
+    def with_stub(stub):
+        return lambda script: defender._run_powershell(stub + script)
+
+    add_throws_stub = (
+        "function Add-MpPreference { param($ExclusionPath, $ErrorAction)"
+        " throw '被篡改防护拦截了' }\n"
+        "function Get-MpPreference { [PSCustomObject]@{ ExclusionPath = @() } }\n"
+    )
+    with patch.object(defender, "_run_elevated_powershell", with_stub(add_throws_stub)):
+        result = defender.change_defender_exclusion(targets, enabled=True)
+    assert result.success is False
+    assert result.cancelled is False
+    assert result.detail == "被篡改防护拦截了"
+
+    verify_throws_stub = (
+        "function Add-MpPreference { param($ExclusionPath, $ErrorAction) }\n"
+        "function Get-MpPreference { throw 'simulated verify glitch' }\n"
+    )
+    with patch.object(
+        defender, "_run_elevated_powershell", with_stub(verify_throws_stub)
+    ):
+        result = defender.change_defender_exclusion(targets, enabled=True)
+    assert result.success is True
+
+
 def test_change_treats_post_change_verify_query_failure_as_success() -> None:
     # 回归锁定（用户实测复现）：Remove-MpPreference 真的成功执行了，紧
     # 接着的 Get-MpPreference 复查却偶发抛异常（Defender 的 WMI 提供程
@@ -327,7 +365,8 @@ def test_change_uses_encoded_paths_and_reports_uac_cancellation() -> None:
         result = defender.change_defender_exclusion(targets, enabled=True)
     assert result.success is True
     script = captured[0]
-    assert script.count("FromBase64String") == 2  # 两个目标各一段
+    # 两个目标各一段 base64，加上中转文件路径一段。
+    assert script.count("FromBase64String") == 3
     assert "foreach ($t in $targets)" in script
     assert "Add-MpPreference -ExclusionPath $t" in script
     assert "Get-MpPreference -ErrorAction Stop" in script
@@ -373,6 +412,7 @@ def main() -> None:
         test_clean_powershell_error_strips_clixml_serialization,
         test_check_parses_status_lines_in_target_order,
         test_elevated_check_reads_relay_file_and_reports_uac_cancel,
+        test_change_outer_catch_reports_real_detail_via_relay_file,
         test_change_treats_post_change_verify_query_failure_as_success,
         test_change_uses_encoded_paths_and_reports_uac_cancellation,
     ]
