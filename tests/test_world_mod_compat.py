@@ -378,6 +378,17 @@ def test_lua_multiline_roundtrip() -> None:
     assert parse_lua_table(serialize_lua_table(original)) == original
 
 
+def test_lua_file_strips_klei_persistent_string_header() -> None:
+    # 真机复现过的用户反馈：游戏引擎某些流程用 TheSim:SetPersistentString()
+    # 写 leveldataoverride.lua 时会带上 "KLEI<版本号> " 头，游戏自己读走
+    # 配套的 GetPersistentString() 会把头吃掉，我们直接读原始字节不处理
+    # 就会把 "KLEI" 当非法 token 报"格式错误"。
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "leveldataoverride.lua"
+        path.write_text('KLEI     1 return { id="DST_CAVE" }', encoding="utf-8")
+        assert parse_lua_file(path) == {"id": "DST_CAVE"}
+
+
 def test_en_zh_mod_metadata() -> None:
     with TemporaryDirectory() as directory:
         mod = Path(directory) / "1234567890"
@@ -1044,6 +1055,7 @@ def main() -> None:
         test_island_writer_repairs_partial_legacy_plan,
         test_island_cross_shard_reuses_verified_vanilla_template,
         test_lua_multiline_roundtrip,
+        test_lua_file_strips_klei_persistent_string_header,
         test_en_zh_mod_metadata,
         test_world_setting_icon_rendering,
         test_dimension_keyed_render_caches_are_bounded,

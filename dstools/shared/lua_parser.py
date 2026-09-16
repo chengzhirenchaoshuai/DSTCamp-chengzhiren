@@ -541,6 +541,23 @@ def parse_lua_value(text: str, filename: str = "<value>") -> Any:
     return parser._parse_value()
 
 
+_KLEI_PERSISTENT_STRING_HEADER_RE = re.compile(r'^KLEI\s*\d+ ')
+
+
+def _strip_klei_persistent_string_header(text: str) -> str:
+    """去掉游戏引擎 TheSim:SetPersistentString() 写文件时加的头部。
+
+    真机确认过：leveldataoverride.lua 如果是游戏内某些流程（而不是
+    DSTCamp 或服务器建档工具的纯文本写入）通过这个引擎 API 落盘的，
+    开头会带 "KLEI<版本号> " 这样的头（如 "KLEI     1 "），游戏自己读
+    这个文件走的是配套的 TheSim:GetPersistentString()，引擎内部会把
+    这段头吃掉；我们是直接读原始字节，不去掉就会把 "KLEI" 当成非法
+    token 报"格式错误"，但文件本身完全合法。
+    """
+    match = _KLEI_PERSISTENT_STRING_HEADER_RE.match(text)
+    return text[match.end():] if match else text
+
+
 def parse_lua_file(path: Path) -> dict:
     """解析一个包含 `return { ... }` 表的 Lua 文件。
 
@@ -551,6 +568,7 @@ def parse_lua_file(path: Path) -> dict:
         解析出的嵌套 Python dict。
     """
     text = path.read_text(encoding="utf-8")
+    text = _strip_klei_persistent_string_header(text)
     return parse_lua_table(text, str(path))
 
 
