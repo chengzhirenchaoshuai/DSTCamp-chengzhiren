@@ -855,12 +855,14 @@ class DSToolsApp:
         容本身还是原生渲染，只是常驻可见的那一条换成能自己上色的控件）。"""
         fm = tk.Menu(self.root, tearoff=0)
         fm.add_command(label=t("app.refresh"), command=self._refresh, accelerator="F5")
+        # 跟"刷新全部"一样不依赖当前选没选存档，随时能点——清空的是图标/
+        # 解析/翻译这些按需自动重建的缓存，不影响存档数据，不需要重启。
+        fm.add_command(label=t("app.clear_cache_dir"), command=self._clear_cache_dir)
         # 手动入口——正常情况下 Mod 管理页签会自动探测缺运行库并弹横幅，
         # 这里是留给"探测漏检"场景的兜底（真机已经复现过一次退出码判断
         # 漏掉一种真实情况，见 tex_convert.py 的说明）：哪怕以后还有别的
-        # 没覆盖到的报错场景，用户也能不看提示、自己主动点这里装。放在
-        # "刷新全部"正下方，跟它一样是"随时能点、不依赖当前选没选存档"
-        # 的全局性操作。
+        # 没覆盖到的报错场景，用户也能不看提示、自己主动点这里装。跟
+        # "刷新全部"一样是"随时能点、不依赖当前选没选存档"的全局性操作。
         fm.add_command(label=t("app.install_vcredist"), command=self._install_vcredist)
         # 原生 tk.Menu 的条目本身不是独立控件，不能直接挂 shared/gui/
         # tooltip.py 那套"给控件绑 <Enter>/<Leave>"的 Tooltip——菜单标签
@@ -916,6 +918,9 @@ class DSToolsApp:
             command=lambda: self._switch_language("en"),
         )
         sm.add_cascade(label=t("settings.language_label"), menu=lang_menu)
+        sm.add_command(
+            label=t("settings.defender_label"), command=self._show_defender_dialog
+        )
         sm.add_separator()
         self._settings_minimize_var = tk.BooleanVar(value=get_minimize_on_close())
         sm.add_checkbutton(
@@ -925,9 +930,6 @@ class DSToolsApp:
         )
         sm.add_command(
             label=t("settings.cache_dir_label"), command=self._show_cache_dir_dialog
-        )
-        sm.add_command(
-            label=t("settings.defender_label"), command=self._show_defender_dialog
         )
 
         # 语言/主题切换都会重新调一次这个方法，旧的触发条要先拆掉再重
@@ -2438,6 +2440,47 @@ class DSToolsApp:
         d = cache_root_dir()
         d.mkdir(parents=True, exist_ok=True)
         os.startfile(str(d))
+
+    def _clear_cache_dir(self) -> None:
+        """"文件"菜单"清理缓存目录"——只清缓存根目录下的内容，根目录本身
+        留着。跟 data_dir() 存的长驻数据（frpc 副本、SSH 密钥等）是分开
+        的两棵目录树，这里不会碰到；图标/解析/翻译缓存本来就是按需重建
+        的，清完不需要重启，下次用到时各处会自动重新生成。"""
+        import shutil
+
+        from dstools.shared.resource_paths import cache_root_dir
+
+        d = cache_root_dir()
+        if not d.is_dir() or not any(d.iterdir()):
+            dlg.show_info(
+                self.root, t("app.clear_cache_dir"), t("settings.cache_dir_clear_empty")
+            )
+            return
+        if not dlg.ask_yes_no(
+            self.root,
+            t("app.clear_cache_dir"),
+            t("settings.cache_dir_clear_confirm", path=str(d)),
+        ):
+            return
+        failed = []
+        for item in d.iterdir():
+            try:
+                if item.is_dir() and not item.is_symlink():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+            except OSError:
+                failed.append(item.name)
+        if failed:
+            dlg.show_warning(
+                self.root,
+                t("app.clear_cache_dir"),
+                t("settings.cache_dir_clear_partial", names="、".join(failed)),
+            )
+        else:
+            dlg.show_info(
+                self.root, t("app.clear_cache_dir"), t("settings.cache_dir_clear_done")
+            )
 
     def _install_vcredist(self) -> None:
         """ "文件"菜单"安装运行库"——跟 Mod 管理页签"缺少运行库"横幅点击
