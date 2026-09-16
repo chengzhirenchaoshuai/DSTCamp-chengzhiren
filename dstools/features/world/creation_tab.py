@@ -1042,11 +1042,13 @@ class WorldCreationTab:
             else:
                 placeholder_text = ""
             if placeholder_text:
+                # 跟列表里"配置"按钮、创意工坊链接同一个字号（18px），
+                # 跟主窗口 Mod 页签保持一致。
                 s = width / BASE_REF_WIDTH
                 _ImageDraw.Draw(img).text(
                     (width / 2, 35),
                     placeholder_text,
-                    font=get_font(round(30 * s)),
+                    font=get_font(round(18 * s)),
                     fill=theme.TEXT_MUTED,
                     anchor="mm",
                 )

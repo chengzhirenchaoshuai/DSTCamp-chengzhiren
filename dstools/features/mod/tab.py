@@ -3439,11 +3439,11 @@ class ModManagerTab:
         img = _Image.new("RGB", (w, 70), theme.CARD_BG)
         if text:
             draw = _ImageDraw.Draw(img)
-            # 比列表里 mod 名字（默认宽度下 24px）更大一些，加载提示是
-            # 整页唯一内容，值得比列表正文更显眼。
+            # 跟列表里"配置"按钮、创意工坊链接同一个字号（18px），不再
+            # 单独放大——之前放大过一版，用户反馈太突兀。
             s = w / BASE_REF_WIDTH
             draw.text(
-                (w / 2, 35), text, font=get_font(round(30 * s)),
+                (w / 2, 35), text, font=get_font(round(18 * s)),
                 fill=theme.TEXT_MUTED, anchor="mm",
             )
         self.list_panel.set_image(img, [], keep_scroll=True)
