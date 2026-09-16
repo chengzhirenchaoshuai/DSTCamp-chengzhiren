@@ -85,7 +85,7 @@ from dstools.shared.token_manager import (
     token_fingerprint,
     write_token,
 )
-from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui import dpi, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
@@ -223,7 +223,7 @@ class _RollbackDialog:
         win.title(t("local.rollback_title"))
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
-        WIN_W = 380
+        WIN_W = dpi.scale_px(380)
 
         ttk.Label(
             win,
@@ -467,7 +467,7 @@ class _AnnounceDialog:
         win.title(t("local.console_announce_btn"))
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
-        WIN_W = 480
+        WIN_W = dpi.scale_px(480)
 
         ttk.Label(
             win,

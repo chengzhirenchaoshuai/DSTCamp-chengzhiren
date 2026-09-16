@@ -85,6 +85,19 @@ class DSToolsApp:
         set_process_dpi_aware()
 
         self.root = tk.Tk()
+
+        # 声明了 DPI 感知之后，Tk 会自动把原生控件的字体按显示器真实 DPI
+        # 放大，但窗口尺寸这类像素字面量它不会替我们缩放——WINDOW_BASE_W/H
+        # 在这里换算成实例属性（覆盖类常量），后面所有引用
+        # self.WINDOW_BASE_W/H 的地方（启动定位、宽高比、ResizeGrips）
+        # 自动跟着生效，不用逐处改。必须在下面 geometry()/_compute_
+        # startup_position() 之前算好。
+        from dstools.shared.gui import dpi
+
+        dpi.init(self.root.winfo_id())
+        self.WINDOW_BASE_W = dpi.scale_px(self.WINDOW_BASE_W)
+        self.WINDOW_BASE_H = dpi.scale_px(self.WINDOW_BASE_H)
+
         self.root.title(f"{t('app.title')} v{__version__}")
         from dstools.shared.resource_paths import bundled_resource_dir
 
@@ -98,7 +111,7 @@ class DSToolsApp:
         # 过/校验不通过就回退屏幕居中。
         x, y = self._compute_startup_position()
         self.root.geometry(f"{self.WINDOW_BASE_W}x{self.WINDOW_BASE_H}+{x}+{y}")
-        self.root.minsize(900, 580)
+        self.root.minsize(dpi.scale_px(900), dpi.scale_px(580))
         self.root.resizable(True, True)
 
         # 标题栏"伪最大化"按钮的状态——见 _toggle_pseudo_maximize()。

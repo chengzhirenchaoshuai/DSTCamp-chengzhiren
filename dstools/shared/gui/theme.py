@@ -12,7 +12,7 @@ from tkinter import ttk
 from PIL import Image, ImageDraw, ImageTk
 
 from dstools.shared.app_settings import get_font_style_choice, get_theme_name
-from dstools.shared.gui import custom_font_loader, fonts as _fonts
+from dstools.shared.gui import custom_font_loader, dpi, fonts as _fonts
 from dstools.shared.gui.font_styles import (
     FONT_FAMILY_BY_STYLE, FONT_SIZE_SCALE_BY_STYLE, FONT_STYLES, FONT_STYLE_NAMES,
 )
@@ -312,7 +312,8 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     # 留出约四个中文字的视觉容量，比完全贴着文字的 width=0 舒展，同时
     # 长文案仍会按实际内容扩展；这里只影响横向请求尺寸，不改变高度。
     style.configure("TButton", background=PRIMARY, foreground="#FFFFFF",
-                     borderwidth=0, focusthickness=0, padding=(12, 6), width=-7,
+                     borderwidth=0, focusthickness=0,
+                     padding=(dpi.scale_px(12), dpi.scale_px(6)), width=-7,
                      font=font_tuple(default_size, bold=True))
     style.map("TButton",
               background=[("disabled", PRIMARY_LIGHT), ("pressed", PRIMARY_DARK),
@@ -325,7 +326,8 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     # 会拿系统默认字体画，跟界面其它按钮不一致；字号用 FONT_SIZE_MD 而
     # 不是写死数字，这样才会跟着字体样式的缩放系数一起变。
     style.configure("Big.TButton", background=PRIMARY, foreground="#FFFFFF",
-                     borderwidth=0, focusthickness=0, padding=(12, 6), font=font_tuple(FONT_SIZE_MD))
+                     borderwidth=0, focusthickness=0,
+                     padding=(dpi.scale_px(12), dpi.scale_px(6)), font=font_tuple(FONT_SIZE_MD))
     style.map("Big.TButton",
               background=[("disabled", PRIMARY_LIGHT), ("pressed", PRIMARY_DARK),
                           ("active", PRIMARY_DARK)],
@@ -356,7 +358,7 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     # 按钮样子，因为它们视觉上都是"选择器"不是"动作按钮"。
     style.configure("TMenubutton", background=CARD_BG, foreground=TEXT,
                      bordercolor=CARD_BORDER, arrowcolor=TEXT, relief="solid",
-                     borderwidth=1, anchor=tk.W, padding=(6, 3))
+                     borderwidth=1, anchor=tk.W, padding=(dpi.scale_px(6), dpi.scale_px(3)))
     style.map("TMenubutton",
               background=[("active", CARD_BG)],
               bordercolor=[("active", ACCENT)])
@@ -364,7 +366,8 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     # "Archive.TMenubutton" -- 顶部全局存档选择器专用，字号/内边距比基础
     # 样式略大（跟旁边"刷新"按钮视觉匹配），其余外观继承基础样式；字体
     # 同 Big.TButton 的理由，必须用 font_tuple()+FONT_SIZE_MD。
-    style.configure("Archive.TMenubutton", padding=(7, 3), font=font_tuple(FONT_SIZE_MD))
+    style.configure("Archive.TMenubutton", padding=(dpi.scale_px(7), dpi.scale_px(3)),
+                     font=font_tuple(FONT_SIZE_MD))
 
     # "ModOption.TMenubutton" -- Mod配置弹窗每个设置项、以及服务器配置里
     # 少数几个下拉选择字段（游戏模式/服务器语言等）共用，字号跟原来这两
@@ -372,9 +375,11 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
     # 死的空族名/数字。
     style.configure("ModOption.TMenubutton", font=font_tuple(FONT_SIZE_MD))
 
-    style.configure("TNotebook", background=BG_SOFT, borderwidth=0, tabmargins=(2, 4, 2, 0))
+    style.configure("TNotebook", background=BG_SOFT, borderwidth=0,
+                     tabmargins=(dpi.scale_px(2), dpi.scale_px(4), dpi.scale_px(2), 0))
     style.configure("TNotebook.Tab", background=CARD_BG, foreground=TEXT_MUTED,
-                     padding=(14, 6), borderwidth=1, bordercolor=CARD_BORDER)
+                     padding=(dpi.scale_px(14), dpi.scale_px(6)),
+                     borderwidth=1, bordercolor=CARD_BORDER)
     style.map("TNotebook.Tab",
               background=[("selected", PRIMARY)],
               foreground=[("selected", "#FFFFFF")],
@@ -386,7 +391,8 @@ def apply_theme(root: tk.Tk, style: ttk.Style) -> None:
               relief=[("selected", "raised"), ("!selected", "flat")],
               # 选中页签多留几像素内边距，强化"凸起"的观感，而不是简单
               # 换个高度。
-              padding=[("selected", (14, 8)), ("!selected", (14, 6))])
+              padding=[("selected", (dpi.scale_px(14), dpi.scale_px(8))),
+                       ("!selected", (dpi.scale_px(14), dpi.scale_px(6)))])
     # clam 默认的页签布局会用一个 "Notebook.focus" 元素包住标签文字，画
     # 一个虚线焦点框——app.py 每次切页签都故意把键盘焦点转移到 notebook
     # 本身（见 ClusterConfigTab/_cc_notebook 的注释），不这样处理的话虚

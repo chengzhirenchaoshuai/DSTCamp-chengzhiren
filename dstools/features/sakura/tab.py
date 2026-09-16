@@ -31,7 +31,7 @@ from dstools.features.sakura.frpc_recovery_dialog import (
 )
 from dstools.shared.resource_paths import data_dir
 from dstools.shared.token_manager import is_valid_token, mask_token
-from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui import dpi, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.pill_tabs import PillTabBar
@@ -130,7 +130,7 @@ class _NodeSelectDialog:
         win.configure(background=theme.BG_SOFT)
         # 拿掉底部按钮栏之后窗口应该贴合内容，不留死板的固定高度空白——
         # 高度按实际内容多高来算（封顶，超出的靠滚动条），不是写死一个数。
-        WIN_W, MAX_WIN_H = 940, 640
+        WIN_W, MAX_WIN_H = dpi.scale_px(940), dpi.scale_px(640)
 
         canvas = tk.Canvas(win, background=theme.BG_SOFT, highlightthickness=0)
         vsb = ttk.Scrollbar(win, orient=tk.VERTICAL, command=canvas.yview)
@@ -148,7 +148,7 @@ class _NodeSelectDialog:
             tag = t("sakura.node_tag_free") if node.get("vip", 0) == 0 else t("sakura.node_tag_vip", level=node.get("vip"))
             label = f"{node.get('name', node_id)}\n{tag}"
             btn = tk.Button(
-                grid_frame, text=label, width=26, height=2, wraplength=230, justify=tk.CENTER,
+                grid_frame, text=label, width=26, height=2, wraplength=dpi.scale_px(230), justify=tk.CENTER,
                 relief=tk.SUNKEN if node_id == current_id else tk.RAISED,
                 state=tk.NORMAL if eligible else tk.DISABLED,
                 fg=theme.TEXT if eligible else theme.TEXT_MUTED,

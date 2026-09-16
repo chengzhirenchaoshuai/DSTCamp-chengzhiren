@@ -94,7 +94,7 @@ from dstools.features.world.location_profiles import (
     IA_SHIPWRECKED_MOD_ID,
     find_mod_key,
 )
-from dstools.shared.gui import fonts, theme, themed_dialog as dlg
+from dstools.shared.gui import dpi, fonts, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.shared.gui.interaction_cursor import bind_canvas_hand_cursor
@@ -4896,7 +4896,7 @@ class ModConfigDialog:
         # 加宽了（原来是 820），好放下下面的 NAME_W_PX 而不挤压下拉
         # 框——长选项名（比如 mod 自己中英文合并的标题）以前会被截断成
         # "..."，只能靠悬浮提示才能看全。
-        DIALOG_W, DIALOG_H = 980, 680
+        DIALOG_W, DIALOG_H = dpi.scale_px(980), dpi.scale_px(680)
         win.minsize(DIALOG_W, DIALOG_H)
 
         # 按钮栏必须先 pack 到底部，这样它总能先占好自己那一块空间，再
@@ -5002,8 +5002,8 @@ class ModConfigDialog:
         # 线下面，高度由说明文字的实际换行数决定（见该函数的 docstring）。
         from dstools.shared.gui.tooltip import Tooltip
 
-        NAME_W_PX = 520
-        HEADER_W_PX = 900
+        NAME_W_PX = dpi.scale_px(520)
+        HEADER_W_PX = dpi.scale_px(900)
         COMBO_CHARS = 26
         name_font = tkfont.Font(
             family=theme.FONT_FAMILY, size=theme.FONT_SIZE_MD, weight="bold"

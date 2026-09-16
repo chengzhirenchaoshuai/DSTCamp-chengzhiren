@@ -21,7 +21,7 @@ from dstools.features.mod.manager import list_mods, load_mod_overrides
 from dstools.features.mod.parser import resolve_wegame_client_mods_dir
 from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.features.save_browser.reader import get_save_summary, list_save_sessions, list_session_players
-from dstools.shared.gui import theme, themed_dialog as dlg
+from dstools.shared.gui import dpi, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
 from dstools.features.local_service.tab import _RUNNING_LIKE
@@ -85,7 +85,7 @@ class _CopyToServerDialog:
         # 的 ttk 控件拼在一起会很不协调（_TokenInputDialog 也有同样的
         # 遗留问题，一并修一下）。
         win.configure(background=theme.BG_SOFT)
-        WIN_W = 480
+        WIN_W = dpi.scale_px(480)
 
         # 字号统一成两档：主要内容 11（说明文字/字段标签/输入框），提示
         # 性质的错误文字 10——之前字段标签那行漏配字号，跟其它几行不一
@@ -182,7 +182,7 @@ class _RestoreBackupDialog:
         win.title(t("save.restore_backup"))
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
-        WIN_W = 560
+        WIN_W = dpi.scale_px(560)
 
         ttk.Label(win, text=t("save.restore_prompt"), font=theme.font_tuple(theme.FONT_SIZE_BASE),
                   wraplength=WIN_W - 40, justify=tk.LEFT).pack(anchor=tk.W, padx=20, pady=(20, 8))
@@ -276,7 +276,7 @@ class _BackupPolicyDialog:
         win.title(t("save.backup_policy_title"))
         win.resizable(False, False)
         win.configure(background=theme.BG_SOFT)
-        WIN_W = 420
+        WIN_W = dpi.scale_px(420)
         vcmd = (win.register(lambda s: s == "" or s.isdigit()), "%P")
 
         row0 = ttk.Frame(win)
