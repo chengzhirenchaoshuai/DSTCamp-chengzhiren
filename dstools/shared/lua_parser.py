@@ -436,6 +436,16 @@ class LuaTableParser:
         数组位置的下标会作为字符串形式的整数 key 存进同一个 dict。
         """
         token = self._advance()  # 吃掉 {
+        if token.type != TokenType.LBRACE:
+            # 空文件/被截断的文件（比如云同步占位符、写入中途被打断）走到
+            # 这里 token 会是 EOF 而不是 '{'——之前直接假定是 '{' 往下
+            # 走，实际上会在下一次按下标取 token 时抛出语义不明的
+            # IndexError，被上层吞成一句笼统的"格式错误"，没法跟真正的
+            # Lua 语法错误、编码错误区分开。
+            raise LuaParseError(
+                f"Expected '{{' to start table, got {token.type.name} ({token.value!r})",
+                token.line, token.col,
+            )
         start_line = token.line
 
         result = {}

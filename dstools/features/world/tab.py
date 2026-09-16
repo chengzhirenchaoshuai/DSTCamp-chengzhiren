@@ -249,8 +249,13 @@ class WorldSettingsTab:
                 self._wl_path = s.leveldata_path
                 load_result = load_leveldata(s.leveldata_path)
                 if load_result.status != LeveldataStatus.OK:
-                    title = t("world.invalid_leveldata") if load_result.status == LeveldataStatus.INVALID else t("world.no_leveldata")
-                    self._wl_title_var.set(title); self._wl_desc_var.set("")
+                    is_invalid = load_result.status == LeveldataStatus.INVALID
+                    title = t("world.invalid_leveldata") if is_invalid else t("world.no_leveldata")
+                    # 之前这里把 load_result.error 直接丢掉，用户反馈"格式错
+                    # 误"时完全没法判断到底是编码问题、空文件还是别的——现在
+                    # 把具体异常文本显示出来，方便远程排障。
+                    detail = t("world.invalid_leveldata_detail", detail=str(load_result.error)) if is_invalid and load_result.error else ""
+                    self._wl_title_var.set(title); self._wl_desc_var.set(detail)
                     self._rules_panel.set_image(*self._empty_image())
                     self._gen_panel.set_image(*self._empty_image())
                     return
