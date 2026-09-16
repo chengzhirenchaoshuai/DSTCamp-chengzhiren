@@ -67,6 +67,18 @@ python scripts/build_exe.py
 
 The build uses an explicit tool allowlist, stages resources under `build/`, and smoke-tests the frozen executable. Real Windows GUI, Steam, frpc, and game behavior still require manual validation.
 
+## 1.3.9 highlights
+
+- Expanded Windows Defender exclusion detection to three targets (including frpc's actual run location); when the result is unknown it now falls back to an admin-level check automatically, removing an extra click.
+- Fixed the Defender exclusion script crashing on wildcard targets, garbled PowerShell output, CLIXML leaking into the UI and blowing up the window, and the path box going blank after being garbage-collected.
+- Fixed the Defender exclusion modification script being misreported as failed due to re-check jitter, an uncaught exception during re-check, and an overlong UAC elevation argument.
+- Unified the Mod loading indicator's wording and font size between the main window and the create-save sub-window, matching the "Configure" button and Workshop link's visual style.
+- Added click-to-copy for Mod names on the Mod management tab, supported in both the main window and the create-save sub-window.
+- The Lua parser now tolerates the KLEI header written by TheSim:SetPersistentString; world settings now show the specific exception when reading leveldataoverride.lua fails, easing remote troubleshooting.
+- Fixed a layout imbalance under high-DPI scaling by converting pixel literals using the display's DPI consistently.
+- Adjusted the settings menu: moved the Windows Security exclusions entry below Language, renamed the cache directory setting, and added a "clear cache" entry to the File menu.
+- Rewrote auto-update cleanup to use a fixed installer filename and self-heal leftover update files; also cleaned up zombie `tools` directories left behind by legacy ZIP-version users after updating.
+
 ## 1.3.8 highlights
 
 - Improved the Mod configuration dialog's loading feedback and response speed; fixed the main window still lagging after closing the config dialog.
