@@ -70,9 +70,7 @@ The build uses an explicit tool allowlist, stages resources under `build/`, and 
 ## 1.3.9 highlights
 
 - Trimmed the release down to a single-file EXE; the external-tools ZIP build is no longer produced or published. Existing ZIP-version users are unaffected — auto-update switches them to the embedded EXE automatically.
-- Expanded Windows Defender exclusion detection to three targets (including frpc's actual run location); when the result is unknown it now falls back to an admin-level check automatically, removing an extra click.
-- Fixed the Defender exclusion script crashing on wildcard targets, garbled PowerShell output, CLIXML leaking into the UI and blowing up the window, and the path box going blank after being garbage-collected.
-- Fixed the Defender exclusion modification script being misreported as failed due to re-check jitter, an uncaught exception during re-check, and an overlong UAC elevation argument.
+- Overhauled Windows Defender exclusion handling: detection now covers three targets and falls back to an admin-level check automatically when the result is unknown, and a series of bugs are fixed — crashes on wildcard targets, garbled output, CLIXML leaking into the UI, a blank path box, and modifications being misreported as failed.
 - Unified the Mod loading indicator's wording and font size between the main window and the create-save sub-window, matching the "Configure" button and Workshop link's visual style.
 - Added click-to-copy for Mod names on the Mod management tab, supported in both the main window and the create-save sub-window.
 - The Lua parser now tolerates the KLEI header written by TheSim:SetPersistentString; world settings now show the specific exception when reading leveldataoverride.lua fails, easing remote troubleshooting.
