@@ -397,10 +397,29 @@ $ProgressPreference = 'SilentlyContinue'
 {_FULLPATH_HELPER_SNIPPET}
 {_paths_assignment(targets)}
 if (-not (Get-Command {command} -ErrorAction SilentlyContinue)) {{ exit 2 }}
-foreach ($t in $targets) {{
-    {command} -ExclusionPath $t -ErrorAction Stop
+try {{
+    foreach ($t in $targets) {{
+        {command} -ExclusionPath $t -ErrorAction Stop
+    }}
+}} catch {{
+    # Add/Remove-MpPreference 本身真的失败了（比如被企业策略、篡改防
+    # 护拦截）——跟下面复查阶段的失败是两回事，专门给一个不同的退出
+    # 码，方便以后排查。
+    exit 4
 }}
-$exclusions = @((Get-MpPreference -ErrorAction Stop).ExclusionPath)
+$exclusions = $null
+for ($attempt = 0; $attempt -lt 3; $attempt++) {{
+    try {{
+        $exclusions = @((Get-MpPreference -ErrorAction Stop).ExclusionPath)
+        break
+    }} catch {{
+        # Add/Remove-MpPreference 已经成功执行了，紧接着的 Get-MpPreference
+        # 复查偶发会因为 Defender 的 WMI 提供程序刚改完还没稳定而抛异
+        # 常——不是修改本身失败，重试几次通常就好。
+        Start-Sleep -Milliseconds 300
+    }}
+}}
+if ($null -eq $exclusions) {{ exit 5 }}
 $allOk = $true
 foreach ($t in $targets) {{
     $wanted = DstCamp-FullPath $t
@@ -420,6 +439,10 @@ if (-not $allOk) {{ exit 3 }}
         result = _run_elevated_powershell(script)
     except (OSError, subprocess.SubprocessError) as exc:
         return DefenderChangeResult(False, detail=str(exc))
+    if result.returncode == 5:
+        # 修改命令本身没有抛异常，只是复查查询重试 3 次都失败，不能当
+        # 成修改失败——真实场景验证过这种情况下修改其实已经生效了。
+        return DefenderChangeResult(True)
     if result.returncode == 0:
         return DefenderChangeResult(True)
     detail = _clean_powershell_error(result.stderr or result.stdout)

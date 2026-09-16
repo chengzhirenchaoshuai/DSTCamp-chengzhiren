@@ -292,6 +292,24 @@ def test_elevated_check_reads_relay_file_and_reports_uac_cancel() -> None:
     assert defender.check_defender_exclusion_elevated([]) == []
 
 
+def test_change_treats_post_change_verify_query_failure_as_success() -> None:
+    # 回归锁定（用户实测复现）：Remove-MpPreference 真的成功执行了，紧
+    # 接着的 Get-MpPreference 复查却偶发抛异常（Defender 的 WMI 提供程
+    # 序刚改完还没稳定），之前整段脚本没包 try/catch，直接以未捕获异
+    # 常崩溃退出，被误报成"无法修改...可能被企业策略/篡改防护阻
+    # 止"——实际上移除已经生效，用户重新点检测能看到。exit 5 表示
+    # "Add/Remove 命令本身没抛异常，只是复查重试 3 次都查不到"，必须
+    # 当成功处理，不能报失败。已经在真实 PowerShell 上验证过这段重试
+    # 逻辑本身语法、行为都正确（exit 4/5/0 三种场景）。
+    targets = [defender.DefenderTarget(Path("C:/DSTCamp"), "runtime_tools")]
+    with patch.object(
+        defender, "_run_elevated_powershell", return_value=_completed(returncode=5)
+    ):
+        result = defender.change_defender_exclusion(targets, enabled=False)
+    assert result.success is True
+    assert result.cancelled is False
+
+
 def test_change_uses_encoded_paths_and_reports_uac_cancellation() -> None:
     targets = [
         defender.DefenderTarget(Path("C:/DSTCamp/it's; Write-Output unsafe"), "file"),
@@ -355,6 +373,7 @@ def main() -> None:
         test_clean_powershell_error_strips_clixml_serialization,
         test_check_parses_status_lines_in_target_order,
         test_elevated_check_reads_relay_file_and_reports_uac_cancel,
+        test_change_treats_post_change_verify_query_failure_as_success,
         test_change_uses_encoded_paths_and_reports_uac_cancellation,
     ]
     for test in tests:
