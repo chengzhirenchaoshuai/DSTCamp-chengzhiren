@@ -1047,6 +1047,64 @@ def test_selfhost_server_ip_eye_uses_closed_and_open_states():
 
 
 
+def test_defender_dialog_target_paths_survive_garbage_collection():
+    """回归锁定：Defender 排除项对话框里，如果 StringVar 直接内联当
+    textvariable 参数传、不留任何 Python 引用，CPython 引用计数会在语
+    句结束后立刻回收它，__del__ 里 unset 掉背后的 Tcl 变量，导致路径框
+    显示空白（用户实测复现：主程序/长驻工具缓存/启动临时目录后面的框
+    全是空白）。这里真实起一个 Tk 对话框，构造完立刻强制
+    gc.collect()，断言路径文字仍然完整显示。"""
+    import gc
+
+    from dstools.shared import windows_defender as defender
+    from dstools.shared.gui import windows_defender_dialog as dlg_mod
+
+    targets = [
+        defender.DefenderTarget(Path("C:/DSTCamp/DSTCamp.exe"), "file"),
+        defender.DefenderTarget(
+            Path("C:/DSTCamp/data/runtime_tools"), "runtime_tools"
+        ),
+    ]
+
+    def collect_entries(widget):
+        found = []
+        for child in widget.winfo_children():
+            if isinstance(child, ttk.Entry):
+                found.append(child)
+            found.extend(collect_entries(child))
+        return found
+
+    root = tk.Tk()
+    root.withdraw()
+    captured = {}
+
+    def poke_then_close():
+        win = next(w for w in root.winfo_children() if isinstance(w, tk.Toplevel))
+        gc.collect()
+        captured["texts"] = [entry.get() for entry in collect_entries(win)]
+        win.destroy()
+
+    root.after(80, poke_then_close)
+    with patch.object(
+        dlg_mod, "resolve_defender_targets", return_value=targets
+    ), patch.object(
+        dlg_mod,
+        "check_defender_exclusion",
+        return_value=[
+            defender.DefenderState("excluded"),
+            defender.DefenderState("excluded"),
+        ],
+    ):
+        dlg_mod.show_windows_defender_dialog(root)
+    root.destroy()
+
+    assert captured["texts"] == [
+        str(Path("C:/DSTCamp/DSTCamp.exe")),
+        str(Path("C:/DSTCamp/data/runtime_tools")),
+    ]
+    print("  PASS: Defender 排除目标路径在 GC 之后仍完整显示")
+
+
 def main():
     """Run all Phase 2 tests."""
     print("\n" + "O" * 60)
@@ -1081,6 +1139,7 @@ def main():
         test_selfhost_host_display_uses_authenticated_address,
         test_selfhost_server_ip_mask_and_visibility,
         test_selfhost_server_ip_eye_uses_closed_and_open_states,
+        test_defender_dialog_target_paths_survive_garbage_collection,
     ]
 
     for test in tests:

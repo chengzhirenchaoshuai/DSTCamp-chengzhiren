@@ -97,6 +97,12 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
 
     targets_frame = tk.Frame(card, background=theme.CARD_BG)
     targets_frame.pack(fill=tk.X, padx=24)
+    # StringVar 只把 Tcl 变量名交给控件，不会被控件自身持有引用；如果
+    # 直接内联 tk.StringVar(...) 当参数传，语句结束后 Python 侧没有任何
+    # 名字再引用它，CPython 引用计数会立刻回收并 unset 掉背后的 Tcl 变
+    # 量，导致 Entry 显示为空白。这里用列表把每个 StringVar 都攒住，让
+    # 它们至少活到 win.wait_window() 返回、对话框关闭为止。
+    path_vars: list[tk.StringVar] = []
     if targets:
         for target in targets:
             row = tk.Frame(targets_frame, background=theme.CARD_BG)
@@ -110,13 +116,17 @@ def show_windows_defender_dialog(parent: tk.Misc) -> None:
                 anchor=tk.W,
                 width=12,
             ).pack(side=tk.LEFT)
-            ttk.Entry(
-                row, textvariable=tk.StringVar(value=str(target.path)), state="readonly"
-            ).pack(side=tk.LEFT, fill=tk.X, expand=True)
+            path_var = tk.StringVar(value=str(target.path))
+            path_vars.append(path_var)
+            ttk.Entry(row, textvariable=path_var, state="readonly").pack(
+                side=tk.LEFT, fill=tk.X, expand=True
+            )
     else:
-        ttk.Entry(
-            targets_frame, textvariable=tk.StringVar(value="—"), state="readonly"
-        ).pack(fill=tk.X)
+        empty_var = tk.StringVar(value="—")
+        path_vars.append(empty_var)
+        ttk.Entry(targets_frame, textvariable=empty_var, state="readonly").pack(
+            fill=tk.X
+        )
 
     scope_key = (
         "settings.defender_folder_scope"
