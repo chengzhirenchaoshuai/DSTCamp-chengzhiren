@@ -536,9 +536,28 @@ def parse_lua_value(text: str, filename: str = "<value>") -> Any:
     任意单个值表达式——用在诸如 mod 配置项的 `default = <value>`、选项的
     `data = <value>` 这类场景，值既可能是裸标量（true、5、"text"），也
     可能是一个表。
+
+    真实遇到过的坑：mod 作者有时把 `default` 写成一次函数调用，比如
+    `default = en_zh("en", "zh")`（按游戏 locale 挑语言）——本解析器不
+    识别圆括号，也不认识函数调用，`_parse_value()` 只会吃掉打头的标识符
+    "en_zh" 就当作解析完成返回，后面的 `("en", "zh")` 被无声丢弃，得到
+    一个语法上"成功"但内容完全错误的结果（字面量字符串 "en_zh"）。这里
+    补一道检查：值解析完之后如果还有没吃完的 token，说明这根本不是一个
+    单纯的字面量，明确报错，而不是悄悄返回一个像模像样但错误的值——调
+    用方（mod/parser.py 的 _coerce_lua_value）捕获这个异常后会回退成保
+    留原始文本，不会把这种情况伪装成解析成功。
     """
     parser = LuaTableParser(text, filename)
-    return parser._parse_value()
+    value = parser._parse_value()
+    trailing = parser._peek()
+    if trailing.type != TokenType.EOF:
+        raise LuaParseError(
+            f"Unexpected trailing token after value: {trailing.type.name} "
+            f"({trailing.value!r}) -- looks like a function call or expression, "
+            "not a literal",
+            trailing.line, trailing.col,
+        )
+    return value
 
 
 _KLEI_PERSISTENT_STRING_HEADER_RE = re.compile(r'^KLEI\s*\d+ ')

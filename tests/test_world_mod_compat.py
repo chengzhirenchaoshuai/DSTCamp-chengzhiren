@@ -71,8 +71,10 @@ from dstools.models import ModEntry, SaveSource  # noqa: E402
 from PIL import Image, ImageChops, ImageDraw  # noqa: E402
 from dstools.shared.gui.fonts import get_font  # noqa: E402
 from dstools.shared.lua_parser import (  # noqa: E402
+    LuaParseError,
     parse_lua_file,
     parse_lua_table,
+    parse_lua_value,
     serialize_lua_table,
 )
 
@@ -387,6 +389,21 @@ def test_lua_file_strips_klei_persistent_string_header() -> None:
         path = Path(directory) / "leveldataoverride.lua"
         path.write_text('KLEI     1 return { id="DST_CAVE" }', encoding="utf-8")
         assert parse_lua_file(path) == {"id": "DST_CAVE"}
+
+
+def test_lua_value_rejects_function_call_instead_of_guessing() -> None:
+    # 真机复现过的用户反馈："全局事件计时器" mod 把 default 写成
+    # en_zh("en", "zh") 这样按 locale 取值的函数调用。本解析器不认识
+    # 函数调用语法，之前会只吃掉打头的标识符 "en_zh" 就当解析完成，
+    # 悄悄丢弃后面的实参，得到一个语法上"成功"但内容错误的字符串
+    # "en_zh"。现在改成值解析完后如果还有没吃完的 token 就明确报错，
+    # 调用方（mod/parser.py::_coerce_lua_value）捕获后回退保留原始文
+    # 本，不会再伪装成解析成功。
+    try:
+        parse_lua_value('en_zh("en", "zh")')
+        assert False, "应该因为有没吃完的 token 而报错"
+    except LuaParseError:
+        pass
 
 
 def test_en_zh_mod_metadata() -> None:
@@ -1056,6 +1073,7 @@ def main() -> None:
         test_island_cross_shard_reuses_verified_vanilla_template,
         test_lua_multiline_roundtrip,
         test_lua_file_strips_klei_persistent_string_header,
+        test_lua_value_rejects_function_call_instead_of_guessing,
         test_en_zh_mod_metadata,
         test_world_setting_icon_rendering,
         test_dimension_keyed_render_caches_are_bounded,
