@@ -406,6 +406,24 @@ def test_lua_value_rejects_function_call_instead_of_guessing() -> None:
         pass
 
 
+def test_lua_value_rejects_bare_identifier_without_trailing_tokens() -> None:
+    # 跟 test_lua_value_rejects_function_call_instead_of_guessing 是同一
+    # 类问题的另一半：那个测试覆盖的是"函数调用有残留 token"（比如
+    # en_zh("en","zh") 后面还跟着实参），这里覆盖"裸标识符、后面什么都
+    # 不剩"的情况（比如 default = SomeConstant）——这种没有残留 token 可
+    # 抓，得靠单独判断"不是 true/false/nil 的裸标识符"才能拦住，否则会
+    # 把变量名本身悄悄当成字面量字符串返回。
+    try:
+        parse_lua_value("SomeConstant")
+        assert False, "裸标识符（非 true/false/nil）应该报错，不能当字面量"
+    except LuaParseError:
+        pass
+    # true/false/nil 三个真正的关键字必须继续正常工作，不能被误伤。
+    assert parse_lua_value("true") is True
+    assert parse_lua_value("false") is False
+    assert parse_lua_value("nil") is None
+
+
 def test_en_zh_mod_metadata() -> None:
     with TemporaryDirectory() as directory:
         mod = Path(directory) / "1234567890"
@@ -1074,6 +1092,7 @@ def main() -> None:
         test_lua_multiline_roundtrip,
         test_lua_file_strips_klei_persistent_string_header,
         test_lua_value_rejects_function_call_instead_of_guessing,
+        test_lua_value_rejects_bare_identifier_without_trailing_tokens,
         test_en_zh_mod_metadata,
         test_world_setting_icon_rendering,
         test_dimension_keyed_render_caches_are_bounded,

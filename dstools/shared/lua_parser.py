@@ -410,7 +410,21 @@ class LuaTableParser:
             return token.value
 
         if token.type == TokenType.IDENTIFIER:
-            # true, false, nil
+            if isinstance(token.value, str):
+                # 真正的 true/false/nil 在词法分析器里已经直接转成了
+                # bool/None（见 LuaTokenizer._read_identifier），走到这
+                # 里 value 还是 str 的，说明是别的裸标识符——外部变量引
+                # 用，或者函数调用打头那部分（比如 en_zh(...) 的
+                # "en_zh"）。本解析器不执行代码，没法知道它实际引用的是
+                # 什么，绝不能把标识符名字本身悄悄当成字面量返回（之前
+                # 就是这样把 en_zh("en","zh") 错解析成字符串 "en_zh" 的，
+                # 真机复现过）。
+                raise LuaParseError(
+                    f"Unexpected bare identifier {token.value!r} (not "
+                    "true/false/nil) -- looks like a variable reference or "
+                    "function call, not a literal this parser can evaluate",
+                    token.line, token.col,
+                )
             self._advance()
             return token.value
 
