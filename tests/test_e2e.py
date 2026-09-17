@@ -1106,6 +1106,30 @@ def test_app_settings_toggles():
         assert stable_tool.read_bytes() == b"frpc"
         print("  PASS: 缓存、持久数据、安全材料和长驻工具使用独立目录")
 
+        # 单文件版打包的是 .gz（PyInstaller 每次启动都无条件把 tools/
+        # 解压到全新临时目录，裸 exe——尤其是 frp 系列——是"没用到功能也
+        # 每次启动被杀软隔离"的诱因，见 resource_paths.runtime_tool_path()
+        # 顶部注释）；这里真实用 gzip 压缩再解压，不 mock，验证内容一致
+        # 且落到同一套稳定哈希缓存目录，第二次调用命中缓存不重复解压。
+        import gzip
+
+        gz_bundled = root / "bundle" / "tools" / "frpc-gz" / "frpc.exe.gz"
+        gz_bundled.parent.mkdir(parents=True)
+        with gzip.open(gz_bundled, "wb") as stream:
+            stream.write(b"frpc-compressed-payload")
+        with (
+            patch.object(sys, "frozen", True, create=True),
+            patch.object(sys, "_MEIPASS", str(root / "bundle"), create=True),
+        ):
+            gz_stable_tool = runtime_tool_path("frpc-gz/frpc.exe")
+            mtime_first = gz_stable_tool.stat().st_mtime_ns
+            gz_stable_tool_again = runtime_tool_path("frpc-gz/frpc.exe")
+        assert gz_stable_tool.parent.parent.parent == root / "data" / "runtime_tools"
+        assert gz_stable_tool.read_bytes() == b"frpc-compressed-payload"
+        assert gz_stable_tool_again == gz_stable_tool
+        assert gz_stable_tool_again.stat().st_mtime_ns == mtime_first
+        print("  PASS: 长驻工具优先解压 .gz 压缩包，命中哈希缓存不重复落地")
+
 
 def test_cache_path_user_guidance():
     """缓存路径异常应在启动时提醒，恢复无效默认值时使用专门提示。"""
