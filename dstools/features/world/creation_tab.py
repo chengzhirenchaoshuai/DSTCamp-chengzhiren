@@ -417,6 +417,12 @@ class WorldCreationTab:
             self._world_content, ref_width=REF_WIDTH, bg=theme.CARD_BG, app=self.app
         )
         self._rules_panel.frame.pack(fill=tk.BOTH, expand=True)
+        # 跟主页“世界设置”一样，resize 停顿后按 Canvas 真实像素宽度重
+        # 渲染一次，消除位图缩放导致的文字发虚（此前只有 Mod 列表接了
+        # on_settle，这里漏掉了，世界规则/生成面板一直按固定 REF_WIDTH
+        # 位图缩放显示）。
+        self._rules_panel.on_settle = lambda w, _h: self._render(ref_width=w)
+        self._gen_panel.on_settle = lambda w, _h: self._render(ref_width=w)
 
     def _on_world_sub_tab_select(self, key: str) -> None:
         if key == self._world_sub_tab_key:
@@ -1317,7 +1323,7 @@ class WorldCreationTab:
         )
         return platform, resolve_wegame_client_mods_dir(platform)
 
-    def _render(self):
+    def _render(self, ref_width=None):
         if not hasattr(self, "_rules_panel"):
             return
         plan = self._active_preset()
@@ -1379,6 +1385,8 @@ class WorldCreationTab:
             callback = self._on_gen_click
             is_rule = False
         hidden_panel.release_image()
+        if ref_width is None:
+            ref_width = panel.current_width(REF_WIDTH)
 
         def render_viewport(view_y, view_height):
             img, hits = render_world_panel(
@@ -1387,7 +1395,7 @@ class WorldCreationTab:
                 CATEGORY_COLORS,
                 editable=True,
                 on_click=callback,
-                ref_width=REF_WIDTH,
+                ref_width=ref_width,
                 location=preset.location,
                 mod_settings=self._active_mod_settings,
                 mod_icons=self._mod_world_icons,
@@ -1399,8 +1407,8 @@ class WorldCreationTab:
             return img, hits, []
 
         panel.set_virtual_image(
-            REF_WIDTH,
-            world_panel_height(cats, rows, REF_WIDTH, compact=True),
+            ref_width,
+            world_panel_height(cats, rows, ref_width, compact=True),
             render_viewport,
             keep_scroll=True,
         )
