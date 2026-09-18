@@ -111,6 +111,19 @@ _CONSOLE_MAX_LINES = 20_000
 _COMMAND_HISTORY_LIMIT = 100
 _STEAM_REMOTE_BUILD_TTL = 300.0
 _LUAJIT_VCREDIST_DOWNLOAD_URL = "https://wwwu.lanzoub.com/b0nyns22d"
+# 公网/穿透代码查询的超时上限：真机反馈过会一直卡在"获取中…"——根因
+# 是 urllib 的 timeout= 只管连接建立后的收发，不管 DNS 解析（某些网络
+# 环境下域名解析本身会挂起，比单个请求的 socket 超时长得多），后台线
+# 程可能真的几十秒甚至更久都不返回。查询线程杀不掉（Python 线程没有
+# 安全的强制终止手段），只能在 UI 侧不再无限等：超过这个时限还没等到
+# 结果就改显示"获取失败"，引导用户点顶部"刷新"重试；线程本身继续跑，
+# 真晚到的结果不受影响，来了照样正常显示。
+# 公网 IP 最多顺序试 3 个来源、每个 socket 超时 4s，正常最坏情况 12s；
+# 内网穿透最多顺序查樱花 2 个接口、每个超时 10s，正常最坏情况 20s——
+# 两个阈值都在各自正常最坏耗时上留出 50% 以上余量，避免把还在正常排
+# 队等待的请求误判成"失败"。
+_PUBLIC_CONNECT_TIMEOUT_S = 18.0
+_NAT_CONNECT_TIMEOUT_S = 28.0
 _PUBLIC_IP_SOURCES = (
     # cip.cc 会按 User-Agent 区分网页与命令行响应；使用 curl 标识可直接
     # 获取短纯文本，避免公网 IP 落在仅读取的前 256 字节之外。
@@ -1450,6 +1463,14 @@ class LocalServiceTab:
         self._lan_status_key = None  # 状态缓存，避免 poll 每 150ms 重复重画
         self._public_status_key = None
         self._nat_status_key = None
+        # 公网/穿透代码查询超时看门狗——见 _PUBLIC_CONNECT_TIMEOUT_S 的
+        # 说明。*_pending_since 为 None 表示当前没有正在等待的查询；
+        # *_timed_out 记录这一轮是否已经因为超时改显示过"获取失败"，避
+        # 免每次 poll 都重复设置同样的文案。
+        self._public_pending_since: float | None = None
+        self._public_timed_out = False
+        self._nat_pending_since: float | None = None
+        self._nat_timed_out = False
         self._connect_value_cells = []
 
         self._lan_row = lan_row = BgFrame(connect_row, app, bg=theme.CARD_BG)
@@ -1693,6 +1714,8 @@ class LocalServiceTab:
         self._nat_code = None
         self._nat_set_text(t("local.connect_loading"))
         self._nat_set_status("")
+        self._nat_pending_since = time.monotonic()
+        self._nat_timed_out = False
         threading.Thread(
             target=self._fetch_nat_connect_async,
             args=(cluster, str(cluster.path), self._connect_fetch_generation),
@@ -1855,6 +1878,8 @@ class LocalServiceTab:
         self._public_code = None
         self._public_set_text(t("local.connect_loading"))
         self._public_set_status("")
+        self._public_pending_since = time.monotonic()
+        self._public_timed_out = False
         self._nat_code = None
         threading.Thread(
             target=self._fetch_public_connect_async,
@@ -1864,6 +1889,8 @@ class LocalServiceTab:
         if self._nat_lookup_needed(cluster):
             self._nat_set_text(t("local.connect_loading"))
             self._nat_set_status("")
+            self._nat_pending_since = time.monotonic()
+            self._nat_timed_out = False
             threading.Thread(
                 target=self._fetch_nat_connect_async,
                 args=(cluster, cluster_key, generation),
@@ -1877,6 +1904,7 @@ class LocalServiceTab:
                 theme.TEXT_MUTED,
                 t("local.nat_not_mapped"),
             )
+            self._nat_pending_since = None
 
     def _fetch_public_connect_async(self, cluster, cluster_key, generation):
         public_ip = self._fetch_public_ipv4()
@@ -1896,6 +1924,10 @@ class LocalServiceTab:
         )
 
     def _apply_public_result(self, codes, cluster_key, ip_available):
+        # 到这里说明结果对应的正是当前这一轮查询（_drain_connect_results
+        # 已经按 generation 过滤过），不管下面因为切了存档而不渲染，这一
+        # 轮查询本身都已经有了结果，不再算"还在等"，看门狗不用再管它。
+        self._public_pending_since = None
         cluster = self._get_cluster()
         if (
             cluster_key != (str(cluster.path) if cluster else None)
@@ -2034,6 +2066,8 @@ class LocalServiceTab:
     def _apply_nat_result(self, codes, cluster_key):
         # 内网穿透要真正能连，三个条件缺一不可：映射建立、世界在跑、frpc
         # 在转发。未就绪按这个顺序提示最缺的那个环节，悬停状态列能看到。
+        # 结果已经到手，不再算"还在等"，理由同 _apply_public_result()。
+        self._nat_pending_since = None
         cluster = self._get_cluster()
         if (
             cluster_key != (str(cluster.path) if cluster else None)
@@ -2116,6 +2150,39 @@ class LocalServiceTab:
             )
         else:
             self._nat_set_status(f"● {t('local.connect_ready')}", theme.ACCENT)
+
+    def _check_connect_fetch_timeouts(self):
+        """公网/穿透代码查询看门狗——见 _PUBLIC_CONNECT_TIMEOUT_S 的说
+        明。超过阈值还没等到结果就把"获取中…"改成"获取失败"，引导用户
+        点顶部"刷新"重试；后台线程杀不掉，真晚到的结果仍会在
+        _apply_public_result()/_apply_nat_result() 里正常覆盖这里的提
+        示。每轮 poll（150ms）都调用，但 *_timed_out 保证同一轮只真正
+        重新配置一次控件，不会每次都重画。"""
+        now = time.monotonic()
+        if (
+            self._public_pending_since is not None
+            and not self._public_timed_out
+            and now - self._public_pending_since >= _PUBLIC_CONNECT_TIMEOUT_S
+        ):
+            self._public_timed_out = True
+            self._public_set_text(t("local.connect_failed"))
+            self._public_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.connect_failed_reason"),
+            )
+        if (
+            self._nat_pending_since is not None
+            and not self._nat_timed_out
+            and now - self._nat_pending_since >= _NAT_CONNECT_TIMEOUT_S
+        ):
+            self._nat_timed_out = True
+            self._nat_set_text(t("local.connect_failed"))
+            self._nat_set_status(
+                f"● {t('local.connect_not_ready')}",
+                theme.TEXT_MUTED,
+                t("local.connect_failed_reason"),
+            )
 
     def _nat_frpc_ready(self) -> bool:
         """内网穿透的 frpc 客户端是否在跑（樱花映射或自建 frps 任一）。"""
@@ -3926,6 +3993,7 @@ class LocalServiceTab:
             self._refresh_lan_status()
             self._refresh_public_status()
             self._refresh_nat_status()
+            self._check_connect_fetch_timeouts()
         self._maybe_periodic_backup()
         self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 

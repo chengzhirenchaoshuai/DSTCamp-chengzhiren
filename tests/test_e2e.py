@@ -3505,6 +3505,56 @@ def test_ktech_ascii_runtime_conversion():
     print("  PASS: 整套 ktools 按内容哈希复制到英文缓存，转换只使用固定英文文件名")
 
 
+def test_connect_fetch_timeout_watchdog():
+    """公网/穿透直连代码查询卡在"获取中…"的看门狗——真机反馈过会一直
+    卡住不动：urllib 的 timeout= 只管连接建立后的收发，不管 DNS 解析，
+    后台线程可能真的几十秒都不返回。这里直接测 _check_connect_fetch_
+    timeouts() 本身的判断逻辑（不搭真实 GUI，用 object.__new__ 绕开
+    __init__，跟 test_world_mod_compat.py 里
+    test_world_tab_keeps_only_the_visible_panel_image 同一个手法）：
+    没到阈值不动作、过了阈值只触发一次、公网和穿透两条互不影响。"""
+    print("\n" + "=" * 60)
+    print("Test: Connect Fetch Timeout Watchdog")
+
+    from dstools.features.local_service.tab import LocalServiceTab
+    from dstools.i18n import t
+
+    tab = object.__new__(LocalServiceTab)
+    calls = {"public_text": [], "public_status": [], "nat_text": [], "nat_status": []}
+    tab._public_set_text = lambda *a, **k: calls["public_text"].append(a)
+    tab._public_set_status = lambda *a, **k: calls["public_status"].append(a)
+    tab._nat_set_text = lambda *a, **k: calls["nat_text"].append(a)
+    tab._nat_set_status = lambda *a, **k: calls["nat_status"].append(a)
+
+    now = time.monotonic()
+    tab._public_pending_since = now
+    tab._public_timed_out = False
+    tab._nat_pending_since = None
+    tab._nat_timed_out = False
+    tab._check_connect_fetch_timeouts()
+    assert calls["public_text"] == [] and calls["nat_text"] == []
+    print("  PASS: 未超过阈值时不触发")
+
+    tab._public_pending_since = now - 1000  # 远超阈值
+    tab._check_connect_fetch_timeouts()
+    assert len(calls["public_text"]) == 1
+    assert calls["public_text"][0][0] == t("local.connect_failed")
+    assert tab._public_timed_out is True
+    assert calls["nat_text"] == []
+    print("  PASS: 超过阈值触发一次，且只影响公网这一行")
+
+    tab._check_connect_fetch_timeouts()
+    assert len(calls["public_text"]) == 1, "已经标记过超时不该重复触发"
+    print("  PASS: 已标记超时后不重复触发")
+
+    tab._nat_pending_since = now - 1000
+    tab._check_connect_fetch_timeouts()
+    assert len(calls["nat_text"]) == 1
+    assert calls["nat_text"][0][0] == t("local.connect_failed")
+    assert len(calls["public_text"]) == 1, "穿透超时不该影响已经触发过的公网这一行"
+    print("  PASS: 穿透超时独立触发，不影响公网状态")
+
+
 def main():
     """运行全部测试。"""
     print("\n" + "█" * 60)
@@ -3564,6 +3614,7 @@ def main():
         test_ktech_runtime_detector,
         test_ktech_ascii_runtime_conversion,
         test_world_ocean_frequency_labels,
+        test_connect_fetch_timeout_watchdog,
     ]
 
     for test in tests:
