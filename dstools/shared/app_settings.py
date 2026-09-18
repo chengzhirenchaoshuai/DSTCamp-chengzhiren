@@ -14,6 +14,7 @@ _KEY_FONT_STYLE_CHOICE = "font_style_choice"
 _DEFAULT_FONT_STYLE_CHOICE = "default"
 _KEY_PLAYER_NOTES = "player_notes"
 _KEY_MINIMIZE_ON_CLOSE = "minimize_on_close"
+_KEY_REMIND_UPDATE_ENABLED = "remind_update_enabled"
 _KEY_CACHE_USE_EXE_DIR = "cache_use_exe_dir"
 _KEY_CACHE_DIR = "cache_dir"
 _KEY_CUSTOM_BG_FILENAME = "custom_bg_filename"
@@ -240,6 +241,17 @@ def get_minimize_on_close() -> bool:
 def set_minimize_on_close(value: bool) -> None:
     data = load_settings()
     data[_KEY_MINIMIZE_ON_CLOSE] = value
+    save_settings(data)
+
+
+def get_remind_update_enabled() -> bool:
+    """启动时检测到新版本是否自动弹出更新窗口，默认开启。"""
+    return load_settings().get(_KEY_REMIND_UPDATE_ENABLED, True)
+
+
+def set_remind_update_enabled(value: bool) -> None:
+    data = load_settings()
+    data[_KEY_REMIND_UPDATE_ENABLED] = value
     save_settings(data)
 
 

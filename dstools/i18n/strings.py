@@ -19,6 +19,7 @@ STRINGS = {
         "update.downloading": "正在下载 DSTCamp v{version}… {percent}%",
         "update.failed": "自动更新失败，当前程序和原文件均未更改。\n\n错误：{error}",
         "update.close_servers": "更新需要退出 DSTCamp。检测到仍有专用服务器运行，是否先安全关闭服务器再安装更新？",
+        "update.dont_remind_again": "不再提醒",
         # 菜单
         "menu.file": "文件",
         "menu.lang_zh": "中文",
@@ -115,6 +116,7 @@ STRINGS = {
         "about.message": "DSTCamp {version}\n\nDon't Starve Together 本地服务器管理工具\n\n作者：橙之刃\n交流群：463227692",
         "about.repo_label": "项目地址：",
         "about.repo_link_text": "Github",
+        "about.remind_update_label": "提醒更新",
         "about.check_update_btn": "检查更新",
         "about.checking_update": "正在检查更新…",
         "about.check_update_failed": "检查失败，请检查网络连接",
@@ -1077,6 +1079,7 @@ STRINGS = {
         "update.downloading": "Downloading DSTCamp v{version}… {percent}%",
         "update.failed": "Auto update failed. The running program and original file were not changed.\n\nError: {error}",
         "update.close_servers": "DSTCamp must exit to update. Dedicated servers are still running. Shut them down safely before installing?",
+        "update.dont_remind_again": "Don't remind me again",
         # 菜单
         "menu.file": "File",
         "menu.lang_zh": "中文",
@@ -1173,6 +1176,7 @@ STRINGS = {
         "about.message": "DSTCamp {version}\n\nDon't Starve Together local server manager\n\nAuthor：橙之刃\nQQ group：463227692",
         "about.repo_label": "Project: ",
         "about.repo_link_text": "Github",
+        "about.remind_update_label": "Remind Me of Updates",
         "about.check_update_btn": "Check for Updates",
         "about.checking_update": "Checking for updates…",
         "about.check_update_failed": "Check failed, please verify your network connection",

@@ -20,6 +20,8 @@ from dstools.shared.app_settings import (
     set_font_style_choice,
     get_minimize_on_close,
     set_minimize_on_close,
+    get_remind_update_enabled,
+    set_remind_update_enabled,
     set_cache_dir_override,
     get_custom_bg_opacity,
     get_window_position,
@@ -1839,6 +1841,37 @@ class DSToolsApp:
         )
         update_label.pack(fill=tk.X, padx=24, pady=(10, 0))
 
+        # "提醒更新"——默认开启；开启时启动检测到新版本会直接弹出更新
+        # 窗口（见 _start_update_check()），不用再等用户自己点状态栏角落
+        # 那行小字或者翻到这个"关于"弹窗来查。更新窗口自己也有一个"不再
+        # 提醒"勾选框（见 _show_update_prompt()），跟这里是同一个设置，
+        # 双向同步。不用 ttk.Checkbutton：这个项目全局 clam 主题下它的选
+        # 中态画出来是个"×"不是"√"（真机截图确认过），改成自画的 ☑/☐
+        # 文本 Label 点击切换，跟 mod/tab.py 里同样取舍的复选框一致。
+        remind_var = tk.BooleanVar(value=get_remind_update_enabled())
+        remind_row = tk.Frame(card, background=theme.CARD_BG)
+        remind_row.pack(fill=tk.X, padx=24, pady=(10, 0))
+        remind_lbl = tk.Label(
+            remind_row,
+            cursor="hand2",
+            background=theme.CARD_BG,
+            foreground=theme.TEXT,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        )
+
+        def _redraw_remind():
+            mark = "☑" if remind_var.get() else "☐"
+            remind_lbl.configure(text=f"{mark}  {t('about.remind_update_label')}")
+
+        def _toggle_remind(_event=None):
+            remind_var.set(not remind_var.get())
+            set_remind_update_enabled(remind_var.get())
+            _redraw_remind()
+
+        remind_lbl.bind("<Button-1>", _toggle_remind)
+        remind_lbl.pack(side=tk.LEFT)
+        _redraw_remind()
+
         def _open_found_url(_event=None):
             if found["release"]:
                 self._show_update_prompt(found["release"], win)
@@ -2149,8 +2182,11 @@ class DSToolsApp:
     def _start_update_check(self) -> None:
         """启动时后台线程查一次 GitHub 最新 Release，跟樱花映射页签查账
         号信息是同一个道理——网络请求没有上限延迟，不能在 Tk 主线程同步
-        跑；查不到/没有更新就什么都不做，不弹窗、不重试，只在确实有更新
-        时通过 root.after(0, ...) 回到主线程点亮状态栏右侧那行提示。"""
+        跑；查不到/没有更新就什么都不做，不弹窗、不重试。确实有更新时
+        始终先点亮状态栏右侧那行提示（不受"提醒更新"开关影响，本来就
+        很克制，不算"提醒"）；"提醒更新"开着（默认开）才额外弹出更新
+        窗口——这个开关和更新窗口里的"不再提醒"是同一个设置，见
+        _show_about()/_show_update_prompt()。"""
 
         state = {"done": False, "result": None}
 
@@ -2165,6 +2201,8 @@ class DSToolsApp:
             result = state["result"]
             if result is not None and is_newer_version(__version__, result.version):
                 self._show_update_notice(result)
+                if get_remind_update_enabled():
+                    self._show_update_prompt(result, self.root)
 
         threading.Thread(target=_worker, daemon=True).start()
         self.root.after(100, _apply_or_poll)
@@ -2252,33 +2290,104 @@ class DSToolsApp:
         self._show_update_prompt(self._update_notice, self.root)
 
     def _show_update_prompt(self, release: UpdateRelease, parent: tk.Misc) -> None:
-        choices = []
-        if release.can_auto_update and getattr(sys, "frozen", False):
-            choices.append((t("update.install_now"), "install"))
-        choices.extend(
-            [
-                (t("update.open_download"), "manual"),
-                (t("dlg.cancel_btn"), "cancel"),
-            ]
-        )
-        choice = dlg.ask_choice(
-            parent,
-            t("update.title"),
-            t(
-                "update.prompt"
-                if release.can_auto_update
-                else "update.manual_only",
-                version=release.version,
-            ),
-            choices,
-            default="install" if release.can_auto_update else "manual",
-        )
-        if choice == "manual":
-            import webbrowser
+        """跟 _show_about() 一样手搭一个卡片弹窗，而不是复用
+        themed_dialog.ask_choice()——这里要多塞一个"不再提醒"勾选框，
+        ask_choice() 是纯"文字+按钮"的通用确认框，没有插自定义控件的余
+        地，硬塞不如照抄项目里其它自定义弹窗（_show_about/
+        _show_cache_dir_dialog）同样的搭法。"""
+        can_install = release.can_auto_update and getattr(sys, "frozen", False)
 
-            webbrowser.open(release.page_url)
-        elif choice == "install":
-            self._download_and_install_update(release, self.root)
+        win = tk.Toplevel(parent)
+        win.withdraw()
+        win.title(t("update.title"))
+        win.resizable(False, False)
+        win.configure(background=theme.CARD_BORDER)
+
+        card = tk.Frame(win, background=theme.CARD_BG)
+        card.pack(fill=tk.BOTH, expand=True, padx=1, pady=1)
+
+        message = t(
+            "update.prompt" if release.can_auto_update else "update.manual_only",
+            version=release.version,
+        )
+        tk.Label(
+            card,
+            text=message,
+            font=theme.font_tuple(theme.FONT_SIZE_BASE),
+            fg=theme.TEXT,
+            bg=theme.CARD_BG,
+            justify=tk.LEFT,
+            anchor=tk.W,
+            wraplength=420,
+        ).pack(fill=tk.X, padx=24, pady=(24, 0))
+
+        # "不再提醒"——跟"关于"弹窗里的"提醒更新"是同一个设置，勾选这里
+        # 等价于取消勾选那边（两边各自开的时候都从当前设置现读一次初始
+        # 值，不需要额外同步）。同样不用 ttk.Checkbutton，理由见
+        # _show_about() 里"提醒更新"那份一样的说明。
+        remind_var = tk.BooleanVar(value=not get_remind_update_enabled())
+        remind_row = tk.Frame(card, background=theme.CARD_BG)
+        remind_row.pack(fill=tk.X, padx=24, pady=(14, 0))
+        remind_lbl = tk.Label(
+            remind_row,
+            cursor="hand2",
+            background=theme.CARD_BG,
+            foreground=theme.TEXT,
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        )
+
+        def _redraw_remind():
+            mark = "☑" if remind_var.get() else "☐"
+            remind_lbl.configure(text=f"{mark}  {t('update.dont_remind_again')}")
+
+        def _toggle_remind(_event=None):
+            remind_var.set(not remind_var.get())
+            _redraw_remind()
+
+        remind_lbl.bind("<Button-1>", _toggle_remind)
+        remind_lbl.pack(side=tk.LEFT)
+        _redraw_remind()
+
+        def _finish(action: str):
+            set_remind_update_enabled(not remind_var.get())
+            win.destroy()
+            if action == "manual":
+                import webbrowser
+
+                webbrowser.open(release.page_url)
+            elif action == "install":
+                self._download_and_install_update(release, self.root)
+
+        btn_row = tk.Frame(card, background=theme.CARD_BG)
+        btn_row.pack(fill=tk.X, padx=24, pady=(18, 24))
+        default_btn = None
+        if can_install:
+            default_btn = ttk.Button(
+                btn_row, text=t("update.install_now"),
+                command=lambda: _finish("install"),
+            )
+            default_btn.pack(side=tk.LEFT)
+        manual_btn = ttk.Button(
+            btn_row, text=t("update.open_download"),
+            command=lambda: _finish("manual"),
+        )
+        manual_btn.pack(side=tk.LEFT, padx=(8, 0))
+        if default_btn is None:
+            default_btn = manual_btn
+        ttk.Button(
+            btn_row, text=t("dlg.cancel_btn"), command=lambda: _finish("cancel")
+        ).pack(side=tk.RIGHT)
+
+        win.protocol("WM_DELETE_WINDOW", lambda: _finish("cancel"))
+        win.bind("<Escape>", lambda e: _finish("cancel"))
+        win.bind("<Return>", lambda e: default_btn.invoke())
+
+        center_over_parent(win, parent, min_width=460)
+        win.transient(parent)
+        win.deiconify()
+        default_btn.focus_set()
+        win.grab_set()
+        win.wait_window()
 
     def _download_and_install_update(
         self, release: UpdateRelease, parent: tk.Misc
