@@ -1844,33 +1844,27 @@ class DSToolsApp:
         # "提醒更新"——默认开启；开启时启动检测到新版本会直接弹出更新
         # 窗口（见 _start_update_check()），不用再等用户自己点状态栏角落
         # 那行小字或者翻到这个"关于"弹窗来查。更新窗口自己也有一个"不再
-        # 提醒"勾选框（见 _show_update_prompt()），跟这里是同一个设置，
-        # 双向同步。不用 ttk.Checkbutton：这个项目全局 clam 主题下它的选
-        # 中态画出来是个"×"不是"√"（真机截图确认过），改成自画的 ☑/☐
-        # 文本 Label 点击切换，跟 mod/tab.py 里同样取舍的复选框一致。
-        remind_var = tk.BooleanVar(value=get_remind_update_enabled())
+        # 提醒"开关（见 _show_update_prompt()），跟这里是同一个设置，双
+        # 向同步。用项目自己已有的 ToggleSwitch（圆角滑块，纯 Canvas 画
+        # 的），不用组合 Unicode 字符"☑"/"☐"——真机反馈过那个字符在默认
+        # 字体下打勾偏左下、不在方框正中间，ToggleSwitch 完全不存在这个
+        # 问题，其它页签（比如存档页的自动备份开关）已经在用同一个控件。
+        from dstools.shared.gui.toggle_switch import ToggleSwitch
+
         remind_row = tk.Frame(card, background=theme.CARD_BG)
         remind_row.pack(fill=tk.X, padx=24, pady=(10, 0))
-        remind_lbl = tk.Label(
+        tk.Label(
             remind_row,
-            cursor="hand2",
-            background=theme.CARD_BG,
-            foreground=theme.TEXT,
+            text=t("about.remind_update_label"),
             font=theme.font_tuple(theme.FONT_SIZE_SM),
-        )
-
-        def _redraw_remind():
-            mark = "☑" if remind_var.get() else "☐"
-            remind_lbl.configure(text=f"{mark}  {t('about.remind_update_label')}")
-
-        def _toggle_remind(_event=None):
-            remind_var.set(not remind_var.get())
-            set_remind_update_enabled(remind_var.get())
-            _redraw_remind()
-
-        remind_lbl.bind("<Button-1>", _toggle_remind)
-        remind_lbl.pack(side=tk.LEFT)
-        _redraw_remind()
+            fg=theme.TEXT,
+            bg=theme.CARD_BG,
+        ).pack(side=tk.LEFT)
+        remind_var = tk.BooleanVar(value=get_remind_update_enabled())
+        ToggleSwitch(
+            remind_row, variable=remind_var, app=self,
+            command=lambda: set_remind_update_enabled(remind_var.get()),
+        ).pack(side=tk.RIGHT)
 
         def _open_found_url(_event=None):
             if found["release"]:
@@ -2323,30 +2317,21 @@ class DSToolsApp:
 
         # "不再提醒"——跟"关于"弹窗里的"提醒更新"是同一个设置，勾选这里
         # 等价于取消勾选那边（两边各自开的时候都从当前设置现读一次初始
-        # 值，不需要额外同步）。同样不用 ttk.Checkbutton，理由见
-        # _show_about() 里"提醒更新"那份一样的说明。
-        remind_var = tk.BooleanVar(value=not get_remind_update_enabled())
+        # 值，不需要额外同步）。同样用 ToggleSwitch，理由见 _show_about()
+        # 里"提醒更新"那份一样的说明。
+        from dstools.shared.gui.toggle_switch import ToggleSwitch
+
         remind_row = tk.Frame(card, background=theme.CARD_BG)
         remind_row.pack(fill=tk.X, padx=24, pady=(14, 0))
-        remind_lbl = tk.Label(
+        tk.Label(
             remind_row,
-            cursor="hand2",
-            background=theme.CARD_BG,
-            foreground=theme.TEXT,
+            text=t("update.dont_remind_again"),
             font=theme.font_tuple(theme.FONT_SIZE_SM),
-        )
-
-        def _redraw_remind():
-            mark = "☑" if remind_var.get() else "☐"
-            remind_lbl.configure(text=f"{mark}  {t('update.dont_remind_again')}")
-
-        def _toggle_remind(_event=None):
-            remind_var.set(not remind_var.get())
-            _redraw_remind()
-
-        remind_lbl.bind("<Button-1>", _toggle_remind)
-        remind_lbl.pack(side=tk.LEFT)
-        _redraw_remind()
+            fg=theme.TEXT,
+            bg=theme.CARD_BG,
+        ).pack(side=tk.LEFT)
+        remind_var = tk.BooleanVar(value=not get_remind_update_enabled())
+        ToggleSwitch(remind_row, variable=remind_var, app=self).pack(side=tk.RIGHT)
 
         def _finish(action: str):
             set_remind_update_enabled(not remind_var.get())
