@@ -1498,7 +1498,8 @@ class SelfHostFrpPage:
             return
         conn = auth_dlg.result
 
-        progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_auth_progress_title"))
+        # 宽度跟"Mod 更新日志"窗口保持一致（用户要求改成 100）。
+        progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_auth_progress_title"), text_width=100)
 
         def _on_log(line):
             self._post_to_ui(lambda: progress.append(line))
@@ -1846,7 +1847,8 @@ class SelfHostFrpPage:
 
         host, bind_port = server["host"], server["bind_port"]
         ssh_conn = app_settings.get_selfhost_ssh_connection()
-        progress = ModSyncLogDialog(self.frame, title=t("selfhost.conn_check_title"))
+        # 宽度跟"Mod 更新日志"窗口保持一致（用户要求改成 100）。
+        progress = ModSyncLogDialog(self.frame, title=t("selfhost.conn_check_title"), text_width=100)
 
         def _worker():
             ok, detail = connectivity.check_tcp_port(host, bind_port)
@@ -2042,7 +2044,8 @@ class SelfHostFrpPage:
                                   t("sakura.other_mapping_conflict_msg", shards="、".join(conflicting)))
                 return
 
-        progress = ModSyncLogDialog(self.frame, title=t("selfhost.setup_progress_title"))
+        # 宽度跟"Mod 更新日志"窗口保持一致（用户要求改成 100）。
+        progress = ModSyncLogDialog(self.frame, title=t("selfhost.setup_progress_title"), text_width=100)
         shards = list(cluster.shards)
         base_port = server["bind_port"] + 1
 
