@@ -1572,8 +1572,12 @@ class SelfHostFrpPage:
             return
 
         cancel_event = threading.Event()
+        # 宽度跟"Mod 更新日志"窗口保持一致（见 mod/tab.py 的
+        # text_width=82）——远程部署这边的日志行普遍比默认 64 字符宽
+        # 的窗口窄不下多少，之前太窄，SSH 输出、路径这类长行经
+        # 常被硬换行挤成好几行，看着很局促。
         progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_progress_title"),
-                                    on_cancel=cancel_event.set)
+                                    on_cancel=cancel_event.set, text_width=82)
 
         def _on_log(line):
             self._post_to_ui(lambda: progress.append(line))
