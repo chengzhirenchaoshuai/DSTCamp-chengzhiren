@@ -897,9 +897,9 @@ class SelfHostFrpPage:
             dlg.show_error(self.app.root, t("selfhost.lobby_accel_label"), str(exc))
             return
         # 宽度跟"Mod 更新日志"窗口保持一致（见 mod/tab.py 的
-        # text_width=82）。
+        # text_width=100）。
         progress = ModSyncLogDialog(
-            self.frame, title=t("selfhost.lobby_accel_deploy_wireguard"), text_width=82
+            self.frame, title=t("selfhost.lobby_accel_deploy_wireguard"), text_width=100
         )
         self._wireguard_deploying = True
         self._refresh_lobby_accel_row()
@@ -1576,11 +1576,11 @@ class SelfHostFrpPage:
 
         cancel_event = threading.Event()
         # 宽度跟"Mod 更新日志"窗口保持一致（见 mod/tab.py 的
-        # text_width=82）——远程部署这边的日志行普遍比默认 64 字符宽
+        # text_width=100）——远程部署这边的日志行普遍比默认 64 字符宽
         # 的窗口窄不下多少，之前太窄，SSH 输出、路径这类长行经
         # 常被硬换行挤成好几行，看着很局促。
         progress = ModSyncLogDialog(self.frame, title=t("selfhost.ssh_progress_title"),
-                                    on_cancel=cancel_event.set, text_width=82)
+                                    on_cancel=cancel_event.set, text_width=100)
 
         def _on_log(line):
             self._post_to_ui(lambda: progress.append(line))
