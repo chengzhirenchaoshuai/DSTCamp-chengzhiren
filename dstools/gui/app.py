@@ -1861,8 +1861,14 @@ class DSToolsApp:
             bg=theme.CARD_BG,
         ).pack(side=tk.LEFT)
         remind_var = tk.BooleanVar(value=get_remind_update_enabled())
+        # 必须显式传 bg=theme.CARD_BG——不传的话 ToggleSwitch 悄悄落到
+        # theme.BG_SOFT（跟这个弹窗卡片的 CARD_BG 是两个不同色号），开
+        # 关圆角胶囊之外、Canvas 方形范围以内的四个角就会露出这层不一致
+        # 的底色，看起来像贴了个方框（真机反馈过）。cluster_config/tab.py
+        # 里那处 ToggleSwitch 不用传是因为它所在的容器本来就是
+        # BG_SOFT，这里的容器是 CARD_BG，必须对应传。
         ToggleSwitch(
-            remind_row, variable=remind_var, app=self,
+            remind_row, variable=remind_var, app=self, bg=theme.CARD_BG,
             command=lambda: set_remind_update_enabled(remind_var.get()),
         ).pack(side=tk.RIGHT)
 
@@ -2331,7 +2337,12 @@ class DSToolsApp:
             bg=theme.CARD_BG,
         ).pack(side=tk.LEFT)
         remind_var = tk.BooleanVar(value=not get_remind_update_enabled())
-        ToggleSwitch(remind_row, variable=remind_var, app=self).pack(side=tk.RIGHT)
+        # bg=theme.CARD_BG 理由见 _show_about() 里同一处的说明——不传的
+        # 话开关会悄悄落到 theme.BG_SOFT，跟这个弹窗卡片的 CARD_BG 对不
+        # 上，四个角会露出一圈不一致的底色。
+        ToggleSwitch(
+            remind_row, variable=remind_var, app=self, bg=theme.CARD_BG,
+        ).pack(side=tk.RIGHT)
 
         def _finish(action: str):
             set_remind_update_enabled(not remind_var.get())
