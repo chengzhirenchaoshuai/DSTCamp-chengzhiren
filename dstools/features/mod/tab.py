@@ -2315,7 +2315,7 @@ class ModManagerTab:
             on_cancel=request_stop,
             cancel_text=t("mod.update_stop_btn"),
             allow_close_while_running=True,
-            text_width=82,
+            text_width=100,
         )
         self._workshop_log_dialog = log_dialog
         log_dialog.win.bind(
