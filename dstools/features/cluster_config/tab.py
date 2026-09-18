@@ -1097,7 +1097,18 @@ class ClusterConfigTab:
         return var
 
     def _load_config(self):
-        """以隐藏页签事务方式重建 cluster/server 表单，完成后只呈现一次。"""
+        """以隐藏页签事务方式重建 cluster/server 表单，完成后只呈现一次。
+
+        是否需要呈现要看 ``_sub_tab_key`` 这个模型状态（当前应该显示哪个
+        子页），不能看 ``page.winfo_ismapped()``——冷启动首次切到"服务器
+        配置"时，外层主页签的 card.grid() 和这里的重建在同一次事件循环
+        里同步发生，Tk 还没来得及处理那次 grid()，``winfo_ismapped()``
+        仍然读到旧的"未映射"状态，导致本该发生的 ``_present_sub_page()``
+        （里面的列宽 settle 和背景/文字强制重绘）被跳过——三列卡片按
+        重建瞬间那个还没定形的窄宽度布局定型，GAMEPLAY/MISC、SHARD/STEAM
+        两列因为一列里塞了两个小节，看起来比只有一个大节的 NETWORK 更容
+        易错位。手动切子页签或点刷新之所以能修好，是因为那时页面已经
+        真正被 Tk 映射过，走的是同一段 ``_present_sub_page()`` 逻辑。"""
         page = self._sub_pages.get(self._sub_tab_key)
         was_mapped = bool(page is not None and page.winfo_ismapped())
         if was_mapped:
@@ -1105,7 +1116,7 @@ class ClusterConfigTab:
         try:
             self._load_config_impl()
         finally:
-            if was_mapped:
+            if self._sub_tab_key == "cluster":
                 self._present_sub_page(self._sub_tab_key)
 
     def _load_config_impl(self):
