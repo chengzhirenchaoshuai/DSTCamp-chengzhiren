@@ -1059,6 +1059,7 @@ def test_app_settings_toggles():
         from dstools.shared.app_settings import get_settings_dir
         from unittest.mock import patch
 
+        import dstools.shared.resource_paths as resource_paths_module
         from dstools.shared.resource_paths import (
             cache_root_dir,
             cache_dir,
@@ -1129,6 +1130,29 @@ def test_app_settings_toggles():
         assert gz_stable_tool_again == gz_stable_tool
         assert gz_stable_tool_again.stat().st_mtime_ns == mtime_first
         print("  PASS: 长驻工具优先解压 .gz 压缩包，命中哈希缓存不重复落地")
+
+        # 回归锁定（用户实测复现：樱花 frpc 客户端提示"未找到客户端文
+        # 件"）：源码模式（sys.frozen=False）下仓库 tools/ 目录里如果只
+        # 有 .gz、没有裸 exe（frpc.exe/sakura-frpc.exe 已经全部替换成压
+        # 缩包），之前"源码版/ZIP 版直接返回裸文件路径，不走 .gz 回退"
+        # 那条分支会直接把不存在的裸路径原样返回，被上层判定成"客户端
+        # 文件缺失"。这里模拟源码模式下只有 .gz、没有裸文件的真实场
+        # 景，断言依然能正确解压落地到稳定缓存目录。
+        source_mode_tools = root / "source_mode_tools"
+        gz_only = source_mode_tools / "frpc-src" / "frpc.exe.gz"
+        gz_only.parent.mkdir(parents=True)
+        with gzip.open(gz_only, "wb") as stream:
+            stream.write(b"source-mode-frpc-payload")
+        with (
+            patch.object(sys, "frozen", False, create=True),
+            patch.object(
+                resource_paths_module, "tool_binary_dir", return_value=source_mode_tools
+            ),
+        ):
+            source_mode_tool = runtime_tool_path("frpc-src/frpc.exe")
+        assert source_mode_tool.read_bytes() == b"source-mode-frpc-payload"
+        assert source_mode_tool.parent.parent.parent == root / "data" / "runtime_tools"
+        print("  PASS: 源码模式下工具目录只有 .gz、没有裸文件时也能正确解压落地")
 
 
 def test_cache_path_user_guidance():

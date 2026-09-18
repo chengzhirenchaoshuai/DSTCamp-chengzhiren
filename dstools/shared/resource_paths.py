@@ -50,8 +50,15 @@ def runtime_tool_path(relative: str | Path) -> Path:
     杀软隔离"的真实诱因（remote_deploy.py 顶部注释记录过几乎一样的故
     障，当时把只转发给远程服务器、本机从不执行的 frps_linux_* 也改成了
     这个方案）。这里优先找 ``.gz`` 压缩兄弟文件，现场解压后再按内容哈
-    希落地到稳定目录；找不到 ``.gz``（还没来得及压缩的工具，或本地源
-    码开发模式）就照旧回退读裸文件。
+    希落地到稳定目录；找不到 ``.gz``（还没来得及压缩的工具）就照旧回
+    退读裸文件。
+
+    源码版和 ZIP 外置版的 tools/ 是启动时就固定存在的目录，不经过
+    _MEIPASS 临时解压，本来没有"每次启动重新落地裸文件"这个问题，裸
+    文件存在时优先直接用；但仓库里 frpc.exe/sakura-frpc.exe 这类工具
+    现在只提交了 ``.gz``（原始 .exe 已删除），源码模式跑起来时裸文件
+    根本不存在，必须跟单文件版一样也走 ``.gz`` 解压落地这条路，否则源
+    码模式直接判定"客户端文件缺失"（曾经真的这样崩过）。
     """
     relative = Path(relative)
     if relative.is_absolute() or ".." in relative.parts:
@@ -62,9 +69,7 @@ def runtime_tool_path(relative: str | Path) -> Path:
     is_onefile_bundle = (
         getattr(sys, "frozen", False) and source.parent == bundled_root / relative.parent
     )
-    if not is_onefile_bundle:
-        # 源码版和 ZIP 外置版的 tools/ 是启动时就固定存在的目录，不经过
-        # _MEIPASS 临时解压，没有"每次启动重新落地裸文件"这个问题。
+    if source.is_file() and not is_onefile_bundle:
         return source
 
     if gz_source.is_file():
