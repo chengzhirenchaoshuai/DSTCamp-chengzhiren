@@ -613,6 +613,7 @@ class _ConsolePane:
         # 有效果，所以从世界的控制台干脆不画这个按钮，不留一个"点了但
         # 没用"的陷阱，而不是画出来再禁用+解释。
         self.reset_world_btn = None
+        self.save_btn = None
         if getattr(proc, "is_master", True):
             self.reset_world_btn = ttk.Button(
                 quick_row,
@@ -624,7 +625,17 @@ class _ConsolePane:
                 self.reset_world_btn,
                 lambda: not_ready_hint() or t("local.console_reset_world_hover"),
             )
-        # 放在“重置世界”右侧；从世界没有回档和重置按钮时紧跟玩家列表。
+            # c_save() 只是强制触发一次自动保存，无参数、不删改已有
+            # 数据，跟“重置世界”那种破坏性操作不是一回事，不需要二
+            # 次确认；放在从世界没有的“回档/重置世界”这一组末尾，
+            # 同样只在主世界控制台出现。
+            self.save_btn = ttk.Button(
+                quick_row, text=t("local.console_save_btn"), command=self._save_world
+            )
+            self.save_btn.pack(side=tk.LEFT, padx=(4, 0))
+            Tooltip(self.save_btn, not_ready_hint)
+        # 放在“重置世界/保存”右侧；从世界没有回档/重置世界/保存这
+        # 几个按钮时紧跟玩家列表。
         self.copy_log_btn.pack(side=tk.LEFT, padx=(4, 0))
         # "关闭"跟其它几个不一样，不受 can_send 控制（见 pump()）——世界
         # 已经停了的标签页也要能关掉，不然切换存档、反复开关世界之后这些
@@ -990,6 +1001,9 @@ class _ConsolePane:
     def _list_players(self):
         self.proc.send_command("c_listallplayers()")
 
+    def _save_world(self):
+        self.proc.send_command("c_save()")
+
     def _copy_world_log(self):
         """复制当前控制台对应世界的 server_log.txt 文件。"""
         log_path = (
@@ -1208,6 +1222,8 @@ class _ConsolePane:
             self.reset_world_btn.configure(
                 state=tk.NORMAL if world_ready else tk.DISABLED
             )
+        if self.save_btn is not None:
+            self.save_btn.configure(state=tk.NORMAL if world_ready else tk.DISABLED)
 
         # missing_mods 只在 world_ready 那一刻算一次（见 dedicated_
         # server.py），非 None 之后才是"真的算完了"；每个进程只报一次，
