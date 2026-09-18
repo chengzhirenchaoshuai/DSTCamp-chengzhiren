@@ -3973,29 +3973,47 @@ class LocalServiceTab:
             sakura_tab.poll_lobby_accel()
 
     def _poll(self):
-        self._drain_steam_remote_build_result()
-        self._refresh_steam_remote_build_async()
-        self._drain_connect_results()
-        for pane in self._console_panes.values():
-            pane.pump()
-        for row in self._shard_rows.values():
-            row.update()
-        self._update_start_lock_state(self._get_cluster())
-        self._update_stop_all_btn_state(self._get_cluster())
-        self._update_restart_all_btn_state(self._get_cluster())
-        self._update_logs_btn_state(self._get_cluster())
-        self._update_luajit_row(self._get_cluster())
-        self._poll_lobby_accel_if_ready()
-        # 直连代码状态随服务器/frpc 进程启停实时刷新——局域网查主世界进程、
-        # 内网穿透查 frpc，都是本地同步判断；只在服务器存档可见时刷新（本地
-        # 存档不显示这块，省掉无谓重画）。
-        if self._connect_row.winfo_ismapped():
-            self._refresh_lan_status()
-            self._refresh_public_status()
-            self._refresh_nat_status()
-            self._check_connect_fetch_timeouts()
-        self._maybe_periodic_backup()
-        self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
+        # 真机反馈过直连代码一直卡在"获取中…"、加了超时看门狗
+        # （_check_connect_fetch_timeouts）之后还是卡住不动——查下来这
+        # 个方法之前完全没有异常隔离：最后一行 self.frame.after(...) 负
+        # 责把自己重新排回下一轮，但只要上面任何一步抛了异常，Tk 的默
+        # 认 report_callback_exception 只会把 traceback 打到 stderr（打
+        # 包成 --windowed 的发布版根本看不到任何控制台），然后这次调用
+        # 就直接中断，压根走不到重新排程那一行——不是只有这一轮轮询没
+        # 跑，是往后再也不会有任何一轮轮询了，包括这里新加的超时看门
+        # 狗、控制台日志滚动、进程状态刷新等等全部一起永久停摆，且用户
+        # 完全看不到任何报错。这里用 try/finally 保证不管上面出不出异常，
+        # 重新排程这一步始终执行，一次失败不会拖死整条轮询链；异常仍然
+        # 打到 stderr，源码/控制台模式下依旧能看到具体是哪里出的问题。
+        try:
+            self._drain_steam_remote_build_result()
+            self._refresh_steam_remote_build_async()
+            self._drain_connect_results()
+            for pane in self._console_panes.values():
+                pane.pump()
+            for row in self._shard_rows.values():
+                row.update()
+            self._update_start_lock_state(self._get_cluster())
+            self._update_stop_all_btn_state(self._get_cluster())
+            self._update_restart_all_btn_state(self._get_cluster())
+            self._update_logs_btn_state(self._get_cluster())
+            self._update_luajit_row(self._get_cluster())
+            self._poll_lobby_accel_if_ready()
+            # 直连代码状态随服务器/frpc 进程启停实时刷新——局域网查主世界
+            # 进程、内网穿透查 frpc，都是本地同步判断；只在服务器存档可见
+            # 时刷新（本地存档不显示这块，省掉无谓重画）。
+            if self._connect_row.winfo_ismapped():
+                self._refresh_lan_status()
+                self._refresh_public_status()
+                self._refresh_nat_status()
+                self._check_connect_fetch_timeouts()
+            self._maybe_periodic_backup()
+        except Exception:
+            import traceback
+
+            traceback.print_exc()
+        finally:
+            self._poll_after_id = self.frame.after(_POLL_MS, self._poll)
 
     def _maybe_periodic_backup(self):
         """ "设置备份策略"里配的自动备份周期——只要某个 cluster 名下还有
