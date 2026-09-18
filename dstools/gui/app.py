@@ -2518,6 +2518,23 @@ class DSToolsApp:
         else:
             self._stale_cluster_tabs.add("local")
 
+    def mark_server_tab_stale(self) -> None:
+        """开启/关闭樱花映射或自建 frps 隧道之后调用——"服务器配置"页
+        签"世界配置(server.ini)"里的 server_port 字段是否只读，取决于
+        这个世界当前有没有被樱花/自建映射接管（见
+        cluster_config/tab.py 里 `if sec == "NETWORK" and key ==
+        "server_port"...` 那段，用 sakura_tab.has_active_mapping() 现
+        查），但这个判断只在表单重新渲染（_load_shard_config()）那一
+        刻算一次，不会跟着隧道开关实时联动——真机反馈过：关掉映射后
+        这个字段还是显示只读，得手动刷新一下存档才会解锁。跟
+        mark_world_tab_stale() 同一套规则：服务器配置正好是当前显示
+        的页签就立即重算，否则只标脏，真正切过去时 _on_tab_select()
+        才补一次。"""
+        if self._current_tab_key == "server":
+            self.cluster_tab.refresh()
+        else:
+            self._stale_cluster_tabs.add("server")
+
     def _refresh(self):
         self.env = discover_environment(self.env.klei_root, self.env.wegame_klei_root)
         self._update_status()

@@ -2106,6 +2106,9 @@ class SelfHostFrpPage:
         # 直连代码在本地服务器页签左下角，映射开启后要通知它重查一次，否则
         # 状态停在「未就绪」直到手动刷新存档。
         self.app.local_tab._refresh_connect_labels()
+        # server_port 是否只读（"世界配置"页签）取决于这个世界有没有
+        # 被映射接管，见 mark_server_tab_stale() 的说明。
+        self.app.mark_server_tab_stale()
 
     def _disable_mapping(self):
         cluster = self._current_cluster
@@ -2123,3 +2126,4 @@ class SelfHostFrpPage:
         self.frpc.stop(cluster.path)
         self._render_shard_rows()
         self.app.local_tab._refresh_connect_labels()
+        self.app.mark_server_tab_stale()

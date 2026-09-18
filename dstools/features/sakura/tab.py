@@ -1241,6 +1241,9 @@ class SakuraTab:
                            t("sakura.setup_done_msg_restart", shards="、".join(running)))
         self._reload_async()
         self.app.local_tab._refresh_connect_labels()
+        # server_port 是否只读（"世界配置"页签）取决于这个世界有没有
+        # 被映射接管，见 mark_server_tab_stale() 的说明。
+        self.app.mark_server_tab_stale()
 
     def _on_enable_error(self, progress, e):
         progress.append(t("sakura.api_error", detail=str(e)))
@@ -1252,6 +1255,7 @@ class SakuraTab:
         # 重新点一次"开启樱花映射"是安全的，不会把已经建好的世界重复建。
         self._reload_async()
         self.app.local_tab._refresh_connect_labels()
+        self.app.mark_server_tab_stale()
 
     def _disable_mapping(self):
         cluster = self._current_cluster
@@ -1272,5 +1276,6 @@ class SakuraTab:
                 self._frpc_pointer_path(cluster.path, shard.name).unlink(missing_ok=True)
             self.frame.after(0, self._reload_async)
             self.frame.after(0, self.app.local_tab._refresh_connect_labels)
+            self.frame.after(0, self.app.mark_server_tab_stale)
 
         threading.Thread(target=_worker, daemon=True).start()
