@@ -896,8 +896,10 @@ class SelfHostFrpPage:
         except (OSError, ValueError) as exc:
             dlg.show_error(self.app.root, t("selfhost.lobby_accel_label"), str(exc))
             return
+        # 宽度跟"Mod 更新日志"窗口保持一致（见 mod/tab.py 的
+        # text_width=82）。
         progress = ModSyncLogDialog(
-            self.frame, title=t("selfhost.lobby_accel_deploy_wireguard")
+            self.frame, title=t("selfhost.lobby_accel_deploy_wireguard"), text_width=82
         )
         self._wireguard_deploying = True
         self._refresh_lobby_accel_row()
