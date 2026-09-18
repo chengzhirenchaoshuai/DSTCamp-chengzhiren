@@ -628,6 +628,20 @@ def test_main_tab_refresh_contract():
     print("  PASS: 六个主页签均提供刷新接口，且全量刷新可正确回退")
 
 
+def test_tab_select_ignores_click_before_cluster_tab_map_ready():
+    """回归锁定（真机复现过 AttributeError）：页签栏在 __init__ 早期就
+    构造并绑定了点击回调，但 _cluster_tab_map 要等 6 个页签对象全部构
+    造完才赋值；构造期间偶发会先收到一次点击，之前 _on_tab_select()
+    直接 self._cluster_tab_map.get(...) 崩掉这个 Tk 回调。构造完成前
+    的点击应该被安全忽略，而不是抛异常。"""
+    from dstools.gui.app import DSToolsApp
+
+    app = DSToolsApp.__new__(DSToolsApp)
+    assert not hasattr(app, "_cluster_tab_map")
+    app._on_tab_select("mods")  # 不应该抛异常
+    print("  PASS: _cluster_tab_map 还没赋值时点击页签不会崩溃")
+
+
 def test_save_bundle_action_copies_file_after_worker_finishes():
     """后台打包完成后，应在主线程路径中复制 ZIP 并恢复按钮状态。"""
     from dstools.features.save_browser import tab as save_tab
@@ -1185,6 +1199,7 @@ def main():
         test_selfhost_server_ip_eye_uses_closed_and_open_states,
         test_defender_dialog_target_paths_survive_garbage_collection,
         test_defender_dialog_auto_escalates_to_admin_check_when_ambiguous,
+        test_tab_select_ignores_click_before_cluster_tab_map_ready,
     ]
 
     for test in tests:

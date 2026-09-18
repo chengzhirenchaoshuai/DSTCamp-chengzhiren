@@ -545,6 +545,14 @@ class DSToolsApp:
         self.root.after(500, self._check_cache_dir_on_startup)
 
     def _on_tab_select(self, key: str) -> None:
+        if not hasattr(self, "_cluster_tab_map"):
+            # 页签栏在 __init__ 早期就构造并绑定了点击回调（见
+            # self._pill_bar），但 _cluster_tab_map 要等 6 个页签对象全部
+            # 构造完才赋值——这中间要建完整的控件树，偶发会在这段窗口
+            # 里先收到一次点击（真机复现过 AttributeError）。此时主窗口
+            # 本来就还没初始化完，直接忽略这次点击，不影响初始化完成后
+            # 的正常使用。
+            return
         previous_key = getattr(self, "_current_tab_key", None)
         if previous_key != key:
             previous_tab = self._cluster_tab_map.get(previous_key)
