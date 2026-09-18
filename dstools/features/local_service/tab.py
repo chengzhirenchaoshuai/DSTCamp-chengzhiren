@@ -1937,6 +1937,13 @@ class LocalServiceTab:
         self._public_code = codes[0] if codes else None
         if codes:
             self._public_set_text(codes[1], codes[0])
+        elif not ip_available:
+            # 公网 IP 本来就是现查的，查不到是"获取失败"，不是"未配
+            # 置"——"未配置"这个措辞该留给真正没有配置项可言的场景（比
+            # 如局域网 IP 找不到网卡）。ip_available 为真但 codes 仍是
+            # None 是另一种情况（IP 拿到了，但存档自己没配端口/找不到
+            # 主世界），这才是真正意义上的"未配置"。
+            self._public_set_text(t("local.connect_failed"))
         else:
             self._public_set_text(t("local.connect_unavailable"))
         self._refresh_public_status(ip_available)
