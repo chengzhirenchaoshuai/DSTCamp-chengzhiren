@@ -1682,6 +1682,9 @@ class ClusterConfigTab:
 
         save_cluster_config(config, c.path)
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=c.name))
+        # cluster_password 会拼进"本地服务器"页签左下角三行直连代码，这
+        # 里改了不标脏的话那三行会一直显示旧密码，见 mark_local_tab_stale()。
+        self.app.mark_local_tab_stale()
         # _load_config() 会连"世界配置"一起重建，其中世界下拉框固定默认
         # 选中 Master——不记住并恢复的话，保存"服务器配置"时如果用户当时
         # 正在看 Caves 世界，会被莫名其妙地切回 Master。
@@ -1949,6 +1952,9 @@ class ClusterConfigTab:
 
         save_shard_config(shard_config, target.path)
         dlg.show_info(self.app.root, t("dlg.save_ok"), t("dlg.config_saved", name=f"{c.name}/{target.name}"))
+        # server_port 会拼进"本地服务器"页签左下角三行直连代码，这里改了
+        # 不标脏的话那三行会一直显示旧端口，见 mark_local_tab_stale()。
+        self.app.mark_local_tab_stale()
         # 只重新加载这个世界自己的字段，不整页 _load_config()——后者会把
         # 世界下拉框重置回默认的 Master，保存完不该跳走用户正在看的世界。
         self._load_shard_config()

@@ -2503,6 +2503,21 @@ class DSToolsApp:
         else:
             self._stale_cluster_tabs.add("world")
 
+    def mark_local_tab_stale(self) -> None:
+        """服务器配置(cluster.ini)/世界配置(server.ini) 保存之后调用——
+        "本地服务器"页签左下角三行直连代码（局域网/公网/内网穿透）里的
+        端口、密码都是保存那一刻从磁盘现读进来拼进 c_connect(...) 字符
+        串的（见 LocalServiceTab._lan_connect_code()/_build_connect_
+        strings()），不是每次 poll 都重新读——只手动改端口/密码、不点
+        顶部"刷新"的话，三行代码会一直显示改之前的旧值，真机反馈过用
+        户以为"改了端口怎么直连代码没变"。跟 mark_world_tab_stale() 同
+        一套规则：本地服务器正好是当前显示的页签就立即重算，否则只标
+        脏，真正切过去时 _on_tab_select() 才补一次。"""
+        if self._current_tab_key == "local":
+            self.local_tab.refresh()
+        else:
+            self._stale_cluster_tabs.add("local")
+
     def _refresh(self):
         self.env = discover_environment(self.env.klei_root, self.env.wegame_klei_root)
         self._update_status()
