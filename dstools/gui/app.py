@@ -1861,14 +1861,15 @@ class DSToolsApp:
             bg=theme.CARD_BG,
         ).pack(side=tk.LEFT)
         remind_var = tk.BooleanVar(value=get_remind_update_enabled())
-        # 必须显式传 bg=theme.CARD_BG——不传的话 ToggleSwitch 悄悄落到
-        # theme.BG_SOFT（跟这个弹窗卡片的 CARD_BG 是两个不同色号），开
-        # 关圆角胶囊之外、Canvas 方形范围以内的四个角就会露出这层不一致
-        # 的底色，看起来像贴了个方框（真机反馈过）。cluster_config/tab.py
-        # 里那处 ToggleSwitch 不用传是因为它所在的容器本来就是
-        # BG_SOFT，这里的容器是 CARD_BG，必须对应传。
+        # 不传 app：这个弹窗是纯色卡片，不参与全局背景图系统。真机反馈
+        # 过：传 app=self（真实的 DSToolsApp）会让 ToggleSwitch 当成一个
+        # 正常的背景图表面处理，真的去裁一块共享背景图（用户设置过自定
+        # 义背景图时）铺在圆角胶囊外面的方形范围里，跟周围纯白卡片格格
+        # 不入，看起来像贴了张长方形的图。不传 app 时 ToggleSwitch 会自
+        # 己退回纯色模式（见 toggle_switch.py 的 _SOLID_APP 兜底），同时
+        # 从 bg=theme.CARD_BG 取纯色，不会有任何背景图介入。
         ToggleSwitch(
-            remind_row, variable=remind_var, app=self, bg=theme.CARD_BG,
+            remind_row, variable=remind_var, bg=theme.CARD_BG,
             command=lambda: set_remind_update_enabled(remind_var.get()),
         ).pack(side=tk.RIGHT)
 
@@ -2337,11 +2338,12 @@ class DSToolsApp:
             bg=theme.CARD_BG,
         ).pack(side=tk.LEFT)
         remind_var = tk.BooleanVar(value=not get_remind_update_enabled())
-        # bg=theme.CARD_BG 理由见 _show_about() 里同一处的说明——不传的
-        # 话开关会悄悄落到 theme.BG_SOFT，跟这个弹窗卡片的 CARD_BG 对不
-        # 上，四个角会露出一圈不一致的底色。
+        # 不传 app、显式传 bg=theme.CARD_BG——理由见 _show_about() 里同一
+        # 处的说明：传 app=self 会让 ToggleSwitch 真的去裁一块共享背景图
+        # 铺在方形范围里，用户设置过自定义背景图时会露出一块跟周围纯白
+        # 卡片格格不入的长方形。
         ToggleSwitch(
-            remind_row, variable=remind_var, app=self, bg=theme.CARD_BG,
+            remind_row, variable=remind_var, bg=theme.CARD_BG,
         ).pack(side=tk.RIGHT)
 
         def _finish(action: str):
