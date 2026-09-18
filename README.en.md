@@ -17,8 +17,8 @@ WeGame does not provide one-click dedicated-server launching. DSTCamp does not b
 
 Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
 
-- `DSTCamp-1.3.9.exe`: single-file build with all required resources embedded; no installation needed.
-- `DSTCamp-1.3.9.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
+- `DSTCamp-1.4.0.exe`: single-file build with all required resources embedded; no installation needed.
+- `DSTCamp-1.4.0.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
 
 To run from source:
 
@@ -66,6 +66,19 @@ python scripts/build_exe.py
 ```
 
 The build uses an explicit tool allowlist, stages resources under `build/`, and smoke-tests the frozen executable. Real Windows GUI, Steam, frpc, and game behavior still require manual validation.
+
+## 1.4.0 highlights
+
+- Unified the width of several progress/log dialogs (remote deploy, WireGuard deploy, SSH auth/connection check/port mapping, Mod update log) to 100, so long lines no longer wrap awkwardly.
+- Added a "Notify on update" toggle, synced between the About dialog and the update window; enabled by default, it now pops the update prompt directly when a new version is detected.
+- Hardened single-value Lua parsing: function-call expressions with leftover tokens and bare identifiers are now both rejected and fall back to the raw text, preventing Mod config defaults from being misread.
+- Switched frpc/sakura-frpc to gzip-compressed distribution to reduce antivirus quarantines triggered on every launch; also fixed a source-mode regression where the client was misreported as missing.
+- Added a timeout watchdog for public-IP and tunnel-mapping queries that shows "failed to fetch" instead of hanging; the polling loop also gained exception isolation so one failing step can no longer stall it permanently.
+- The local-server tab's direct-connect info and the server-config tab now refresh promptly after saving server/world settings or toggling a tunnel mapping, without needing to switch saves manually.
+- Fixed an intermittent crash (AttributeError) from clicking a tab very early during startup.
+- Fixed blurry text on the world-settings tab of the create-save wizard.
+- Added a save button next to the reset-world button in the master world console.
+- Fixed a column-layout glitch on the room settings page on first cold-start entry.
 
 ## 1.3.9 highlights
 

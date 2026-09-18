@@ -34,8 +34,8 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 或 [Gitee 发行版](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.3.9.exe`：工具与资源全部内嵌，单文件运行，无需安装。
-- `DSTCamp-1.3.9.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
+- `DSTCamp-1.4.0.exe`：工具与资源全部内嵌，单文件运行，无需安装。
+- `DSTCamp-1.4.0.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
 
 源码运行：
 
@@ -98,6 +98,19 @@ python scripts/build_exe.py
 ```
 
 构建脚本在 `build/` 暂存固定工具和图标，只向 `dist/` 输出单文件 EXE 与 `sha256.json`；EXE 会执行冻结入口与资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+
+## 1.4.0 更新
+
+- 统一远程部署、WireGuard 部署、SSH 鉴权/连接检测/端口映射设置、Mod 更新日志等进度窗口宽度为 100，长文本不再局促换行。
+- 新增"提醒更新"开关：关于弹窗与更新窗口双向同步，默认开启，检测到新版本时直接弹出更新提示。
+- 加固 Lua 单值解析：函数调用残留 token 和裸标识符都会被拒绝并回退为原始文本，避免 Mod 配置默认值被误判。
+- frpc/sakura-frpc 改为 gzip 压缩分发，减少启动即被杀毒软件误隔离；同步修复源码模式下因此误判客户端缺失的问题。
+- 公网 IP/内网穿透查询增加超时看门狗，卡住时显示"获取失败"；轮询主循环加异常隔离，避免任意一步出错拖死整条轮询链。
+- 保存服务器/世界配置或切换隧道映射后，本地服务器页签的直连代码与服务器配置页签及时刷新，无需手动切换存档。
+- 修复启动早期点击页签导致的偶发崩溃（AttributeError）。
+- 修复创建服务器存档向导中世界设置页签文字模糊的问题。
+- 主世界控制台新增保存按钮，紧跟重置世界按钮。
+- 修复房间设置页冷启动首次进入时三列布局错乱的问题。
 
 ## 1.3.9 更新
 
