@@ -94,7 +94,10 @@ from dstools.shared.gui.toolbar_widgets import ReadonlyBanner
 from dstools.shared.gui.tooltip import Tooltip
 from dstools.shared.server_ports import (
     collect_cluster_port_claims,
+    disable_lan_restrictions,
     find_port_conflicts,
+    format_lan_port_issues,
+    lan_restriction_names,
     scan_udp_ports,
     stable_path_key,
     system_port_claims,
@@ -3124,6 +3127,50 @@ class LocalServiceTab:
                 return candidate
         return None
 
+    def _lan_port_blocked(
+        self, cluster, shards, issues, target_running, *, restarting=False
+    ) -> bool:
+        """LAN/离线端口越界却不能自动改端口时，说明原因并给出可执行的出路。"""
+        modes = "、".join(lan_restriction_names(cluster)) or "离线模式"
+        details = format_lan_port_issues(issues)
+        title = t("lan_conflict.title")
+        if target_running:
+            dlg.show_error(
+                self.app.root, title,
+                t("lan_conflict.running_msg", modes=modes, details=details,
+                  outcome=t("lan_conflict.outcome_launch")),
+                wraplength=780, min_width=840,
+            )
+            return False
+        choice = dlg.ask_choice(
+            self.app.root, title,
+            t("lan_conflict.mapping_msg", modes=modes, details=details,
+              outcome=t("lan_conflict.outcome_launch")),
+            [
+                (t("lan_conflict.disable_btn", modes=modes), "disable"),
+                (t("lan_conflict.goto_mapping_btn"), "goto"),
+                (t("dlg.cancel_btn"), "cancel"),
+            ],
+            default="cancel", wraplength=780, min_width=840,
+        )
+        if choice == "goto":
+            self.app.goto_tab("sakura")
+            return False
+        if choice != "disable":
+            return False
+        try:
+            disable_lan_restrictions(cluster)
+        except (OSError, ValueError) as exc:
+            dlg.show_error(
+                self.app.root, t("local.port_repair_title"),
+                t("local.port_repair_failed", detail=f"{type(exc).__name__}: {exc}"),
+            )
+            return False
+        self.app.mark_server_tab_stale()
+        return self._preflight_start(
+            cluster, shards, allow_repair=False, restarting=restarting,
+        )
+
     def _preflight_start(
         self, cluster, shards, *, allow_repair=True, restarting=False
     ) -> bool:
@@ -3260,6 +3307,11 @@ class LocalServiceTab:
                             restarting=restarting,
                         )
                     return False
+                if target_running or has_mapping:
+                    return self._lan_port_blocked(
+                        cluster, shards, lan_issues, target_running,
+                        restarting=restarting,
+                    )
             dlg.show_error(
                 self.app.root,
                 t("local.port_preflight_title"),

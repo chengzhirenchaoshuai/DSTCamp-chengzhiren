@@ -617,6 +617,13 @@ class DSToolsApp:
         if key == "mods":
             self.mod_tab.refresh_sync_button_state()
 
+    def goto_tab(self, key: str) -> None:
+        """从其它功能跳转到某个顶层页签，走与点击页签条相同的切换流程。"""
+        if key not in self._tab_keys or key == getattr(self, "_current_tab_key", None):
+            return
+        self._pill_bar.select(key)
+        self._on_tab_select(key)
+
     def _dismiss_entry_focus(self, event):
         """点击到的控件本身不是输入框时，如果当前焦点停在某个 Entry/Text
         上，把焦点转移到实际点击控件所属的顶层窗口（不选中任何东西的

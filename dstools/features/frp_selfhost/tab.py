@@ -49,6 +49,7 @@ from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.shared.gui.tooltip import Tooltip
 from dstools.shared.gui.toggle_switch import ToggleSwitch
+from dstools.shared.lan_mapping_guard import ensure_lan_free_for_mapping
 from dstools.shared.server_ports import stable_path_key
 from dstools.i18n import t
 from dstools.models import SaveSource
@@ -2043,6 +2044,10 @@ class SelfHostFrpPage:
                 dlg.show_warning(self.app.root, t("selfhost.enable_btn"),
                                   t("sakura.other_mapping_conflict_msg", shards="、".join(conflicting)))
                 return
+
+        # 仅局域网/离线模式要求端口在 10998~11018，映射写入的远程端口必然越界。
+        if not ensure_lan_free_for_mapping(self.app, cluster):
+            return
 
         # 宽度跟"Mod 更新日志"窗口保持一致（用户要求改成 100）。
         progress = ModSyncLogDialog(self.frame, title=t("selfhost.setup_progress_title"), text_width=100)

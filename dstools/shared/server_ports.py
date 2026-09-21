@@ -415,6 +415,45 @@ def rewrite_lan_server_ports_atomic(
     return values
 
 
+def format_lan_port_issues(issues: Iterable[PortIssue]) -> str:
+    """把 LAN/离线端口越界整理成逐行说明，不暴露 repr 和内部回退细节。"""
+    return "\n".join(
+        f"{issue.cluster_name}/{issue.shard_name or '-'}：当前端口 {issue.value}"
+        f"（需要 {LAN_SERVER_PORT_MIN}~{LAN_SERVER_PORT_MAX}）"
+        for issue in issues
+    )
+
+
+def lan_restriction_names(
+        cluster: Cluster, config: ClusterConfig | None = None,
+) -> list[str]:
+    """返回当前开启的 LAN 限制名称（仅限局域网 / 离线模式）。
+
+    ``config`` 为空时读取磁盘上的 cluster.ini；保存流程传入尚未落盘的表单值。
+    """
+    network = (config or _cluster_config(cluster)).network
+    names = []
+    if network.get("lan_only_cluster", False):
+        names.append("仅限局域网")
+    if network.get("offline_cluster", False):
+        names.append("离线模式")
+    return names
+
+
+def disable_lan_restrictions(cluster: Cluster) -> None:
+    """关闭仅限局域网和离线模式并原子写回 cluster.ini。
+
+    调用方负责取得用户确认，并保证存档没有进程在运行。
+    """
+    config = copy.deepcopy(_cluster_config(cluster))
+    config.network["lan_only_cluster"] = False
+    config.network["offline_cluster"] = False
+    _write_configs_atomic(
+        cluster, [(cluster.path / "cluster.ini", config, write_cluster_ini)],
+        create_backup=False,
+    )
+
+
 def rewrite_cluster_ports_atomic(cluster: Cluster, used: Iterable[int], *,
                                  create_backup: bool = True) -> tuple[int, dict[str, dict[str, int]]]:
     """把一个已停止存档的整组端口原子改成不冲突值。

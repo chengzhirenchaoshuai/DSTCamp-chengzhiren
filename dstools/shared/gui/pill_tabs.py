@@ -197,6 +197,12 @@ class PillTabBar(tk.Frame):
                               size=round(self._base_font_size * scale))
         self._redraw()
 
+    def select(self, key: str) -> None:
+        """只更新选中态并重画，不触发 on_select；由调用方自己切换内容。"""
+        if key in {k for k, _ in self._tabs} and key != self._selected:
+            self._selected = key
+            self._redraw()
+
     def _on_click(self, event):
         for x1, x2, key in self._regions:
             if x1 <= event.x <= x2:

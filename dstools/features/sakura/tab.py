@@ -38,6 +38,7 @@ from dstools.shared.gui.pill_tabs import PillTabBar
 from dstools.features.local_service.tab import _RUNNING_LIKE
 from dstools.shared.gui.mod_sync_log_dialog import ModSyncLogDialog
 from dstools.shared.gui.tooltip import Tooltip
+from dstools.shared.lan_mapping_guard import ensure_lan_free_for_mapping
 from dstools.shared.server_ports import stable_path_key
 from dstools.i18n import t
 from dstools.models import SaveSource
@@ -1156,6 +1157,10 @@ class SakuraTab:
         # 必须在创建樱花隧道和回写 server_port 之前确认本地客户端可用；
         # 否则用户最后才发现文件已被隔离，还留下半配置状态。
         if self._ensure_frpc_available() is None:
+            return
+
+        # 仅局域网/离线模式要求端口在 10998~11018，映射写入的远程端口必然越界。
+        if not ensure_lan_free_for_mapping(self.app, cluster):
             return
 
         progress = ModSyncLogDialog(self.frame, title=t("sakura.setup_progress_title"))

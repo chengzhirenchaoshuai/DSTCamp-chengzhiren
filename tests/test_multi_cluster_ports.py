@@ -426,6 +426,70 @@ def test_local_service_lan_preflight_repair() -> None:
         assert ports == {LAN_SERVER_PORT_MIN, LAN_SERVER_PORT_FALLBACK}
 
 
+def test_local_service_lan_blocked_by_mapping_or_running() -> None:
+    from dstools.features.local_service import tab as local_tab
+    from dstools.shared.ini_parser import parse_cluster_ini
+
+    def make_service(cluster, *, running):
+        jumps = []
+        app = SimpleNamespace(
+            root=None,
+            env=SimpleNamespace(clusters=[cluster]),
+            sakura_tab=SimpleNamespace(has_active_mapping=lambda *_args: True),
+            goto_tab=jumps.append,
+            mark_server_tab_stale=lambda: None,
+        )
+        proc = SimpleNamespace(cluster_path=cluster.path, shard_name="Master")
+        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service.app = app
+        service.manager = SimpleNamespace(running=lambda: [proc] if running else [])
+        service._launching_keys = set()
+        service._prepare_legacy_mods_for_start = lambda _cluster: True
+        return service, jumps
+
+    def offline_flag(cluster) -> bool:
+        return bool(parse_cluster_ini(cluster.path / "cluster.ini").network["offline_cluster"])
+
+    with tempfile.TemporaryDirectory() as tmp:
+        cluster = _write_cluster(
+            Path(tmp), "Mapped_Offline", offline=True,
+            master_game_port=39491, caves_game_port=12256,
+        )
+        service, jumps = make_service(cluster, running=False)
+        with patch.object(local_tab, "scan_udp_ports", return_value=UdpPortScan(True, {})):
+            # 取消：不改配置、不跳转，也不能落到只有“确认”的旧错误框。
+            with patch.object(local_tab.dlg, "ask_choice", return_value="cancel") as ask, \
+                    patch.object(local_tab.dlg, "show_error") as error:
+                assert not service._preflight_start(cluster, cluster.shards)
+                assert not error.called
+                message = ask.call_args.args[2]
+                assert "离线模式" in message and "39491" in message and "12256" in message
+                assert [value for _label, value in ask.call_args.args[3]] == [
+                    "disable", "goto", "cancel",
+                ]
+            assert offline_flag(cluster) and not jumps
+
+            with patch.object(local_tab.dlg, "ask_choice", return_value="goto"):
+                assert not service._preflight_start(cluster, cluster.shards)
+            assert jumps == ["sakura"] and offline_flag(cluster)
+
+            # 关闭离线模式后重新预检，不再有 LAN 端口问题。
+            with patch.object(local_tab.dlg, "ask_choice", return_value="disable"):
+                assert service._preflight_start(cluster, cluster.shards)
+            assert not offline_flag(cluster)
+
+        running_cluster = _write_cluster(
+            Path(tmp), "Running_Offline", offline=True,
+            master_game_port=39491, caves_game_port=12256,
+        )
+        service, _ = make_service(running_cluster, running=True)
+        with patch.object(local_tab.dlg, "ask_choice") as ask, \
+                patch.object(local_tab.dlg, "show_error") as error:
+            assert not service._preflight_start(running_cluster, running_cluster.shards)
+            assert error.called and not ask.called
+        assert offline_flag(running_cluster)
+
+
 def test_config_editor_lan_port_repair_and_lock() -> None:
     from dstools.features.cluster_config import tab as cluster_tab
     from dstools.features.cluster_config.config_manager import load_cluster_config
@@ -466,7 +530,7 @@ def test_config_editor_lan_port_repair_and_lock() -> None:
         }
         assert ports == {LAN_SERVER_PORT_MIN, LAN_SERVER_PORT_FALLBACK}
 
-        # 存档运行或映射存在时，配置页不得跨文件重写端口。
+        # 存档有映射时，配置页不得跨文件重写端口，只能让用户改为关闭 LAN 限制。
         before = {
             shard.path: (shard.path / "server.ini").read_bytes()
             for shard in cluster.shards
@@ -474,14 +538,63 @@ def test_config_editor_lan_port_repair_and_lock() -> None:
         editor.app.sakura_tab = SimpleNamespace(
             has_active_mapping=lambda *_args: True
         )
-        with patch.object(cluster_tab.dlg, "show_error"):
-            assert not editor._repair_lan_ports_while_saving(
+        jumps = []
+        editor.app.goto_tab = jumps.append
+        assert editor._cluster_ports_locked(cluster)
+        with patch.object(cluster_tab.dlg, "ask_choice", return_value="cancel"):
+            assert not editor._resolve_lan_lock_while_saving(
                 cluster, proposed, lan_issues,
             )
+        with patch.object(cluster_tab.dlg, "ask_choice", return_value="goto"):
+            assert not editor._resolve_lan_lock_while_saving(
+                cluster, proposed, lan_issues,
+            )
+        assert jumps == ["sakura"] and proposed.network["lan_only_cluster"] is True
+        with patch.object(cluster_tab.dlg, "ask_choice", return_value="disable") as ask:
+            assert editor._resolve_lan_lock_while_saving(
+                cluster, proposed, lan_issues,
+            )
+            assert "仅限局域网" in ask.call_args.args[2]
+        assert proposed.network["lan_only_cluster"] is False
+        assert proposed.network["offline_cluster"] is False
         assert all(
             (path / "server.ini").read_bytes() == content
             for path, content in before.items()
         )
+
+        # 运行中只提示先停止，不提供修改类按钮。
+        proposed.network["lan_only_cluster"] = True
+        editor.app.local_tab = SimpleNamespace(manager=SimpleNamespace(running=lambda: [
+            SimpleNamespace(cluster_path=cluster.path),
+        ]))
+        with patch.object(cluster_tab.dlg, "ask_choice") as ask, \
+                patch.object(cluster_tab.dlg, "show_error") as error:
+            assert not editor._resolve_lan_lock_while_saving(
+                cluster, proposed, lan_issues,
+            )
+            assert error.called and not ask.called
+
+
+def test_mapping_enable_guard_for_lan_saves() -> None:
+    from dstools.shared import lan_mapping_guard
+    from dstools.shared.ini_parser import parse_cluster_ini
+
+    with tempfile.TemporaryDirectory() as tmp:
+        lan_cluster = _write_cluster(Path(tmp), "Offline_Save", offline=True)
+        app = SimpleNamespace(root=None, mark_server_tab_stale=lambda: None)
+
+        with patch.object(lan_mapping_guard.dlg, "ask_choice", return_value="cancel"):
+            assert not lan_mapping_guard.ensure_lan_free_for_mapping(app, lan_cluster)
+        assert parse_cluster_ini(lan_cluster.path / "cluster.ini").network["offline_cluster"]
+
+        with patch.object(lan_mapping_guard.dlg, "ask_choice", return_value="disable"):
+            assert lan_mapping_guard.ensure_lan_free_for_mapping(app, lan_cluster)
+        assert not parse_cluster_ini(lan_cluster.path / "cluster.ini").network["offline_cluster"]
+
+        # 已经不带 LAN 限制的存档不弹任何窗口。
+        with patch.object(lan_mapping_guard.dlg, "ask_choice") as ask:
+            assert lan_mapping_guard.ensure_lan_free_for_mapping(app, lan_cluster)
+            assert not ask.called
 
 
 def test_config_editor_effective_conflicts() -> None:
@@ -1036,9 +1149,11 @@ def main() -> None:
         test_atomic_lan_port_rewrite_rolls_back,
         test_local_service_batch_preflight,
         test_local_service_lan_preflight_repair,
+        test_local_service_lan_blocked_by_mapping_or_running,
         test_config_editor_effective_conflicts,
         test_config_editor_port_ranges,
         test_config_editor_lan_port_repair_and_lock,
+        test_mapping_enable_guard_for_lan_saves,
         test_world_creation_port_conflict_choices,
         test_server_manager_rejects_duplicate_start,
         test_restart_all_preserves_stopped_shards_and_rejects_transitions,

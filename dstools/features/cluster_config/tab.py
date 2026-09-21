@@ -35,6 +35,8 @@ from dstools.shared.gui.toolbar_widgets import ReadonlyBanner
 from dstools.shared.server_ports import (
     collect_cluster_port_claims,
     find_port_conflicts,
+    format_lan_port_issues,
+    lan_restriction_names,
     rewrite_lan_server_ports_atomic,
     scan_udp_ports,
 )
@@ -1677,8 +1679,13 @@ class ClusterConfigTab:
             if issue.code == "lan_server_port_range"
         ]
         if lan_issues:
-            self._repair_lan_ports_while_saving(c, config, lan_issues)
-            return
+            if not self._cluster_ports_locked(c):
+                self._repair_lan_ports_while_saving(c, config, lan_issues)
+                return
+            # 运行中或有端口映射时不能改端口；用户选择关闭 LAN 限制后 config
+            # 已就地改好，继续走后面的常规保存流程。
+            if not self._resolve_lan_lock_while_saving(c, config, lan_issues):
+                return
 
         conflict = self._find_cluster_port_conflict(c, config)
         if conflict:
@@ -1719,12 +1726,15 @@ class ClusterConfigTab:
             for issue in issues
         )
 
-    def _cluster_ports_locked(self, cluster) -> bool:
+    def _cluster_running(self, cluster) -> bool:
         local_tab = getattr(self.app, "local_tab", None)
-        if local_tab is not None and any(
+        return local_tab is not None and any(
             str(proc.cluster_path) == str(cluster.path)
             for proc in local_tab.manager.running()
-        ):
+        )
+
+    def _cluster_ports_locked(self, cluster) -> bool:
+        if self._cluster_running(cluster):
             return True
         sakura_tab = getattr(self.app, "sakura_tab", None)
         return bool(sakura_tab and any(
@@ -1752,17 +1762,54 @@ class ClusterConfigTab:
             used.update(claim.port for claim in claims)
         return used
 
+    def _resolve_lan_lock_while_saving(
+            self, cluster, cluster_config, issues,
+    ) -> bool:
+        """存档运行中或有映射、无法改端口时，说明原因并给出出路。
+
+        返回 True 表示用户选择关闭 LAN 限制，``cluster_config`` 已就地改好，
+        调用方可以继续保存；其余情况返回 False。
+        """
+        modes = "、".join(lan_restriction_names(cluster, cluster_config)) or "离线模式"
+        details = format_lan_port_issues(issues)
+        title = t("lan_conflict.title")
+        outcome = t("lan_conflict.outcome_save")
+        if self._cluster_running(cluster):
+            dlg.show_error(
+                self.app.root, title,
+                t("lan_conflict.running_msg", modes=modes, details=details,
+                  outcome=outcome),
+                wraplength=780, min_width=840,
+            )
+            return False
+        choice = dlg.ask_choice(
+            self.app.root, title,
+            t("lan_conflict.mapping_msg", modes=modes, details=details,
+              outcome=outcome),
+            [
+                (t("lan_conflict.disable_save_btn", modes=modes), "disable"),
+                (t("lan_conflict.goto_mapping_btn"), "goto"),
+                (t("dlg.cancel_btn"), "cancel"),
+            ],
+            default="cancel", wraplength=780, min_width=840,
+        )
+        if choice == "goto":
+            self.app.goto_tab("sakura")
+            return False
+        if choice != "disable":
+            return False
+        cluster_config.network["lan_only_cluster"] = False
+        cluster_config.network["offline_cluster"] = False
+        return True
+
     def _repair_lan_ports_while_saving(
             self, cluster, cluster_config, issues,
     ) -> bool:
-        """保存 LAN/离线开关时修复全部世界端口；成功时已完成整组写入。"""
+        """保存 LAN/离线开关时修复全部世界端口；成功时已完成整组写入。
+
+        调用方保证存档没有运行、也没有端口映射（见 ``_resolve_lan_lock_while_saving``）。
+        """
         details = self._format_port_issues(issues)
-        if self._cluster_ports_locked(cluster):
-            dlg.show_error(
-                self.app.root, t("dlg.save_fail"),
-                t("cluster.lan_port_repair_locked", details=details),
-            )
-            return False
         scan = scan_udp_ports()
         if not scan.ok:
             dlg.show_error(
