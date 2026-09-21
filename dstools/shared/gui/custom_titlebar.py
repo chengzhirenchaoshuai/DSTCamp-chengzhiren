@@ -92,7 +92,7 @@ def restore_window(root: tk.Tk) -> None:
     被标题栏最小化按钮（原生 ShowWindow(SW_MINIMIZE)）藏起来的，也可能是
     被 DSToolsApp._minimize_to_tray()（Tk 自己的 root.withdraw()）藏起来
     的，这是两条完全不同的路径，只调 Tk 的 root.deiconify() 只能撤销后
-    者——真机反馈过"没勾选'关闭时最小化到任务栏'时点托盘图标没反应"，根
+    者——真机反馈过"没勾选'关闭时最小化到托盘'时点托盘图标没反应"，根
     因就是这种情况下用户是拿标题栏的最小化按钮把窗口藏起来的（那个按钮
     走的是原生 ShowWindow 分支，跟这个复选框设置完全无关），Tk 自己并
     不知道窗口是被原生调用最小化的，deiconify() 对这种情况不起作用。原

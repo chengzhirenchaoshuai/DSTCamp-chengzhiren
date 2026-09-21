@@ -64,6 +64,11 @@ class DSToolsApp:
     WINDOW_BASE_W = 1600
     WINDOW_BASE_H = 900
 
+    # __init__ 里的 update()/update_idletasks() 会提前处理点击；标题栏关闭按钮
+    # 比各页签先建好，启动中途点它会走到还没创建的页签。
+    _startup_done = False
+    _exit_requested_during_startup = False
+
     def __init__(self, klei_path: Path | None = None):
         # 只在真正构造 GUI 的正常启动路径上跑到这里——冒烟测试、重启辅
         # 助进程、Lua/Workshop Worker 等特殊入口在 scripts/run_gui.py 里
@@ -543,6 +548,9 @@ class DSToolsApp:
         # 未修复前每次启动都提醒一次；用户选择“立即更改”后直接进入目录
         # 选择器，减少再打开一层设置窗口的操作。
         self.root.after(500, self._check_cache_dir_on_startup)
+        self._startup_done = True
+        if self._exit_requested_during_startup:
+            self.root.after_idle(self._do_exit)
 
     def _on_tab_select(self, key: str) -> None:
         if not hasattr(self, "_cluster_tab_map"):
@@ -650,7 +658,7 @@ class DSToolsApp:
                 pass
 
     def _on_close(self):
-        """窗口右上角 X 专用入口——按"设置"里"关闭时最小化到任务栏"这
+        """窗口右上角 X 专用入口——按"设置"里"关闭时最小化到托盘"这
         个开关走：开着就直接最小化，不问任何问题（不管有没有服务器在
         跑，最小化本来就不影响服务器）；关着就跟菜单"退出"/Ctrl+Q 走
         完全一样的统一退出检查（_do_exit，里面才会按"有没有服务器在
@@ -665,7 +673,7 @@ class DSToolsApp:
 
     def _restore_from_tray(self):
         # 不能只调 root.deiconify()——窗口被藏起来可能走了两条不同的路
-        # 径：勾选"关闭时最小化到任务栏"时点关闭按钮走 _minimize_to_tray()
+        # 径：勾选"关闭时最小化到托盘"时点关闭按钮走 _minimize_to_tray()
         # （root.withdraw()，deiconify() 能撤销）；标题栏最小化按钮走的
         # 是原生 ShowWindow(SW_MINIMIZE)，deiconify() 对这种情况不起作
         # 用。custom_titlebar.restore_window() 两条路径都处理。
@@ -675,9 +683,13 @@ class DSToolsApp:
 
     def _do_exit(self):
         """真正退出的唯一入口——菜单"退出"/Ctrl+Q/托盘菜单"退出"/关闭
-        窗口时"关闭时最小化到任务栏"未勾选，都走这里：如果还有本地服
+        窗口时"关闭时最小化到托盘"未勾选，都走这里：如果还有本地服
         务器在跑，先问一句是否一并关闭；选"否"就是取消退出，窗口/托盘
         保持原样，不会像以前那样问完不管选什么都照样退出。"""
+        if not self._startup_done:
+            # 页签还没建完，此时退出会访问不存在的属性；记下来，启动完成后再退出。
+            self._exit_requested_during_startup = True
+            return
         if self.local_tab.has_running_servers():
             running = self.local_tab.manager.running()
             world_count = len(running)

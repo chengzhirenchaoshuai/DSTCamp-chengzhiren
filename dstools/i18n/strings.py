@@ -38,7 +38,7 @@ STRINGS = {
         # 设置菜单
         "settings.title": "设置",
         "settings.language_label": "语言",
-        "settings.minimize_on_close_label": "关闭时最小化到任务栏",
+        "settings.minimize_on_close_label": "关闭时最小化到托盘",
         "settings.cache_use_exe_dir_label": "缓存存放在程序所在目录",
         "settings.restart_required": "设置已保存，重启 DSTCamp 后生效。",
         "settings.cache_dir_label": "缓存目录设置",
