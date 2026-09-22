@@ -130,7 +130,14 @@ def _write_lua(path: Path, data: dict) -> None:
 
 
 def default_cluster_config(cluster_name: str = "Cluster_New") -> ClusterConfig:
-    """Return the verified fresh-server ``cluster.ini`` defaults."""
+    """Return the verified fresh-server ``cluster.ini`` defaults.
+
+    仅限局域网/离线模式默认关闭——之前默认开启，每次新建公网可加入的存档
+    都要先手动关掉这两个开关才能启动，真机反馈过这是重复劳动。跟游戏本身
+    新建专服的默认行为、以及 CLUSTER_INI_DEFAULTS（见 config_manager.py）
+    的缺省值保持一致。仍需要局域网/离线的用户在向导的"服务器配置"子页签
+    里打开即可，创建时会按当时的选择写入。
+    """
     return ClusterConfig(
         gameplay={
             "game_mode": "survival",
@@ -139,11 +146,11 @@ def default_cluster_config(cluster_name: str = "Cluster_New") -> ClusterConfig:
             "pause_when_empty": True,
         },
         network={
-            "lan_only_cluster": True,
+            "lan_only_cluster": False,
             "cluster_password": "",
             "cluster_description": "",
             "cluster_name": cluster_name,
-            "offline_cluster": True,
+            "offline_cluster": False,
             "cluster_language": "zh",
         },
         misc={"console_enabled": True},
