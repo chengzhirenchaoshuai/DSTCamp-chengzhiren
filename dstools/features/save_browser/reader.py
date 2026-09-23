@@ -295,3 +295,29 @@ def list_session_players(session: SaveSession) -> list[PlayerCharacterSave]:
         players.append(player)
 
     return players
+
+
+def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
+    """扫描一组世界（shard）下的全部存档会话，收集出现过的玩家真实 ID。
+
+    只保留形如 KU_/OU_ 的 ID——cluster.ini [ACCOUNT] encode_user_path 打开
+    时文件夹名是混淆编码，不是真实 Klei 账号 ID（见 PlayerCharacterSave 的
+    说明），这里直接过滤掉，避免调用方把混淆值当成真实 ID 写进 adminlist/
+    blocklist。返回按 ID 排序、去重后的 (player_id, 角色显示名提示) 列表；
+    角色名只是给人看着好认的辅助信息，识别不出的角色（模组角色）原样显示
+    prefab，解析失败的槽位（没有角色名）留空不影响 ID 本身的收集。
+    """
+    from dstools.features.save_browser.character_names import get_character_display_name
+
+    seen: dict[str, str] = {}
+    for shard in shards:
+        for session in list_save_sessions(shard.path):
+            for player in list_session_players(session):
+                pid = player.player_id
+                if pid[:3] not in ("KU_", "OU_"):
+                    continue
+                if player.character:
+                    seen[pid] = get_character_display_name(player.character)
+                else:
+                    seen.setdefault(pid, "")
+    return sorted(seen.items())

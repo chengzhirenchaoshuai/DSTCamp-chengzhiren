@@ -426,6 +426,10 @@ STRINGS = {
         "admin.already_exists": "该 ID 已在列表中",
         "admin.not_found": "未找到该管理员",
         "admin.invalid_format": "格式不正确，DST 用户 ID 应形如 KU_XXXXXXXX 或 OU_XXXXXXXX。",
+        "admin.pick_from_save": "从存档选择",
+        "admin.pick_save_title": "从存档选择用户",
+        "admin.pick_save_prompt": "该服务器存档里出现过的用户 ID（需要先在房间设置里关闭 encode_user_path，新连接的玩家才会显示真实 ID，历史记录不受影响）：",
+        "admin.pick_save_empty": "存档里没有找到可用的真实用户 ID——可能是 encode_user_path 仍处于开启状态（文件夹名是混淆编码），或者还没有玩家连接过。",
         # Blocklist / 黑名单 (NEW)
         "blocklist.title": "黑名单",
         "blocklist.empty": "(无黑名单人员)",
@@ -1498,6 +1502,10 @@ STRINGS = {
         "admin.already_exists": "This ID is already in the list",
         "admin.not_found": "Admin not found",
         "admin.invalid_format": "Invalid format -- a DST user ID should look like KU_XXXXXXXX or OU_XXXXXXXX.",
+        "admin.pick_from_save": "Pick from Save",
+        "admin.pick_save_title": "Pick User from Save",
+        "admin.pick_save_prompt": "User IDs seen in this server's saves (turn off encode_user_path in room settings first -- only newly connected players will show a real ID; past history is unaffected):",
+        "admin.pick_save_empty": "No usable real user ID found in the saves -- encode_user_path may still be on (folder names are obfuscated), or no player has connected yet.",
         # 黑名单
         "blocklist.title": "Blocklist",
         "blocklist.empty": "(No blocked players)",

@@ -24,6 +24,7 @@ from dstools.shared.token_manager import (
     token_fingerprint,
     write_token,
 )
+from dstools.features.save_browser.reader import list_known_player_ids
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.card_frame import CardFrame
@@ -200,6 +201,71 @@ class _IdInputDialog:
         if value:
             self.result = value
             self.win.destroy()
+
+    def _cancel(self):
+        self.result = None
+        self.win.destroy()
+
+
+class _SaveUserPickDialog:
+    """从存档里扫描出的真实用户 ID 中挑一个，返回给调用方去加管理员/黑名单。
+
+    只在 encode_user_path 关闭之后新连接的玩家才会在存档里留下真实 ID
+    （见 list_known_player_ids 的说明），这里拿到的 candidates 已经是过滤
+    过的结果，不需要再校验格式。
+    """
+
+    def __init__(self, parent_widget, candidates: list[tuple[str, str]]):
+        self.result: str | None = None
+        self._ids = [pid for pid, _hint in candidates]
+        win = tk.Toplevel(parent_widget)
+        self.win = win
+        win.withdraw()
+        win.title(t("admin.pick_save_title"))
+        win.resizable(False, False)
+        win.configure(background=theme.BG_SOFT)
+
+        ttk.Label(
+            win, text=t("admin.pick_save_prompt"),
+            font=theme.font_tuple(theme.FONT_SIZE_MD),
+            wraplength=480, justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=20, pady=(20, 8))
+
+        list_frame = ttk.Frame(win)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
+        self.listbox = tk.Listbox(list_frame, font=("Consolas", 11), height=8, exportselection=False)
+        self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.listbox.yview)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.listbox.configure(yscrollcommand=scroll.set)
+        for pid, hint in candidates:
+            self.listbox.insert(tk.END, f"{pid}   ({hint})" if hint else pid)
+        self.listbox.bind("<Double-Button-1>", lambda _e: self._confirm())
+
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
+        ttk.Button(
+            btn_frame, text=t("dlg.cancel_btn"), command=self._cancel,
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            btn_frame, text=t("dlg.confirm_btn"), command=self._confirm,
+        ).pack(side=tk.RIGHT)
+
+        win.bind("<Escape>", lambda e: self._cancel())
+        win.protocol("WM_DELETE_WINDOW", self._cancel)
+
+        root = parent_widget.winfo_toplevel()
+        center_over_parent(win, root, min_width=500)
+        win.transient(root)
+        win.deiconify()
+        win.grab_set()
+        win.wait_window()
+
+    def _confirm(self):
+        selection = self.listbox.curselection()
+        if selection:
+            self.result = self._ids[selection[0]]
+        self.win.destroy()
 
     def _cancel(self):
         self.result = None
@@ -690,23 +756,31 @@ class ClusterConfigTab:
         # 同的 Cluster 属性名+文件名来区分。
         self._admin_frame = self._layout_frame(self._sub_content)
         (self._admin_title_lbl, self._admin_listbox, self._admin_add_btn,
-         self._admin_remove_btn, self._admin_status) = self._build_id_list_panel(self._admin_frame, "admin.title")
+         self._admin_remove_btn, self._admin_pick_btn,
+         self._admin_status) = self._build_id_list_panel(self._admin_frame, "admin.title")
         self._admin_add_btn.configure(command=lambda: self._add_id_entry(
             "adminlist_path", "adminlist.txt", self._admin_listbox, self._admin_status,
             self._admin_add_btn, self._admin_remove_btn))
         self._admin_remove_btn.configure(command=lambda: self._remove_id_entry(
             "adminlist_path", self._admin_listbox, self._admin_status,
             self._admin_add_btn, self._admin_remove_btn))
+        self._admin_pick_btn.configure(command=lambda: self._pick_id_from_save(
+            "adminlist_path", "adminlist.txt", self._admin_listbox, self._admin_status,
+            self._admin_add_btn, self._admin_remove_btn))
         self._sub_pages["admin"] = self._admin_frame
 
         self._block_frame = self._layout_frame(self._sub_content)
         (self._block_title_lbl, self._block_listbox, self._block_add_btn,
-         self._block_remove_btn, self._block_status) = self._build_id_list_panel(self._block_frame, "blocklist.title")
+         self._block_remove_btn, self._block_pick_btn,
+         self._block_status) = self._build_id_list_panel(self._block_frame, "blocklist.title")
         self._block_add_btn.configure(command=lambda: self._add_id_entry(
             "blocklist_path", "blocklist.txt", self._block_listbox, self._block_status,
             self._block_add_btn, self._block_remove_btn))
         self._block_remove_btn.configure(command=lambda: self._remove_id_entry(
             "blocklist_path", self._block_listbox, self._block_status,
+            self._block_add_btn, self._block_remove_btn))
+        self._block_pick_btn.configure(command=lambda: self._pick_id_from_save(
+            "blocklist_path", "blocklist.txt", self._block_listbox, self._block_status,
             self._block_add_btn, self._block_remove_btn))
         self._sub_pages["block"] = self._block_frame
 
@@ -792,6 +866,7 @@ class ClusterConfigTab:
         bf = self._layout_frame(lf); bf.pack(fill=tk.X)
         add_btn = ttk.Button(bf, text=t("admin.add")); add_btn.pack(side=tk.LEFT, padx=2)
         remove_btn = ttk.Button(bf, text=t("admin.remove")); remove_btn.pack(side=tk.LEFT, padx=2)
+        pick_btn = ttk.Button(bf, text=t("admin.pick_from_save")); pick_btn.pack(side=tk.LEFT, padx=2)
         listbox.bind(
             "<<ListboxSelect>>",
             lambda _event: self._sync_id_remove_state(listbox, remove_btn),
@@ -800,7 +875,7 @@ class ClusterConfigTab:
         status = TransparentLabel(lf, self.app, text="", font=self._ROW_VALUE_FONT,
                                   foreground=theme.TEXT_MUTED, padx=5, pady=2)
         status.pack(anchor=tk.W, pady=(5,0))
-        return title_lbl, listbox, add_btn, remove_btn, status
+        return title_lbl, listbox, add_btn, remove_btn, pick_btn, status
 
     def _build_token_panel(self, parent):
         p = self._layout_frame(parent); p.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -1538,6 +1613,23 @@ class ClusterConfigTab:
             # 不认识的 ID；管理员和黑名单共用这条规则。
             status.configure(text=t("admin.invalid_format"))
             return
+        self._commit_id_add(c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn)
+
+    def _pick_id_from_save(self, path_attr, default_filename, listbox, status, add_btn, remove_btn):
+        # 从当前存档里扫描出来的真实用户 ID 中选一个直接加入——只有关闭
+        # encode_user_path 之后新连接玩家的文件夹名才是明文 ID，list_known_
+        # player_ids() 已经按前缀过滤过，这里不需要再校验格式。
+        c = self._get_cluster()
+        if not c: return
+        candidates = list_known_player_ids(c.shards)
+        if not candidates:
+            status.configure(text=t("admin.pick_save_empty"))
+            return
+        kid = _SaveUserPickDialog(self.frame, candidates).result
+        if not kid: return
+        self._commit_id_add(c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn)
+
+    def _commit_id_add(self, c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn):
         path = getattr(c, path_attr) or (c.path / default_filename)
         if add_admin(path, kid):
             setattr(c, path_attr, path)
@@ -2028,8 +2120,10 @@ class ClusterConfigTab:
         })
         self._admin_title_lbl.configure(text=t("admin.title"))
         self._admin_add_btn.configure(text=t("admin.add")); self._admin_remove_btn.configure(text=t("admin.remove"))
+        self._admin_pick_btn.configure(text=t("admin.pick_from_save"))
         self._block_title_lbl.configure(text=t("blocklist.title"))
         self._block_add_btn.configure(text=t("admin.add")); self._block_remove_btn.configure(text=t("admin.remove"))
+        self._block_pick_btn.configure(text=t("admin.pick_from_save"))
         self._token_title_lbl.configure(text=t("token.current_title"))
         self._token_show_btn.configure(text=t("token.show") if not self._token_visible else t("token.hide"))
         self._token_copy_btn.configure(text=t("token.copy")); self._token_change_btn.configure(text=t("token.change"))
