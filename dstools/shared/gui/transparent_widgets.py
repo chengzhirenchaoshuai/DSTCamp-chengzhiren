@@ -151,9 +151,12 @@ class TransparentIdList(BgFrame):
         self._selected = None
         self._row_height = max(24, int(row_height))
         self._redrawing = False
-        super().__init__(parent, app, bg=theme.BG_SOFT, cursor="hand2", **kw)
+        self._hovering = False
+        super().__init__(parent, app, bg=theme.BG_SOFT, **kw)
         self.bind("<Configure>", lambda _e: self._redraw(), add="+")
         self.bind("<Button-1>", self._on_click, add="+")
+        self.bind("<Motion>", self._on_motion, add="+")
+        self.bind("<Leave>", self._on_leave, add="+")
         self._redraw()
 
     def configure(self, cnf=None, **kwargs):
@@ -193,7 +196,18 @@ class TransparentIdList(BgFrame):
         if not self._items:
             return
         start = max(0, int(first))
-        end = start if last is None or last == tk.END else min(len(self._items) - 1, int(last))
+        # last=None（真实 Listbox.delete(index) 语义）只删 first 这一条；
+        # last=tk.END 要删到列表真正的末尾，不能跟 last=None 混在一起当
+        # 成同一种"只删 first"——之前这两种情况被合并处理，导致
+        # delete(0, tk.END) 在列表有 ≥2 项时只删掉第 0 项，重新 insert()
+        # 整份数据后旧的尾部条目全部留了下来，表现为每刷新一次列表就多
+        # 出一份重复（真机反馈过："设置管理员时显示好几个重复值"）。
+        if last is None:
+            end = start
+        elif last == tk.END:
+            end = len(self._items) - 1
+        else:
+            end = min(len(self._items) - 1, int(last))
         del self._items[start:end + 1]
         self._selected = None
         self._redraw()
@@ -210,6 +224,29 @@ class TransparentIdList(BgFrame):
             self._selected = index
             self._redraw()
             self.event_generate("<<ListboxSelect>>")
+
+    def _row_index_at(self, x: int, y: int) -> int | None:
+        """鼠标落在哪一条真实条目文字上——只看行高区间不够，整行空白处
+        （文字右边一大片）也会落进同一个 index // row_height 区间，之前
+        整个控件常驻 cursor="hand2" 就是因为没做这层区分，导致鼠标放哪
+        都是手型（真机反馈过）。这里额外用字体量出文字实际宽度，卡住
+        水平范围，只有真的压在文字上才算命中。"""
+        index = int(max(0, y - 8) // self._row_height)
+        if not (0 <= index < len(self._items)):
+            return None
+        text_width = self._font.measure(self._items[index])
+        return index if 14 <= x <= 14 + text_width else None
+
+    def _on_motion(self, event):
+        hit = self._row_index_at(event.x, event.y) is not None
+        if hit != self._hovering:
+            self._hovering = hit
+            self.configure(cursor="hand2" if hit else "")
+
+    def _on_leave(self, _event=None):
+        if self._hovering:
+            self._hovering = False
+            self.configure(cursor="")
 
     @staticmethod
     def _rounded_points(x1, y1, x2, y2, radius):

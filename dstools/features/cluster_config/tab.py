@@ -18,6 +18,7 @@ from dstools.shared import app_settings
 from dstools.shared.token_manager import (
     ServerTokenKind,
     classify_token,
+    extract_token_owner_id,
     is_valid_token,
     mask_token,
     read_token,
@@ -1584,7 +1585,18 @@ class ClusterConfigTab:
         path = getattr(cluster, path_attr)
         ids = read_adminlist(path) if path else []
         for a in ids: listbox.insert(tk.END, a)
-        if not ids: listbox.insert(tk.END, empty_text)
+        # 服务器令牌所有者账号天然拥有这个专服的管理员权限——游戏引擎自
+        # 己认的，不需要写进 adminlist.txt 也生效。这里只在管理员页签追
+        # 加一条只读提示，帮用户确认"这个号已经是管理员了"，不写文件、
+        # 不能选中删除（真选中点删除也只是 remove_admin() 在文件里找不
+        # 到这个字符串、no-op，不会误删真实条目）。
+        has_token_hint = False
+        if path_attr == "adminlist_path" and cluster.source == SaveSource.SERVER:
+            owner_id = extract_token_owner_id(read_token(cluster.token_path)) if cluster.token_path else None
+            if owner_id and owner_id not in ids:
+                listbox.insert(tk.END, t("admin.token_owner_hint", id=owner_id))
+                has_token_hint = True
+        if not ids and not has_token_hint: listbox.insert(tk.END, empty_text)
         # 添加按钮始终可用 -- 对应的文件不存在时 add_admin() 会自己创建，
         # 不需要先有文件才能添加。重新加载会清空选择，因此删除按钮必须
         # 保持禁用，直到用户明确选中一个真实 ID。

@@ -21,6 +21,7 @@ from dstools.features.mod.manager import list_mods, load_mod_overrides
 from dstools.features.mod.parser import resolve_wegame_client_mods_dir
 from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.features.save_browser.reader import get_save_summary, list_save_sessions, list_session_players
+from dstools.features.save_browser.connection_log import collect_player_connection_log
 from dstools.shared.gui import dpi, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
@@ -576,6 +577,7 @@ class SaveBrowserTab:
         wegame_client_mods_dir = resolve_wegame_client_mods_dir(platform)
         sessions = []
         mod_overrides_path = None
+        shard_path = None
         if c:
             for s in c.shards:
                 if s.name == self.shard_var.get():
@@ -583,6 +585,7 @@ class SaveBrowserTab:
                     for session in sessions:
                         session.cluster_name = c.name; session.shard_name = s.name; session.source = c.source
                     mod_overrides_path = s.mod_overrides_path
+                    shard_path = s.path
                     break
 
         if not sessions:
@@ -615,7 +618,7 @@ class SaveBrowserTab:
         self._resync_players_section_bg()
 
         session.players = list_session_players(session)
-        self._refresh_players(session, mod_overrides_path, platform, wegame_client_mods_dir)
+        self._refresh_players(session, mod_overrides_path, platform, wegame_client_mods_dir, shard_path)
 
     def _resync_players_section_bg(self):
         """"基本信息"（info_frame）每次变高/变矮，都会把下面 pf 这一整
@@ -734,7 +737,7 @@ class SaveBrowserTab:
         ttk.Label(rows_frame, text=t("save.loading"), foreground=theme.TEXT_MUTED).pack(pady=10)
 
     def _refresh_players(self, session, mod_overrides_path=None,
-                          platform=Platform.STEAM, wegame_client_mods_dir=None):
+                          platform=Platform.STEAM, wegame_client_mods_dir=None, shard_path=None):
         rows_frame = self._players_rows_frame
         canvas = self._players_canvas
         for w in rows_frame.winfo_children(): w.destroy()
@@ -743,6 +746,12 @@ class SaveBrowserTab:
         photo_refs = []
         self._player_photo_refs = photo_refs
         players = session.players if session else []
+        # 日志解析放在这里做一次（不是每个玩家各读一遍 server_log.txt），
+        # 一个世界的日志文件对这批玩家是共用的。session 为空（没有存档）
+        # 时没有 session_id 可比对，直接给空字典。
+        connection_log = {}
+        if session and shard_path:
+            connection_log = collect_player_connection_log(shard_path)
         if not players:
             ttk.Label(rows_frame, text=t("save.no_players"), foreground=theme.TEXT_MUTED).pack(pady=10)
         else:
@@ -758,13 +767,14 @@ class SaveBrowserTab:
                 (id_font.measure(id_prefix + p.player_id) for p in players), default=0,
             ) + 6
             for player in players:
+                timestamps = connection_log.get((session.session_id, player.player_id), []) if session else []
                 self._build_player_row(rows_frame, player, mod_overrides_path, photo_refs, id_col_width,
-                                        platform, wegame_client_mods_dir)
+                                        platform, wegame_client_mods_dir, timestamps)
         self._canvas_bind_mousewheel(canvas, canvas)
         self._canvas_bind_mousewheel(rows_frame, canvas)
 
     def _build_player_row(self, parent, player, mod_overrides_path, photo_refs, id_col_width,
-                           platform=Platform.STEAM, wegame_client_mods_dir=None):
+                           platform=Platform.STEAM, wegame_client_mods_dir=None, connection_timestamps=()):
         bg = theme.CARD_BG_ALT
         row = tk.Frame(parent, background=bg, highlightbackground=theme.CARD_BORDER,
                        highlightthickness=1)
@@ -799,14 +809,14 @@ class SaveBrowserTab:
                     fg=theme.TEXT, background=bg, anchor=tk.W).pack(fill=tk.X)
             tk.Label(body, text=t("save.player_parse_error"), font=theme.font_tuple(theme.FONT_SIZE_XS), fg=theme.ERROR,
                     background=bg, anchor=tk.W).pack(fill=tk.X)
-            self._build_player_id_row(body, player, bg, id_col_width)
+            self._build_player_id_row(body, player, bg, id_col_width, connection_timestamps)
         else:
             header = tk.Frame(body, background=bg)
             header.pack(fill=tk.X)
             tk.Label(header, text=name, font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True), fg=theme.TEXT,
                     background=bg, anchor=tk.W).pack(side=tk.LEFT)
 
-            self._build_player_id_row(body, player, bg, id_col_width)
+            self._build_player_id_row(body, player, bg, id_col_width, connection_timestamps)
 
             # 存档文件里没有"上限"这个数（不同角色/模组血量上限不一样），
             # 这里只显示原始数值，不猜一个上限画成百分比进度条。
@@ -842,7 +852,7 @@ class SaveBrowserTab:
 
         body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    def _build_player_id_row(self, parent, player, bg, id_col_width):
+    def _build_player_id_row(self, parent, player, bg, id_col_width, connection_timestamps=()):
         """"玩家标识"那一行——标识本身 + 备注（可编辑，按玩家标识全局
         存一份，同一个人在不同存档下认得出来）+ 打开路径（这个玩家自己
         那个子文件夹，不是整个会话的文件夹）。
@@ -851,6 +861,10 @@ class SaveBrowserTab:
         见 _refresh_players）的容器，标识 Label 装在里面而不是直接
         pack(side=LEFT)——固定宽度才能让"备注:"起始位置在每一行都对齐，
         不然标识越短的行"备注:"就会越往左缩。
+
+        connection_timestamps 是从 server_log.txt 解析出的这个玩家在这
+        个会话里"续接进入"的时间戳列表（见 connection_log.py），只有
+        HH:MM:SS、没有日期，只做参考展示，不当成精确时间线。
         """
         id_row = tk.Frame(parent, background=bg)
         id_row.pack(fill=tk.X, pady=(2,0))
@@ -891,6 +905,20 @@ class SaveBrowserTab:
 
         note_entry.bind("<FocusOut>", _save_note)
         note_entry.bind("<Return>", _save_note_on_return)
+
+        if connection_timestamps:
+            conn_row = tk.Frame(parent, background=bg)
+            conn_row.pack(fill=tk.X, pady=(2, 0))
+            tk.Label(
+                conn_row,
+                text=t(
+                    "save.player_connection_log",
+                    last=connection_timestamps[-1],
+                    count=len(connection_timestamps),
+                ),
+                font=theme.font_tuple(theme.FONT_SIZE_XS),
+                fg=theme.TEXT_MUTED, background=bg, anchor=tk.W,
+            ).pack(side=tk.LEFT)
 
     def _open_player_path(self, player):
         if not player.save_file:

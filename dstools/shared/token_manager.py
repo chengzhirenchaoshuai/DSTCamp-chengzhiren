@@ -27,6 +27,21 @@ def classify_token(token: str) -> ServerTokenKind:
     return ServerTokenKind.OLD if len(parts) == 3 else ServerTokenKind.NEW
 
 
+def extract_token_owner_id(token: str) -> str | None:
+    """从令牌正文里取出所有者的 Klei 用户 ID（KU_/OU_）。
+
+    这个账号是这份专服令牌的生成/授权者，游戏引擎自己就认它在这个专服
+    上天然拥有管理员权限——不需要写进 adminlist.txt 也生效，不是
+    DSTCamp 决定的行为。令牌分段结构和 classify_token() 依据的是同一套
+    实测格式（第二段就是明文 ID）；格式认不出来就返回 None，不去猜测
+    拼凑一个可能是错的 ID。
+    """
+    parts = token.strip().split("^")
+    if len(parts) < 2 or parts[0] != "pds-g" or not parts[1].startswith(("KU_", "OU_")):
+        return None
+    return parts[1]
+
+
 def token_fingerprint(token: str) -> str:
     """返回只用于本机占用状态关联的不可逆指纹，不暴露令牌正文。"""
     return hashlib.sha256(token.strip().encode("utf-8")).hexdigest()

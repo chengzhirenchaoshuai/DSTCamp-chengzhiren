@@ -192,6 +192,7 @@ STRINGS = {
         "save.player_parse_error": "该玩家存档解析失败",
         "save.player_note_label": "备注",
         "save.player_open_path": "打开路径",
+        "save.player_connection_log": "连接记录（来自服务器日志）：最近 {last} · 共 {count} 次",
         "save.stat_character": "角色",
         "save.stat_health": "血量",
         "save.stat_sanity": "理智",
@@ -430,6 +431,7 @@ STRINGS = {
         "admin.pick_save_title": "从存档选择用户",
         "admin.pick_save_prompt": "该服务器存档里出现过的用户 ID（需要先在房间设置里关闭 encode_user_path，新连接的玩家才会显示真实 ID，历史记录不受影响）：",
         "admin.pick_save_empty": "存档里没有找到可用的真实用户 ID——可能是 encode_user_path 仍处于开启状态（文件夹名是混淆编码），或者还没有玩家连接过。",
+        "admin.token_owner_hint": "{id}（服务器令牌账号，自动拥有管理员权限，无需手动添加）",
         # Blocklist / 黑名单 (NEW)
         "blocklist.title": "黑名单",
         "blocklist.empty": "(无黑名单人员)",
@@ -1268,6 +1270,7 @@ STRINGS = {
         "save.player_parse_error": "Failed to parse this player's save data",
         "save.player_note_label": "Note",
         "save.player_open_path": "Open Path",
+        "save.player_connection_log": "Connection log (from server log): last {last} - {count} time(s)",
         "save.stat_character": "Character",
         "save.stat_health": "Health",
         "save.stat_sanity": "Sanity",
@@ -1506,6 +1509,7 @@ STRINGS = {
         "admin.pick_save_title": "Pick User from Save",
         "admin.pick_save_prompt": "User IDs seen in this server's saves (turn off encode_user_path in room settings first -- only newly connected players will show a real ID; past history is unaffected):",
         "admin.pick_save_empty": "No usable real user ID found in the saves -- encode_user_path may still be on (folder names are obfuscated), or no player has connected yet.",
+        "admin.token_owner_hint": "{id} (server token owner -- automatically an admin, no need to add manually)",
         # 黑名单
         "blocklist.title": "Blocklist",
         "blocklist.empty": "(No blocked players)",
