@@ -1224,7 +1224,16 @@ class ClusterConfigTab:
         重建瞬间那个还没定形的窄宽度布局定型，GAMEPLAY/MISC、SHARD/STEAM
         两列因为一列里塞了两个小节，看起来比只有一个大节的 NETWORK 更容
         易错位。手动切子页签或点刷新之所以能修好，是因为那时页面已经
-        真正被 Tk 映射过，走的是同一段 ``_present_sub_page()`` 逻辑。"""
+        真正被 Tk 映射过，走的是同一段 ``_present_sub_page()`` 逻辑。
+
+        上面这段 was_mapped 判断只要 page 之前确实映射过就会
+        ``page.pack_forget()`` 先把它取消映射，不管当前停在哪个子页——
+        finally 这里必须无条件把 ``_sub_tab_key`` 对应的那个子页重新呈
+        现出来，不能只处理 "cluster"：之前只判断 "cluster" 时，停在"世
+        界设置/管理员/黑名单/服务器令牌"这几个子页上点刷新，页面会被取
+        消映射之后再也没人把它 pack 回去，整块区域看起来就是空白，要手
+        动切到别的子页再切回来才会恢复（真机反馈过"除了房间设置，其他
+        所有页签点击刷新之后白屏了，不会再显示"）。"""
         page = self._sub_pages.get(self._sub_tab_key)
         was_mapped = bool(page is not None and page.winfo_ismapped())
         if was_mapped:
@@ -1232,8 +1241,7 @@ class ClusterConfigTab:
         try:
             self._load_config_impl()
         finally:
-            if self._sub_tab_key == "cluster":
-                self._present_sub_page(self._sub_tab_key)
+            self._present_sub_page(self._sub_tab_key)
 
     def _load_config_impl(self):
         self._clear_form()
