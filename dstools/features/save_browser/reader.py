@@ -300,12 +300,16 @@ def list_session_players(session: SaveSession) -> list[PlayerCharacterSave]:
 def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
     """扫描一组世界（shard）下的全部存档会话，收集出现过的玩家真实 ID。
 
-    只保留形如 KU_/OU_ 的 ID——cluster.ini [ACCOUNT] encode_user_path 打开
-    时文件夹名是混淆编码，不是真实 Klei 账号 ID（见 PlayerCharacterSave 的
-    说明），这里直接过滤掉，避免调用方把混淆值当成真实 ID 写进 adminlist/
-    blocklist。返回按 ID 排序、去重后的 (player_id, 角色显示名提示) 列表；
-    角色名只是给人看着好认的辅助信息，识别不出的角色（模组角色）原样显示
-    prefab，解析失败的槽位（没有角色名）留空不影响 ID 本身的收集。
+    两种来源，日志能核实到的优先：
+    1. server_log.txt 能关联到真实账号 ID 的（见
+       connection_log.collect_player_identity_log）——这种连文件夹名本
+       身是混淆编码的玩家也能拿到真实 ID，昵称也是日志里实测到的，不是
+       猜的。
+    2. 日志关联不到、但文件夹名本身就是 KU_/OU_ 开头的——encode_user_path
+       关闭后才会是这种明文文件夹名（见 PlayerCharacterSave 的说明），用
+       角色名当辨识提示（角色名不是玩家昵称，只是"看着比裸 ID 好认"）。
+       混淆编码、日志又关联不上的文件夹名直接跳过，不拿混淆值冒充真实
+       ID 写进 adminlist/blocklist。
 
     真机存档实测过：encode_user_path 关闭后，文件夹名不总是等于干净的
     KU_xxx——见过 "KU_dwt6dfPl_" 这种带一个尾部下划线的文件夹名，跟这个
@@ -314,20 +318,42 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
     直接把带下划线的原样交给调用方去写 adminlist.txt 会因为多一个字符
     匹配不上真实账号，管理员/黑名单形同虚设——这里统一去掉这一个尾部下
     划线再收集。
+
+    Returns:
+        按账号 ID 排序、去重后的 (账号ID, 辨识提示) 列表——提示优先用日志
+        昵称，查不到昵称退回角色显示名，都没有就是空字符串。
     """
     from dstools.features.save_browser.character_names import get_character_display_name
+    from dstools.features.save_browser.connection_log import collect_player_identity_log
 
-    seen: dict[str, str] = {}
+    # 同一个真实账号可能在好几个不同的存档文件夹（不同次连接留下的）下
+    # 都出现过——有的能查到昵称，有的只有角色名。昵称是日志实测到的更
+    # 可信辨识信息，不能被后面遍历到的、只查到角色名的记录覆盖掉，所以
+    # 昵称和角色名分开存，最后按"有昵称用昵称、没有才退回角色名"合并，
+    # 不看遍历顺序。
+    seen_ids: set[str] = set()
+    nicknames: dict[str, str] = {}
+    character_hints: dict[str, str] = {}
     for shard in shards:
+        identity_log = collect_player_identity_log(shard.path)
         for session in list_save_sessions(shard.path):
             for player in list_session_players(session):
-                pid = player.player_id
-                if pid[:3] not in ("KU_", "OU_"):
-                    continue
-                if pid.endswith("_"):
-                    pid = pid[:-1]
-                if player.character:
-                    seen[pid] = get_character_display_name(player.character)
+                identity = identity_log.get(player.player_id)
+                if identity:
+                    account_id, nickname = identity
                 else:
-                    seen.setdefault(pid, "")
-    return sorted(seen.items())
+                    account_id, nickname = player.player_id, None
+
+                if account_id[:3] not in ("KU_", "OU_"):
+                    continue
+                if account_id.endswith("_"):
+                    account_id = account_id[:-1]
+
+                seen_ids.add(account_id)
+                if nickname:
+                    nicknames[account_id] = nickname
+                elif player.character and account_id not in character_hints:
+                    character_hints[account_id] = get_character_display_name(player.character)
+    return sorted(
+        (pid, nicknames.get(pid) or character_hints.get(pid, "")) for pid in seen_ids
+    )

@@ -209,16 +209,22 @@ class _IdInputDialog:
 
 
 class _SaveUserPickDialog:
-    """从存档里扫描出的真实用户 ID 中挑一个，返回给调用方去加管理员/黑名单。
+    """从存档/日志里扫描出的真实用户中挑一个，快速加入或移出当前这份名单
+    （管理员/黑名单，由调用方决定）。
 
-    只在 encode_user_path 关闭之后新连接的玩家才会在存档里留下真实 ID
-    （见 list_known_player_ids 的说明），这里拿到的 candidates 已经是过滤
-    过的结果，不需要再校验格式。
+    candidates 是 list_known_player_ids() 的结果（真实 ID + 昵称/角色名
+    辨识提示，不需要再校验格式）；current_ids 是这份名单文件里已有的
+    ID，用来判断每个候选人当前是"可以添加"还是"可以移除"——写文件的时
+    候始终只用 ID 本身，昵称只在这个弹窗里给人看，不会被写进去。
+
+    结果是 (action, id) 二元组，action 是 "add" 或 "remove"；取消/没选
+    中任何一条时是 None。
     """
 
-    def __init__(self, parent_widget, candidates: list[tuple[str, str]]):
-        self.result: str | None = None
+    def __init__(self, parent_widget, candidates: list[tuple[str, str]], current_ids: list[str]):
+        self.result: tuple[str, str] | None = None
         self._ids = [pid for pid, _hint in candidates]
+        self._current_ids = set(current_ids)
         win = tk.Toplevel(parent_widget)
         self.win = win
         win.withdraw()
@@ -240,32 +246,59 @@ class _SaveUserPickDialog:
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.listbox.configure(yscrollcommand=scroll.set)
         for pid, hint in candidates:
-            self.listbox.insert(tk.END, f"{pid}   ({hint})" if hint else pid)
-        self.listbox.bind("<Double-Button-1>", lambda _e: self._confirm())
+            label = f"{pid}   ({hint})" if hint else pid
+            if pid in self._current_ids:
+                label += f"  {t('admin.pick_save_already_in_list')}"
+            self.listbox.insert(tk.END, label)
+        self.listbox.bind("<<ListboxSelect>>", lambda _e: self._sync_buttons())
+        self.listbox.bind("<Double-Button-1>", lambda _e: self._confirm_default())
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
         ttk.Button(
             btn_frame, text=t("dlg.cancel_btn"), command=self._cancel,
         ).pack(side=tk.LEFT)
-        ttk.Button(
-            btn_frame, text=t("dlg.confirm_btn"), command=self._confirm,
-        ).pack(side=tk.RIGHT)
+        self.remove_btn = ttk.Button(
+            btn_frame, text=t("admin.remove"), command=lambda: self._confirm("remove"),
+        )
+        self.remove_btn.pack(side=tk.RIGHT)
+        self.add_btn = ttk.Button(
+            btn_frame, text=t("admin.add"), command=lambda: self._confirm("add"),
+        )
+        self.add_btn.pack(side=tk.RIGHT, padx=(0, 6))
+        self._sync_buttons()
 
         win.bind("<Escape>", lambda e: self._cancel())
         win.protocol("WM_DELETE_WINDOW", self._cancel)
 
         root = parent_widget.winfo_toplevel()
-        center_over_parent(win, root, min_width=500)
+        center_over_parent(win, root, min_width=520)
         win.transient(root)
         win.deiconify()
         win.grab_set()
         win.wait_window()
 
-    def _confirm(self):
+    def _selected_id(self) -> str | None:
         selection = self.listbox.curselection()
-        if selection:
-            self.result = self._ids[selection[0]]
+        return self._ids[selection[0]] if selection else None
+
+    def _sync_buttons(self):
+        pid = self._selected_id()
+        in_list = pid is not None and pid in self._current_ids
+        self.add_btn.configure(state=tk.DISABLED if (pid is None or in_list) else tk.NORMAL)
+        self.remove_btn.configure(state=tk.NORMAL if in_list else tk.DISABLED)
+
+    def _confirm_default(self):
+        pid = self._selected_id()
+        if pid is None:
+            return
+        self._confirm("remove" if pid in self._current_ids else "add")
+
+    def _confirm(self, action):
+        pid = self._selected_id()
+        if pid is None:
+            return
+        self.result = (action, pid)
         self.win.destroy()
 
     def _cancel(self):
@@ -1640,18 +1673,26 @@ class ClusterConfigTab:
         self._commit_id_add(c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn)
 
     def _pick_id_from_save(self, path_attr, default_filename, listbox, status, add_btn, remove_btn):
-        # 从当前存档里扫描出来的真实用户 ID 中选一个直接加入——只有关闭
-        # encode_user_path 之后新连接玩家的文件夹名才是明文 ID，list_known_
-        # player_ids() 已经按前缀过滤过，这里不需要再校验格式。
+        # 从当前存档/日志里扫描出来的真实用户中选一个，直接加入或移出这
+        # 份名单——list_known_player_ids() 已经把能核实到的真实 ID 和昵
+        # 称/角色名提示都准备好了，这里不需要再校验格式。
         c = self._get_cluster()
         if not c: return
         candidates = list_known_player_ids(c.shards)
         if not candidates:
-            status.configure(text=t("admin.pick_save_empty"))
+            # 扫不到人是个容易被忽略的结果（比如误以为按钮没反应），弹
+            # 窗提醒比状态栏一行小字更不容易漏看。
+            dlg.show_info(self.frame, t("admin.pick_save_title"), t("admin.pick_save_empty"))
             return
-        kid = _SaveUserPickDialog(self.frame, candidates).result
-        if not kid: return
-        self._commit_id_add(c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn)
+        path = getattr(c, path_attr)
+        current_ids = read_adminlist(path) if path else []
+        result = _SaveUserPickDialog(self.frame, candidates, current_ids).result
+        if not result: return
+        action, kid = result
+        if action == "add":
+            self._commit_id_add(c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn)
+        else:
+            self._commit_id_remove(c, path_attr, kid, listbox, status, add_btn, remove_btn)
 
     def _commit_id_add(self, c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn):
         path = getattr(c, path_attr) or (c.path / default_filename)
@@ -1660,6 +1701,12 @@ class ClusterConfigTab:
             status.configure(text=t("admin.added", id=kid))
         else:
             status.configure(text=t("admin.already_exists"))
+        self._load_id_list_into(c, path_attr, listbox, add_btn, remove_btn)
+
+    def _commit_id_remove(self, c, path_attr, kid, listbox, status, add_btn, remove_btn):
+        path = getattr(c, path_attr, None)
+        if path and remove_admin(path, kid):
+            status.configure(text=t("admin.removed", id=kid))
         self._load_id_list_into(c, path_attr, listbox, add_btn, remove_btn)
 
     def _remove_id_entry(self, path_attr, listbox, status, add_btn, remove_btn):

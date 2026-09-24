@@ -431,8 +431,9 @@ STRINGS = {
         "admin.invalid_format": "格式不正确，DST 用户 ID 应形如 KU_XXXXXXXX 或 OU_XXXXXXXX。",
         "admin.pick_from_save": "从存档选择",
         "admin.pick_save_title": "从存档选择用户",
-        "admin.pick_save_prompt": "该服务器存档里出现过的用户 ID（需要先在房间设置里关闭 encode_user_path，新连接的玩家才会显示真实 ID，历史记录不受影响）：",
-        "admin.pick_save_empty": "存档里没有找到可用的真实用户 ID——可能是 encode_user_path 仍处于开启状态（文件夹名是混淆编码），或者还没有玩家连接过。",
+        "admin.pick_save_prompt": "该服务器存档/日志里能核实到真实账号的用户（双击可直接对已选中的一条执行添加/移出）：",
+        "admin.pick_save_empty": "存档里没有找到可用的真实用户 ID——可能是 encode_user_path 仍处于开启状态（文件夹名是混淆编码）、服务器日志也关联不出真实账号，或者还没有玩家连接过。",
+        "admin.pick_save_already_in_list": "【已在名单中】",
         "admin.token_owner_hint": "{id}（服务器令牌账号，自动拥有管理员权限，无需手动添加）",
         # Blocklist / 黑名单 (NEW)
         "blocklist.title": "黑名单",
@@ -1511,8 +1512,9 @@ STRINGS = {
         "admin.invalid_format": "Invalid format -- a DST user ID should look like KU_XXXXXXXX or OU_XXXXXXXX.",
         "admin.pick_from_save": "Pick from Save",
         "admin.pick_save_title": "Pick User from Save",
-        "admin.pick_save_prompt": "User IDs seen in this server's saves (turn off encode_user_path in room settings first -- only newly connected players will show a real ID; past history is unaffected):",
-        "admin.pick_save_empty": "No usable real user ID found in the saves -- encode_user_path may still be on (folder names are obfuscated), or no player has connected yet.",
+        "admin.pick_save_prompt": "Users whose real account could be verified from this server's saves/logs (double-click a selected row to add/remove it directly):",
+        "admin.pick_save_empty": "No usable real user ID found in the saves -- encode_user_path may still be on (folder names are obfuscated), the server log couldn't link a real account either, or no player has connected yet.",
+        "admin.pick_save_already_in_list": "[Already in list]",
         "admin.token_owner_hint": "{id} (server token owner -- automatically an admin, no need to add manually)",
         # 黑名单
         "blocklist.title": "Blocklist",
