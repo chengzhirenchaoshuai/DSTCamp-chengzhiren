@@ -904,26 +904,41 @@ def test_transparent_id_list_keeps_background_above_fallback():
 
 
 def test_id_remove_button_requires_real_selection():
-    """管理员和黑名单未选中真实 ID 时，删除按钮必须保持只读。"""
+    """管理员和黑名单未选中真实 ID 时，删除按钮必须保持只读；选中令牌
+    所有者的只读提示条目（见 _load_id_list_into 里的 token_owner_hint）
+    时也必须保持只读，不能靠 remove_admin() 文件里找不到这个字符串默默
+    no-op——真机反馈过，删除按钮还能点会让人以为真的能删。"""
     from dstools.features.cluster_config.tab import ClusterConfigTab
+
+    # _sync_id_remove_state 现在要读 self._admin_token_hint_text，不再是
+    # 纯 staticmethod；用 __new__ 跳过 __init__（不需要真建一整个 Tk 页
+    # 签）只手动补这一个属性。
+    tab = ClusterConfigTab.__new__(ClusterConfigTab)
+    tab._admin_token_hint_text = None
 
     button = Mock()
     listbox = Mock()
     listbox.curselection.return_value = ()
-    ClusterConfigTab._sync_id_remove_state(listbox, button)
+    tab._sync_id_remove_state(listbox, button)
     button.configure.assert_called_with(state=tk.DISABLED)
 
     button.reset_mock()
     listbox.curselection.return_value = (0,)
     listbox.get.return_value = t("admin.empty")
-    ClusterConfigTab._sync_id_remove_state(listbox, button)
+    tab._sync_id_remove_state(listbox, button)
     button.configure.assert_called_with(state=tk.DISABLED)
 
     button.reset_mock()
     listbox.get.return_value = "KU_example"
-    ClusterConfigTab._sync_id_remove_state(listbox, button)
+    tab._sync_id_remove_state(listbox, button)
     button.configure.assert_called_with(state=tk.NORMAL)
-    print("  PASS: 管理员/黑名单删除按钮只在选中真实 ID 后启用")
+
+    button.reset_mock()
+    tab._admin_token_hint_text = "KU_tokenowner999（服务器令牌账号，自动拥有管理员权限，无需手动添加）"
+    listbox.get.return_value = tab._admin_token_hint_text
+    tab._sync_id_remove_state(listbox, button)
+    button.configure.assert_called_with(state=tk.DISABLED)
+    print("  PASS: 管理员/黑名单删除按钮只在选中真实 ID 后启用，令牌所有者提示条目保持只读")
 
 
 def test_selfhost_worker_ui_dispatch_contract():

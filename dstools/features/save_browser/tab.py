@@ -21,7 +21,7 @@ from dstools.features.mod.manager import list_mods, load_mod_overrides
 from dstools.features.mod.parser import resolve_wegame_client_mods_dir
 from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.features.save_browser.reader import get_save_summary, list_save_sessions, list_session_players
-from dstools.features.save_browser.connection_log import collect_player_connection_log
+from dstools.features.save_browser.connection_log import collect_player_connection_log, collect_player_identity_log
 from dstools.shared.gui import dpi, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
@@ -750,8 +750,10 @@ class SaveBrowserTab:
         # 一个世界的日志文件对这批玩家是共用的。session 为空（没有存档）
         # 时没有 session_id 可比对，直接给空字典。
         connection_log = {}
+        identity_log = {}
         if session and shard_path:
             connection_log = collect_player_connection_log(shard_path)
+            identity_log = collect_player_identity_log(shard_path)
         if not players:
             ttk.Label(rows_frame, text=t("save.no_players"), foreground=theme.TEXT_MUTED).pack(pady=10)
         else:
@@ -768,13 +770,15 @@ class SaveBrowserTab:
             ) + 6
             for player in players:
                 timestamps = connection_log.get((session.session_id, player.player_id), []) if session else []
+                identity = identity_log.get(player.player_id) if session else None
                 self._build_player_row(rows_frame, player, mod_overrides_path, photo_refs, id_col_width,
-                                        platform, wegame_client_mods_dir, timestamps)
+                                        platform, wegame_client_mods_dir, timestamps, identity)
         self._canvas_bind_mousewheel(canvas, canvas)
         self._canvas_bind_mousewheel(rows_frame, canvas)
 
     def _build_player_row(self, parent, player, mod_overrides_path, photo_refs, id_col_width,
-                           platform=Platform.STEAM, wegame_client_mods_dir=None, connection_timestamps=()):
+                           platform=Platform.STEAM, wegame_client_mods_dir=None, connection_timestamps=(),
+                           identity=None):
         bg = theme.CARD_BG_ALT
         row = tk.Frame(parent, background=bg, highlightbackground=theme.CARD_BORDER,
                        highlightthickness=1)
@@ -809,14 +813,14 @@ class SaveBrowserTab:
                     fg=theme.TEXT, background=bg, anchor=tk.W).pack(fill=tk.X)
             tk.Label(body, text=t("save.player_parse_error"), font=theme.font_tuple(theme.FONT_SIZE_XS), fg=theme.ERROR,
                     background=bg, anchor=tk.W).pack(fill=tk.X)
-            self._build_player_id_row(body, player, bg, id_col_width, connection_timestamps)
+            self._build_player_id_row(body, player, bg, id_col_width, connection_timestamps, identity)
         else:
             header = tk.Frame(body, background=bg)
             header.pack(fill=tk.X)
             tk.Label(header, text=name, font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True), fg=theme.TEXT,
                     background=bg, anchor=tk.W).pack(side=tk.LEFT)
 
-            self._build_player_id_row(body, player, bg, id_col_width, connection_timestamps)
+            self._build_player_id_row(body, player, bg, id_col_width, connection_timestamps, identity)
 
             # 存档文件里没有"上限"这个数（不同角色/模组血量上限不一样），
             # 这里只显示原始数值，不猜一个上限画成百分比进度条。
@@ -852,7 +856,7 @@ class SaveBrowserTab:
 
         body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    def _build_player_id_row(self, parent, player, bg, id_col_width, connection_timestamps=()):
+    def _build_player_id_row(self, parent, player, bg, id_col_width, connection_timestamps=(), identity=None):
         """"玩家标识"那一行——标识本身 + 备注（可编辑，按玩家标识全局
         存一份，同一个人在不同存档下认得出来）+ 打开路径（这个玩家自己
         那个子文件夹，不是整个会话的文件夹）。
@@ -865,6 +869,11 @@ class SaveBrowserTab:
         connection_timestamps 是从 server_log.txt 解析出的这个玩家在这
         个会话里"续接进入"的时间戳列表（见 connection_log.py），只有
         HH:MM:SS、没有日期，只做参考展示，不当成精确时间线。
+
+        identity 是 (账号ID, 昵称) 或 None——同样来自 server_log.txt（见
+        connection_log.collect_player_identity_log），只有日志里能找到
+        可靠关联时才有值，昵称部分可能是空字符串（账号 ID 查到了但没查
+        到对应的 "Client authenticated" 记录）。
         """
         id_row = tk.Frame(parent, background=bg)
         id_row.pack(fill=tk.X, pady=(2,0))
@@ -905,6 +914,20 @@ class SaveBrowserTab:
 
         note_entry.bind("<FocusOut>", _save_note)
         note_entry.bind("<Return>", _save_note_on_return)
+
+        if identity:
+            account_id, nickname = identity
+            identity_row = tk.Frame(parent, background=bg)
+            identity_row.pack(fill=tk.X, pady=(2, 0))
+            text = (
+                t("save.player_identity_with_nickname", id=account_id, nickname=nickname)
+                if nickname else
+                t("save.player_identity_no_nickname", id=account_id)
+            )
+            tk.Label(
+                identity_row, text=text, font=theme.font_tuple(theme.FONT_SIZE_XS),
+                fg=theme.TEXT_MUTED, background=bg, anchor=tk.W,
+            ).pack(side=tk.LEFT)
 
         if connection_timestamps:
             conn_row = tk.Frame(parent, background=bg)

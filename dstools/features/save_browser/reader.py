@@ -306,6 +306,14 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
     blocklist。返回按 ID 排序、去重后的 (player_id, 角色显示名提示) 列表；
     角色名只是给人看着好认的辅助信息，识别不出的角色（模组角色）原样显示
     prefab，解析失败的槽位（没有角色名）留空不影响 ID 本身的收集。
+
+    真机存档实测过：encode_user_path 关闭后，文件夹名不总是等于干净的
+    KU_xxx——见过 "KU_dwt6dfPl_" 这种带一个尾部下划线的文件夹名，跟这个
+    账号真实 ID（同一台机器 adminlist.txt 里记的、以及 server_log.txt
+    "Client authenticated" 行里打印的）都是 "KU_dwt6dfPl"，没有下划线。
+    直接把带下划线的原样交给调用方去写 adminlist.txt 会因为多一个字符
+    匹配不上真实账号，管理员/黑名单形同虚设——这里统一去掉这一个尾部下
+    划线再收集。
     """
     from dstools.features.save_browser.character_names import get_character_display_name
 
@@ -316,6 +324,8 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
                 pid = player.player_id
                 if pid[:3] not in ("KU_", "OU_"):
                     continue
+                if pid.endswith("_"):
+                    pid = pid[:-1]
                 if player.character:
                     seen[pid] = get_character_display_name(player.character)
                 else:
