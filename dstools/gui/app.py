@@ -2577,7 +2577,24 @@ class DSToolsApp:
             # refresh_full() 是可选接口（只有 ModManagerTab 定义了它），
             # 其它页签仍然只用各自普通的 refresh()。
             self._full_refresh_tabs.discard(key)
-            self._refresh_tab(key, full=True)
+            # 服务器配置页 refresh() 末尾自己会做一次背景重绘（
+            # ClusterConfigTab._present_sub_page() -> refresh_bg_surface()，
+            # 停在"世界设置/管理员/黑名单/服务器令牌"这几个子页时才需要，
+            # 不然子页刷新完不会被重新 pack 回可见区域），但下面几行马上
+            # 就要做一次同等力度的全窗口强制重绘（_force_refresh_bg_now()）
+            # ——两次连着做是真机反馈过的"刷新后变慢，要等1~2秒"的根因。
+            # 只有这里（app._refresh() 自己的循环）能保证背景一定会被后
+            # 面这次强制重绘补上，_on_tab_select() 切到标脏页签时没有这
+            # 道收尾、不能这样跳过，所以这个标记只在这一次调用前后临时置
+            # 位，不做成 cluster_tab 的默认行为。
+            if key == "server":
+                self.cluster_tab._skip_present_bg_refresh = True
+                try:
+                    self._refresh_tab(key, full=True)
+                finally:
+                    self.cluster_tab._skip_present_bg_refresh = False
+            else:
+                self._refresh_tab(key, full=True)
         # “刷新全部”同时承担用户主动修复视觉异常的入口。业务页签刷新可能
         # 改变容器位置但不改变尺寸，必须等几何传播完成后强制重建共享图并
         # 使每个可见表面的切片缓存失效，否则错位切片会继续被缓存命中。

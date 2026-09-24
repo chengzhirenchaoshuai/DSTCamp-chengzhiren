@@ -793,6 +793,11 @@ class ClusterConfigTab:
         # <<ListboxSelect>> 绑定触发一次（构造阶段列表还是空的，但绑定
         # 已经生效），这里先给个 None 兜底，不然会在属性还不存在时报错。
         self._admin_token_hint_text = None
+        # app._refresh()（F5）在 "server" 页签这一次调用前后临时置位，跳
+        # 过 _present_sub_page() 自己的背景重绘，交给它收尾时统一画一次
+        # （见 _present_sub_page()/app.py._refresh() 的说明）；平时保持
+        # False，走原来每次都画的路径。
+        self._skip_present_bg_refresh = False
         self._admin_frame = self._layout_frame(self._sub_content)
         (self._admin_title_lbl, self._admin_listbox, self._admin_add_btn,
          self._admin_remove_btn, self._admin_pick_btn,
@@ -850,7 +855,22 @@ class ClusterConfigTab:
             page.pack(fill=tk.BOTH, expand=True)
 
     def _present_sub_page(self, key=None):
-        """在布局完成后一次性显示页签并刷新对应背景。"""
+        """在布局完成后一次性显示页签并刷新对应背景。
+
+        背景重绘（refresh_bg_surface / refresh_descendants）这一步实测
+        开销不小（重建共享背景图 + 强制刷新所有可见表面切片）。F5"刷新
+        全部"会在这次调用之后紧接着自己再做一遍同等力度的全窗口强制重
+        绘（app._refresh() -> _force_refresh_bg_now()，用来修复几何变化
+        后可能错位的背景切片缓存），如果这里也画一次就是同一份重活连着
+        算两遍——真机反馈过"刷新后没有之前快，要等 1~2 秒才显示"。
+        self._skip_present_bg_refresh 由 refresh_full()（F5 专用入口）临
+        时置位，跳过这一步，把背景重绘完全交给 app._refresh() 收尾时统
+        一画一次；子页 pack 回去 + 几何 settle 这些背景无关、后面
+        _force_refresh_bg_now() 顶不上的部分仍然照常执行，视觉上不会有
+        中间态（同一次 Python 调用栈内完成，Tk 事件循环没机会先画一帧半
+        成品出来）。切存档下拉框等其它路径没有这道"F5 收尾重绘"，不设
+        这个标记，跟以前一样每次都画。
+        """
         key = key or self._sub_tab_key
         self._pack_sub_page(key)
         self.frame.update_idletasks()
@@ -864,6 +884,8 @@ class ClusterConfigTab:
         if key == "cluster":
             self._position_cluster_save_row()
         self.frame.update_idletasks()
+        if getattr(self, "_skip_present_bg_refresh", False):
+            return
         try:
             refresh_surface = getattr(self.app, "refresh_bg_surface", None)
             if refresh_surface is not None:
