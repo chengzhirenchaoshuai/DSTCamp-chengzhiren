@@ -211,31 +211,49 @@ class _IdInputDialog:
 
 
 class _SaveUserPickDialog:
-    """从存档/日志里扫描出的真实用户中挑一个，返回给调用方去加进当前这
-    份名单（管理员/黑名单，由调用方决定）。
+    """从存档/日志/跨存档玩家登记簿里挑一个真实用户，返回给调用方去加进
+    当前这份名单（管理员/黑名单，由调用方决定）。
 
-    candidates 是 list_known_player_ids() 的结果（真实 ID + 昵称/角色名
-    辨识提示，不需要再校验格式）；只负责"挑一个"，不在这个弹窗里处理
-    移除——真要移除，回主列表里选中已有的那一行点"删除"就行。
+    candidates 是 list_known_player_ids() 的结果：(账号ID, 昵称/角色名提
+    示, 是否属于当前存档)，不需要再校验格式。上方开关可以只看当前存档
+    的用户（登记簿是所有存档共用的，人多了不想全翻一遍时用）；本存档
+    一个人都认不出来时开关不可用。只负责"挑一个"，不在这个弹窗里处理移
+    除——真要移除，回主列表里选中已有的那一行点"删除"就行。
 
     结果是选中的 ID；取消/没选中任何一条时是 None。
     """
 
-    def __init__(self, parent_widget, candidates: list[tuple[str, str]]):
+    def __init__(self, parent_widget, candidates: list[tuple[str, str, bool]]):
+        from dstools.shared.gui.toggle_switch import ToggleSwitch
+
         self.result: str | None = None
-        self._ids = [pid for pid, _hint in candidates]
+        self._candidates = candidates
+        self._shown_ids: list[str] = []
         win = tk.Toplevel(parent_widget)
         self.win = win
         win.withdraw()
         win.title(t("admin.pick_save_title"))
-        win.resizable(False, False)
+        win.resizable(True, True)
         win.configure(background=theme.BG_SOFT)
 
         ttk.Label(
             win, text=t("admin.pick_save_prompt"),
             font=theme.font_tuple(theme.FONT_SIZE_MD),
-            wraplength=480, justify=tk.LEFT,
+            wraplength=720, justify=tk.LEFT,
         ).pack(anchor=tk.W, padx=20, pady=(20, 8))
+
+        filter_row = ttk.Frame(win)
+        filter_row.pack(fill=tk.X, padx=20, pady=(0, 8))
+        self._only_current_var = tk.BooleanVar(value=False)
+        has_current = any(in_current for _pid, _hint, in_current in candidates)
+        ToggleSwitch(
+            filter_row, variable=self._only_current_var, command=self._refill,
+            enabled=has_current,
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            filter_row, text=t("admin.pick_save_only_current"),
+            font=theme.font_tuple(theme.FONT_SIZE_SM),
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
         list_frame = ttk.Frame(win)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
@@ -245,15 +263,14 @@ class _SaveUserPickDialog:
         # 照顾中英混排选的。
         self.listbox = tk.Listbox(
             list_frame, font=theme.font_tuple(theme.FONT_SIZE_MD),
-            height=8, exportselection=False,
+            width=64, height=18, exportselection=False,
         )
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.listbox.yview)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.listbox.configure(yscrollcommand=scroll.set)
-        for pid, hint in candidates:
-            self.listbox.insert(tk.END, f"{pid}   ({hint})" if hint else pid)
         self.listbox.bind("<Double-Button-1>", lambda _e: self._confirm())
+        self._refill()
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
@@ -268,16 +285,26 @@ class _SaveUserPickDialog:
         win.protocol("WM_DELETE_WINDOW", self._cancel)
 
         root = parent_widget.winfo_toplevel()
-        center_over_parent(win, root, min_width=520)
+        center_over_parent(win, root, min_width=760)
         win.transient(root)
         win.deiconify()
         win.grab_set()
         win.wait_window()
 
+    def _refill(self):
+        only_current = self._only_current_var.get()
+        self.listbox.delete(0, tk.END)
+        self._shown_ids = []
+        for pid, hint, in_current in self._candidates:
+            if only_current and not in_current:
+                continue
+            self._shown_ids.append(pid)
+            self.listbox.insert(tk.END, f"{pid}   ({hint})" if hint else pid)
+
     def _confirm(self):
         selection = self.listbox.curselection()
         if selection:
-            self.result = self._ids[selection[0]]
+            self.result = self._shown_ids[selection[0]]
         self.win.destroy()
 
     def _cancel(self):

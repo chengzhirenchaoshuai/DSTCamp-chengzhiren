@@ -433,6 +433,7 @@ STRINGS = {
         "admin.pick_from_save": "从存档选择",
         "admin.pick_save_title": "从存档选择用户",
         "admin.pick_save_prompt": "该服务器存档/日志里能核实到真实账号的用户（双击可直接添加选中的一条）：",
+        "admin.pick_save_only_current": "只显示当前存档的用户",
         "admin.pick_save_empty": "存档里没有找到可用的真实用户 ID——可能是 encode_user_path 仍处于开启状态（文件夹名是混淆编码）、服务器日志也关联不出真实账号，或者还没有玩家连接过。",
         "admin.token_owner_hint": "{id}（服务器令牌账号，自动拥有管理员权限，无需手动添加）",
         # Blocklist / 黑名单 (NEW)
@@ -1514,6 +1515,7 @@ STRINGS = {
         "admin.pick_from_save": "Pick from Save",
         "admin.pick_save_title": "Pick User from Save",
         "admin.pick_save_prompt": "Users whose real account could be verified from this server's saves/logs (double-click a selected row to add it directly):",
+        "admin.pick_save_only_current": "Only users of the current save",
         "admin.pick_save_empty": "No usable real user ID found in the saves -- encode_user_path may still be on (folder names are obfuscated), the server log couldn't link a real account either, or no player has connected yet.",
         "admin.token_owner_hint": "{id} (server token owner -- automatically an admin, no need to add manually)",
         # 黑名单

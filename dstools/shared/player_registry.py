@@ -94,3 +94,20 @@ def merge(updates: dict[str, dict[str, Any]]) -> bool:
     if changed:
         _save(players)
     return changed
+
+
+def folder_index(players: dict[str, dict[str, Any]] | None = None) -> dict[str, str]:
+    """存档文件夹标识 -> 账号 ID 的反查表。
+
+    同一个文件夹标识实测在各存档里都指向同一个账号（用本机 9 个存档的
+    日志核对过没有冲突），所以新建的存档只要文件夹标识在别的存档里出现
+    过，就能直接认出是谁。一个账号可以登记多个标识。万一某个标识被登记到了不止一个账号（理论上不
+    该发生），这个标识不放进索引——宁可认不出来，也不猜。
+    """
+    if players is None:
+        players = load()
+    owners: dict[str, set[str]] = {}
+    for account_id, info in players.items():
+        for player_id in info.get("player_ids", []):
+            owners.setdefault(player_id, set()).add(account_id)
+    return {pid: next(iter(accounts)) for pid, accounts in owners.items() if len(accounts) == 1}

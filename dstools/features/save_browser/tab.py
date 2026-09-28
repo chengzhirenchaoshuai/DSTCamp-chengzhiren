@@ -20,8 +20,10 @@ from dstools.features.cluster_config.ini_field_info import get_enum_choices
 from dstools.features.mod.manager import list_mods, load_mod_overrides
 from dstools.features.mod.parser import resolve_wegame_client_mods_dir
 from dstools.shared.resource_paths import bundled_resource_dir
-from dstools.features.save_browser.reader import get_save_summary, list_save_sessions, list_session_players
-from dstools.features.save_browser.connection_log import collect_player_connection_log, collect_player_identity_log
+from dstools.features.save_browser.reader import (
+    get_save_summary, list_save_sessions, list_session_players, make_identity_resolver,
+)
+from dstools.features.save_browser.connection_log import collect_player_connection_log
 from dstools.shared.gui import dpi, theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.dialog_geometry import center_over_parent
@@ -750,10 +752,12 @@ class SaveBrowserTab:
         # 一个世界的日志文件对这批玩家是共用的。session 为空（没有存档）
         # 时没有 session_id 可比对，直接给空字典。
         connection_log = {}
-        identity_log = {}
+        resolve_identity = None
         if session and shard_path:
             connection_log = collect_player_connection_log(shard_path)
-            identity_log = collect_player_identity_log(shard_path)
+            # 认玩家不只看这个世界自己的日志：账号对应的文件夹标识记在跨存档
+            # 玩家登记簿里，新建的存档只要标识在别的存档里出现过就能认出来。
+            resolve_identity = make_identity_resolver(shard_path)
         if not players:
             ttk.Label(rows_frame, text=t("save.no_players"), foreground=theme.TEXT_MUTED).pack(pady=10)
         else:
@@ -770,7 +774,7 @@ class SaveBrowserTab:
             ) + 6
             for player in players:
                 timestamps = connection_log.get((session.session_id, player.player_id), []) if session else []
-                identity = identity_log.get(player.player_id) if session else None
+                identity = resolve_identity(player.player_id) if resolve_identity else None
                 self._build_player_row(rows_frame, player, mod_overrides_path, photo_refs, id_col_width,
                                         platform, wegame_client_mods_dir, timestamps, identity)
         self._canvas_bind_mousewheel(canvas, canvas)
@@ -868,10 +872,9 @@ class SaveBrowserTab:
         个会话里"续接进入"的时间戳列表（见 connection_log.py），只有
         HH:MM:SS、没有日期，只做参考展示，不当成精确时间线。
 
-        identity 是 (账号ID, 昵称) 或 None——同样来自 server_log.txt（见
-        connection_log.collect_player_identity_log），只有日志里能找到
-        可靠关联时才有值，昵称部分可能是空字符串（账号 ID 查到了但没查
-        到对应的 "Client authenticated" 记录）。
+        identity 是 (账号ID, 昵称) 或 None——见 reader.make_identity_resolver，
+        只有日志/跨存档登记簿里能找到可靠对应时才有值，昵称部分可能是空
+        字符串（账号 ID 认出来了但没记到昵称）。
         """
         id_row = tk.Frame(parent, background=bg)
         id_row.pack(fill=tk.X, pady=(2,0))

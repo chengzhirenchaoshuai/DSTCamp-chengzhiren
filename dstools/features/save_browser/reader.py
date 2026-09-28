@@ -307,31 +307,66 @@ def refresh_player_registry(shards: list) -> bool:
     return sync_registry_from_shard_paths([shard.path for shard in shards])
 
 
-def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
+def make_identity_resolver(shard_path: Path):
+    """返回一个 resolve(player_id) -> (账号ID, 昵称) | None，把存档里的玩家
+    文件夹标识对应到真实账号。
+
+    依次尝试（都是有依据的，不猜）：
+    1. 这个世界自己的日志里关联到的（"Resuming user" 紧跟 "User ID
+       assigned ownership"）；
+    2. 跨存档玩家登记簿里记过的文件夹标识——加密算法对同一个账号是固
+       定的，别的存档里见过这个标识，新建的存档不用等自己的日志就能认；
+    3. 文件夹名本身就是 KU_/OU_ 开头（去掉真机见过的一个尾部下划线）。
+    昵称统一用登记簿里的最新昵称，查不到时是空字符串。
+    """
+    from dstools.features.save_browser.connection_log import (
+        collect_player_identity_log, sync_registry_from_shard_paths,
+    )
+    from dstools.shared import player_registry
+
+    sync_registry_from_shard_paths([shard_path])
+    identity_log = collect_player_identity_log(shard_path)
+    registry = player_registry.load()
+    index = player_registry.folder_index(registry)
+
+    def resolve(player_id: str) -> tuple[str, str] | None:
+        linked = identity_log.get(player_id)
+        account_id = linked[0] if linked else index.get(player_id)
+        if not account_id and player_id[:3] in ("KU_", "OU_"):
+            account_id = player_id[:-1] if player_id.endswith("_") else player_id
+        if not account_id:
+            return None
+        nickname = registry.get(account_id, {}).get("nickname") or (linked[1] if linked else "")
+        return account_id, nickname
+
+    return resolve
+
+
+def list_known_player_ids(shards: list) -> list[tuple[str, str, bool]]:
     """列出可以直接加管理员/黑名单的真实账号：跨存档共享的玩家登记簿里
-    记过的全部账号（不限于传入的这批世界），再补上这批世界存档里文件夹
-    名本身就是明文 KU_/OU_ 的账号。
+    记过的全部账号（不限于传入的这批世界），再补上这批世界存档里能认出
+    的账号。
 
     登记簿（shared/player_registry.py）来自各存档 server_log.txt 里的
     "Client authenticated"/"User ID assigned ownership" 记录，按账号记，
     玩家换角色、换存档都不影响；这批世界的日志会先合并进去再读，保证是
-    最新的。文件夹名是混淆编码、日志又关联不出真实账号的玩家跳过，不拿
-    混淆值冒充真实 ID 写进 adminlist/blocklist。
+    最新的。存档文件夹按 make_identity_resolver() 的规则认账号，认不出
+    的（混淆编码、日志和登记簿都没记录）跳过，不拿混淆值冒充真实 ID 写
+    进 adminlist/blocklist。
 
     真机存档实测过：encode_user_path 关闭后，文件夹名不总是等于干净的
     KU_xxx——见过 "KU_dwt6dfPl_" 这种带一个尾部下划线的文件夹名，跟这个
-    账号真实 ID（同一台机器 adminlist.txt 里记的、以及 server_log.txt
-    "Client authenticated" 行里打印的）都是 "KU_dwt6dfPl"，没有下划线。
-    直接把带下划线的原样交给调用方去写 adminlist.txt 会因为多一个字符
-    匹配不上真实账号，管理员/黑名单形同虚设——这里统一去掉这一个尾部下
-    划线再收集。
+    账号真实 ID（adminlist.txt 里记的、日志里打印的）都是
+    "KU_dwt6dfPl"，直接写带下划线的会匹配不上真实账号，所以统一去掉。
 
     Returns:
-        按账号 ID 排序、去重后的 (账号ID, 辨识提示) 列表——提示优先用登记
-        簿里的昵称，没有昵称退回角色显示名，都没有就是空字符串。
+        按账号 ID 排序的 (账号ID, 辨识提示, 是否属于这批世界) 列表——提示优
+        先用登记簿里的昵称，没有昵称退回角色显示名，都没有就是空字符串；
+        "属于这批世界"指这批世界的日志里连过、或存档文件夹能认出是他，
+        供"只看当前存档"筛选用。
     """
     from dstools.features.save_browser.character_names import get_character_display_name
-    from dstools.features.save_browser.connection_log import collect_player_identity_log
+    from dstools.features.save_browser.connection_log import collect_shard_accounts
     from dstools.shared import player_registry
 
     refresh_player_registry(shards)
@@ -339,26 +374,28 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
     seen_ids: set[str] = set(registry)
     nicknames = {a: info["nickname"] for a, info in registry.items() if info.get("nickname")}
 
-    # 昵称已经在登记簿里，这里遍历存档只为两件事：文件夹名是明文账号但
-    # 日志里没记录的账号补进来；顺便给没有昵称的账号找个角色名当提示。
-    # 角色名不是身份（换局就变），只在完全没有昵称时才用来凑数。
+    # 昵称已经在登记簿里，这里遍历存档只为：认出存档文件夹对应的账号
+    # （标记为"当前存档的人"、补上登记簿没有的明文账号），顺便给没有昵称
+    # 的账号找个角色名当提示。角色名不是身份（换局就变），只在完全没有
+    # 昵称时才用来凑数。
+    in_current: set[str] = set()
     character_hints: dict[str, str] = {}
     for shard in shards:
-        identity_log = collect_player_identity_log(shard.path)
+        in_current.update(collect_shard_accounts(shard.path))
+        resolve = make_identity_resolver(shard.path)
         for session in list_save_sessions(shard.path):
             for player in list_session_players(session):
-                identity = identity_log.get(player.player_id)
-                account_id = identity[0] if identity else player.player_id
-                if account_id[:3] not in ("KU_", "OU_"):
+                identity = resolve(player.player_id)
+                if not identity:
                     continue
-                if account_id.endswith("_"):
-                    account_id = account_id[:-1]
-
+                account_id = identity[0]
                 seen_ids.add(account_id)
+                in_current.add(account_id)
                 if account_id not in nicknames and player.character and account_id not in character_hints:
                     character_hints[account_id] = get_character_display_name(player.character)
     return sorted(
-        (pid, nicknames.get(pid) or character_hints.get(pid, "")) for pid in seen_ids
+        (pid, nicknames.get(pid) or character_hints.get(pid, ""), pid in in_current)
+        for pid in seen_ids
     )
 
 
