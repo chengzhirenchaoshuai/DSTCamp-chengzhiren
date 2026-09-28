@@ -21,6 +21,7 @@ from dstools.qt.background import Background
 from dstools.qt.context import AppContext
 from dstools.qt.pages.placeholder import PlaceholderPage
 from dstools.qt.pages.save_info import SaveInfoPage
+from dstools.qt.pages.server_config import ServerConfigPage
 from dstools.qt.pages.world_settings import WorldSettingsPage
 from dstools.qt.theme import THEME_NAMES, theme
 from dstools.qt.widgets import Card, Grip, PillTabBar
@@ -312,6 +313,7 @@ class MainWindow(QWidget):
         self._build_pages()
         self.tabbar.current_changed.connect(self._on_tab_changed)
         ctx.cluster_changed.connect(self._on_cluster_changed)
+        ctx.tab_requested.connect(self.goto_tab)
         ctx.platform_changed.connect(self._update_status)
         ctx.env_changed.connect(self._update_status)
         theme.changed.connect(self._on_theme_changed)
@@ -342,7 +344,14 @@ class MainWindow(QWidget):
             return SaveInfoPage(self.ctx)
         if key == "world":
             return WorldSettingsPage(self.ctx)
+        if key == "server":
+            return ServerConfigPage(self.ctx)
         return PlaceholderPage(self.ctx, key)
+
+    def goto_tab(self, key: str) -> None:
+        index = TAB_KEYS.index(key)
+        self.tabbar.set_current_index(index)
+        self._on_tab_changed(index)
 
     def current_page(self):
         return self.pages[TAB_KEYS[self.tabbar.current_index()]]

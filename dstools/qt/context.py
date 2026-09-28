@@ -22,12 +22,17 @@ class AppContext(QObject):
     env_changed = Signal()
     platform_changed = Signal()
     cluster_changed = Signal(object)  # 当前选中的 Cluster，可能是 None
+    cluster_config_saved = Signal(object)  # 某个存档的 cluster.ini/server.ini 被保存（本地服务器页据此刷新直连代码）
+    tab_requested = Signal(str)            # 页面请求跳到另一个页签（如"去内网穿透页处理端口映射"）
 
     def __init__(self, klei_path: Path | None = None):
         super().__init__()
         self.env = discover_environment(klei_path)
         # 本进程启动的专服子进程集合，本地服务器页和备份恢复等跨页检查共用这一个
         self.manager = ServerManager()
+        # 跨页钩子：由对应页面迁移后接管，默认值等价于"没有这个功能在占用"
+        self.mapping_owner = lambda cluster, shard: None   # 端口是否被映射接管："sakura"/"selfhost"/None
+        self.token_uses = lambda: ()                        # 各存档正在使用的令牌（本地服务器页提供）
         self._platform = Platform.WEGAME if get_last_platform() == "WeGame" else Platform.STEAM
         self._selected: Cluster | None = None
         self._restore_selection(Path(get_last_cluster_path()) if get_last_cluster_path() else None)
@@ -82,6 +87,12 @@ class AppContext(QObject):
         if any(proc.cluster_path == cluster.path for proc in self.manager.running()):
             text += t("selector.running_suffix")
         return text
+
+    def goto_tab(self, key: str) -> None:
+        self.tab_requested.emit(key)
+
+    def cluster_running(self, cluster: Cluster) -> bool:
+        return any(str(proc.cluster_path) == str(cluster.path) for proc in self.manager.running())
 
     def running_shard_names(self, cluster: Cluster) -> list[str]:
         """这个存档下仍在启动/运行/停止中的世界（世界文件被进程占着时不能覆盖或删除）。"""

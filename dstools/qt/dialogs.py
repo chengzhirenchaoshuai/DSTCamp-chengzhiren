@@ -7,11 +7,11 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QIntValidator
+from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QIntValidator
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPlainTextEdit, QPushButton,
-    QVBoxLayout,
+    QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QMessageBox, QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QToolTip, QVBoxLayout,
 )
 
 from dstools.features.local_service.backup_manager import get_backup_summary
@@ -27,11 +27,13 @@ from dstools.shared.app_settings import (
 
 # ── 消息框 ──────────────────────────────────────────────────────────────
 
-def _box(parent, icon, title: str, text: str, with_ok: bool = True) -> QMessageBox:
+def _box(parent, icon, title: str, text: str, with_ok: bool = True, min_width: int = 0) -> QMessageBox:
     box = QMessageBox(parent)
     box.setIcon(icon)
     box.setWindowTitle(title)
     box.setText(text)
+    if min_width:
+        box.setStyleSheet(f"QLabel {{ min-width: {min_width}px; }}")
     if with_ok:  # 默认按钮文字是英文 OK，统一成项目里的"确认"
         box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.AcceptRole)
     return box
@@ -45,16 +47,42 @@ def show_warning(parent, title: str, text: str) -> None:
     _box(parent, QMessageBox.Icon.Warning, title, text).exec()
 
 
-def show_error(parent, title: str, text: str) -> None:
-    _box(parent, QMessageBox.Icon.Critical, title, text).exec()
+def show_error(parent, title: str, text: str, min_width: int = 0) -> None:
+    _box(parent, QMessageBox.Icon.Critical, title, text, min_width=min_width).exec()
 
 
-def ask_yes_no(parent, title: str, text: str) -> bool:
-    box = _box(parent, QMessageBox.Icon.Question, title, text, with_ok=False)
+def ask_yes_no(parent, title: str, text: str, min_width: int = 0) -> bool:
+    box = _box(parent, QMessageBox.Icon.Question, title, text, with_ok=False, min_width=min_width)
     yes = box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.YesRole)
     box.addButton(t("dlg.cancel_btn"), QMessageBox.ButtonRole.NoRole)
     box.exec()
     return box.clickedButton() is yes
+
+
+def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], default: str = "",
+               min_width: int = 0) -> str:
+    """多选项询问：choices 是 [(按钮文字, 返回值)]；关闭窗口/按 Esc 返回 default。"""
+    box = _box(parent, QMessageBox.Icon.Question, title, text, with_ok=False, min_width=min_width)
+    buttons = {}
+    for label, value in choices:
+        buttons[box.addButton(label, QMessageBox.ButtonRole.ActionRole)] = value
+    box.exec()
+    return buttons.get(box.clickedButton(), default)
+
+
+def show_toast(parent, text: str, ms: int = 1400) -> None:
+    """轻提示：浮在父窗口中央，自动消失，不抢焦点、不需要点击。"""
+    anchor = parent.window() if parent is not None else None
+    label = QLabel(text, anchor)
+    label.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+    label.setStyleSheet(f"QLabel {{ background: {theme.hex('CARD_BG')}; color: {theme.hex('TEXT')};"
+                        f" border: 1px solid {theme.hex('CARD_BORDER')}; border-radius: 8px; padding: 8px 18px; }}")
+    label.adjustSize()
+    if anchor is not None:
+        center = anchor.mapToGlobal(anchor.rect().center())
+        label.move(center.x() - label.width() // 2, center.y() - label.height() // 2)
+    label.show()
+    QTimer.singleShot(ms, label.close)
 
 
 def show_file_location(parent, title: str, path, location_label: str, copied_message: str) -> None:
@@ -304,3 +332,254 @@ class LogDialog(_Dialog):
         else:
             event.ignore()
 
+
+
+class TextInputDialog(_Dialog):
+    """单行文本输入（令牌/管理员 ID）：等宽字体，可选校验函数（返回错误文案则不关闭窗口）。"""
+
+    def __init__(self, parent, title: str, prompt: str, initial: str = "", validator=None,
+                 width: int = 500):
+        super().__init__(parent, title, width)
+        self._validator = validator
+        self.result_text: str | None = None
+        self.body.addWidget(self.text_label(prompt, size_key="FONT_SIZE_MD"))
+        self._edit = QLineEdit(initial)
+        self._edit.setFont(QFont("Consolas", 12))
+        self._edit.returnPressed.connect(self.accept_if_valid)
+        self.body.addWidget(self._edit)
+        self._error = self.error_label()
+        self.body.addWidget(self._error)
+        self.add_buttons()
+        self._edit.setFocus()
+
+    def accept_if_valid(self) -> None:
+        value = self._edit.text().strip()
+        if not value:
+            return
+        error = self._validator(value) if self._validator else None
+        if error:
+            self._error.setText(error)
+            return
+        self.result_text = value
+        self.accept()
+
+
+class SaveUserPickDialog(_Dialog):
+    """从存档/日志/跨存档玩家登记簿里挑一个真实用户；开关可以只看当前存档的用户。"""
+
+    def __init__(self, parent, candidates: list[tuple[str, str, bool]]):
+        super().__init__(parent, t("admin.pick_save_title"), 640)
+        self._candidates = candidates
+        self._shown_ids: list[str] = []
+        self.result_id: str | None = None
+        self.body.addWidget(self.text_label(t("admin.pick_save_prompt"), size_key="FONT_SIZE_MD"))
+        row = QHBoxLayout()
+        self._only_current = ToggleSwitch(False, enabled=any(cur for _pid, _hint, cur in candidates))
+        self._only_current.toggled.connect(lambda _checked: self._refill())
+        row.addWidget(self._only_current)
+        row.addWidget(self.text_label(t("admin.pick_save_only_current"), size_key="FONT_SIZE_SM", wrap=False))
+        row.addStretch()
+        self.body.addLayout(row)
+        self._list = QListWidget()
+        self._list.setMinimumHeight(340)
+        self._list.setFont(theme.font("FONT_SIZE_MD"))
+        self._list.itemDoubleClicked.connect(lambda _item: self.accept_if_valid())
+        self.body.addWidget(self._list, 1)
+        self.add_buttons()
+        self._refill()
+
+    def _refill(self) -> None:
+        only_current = self._only_current.isChecked()
+        self._list.clear()
+        self._shown_ids = []
+        for pid, hint, in_current in self._candidates:
+            if only_current and not in_current:
+                continue
+            self._shown_ids.append(pid)
+            self._list.addItem(f"{pid}   ({hint})" if hint else pid)
+
+    def accept_if_valid(self) -> None:
+        row = self._list.currentRow()
+        if row >= 0:
+            self.result_id = self._shown_ids[row]
+        self.accept()
+
+
+class GlobalTokensDialog(_Dialog):
+    """管理全局令牌池，可把选中的令牌返回给当前存档。令牌始终脱敏显示；悬停令牌文字临时显示完整值，
+    点击同一处复制。增删即时写入设置；"使用"只返回选中项，由调用方写进存档的令牌文件。"""
+
+    def __init__(self, parent, token_uses=()):
+        from dstools.shared import app_settings
+        from dstools.shared.token_manager import mask_token, token_fingerprint
+        super().__init__(parent, t("token.set_global_btn"), 760)
+        self._app_settings, self._mask, self._fingerprint = app_settings, mask_token, token_fingerprint
+        self.result_token: str | None = None
+        self._tokens = app_settings.get_global_tokens()
+        self._token_uses = tuple(token_uses)
+        self._holds = app_settings.get_token_holds()
+        self.body.addWidget(self.text_label(t("token.global_hint"), size_key="FONT_SIZE_SM"))
+        self._table = QTableWidget(0, 3)
+        self._table.setHorizontalHeaderLabels(
+            [t("token.column_token"), t("token.column_kind"), t("token.column_status")])
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setMinimumHeight(260)
+        self._table.setMouseTracking(True)
+        self._table.itemSelectionChanged.connect(self._update_buttons)
+        self._table.cellEntered.connect(self._on_cell_entered)
+        self._table.cellClicked.connect(self._on_cell_clicked)
+        self._hover_timer = QTimer(self, singleShot=True, interval=350)
+        self._hover_timer.timeout.connect(self._show_full_token)
+        self._hover_row: int | None = None
+        self.body.addWidget(self._table, 1)
+
+        row = QHBoxLayout()
+        self._add = QPushButton(t("admin.add"))
+        self._remove = QPushButton(t("admin.remove"))
+        self._release = QPushButton(t("token.clear_hold"))
+        self._use = QPushButton(t("token.global_use"))
+        self._add.clicked.connect(self._on_add)
+        self._remove.clicked.connect(self._on_remove)
+        self._release.clicked.connect(self._on_clear_hold)
+        self._use.clicked.connect(self._on_use)
+        for button in (self._add, self._remove, self._release):
+            row.addWidget(button)
+        row.addStretch()
+        row.addWidget(self._use)
+        self.body.addSpacing(8)
+        self.body.addLayout(row)
+        self._refresh()
+
+    def _row_texts(self, token: str) -> tuple[str, str, str]:
+        from dstools.shared.token_manager import ServerTokenKind, classify_token, is_valid_token
+        kind_key = {ServerTokenKind.OLD: "token.kind_old", ServerTokenKind.NEW: "token.kind_new",
+                    ServerTokenKind.UNKNOWN: "token.kind_unknown"}[classify_token(token)]
+        fingerprint = self._fingerprint(token)
+        users = sorted({use.cluster_name for use in self._token_uses
+                        if self._fingerprint(use.token) == fingerprint})
+        hold = self._holds.get(fingerprint)
+        if not is_valid_token(token):
+            status = t("token.status_invalid")
+        elif hold:
+            status = t("token.status_conflict" if hold["state"] == "conflict" else "token.status_waiting",
+                       name=hold.get("cluster_name") or "-")
+        elif users:
+            status = t("token.status_in_use", names="、".join(users))
+        else:
+            status = t("token.status_available")
+        return self._mask(token), t(kind_key), status
+
+    def _selected(self) -> int | None:
+        rows = self._table.selectionModel().selectedRows()
+        return rows[0].row() if rows and rows[0].row() < len(self._tokens) else None
+
+    def _refresh(self, select: int | None = None) -> None:
+        if select is None:
+            select = self._selected()
+        self._holds = self._app_settings.get_token_holds()
+        self._table.blockSignals(True)
+        self._table.setRowCount(0)
+        if not self._tokens:
+            self._table.setRowCount(1)
+            self._table.setItem(0, 0, QTableWidgetItem(t("token.global_empty")))
+        for index, token in enumerate(self._tokens):
+            self._table.insertRow(index)
+            for col, text in enumerate(self._row_texts(token)):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self._table.setItem(index, col, item)
+        self._table.blockSignals(False)
+        if self._tokens and select is not None:
+            self._table.selectRow(min(select, len(self._tokens) - 1))
+        self._update_buttons()
+
+    def _update_buttons(self) -> None:
+        index = self._selected()
+        self._use.setEnabled(index is not None)
+        can_clear = False
+        if index is not None:
+            fingerprint = self._fingerprint(self._tokens[index])
+            active = any(self._fingerprint(use.token) == fingerprint for use in self._token_uses)
+            can_clear = fingerprint in self._holds and not active
+        self._release.setEnabled(can_clear)
+
+    def _over_token_text(self, row: int, col: int, pos: QPoint) -> bool:
+        """命中区域只覆盖实际显示的脱敏文字，点击单元格右侧空白不触发复制。"""
+        if col != 0 or not 0 <= row < len(self._tokens):
+            return False
+        rect = self._table.visualItemRect(self._table.item(row, 0))
+        text_w = QFontMetrics(self._table.font()).horizontalAdvance(self._mask(self._tokens[row]))
+        return abs(pos.x() - rect.center().x()) <= text_w / 2 + 4
+
+    def _cursor_in_viewport(self) -> QPoint:
+        return self._table.viewport().mapFromGlobal(self._table.cursor().pos())
+
+    def _on_cell_entered(self, row: int, col: int) -> None:
+        over = self._over_token_text(row, col, self._cursor_in_viewport())
+        self._table.viewport().setCursor(Qt.CursorShape.PointingHandCursor if over else Qt.CursorShape.ArrowCursor)
+        self._hover_row = row if over else None
+        if over:
+            self._hover_timer.start()
+        else:
+            self._hover_timer.stop()
+            QToolTip.hideText()
+
+    def _show_full_token(self) -> None:
+        if self._hover_row is not None and self._hover_row < len(self._tokens):
+            QToolTip.showText(self._table.cursor().pos(), self._tokens[self._hover_row], self._table)
+
+    def _on_cell_clicked(self, row: int, col: int) -> None:
+        if self._over_token_text(row, col, self._cursor_in_viewport()):
+            QToolTip.hideText()
+            QGuiApplication.clipboard().setText(self._tokens[row])
+            show_toast(self, t("token.copied"))
+
+    def _on_add(self) -> None:
+        from dstools.shared.token_manager import is_valid_token
+        dialog = TextInputDialog(
+            self, t("token.global_add_title"), t("token.prompt"),
+            validator=lambda value: None if is_valid_token(value) else t("token.invalid_hint"))
+        if not dialog.exec() or dialog.result_text is None:
+            return
+        if dialog.result_text in self._tokens:
+            show_warning(self, t("token.set_global_btn"), t("token.global_duplicate"))
+            return
+        self._tokens.append(dialog.result_text)
+        self._app_settings.set_global_tokens(self._tokens)
+        self._refresh(select=len(self._tokens) - 1)
+
+    def _on_remove(self) -> None:
+        index = self._selected()
+        if index is None:
+            return
+        fingerprint = self._fingerprint(self._tokens[index])
+        if any(self._fingerprint(use.token) == fingerprint for use in self._token_uses):
+            show_warning(self, t("token.set_global_btn"), t("token.remove_in_use"))
+            return
+        if fingerprint in self._holds and not ask_yes_no(
+                self, t("token.set_global_btn"), t("token.remove_held_confirm")):
+            return
+        del self._tokens[index]
+        self._app_settings.set_global_tokens(self._tokens)
+        self._app_settings.prune_token_holds(self._tokens)
+        self._refresh(select=index if self._tokens else None)
+
+    def _on_clear_hold(self) -> None:
+        index = self._selected()
+        if index is None or not ask_yes_no(self, t("token.clear_hold"), t("token.clear_hold_confirm")):
+            return
+        self._app_settings.clear_token_hold(self._fingerprint(self._tokens[index]))
+        self._refresh(select=index)
+
+    def _on_use(self) -> None:
+        index = self._selected()
+        if index is not None:
+            self.result_token = self._tokens[index]
+            self.accept()
