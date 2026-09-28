@@ -52,6 +52,7 @@ class BgFrame(tk.Canvas):
         self._bg_key = theme.resolve_color_key(bg) if bg is not None else None
         super().__init__(parent, highlightthickness=0, bd=0,
                           background=self._resolve_color(), **kw)
+        self._applied_bg = self._resolve_color()
         self._photo = None
         self._last_render_key = None  # render_now 缓存键，避免恢复窗口时无谓重画
         self._render_after_id = None
@@ -66,6 +67,12 @@ class BgFrame(tk.Canvas):
         app._register_bg_surface(self)
 
     def _resolve_color(self) -> str:
+        # 有主题色键时现查当前主题：切主题后即使某个容器没被显式
+        # apply_theme()，下一次重绘也不会再沿用构造时的旧颜色。
+        if self._bg_key is not None:
+            color = getattr(theme, self._bg_key, None)
+            if color:
+                return color
         return self._bg_color_override if self._bg_color_override is not None else theme.BG_SOFT
 
     def _content_item_ids(self) -> tuple[int, ...]:
@@ -100,7 +107,8 @@ class BgFrame(tk.Canvas):
             self._bg_key = theme.resolve_color_key(bg)
         elif self._bg_key is not None:
             self._bg_color_override = getattr(theme, self._bg_key, None)
-        self.configure(background=self._resolve_color())
+        self._applied_bg = self._resolve_color()
+        self.configure(background=self._applied_bg)
         self.render_now()
 
     def _request_render(self) -> None:
@@ -177,12 +185,17 @@ class BgFrame(tk.Canvas):
         # 恢复（共享图和控件尺寸都没变，缓存会一直命中）。
         root = getattr(self._app, "root", self.winfo_toplevel())
         offset = _relative_bg_offset(self, root)
-        render_key = (shared_key, w, h, offset, theme.BG_SOFT)
+        color = self._resolve_color()
+        render_key = (shared_key, w, h, offset, theme.BG_SOFT, color)
         # 纯色主题下没有 bg_image（只有 bg_fill 兜底矩形），两个都要认，否
         # 则纯色主题从任务栏恢复时缓存永不命中、每次都重画一遍。
         if render_key == self._last_render_key and (self.find_withtag("bg_image") or self.find_withtag("bg_fill")):
             return
         self._last_render_key = render_key
+        applied = getattr(self, "_applied_bg", None)
+        if applied is not None and color != applied:
+            self._applied_bg = color
+            self.configure(background=color)
         self.delete("bg_image")
         self.delete("bg_fill")
         # Tk 在 Canvas 子窗口之间切换时，旧页签的窗口像素有时不会立刻

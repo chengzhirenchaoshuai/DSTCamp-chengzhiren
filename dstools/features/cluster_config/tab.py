@@ -2256,5 +2256,20 @@ class ClusterConfigTab:
         self._token_title_lbl.configure(font=theme.font_tuple(theme.FONT_SIZE_SM, bold=True))
         self._token_display.configure(font=self._ROW_VALUE_FONT)
         self._global_tokens_hint_lbl.configure(font=theme.font_tuple(theme.FONT_SIZE_XS))
+        # 令牌展示框是普通 tk.Text，颜色在构造时写死，不会随全局样式表变化。
+        self._token_display.configure(
+            bg=theme.CARD_BG, fg=theme.TEXT,
+            highlightbackground=theme.CARD_BORDER, highlightcolor=theme.ACCENT,
+        )
+        # 各子页的容器背景由 BgFrame 按主题键自行取新值；透明标签/ID 列表
+        # 是 Canvas 自绘文字，文字色要逐个重画。隐藏中的子页也在控件树里，
+        # 一并处理，切过去时才不会露出旧主题的文字色。
+        self._retheme_transparent_widgets(self.frame)
+
+    def _retheme_transparent_widgets(self, widget) -> None:
+        for child in widget.winfo_children():
+            if isinstance(child, (TransparentLabel, TransparentIdList)):
+                child.apply_theme()
+            self._retheme_transparent_widgets(child)
 
     def refresh(self): self.on_cluster_changed(self.app.get_selected_cluster())

@@ -26,6 +26,7 @@ class TransparentLabel(BgFrame):
         self._text = str(text)
         self._font = tkfont.Font(font=font or theme.font_tuple(theme.FONT_SIZE_BASE))
         self._foreground = foreground or theme.TEXT
+        self._fg_key = theme.resolve_color_key(self._foreground)
         self._anchor = anchor
         self._justify = justify
         self._wraplength = int(wraplength or 0)
@@ -51,9 +52,11 @@ class TransparentLabel(BgFrame):
             redraw = True
         if "foreground" in options:
             self._foreground = options.pop("foreground")
+            self._fg_key = theme.resolve_color_key(self._foreground)
             redraw = True
         elif "fg" in options:
             self._foreground = options.pop("fg")
+            self._fg_key = theme.resolve_color_key(self._foreground)
             redraw = True
         if "anchor" in options:
             self._anchor = options.pop("anchor")
@@ -133,7 +136,11 @@ class TransparentLabel(BgFrame):
             self._redrawing = False
 
     def apply_theme(self, bg=None):
-        super().apply_theme(bg=bg or self._bg_color_override or theme.BG_SOFT)
+        # 背景色由 BgFrame 按主题色键重新取值（不能把旧的覆盖色再传回去，
+        # 否则切主题后一直停在旧颜色）；文字色同理按键重新取值。
+        if self._fg_key is not None:
+            self._foreground = getattr(theme, self._fg_key, self._foreground)
+        super().apply_theme(bg=bg)
         self._redraw()
 
 
@@ -294,5 +301,5 @@ class TransparentIdList(BgFrame):
             self._redrawing = False
 
     def apply_theme(self, bg=None):
-        super().apply_theme(bg=bg or self._bg_color_override or theme.BG_SOFT)
+        super().apply_theme(bg=bg)
         self._redraw()

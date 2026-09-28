@@ -147,6 +147,24 @@ def get_monitor_work_area(root: tk.Tk) -> tuple[int, int, int, int]:
     return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
 
 
+def get_virtual_screen_bounds(root: tk.Tk) -> tuple[int, int, int, int]:
+    """整个虚拟桌面（横跨全部显示器）的 (left, top, right, bottom)。
+    用来限制窗口缩放/拖动不越出桌面：窗口顶边一旦跑到屏幕外，自绘标
+    题栏就够不着了，窗口再也拖不回来。非 Windows/调用失败退回主显示
+    器尺寸。"""
+    if IS_WINDOWS:
+        try:
+            vx = user32.GetSystemMetrics(76)  # SM_XVIRTUALSCREEN
+            vy = user32.GetSystemMetrics(77)  # SM_YVIRTUALSCREEN
+            vw = user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
+            vh = user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
+            if vw > 0 and vh > 0:
+                return vx, vy, vx + vw, vy + vh
+        except Exception:
+            pass
+    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
+
+
 def ensure_taskbar_visible(root: tk.Tk, refresh_shell: bool = False) -> bool:
     """加回 WS_EX_APPWINDOW 这个扩展样式位，强制这个 overrideredirect 窗
     口在任务栏/Alt+Tab 里显示（默认没有）。**设计成随时可以重复调用**
@@ -356,6 +374,7 @@ class ResizeGrips:
         self._edge = None
         self._pending_rect = None
         self._drag_after_id = None
+        self._bounds = None  # 按下时取一次桌面范围，缩放过程中不再重复查询
         self._grips = []
 
         # 4 条边（沿窗口铺满，两端各让开对应角手柄的边长）+ 4 个角（固定
@@ -432,6 +451,7 @@ class ResizeGrips:
         w0 = self.root.winfo_width()
         h0 = self.root.winfo_height()
         self._start = (event.x_root, event.y_root, x0, y0, x0 + w0, y0 + h0)
+        self._bounds = get_virtual_screen_bounds(self.root)
         begin_preview = getattr(self._app, "_begin_window_resize_preview", None)
         if callable(begin_preview):
             begin_preview()
@@ -512,6 +532,45 @@ class ResizeGrips:
             else:
                 right = left + w
 
+        return self._clamp_to_bounds(
+            (left0, top0, right0, bottom0), (left, top, right, bottom)
+        )
+
+    def _clamp_to_bounds(self, original, rect):
+        """缩放结果不允许越出桌面：顶边跑到屏幕外之后标题栏没法再抓取，
+        窗口就拖不回来了。宽高比是锁死的，所以超出时按比例整体缩小，
+        没有被拖动的那一侧保持不动。只在"被拖动的边"越界时才干预——
+        窗口原本就有一部分在屏幕外（允许的摆放方式）时，拖动别的边不
+        应该把它强行缩回来。"""
+        if self._bounds is None:
+            return rect
+        l0, t0, r0, b0 = original
+        left, top, right, bottom = rect
+        bl, bt, br, bb = self._bounds
+        overflow = (
+            (left != l0 and left < bl) or (top != t0 and top < bt)
+            or (right != r0 and right > br) or (bottom != b0 and bottom > bb)
+        )
+        if not overflow:
+            return rect
+        w, h = right - left, bottom - top
+        # 上限不低于拖动前的尺寸：只阻止"继续长出桌面"，不把本来就有一部
+        # 分在屏幕外的窗口强行缩小。
+        max_w = max((right - bl) if left != l0 else (br - left), r0 - l0)
+        max_h = max((bottom - bt) if top != t0 else (bb - top), b0 - t0)
+        if w <= 0 or h <= 0:
+            return rect
+        scale = min(max_w / w, max_h / h)
+        new_w = max(self.min_width, int(w * scale))
+        new_h = int(new_w / self.aspect)
+        if left != l0:
+            left = right - new_w
+        else:
+            right = left + new_w
+        if top != t0:
+            top = bottom - new_h
+        else:
+            bottom = top + new_h
         return left, top, right, bottom
 
 
@@ -638,8 +697,21 @@ class CustomTitleBar(BgFrame):
         self._pending_drag_pos = None
         if pos is None or pos == self._last_drag_pos:
             return
+        pos = self._clamp_drag_pos(*pos)
+        if pos == self._last_drag_pos:
+            return
         self._last_drag_pos = pos
         self.root.geometry(f"+{pos[0]}+{pos[1]}")
+
+    def _clamp_drag_pos(self, x: int, y: int) -> tuple[int, int]:
+        """标题栏永远留在桌面内：顶边不能高于桌面上沿，左右/底部至少
+        留 100px 在屏幕里（跟 app 启动时校验上次窗口位置的规则一致）。"""
+        left, top, right, bottom = get_virtual_screen_bounds(self.root)
+        keep = 100
+        width = self.root.winfo_width()
+        x = max(left - width + keep, min(x, right - keep))
+        y = max(top, min(y, bottom - keep))
+        return x, y
 
     def _on_drag_release(self, event):
         if self._drag_start is None:

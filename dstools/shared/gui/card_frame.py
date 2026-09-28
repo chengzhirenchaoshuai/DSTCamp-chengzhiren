@@ -23,6 +23,10 @@ class CardFrame(tk.Frame):
         bg = bg or theme.BG_SOFT
         super().__init__(parent, background=bg, **kw)
         self._app = app
+        # 记住 bg 对应的主题色键，切主题时按键取新值（不同卡片的 bg 可能是
+        # BG_SOFT 也可能是 CARD_BG，不能统一写死成 BG_SOFT）。
+        self._bg_key = theme.resolve_color_key(bg)
+        self._bg_fixed = bg
         # radius=None（唯一的现有调用方式）表示"跟着主题走"，随
         # apply_theme() 里的 theme.CARD_RADIUS 变化；显式传了具体数字的调
         # 用方（目前没有）则视为固定圆角，不随主题变化。
@@ -66,9 +70,10 @@ class CardFrame(tk.Frame):
         theme.py 的模块级变量更新自动变化，需要显式重新读一遍再重画。
         self._canvas 现在是 BgFrame，用它自己的 apply_theme()（顺带重新
         裁一次背景图切片），而不是直接 .configure()。"""
-        self.configure(background=theme.BG_SOFT)
-        self._canvas.apply_theme(bg=theme.BG_SOFT)
-        self._card_bg = theme.BG_SOFT if self._body_follows_bg else (
+        bg = (getattr(theme, self._bg_key, None) if self._bg_key else None) or self._bg_fixed
+        self.configure(background=bg)
+        self._canvas.apply_theme(bg=bg)
+        self._card_bg = bg if self._body_follows_bg else (
             self._body_bg_override or theme.CARD_BG
         )
         self._border = theme.CARD_BORDER
