@@ -815,14 +815,16 @@ class SaveBrowserTab:
         if player.parse_error:
             tk.Label(body, text=f"{t('save.player_id_label')}: {player.player_id}", font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
                     fg=theme.TEXT, background=bg, anchor=tk.W).pack(fill=tk.X)
-            self._build_player_id_row(body, player, bg, id_col_width, connection_timestamps, identity)
+            self._build_player_summary_row(body, bg, connection_timestamps, identity)
+            self._build_player_id_row(body, player, bg, id_col_width)
         else:
             header = tk.Frame(body, background=bg)
             header.pack(fill=tk.X)
             tk.Label(header, text=name, font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True), fg=theme.TEXT,
                     background=bg, anchor=tk.W).pack(side=tk.LEFT)
 
-            self._build_player_id_row(body, player, bg, id_col_width, connection_timestamps, identity)
+            self._build_player_summary_row(body, bg, connection_timestamps, identity)
+            self._build_player_id_row(body, player, bg, id_col_width)
 
             # 存档文件里没有"上限"这个数（不同角色/模组血量上限不一样），
             # 这里只显示原始数值，不猜一个上限画成百分比进度条。
@@ -856,25 +858,26 @@ class SaveBrowserTab:
             except Exception:
                 pass  # 头像损坏/转换失败就不显示图标，不影响这一行其余信息
 
+        # "打开路径"放在整行右侧垂直居中，不放进"玩家标识"那一行：ttk 按钮
+        # 比同行的文字/备注框高出一截（实测 36px vs 26px），塞在那一行里会
+        # 把这一行撑高，看起来上下行距比其它行都大。
+        open_path_btn = ttk.Button(outer, text=t("save.player_open_path"),
+                                   command=lambda p=player: self._open_player_path(p))
+        open_path_btn.pack(side=tk.RIGHT, padx=(8, 0))
+        if not player.save_file:
+            open_path_btn.configure(state=tk.DISABLED)
+
         body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    def _build_player_id_row(self, parent, player, bg, id_col_width, connection_timestamps=(), identity=None):
+    def _build_player_id_row(self, parent, player, bg, id_col_width):
         """"玩家标识"那一行——标识本身 + 备注（可编辑，按玩家标识全局
-        存一份，同一个人在不同存档下认得出来）+ 打开路径（这个玩家自己
-        那个子文件夹，不是整个会话的文件夹）。
+        存一份，同一个人在不同存档下认得出来）。"打开路径"按钮不在这一行
+        里（见 _build_player_row）。
 
         id_col 是个固定像素宽度（这一批玩家里最长标识文字量出来的宽度，
         见 _refresh_players）的容器，标识 Label 装在里面而不是直接
         pack(side=LEFT)——固定宽度才能让"备注:"起始位置在每一行都对齐，
         不然标识越短的行"备注:"就会越往左缩。
-
-        connection_timestamps 是从 server_log.txt 解析出的这个玩家在这
-        个会话里"续接进入"的时间戳列表（见 connection_log.py），只有
-        HH:MM:SS、没有日期，只做参考展示，不当成精确时间线。
-
-        identity 是 (账号ID, 昵称) 或 None——见 reader.make_identity_resolver，
-        只有日志/跨存档登记簿里能找到可靠对应时才有值，昵称部分可能是空
-        字符串（账号 ID 认出来了但没记到昵称）。
         """
         id_row = tk.Frame(parent, background=bg)
         id_row.pack(fill=tk.X, pady=(2,0))
@@ -890,12 +893,6 @@ class SaveBrowserTab:
         id_col.pack_propagate(False)
         tk.Label(id_col, text=f"{t('save.player_id_label')}: {player.player_id}", font=id_font,
                 fg=theme.TEXT_MUTED, background=bg, anchor=tk.W).pack(side=tk.LEFT, fill=tk.X)
-
-        open_path_btn = ttk.Button(id_row, text=t("save.player_open_path"),
-                                   command=lambda p=player: self._open_player_path(p))
-        open_path_btn.pack(side=tk.RIGHT)
-        if not player.save_file:
-            open_path_btn.configure(state=tk.DISABLED)
 
         note_frame = tk.Frame(id_row, background=bg)
         note_frame.pack(side=tk.LEFT, padx=(12,0))
@@ -916,29 +913,33 @@ class SaveBrowserTab:
         note_entry.bind("<FocusOut>", _save_note)
         note_entry.bind("<Return>", _save_note_on_return)
 
-        # 连接记录 + 克雷ID/昵称合并成一行（连接记录在前）——两者都来自
-        # server_log.txt 解析，分开占两行之前反馈过"这一块看着占地方"，
-        # 合成一行更紧凑；标签里不再重复标注"来自服务器日志"，这一整块
-        # 信息本来就只有日志能给，不需要每行都提醒一遍。
-        summary_parts = []
+    def _build_player_summary_row(self, parent, bg, connection_timestamps, identity):
+        """标题（角色名）下面那一行：连接记录 + 克雷ID + 昵称（连接记录在
+        前）。克雷ID/昵称优先用跨存档玩家登记簿里的信息（见 reader.
+        make_identity_resolver），查不到就显示"待获取"，不留空、不猜。
+
+        connection_timestamps 是从 server_log.txt 解析出的这个玩家在这个
+        会话里"续接进入"的时间戳列表（见 connection_log.py），只有
+        HH:MM:SS、没有日期，只做参考展示，不当成精确时间线；没有记录时
+        这一段不显示。
+        """
+        account_id, nickname = identity if identity else ("", "")
+        pending = t("save.player_pending")
+        parts = []
         if connection_timestamps:
-            summary_parts.append(t(
+            parts.append(t(
                 "save.player_connection_fragment",
                 last=connection_timestamps[-1], count=len(connection_timestamps),
             ))
-        if identity:
-            account_id, nickname = identity
-            summary_parts.append(t("save.player_identity_fragment", id=account_id))
-            if nickname:
-                summary_parts.append(t("save.player_nickname_fragment", nickname=nickname))
-        if summary_parts:
-            summary_row = tk.Frame(parent, background=bg)
-            summary_row.pack(fill=tk.X, pady=(2, 0))
-            tk.Label(
-                summary_row, text="  ·  ".join(summary_parts),
-                font=theme.font_tuple(theme.FONT_SIZE_XS),
-                fg=theme.TEXT_MUTED, background=bg, anchor=tk.W,
-            ).pack(side=tk.LEFT)
+        parts.append(t("save.player_identity_fragment", id=account_id or pending))
+        parts.append(t("save.player_nickname_fragment", nickname=nickname or pending))
+        summary_row = tk.Frame(parent, background=bg)
+        summary_row.pack(fill=tk.X, pady=(2, 0))
+        tk.Label(
+            summary_row, text="  ·  ".join(parts),
+            font=theme.font_tuple(theme.FONT_SIZE_XS),
+            fg=theme.TEXT_MUTED, background=bg, anchor=tk.W,
+        ).pack(side=tk.LEFT)
 
     def _open_player_path(self, player):
         if not player.save_file:
