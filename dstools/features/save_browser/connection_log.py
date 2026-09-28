@@ -230,6 +230,29 @@ def collect_shard_accounts(shard_path: Path) -> dict[str, dict[str, Any]]:
     return accounts
 
 
+def collect_plain_folder_accounts(shard_path: Path) -> dict[str, set[str]]:
+    """存档里明文命名的玩家文件夹（账号 ID + "_"）-> 账号 ID：{账号ID: {文
+    件夹名}}。只列目录名，不解析存档内容；日志已经被清理、但存档还在的账
+    号也能登记上。"""
+    from dstools.shared.player_registry import account_from_plain_folder
+
+    result: dict[str, set[str]] = {}
+    session_root = shard_path / "save" / "session"
+    if not session_root.is_dir():
+        return result
+    try:
+        for session_dir in session_root.iterdir():
+            if not session_dir.is_dir():
+                continue
+            for folder in session_dir.iterdir():
+                account_id = account_from_plain_folder(folder.name) if folder.is_dir() else None
+                if account_id:
+                    result.setdefault(account_id, set()).add(folder.name)
+    except OSError:
+        pass
+    return result
+
+
 def sync_registry_from_shard_paths(shard_paths) -> bool:
     """扫描给定的一批世界目录，把日志里看到的账号合并进跨存档共享的
     玩家登记簿（shared/player_registry.py）。传入的世界越多，登记簿里能
@@ -250,4 +273,9 @@ def sync_registry_from_shard_paths(shard_paths) -> bool:
                 merged["nickname"] = info["nickname"]
                 merged["seen_at"] = info["seen_at"]
             merged["player_ids"] |= info["player_ids"]
+        for account_id, folders in collect_plain_folder_accounts(Path(shard_path)).items():
+            merged = updates.setdefault(
+                account_id, {"nickname": "", "seen_at": 0.0, "player_ids": set()}
+            )
+            merged["player_ids"] |= folders
     return player_registry.merge(updates)

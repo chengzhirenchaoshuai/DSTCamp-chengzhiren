@@ -927,6 +927,10 @@ def test_player_registry_merge_rules():
             # 更新的日志里昵称变了：取新的
             assert player_registry.merge({"KU_a": {"nickname": "改名", "seen_at": 300.0, "player_ids": []}})
             assert player_registry.load()["KU_a"]["nickname"] == "改名"
+            # 明文文件夹 = 账号 ID + 固定的一个 "_"；别的形式一律不认
+            fn = player_registry.account_from_plain_folder
+            assert fn("KU_dwt6dfPl_") == "KU_dwt6dfPl" and fn("OU_123_") == "OU_123"
+            assert fn("KU_dwt6dfPl") is None and fn("A7KVLN39T5JF") is None
         finally:
             player_registry._registry_path = original
     print("  PASS: 玩家登记簿合并规则（昵称取最新、不因 mtime 抖动重写、标识取并集）")

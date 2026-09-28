@@ -316,7 +316,8 @@ def make_identity_resolver(shard_path: Path):
        assigned ownership"）；
     2. 跨存档玩家登记簿里记过的文件夹标识——加密算法对同一个账号是固
        定的，别的存档里见过这个标识，新建的存档不用等自己的日志就能认；
-    3. 文件夹名本身就是 KU_/OU_ 开头（去掉真机见过的一个尾部下划线）。
+    3. 文件夹名是明文格式（账号 ID + 固定的一个尾部 "_"，见
+       player_registry.account_from_plain_folder）。
     昵称统一用登记簿里的最新昵称，查不到时是空字符串。
     """
     from dstools.features.save_browser.connection_log import (
@@ -332,8 +333,8 @@ def make_identity_resolver(shard_path: Path):
     def resolve(player_id: str) -> tuple[str, str] | None:
         linked = identity_log.get(player_id)
         account_id = linked[0] if linked else index.get(player_id)
-        if not account_id and player_id[:3] in ("KU_", "OU_"):
-            account_id = player_id[:-1] if player_id.endswith("_") else player_id
+        if not account_id:
+            account_id = player_registry.account_from_plain_folder(player_id)
         if not account_id:
             return None
         nickname = registry.get(account_id, {}).get("nickname") or (linked[1] if linked else "")
@@ -354,10 +355,9 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str, bool]]:
     的（混淆编码、日志和登记簿都没记录）跳过，不拿混淆值冒充真实 ID 写
     进 adminlist/blocklist。
 
-    真机存档实测过：encode_user_path 关闭后，文件夹名不总是等于干净的
-    KU_xxx——见过 "KU_dwt6dfPl_" 这种带一个尾部下划线的文件夹名，跟这个
-    账号真实 ID（adminlist.txt 里记的、日志里打印的）都是
-    "KU_dwt6dfPl"，直接写带下划线的会匹配不上真实账号，所以统一去掉。
+    明文文件夹名比真实账号 ID 多一个固定的尾部 "_"（如 "KU_dwt6dfPl_"，
+    账号是 "KU_dwt6dfPl"），直接写带下划线的会匹配不上真实账号，认人时
+    统一去掉。
 
     Returns:
         按账号 ID 排序的 (账号ID, 辨识提示, 是否属于这批世界) 列表——提示优

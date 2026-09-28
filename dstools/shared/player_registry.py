@@ -96,6 +96,20 @@ def merge(updates: dict[str, dict[str, Any]]) -> bool:
     return changed
 
 
+def account_from_plain_folder(folder_name: str) -> str | None:
+    """明文（未加密）存档文件夹名 -> 账号 ID。
+
+    encode_user_path 关闭时，玩家文件夹名就是"账号 ID + 一个 '_'"，格式固
+    定（如 KU_dwt6dfPl 对应 KU_dwt6dfPl_，本机日志里的实例与账号完全对
+    得上）；同一个账号开着加密时的文件夹是另一串加密标识，所以一个账号
+    对应 1~2 个文件夹标识。不是 KU_/OU_ 开头、或没有这个尾部 '_' 的名字
+    一律不认，不去猜。
+    """
+    if folder_name[:3] in ("KU_", "OU_") and folder_name.endswith("_") and len(folder_name) > 4:
+        return folder_name[:-1]
+    return None
+
+
 def folder_index(players: dict[str, dict[str, Any]] | None = None) -> dict[str, str]:
     """存档文件夹标识 -> 账号 ID 的反查表。
 
