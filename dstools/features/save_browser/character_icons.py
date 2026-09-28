@@ -210,7 +210,8 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None,
     """解析一个角色 prefab 的显示名 + 头像路径。
 
     先查官方角色表；查不到（说明是模组角色）再去这个世界当前启用的模组
-    里找同名声明，连带该模组自带的头像一起用；都找不到就原样显示英文
+    里找同名声明，连带该模组自带的头像一起用；名字读不出来（脚本加密）
+    但模组带了头像时，显示英文 prefab + 头像；都找不到就原样显示英文
     prefab、不给头像——不去猜测未知模组的命名规则。
 
     platform/wegame_client_mods_dir 透传给 find_mod_folder()——WeGame 存
@@ -225,6 +226,7 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None,
         from dstools.features.mod.manager import list_mods, load_mod_overrides
         from dstools.features.mod.parser import find_mod_folder
         overrides = load_mod_overrides(mod_overrides_path)
+        icon_only: Path | None = None
         for entry in list_mods(overrides):
             if not entry.enabled:
                 continue
@@ -235,5 +237,11 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None,
             if name:
                 icon = get_mod_avatar_path(mod_folder, entry.workshop_id, prefab)
                 return name, icon
+            # 有的模组脚本是加密的，读不出中文名，但头像是明文贴图，
+            # 不能因为名字找不到就把头像一起丢掉。
+            if icon_only is None:
+                icon_only = get_mod_avatar_path(mod_folder, entry.workshop_id, prefab)
+        if icon_only:
+            return prefab, icon_only
 
     return prefab, None

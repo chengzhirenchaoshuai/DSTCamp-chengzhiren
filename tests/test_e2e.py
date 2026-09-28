@@ -528,6 +528,28 @@ def test_character_icons():
     assert name == "totally_unknown_prefab" and icon is None
     print("  PASS: Unresolvable prefab falls back to raw name with no icon")
 
+    # 模组脚本加密、读不出中文名，但带了头像：不能把头像跟着名字一起丢掉。
+    # （真机复现：Cluster_New 里 thsj_peiling / mcw 两个角色。）
+    from unittest.mock import patch
+
+    from dstools.features.save_browser import character_icons
+
+    class _Entry:
+        workshop_id = "workshop-1"
+        enabled = True
+
+    fake_icon = Path("fake_avatar.png")
+    overrides_file = Path(tempfile.gettempdir()) / "modoverrides.lua"
+    with patch.object(Path, "exists", lambda self: True), \
+            patch("dstools.features.mod.manager.load_mod_overrides", return_value={}), \
+            patch("dstools.features.mod.manager.list_mods", return_value=[_Entry()]), \
+            patch("dstools.features.mod.parser.find_mod_folder", return_value=Path("fake_mod")), \
+            patch.object(character_icons, "find_mod_character_name", return_value=None), \
+            patch.object(character_icons, "get_mod_avatar_path", return_value=fake_icon):
+        name, icon = resolve_character("encrypted_char", overrides_file)
+    assert name == "encrypted_char" and icon == fake_icon, (name, icon)
+    print("  PASS: Icon kept when the mod's character name cannot be read")
+
 
 def test_modinfo_reader():
     """用手写的合成 mod 数据测试 modinfo.lua 解析逻辑（parser.py）——这段
