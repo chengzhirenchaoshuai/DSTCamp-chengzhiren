@@ -936,6 +936,35 @@ def test_player_registry_merge_rules():
     print("  PASS: 玩家登记簿合并规则（昵称取最新、不因 mtime 抖动重写、标识取并集）")
 
 
+def test_spawn_sequence_links_folder_to_account():
+    """首次出生的新角色没有 Resuming 行，靠"归属分配 -> 出生 -> 出生保护 ->
+    Serializing user"四行严格相邻认人；中间夹了别人的定时存档就不能认。"""
+    import tempfile
+    from pathlib import Path
+
+    from dstools.features.save_browser.connection_log import _parse_file_raw
+
+    ts = "[03:52:17]: "
+    strict = [
+        ts + "User ID\tKU_new\tassigned ownership to entity\t163816 - willow\t",
+        ts + "Spawning player at: [Fixed] (80.00, 0.00, -232.00)\t",
+        ts + "Enabling Spawn Protection for\t163816 - willow\t",
+        ts + "Serializing user: session/2E6610FDFB1CBC0E/A7NEWFOLDER1/0000000162",
+    ]
+    interleaved = [
+        ts + "User ID\tKU_other\tassigned ownership to entity\t164595 - myth_yutu\t",
+        ts + "Spawning player at: [Fixed] (80.00, 0.00, -232.00)\t",
+        ts + "Serializing user: session/2E6610FDFB1CBC0E/A7PERIODIC01/0000000163",
+        ts + "Enabling Spawn Protection for\t164595 - myth_yutu\t",
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "server_log.txt"
+        log.write_text("\n".join(strict + interleaved) + "\n", encoding="utf-8")
+        identities = _parse_file_raw(log)["identities"]
+    assert identities == {"A7NEWFOLDER1": "KU_new"}, identities
+    print("  PASS: 出生序列四行严格相邻才把玩家文件夹对应到账号")
+
+
 def test_id_remove_button_requires_real_selection():
     """管理员和黑名单未选中真实 ID 时，删除按钮必须保持只读；选中空状态
     占位行/令牌所有者只读提示行（row_ids 里对应 None，见
@@ -1236,6 +1265,7 @@ def main():
         test_transparent_id_list_keeps_background_above_fallback,
         test_id_remove_button_requires_real_selection,
         test_player_registry_merge_rules,
+        test_spawn_sequence_links_folder_to_account,
         test_selfhost_worker_ui_dispatch_contract,
         test_selfhost_status_card_layout_contract,
         test_selfhost_host_display_uses_authenticated_address,

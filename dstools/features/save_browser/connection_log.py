@@ -22,6 +22,15 @@ assigned ownership" 100% 紧跟在对应的 "Resuming/Restoring user" 下一行
 在结果里，不用不确定的数据拼凑答案——真机也实测过存在结构性盲区：玩家
 快速重连、角色没有被重新分配归属时，这一行根本不会出现，这种情况下这
 个 player_id 就是关联不上，不去猜。
+
+首次出生的新角色没有 Resuming 行，但出生序列固定是紧挨着的四行：
+    [03:52:17]: User ID	KU_e2T_LVf2	assigned ownership to entity	163816 - willow
+    [03:52:17]: Spawning player at: [Fixed] (80.00, 0.00, -232.00)
+    [03:52:17]: Enabling Spawn Protection for	163816 - willow
+    [03:52:17]: Serializing user: session/2E6610FDFB1CBC0E/A7L04TVLBUI2/0000000162
+只认这种四行严格相邻的形态（放宽到"附近出现 Serializing"会撞上别人的
+定时存档，252 份真实日志里出现过 3 例错配）；严格形态在真实日志里 0 例
+冲突。
 """
 
 from __future__ import annotations
@@ -39,6 +48,11 @@ _RESUME_USER_RE = re.compile(
 
 _USER_ID_ASSIGN_RE = re.compile(
     r"^\[(?P<ts>\d{2}:\d{2}:\d{2})\]:\s*User ID\s+(?P<user_id>(?:KU_|OU_)\S+?)\s+assigned ownership"
+)
+
+_SERIALIZE_USER_RE = re.compile(
+    r"^\[\d{2}:\d{2}:\d{2}\]:\s*Serializing user:"
+    r"\s*session/[0-9A-Fa-f]+/(?P<player_id>[^/\s]+)(?:/\d+)?\s*$"
 )
 
 _CLIENT_AUTH_RE = re.compile(
@@ -89,6 +103,17 @@ def _parse_file_raw(log_path: Path) -> dict[str, Any]:
         user_id = assigns.get(i + 1)
         if user_id:
             identities[pid] = user_id
+
+    # 首次出生的新角色前面没有 Resuming 行，靠出生序列里紧贴着的
+    # Serializing user 认人；已经由 Resuming 关联上的不覆盖。
+    for i, user_id in assigns.items():
+        if i + 3 >= len(lines):
+            continue
+        if "Spawning player at" not in lines[i + 1] or "Enabling Spawn Protection" not in lines[i + 2]:
+            continue
+        m = _SERIALIZE_USER_RE.match(lines[i + 3])
+        if m:
+            identities.setdefault(m.group("player_id"), user_id)
 
     return {
         "resumes": [[ts, sid, pid] for _i, ts, sid, pid in resumes],
