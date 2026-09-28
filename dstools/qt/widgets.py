@@ -4,7 +4,7 @@
 """
 
 from PySide6.QtCore import QRectF, Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
 from dstools.qt.theme import theme
@@ -77,12 +77,15 @@ class PillTabBar(QWidget):
 
     current_changed = Signal(int)
 
-    def __init__(self, labels: list[str], parent=None):
+    def __init__(self, labels: list[str], parent=None, height: int = 44, pill_height: int = 34,
+                 font_size_key: str | None = None):
         super().__init__(parent)
         self._labels = list(labels)
         self._index = 0
         self._hover = -1
-        self.setFixedHeight(44)
+        self._pill_h = pill_height
+        self._font_size_key = font_size_key  # None 表示用应用默认字体；子页签条传较小的字号键
+        self.setFixedHeight(height)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
@@ -99,14 +102,19 @@ class PillTabBar(QWidget):
             self.update()
 
     def _rects(self) -> list[QRectF]:
-        metrics = self.fontMetrics()
-        widths = [metrics.horizontalAdvance(text) + 44 for text in self._labels]
+        metrics = QFontMetrics(self._font())
+        pad = 44 if self._font_size_key is None else 32
+        widths = [metrics.horizontalAdvance(text) + pad for text in self._labels]
         x = (self.width() - sum(widths) - 6 * (len(widths) - 1)) / 2
+        top = (self.height() - self._pill_h) / 2
         rects = []
         for width in widths:
-            rects.append(QRectF(x, 5, width, 34))
+            rects.append(QRectF(x, top, width, self._pill_h))
             x += width + 6
         return rects
+
+    def _font(self):
+        return theme.font(self._font_size_key) if self._font_size_key else self.font()
 
     def mouseMoveEvent(self, event):
         hover = next((i for i, r in enumerate(self._rects()) if r.contains(event.position())), -1)
@@ -129,12 +137,13 @@ class PillTabBar(QWidget):
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setFont(self._font())
         for i, rect in enumerate(self._rects()):
             selected = i == self._index
             if selected or i == self._hover:
                 painter.setPen(Qt.PenStyle.NoPen)
                 painter.setBrush(theme.color("PRIMARY") if selected else theme.color("PRIMARY_LIGHT"))
-                painter.drawRoundedRect(rect, 17, 17)
+                painter.drawRoundedRect(rect, self._pill_h / 2, self._pill_h / 2)
             painter.setPen(QColor("#FFFFFF") if selected else theme.color("TEXT_MUTED"))
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, self._labels[i])
 
@@ -150,3 +159,29 @@ class Grip(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.window().windowHandle().startSystemResize(self._edges)
+
+
+class Banner(QWidget):
+    """醒目的提示条（本地存档只读、没有存档等）。文字为空时隐藏。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._text = ""
+        self.setVisible(False)
+        self.setFixedHeight(34)
+
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self.setVisible(bool(text))
+        self.update()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme.color("BANNER_BG"))
+        painter.drawRoundedRect(QRectF(self.rect()), 8, 8)
+        painter.setFont(theme.font("FONT_SIZE_SM", bold=True))
+        painter.setPen(theme.color("BANNER_TEXT"))
+        painter.drawText(QRectF(self.rect()).adjusted(14, 0, -14, 0),
+                         Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._text)

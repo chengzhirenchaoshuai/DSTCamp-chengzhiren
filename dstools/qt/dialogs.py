@@ -27,11 +27,13 @@ from dstools.shared.app_settings import (
 
 # ── 消息框 ──────────────────────────────────────────────────────────────
 
-def _box(parent, icon, title: str, text: str) -> QMessageBox:
+def _box(parent, icon, title: str, text: str, with_ok: bool = True) -> QMessageBox:
     box = QMessageBox(parent)
     box.setIcon(icon)
     box.setWindowTitle(title)
     box.setText(text)
+    if with_ok:  # 默认按钮文字是英文 OK，统一成项目里的"确认"
+        box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.AcceptRole)
     return box
 
 
@@ -48,7 +50,7 @@ def show_error(parent, title: str, text: str) -> None:
 
 
 def ask_yes_no(parent, title: str, text: str) -> bool:
-    box = _box(parent, QMessageBox.Icon.Question, title, text)
+    box = _box(parent, QMessageBox.Icon.Question, title, text, with_ok=False)
     yes = box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.YesRole)
     box.addButton(t("dlg.cancel_btn"), QMessageBox.ButtonRole.NoRole)
     box.exec()
@@ -58,7 +60,7 @@ def ask_yes_no(parent, title: str, text: str) -> bool:
 def show_file_location(parent, title: str, path, location_label: str, copied_message: str) -> None:
     """显示文件位置，点链接在资源管理器里选中该文件。"""
     path = Path(path).resolve()
-    box = _box(parent, QMessageBox.Icon.Information, title, "")
+    box = _box(parent, QMessageBox.Icon.Information, title, "", with_ok=False)
     link = f'<a href="open" style="color:{theme.hex("PRIMARY")}">点我打开</a>'
     box.setTextFormat(Qt.TextFormat.RichText)
     box.setText(f"{location_label}<br>{link}<br>{copied_message.replace(chr(10), '<br>')}")

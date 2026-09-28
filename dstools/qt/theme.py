@@ -123,7 +123,7 @@ class Theme(QObject):
             QListWidget::item {{ padding: 4px 6px; border-radius: 4px; }}
             QListWidget::item:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; }}
             QToolTip {{ background: #ffffe0; color: #2e3438; border: 1px solid #b0b0a0; padding: 3px; }}
-            QListView, QScrollArea {{ background: transparent; border: none; }}
+            QListView, QAbstractScrollArea {{ background: transparent; border: none; }}
             QScrollBar:vertical {{ width: 10px; background: transparent; margin: 2px; }}
             QScrollBar::handle:vertical {{ background: {c['PRIMARY']}; border-radius: 4px; min-height: 36px; }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
