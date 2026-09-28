@@ -248,7 +248,7 @@ class _SaveUserPickDialog:
         has_current = any(in_current for _pid, _hint, in_current in candidates)
         ToggleSwitch(
             filter_row, variable=self._only_current_var, command=self._refill,
-            enabled=has_current,
+            enabled=has_current, solid=True,
         ).pack(side=tk.LEFT)
         ttk.Label(
             filter_row, text=t("admin.pick_save_only_current"),

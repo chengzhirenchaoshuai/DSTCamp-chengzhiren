@@ -44,13 +44,15 @@ class ToggleSwitch(BgFrame):
 
     def __init__(self, parent, variable: tk.BooleanVar, width: int = 44,
                  height: int = 22, command=None, enabled: bool = True,
-                 app=None, **kw):
+                 app=None, solid: bool = False, **kw):
         explicit_bg = kw.pop("bg", None)
         self.variable = variable
         self.command = command
         self.enabled = enabled
         self._sw_w, self._sw_h = width, height
-        bg_app = app or _find_bg_app(parent)
+        # solid=True：用于纯色弹窗——弹窗自己不画背景图，但父级链上若有主窗口
+        # 的 BgFrame，_find_bg_app() 会把开关挂到共享背景图上，圆角外露出长方形。
+        bg_app = None if solid else (app or _find_bg_app(parent))
         if bg_app is None:
             bg_app = _SOLID_APP
             if explicit_bg is None:

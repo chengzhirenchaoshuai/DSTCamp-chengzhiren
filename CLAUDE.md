@@ -60,6 +60,7 @@ python scripts/build_exe.py
 - `Toplevel` 不写死宽高；使用请求尺寸或 `center_over_parent()`。
 - 下拉框用 `MenuCombo`，滑块用 `Slider`，不要使用目标环境失效的 `ttk.Combobox`/`ttk.Scale`。
 - 自定义背景上的只读文字用 `BgFrame` + `create_text`。
+- 纯色 `Toplevel` 弹窗里的 `ToggleSwitch` 必须传 `solid=True`：否则它沿父级链挂到主窗口共享背景图，设了自定义背景的用户会看到一块长方形。
 - `Notebook`/`PanedWindow` 中插入控件时，必要时使用 `pack(before=existing_widget)`。
 - 主题值使用时读取 `theme.X`；字体只用 `theme.font_tuple()`；长期容器实现主题刷新。
 - 字体样式只在 `shared/gui/font_styles.py` 注册，字体及许可证放 `tools/fonts/`。
