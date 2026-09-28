@@ -63,6 +63,10 @@ class DSToolsApp:
     # 算都用这一对值，改窗口比例只需要改这里。
     WINDOW_BASE_W = 1600
     WINDOW_BASE_H = 900
+    # 拖拽缩放的下限（宽高比与 BASE 相同）；同样是 100% 缩放下的设计值，
+    # 启动时随 DPI 换算成实例属性。
+    WINDOW_MIN_W = 960
+    WINDOW_MIN_H = 540
 
     # __init__ 里的 update()/update_idletasks() 会提前处理点击；标题栏关闭按钮
     # 比各页签先建好，启动中途点它会走到还没创建的页签。
@@ -104,6 +108,8 @@ class DSToolsApp:
         dpi.init(self.root.winfo_id())
         self.WINDOW_BASE_W = dpi.scale_px(self.WINDOW_BASE_W)
         self.WINDOW_BASE_H = dpi.scale_px(self.WINDOW_BASE_H)
+        self.WINDOW_MIN_W = dpi.scale_px(self.WINDOW_MIN_W)
+        self.WINDOW_MIN_H = dpi.scale_px(self.WINDOW_MIN_H)
 
         self.root.title(f"{t('app.title')} v{__version__}")
         from dstools.shared.resource_paths import bundled_resource_dir
@@ -118,7 +124,7 @@ class DSToolsApp:
         # 过/校验不通过就回退屏幕居中。
         x, y = self._compute_startup_position()
         self.root.geometry(f"{self.WINDOW_BASE_W}x{self.WINDOW_BASE_H}+{x}+{y}")
-        self.root.minsize(dpi.scale_px(900), dpi.scale_px(580))
+        self.root.minsize(self.WINDOW_MIN_W, self.WINDOW_MIN_H)
         self.root.resizable(True, True)
 
         # 标题栏"伪最大化"按钮的状态——见 _toggle_pseudo_maximize()。
@@ -537,6 +543,8 @@ class DSToolsApp:
             self,
             self.WINDOW_BASE_W,
             self.WINDOW_BASE_H,
+            min_width=self.WINDOW_MIN_W,
+            min_height=self.WINDOW_MIN_H,
             bottom_reserve=0,
             top_reserve=top_reserve,
             bottom_grip=5,
