@@ -51,5 +51,12 @@ def run_async(work, on_done, on_error=None) -> None:
     QThreadPool.globalInstance().start(_Task(work, on_done, on_error or _raise))
 
 
+def run_async_with_log(work, on_line, on_done, on_error=None) -> None:
+    """同 run_async，但 work(emit) 里可以多次 emit(line)，每一行都在界面线程回调 on_line(line)。
+    行与最终结果走同一个队列，先后顺序保持一致。"""
+    bridge = _get_bridge()
+    run_async(lambda: work(lambda line: bridge.delivered.emit((on_line, line))), on_done, on_error)
+
+
 def _raise(exc: Exception) -> None:
     raise exc

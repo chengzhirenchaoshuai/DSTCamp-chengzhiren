@@ -7,7 +7,7 @@
 import ctypes
 from ctypes import wintypes
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
@@ -200,6 +200,16 @@ class MenuStrip(QWidget):
         return menu
 
 
+class _RefreshingCombo(QComboBox):
+    """每次点开下拉前先通知外面刷新一遍选项文字（运行中标注只在点开时现查，不用轮询）。"""
+
+    about_to_open = Signal()
+
+    def showPopup(self):
+        self.about_to_open.emit()
+        super().showPopup()
+
+
 class ClusterBar(QWidget):
     """顶部统一存档选择栏：存档类型（Steam/WeGame）+ 存档下拉 + 刷新。全部页签共用。"""
 
@@ -220,7 +230,8 @@ class ClusterBar(QWidget):
         self._platform = QComboBox()
         self._platform.addItems(["Steam", "WeGame"])
         self._platform.setFixedWidth(110)
-        self._cluster = QComboBox()
+        self._cluster = _RefreshingCombo()
+        self._cluster.about_to_open.connect(self.reload)
         self._cluster.setMinimumWidth(360)
         self._refresh = QPushButton()
         self._refresh.clicked.connect(window.refresh_all)

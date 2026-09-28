@@ -8,6 +8,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 
+from dstools.features.local_service.dedicated_server import ServerManager, ServerStatus
 from dstools.i18n import t
 from dstools.models import Cluster, Platform, SaveSource
 from dstools.shared.app_settings import (
@@ -25,6 +26,8 @@ class AppContext(QObject):
     def __init__(self, klei_path: Path | None = None):
         super().__init__()
         self.env = discover_environment(klei_path)
+        # 本进程启动的专服子进程集合，本地服务器页和备份恢复等跨页检查共用这一个
+        self.manager = ServerManager()
         self._platform = Platform.WEGAME if get_last_platform() == "WeGame" else Platform.STEAM
         self._selected: Cluster | None = None
         self._restore_selection(Path(get_last_cluster_path()) if get_last_cluster_path() else None)
@@ -74,7 +77,17 @@ class AppContext(QObject):
 
     # ── 显示文字 ────────────────────────────────────────────────────────
     def cluster_text(self, cluster: Cluster) -> str:
-        return cluster_label(cluster)
+        """存档下拉文字；有世界正在运行时加"运行中"标注。"""
+        text = cluster_label(cluster)
+        if any(proc.cluster_path == cluster.path for proc in self.manager.running()):
+            text += t("selector.running_suffix")
+        return text
+
+    def running_shard_names(self, cluster: Cluster) -> list[str]:
+        """这个存档下仍在启动/运行/停止中的世界（世界文件被进程占着时不能覆盖或删除）。"""
+        active = (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING)
+        return [shard.name for shard in cluster.shards
+                if (proc := self.manager.get(cluster.path, shard.name)) and proc.status in active]
 
     def status_text(self) -> str:
         """状态栏文字：跟随平台筛选，WeGame 与 Steam 各用各的根目录/用户 ID。"""

@@ -8,18 +8,26 @@
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QAction, QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
+from dstools.features.local_service.backup_manager import create_backup, list_backups, restore_backup
 from dstools.features.save_browser import view_data
+from dstools.features.save_browser.cluster_copy import (
+    copy_local_cluster_to_server, suggest_new_cluster_name, validate_cluster_folder_name,
+)
+from dstools.features.save_browser.save_bundle import create_save_bundle
 from dstools.i18n import t
+from dstools.models import SaveSource
+from dstools.qt import dialogs
 from dstools.qt.pages.base import Page
 from dstools.qt.theme import theme
-from dstools.qt.threads import run_async
+from dstools.qt.threads import run_async, run_async_with_log
 from dstools.qt.widgets import Card
 from dstools.shared.app_settings import set_player_note
+from dstools.shared.clipboard import copy_file_to_clipboard
 
 AVATAR_SIZE = 72
 
@@ -46,8 +54,29 @@ class SaveInfoPage(Page):
         layout.setContentsMargins(22, 14, 22, 14)
         layout.setSpacing(8)
 
+        title_row = QHBoxLayout()
         self._basic_title = _label(size_key="FONT_SIZE_BASE", bold=True, muted=False)
-        layout.addWidget(self._basic_title)
+        title_row.addWidget(self._basic_title)
+        title_row.addStretch()
+        # "打包存档"直接放标题行；立即备份/备份策略/恢复统一收进"备份管理"菜单
+        self._bundle_button = QPushButton()
+        self._bundle_button.clicked.connect(self._on_bundle)
+        self._manage_button = QPushButton()
+        self._manage_menu = QMenu(self._manage_button)
+        self._backup_now_action = QAction(self)
+        self._backup_now_action.triggered.connect(self._on_backup_now)
+        self._backup_policy_action = QAction(self)
+        self._backup_policy_action.triggered.connect(self._on_backup_policy)
+        self._restore_action = QAction(self)
+        self._restore_action.triggered.connect(self._on_restore)
+        for action in (self._backup_now_action, self._backup_policy_action, self._restore_action):
+            self._manage_menu.addAction(action)
+        self._manage_button.setMenu(self._manage_menu)
+        title_row.addWidget(self._bundle_button)
+        title_row.addWidget(self._manage_button)
+        layout.addLayout(title_row)
+        self._bundle_running = False
+        self._log_dialog = None  # 复制为服务器存档的日志窗口，保持引用避免被回收
 
         self._overview = Card(radius=14, alpha=220, fill_key="CARD_BG_ALT")
         overview_row = QHBoxLayout(self._overview)
@@ -60,8 +89,11 @@ class SaveInfoPage(Page):
         for label in (self._storage_label, self._detail_label, self._shards_label):
             overview_text.addWidget(label)
         overview_row.addLayout(overview_text, 1)
+        self._copy_to_server = QPushButton()
+        self._copy_to_server.clicked.connect(self._on_copy_to_server)
         self._open_location = QPushButton()
         self._open_location.clicked.connect(self._on_open_location)
+        overview_row.addWidget(self._copy_to_server, 0, Qt.AlignmentFlag.AlignVCenter)
         overview_row.addWidget(self._open_location, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._overview)
 
@@ -103,6 +135,12 @@ class SaveInfoPage(Page):
         self._shard_label.setText(t("save.shard"))
         self._players_title.setText(t("save.players_section"))
         self._open_location.setText(t("env.open_location"))
+        self._copy_to_server.setText(t("save.copy_to_server"))
+        self._bundle_button.setText(t("save.bundle_running") if self._bundle_running else t("save.bundle_btn"))
+        self._manage_button.setText(t("save.backup_management"))
+        self._backup_now_action.setText(t("save.backup_now"))
+        self._backup_policy_action.setText(t("save.backup_policy_btn"))
+        self._restore_action.setText(t("save.restore_backup"))
 
     def _on_theme_changed(self) -> None:
         # 字体样式/字号可能变了：整页重新取数重建，颜色由 QSS/自绘控件自己跟随
@@ -125,6 +163,11 @@ class SaveInfoPage(Page):
             self._shard = ""
         self._shard_combo.blockSignals(False)
         self._overview.setVisible(cluster is not None)
+        has_cluster = cluster is not None
+        self._bundle_button.setEnabled(has_cluster and not self._bundle_running)
+        self._manage_button.setEnabled(has_cluster)
+        # 只有本地存档才需要"复制为服务器存档"
+        self._copy_to_server.setVisible(has_cluster and cluster.source == SaveSource.LOCAL)
         self._load_overview(cluster)
         self._load_session(cluster)
 
@@ -285,3 +328,125 @@ class SaveInfoPage(Page):
     def _open_path(path) -> None:
         if path is not None:
             os.startfile(str(path))
+
+    def _window(self):
+        return self.window()
+
+    def _on_backup_now(self) -> None:
+        cluster = self.ctx.selected_cluster()
+        if cluster is None:
+            return
+        title = t("save.backup_title")
+        run_async(
+            lambda: create_backup(cluster.path),
+            lambda _result: dialogs.show_info(self._window(), title, t("save.backup_ok")),
+            lambda exc: dialogs.show_error(self._window(), title, t("save.backup_failed", error=str(exc))),
+        )
+
+    def _on_backup_policy(self) -> None:
+        dialogs.BackupPolicyDialog(self._window()).exec()
+
+    def _on_restore(self) -> None:
+        cluster = self.ctx.selected_cluster()
+        if cluster is None:
+            return
+        title = t("save.restore_backup")
+        backups = list_backups(cluster.path)
+        if not backups:
+            dialogs.show_info(self._window(), title, t("save.restore_none"))
+            return
+        picker = dialogs.RestoreBackupDialog(self._window(), cluster, backups)
+        if not picker.exec() or picker.result_backup is None:
+            return
+        # 世界文件被服务器进程占着时没法覆盖/删除，必须先确认这个存档下所有世界都已停止
+        running = self.ctx.running_shard_names(cluster)
+        if running:
+            dialogs.show_warning(self._window(), title, t("save.restore_shards_running", shards="、".join(running)))
+            return
+        if not dialogs.ask_yes_no(self._window(), title, t("save.restore_confirm")):
+            return
+        backup = picker.result_backup
+
+        def work():
+            create_backup(cluster.path)  # 恢复前先保险备份一次当前状态，恢复本身也能撤销
+            restore_backup(cluster.path, backup)
+
+        def done(_result) -> None:
+            dialogs.show_info(self._window(), title, t("save.restore_ok"))
+            self.load()
+
+        run_async(work, done, lambda exc: dialogs.show_error(
+            self._window(), title, t("save.restore_failed", error=str(exc))))
+
+    def _on_bundle(self) -> None:
+        """后台打包当前完整存档，完成后把 ZIP 文件放入系统剪贴板。"""
+        cluster = self.ctx.selected_cluster()
+        if cluster is None or self._bundle_running:
+            return
+        self._bundle_running = True
+        self._bundle_button.setEnabled(False)
+        self._bundle_button.setText(t("save.bundle_running"))
+        title = t("save.bundle_title")
+
+        def finish() -> None:
+            self._bundle_running = False
+            self._bundle_button.setText(t("save.bundle_btn"))
+            self._bundle_button.setEnabled(self.ctx.selected_cluster() is not None)
+
+        def done(zip_path) -> None:
+            finish()
+            if copy_file_to_clipboard(zip_path):
+                dialogs.show_file_location(
+                    self._window(), title, zip_path, t("save.bundle_location_label"),
+                    t("save.bundle_clipboard_hint"))
+                return
+            QGuiApplication.clipboard().setText(str(zip_path))
+            dialogs.show_warning(self._window(), title, t("save.bundle_path_copied", path=str(zip_path)))
+
+        def failed(exc: Exception) -> None:
+            finish()
+            dialogs.show_error(self._window(), title, t("save.bundle_failed", error=str(exc)))
+
+        run_async(lambda: create_save_bundle(cluster.path), done, failed)
+
+    def _on_copy_to_server(self) -> None:
+        """把本地存档整个文件夹复制成一份新的服务器存档，过程日志实时显示在弹窗里。"""
+        cluster = self.ctx.selected_cluster()
+        if cluster is None or cluster.source != SaveSource.LOCAL:
+            return
+        klei_root = self.ctx.env.klei_root_for(cluster.platform)
+        if not klei_root:
+            dialogs.show_error(self._window(), t("save.copy_to_server"), t("save.no_saves"))
+            return
+
+        def validate(name: str):
+            reason = validate_cluster_folder_name(name)
+            if reason:
+                return t(f"save.copy_name_{reason}")
+            if (klei_root / name.strip()).exists():
+                return t("save.copy_name_exists")
+            return None
+
+        picker = dialogs.CopyToServerDialog(
+            self._window(), cluster.name, suggest_new_cluster_name(klei_root, cluster.name), validate)
+        if not picker.exec() or not picker.result_name:
+            return
+        new_name = picker.result_name
+
+        self._copy_to_server.setEnabled(False)
+        log = self._log_dialog = dialogs.LogDialog(self._window(), t("save.copy_result_title"))
+        log.setModal(False)
+        log.show()
+
+        def work(emit):
+            try:
+                copy_local_cluster_to_server(cluster.path, klei_root, new_name, on_log=emit)
+            except Exception as exc:  # noqa: BLE001 - 原始错误写进日志窗口
+                emit(t("sync.error_prefix", detail=str(exc)))
+
+        def done(_result) -> None:
+            log.finish()
+            self._copy_to_server.setEnabled(True)
+            self.ctx.refresh_env()
+
+        run_async_with_log(work, log.append, done)

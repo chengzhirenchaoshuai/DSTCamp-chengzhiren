@@ -117,6 +117,11 @@ class Theme(QObject):
             QMenu::item {{ padding: 6px 22px; border-radius: 4px; }}
             QMenu::item:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; }}
             QMenu::separator {{ height: 1px; background: {c['CARD_BORDER']}; margin: 4px 8px; }}
+            QDialog {{ background: {c['BG_SOFT']}; }}
+            QListWidget, QPlainTextEdit {{ background: rgba(255,255,255,200); color: {c['TEXT']};
+                border: 1px solid {c['CARD_BORDER']}; border-radius: 8px; padding: 4px; }}
+            QListWidget::item {{ padding: 4px 6px; border-radius: 4px; }}
+            QListWidget::item:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; }}
             QToolTip {{ background: #ffffe0; color: #2e3438; border: 1px solid #b0b0a0; padding: 3px; }}
             QListView, QScrollArea {{ background: transparent; border: none; }}
             QScrollBar:vertical {{ width: 10px; background: transparent; margin: 2px; }}
