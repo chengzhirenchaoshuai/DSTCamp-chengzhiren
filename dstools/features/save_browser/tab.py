@@ -914,8 +914,8 @@ class SaveBrowserTab:
         note_entry.bind("<Return>", _save_note_on_return)
 
     def _build_player_summary_row(self, parent, bg, connection_timestamps, identity):
-        """标题（角色名）下面那一行：连接记录 + 克雷ID + 昵称（连接记录在
-        前）。克雷ID/昵称优先用跨存档玩家登记簿里的信息（见 reader.
+        """标题（角色名）下面那一行：连接记录 + 科雷ID + 昵称（连接记录在
+        前）。科雷ID/昵称优先用跨存档玩家登记簿里的信息（见 reader.
         make_identity_resolver），查不到就显示"待获取"，不留空、不猜。
 
         connection_timestamps 是从 server_log.txt 解析出的这个玩家在这个

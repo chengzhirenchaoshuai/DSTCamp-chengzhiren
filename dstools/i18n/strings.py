@@ -193,7 +193,7 @@ STRINGS = {
         "save.player_open_path": "打开路径",
         "save.player_connection_fragment": "连接记录：最近 {last} · 共 {count} 次",
         "save.player_pending": "待获取",
-        "save.player_identity_fragment": "克雷ID：{id}",
+        "save.player_identity_fragment": "科雷ID：{id}",
         "save.player_nickname_fragment": "昵称：{nickname}",
         "save.stat_character": "角色",
         "save.stat_health": "血量",
