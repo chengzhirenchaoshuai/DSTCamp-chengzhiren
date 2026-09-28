@@ -25,7 +25,7 @@ from dstools.shared.token_manager import (
     token_fingerprint,
     write_token,
 )
-from dstools.features.save_browser.reader import list_known_player_ids
+from dstools.features.save_browser.reader import known_nicknames, list_known_player_ids
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.card_frame import CardFrame
@@ -209,22 +209,19 @@ class _IdInputDialog:
 
 
 class _SaveUserPickDialog:
-    """从存档/日志里扫描出的真实用户中挑一个，快速加入或移出当前这份名单
-    （管理员/黑名单，由调用方决定）。
+    """从存档/日志里扫描出的真实用户中挑一个，返回给调用方去加进当前这
+    份名单（管理员/黑名单，由调用方决定）。
 
     candidates 是 list_known_player_ids() 的结果（真实 ID + 昵称/角色名
-    辨识提示，不需要再校验格式）；current_ids 是这份名单文件里已有的
-    ID，用来判断每个候选人当前是"可以添加"还是"可以移除"——写文件的时
-    候始终只用 ID 本身，昵称只在这个弹窗里给人看，不会被写进去。
+    辨识提示，不需要再校验格式）；只负责"挑一个"，不在这个弹窗里处理
+    移除——真要移除，回主列表里选中已有的那一行点"删除"就行。
 
-    结果是 (action, id) 二元组，action 是 "add" 或 "remove"；取消/没选
-    中任何一条时是 None。
+    结果是选中的 ID；取消/没选中任何一条时是 None。
     """
 
-    def __init__(self, parent_widget, candidates: list[tuple[str, str]], current_ids: list[str]):
-        self.result: tuple[str, str] | None = None
+    def __init__(self, parent_widget, candidates: list[tuple[str, str]]):
+        self.result: str | None = None
         self._ids = [pid for pid, _hint in candidates]
-        self._current_ids = set(current_ids)
         win = tk.Toplevel(parent_widget)
         self.win = win
         win.withdraw()
@@ -240,33 +237,30 @@ class _SaveUserPickDialog:
 
         list_frame = ttk.Frame(win)
         list_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 8))
-        self.listbox = tk.Listbox(list_frame, font=("Consolas", 11), height=8, exportselection=False)
+        # 候选人名字里常见中文昵称，之前写死 Consolas（纯西文等宽字体）
+        # 中文会被系统拿别的字体顶替，跟英文部分宽度对不上、显示很怪
+        # （真机反馈过）——项目里字体统一走 theme.font_tuple()，本身就是
+        # 照顾中英混排选的。
+        self.listbox = tk.Listbox(
+            list_frame, font=theme.font_tuple(theme.FONT_SIZE_MD),
+            height=8, exportselection=False,
+        )
         self.listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.listbox.yview)
         scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.listbox.configure(yscrollcommand=scroll.set)
         for pid, hint in candidates:
-            label = f"{pid}   ({hint})" if hint else pid
-            if pid in self._current_ids:
-                label += f"  {t('admin.pick_save_already_in_list')}"
-            self.listbox.insert(tk.END, label)
-        self.listbox.bind("<<ListboxSelect>>", lambda _e: self._sync_buttons())
-        self.listbox.bind("<Double-Button-1>", lambda _e: self._confirm_default())
+            self.listbox.insert(tk.END, f"{pid}   ({hint})" if hint else pid)
+        self.listbox.bind("<Double-Button-1>", lambda _e: self._confirm())
 
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=20)
         ttk.Button(
             btn_frame, text=t("dlg.cancel_btn"), command=self._cancel,
         ).pack(side=tk.LEFT)
-        self.remove_btn = ttk.Button(
-            btn_frame, text=t("admin.remove"), command=lambda: self._confirm("remove"),
-        )
-        self.remove_btn.pack(side=tk.RIGHT)
-        self.add_btn = ttk.Button(
-            btn_frame, text=t("admin.add"), command=lambda: self._confirm("add"),
-        )
-        self.add_btn.pack(side=tk.RIGHT, padx=(0, 6))
-        self._sync_buttons()
+        ttk.Button(
+            btn_frame, text=t("admin.add"), command=self._confirm,
+        ).pack(side=tk.RIGHT)
 
         win.bind("<Escape>", lambda e: self._cancel())
         win.protocol("WM_DELETE_WINDOW", self._cancel)
@@ -278,27 +272,10 @@ class _SaveUserPickDialog:
         win.grab_set()
         win.wait_window()
 
-    def _selected_id(self) -> str | None:
+    def _confirm(self):
         selection = self.listbox.curselection()
-        return self._ids[selection[0]] if selection else None
-
-    def _sync_buttons(self):
-        pid = self._selected_id()
-        in_list = pid is not None and pid in self._current_ids
-        self.add_btn.configure(state=tk.DISABLED if (pid is None or in_list) else tk.NORMAL)
-        self.remove_btn.configure(state=tk.NORMAL if in_list else tk.DISABLED)
-
-    def _confirm_default(self):
-        pid = self._selected_id()
-        if pid is None:
-            return
-        self._confirm("remove" if pid in self._current_ids else "add")
-
-    def _confirm(self, action):
-        pid = self._selected_id()
-        if pid is None:
-            return
-        self.result = (action, pid)
+        if selection:
+            self.result = self._ids[selection[0]]
         self.win.destroy()
 
     def _cancel(self):
@@ -793,6 +770,12 @@ class ClusterConfigTab:
         # <<ListboxSelect>> 绑定触发一次（构造阶段列表还是空的，但绑定
         # 已经生效），这里先给个 None 兜底，不然会在属性还不存在时报错。
         self._admin_token_hint_text = None
+        # 跟 listbox 每一行一一对应的"真实 ID"（不含昵称后缀），空状态占
+        # 位行/令牌所有者提示行对应 None——_remove_id_entry()/
+        # _sync_id_remove_state() 靠这个判断，而不是解析显示文字，昵称里
+        # 混进跟 ID 格式相似的字符也不会误判（见 _load_id_list_into()）。
+        self._admin_row_ids: list[str | None] = []
+        self._block_row_ids: list[str | None] = []
         # app._refresh()（F5）在 "server" 页签这一次调用前后临时置位，跳
         # 过 _present_sub_page() 自己的背景重绘，交给它收尾时统一画一次
         # （见 _present_sub_page()/app.py._refresh() 的说明）；平时保持
@@ -801,7 +784,7 @@ class ClusterConfigTab:
         self._admin_frame = self._layout_frame(self._sub_content)
         (self._admin_title_lbl, self._admin_listbox, self._admin_add_btn,
          self._admin_remove_btn, self._admin_pick_btn,
-         self._admin_status) = self._build_id_list_panel(self._admin_frame, "admin.title")
+         self._admin_status) = self._build_id_list_panel(self._admin_frame, "admin.title", "adminlist_path")
         self._admin_add_btn.configure(command=lambda: self._add_id_entry(
             "adminlist_path", "adminlist.txt", self._admin_listbox, self._admin_status,
             self._admin_add_btn, self._admin_remove_btn))
@@ -816,7 +799,7 @@ class ClusterConfigTab:
         self._block_frame = self._layout_frame(self._sub_content)
         (self._block_title_lbl, self._block_listbox, self._block_add_btn,
          self._block_remove_btn, self._block_pick_btn,
-         self._block_status) = self._build_id_list_panel(self._block_frame, "blocklist.title")
+         self._block_status) = self._build_id_list_panel(self._block_frame, "blocklist.title", "blocklist_path")
         self._block_add_btn.configure(command=lambda: self._add_id_entry(
             "blocklist_path", "blocklist.txt", self._block_listbox, self._block_status,
             self._block_add_btn, self._block_remove_btn))
@@ -913,7 +896,7 @@ class ClusterConfigTab:
     def _surface_canvas(self, parent):
         return BgFrame(parent, self.app, bg=theme.BG_SOFT)
 
-    def _build_id_list_panel(self, parent, title_key):
+    def _build_id_list_panel(self, parent, title_key, path_attr):
         lf = self._layout_frame(parent); lf.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         title_lbl = TransparentLabel(
             lf, self.app, text=t(title_key),
@@ -930,7 +913,7 @@ class ClusterConfigTab:
         pick_btn = ttk.Button(bf, text=t("admin.pick_from_save")); pick_btn.pack(side=tk.LEFT, padx=2)
         listbox.bind(
             "<<ListboxSelect>>",
-            lambda _event: self._sync_id_remove_state(listbox, remove_btn),
+            lambda _event: self._sync_id_remove_state(path_attr, listbox, remove_btn),
             add="+",
         )
         status = TransparentLabel(lf, self.app, text="", font=self._ROW_VALUE_FONT,
@@ -1652,16 +1635,24 @@ class ClusterConfigTab:
         listbox.delete(0, tk.END)
         path = getattr(cluster, path_attr)
         ids = read_adminlist(path) if path else []
-        for a in ids: listbox.insert(tk.END, a)
+        # 日志里能确认到昵称的账号，显示的时候带上昵称方便辨认——但写文
+        # 件/删除判断永远只认 ID 本身，昵称只是展示层的东西，所以每一行
+        # 显示文字和它对应的"真实 ID"分开存两份列表（row_ids），不能靠解
+        # 析显示文字反推 ID。
+        nicknames = known_nicknames(cluster.shards) if cluster.source == SaveSource.SERVER else {}
+        row_ids: list[str | None] = []
+        for a in ids:
+            label = f"{a}（{nicknames[a]}）" if nicknames.get(a) else a
+            listbox.insert(tk.END, label)
+            row_ids.append(a)
         # 服务器令牌所有者账号天然拥有这个专服的管理员权限——游戏引擎自
         # 己认的，不需要写进 adminlist.txt 也生效。这里只在管理员页签追
         # 加一条只读提示，帮用户确认"这个号已经是管理员了"。这一条不是
-        # 真实文件内容，选中它时"删除"按钮要禁用（而不是允许点了之后靠
+        # 真实文件内容，对应的 row_ids 是 None，_sync_id_remove_state()
+        # 靠这个判断选中它时要禁用"删除"（而不是允许点了之后靠
         # remove_admin() 在文件里找不到这个字符串默默 no-op）——真机反
         # 馈过，用户选中它发现删除按钮还能点，以为是真的能删、点了却没
-        # 反应，体验上像坏了。self._admin_token_hint_text 记录当前这一条
-        # 提示的完整文本，只有 path_attr 是 adminlist_path 时才会非空；
-        # _sync_id_remove_state() 靠它跟"空状态占位文字"一样处理成不可删。
+        # 反应，体验上像坏了。
         has_token_hint = False
         if path_attr == "adminlist_path":
             self._admin_token_hint_text = None
@@ -1670,21 +1661,27 @@ class ClusterConfigTab:
                 if owner_id and owner_id not in ids:
                     self._admin_token_hint_text = t("admin.token_owner_hint", id=owner_id)
                     listbox.insert(tk.END, self._admin_token_hint_text)
+                    row_ids.append(None)
                     has_token_hint = True
-        if not ids and not has_token_hint: listbox.insert(tk.END, empty_text)
+        if not ids and not has_token_hint:
+            listbox.insert(tk.END, empty_text)
+            row_ids.append(None)
+        if path_attr == "adminlist_path":
+            self._admin_row_ids = row_ids
+        else:
+            self._block_row_ids = row_ids
         # 添加按钮始终可用 -- 对应的文件不存在时 add_admin() 会自己创建，
         # 不需要先有文件才能添加。重新加载会清空选择，因此删除按钮必须
         # 保持禁用，直到用户明确选中一个真实 ID。
         add_btn.configure(state=tk.NORMAL)
-        self._sync_id_remove_state(listbox, remove_btn)
+        self._sync_id_remove_state(path_attr, listbox, remove_btn)
 
-    def _sync_id_remove_state(self, listbox, remove_btn):
+    def _sync_id_remove_state(self, path_attr, listbox, remove_btn):
         selection = listbox.curselection()
-        removable = bool(selection)
-        if removable:
-            selected_text = listbox.get(selection[0])
-            readonly_texts = (t("admin.empty"), t("blocklist.empty"), self._admin_token_hint_text)
-            removable = selected_text not in readonly_texts
+        removable = False
+        if selection:
+            row_ids = self._admin_row_ids if path_attr == "adminlist_path" else self._block_row_ids
+            removable = selection[0] < len(row_ids) and row_ids[selection[0]] is not None
         remove_btn.configure(state=tk.NORMAL if removable else tk.DISABLED)
 
     def _add_id_entry(self, path_attr, default_filename, listbox, status, add_btn, remove_btn):
@@ -1703,9 +1700,11 @@ class ClusterConfigTab:
         self._commit_id_add(c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn)
 
     def _pick_id_from_save(self, path_attr, default_filename, listbox, status, add_btn, remove_btn):
-        # 从当前存档/日志里扫描出来的真实用户中选一个，直接加入或移出这
-        # 份名单——list_known_player_ids() 已经把能核实到的真实 ID 和昵
-        # 称/角色名提示都准备好了，这里不需要再校验格式。
+        # 从当前存档/日志里扫描出来的真实用户中选一个直接加入——
+        # list_known_player_ids() 已经把能核实到的真实 ID 和昵称/角色名
+        # 提示都准备好了，这里不需要再校验格式。只保留"添加"：移除这个
+        # 动作放在这里做意义不大（真要移除，选中列表里已有的那一行、点
+        # "删除"就行，不需要再扫一遍存档去挑），去掉之后弹窗也更简单。
         c = self._get_cluster()
         if not c: return
         candidates = list_known_player_ids(c.shards)
@@ -1714,15 +1713,9 @@ class ClusterConfigTab:
             # 窗提醒比状态栏一行小字更不容易漏看。
             dlg.show_info(self.frame, t("admin.pick_save_title"), t("admin.pick_save_empty"))
             return
-        path = getattr(c, path_attr)
-        current_ids = read_adminlist(path) if path else []
-        result = _SaveUserPickDialog(self.frame, candidates, current_ids).result
-        if not result: return
-        action, kid = result
-        if action == "add":
-            self._commit_id_add(c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn)
-        else:
-            self._commit_id_remove(c, path_attr, kid, listbox, status, add_btn, remove_btn)
+        kid = _SaveUserPickDialog(self.frame, candidates).result
+        if not kid: return
+        self._commit_id_add(c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn)
 
     def _commit_id_add(self, c, path_attr, default_filename, kid, listbox, status, add_btn, remove_btn):
         path = getattr(c, path_attr) or (c.path / default_filename)
@@ -1730,13 +1723,10 @@ class ClusterConfigTab:
             setattr(c, path_attr, path)
             status.configure(text=t("admin.added", id=kid))
         else:
+            # 状态栏小字容易被忽略（真机反馈过），已经加过同一个 ID 时弹
+            # 窗提醒一下，跟"从存档选择扫不到人"用的是同一套 show_info。
             status.configure(text=t("admin.already_exists"))
-        self._load_id_list_into(c, path_attr, listbox, add_btn, remove_btn)
-
-    def _commit_id_remove(self, c, path_attr, kid, listbox, status, add_btn, remove_btn):
-        path = getattr(c, path_attr, None)
-        if path and remove_admin(path, kid):
-            status.configure(text=t("admin.removed", id=kid))
+            dlg.show_info(self.frame, t("admin.duplicate_title"), t("admin.already_exists_msg", id=kid))
         self._load_id_list_into(c, path_attr, listbox, add_btn, remove_btn)
 
     def _remove_id_entry(self, path_attr, listbox, status, add_btn, remove_btn):
@@ -1745,8 +1735,9 @@ class ClusterConfigTab:
         if not c or not path: return
         sel = listbox.curselection()
         if not sel: return
-        kid = listbox.get(sel[0])
-        if kid in (t("admin.empty"), t("blocklist.empty")): return
+        row_ids = self._admin_row_ids if path_attr == "adminlist_path" else self._block_row_ids
+        kid = row_ids[sel[0]] if sel[0] < len(row_ids) else None
+        if not kid: return
         if remove_admin(path, kid): status.configure(text=t("admin.removed", id=kid))
         self._load_id_list_into(c, path_attr, listbox, add_btn, remove_btn)
 

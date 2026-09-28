@@ -811,8 +811,6 @@ class SaveBrowserTab:
         if player.parse_error:
             tk.Label(body, text=f"{t('save.player_id_label')}: {player.player_id}", font=theme.font_tuple(theme.FONT_SIZE_BASE, bold=True),
                     fg=theme.TEXT, background=bg, anchor=tk.W).pack(fill=tk.X)
-            tk.Label(body, text=t("save.player_parse_error"), font=theme.font_tuple(theme.FONT_SIZE_XS), fg=theme.ERROR,
-                    background=bg, anchor=tk.W).pack(fill=tk.X)
             self._build_player_id_row(body, player, bg, id_col_width, connection_timestamps, identity)
         else:
             header = tk.Frame(body, background=bg)
@@ -915,30 +913,26 @@ class SaveBrowserTab:
         note_entry.bind("<FocusOut>", _save_note)
         note_entry.bind("<Return>", _save_note_on_return)
 
+        # 连接记录 + 克雷ID/昵称合并成一行（连接记录在前）——两者都来自
+        # server_log.txt 解析，分开占两行之前反馈过"这一块看着占地方"，
+        # 合成一行更紧凑；标签里不再重复标注"来自服务器日志"，这一整块
+        # 信息本来就只有日志能给，不需要每行都提醒一遍。
+        summary_parts = []
+        if connection_timestamps:
+            summary_parts.append(t(
+                "save.player_connection_fragment",
+                last=connection_timestamps[-1], count=len(connection_timestamps),
+            ))
         if identity:
             account_id, nickname = identity
-            identity_row = tk.Frame(parent, background=bg)
-            identity_row.pack(fill=tk.X, pady=(2, 0))
-            text = (
-                t("save.player_identity_with_nickname", id=account_id, nickname=nickname)
-                if nickname else
-                t("save.player_identity_no_nickname", id=account_id)
-            )
+            summary_parts.append(t("save.player_identity_fragment", id=account_id))
+            if nickname:
+                summary_parts.append(t("save.player_nickname_fragment", nickname=nickname))
+        if summary_parts:
+            summary_row = tk.Frame(parent, background=bg)
+            summary_row.pack(fill=tk.X, pady=(2, 0))
             tk.Label(
-                identity_row, text=text, font=theme.font_tuple(theme.FONT_SIZE_XS),
-                fg=theme.TEXT_MUTED, background=bg, anchor=tk.W,
-            ).pack(side=tk.LEFT)
-
-        if connection_timestamps:
-            conn_row = tk.Frame(parent, background=bg)
-            conn_row.pack(fill=tk.X, pady=(2, 0))
-            tk.Label(
-                conn_row,
-                text=t(
-                    "save.player_connection_log",
-                    last=connection_timestamps[-1],
-                    count=len(connection_timestamps),
-                ),
+                summary_row, text="  ·  ".join(summary_parts),
                 font=theme.font_tuple(theme.FONT_SIZE_XS),
                 fg=theme.TEXT_MUTED, background=bg, anchor=tk.W,
             ).pack(side=tk.LEFT)

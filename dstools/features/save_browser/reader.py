@@ -357,3 +357,21 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
     return sorted(
         (pid, nicknames.get(pid) or character_hints.get(pid, "")) for pid in seen_ids
     )
+
+
+def known_nicknames(shards: list) -> dict[str, str]:
+    """扫描一组世界的 server_log.txt，收集"账号ID -> 已确认昵称"的映射。
+
+    只在真正查到过 "Client authenticated" 记录时才有值——不像
+    list_known_player_ids() 那样在查不到昵称时退回角色名当辅助提示，这
+    里要的是"已确认的玩家名称"，管理员/黑名单列表拿这个只标注真正核实
+    过的昵称，不用角色名（角色名换局就变，不是玩家身份）凑数。
+    """
+    from dstools.features.save_browser.connection_log import collect_player_identity_log
+
+    result: dict[str, str] = {}
+    for shard in shards:
+        for _player_id, (account_id, nickname) in collect_player_identity_log(shard.path).items():
+            if nickname:
+                result[account_id] = nickname
+    return result
