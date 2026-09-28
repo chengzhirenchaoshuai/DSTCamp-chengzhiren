@@ -15,13 +15,14 @@ SaveSession.session_id、PlayerCharacterSave.player_id 是同一套值，可以
 直接关联；"User ID ... assigned ownership" 这一行给出真实账号 ID
 （KU_/OU_），"Client authenticated" 把账号 ID 关联到昵称。
 
-player_id 关联账号 ID 靠的是**行号紧邻**，不是时间戳——真机日志里两者
-时间戳偶尔会差 1 秒（同一 tick 内先后写入的两行），但 "User ID ...
-assigned ownership" 100% 紧跟在对应的 "Resuming/Restoring user" 下一行
-（10 组真实样本逐一核对过），比时间戳可靠。没有找到紧邻的 player_id 不
-在结果里，不用不确定的数据拼凑答案——真机也实测过存在结构性盲区：玩家
-快速重连、角色没有被重新分配归属时，这一行根本不会出现，这种情况下这
-个 player_id 就是关联不上，不去猜。
+player_id 关联账号 ID 靠的是"Resuming/Restoring user"后面**最近的**一条
+"User ID ... assigned ownership"：必须在 8 行以内、时间戳同一秒、中间
+不能再插入别的 Resuming/Restoring 行。不能要求"紧挨着下一行"——装了
+全球定位等会往日志里插行的模组时，这两行会被隔开几行（真机 Cluster_New
+里隔了 2 行模组输出）。这个宽松规则在 252 份真实日志里核对过：60 例与
+已知对应关系一致、0 例冲突。没找到就不在结果里，不用不确定的数据拼凑
+答案——真机也实测过存在结构性盲区：玩家快速重连、角色没有被重新分配
+归属时，这一行根本不会出现，这种情况下这个 player_id 就是关联不上，不去猜。
 
 首次出生的新角色没有 Resuming 行，但出生序列固定是紧挨着的四行：
     [03:52:17]: User ID	KU_e2T_LVf2	assigned ownership to entity	163816 - willow
@@ -49,6 +50,8 @@ _RESUME_USER_RE = re.compile(
 _USER_ID_ASSIGN_RE = re.compile(
     r"^\[(?P<ts>\d{2}:\d{2}:\d{2})\]:\s*User ID\s+(?P<user_id>(?:KU_|OU_)\S+?)\s+assigned ownership"
 )
+
+_ASSIGN_MAX_GAP = 8
 
 _SERIALIZE_USER_RE = re.compile(
     r"^\[\d{2}:\d{2}:\d{2}\]:\s*Serializing user:"
@@ -83,7 +86,7 @@ def _parse_file_raw(log_path: Path) -> dict[str, Any]:
         return {"resumes": [], "identities": {}, "auths": []}
 
     resumes: list[tuple[int, str, str, str]] = []
-    assigns: dict[int, str] = {}
+    assigns: dict[int, tuple[str, str]] = {}
     auths: list[tuple[str, str, str]] = []
     for i, line in enumerate(lines):
         m = _RESUME_USER_RE.match(line)
@@ -92,21 +95,26 @@ def _parse_file_raw(log_path: Path) -> dict[str, Any]:
             continue
         m = _USER_ID_ASSIGN_RE.match(line)
         if m:
-            assigns[i] = m.group("user_id")
+            assigns[i] = (m.group("ts"), m.group("user_id"))
             continue
         m = _CLIENT_AUTH_RE.match(line)
         if m:
             auths.append((m.group("ts"), m.group("user_id"), m.group("nickname").strip()))
 
     identities: dict[str, str] = {}
-    for i, _ts, _sid, pid in resumes:
-        user_id = assigns.get(i + 1)
-        if user_id:
-            identities[pid] = user_id
+    resume_lines = {i for i, _ts, _sid, _pid in resumes}
+    for i, ts, _sid, pid in resumes:
+        for j in range(i + 1, min(i + 1 + _ASSIGN_MAX_GAP, len(lines))):
+            if j in resume_lines:
+                break
+            if j in assigns:
+                if assigns[j][0] == ts:
+                    identities[pid] = assigns[j][1]
+                break
 
     # 首次出生的新角色前面没有 Resuming 行，靠出生序列里紧贴着的
     # Serializing user 认人；已经由 Resuming 关联上的不覆盖。
-    for i, user_id in assigns.items():
+    for i, (_ts, user_id) in assigns.items():
         if i + 3 >= len(lines):
             continue
         if "Spawning player at" not in lines[i + 1] or "Enabling Spawn Protection" not in lines[i + 2]:

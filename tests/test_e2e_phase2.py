@@ -965,6 +965,36 @@ def test_spawn_sequence_links_folder_to_account():
     print("  PASS: 出生序列四行严格相邻才把玩家文件夹对应到账号")
 
 
+def test_resume_identity_tolerates_mod_log_noise():
+    """Resuming 和 User ID 之间被模组输出隔开几行（真机 Cluster_New 里全球定位
+    等模组会插行）仍要认出；不同一秒、或中间又出现别的 Resuming 就不能认。"""
+    import tempfile
+    from pathlib import Path
+
+    from dstools.features.save_browser.connection_log import _parse_file_raw
+
+    lines = [
+        # 隔了两行模组输出，同一秒：认
+        "[00:08:27]: Resuming user: session/4C8A4EF1E69A2D75/A7NOISYFOLD1/0000000007",
+        "[00:08:27]: component damagetypebonus already exists on entity 124197 - !",
+        "[00:08:27]: [全球定位]In my AddPlayerPostInit",
+        "[00:08:27]: User ID\tKU_noisy\tassigned ownership to entity\t124197 - thsj_peiling\t",
+        # 不同一秒：不认
+        "[00:09:10]: Resuming user: session/4C8A4EF1E69A2D75/A7LATERFOLD1",
+        "[00:09:12]: User ID\tKU_later\tassigned ownership to entity\t1 - x\t",
+        # 中间夹了别人的 Resuming：第一个不认（第二个紧挨着，认）
+        "[00:10:00]: Resuming user: session/4C8A4EF1E69A2D75/A7FIRSTFOLD1",
+        "[00:10:00]: Resuming user: session/4C8A4EF1E69A2D75/A7SECONDFOLD",
+        "[00:10:00]: User ID\tKU_second\tassigned ownership to entity\t2 - y\t",
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        log = Path(tmp) / "server_log.txt"
+        log.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        identities = _parse_file_raw(log)["identities"]
+    assert identities == {"A7NOISYFOLD1": "KU_noisy", "A7SECONDFOLD": "KU_second"}, identities
+    print("  PASS: 模组输出隔开几行仍能认人，跨秒/夹别人续接行不认")
+
+
 def test_id_remove_button_requires_real_selection():
     """管理员和黑名单未选中真实 ID 时，删除按钮必须保持只读；选中空状态
     占位行/令牌所有者只读提示行（row_ids 里对应 None，见
@@ -1266,6 +1296,7 @@ def main():
         test_id_remove_button_requires_real_selection,
         test_player_registry_merge_rules,
         test_spawn_sequence_links_folder_to_account,
+        test_resume_identity_tolerates_mod_log_noise,
         test_selfhost_worker_ui_dispatch_contract,
         test_selfhost_status_card_layout_contract,
         test_selfhost_host_display_uses_authenticated_address,

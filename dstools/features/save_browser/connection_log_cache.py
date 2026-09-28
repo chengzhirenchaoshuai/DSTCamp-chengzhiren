@@ -22,7 +22,7 @@ from typing import Any
 from dstools.shared.resource_paths import cache_dir
 
 _CACHE_DIR = cache_dir("connection_log")
-_CACHE_FORMAT_VERSION = 2
+_CACHE_FORMAT_VERSION = 3
 
 
 def _cache_path(shard_path: Path) -> Path:
