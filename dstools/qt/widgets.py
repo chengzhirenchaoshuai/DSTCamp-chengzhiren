@@ -54,15 +54,17 @@ class ToggleSwitch(QWidget):
 class Card(QWidget):
     """圆角半透明卡片：透出下面的背景图，只画描边和淡淡的底色。"""
 
-    def __init__(self, parent=None, radius: int | None = None, alpha: int = 150):
+    def __init__(self, parent=None, radius: int | None = None, alpha: int = 150,
+                 fill_key: str = "CARD_BG"):
         super().__init__(parent)
         self._radius = radius
         self._alpha = alpha
+        self._fill_key = fill_key
 
     def paintEvent(self, _event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        fill = theme.color("CARD_BG")
+        fill = theme.color(self._fill_key)
         fill.setAlpha(self._alpha)
         painter.setBrush(fill)
         painter.setPen(QPen(theme.color("CARD_BORDER"), 1))

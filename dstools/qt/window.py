@@ -20,6 +20,7 @@ from dstools.models import Platform
 from dstools.qt.background import Background
 from dstools.qt.context import AppContext
 from dstools.qt.pages.placeholder import PlaceholderPage
+from dstools.qt.pages.save_info import SaveInfoPage
 from dstools.qt.theme import THEME_NAMES, theme
 from dstools.qt.widgets import Card, Grip, PillTabBar
 from dstools.shared.app_settings import (
@@ -325,6 +326,8 @@ class MainWindow(QWidget):
         self.current_page().load()
 
     def _make_page(self, key: str):
+        if key == "saves":
+            return SaveInfoPage(self.ctx)
         return PlaceholderPage(self.ctx, key)
 
     def current_page(self):
