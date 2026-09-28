@@ -903,6 +903,35 @@ def test_transparent_id_list_keeps_background_above_fallback():
     print("  PASS: 用户 ID 选中重画不会让兜底色覆盖背景图")
 
 
+def test_player_registry_merge_rules():
+    """跨存档玩家登记簿：昵称冲突按日志 mtime 取新的（扫描顺序任意，不能让
+    先扫到的旧日志盖掉新昵称）；昵称没变不动 seen_at（避免每次刷新重写）；
+    文件夹标识取并集。"""
+    import tempfile
+    from pathlib import Path
+
+    from dstools.shared import player_registry
+
+    with tempfile.TemporaryDirectory() as tmp:
+        target = Path(tmp) / "players.json"
+        original = player_registry._registry_path
+        player_registry._registry_path = lambda: target
+        try:
+            assert player_registry.merge({"KU_a": {"nickname": "新名", "seen_at": 200.0, "player_ids": ["P1"]}})
+            # 更旧的日志晚扫到：昵称不能被盖掉，但新的文件夹标识要并进去
+            assert player_registry.merge({"KU_a": {"nickname": "旧名", "seen_at": 100.0, "player_ids": ["P2"]}})
+            info = player_registry.load()["KU_a"]
+            assert info["nickname"] == "新名" and info["player_ids"] == ["P1", "P2"], info
+            # 同昵称、mtime 变了（正在写入的日志）不算变化，不重写文件
+            assert not player_registry.merge({"KU_a": {"nickname": "新名", "seen_at": 999.0, "player_ids": ["P1"]}})
+            # 更新的日志里昵称变了：取新的
+            assert player_registry.merge({"KU_a": {"nickname": "改名", "seen_at": 300.0, "player_ids": []}})
+            assert player_registry.load()["KU_a"]["nickname"] == "改名"
+        finally:
+            player_registry._registry_path = original
+    print("  PASS: 玩家登记簿合并规则（昵称取最新、不因 mtime 抖动重写、标识取并集）")
+
+
 def test_id_remove_button_requires_real_selection():
     """管理员和黑名单未选中真实 ID 时，删除按钮必须保持只读；选中空状态
     占位行/令牌所有者只读提示行（row_ids 里对应 None，见
@@ -1202,6 +1231,7 @@ def main():
         test_background_refresh_contract,
         test_transparent_id_list_keeps_background_above_fallback,
         test_id_remove_button_requires_real_selection,
+        test_player_registry_merge_rules,
         test_selfhost_worker_ui_dispatch_contract,
         test_selfhost_status_card_layout_contract,
         test_selfhost_host_display_uses_authenticated_address,

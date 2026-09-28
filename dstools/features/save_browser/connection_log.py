@@ -97,10 +97,11 @@ def _parse_file_raw(log_path: Path) -> dict[str, Any]:
     }
 
 
-def _load_shard_files(shard_path: Path) -> list[dict[str, Any]]:
-    """按由旧到新的顺序返回这个世界目录下每份日志文件的解析结果，历史
-    滚动备份走缓存（指纹对得上就不重新读文件/跑正则），当前 server_log.txt
-    永远现读现解析。"""
+def _load_shard_files(shard_path: Path) -> list[tuple[float, dict[str, Any]]]:
+    """按由旧到新的顺序返回这个世界目录下每份日志文件的 (mtime, 解析结
+    果)，历史滚动备份走缓存（指纹对得上就不重新读文件/跑正则），当前
+    server_log.txt 永远现读现解析。mtime 用来在昵称冲突时判断哪条记录更
+    新（见 collect_shard_accounts）。"""
     files = _list_log_files_oldest_first(shard_path)
     if not files:
         return []
@@ -109,7 +110,7 @@ def _load_shard_files(shard_path: Path) -> list[dict[str, Any]]:
 
     cached = connection_log_cache.load_cache(shard_path)
     updated: dict[str, dict[str, Any]] = {}
-    results: list[dict[str, Any]] = []
+    results: list[tuple[float, dict[str, Any]]] = []
     cache_dirty = False
 
     for path in backups:
@@ -124,13 +125,17 @@ def _load_shard_files(shard_path: Path) -> list[dict[str, Any]]:
             data = _parse_file_raw(path)
             cache_dirty = True
         updated[path.name] = {"size": stat.st_size, "mtime": stat.st_mtime, "data": data}
-        results.append(data)
+        results.append((stat.st_mtime, data))
 
     # 缓存里残留的旧条目（对应文件已经不存在了）不写回，让缓存自然瘦身。
     if cache_dirty or set(updated) != set(cached):
         connection_log_cache.save_cache(shard_path, updated)
 
-    results.append(_parse_file_raw(current_log))
+    try:
+        current_mtime = current_log.stat().st_mtime
+    except OSError:
+        current_mtime = 0.0
+    results.append((current_mtime, _parse_file_raw(current_log)))
     return results
 
 
@@ -157,7 +162,7 @@ def collect_player_connection_log(shard_path: Path) -> dict[tuple[str, str], lis
         文件内由先到后的顺序追加，最后一项是目前已知最新的一次。
     """
     result: dict[tuple[str, str], list[str]] = {}
-    for data in _load_shard_files(shard_path):
+    for _mtime, data in _load_shard_files(shard_path):
         for ts, session_id, player_id in data["resumes"]:
             result.setdefault((session_id, player_id), []).append(ts)
     return result
@@ -180,11 +185,11 @@ def collect_player_identity_log(shard_path: Path) -> dict[str, tuple[str, str]]:
     identity_by_player_id: dict[str, str] = {}
 
     file_datas = _load_shard_files(shard_path)
-    for data in file_datas:
+    for _mtime, data in file_datas:
         for _ts, user_id, nickname in data["auths"]:
             if nickname:
                 nickname_by_user_id[user_id] = nickname
-    for data in file_datas:
+    for _mtime, data in file_datas:
         for player_id, user_id in data["identities"].items():
             identity_by_player_id[player_id] = user_id
 
@@ -192,3 +197,57 @@ def collect_player_identity_log(shard_path: Path) -> dict[str, tuple[str, str]]:
         player_id: (user_id, nickname_by_user_id.get(user_id, ""))
         for player_id, user_id in identity_by_player_id.items()
     }
+
+
+def collect_shard_accounts(shard_path: Path) -> dict[str, dict[str, Any]]:
+    """汇总一个世界日志里出现过的全部真实账号：账号 ID -> 昵称 + 关联到
+    的存档文件夹标识。
+
+    比 collect_player_identity_log() 覆盖面大：只要 "Client authenticated"
+    里出现过（连过这个服务器）就算，不要求能关联到某个存档文件夹——快速
+    重连、角色没有重新分配归属的玩家关联不出文件夹，但账号 ID 和昵称是
+    确定的，加管理员/黑名单只需要这两样。
+
+    Returns:
+        {账号ID: {"nickname": str, "seen_at": float, "player_ids": set[str]}}
+        seen_at 是昵称所在日志文件的 mtime。
+    """
+    accounts: dict[str, dict[str, Any]] = {}
+
+    def entry(account_id: str) -> dict[str, Any]:
+        return accounts.setdefault(
+            account_id, {"nickname": "", "seen_at": 0.0, "player_ids": set()}
+        )
+
+    for mtime, data in _load_shard_files(shard_path):
+        for _ts, user_id, nickname in data["auths"]:
+            item = entry(user_id)
+            if nickname and mtime >= item["seen_at"]:
+                item["nickname"] = nickname
+                item["seen_at"] = mtime
+        for player_id, user_id in data["identities"].items():
+            entry(user_id)["player_ids"].add(player_id)
+    return accounts
+
+
+def sync_registry_from_shard_paths(shard_paths) -> bool:
+    """扫描给定的一批世界目录，把日志里看到的账号合并进跨存档共享的
+    玩家登记簿（shared/player_registry.py）。传入的世界越多，登记簿里能
+    用的账号越全；已经记下的不会丢，只有真有新内容才写盘。
+
+    Returns:
+        登记簿是否有变化。
+    """
+    from dstools.shared import player_registry
+
+    updates: dict[str, dict[str, Any]] = {}
+    for shard_path in shard_paths:
+        for account_id, info in collect_shard_accounts(Path(shard_path)).items():
+            merged = updates.setdefault(
+                account_id, {"nickname": "", "seen_at": 0.0, "player_ids": set()}
+            )
+            if info["nickname"] and info["seen_at"] >= merged["seen_at"]:
+                merged["nickname"] = info["nickname"]
+                merged["seen_at"] = info["seen_at"]
+            merged["player_ids"] |= info["player_ids"]
+    return player_registry.merge(updates)

@@ -297,19 +297,26 @@ def list_session_players(session: SaveSession) -> list[PlayerCharacterSave]:
     return players
 
 
-def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
-    """扫描一组世界（shard）下的全部存档会话，收集出现过的玩家真实 ID。
+def refresh_player_registry(shards: list) -> bool:
+    """扫描这批世界的 server_log.txt，把里面看到的账号合并进跨存档共享的
+    玩家登记簿。调用方想让登记簿覆盖更多存档（比如"从存档选择"要能挑到
+    别的存档里出现过的人），就把所有存档的世界都传进来——历史备份走解析
+    缓存，重复扫描很便宜。"""
+    from dstools.features.save_browser.connection_log import sync_registry_from_shard_paths
 
-    两种来源，日志能核实到的优先：
-    1. server_log.txt 能关联到真实账号 ID 的（见
-       connection_log.collect_player_identity_log）——这种连文件夹名本
-       身是混淆编码的玩家也能拿到真实 ID，昵称也是日志里实测到的，不是
-       猜的。
-    2. 日志关联不到、但文件夹名本身就是 KU_/OU_ 开头的——encode_user_path
-       关闭后才会是这种明文文件夹名（见 PlayerCharacterSave 的说明），用
-       角色名当辨识提示（角色名不是玩家昵称，只是"看着比裸 ID 好认"）。
-       混淆编码、日志又关联不上的文件夹名直接跳过，不拿混淆值冒充真实
-       ID 写进 adminlist/blocklist。
+    return sync_registry_from_shard_paths([shard.path for shard in shards])
+
+
+def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
+    """列出可以直接加管理员/黑名单的真实账号：跨存档共享的玩家登记簿里
+    记过的全部账号（不限于传入的这批世界），再补上这批世界存档里文件夹
+    名本身就是明文 KU_/OU_ 的账号。
+
+    登记簿（shared/player_registry.py）来自各存档 server_log.txt 里的
+    "Client authenticated"/"User ID assigned ownership" 记录，按账号记，
+    玩家换角色、换存档都不影响；这批世界的日志会先合并进去再读，保证是
+    最新的。文件夹名是混淆编码、日志又关联不出真实账号的玩家跳过，不拿
+    混淆值冒充真实 ID 写进 adminlist/blocklist。
 
     真机存档实测过：encode_user_path 关闭后，文件夹名不总是等于干净的
     KU_xxx——见过 "KU_dwt6dfPl_" 这种带一个尾部下划线的文件夹名，跟这个
@@ -320,39 +327,35 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
     划线再收集。
 
     Returns:
-        按账号 ID 排序、去重后的 (账号ID, 辨识提示) 列表——提示优先用日志
-        昵称，查不到昵称退回角色显示名，都没有就是空字符串。
+        按账号 ID 排序、去重后的 (账号ID, 辨识提示) 列表——提示优先用登记
+        簿里的昵称，没有昵称退回角色显示名，都没有就是空字符串。
     """
     from dstools.features.save_browser.character_names import get_character_display_name
     from dstools.features.save_browser.connection_log import collect_player_identity_log
+    from dstools.shared import player_registry
 
-    # 同一个真实账号可能在好几个不同的存档文件夹（不同次连接留下的）下
-    # 都出现过——有的能查到昵称，有的只有角色名。昵称是日志实测到的更
-    # 可信辨识信息，不能被后面遍历到的、只查到角色名的记录覆盖掉，所以
-    # 昵称和角色名分开存，最后按"有昵称用昵称、没有才退回角色名"合并，
-    # 不看遍历顺序。
-    seen_ids: set[str] = set()
-    nicknames: dict[str, str] = {}
+    refresh_player_registry(shards)
+    registry = player_registry.load()
+    seen_ids: set[str] = set(registry)
+    nicknames = {a: info["nickname"] for a, info in registry.items() if info.get("nickname")}
+
+    # 昵称已经在登记簿里，这里遍历存档只为两件事：文件夹名是明文账号但
+    # 日志里没记录的账号补进来；顺便给没有昵称的账号找个角色名当提示。
+    # 角色名不是身份（换局就变），只在完全没有昵称时才用来凑数。
     character_hints: dict[str, str] = {}
     for shard in shards:
         identity_log = collect_player_identity_log(shard.path)
         for session in list_save_sessions(shard.path):
             for player in list_session_players(session):
                 identity = identity_log.get(player.player_id)
-                if identity:
-                    account_id, nickname = identity
-                else:
-                    account_id, nickname = player.player_id, None
-
+                account_id = identity[0] if identity else player.player_id
                 if account_id[:3] not in ("KU_", "OU_"):
                     continue
                 if account_id.endswith("_"):
                     account_id = account_id[:-1]
 
                 seen_ids.add(account_id)
-                if nickname:
-                    nicknames[account_id] = nickname
-                elif player.character and account_id not in character_hints:
+                if account_id not in nicknames and player.character and account_id not in character_hints:
                     character_hints[account_id] = get_character_display_name(player.character)
     return sorted(
         (pid, nicknames.get(pid) or character_hints.get(pid, "")) for pid in seen_ids
@@ -360,18 +363,16 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str]]:
 
 
 def known_nicknames(shards: list) -> dict[str, str]:
-    """扫描一组世界的 server_log.txt，收集"账号ID -> 已确认昵称"的映射。
+    """"账号ID -> 已确认昵称"的映射，来自跨存档共享的玩家登记簿（先把这批
+    世界的日志合并进去）。
 
-    只在真正查到过 "Client authenticated" 记录时才有值——不像
+    只包含真正查到过 "Client authenticated" 记录的昵称——不像
     list_known_player_ids() 那样在查不到昵称时退回角色名当辅助提示，这
     里要的是"已确认的玩家名称"，管理员/黑名单列表拿这个只标注真正核实
-    过的昵称，不用角色名（角色名换局就变，不是玩家身份）凑数。
+    过的昵称，不用角色名（角色名换局就变，不是玩家身份）凑数。别的存档
+    里记下的昵称在这里同样能用。
     """
-    from dstools.features.save_browser.connection_log import collect_player_identity_log
+    from dstools.shared import player_registry
 
-    result: dict[str, str] = {}
-    for shard in shards:
-        for _player_id, (account_id, nickname) in collect_player_identity_log(shard.path).items():
-            if nickname:
-                result[account_id] = nickname
-    return result
+    refresh_player_registry(shards)
+    return {a: info["nickname"] for a, info in player_registry.load().items() if info.get("nickname")}

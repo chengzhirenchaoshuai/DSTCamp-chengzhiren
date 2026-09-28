@@ -25,7 +25,9 @@ from dstools.shared.token_manager import (
     token_fingerprint,
     write_token,
 )
-from dstools.features.save_browser.reader import known_nicknames, list_known_player_ids
+from dstools.features.save_browser.reader import (
+    known_nicknames, list_known_player_ids, refresh_player_registry,
+)
 from dstools.shared.gui import theme, themed_dialog as dlg
 from dstools.shared.gui.bg_frame import BgFrame
 from dstools.shared.gui.card_frame import CardFrame
@@ -1707,6 +1709,10 @@ class ClusterConfigTab:
         # "删除"就行，不需要再扫一遍存档去挑），去掉之后弹窗也更简单。
         c = self._get_cluster()
         if not c: return
+        # 点"从存档选择"是主动更新登记簿的时机：把本机所有存档的日志都
+        # 扫一遍合并进跨存档共享的玩家登记簿，别的存档里出现过的人在这
+        # 里也能直接挑（历史备份走解析缓存，重复扫描很便宜）。
+        refresh_player_registry([s for other in self.app.env.clusters for s in other.shards])
         candidates = list_known_player_ids(c.shards)
         if not candidates:
             # 扫不到人是个容易被忽略的结果（比如误以为按钮没反应），弹
