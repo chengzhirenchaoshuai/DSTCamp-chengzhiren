@@ -550,6 +550,18 @@ def test_character_icons():
     assert name == "encrypted_char" and icon == fake_icon, (name, icon)
     print("  PASS: Icon kept when the mod's character name cannot be read")
 
+    # 模组后来被停用、角色数据还在的存档：停用的模组也要能给出头像。
+    _Entry.enabled = False
+    with patch.object(Path, "exists", lambda self: True), \
+            patch("dstools.features.mod.manager.load_mod_overrides", return_value={}), \
+            patch("dstools.features.mod.manager.list_mods", return_value=[_Entry()]), \
+            patch("dstools.features.mod.parser.find_mod_folder", return_value=Path("fake_mod")), \
+            patch.object(character_icons, "find_mod_character_name", return_value=None), \
+            patch.object(character_icons, "get_mod_avatar_path", return_value=fake_icon):
+        name, icon = resolve_character("disabled_mod_char", overrides_file)
+    assert name == "disabled_mod_char" and icon == fake_icon, (name, icon)
+    print("  PASS: Icon still found from a disabled mod listed in modoverrides")
+
 
 def test_modinfo_reader():
     """用手写的合成 mod 数据测试 modinfo.lua 解析逻辑（parser.py）——这段

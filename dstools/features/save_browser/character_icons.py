@@ -209,8 +209,8 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None,
                        wegame_client_mods_dir: Path | None = None) -> tuple[str, Path | None]:
     """解析一个角色 prefab 的显示名 + 头像路径。
 
-    先查官方角色表；查不到（说明是模组角色）再去这个世界当前启用的模组
-    里找同名声明，连带该模组自带的头像一起用；名字读不出来（脚本加密）
+    先查官方角色表；查不到（说明是模组角色）再去这个世界的模组里找同名
+    声明（已启用的优先，已停用的兜底），连带该模组自带的头像一起用；名字读不出来（脚本加密）
     但模组带了头像时，显示英文 prefab + 头像；都找不到就原样显示英文
     prefab、不给头像——不去猜测未知模组的命名规则。
 
@@ -227,9 +227,9 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None,
         from dstools.features.mod.parser import find_mod_folder
         overrides = load_mod_overrides(mod_overrides_path)
         icon_only: Path | None = None
-        for entry in list_mods(overrides):
-            if not entry.enabled:
-                continue
+        # 已停用的模组排在后面也查：存档里的角色可能是模组被停用之前
+        # 创建的，角色数据还在，头像资源也还在。
+        for entry in sorted(list_mods(overrides), key=lambda e: not e.enabled):
             mod_folder = find_mod_folder(entry.workshop_id, platform, wegame_client_mods_dir)
             if not mod_folder:
                 continue
