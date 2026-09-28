@@ -20,6 +20,7 @@ Steamworks 的正式 SDK 用回调类接收 ``DownloadItemResult_t``。这里使
 
 from __future__ import annotations
 
+import atexit
 import ctypes
 import json
 import os
@@ -327,6 +328,27 @@ class WorkshopBatchResult:
 
 _WORKSHOP_WORKER_FLAG = "--dstcamp-workshop-worker"
 
+# 单文件版里 Worker 是同一个 EXE，PyInstaller 6.9+ 默认让它复用主进程的
+# _MEI 临时目录。主程序退出时若 Worker 还在跑（例如 Mod 更新中途关闭），
+# 它加载的 python3*.dll 等文件会锁住该目录，bootloader 清理失败并弹出
+# "Failed to remove temporary directory"。退出时统一结束仍存活的 Worker。
+_ACTIVE_WORKERS: set[subprocess.Popen] = set()
+_ACTIVE_WORKERS_LOCK = threading.Lock()
+
+
+def _terminate_active_workers() -> None:
+    with _ACTIVE_WORKERS_LOCK:
+        workers = list(_ACTIVE_WORKERS)
+    for process in workers:
+        try:
+            process.kill()
+            process.wait(timeout=5)
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+
+atexit.register(_terminate_active_workers)
+
 
 def _download_result_to_payload(result: WorkshopDownloadResult) -> dict[str, Any]:
     return {
@@ -438,46 +460,68 @@ def _run_workshop_worker(
         )
         event_path.touch()
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        # 源码版需要仓库根目录才能 -m 导入；冻结版 parents[3] 恰好是 _MEI
+        # 根目录，进程工作目录会占住它，改用本次的临时目录。
+        worker_cwd = root if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[3]
         process = subprocess.Popen(
             _workshop_worker_command(request_path, event_path, result_path),
-            cwd=str(Path(__file__).resolve().parents[3]),
+            cwd=str(worker_cwd),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=creationflags,
         )
-        with event_path.open("r", encoding="utf-8") as events:
-            while process.poll() is None:
-                if cancel_event is not None and cancel_event.is_set():
+        with _ACTIVE_WORKERS_LOCK:
+            _ACTIVE_WORKERS.add(process)
+        try:
+            return _collect_workshop_worker(
+                process, event_path, result_path, on_event, cancel_event
+            )
+        finally:
+            with _ACTIVE_WORKERS_LOCK:
+                _ACTIVE_WORKERS.discard(process)
+
+
+def _collect_workshop_worker(
+    process: subprocess.Popen,
+    event_path: Path,
+    result_path: Path,
+    on_event: Callable[[dict[str, Any]], None] | None,
+    cancel_event: threading.Event | None,
+) -> dict[str, Any]:
+    """转发 Worker 事件直到其退出，并读取结果文件。"""
+    with event_path.open("r", encoding="utf-8") as events:
+        while process.poll() is None:
+            if cancel_event is not None and cancel_event.is_set():
+                try:
+                    process.terminate()
+                except OSError:
+                    # Worker 可能恰好在 poll() 后退出；停止意图仍然成立。
+                    pass
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
                     try:
-                        process.terminate()
-                    except OSError:
-                        # Worker 可能恰好在 poll() 后退出；停止意图仍然成立。
-                        pass
-                    try:
+                        process.kill()
                         process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        try:
-                            process.kill()
-                            process.wait(timeout=5)
-                        except OSError:
-                            pass
-                    raise WorkshopUpdateCancelled("Workshop 更新已停止")
-                line = events.readline()
-                if line:
-                    if on_event:
-                        on_event(json.loads(line))
-                else:
-                    time.sleep(0.05)
-            for line in events:
+                    except OSError:
+                        pass
+                raise WorkshopUpdateCancelled("Workshop 更新已停止")
+            line = events.readline()
+            if line:
                 if on_event:
                     on_event(json.loads(line))
-        if not result_path.is_file():
-            raise RuntimeError(f"Steam Worker 异常退出（exit={process.returncode}）")
-        response = json.loads(result_path.read_text(encoding="utf-8"))
-        if not response.get("ok"):
-            raise RuntimeError(response.get("error") or "Steam Worker 执行失败")
-        return dict(response.get("result") or {})
+            else:
+                time.sleep(0.05)
+        for line in events:
+            if on_event:
+                on_event(json.loads(line))
+    if not result_path.is_file():
+        raise RuntimeError(f"Steam Worker 异常退出（exit={process.returncode}）")
+    response = json.loads(result_path.read_text(encoding="utf-8"))
+    if not response.get("ok"):
+        raise RuntimeError(response.get("error") or "Steam Worker 执行失败")
+    return dict(response.get("result") or {})
 
 
 def _load_dll(path: Path):

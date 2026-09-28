@@ -20,6 +20,7 @@ from pathlib import Path
 from dstools.shared.resource_paths import (
     cache_root_dir,
     path_is_ascii,
+    runtime_tool_path,
     tool_binary_dir,
     validate_cache_root,
 )
@@ -291,8 +292,12 @@ def launch_vcredist_installer() -> bool:
     if not _VCREDIST_EXE.exists():
         return False
     try:
+        # 安装向导可能比 DSTCamp 活得更久；直接从单文件版 _MEI 临时目录启
+        # 动会锁住该目录，用户先关 DSTCamp 时 bootloader 就会弹"Failed to
+        # remove temporary directory"。先复制到固定数据目录再启动。
+        installer = runtime_tool_path("vcredist/VC++ 2013 x86.exe")
         before = _enum_visible_windows()
-        subprocess.Popen([str(_VCREDIST_EXE)])
+        subprocess.Popen([str(installer)], cwd=str(installer.parent))
         if sys.platform == "win32":
             threading.Thread(target=_bring_new_window_to_front, args=(before,), daemon=True).start()
     except Exception:
