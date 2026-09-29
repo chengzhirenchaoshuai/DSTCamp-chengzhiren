@@ -311,7 +311,7 @@ class ClusterBar(QWidget):
         self._platform.setFixedWidth(110)
         self._cluster = _RefreshingCombo()
         self._cluster.about_to_open.connect(self.reload)
-        self._cluster.setMinimumWidth(360)
+        self._cluster.setFixedWidth(360)  # 固定宽度，不随窗口拉伸变化
         # "创建服务器存档"针对的是整个存档集合，不属于某一个已选存档的基本信息；
         # 放在全局存档选择器右侧，跟 Tk 版 gui/app.py 的 _create_save_btn 位置一致。
         # 字号跟 Tk 版 "Big.TButton" 一样用 FONT_SIZE_MD（比页面里普通按钮大一号），
@@ -326,8 +326,9 @@ class ClusterBar(QWidget):
         row.addWidget(self._platform)
         row.addSpacing(8)
         row.addWidget(self._archive_label)
-        row.addWidget(self._cluster, 1)
+        row.addWidget(self._cluster)
         row.addWidget(self._create_save)
+        row.addStretch()
         row.addWidget(self._refresh)
         self._platform.activated.connect(self._on_platform)
         self._cluster.activated.connect(self._on_cluster)

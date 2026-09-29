@@ -323,7 +323,7 @@ class ModListPanel(QAbstractScrollArea):
             return None
         wid = row["workshop_id"]
         x = pos.x()
-        name_font, id_font, _btn_font = self._fonts(m.s)
+        name_font, id_font, btn_font = self._fonts(m.s)
         if cols["name_x"] <= x <= cols["name_x"] + cols["name_w"]:
             name_fm = QFontMetricsF(name_font)
             full_name = row["name"] or wid
@@ -345,8 +345,14 @@ class ModListPanel(QAbstractScrollArea):
             return None
         if cols["cfg_x1"] <= x <= cols["cfg_x2"] and row.get("has_config"):
             return ("config", wid)
-        if row.get("has_link") and cols["link_x1"] <= x <= cols["link_x2"] - 30 * m.s:
-            return ("link", wid)
+        if row.get("has_link"):
+            # 命中范围贴着实际文字宽度（跟 _paint_row 画下划线用的同一次量宽），
+            # 不是整个链接列宽——链接列比"创意工坊"三个字宽得多，用整列宽度会让
+            # 文字右边的空白也能点、鼠标悬停还显示手型，之前真机反馈过这个问题。
+            link_text = t("mod.workshop_link_btn")
+            link_w = QFontMetricsF(btn_font).horizontalAdvance(link_text)
+            if cols["link_x1"] <= x <= cols["link_x1"] + link_w:
+                return ("link", wid)
         if row.get("has_folder") and cols["link_x2"] - 34 * m.s <= x <= cols["link_x2"]:
             return ("folder", wid)
         return None

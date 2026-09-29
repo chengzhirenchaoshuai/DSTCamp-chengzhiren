@@ -319,7 +319,11 @@ class LocalServicePage(Page):
         self._stop_all_btn.clicked.connect(self._stop_all)
         self._restart_all_btn.clicked.connect(self._restart_all)
         self._logs_btn.clicked.connect(self._get_logs)
+        # 直角边框 + 略小字号是先试试效果（"square" 属性配对 theme.qss() 的
+        # QPushButton[square="true"] 规则），只影响这一排按钮，不是全局改动。
         for button in (self._start_all_btn, self._stop_all_btn, self._restart_all_btn, self._logs_btn):
+            button.setProperty("square", True)
+            button.setFont(theme.font("FONT_SIZE_SM"))
             btn_row.addWidget(button)
         layout.addLayout(btn_row)
 

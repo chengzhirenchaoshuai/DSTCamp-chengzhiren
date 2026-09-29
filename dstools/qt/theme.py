@@ -5,6 +5,8 @@ font_style_choice），两套界面互相可见。颜色一律通过 ``theme.col
 缓存；自绘控件在 paintEvent 里取色，切主题后整窗重绘即可，不需要逐个控件通知。
 """
 
+import base64
+
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
@@ -16,6 +18,20 @@ from dstools.shared.gui.font_styles import (
 from dstools.shared.resource_paths import tool_binary_dir
 
 THEME_NAMES = palettes.THEME_NAMES
+
+_DOWN_ARROW_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6">'
+    '<path d="M0 0 L10 0 L5 6 Z" fill="{color}"/></svg>'
+)
+
+
+def _down_arrow_data_uri(color: str) -> str:
+    """下拉框箭头：QSS 一旦自定义了 ::drop-down 子控件，Qt 就不再画原生箭头，
+    必须显式给 ::down-arrow 提供图像；内联一个极小的 SVG 三角形，不需要额外
+    的图片资源文件，颜色跟着主题走。"""
+    svg = _DOWN_ARROW_SVG.format(color=color)
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return f"data:image/svg+xml;base64,{encoded}"
 
 
 class Theme(QObject):
@@ -89,6 +105,7 @@ class Theme(QObject):
 
     def qss(self) -> str:
         c = self.palette
+        arrow = _down_arrow_data_uri(c["TEXT"])
         return f"""
             QLabel {{ color: {c['TEXT']}; background: transparent; }}
             QLabel[muted="true"] {{ color: {c['TEXT_MUTED']}; }}
@@ -101,11 +118,13 @@ class Theme(QObject):
             QPushButton[flat="true"] {{ background: transparent; color: {c['TEXT']}; font-weight: normal;
                 border-radius: 5px; padding: 2px 8px; }}
             QPushButton[flat="true"]:hover {{ background: {c['PRIMARY_LIGHT']}; }}
+            QPushButton[square="true"] {{ border-radius: 0px; }}
             QPushButton#titleClose:hover {{ background: #e53935; color: white; }}
             QComboBox {{ background: rgba(255,255,255,200); border: 1px solid {c['CARD_BORDER']};
                 border-radius: 8px; padding: 4px 10px; color: {c['TEXT']}; min-height: 22px; }}
             QComboBox:hover {{ border-color: {c['ACCENT']}; }}
             QComboBox::drop-down {{ border: none; width: 22px; }}
+            QComboBox::down-arrow {{ image: url({arrow}); width: 10px; height: 6px; }}
             QComboBox QAbstractItemView {{ background: {c['CARD_BG']}; color: {c['TEXT']};
                 border: 1px solid {c['CARD_BORDER']}; selection-background-color: {c['PRIMARY_LIGHT']};
                 selection-color: {c['TEXT']}; outline: none; }}
