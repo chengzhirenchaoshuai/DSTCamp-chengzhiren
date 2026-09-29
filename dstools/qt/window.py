@@ -190,6 +190,7 @@ class MenuStrip(QWidget):
         self._bg_settings_action.setText(t("theme.custom_bg_settings"))
         self._font_settings_action.setText(t("theme.font_settings"))
         self._minimize_action.setText(t("settings.minimize_on_close_label"))
+        self._defender_action.setText(t("settings.defender_label"))
         self._lang_menu.setTitle(t("settings.language_label"))
         self._lang_actions["zh"].setText(t("menu.lang_zh"))
         self._lang_actions["en"].setText(t("menu.lang_en"))
@@ -263,6 +264,10 @@ class MenuStrip(QWidget):
         minimize.triggered.connect(lambda checked: set_minimize_on_close(bool(checked)))
         menu.addAction(minimize)
         self._minimize_action = minimize
+        defender = QAction(t("settings.defender_label"), self)
+        defender.triggered.connect(self._window.show_defender_dialog)
+        menu.addAction(defender)
+        self._defender_action = defender
         return menu
 
 
@@ -494,6 +499,11 @@ class MainWindow(QWidget):
         from dstools.qt.settings_dialogs import FontSettingsDialog
 
         FontSettingsDialog(self).exec()
+
+    def show_defender_dialog(self) -> None:
+        from dstools.qt.settings_dialogs import WindowsDefenderDialog
+
+        WindowsDefenderDialog(self).exec()
 
     def switch_language(self, lang: str) -> None:
         """切换界面语言：静态文案（标题栏/菜单/存档栏/页签名/托盘）立即全量刷新；
