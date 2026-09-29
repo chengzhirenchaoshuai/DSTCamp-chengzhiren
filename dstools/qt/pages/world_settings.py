@@ -80,8 +80,20 @@ class WorldSettingsPage(Page):
         layout.addWidget(self._save_button, 0, Qt.AlignmentFlag.AlignHCenter)
 
         theme.changed.connect(self._on_theme_changed)
+        # Mod 页的开关/保存/配置集应用都会改变"来自 Mod"这部分显示内容；这个页不一定
+        # 正在显示，跟 server_config.py 同一套"正显示就重载，不然只标脏"的规则。
+        ctx.cluster_config_saved.connect(self._on_cluster_config_saved_elsewhere)
         self.retranslate()
         self._update_tab_labels()
+
+    def _on_cluster_config_saved_elsewhere(self, cluster) -> None:
+        current = self.ctx.selected_cluster()
+        if current is None or cluster is None or str(current.path) != str(cluster.path):
+            return
+        if self.isVisible():
+            self.load()
+        else:
+            self.stale = True
 
     # ── 文案 ────────────────────────────────────────────────────────────
     def retranslate(self) -> None:
@@ -179,7 +191,11 @@ class WorldSettingsPage(Page):
             self._update_banner()
             self._update_tab_labels()
 
-        run_async(lambda: page_data.load_world_page(cluster, shard), done,
+        # 在界面线程先取一次 Mod 页未保存的预览集合——pending_enabled_mod_ids()
+        # 读的是 Mod 页内存里的字典，后台线程里跟 Mod 页开关点击同时发生会有
+        # 竞态；load_world_page() 本身在下面的 run_async 里跑在后台线程。
+        enabled_mod_ids = self.ctx.pending_enabled_mod_ids(cluster)
+        run_async(lambda: page_data.load_world_page(cluster, shard, enabled_mod_ids), done,
                   lambda exc: self._show_info(str(exc), "") if generation == self._generation else None)
 
     def _show_info(self, title: str, desc: str) -> None:

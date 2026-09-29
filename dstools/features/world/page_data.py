@@ -46,7 +46,13 @@ class WorldPageData:
     generation_categories: list = field(default_factory=list)
 
 
-def load_world_page(cluster: Cluster | None, shard_name: str) -> WorldPageData:
+def load_world_page(
+    cluster: Cluster | None, shard_name: str, enabled_mod_ids=None,
+) -> WorldPageData:
+    """`enabled_mod_ids`：Mod 管理页尚未保存的启用集合预览（不分具体哪个世界），
+    传入时优先于磁盘上 modoverrides.lua 的已保存状态——即时预览开关效果，不等
+    用户先点保存；为 None 时按磁盘实际内容取（Mod 页未迁移完成，或没有未保存的
+    修改）。"""
     if cluster is None:
         return WorldPageData(STATUS_NO_CLUSTER)
     is_server = cluster.source == SaveSource.SERVER
@@ -67,7 +73,8 @@ def load_world_page(cluster: Cluster | None, shard_name: str) -> WorldPageData:
     location = preset.location or "forest"
     # 已启用 mod 里登记过的条目贡献了哪些"世界设置"/"世界生成"——按整个存档算（get_enabled_mod_ids
     # 本来就是并集所有世界的 modoverrides.lua），不分具体哪个世界。
-    all_mod_settings = get_mod_world_settings(get_enabled_mod_ids(cluster))
+    all_mod_settings = get_mod_world_settings(
+        enabled_mod_ids if enabled_mod_ids is not None else get_enabled_mod_ids(cluster))
     # 图标解析要读 mod 自己的图集文件（第一次或 mod 更新过才会真的调 ktech，其余命中磁盘缓存）
     mod_icons = resolve_mod_setting_icons(
         all_mod_settings, cluster.platform, resolve_wegame_client_mods_dir(cluster.platform))

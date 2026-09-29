@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Signal
 
 from dstools.features.local_service.dedicated_server import ServerManager, ServerStatus
+from dstools.features.mod.catalog import ModCatalogStore
 from dstools.i18n import t
 from dstools.models import Cluster, Platform, SaveSource
 from dstools.shared.app_settings import (
@@ -47,6 +48,12 @@ class AppContext(QObject):
         self.stop_frpc_for_shard = lambda cluster, shard, on_done: on_done()
         self.maybe_start_frpc = lambda cluster, shard: None
         self.frpc_ready = lambda cluster: False
+        # 跨页共享的已安装 Mod 元数据快照（图标/路径/解析结果，不含每存档的启用状态）。
+        self.mod_catalog = ModCatalogStore()
+        # Mod 管理页迁移后接管：这个存档尚未保存的 Mod 启用集合预览，供世界设置页
+        # 即时反映"来自 Mod"的设置项，不用等用户先点保存；默认 None 表示按磁盘实际
+        # 已保存内容取（Mod 页未迁移，或没有未保存的修改）。
+        self.pending_enabled_mod_ids = lambda cluster: None
         self._platform = Platform.WEGAME if get_last_platform() == "WeGame" else Platform.STEAM
         self._selected: Cluster | None = None
         self._restore_selection(Path(get_last_cluster_path()) if get_last_cluster_path() else None)

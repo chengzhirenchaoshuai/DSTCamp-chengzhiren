@@ -21,6 +21,7 @@ from dstools.qt import dialogs
 from dstools.qt.background import Background
 from dstools.qt.context import AppContext
 from dstools.qt.pages.local_service import LocalServicePage
+from dstools.qt.pages.mod import ModPage
 from dstools.qt.pages.placeholder import PlaceholderPage
 from dstools.qt.pages.sakura import SakuraPage
 from dstools.qt.pages.save_info import SaveInfoPage
@@ -346,6 +347,8 @@ class MainWindow(QWidget):
     def _make_page(self, key: str):
         if key == "local":
             return LocalServicePage(self.ctx)
+        if key == "mods":
+            return ModPage(self.ctx)
         if key == "saves":
             return SaveInfoPage(self.ctx)
         if key == "world":
