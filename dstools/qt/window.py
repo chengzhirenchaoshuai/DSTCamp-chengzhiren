@@ -240,6 +240,10 @@ class ClusterBar(QWidget):
         self._cluster = _RefreshingCombo()
         self._cluster.about_to_open.connect(self.reload)
         self._cluster.setMinimumWidth(360)
+        # "创建服务器存档"针对的是整个存档集合，不属于某一个已选存档的基本信息；
+        # 放在全局存档选择器右侧，跟 Tk 版 gui/app.py 的 _create_save_btn 位置一致。
+        self._create_save = QPushButton()
+        self._create_save.clicked.connect(window.open_creation_wizard)
         self._refresh = QPushButton()
         self._refresh.clicked.connect(window.refresh_all)
         row.addWidget(self._platform_label)
@@ -247,6 +251,7 @@ class ClusterBar(QWidget):
         row.addSpacing(8)
         row.addWidget(self._archive_label)
         row.addWidget(self._cluster, 1)
+        row.addWidget(self._create_save)
         row.addWidget(self._refresh)
         self._platform.activated.connect(self._on_platform)
         self._cluster.activated.connect(self._on_cluster)
@@ -259,6 +264,7 @@ class ClusterBar(QWidget):
     def retranslate(self) -> None:
         self._platform_label.setText(t("selector.save_type"))
         self._archive_label.setText(t("selector.archive"))
+        self._create_save.setText(t("save.create_server_save"))
         self._refresh.setText(t("app.refresh"))
 
     def reload(self) -> None:
@@ -380,6 +386,13 @@ class MainWindow(QWidget):
 
     def refresh_all(self) -> None:
         self.ctx.refresh_env()
+
+    def open_creation_wizard(self) -> None:
+        from dstools.qt.creation_wizard import CreationWizardDialog
+
+        dialog = CreationWizardDialog(self.ctx)
+        dialog.move(self.geometry().center() - dialog.rect().center())
+        dialog.exec()
 
     def _update_status(self) -> None:
         self.status.setText(self.ctx.status_text())
