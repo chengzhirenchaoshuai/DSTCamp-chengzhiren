@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from dstools import __version__
-from dstools.i18n import t
+from dstools.i18n import get_lang, set_lang, t
 from dstools.models import Platform
 from dstools.qt import dialogs
 from dstools.qt.background import Background
@@ -153,7 +153,10 @@ class TitleBar(QWidget):
 
 
 class MenuStrip(QWidget):
-    """标题栏下方的文字菜单条：文件 / 主题 / 设置。后续随功能迁移逐项补齐。"""
+    """标题栏下方的文字菜单条：文件 / 主题 / 设置。后续随功能迁移逐项补齐。
+
+    语言切换不重建菜单（重建要重新登记 F5 快捷键，容易越切越重复），改成保留每个
+    QAction 的引用，retranslate() 时逐个 setText()。"""
 
     def __init__(self, window: "MainWindow"):
         super().__init__()
@@ -162,6 +165,7 @@ class MenuStrip(QWidget):
         self._layout.setContentsMargins(6, 0, 6, 0)
         self._layout.setSpacing(0)
         self._buttons: dict[str, QPushButton] = {}
+        self._theme_actions: dict[str, QAction] = {}
         for key, builder in (("menu.file", self._file_menu), ("menu.theme", self._theme_menu),
                              ("menu.settings", self._settings_menu)):
             button = QPushButton()
@@ -177,6 +181,13 @@ class MenuStrip(QWidget):
     def retranslate(self) -> None:
         for key, button in self._buttons.items():
             button.setText(t(key))
+        self._refresh_action.setText(t("app.refresh"))
+        for name, action in self._theme_actions.items():
+            action.setText(t(f"theme.{name}"))
+        self._minimize_action.setText(t("settings.minimize_on_close_label"))
+        self._lang_menu.setTitle(t("settings.language_label"))
+        self._lang_actions["zh"].setText(t("menu.lang_zh"))
+        self._lang_actions["en"].setText(t("menu.lang_en"))
 
     def _file_menu(self) -> QMenu:
         menu = QMenu(self)
@@ -185,6 +196,7 @@ class MenuStrip(QWidget):
         refresh.triggered.connect(self._window.refresh_all)
         menu.addAction(refresh)
         self._window.addAction(refresh)  # 让 F5 在整个窗口内生效
+        self._refresh_action = refresh
         return menu
 
     def _theme_menu(self) -> QMenu:
@@ -196,14 +208,29 @@ class MenuStrip(QWidget):
             action.triggered.connect(lambda _checked=False, n=name: theme.set_theme(n))
             group.addAction(action)
             menu.addAction(action)
+            self._theme_actions[name] = action
         return menu
 
     def _settings_menu(self) -> QMenu:
         menu = QMenu(self)
+        lang_menu = QMenu(t("settings.language_label"), self)
+        lang_group = QActionGroup(self)
+        self._lang_actions: dict[str, QAction] = {}
+        for code, key in (("zh", "menu.lang_zh"), ("en", "menu.lang_en")):
+            action = QAction(t(key), self, checkable=True)
+            action.setChecked(get_lang() == code)
+            action.triggered.connect(lambda _checked=False, c=code: self._window.switch_language(c))
+            lang_group.addAction(action)
+            lang_menu.addAction(action)
+            self._lang_actions[code] = action
+        menu.addMenu(lang_menu)
+        self._lang_menu = lang_menu
+        menu.addSeparator()
         minimize = QAction(t("settings.minimize_on_close_label"), self, checkable=True)
         minimize.setChecked(get_minimize_on_close())
         minimize.triggered.connect(lambda checked: set_minimize_on_close(bool(checked)))
         menu.addAction(minimize)
+        self._minimize_action = minimize
         return menu
 
 
@@ -387,6 +414,27 @@ class MainWindow(QWidget):
     def refresh_all(self) -> None:
         self.ctx.refresh_env()
 
+    def switch_language(self, lang: str) -> None:
+        """切换界面语言：静态文案（标题栏/菜单/存档栏/页签名/托盘）立即全量刷新；
+        当前页签内容跟切主题/切存档同一套骨架——重的整页重建只做当前页，其余标脏，
+        真正切过去时再补。"""
+        if get_lang() == lang:
+            return
+        set_lang(lang)
+        self.setWindowTitle(t("app.title"))
+        self.titlebar.retranslate()
+        self.menu_strip.retranslate()
+        self.cluster_bar.retranslate()
+        self.tabbar.set_labels([t(f"tab.{key}") for key in TAB_KEYS])
+        self.tray.setToolTip(t("app.title"))
+        self._tray_show.setText(t("tray.show"))
+        self._tray_exit.setText(t("tray.exit"))
+        for page in self.pages.values():
+            page.retranslate()
+            page.stale = True
+        self.current_page().load()
+        self._update_status()
+
     def open_creation_wizard(self) -> None:
         from dstools.qt.creation_wizard import CreationWizardDialog
 
@@ -483,12 +531,12 @@ class MainWindow(QWidget):
         self.tray = QSystemTrayIcon(self.windowIcon(), self)
         self.tray.setToolTip(t("app.title"))
         menu = QMenu(self)
-        show = QAction(t("tray.show"), self)
-        show.triggered.connect(self.restore_from_tray)
-        exit_action = QAction(t("tray.exit"), self)
-        exit_action.triggered.connect(self._confirm_and_quit)
-        menu.addAction(show)
-        menu.addAction(exit_action)
+        self._tray_show = QAction(t("tray.show"), self)
+        self._tray_show.triggered.connect(self.restore_from_tray)
+        self._tray_exit = QAction(t("tray.exit"), self)
+        self._tray_exit.triggered.connect(self._confirm_and_quit)
+        menu.addAction(self._tray_show)
+        menu.addAction(self._tray_exit)
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(
             lambda reason: self.restore_from_tray() if reason == QSystemTrayIcon.ActivationReason.Trigger else None
