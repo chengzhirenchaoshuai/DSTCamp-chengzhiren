@@ -187,6 +187,8 @@ class MenuStrip(QWidget):
         self._vcredist_action.setToolTip(t("app.install_vcredist_hint"))
         for name, action in self._theme_actions.items():
             action.setText(t(f"theme.{name}"))
+        self._bg_settings_action.setText(t("theme.custom_bg_settings"))
+        self._font_settings_action.setText(t("theme.font_settings"))
         self._minimize_action.setText(t("settings.minimize_on_close_label"))
         self._lang_menu.setTitle(t("settings.language_label"))
         self._lang_actions["zh"].setText(t("menu.lang_zh"))
@@ -229,6 +231,16 @@ class MenuStrip(QWidget):
             group.addAction(action)
             menu.addAction(action)
             self._theme_actions[name] = action
+        menu.addSeparator()
+        # 背景图/字体样式是跟颜色主题解耦的全局设置，点开只弹设置窗口，不切主题。
+        bg_settings = QAction(t("theme.custom_bg_settings"), self)
+        bg_settings.triggered.connect(self._window.show_custom_bg_dialog)
+        menu.addAction(bg_settings)
+        self._bg_settings_action = bg_settings
+        font_settings = QAction(t("theme.font_settings"), self)
+        font_settings.triggered.connect(self._window.show_font_settings_dialog)
+        menu.addAction(font_settings)
+        self._font_settings_action = font_settings
         return menu
 
     def _settings_menu(self) -> QMenu:
@@ -472,6 +484,16 @@ class MainWindow(QWidget):
             dialogs.show_error(self, t("app.install_vcredist"), t("mod.vcredist_installer_missing"))
             return
         dialogs.show_info(self, t("app.install_vcredist"), t("mod.vcredist_installer_launched"))
+
+    def show_custom_bg_dialog(self) -> None:
+        from dstools.qt.settings_dialogs import BackgroundImageDialog
+
+        BackgroundImageDialog(self).exec()
+
+    def show_font_settings_dialog(self) -> None:
+        from dstools.qt.settings_dialogs import FontSettingsDialog
+
+        FontSettingsDialog(self).exec()
 
     def switch_language(self, lang: str) -> None:
         """切换界面语言：静态文案（标题栏/菜单/存档栏/页签名/托盘）立即全量刷新；
