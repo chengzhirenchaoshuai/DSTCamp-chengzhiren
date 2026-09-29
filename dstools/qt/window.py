@@ -174,6 +174,13 @@ class MenuStrip(QWidget):
             button.setMenu(builder())
             self._buttons[key] = button
             self._layout.addWidget(button)
+        # "关于"不需要子菜单，直接绑命令
+        about_button = QPushButton()
+        about_button.setFlat(True)
+        about_button.setFixedHeight(26)
+        about_button.clicked.connect(self._window.show_about_dialog)
+        self._buttons["menu.about"] = about_button
+        self._layout.addWidget(about_button)
         self._layout.addStretch()
         self.setFixedHeight(28)
         self.retranslate()
@@ -514,6 +521,11 @@ class MainWindow(QWidget):
         from dstools.qt.settings_dialogs import CacheDirDialog
 
         CacheDirDialog(self).exec()
+
+    def show_about_dialog(self) -> None:
+        from dstools.qt.settings_dialogs import AboutDialog
+
+        AboutDialog(self).exec()
 
     def switch_language(self, lang: str) -> None:
         """切换界面语言：静态文案（标题栏/菜单/存档栏/页签名/托盘）立即全量刷新；

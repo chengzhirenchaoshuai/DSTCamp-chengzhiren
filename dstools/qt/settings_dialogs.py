@@ -1,30 +1,37 @@
-"""菜单条"主题"里两个跟颜色主题解耦的全局设置弹窗：背景图 / 字体样式。
+"""MenuStrip 触发的一批次级设置/信息弹窗：背景图、字体样式、Windows Defender
+排除项、缓存目录、关于（含只读版本检查）。
 
-对应 Tk 版 shared/gui/background_dialog.py、shared/gui/font_settings_dialog.py。
-字体样式的实际切换早已在 qt/theme.py 里实现（set_font_style() 会持久化设置、
-刷新全局 QFont/QSS 并广播 theme.changed），背景图的绘制也早已在 qt/background.py
-里实现——这里只是补上让用户能操作这两项设置的界面。
+每个弹窗背后的实际逻辑早就绪（qt/theme.py 的 set_font_style()、qt/background.py
+的 Background、shared/windows_defender.py、shared/resource_paths.py 的缓存目录
+校验、shared/update_check.py 的只读版本检查）——这里只是把它们接到 Qt 界面上。
 """
 
 import os
+import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout
+from PySide6.QtGui import QFont, QGuiApplication
+from PySide6.QtWidgets import (
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout,
+)
 
+from dstools import __version__
 from dstools.i18n import t
 from dstools.qt import dialogs
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async
+from dstools.qt.widgets import ToggleSwitch
 from dstools.shared.app_settings import (
-    get_custom_bg_opacity, set_cache_dir_override, set_custom_bg_opacity,
+    get_custom_bg_opacity, get_remind_update_enabled, set_cache_dir_override,
+    set_custom_bg_opacity, set_remind_update_enabled,
 )
 from dstools.shared.custom_background import (
     clear_custom_bg_image, get_custom_bg_path, set_custom_bg_image,
 )
 from dstools.shared.gui.font_styles import FONT_FAMILY_BY_STYLE, FONT_STYLE_NAMES
 from dstools.shared.resource_paths import cache_root_dir, default_cache_root_dir, validate_cache_root
+from dstools.shared.update_check import check_latest_release, is_newer_version
 from dstools.shared.windows_defender import (
     DefenderState, change_defender_exclusion, check_defender_exclusion,
     check_defender_exclusion_elevated, defender_target_is_safe, resolve_defender_targets,
@@ -430,3 +437,130 @@ class CacheDirDialog(dialogs.Dialog):
             default="restart", min_width=520)
         if choice == "restart":
             dialogs.show_info(self, t("settings.cache_dir_label"), t("settings.cache_dir_restart_hint"))
+
+
+class ManualUpdateDialog(dialogs.Dialog):
+    """"关于"弹窗"手动更新"——展示三个下载地址，蓝奏云先复制提取码再跳转。"""
+
+    def __init__(self, parent):
+        super().__init__(parent, t("about.manual_update_title"), 480)
+        self.body.addWidget(self.text_label(t("about.manual_update_hint")))
+        links = (
+            (t("about.manual_update_baidu"), "https://pan.baidu.com/s/1hnyarybAGHjOsCCyUNlsmw?pwd=6666", None),
+            (t("about.manual_update_quark"), "https://pan.quark.cn/s/80446b171dc7?pwd=SmW6", None),
+            (t("about.manual_update_lanzou"), "https://wwblt.lanzout.com/b01euospla", "45w9"),
+        )
+        for label, url, code in links:
+            link = QLabel(f'<a href="{url}">{label}</a>')
+            link.setFont(theme.font("FONT_SIZE_BASE"))
+            link.linkActivated.connect(lambda _url, u=url, c=code: self._open_link(u, c))
+            self.body.addWidget(link)
+        self.add_buttons()
+
+    def _open_link(self, url: str, code: str | None) -> None:
+        if code:
+            QGuiApplication.clipboard().setText(code)
+            dialogs.show_toast(self, t("about.manual_update_code_copied"))
+        webbrowser.open(url)
+
+
+class AboutDialog(dialogs.Dialog):
+    """"关于"——版本/简介/作者信息 + 项目地址链接 + 提醒更新开关 + 只读检查更新。
+
+    "检查更新"只查 GitHub/Gitee 最新 Release 版本号（只读网络请求），查到新版本
+    只给一条可点击跳转到发布页的链接；真正的"自动下载并替换正在运行的 EXE"
+    （对应 Tk 版 _show_update_prompt() 里"立即更新"选项、shared/auto_update.py）
+    这次没有搬，留到 Qt 真正成为发布入口前后再做——点链接跳到发布页，用户仍然
+    能靠"手动更新"或者去发布页自己下载新版 EXE。"""
+
+    def __init__(self, window):
+        super().__init__(window, t("menu.about"), 520)
+        message = t("about.message", version=__version__)
+        header_text, _, rest = message.partition("\n\n")
+        desc_text, _, contact_text = rest.partition("\n\n")
+
+        header = QLabel(header_text)
+        header.setFont(theme.font("FONT_SIZE_XL", bold=True))
+        header.setStyleSheet(f"color: {theme.hex('PRIMARY')};")
+        self.body.addWidget(header)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setStyleSheet(f"color: {theme.hex('CARD_BORDER')};")
+        self.body.addWidget(separator)
+        if desc_text:
+            self.body.addWidget(self.text_label(desc_text))
+
+        repo_url = "https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren"
+        repo_row = QHBoxLayout()
+        repo_row.addWidget(self.text_label(t("about.repo_label"), size_key="FONT_SIZE_SM"))
+        repo_link = QLabel(f'<a href="{repo_url}">{t("about.repo_link_text")}</a>')
+        repo_link.setFont(theme.font("FONT_SIZE_SM"))
+        repo_link.linkActivated.connect(lambda _url: webbrowser.open(repo_url))
+        repo_row.addWidget(repo_link)
+        repo_row.addStretch()
+        self.body.addLayout(repo_row)
+
+        if contact_text:
+            self.body.addWidget(self.text_label(contact_text))
+
+        self._found_release = None
+        self._update_status = QLabel("")
+        self._update_status.setFont(theme.font("FONT_SIZE_SM"))
+        self._update_status.setProperty("muted", True)
+        self._update_status.linkActivated.connect(self._open_release_page)
+        self.body.addWidget(self._update_status)
+
+        remind_row = QHBoxLayout()
+        remind_row.addWidget(self.text_label(t("about.remind_update_label"), size_key="FONT_SIZE_SM"))
+        remind_row.addStretch()
+        remind_switch = ToggleSwitch(checked=get_remind_update_enabled())
+        remind_switch.toggled.connect(set_remind_update_enabled)
+        remind_row.addWidget(remind_switch)
+        self.body.addLayout(remind_row)
+
+        btn_row = QHBoxLayout()
+        self._check_btn = QPushButton(t("about.check_update_btn"))
+        self._check_btn.clicked.connect(self._check_update)
+        manual_btn = QPushButton(t("about.manual_update_btn"))
+        manual_btn.clicked.connect(lambda: ManualUpdateDialog(self).exec())
+        close_btn = QPushButton(t("dlg.confirm_btn"))
+        close_btn.clicked.connect(self.accept)
+        btn_row.addWidget(self._check_btn)
+        btn_row.addWidget(manual_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(close_btn)
+        self.body.addLayout(btn_row)
+
+    def _open_release_page(self, _url: str) -> None:
+        if self._found_release is not None:
+            webbrowser.open(self._found_release.page_url)
+
+    def _check_update(self) -> None:
+        self._check_btn.setEnabled(False)
+        self._update_status.setProperty("muted", True)
+        self._update_status.setText(t("about.checking_update"))
+        self._update_status.style().polish(self._update_status)
+
+        def done(result) -> None:
+            self._check_btn.setEnabled(True)
+            if result is None:
+                self._update_status.setProperty("muted", True)
+                self._update_status.setText(t("about.check_update_failed"))
+            elif is_newer_version(__version__, result.version):
+                self._found_release = result
+                self._update_status.setProperty("muted", False)
+                self._update_status.setText(
+                    f'<a href="{result.page_url}" style="color: {theme.hex("PRIMARY")};">'
+                    f'{t("app.update_available", version=result.version)}</a>')
+            else:
+                self._update_status.setProperty("muted", True)
+                self._update_status.setText(t("about.up_to_date"))
+            self._update_status.style().polish(self._update_status)
+
+        def error(_exc: Exception) -> None:
+            self._check_btn.setEnabled(True)
+            self._update_status.setProperty("muted", True)
+            self._update_status.setText(t("about.check_update_failed"))
+            self._update_status.style().polish(self._update_status)
+
+        run_async(check_latest_release, done, error)
