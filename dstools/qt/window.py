@@ -28,7 +28,7 @@ from dstools.qt.pages.save_info import SaveInfoPage
 from dstools.qt.pages.server_config import ServerConfigPage
 from dstools.qt.pages.world_settings import WorldSettingsPage
 from dstools.qt.theme import THEME_NAMES, theme
-from dstools.qt.threads import post_to_ui
+from dstools.qt.threads import post_to_ui, run_async
 from dstools.qt.widgets import Card, Grip, PillTabBar
 from dstools.shared.app_settings import (
     get_minimize_on_close, get_window_position, set_minimize_on_close, set_window_position,
@@ -390,11 +390,17 @@ class MainWindow(QWidget):
         self.cluster_bar = ClusterBar(ctx, self)
         self.stack = QStackedWidget()
         self.status = QLabel()
-        self.status.setContentsMargins(18, 4, 18, 6)
+        self._update_notice = QLabel("")
+        self._update_notice.linkActivated.connect(self._open_update_notice)
+        self._update_release = None
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(18, 4, 18, 6)
+        status_row.addWidget(self.status, 1)
+        status_row.addWidget(self._update_notice)
         for widget in (self.titlebar, self.menu_strip, self.tabbar, self.cluster_bar):
             root.addWidget(widget)
         root.addWidget(self.stack, 1)
-        root.addWidget(self.status)
+        root.addLayout(status_row)
 
         self.pages: dict[str, QWidget] = {}
         self._build_pages()
@@ -526,6 +532,46 @@ class MainWindow(QWidget):
         from dstools.qt.settings_dialogs import AboutDialog
 
         AboutDialog(self).exec()
+
+    def check_cache_dir_on_startup(self) -> None:
+        """中文用户名导致默认缓存路径不可用时，在启动后主动引导修复。"""
+        from dstools.shared.resource_paths import cache_root_dir, path_is_ascii
+
+        path = cache_root_dir()
+        if path_is_ascii(path):
+            return
+        choice = dialogs.ask_choice(
+            self, t("settings.cache_dir_label"), t("settings.cache_dir_startup_warning", path=str(path)),
+            [(t("settings.cache_dir_fix_now"), "fix"), (t("settings.cache_dir_later"), "later")],
+            default="fix", min_width=520)
+        if choice == "fix":
+            self.show_cache_dir_dialog()
+
+    def start_update_check(self) -> None:
+        """启动时后台查一次最新 Release；查不到/没有更新就什么都不做，不弹窗、
+        不重试。发现新版本只点亮状态栏右侧那行提示（跟 Tk 版一样不受"提醒更新"
+        开关影响，本来就很克制，不算"提醒"）。Tk 版这里还会在"提醒更新"开启时
+        额外弹出一个"立即更新/打开下载页"的选择窗——那个窗口背后连着真正的自动
+        下载替换 EXE 逻辑（shared/auto_update.py），这次连同"关于"弹窗的"检查
+        更新"一起，都只做到只读检查，没有一起搬（见 reference/qt_migration_
+        verification.md 的说明），所以这里也不弹那个窗口，只点亮状态栏，用户
+        自己点"关于"→"检查更新"能看到同样的结果。"""
+        from dstools.shared.update_check import check_latest_release, is_newer_version
+
+        def done(result) -> None:
+            if result is not None and is_newer_version(__version__, result.version):
+                self._update_release = result
+                self._update_notice.setText(
+                    f'<a href="{result.page_url}" style="color: {theme.hex("PRIMARY")};">'
+                    f'{t("app.update_available", version=result.version)}</a>')
+
+        run_async(check_latest_release, done, lambda _exc: None)
+
+    def _open_update_notice(self, _url: str) -> None:
+        if self._update_release is not None:
+            import webbrowser
+
+            webbrowser.open(self._update_release.page_url)
 
     def switch_language(self, lang: str) -> None:
         """切换界面语言：静态文案（标题栏/菜单/存档栏/页签名/托盘）立即全量刷新；
