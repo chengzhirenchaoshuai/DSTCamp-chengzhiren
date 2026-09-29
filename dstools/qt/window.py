@@ -182,6 +182,9 @@ class MenuStrip(QWidget):
         for key, button in self._buttons.items():
             button.setText(t(key))
         self._refresh_action.setText(t("app.refresh"))
+        self._clear_cache_action.setText(t("app.clear_cache_dir"))
+        self._vcredist_action.setText(t("app.install_vcredist"))
+        self._vcredist_action.setToolTip(t("app.install_vcredist_hint"))
         for name, action in self._theme_actions.items():
             action.setText(t(f"theme.{name}"))
         self._minimize_action.setText(t("settings.minimize_on_close_label"))
@@ -191,12 +194,29 @@ class MenuStrip(QWidget):
 
     def _file_menu(self) -> QMenu:
         menu = QMenu(self)
+        menu.setToolTipsVisible(True)  # "安装运行库"要在悬停时显示用途提示
         refresh = QAction(t("app.refresh"), self)
         refresh.setShortcut(QKeySequence(Qt.Key.Key_F5))
         refresh.triggered.connect(self._window.refresh_all)
         menu.addAction(refresh)
         self._window.addAction(refresh)  # 让 F5 在整个窗口内生效
         self._refresh_action = refresh
+
+        # 跟"刷新全部"一样不依赖当前选没选存档，随时能点——清空的是图标/解析/翻译
+        # 这些按需自动重建的缓存，不影响存档数据，不需要重启。
+        clear_cache = QAction(t("app.clear_cache_dir"), self)
+        clear_cache.triggered.connect(self._window.clear_cache_dir)
+        menu.addAction(clear_cache)
+        self._clear_cache_action = clear_cache
+
+        # 手动入口——正常情况下 Mod 管理页签会自动探测缺运行库并弹横幅，这里是留
+        # 给"探测漏检"场景的兜底：哪怕以后还有别的没覆盖到的报错场景，用户也能
+        # 不看提示、自己主动点这里装。
+        vcredist = QAction(t("app.install_vcredist"), self)
+        vcredist.setToolTip(t("app.install_vcredist_hint"))
+        vcredist.triggered.connect(self._window.install_vcredist)
+        menu.addAction(vcredist)
+        self._vcredist_action = vcredist
         return menu
 
     def _theme_menu(self) -> QMenu:
@@ -413,6 +433,45 @@ class MainWindow(QWidget):
 
     def refresh_all(self) -> None:
         self.ctx.refresh_env()
+
+    def clear_cache_dir(self) -> None:
+        """"文件"菜单"清理缓存目录"——只清缓存根目录下的内容，根目录本身留着。
+        图标/解析/翻译缓存是按需重建的，清完不需要重启。"""
+        import shutil
+
+        from dstools.shared.resource_paths import cache_root_dir
+
+        target = cache_root_dir()
+        if not target.is_dir() or not any(target.iterdir()):
+            dialogs.show_info(self, t("app.clear_cache_dir"), t("settings.cache_dir_clear_empty"))
+            return
+        if not dialogs.ask_yes_no(self, t("app.clear_cache_dir"),
+                                  t("settings.cache_dir_clear_confirm", path=str(target))):
+            return
+        failed = []
+        for item in target.iterdir():
+            try:
+                if item.is_dir() and not item.is_symlink():
+                    shutil.rmtree(item)
+                else:
+                    item.unlink()
+            except OSError:
+                failed.append(item.name)
+        if failed:
+            dialogs.show_warning(self, t("app.clear_cache_dir"),
+                                 t("settings.cache_dir_clear_partial", names="、".join(failed)))
+        else:
+            dialogs.show_info(self, t("app.clear_cache_dir"), t("settings.cache_dir_clear_done"))
+
+    def install_vcredist(self) -> None:
+        """"文件"菜单"安装运行库"——跟 Mod 管理页签自动探测走的是同一个安装器，
+        这个入口不依赖任何自动探测，怀疑图标/其它功能异常时能自己主动装一遍。"""
+        from dstools.shared.tex_convert import launch_vcredist_installer
+
+        if not launch_vcredist_installer():
+            dialogs.show_error(self, t("app.install_vcredist"), t("mod.vcredist_installer_missing"))
+            return
+        dialogs.show_info(self, t("app.install_vcredist"), t("mod.vcredist_installer_launched"))
 
     def switch_language(self, lang: str) -> None:
         """切换界面语言：静态文案（标题栏/菜单/存档栏/页签名/托盘）立即全量刷新；
