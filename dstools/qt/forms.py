@@ -95,6 +95,9 @@ class FormGrid(QWidget):
             widget.setValidator(QRegularExpressionValidator(QRegularExpression("[0-9]*")))
             lo, hi = spec.limits
             widget.setToolTip(t("cluster.range_hint", min=lo, max=hi))
+            # 端口这类数字字段最多 5 位数，没必要跟着表单所在列一起拉伸；固定宽度，
+            # 不随窗口缩放变化（真机反馈过端口号输入框跟着变宽很奇怪）。
+            widget.setFixedWidth(100)
         return FieldEditor(spec, widget, widget.text)
 
     @staticmethod

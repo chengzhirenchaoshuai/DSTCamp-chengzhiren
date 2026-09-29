@@ -21,7 +21,7 @@ ROW_GAP = 8
 ROW_H = ICON_SIZE + ROW_GAP
 SWITCH_W, SWITCH_H = 76, 34
 CFG_W, CFG_H = 116, 40
-LINK_W = 160
+LINK_W = 100  # 只是列的锚点起始位置，链接文字/图标按实际宽度紧跟着画，不撑满这个宽度
 COL_GAP = 16
 
 _OFF_COLOR = QColor("#bdbdbd")
@@ -240,21 +240,24 @@ class ModListPanel(QAbstractScrollArea):
         self._paint_pill(painter, cols["cfg_x1"], cy - m.cfg_h / 2, m.cfg_w, m.cfg_h,
                          t("mod.config_btn"), btn_font, enabled=row.get("has_config", False))
 
-        # 创意工坊链接 + 打开目录
+        # 创意工坊链接 + 打开目录——打开目录图标紧跟在链接文字实际宽度之后画，不是
+        # 固定贴在整个链接列的最右端；之前固定在列宽最右端时，中文"创意工坊"这种
+        # 短文字后面会空出一大截，看起来图标离文字很远、又贴着列表右边缘很挤。
         has_link = row.get("has_link", False)
         link_color = theme.color("ACCENT") if has_link else _LINK_DISABLED
         link_text = t("mod.workshop_link_btn") if has_link else t("mod.no_workshop_link")
         painter.setFont(btn_font)
         painter.setPen(link_color)
-        link_rect = QRectF(cols["link_x1"], top, (cols["link_x2"] - cols["link_x1"]) - 30 * m.s, m.row_h)
+        link_fm = QFontMetricsF(btn_font)
+        link_tw = link_fm.horizontalAdvance(link_text)
+        link_rect = QRectF(cols["link_x1"], top, link_tw + 4 * m.s, m.row_h)
         painter.drawText(link_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, link_text)
         if has_link:
-            tw = QFontMetricsF(btn_font).horizontalAdvance(link_text)
-            painter.drawLine(QPointF(cols["link_x1"], cy + 9 * m.s), QPointF(cols["link_x1"] + tw, cy + 9 * m.s))
+            painter.drawLine(QPointF(cols["link_x1"], cy + 9 * m.s), QPointF(cols["link_x1"] + link_tw, cy + 9 * m.s))
         if row.get("has_folder"):
             folder_size = round(22 * m.s)
             folder_icon = self._folder_icon(folder_size)
-            folder_x = cols["link_x2"] - folder_size
+            folder_x = cols["link_x1"] + link_tw + 10 * m.s
             if folder_icon is not None:
                 dpr = folder_icon.devicePixelRatio()
                 painter.drawPixmap(QPointF(folder_x, cy - folder_icon.height() / dpr / 2), folder_icon)
@@ -345,15 +348,16 @@ class ModListPanel(QAbstractScrollArea):
             return None
         if cols["cfg_x1"] <= x <= cols["cfg_x2"] and row.get("has_config"):
             return ("config", wid)
-        if row.get("has_link"):
-            # 命中范围贴着实际文字宽度（跟 _paint_row 画下划线用的同一次量宽），
-            # 不是整个链接列宽——链接列比"创意工坊"三个字宽得多，用整列宽度会让
-            # 文字右边的空白也能点、鼠标悬停还显示手型，之前真机反馈过这个问题。
-            link_text = t("mod.workshop_link_btn")
-            link_w = QFontMetricsF(btn_font).horizontalAdvance(link_text)
-            if cols["link_x1"] <= x <= cols["link_x1"] + link_w:
-                return ("link", wid)
-        if row.get("has_folder") and cols["link_x2"] - 34 * m.s <= x <= cols["link_x2"]:
+        # 命中范围贴着实际文字宽度（跟 _paint_row 是同一次量宽），不是整个链接列
+        # 宽——链接列比文字本身宽得多，用整列宽度会让文字右边的空白也能点、鼠标
+        # 悬停还显示手型，之前真机反馈过这个问题；打开目录图标也紧跟在文字后面
+        # （同 _paint_row 的动态定位），不是固定贴着列的最右端。
+        link_text = t("mod.workshop_link_btn") if row.get("has_link") else t("mod.no_workshop_link")
+        link_w = QFontMetricsF(btn_font).horizontalAdvance(link_text)
+        if row.get("has_link") and cols["link_x1"] <= x <= cols["link_x1"] + link_w:
+            return ("link", wid)
+        folder_x = cols["link_x1"] + link_w + 10 * m.s
+        if row.get("has_folder") and folder_x <= x <= folder_x + 22 * m.s:
             return ("folder", wid)
         return None
 

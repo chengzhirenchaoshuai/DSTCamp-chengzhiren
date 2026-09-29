@@ -177,6 +177,11 @@ class ModPage(Page):
         self._workshop_update_btn.setEnabled(False)
         self._workshop_update_btn.clicked.connect(self._open_workshop_update_dialog)
         bottom_row.addWidget(self._workshop_update_btn)
+        # 跟本地服务器页"全部启动/全部停止/..."一排操作按钮统一字号（方角已经是
+        # 全局默认样式，这里只需要再调小字号）。
+        for button in (self._preset_save_btn, self._preset_apply_btn, self._save_btn,
+                      self._apply_current_btn, self._workshop_update_btn):
+            button.setFont(theme.font("FONT_SIZE_SM"))
         root.addLayout(bottom_row)
 
         ctx.pending_enabled_mod_ids = self.get_pending_enabled_mod_ids
