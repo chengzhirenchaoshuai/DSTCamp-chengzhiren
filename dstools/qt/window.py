@@ -29,7 +29,7 @@ from dstools.qt.pages.server_config import ServerConfigPage
 from dstools.qt.pages.world_settings import WorldSettingsPage
 from dstools.qt.theme import THEME_NAMES, theme
 from dstools.qt.threads import post_to_ui, run_async
-from dstools.qt.widgets import Card, Grip, PillTabBar
+from dstools.qt.widgets import Grip, PillTabBar
 from dstools.shared.app_settings import (
     get_minimize_on_close, get_window_position, set_minimize_on_close, set_window_position,
 )
@@ -300,12 +300,8 @@ class ClusterBar(QWidget):
         super().__init__()
         self._ctx = ctx
         self._populating = False
-        card = Card(self, alpha=190)
-        outer = QHBoxLayout(self)
-        outer.setContentsMargins(24, 4, 24, 4)
-        outer.addWidget(card)
-        row = QHBoxLayout(card)
-        row.setContentsMargins(14, 6, 14, 6)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(24, 4, 24, 4)
         row.setSpacing(10)
         self._platform_label, self._archive_label = QLabel(), QLabel()
         for label in (self._platform_label, self._archive_label):
@@ -318,9 +314,13 @@ class ClusterBar(QWidget):
         self._cluster.setMinimumWidth(360)
         # "创建服务器存档"针对的是整个存档集合，不属于某一个已选存档的基本信息；
         # 放在全局存档选择器右侧，跟 Tk 版 gui/app.py 的 _create_save_btn 位置一致。
+        # 字号跟 Tk 版 "Big.TButton" 一样用 FONT_SIZE_MD（比页面里普通按钮大一号），
+        # 好跟旁边的存档下拉框视觉匹配。
         self._create_save = QPushButton()
+        self._create_save.setFont(theme.font("FONT_SIZE_MD"))
         self._create_save.clicked.connect(window.open_creation_wizard)
         self._refresh = QPushButton()
+        self._refresh.setFont(theme.font("FONT_SIZE_MD"))
         self._refresh.clicked.connect(window.refresh_all)
         row.addWidget(self._platform_label)
         row.addWidget(self._platform)
@@ -341,7 +341,7 @@ class ClusterBar(QWidget):
         self._platform_label.setText(t("selector.save_type"))
         self._archive_label.setText(t("selector.archive"))
         self._create_save.setText(t("save.create_server_save"))
-        self._refresh.setText(t("app.refresh"))
+        self._refresh.setText(t("save.refresh"))
 
     def reload(self) -> None:
         self._populating = True

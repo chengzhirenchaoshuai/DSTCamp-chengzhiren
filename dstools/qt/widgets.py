@@ -102,10 +102,12 @@ class PillTabBar(QWidget):
             self.update()
 
     def _rects(self) -> list[QRectF]:
+        # 左对齐、固定在左边距起画（跟 Tk 版 pill_tabs.py._redraw() 一致）——不是
+        # 居中，窗口缩放时页签不会跟着左右移动。
         metrics = QFontMetrics(self._font())
         pad = 44 if self._font_size_key is None else 32
         widths = [metrics.horizontalAdvance(text) + pad for text in self._labels]
-        x = (self.width() - sum(widths) - 6 * (len(widths) - 1)) / 2
+        x = 24.0
         top = (self.height() - self._pill_h) / 2
         rects = []
         for width in widths:
