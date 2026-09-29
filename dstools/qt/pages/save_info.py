@@ -268,9 +268,15 @@ class SaveInfoPage(Page):
         if player.icon_path:
             pixmap = QPixmap(str(player.icon_path))
             if not pixmap.isNull():
-                avatar.setPixmap(pixmap.scaled(
-                    AVATAR_SIZE, AVATAR_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
-                    Qt.TransformationMode.SmoothTransformation))
+                # 头像素材本身（游戏自带的 Tab 键小图标）通常就比 AVATAR_SIZE 小；
+                # 只在源图比目标框大时才缩小，绝不放大——放大会把本来就小的原图
+                # 拉糊。跟 Tk 版 PIL 的 img.thumbnail() 语义一致（那个方法本来就
+                # 只缩小不放大），Qt 的 QPixmap.scaled() 没有这个保证，需要自己判断。
+                if pixmap.width() > AVATAR_SIZE or pixmap.height() > AVATAR_SIZE:
+                    pixmap = pixmap.scaled(
+                        AVATAR_SIZE, AVATAR_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+                avatar.setPixmap(pixmap)
         row_layout.addWidget(avatar)
 
         body = QVBoxLayout()

@@ -277,7 +277,9 @@ class ServerConfigPage(Page):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 12, 24, 12)
-        card = Card()
+        # 房间设置/世界设置两个子页签内部还各自套了一层 Card（见下方 column/card），
+        # 叠在一起看着深浅不一；先试试整页全部改成全透明（不画任何底色）的效果。
+        card = Card(alpha=0)
         outer.addWidget(card)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(14, 10, 14, 10)
@@ -417,7 +419,7 @@ class ServerConfigPage(Page):
     def _rebuild_cluster_form(self, cluster) -> None:
         self._clear_cluster_form()
         for groups in form_logic.build_cluster_columns(cluster):
-            column = Card(radius=18)
+            column = Card(radius=18, alpha=0)
             column_layout = QVBoxLayout(column)
             column_layout.setContentsMargins(14, 8, 14, 12)
             grid = FormGrid()
@@ -468,7 +470,7 @@ class ServerConfigPage(Page):
                 widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
-        card = Card(radius=18)
+        card = Card(radius=18, alpha=0)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(14, 8, 14, 12)
         grid = FormGrid()

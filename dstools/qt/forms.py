@@ -49,7 +49,14 @@ class FormGrid(QWidget):
             label.setToolTip(spec.description)
         editor = self._make_editor(spec, on_toggled)
         self._grid.addWidget(label, self._row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self._grid.addWidget(editor.widget, self._row, 1, Qt.AlignmentFlag.AlignVCenter)
+        # 固定宽度的控件（端口号输入框/开关）必须显式加 AlignLeft，不然只给了纵向
+        # 对齐、横向没给的话 Qt 会把它摆在这一格（因为列 1 撑满宽度）里说不准的
+        # 位置——真机反馈过端口号输入框会跟着窗口宽度左右挪动。可以自然撑满宽度
+        # 的控件（文本框/下拉框）不加这个，让它们继续填满、不留空白。
+        editor_align = Qt.AlignmentFlag.AlignVCenter
+        if spec.kind in ("int", "bool"):
+            editor_align |= Qt.AlignmentFlag.AlignLeft
+        self._grid.addWidget(editor.widget, self._row, 1, editor_align)
         self._row += 1
         self.editors[(spec.section, spec.key)] = editor
         return editor

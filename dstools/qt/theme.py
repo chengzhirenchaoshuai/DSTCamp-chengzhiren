@@ -25,6 +25,11 @@ THEME_NAMES = palettes.THEME_NAMES
 _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png").as_posix()
 
 
+def _rgba(hex_color: str, alpha: int) -> str:
+    color = QColor(hex_color)
+    return f"rgba({color.red()},{color.green()},{color.blue()},{alpha})"
+
+
 class Theme(QObject):
     changed = Signal()
 
@@ -120,9 +125,10 @@ class Theme(QObject):
             QComboBox:hover {{ border-color: {c['ACCENT']}; }}
             QComboBox::drop-down {{ border: none; width: 22px; }}
             QComboBox::down-arrow {{ image: url({_DOWN_ARROW_PATH}); width: 10px; height: 6px; }}
-            QComboBox QAbstractItemView {{ background: {c['CARD_BG']}; color: {c['TEXT']};
+            QComboBox QAbstractItemView {{ background: {_rgba(c['CARD_BG'], 220)}; color: {c['TEXT']};
                 border: 1px solid {c['CARD_BORDER']}; selection-background-color: {c['PRIMARY_LIGHT']};
                 selection-color: {c['TEXT']}; outline: none; }}
+            QComboBox QAbstractItemView::item {{ padding: 2px 6px; }}
             QLineEdit {{ background: rgba(255,255,255,200); border: 1px solid {c['CARD_BORDER']};
                 border-radius: 8px; padding: 5px 10px; color: {c['TEXT']}; }}
             QLineEdit:focus {{ border-color: {c['ACCENT']}; }}

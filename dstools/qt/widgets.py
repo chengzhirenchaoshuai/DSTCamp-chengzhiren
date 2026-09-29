@@ -62,6 +62,8 @@ class Card(QWidget):
         self._fill_key = fill_key
 
     def paintEvent(self, _event):
+        if self._alpha <= 0:
+            return  # 全透明：连描边一起不画，等于没有这张卡片
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         fill = theme.color(self._fill_key)

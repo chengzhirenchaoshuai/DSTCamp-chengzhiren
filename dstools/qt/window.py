@@ -314,13 +314,11 @@ class ClusterBar(QWidget):
         self._cluster.setFixedWidth(360)  # 固定宽度，不随窗口拉伸变化
         # "创建服务器存档"针对的是整个存档集合，不属于某一个已选存档的基本信息；
         # 放在全局存档选择器右侧，跟 Tk 版 gui/app.py 的 _create_save_btn 位置一致。
-        # 字号跟 Tk 版 "Big.TButton" 一样用 FONT_SIZE_MD（比页面里普通按钮大一号），
-        # 好跟旁边的存档下拉框视觉匹配。
+        # 字号跟全局按钮保持一致（不再单独放大），真机反馈过这两个按钮没必要
+        # 跟别处不一样。
         self._create_save = QPushButton()
-        self._create_save.setFont(theme.font("FONT_SIZE_MD"))
         self._create_save.clicked.connect(window.open_creation_wizard)
         self._refresh = QPushButton()
-        self._refresh.setFont(theme.font("FONT_SIZE_MD"))
         self._refresh.clicked.connect(window.refresh_all)
         row.addWidget(self._platform_label)
         row.addWidget(self._platform)
@@ -387,7 +385,10 @@ class MainWindow(QWidget):
         root.setSpacing(0)
         self.titlebar = TitleBar(self)
         self.menu_strip = MenuStrip(self)
-        self.tabbar = PillTabBar([t(f"tab.{key}") for key in TAB_KEYS])
+        # 全局默认字号改成 FONT_SIZE_SM 后主页签跟着变小了，真机反馈偏小；
+        # 显式指定比子页签（FONT_SIZE_BASE）再大一档，维持"主页签 > 子页签 > 正文"
+        # 的层级。
+        self.tabbar = PillTabBar([t(f"tab.{key}") for key in TAB_KEYS], font_size_key="FONT_SIZE_MD")
         self.cluster_bar = ClusterBar(ctx, self)
         self.stack = QStackedWidget()
         self.status = QLabel()
