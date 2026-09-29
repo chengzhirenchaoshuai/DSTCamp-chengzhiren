@@ -3,7 +3,7 @@
 颜色一律在 paintEvent 里现查 ``theme.color()``；子控件默认透明，能直接透出主窗口画的背景图。
 """
 
-from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtCore import QRect, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -162,18 +162,37 @@ class Grip(QWidget):
 
 
 class Banner(QWidget):
-    """醒目的提示条（本地存档只读、没有存档等）。文字为空时隐藏。"""
+    """醒目的提示条（本地存档只读、没有存档等）。文字为空时隐藏；文字自动折行，
+    高度跟着当前宽度和内容重新计算——放在窄的侧栏里的长提示文字也不会被裁掉。"""
+
+    _MIN_HEIGHT = 34
+    _PAD_X, _PAD_Y = 14, 8
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._text = ""
         self.setVisible(False)
-        self.setFixedHeight(34)
+        self.setFixedHeight(self._MIN_HEIGHT)
 
     def set_text(self, text: str) -> None:
         self._text = text
         self.setVisible(bool(text))
+        self._relayout()
         self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._relayout()
+
+    def _relayout(self) -> None:
+        if not self._text or self.width() <= 2 * self._PAD_X:
+            self.setFixedHeight(self._MIN_HEIGHT)
+            return
+        metrics = QFontMetrics(theme.font("FONT_SIZE_SM", bold=True))
+        bounds = metrics.boundingRect(
+            QRect(0, 0, self.width() - 2 * self._PAD_X, 0),
+            Qt.TextFlag.TextWordWrap | int(Qt.AlignmentFlag.AlignLeft), self._text)
+        self.setFixedHeight(max(self._MIN_HEIGHT, bounds.height() + 2 * self._PAD_Y))
 
     def paintEvent(self, _event):
         painter = QPainter(self)
@@ -183,5 +202,6 @@ class Banner(QWidget):
         painter.drawRoundedRect(QRectF(self.rect()), 8, 8)
         painter.setFont(theme.font("FONT_SIZE_SM", bold=True))
         painter.setPen(theme.color("BANNER_TEXT"))
-        painter.drawText(QRectF(self.rect()).adjusted(14, 0, -14, 0),
-                         Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, self._text)
+        rect = self.rect().adjusted(self._PAD_X, self._PAD_Y, -self._PAD_X, -self._PAD_Y)
+        painter.drawText(rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter) | int(Qt.TextFlag.TextWordWrap),
+                          self._text)

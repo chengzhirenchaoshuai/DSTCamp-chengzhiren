@@ -101,8 +101,8 @@ def show_file_location(parent, title: str, path, location_label: str, copied_mes
 
 # ── 基础对话框 ──────────────────────────────────────────────────────────
 
-class _Dialog(QDialog):
-    """带底部"取消（左）/确认（右）"按钮行的对话框基类。"""
+class Dialog(QDialog):
+    """带底部"取消（左）/确认（右）"按钮行的对话框基类，供本模块及各页面的一次性小对话框继承。"""
 
     def __init__(self, parent, title: str, width: int, confirm_text: str | None = None):
         super().__init__(parent)
@@ -147,7 +147,7 @@ class _Dialog(QDialog):
         return label
 
 
-class CopyToServerDialog(_Dialog):
+class CopyToServerDialog(Dialog):
     """复制为服务器存档：输入目标文件夹名（预填建议值），校验交给调用方传入的 validator。"""
 
     def __init__(self, parent, source_name: str, suggested_name: str, validator):
@@ -186,7 +186,7 @@ def format_backup_label(path: Path, cluster_name: str) -> str:
         return stem
 
 
-class RestoreBackupDialog(_Dialog):
+class RestoreBackupDialog(Dialog):
     """从备份恢复：列出历史备份（新的在前），选中后才现查那一份的详情（需要解压一次，放后台）。"""
 
     def __init__(self, parent, cluster, backups: list[Path]):
@@ -239,7 +239,7 @@ class RestoreBackupDialog(_Dialog):
             self.accept()
 
 
-class BackupPolicyDialog(_Dialog):
+class BackupPolicyDialog(Dialog):
     """备份策略：自动备份开关（点击即生效）+ 保留份数（5~99）+ 自动备份间隔分钟（2~30）。"""
 
     def __init__(self, parent):
@@ -296,12 +296,16 @@ class BackupPolicyDialog(_Dialog):
         self.accept()
 
 
-class LogDialog(_Dialog):
-    """实时追加日志的窗口：任务没跑完前不能关闭，finish() 之后才出现可点的"确认"。"""
+class LogDialog(Dialog):
+    """实时追加日志的窗口：任务没跑完前不能关闭，finish() 之后才出现可点的"确认"。
 
-    def __init__(self, parent, title: str):
+    ``closable=True``（Steam 更新等：下载由 Steam 客户端自己完成，应用只是旁观打日志）
+    允许用户提前关闭窗口，不等待 finish()。"""
+
+    def __init__(self, parent, title: str, closable: bool = False):
         super().__init__(parent, title, 640)
         self._finished = False
+        self._closable = closable
         self._view = QPlainTextEdit()
         self._view.setReadOnly(True)
         self._view.setMinimumHeight(280)
@@ -323,18 +327,18 @@ class LogDialog(_Dialog):
         self._close.setEnabled(True)
 
     def reject(self) -> None:
-        if self._finished:
+        if self._finished or self._closable:
             super().reject()
 
     def closeEvent(self, event):
-        if self._finished:
+        if self._finished or self._closable:
             event.accept()
         else:
             event.ignore()
 
 
 
-class TextInputDialog(_Dialog):
+class TextInputDialog(Dialog):
     """单行文本输入（令牌/管理员 ID）：等宽字体，可选校验函数（返回错误文案则不关闭窗口）。"""
 
     def __init__(self, parent, title: str, prompt: str, initial: str = "", validator=None,
@@ -364,7 +368,7 @@ class TextInputDialog(_Dialog):
         self.accept()
 
 
-class SaveUserPickDialog(_Dialog):
+class SaveUserPickDialog(Dialog):
     """从存档/日志/跨存档玩家登记簿里挑一个真实用户；开关可以只看当前存档的用户。"""
 
     def __init__(self, parent, candidates: list[tuple[str, str, bool]]):
@@ -405,7 +409,7 @@ class SaveUserPickDialog(_Dialog):
         self.accept()
 
 
-class GlobalTokensDialog(_Dialog):
+class GlobalTokensDialog(Dialog):
     """管理全局令牌池，可把选中的令牌返回给当前存档。令牌始终脱敏显示；悬停令牌文字临时显示完整值，
     点击同一处复制。增删即时写入设置；"使用"只返回选中项，由调用方写进存档的令牌文件。"""
 

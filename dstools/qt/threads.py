@@ -30,6 +30,16 @@ def _get_bridge() -> _Bridge:
     return _bridge
 
 
+def _safe_emit(bridge: _Bridge, payload) -> None:
+    """应用退出阶段：底层 C++ 对象可能已经随 QApplication 一起被销毁，工作线程这时
+    才跑完，投递结果已经没有意义（没人在监听了），吞掉即可，不能让后台线程带着
+    异常退出、在控制台刷一屏噪音。"""
+    try:
+        bridge.delivered.emit(payload)
+    except RuntimeError:
+        pass
+
+
 class _Task(QRunnable):
     def __init__(self, work, on_done, on_error):
         super().__init__()
@@ -40,9 +50,9 @@ class _Task(QRunnable):
         try:
             result = self._work()
         except Exception as exc:  # noqa: BLE001 - 原样交给界面层展示
-            bridge.delivered.emit((self._on_error, exc))
+            _safe_emit(bridge, (self._on_error, exc))
             return
-        bridge.delivered.emit((self._on_done, result))
+        _safe_emit(bridge, (self._on_done, result))
 
 
 def run_async(work, on_done, on_error=None) -> None:
@@ -55,7 +65,13 @@ def run_async_with_log(work, on_line, on_done, on_error=None) -> None:
     """同 run_async，但 work(emit) 里可以多次 emit(line)，每一行都在界面线程回调 on_line(line)。
     行与最终结果走同一个队列，先后顺序保持一致。"""
     bridge = _get_bridge()
-    run_async(lambda: work(lambda line: bridge.delivered.emit((on_line, line))), on_done, on_error)
+    run_async(lambda: work(lambda line: _safe_emit(bridge, (on_line, line))), on_done, on_error)
+
+
+def post_to_ui(callback, argument=None) -> None:
+    """从后台线程把一次回调转发到界面线程执行——对应 Tk 版的 ``widget.after(0, ...)``。
+    ServerManager.stop()/stop_all() 的 on_done 就在后台线程直接触发，必须用这个转回来。"""
+    _safe_emit(_get_bridge(), (callback, argument))
 
 
 def _raise(exc: Exception) -> None:

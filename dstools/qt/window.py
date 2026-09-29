@@ -17,13 +17,16 @@ from PySide6.QtWidgets import (
 from dstools import __version__
 from dstools.i18n import t
 from dstools.models import Platform
+from dstools.qt import dialogs
 from dstools.qt.background import Background
 from dstools.qt.context import AppContext
+from dstools.qt.pages.local_service import LocalServicePage
 from dstools.qt.pages.placeholder import PlaceholderPage
 from dstools.qt.pages.save_info import SaveInfoPage
 from dstools.qt.pages.server_config import ServerConfigPage
 from dstools.qt.pages.world_settings import WorldSettingsPage
 from dstools.qt.theme import THEME_NAMES, theme
+from dstools.qt.threads import post_to_ui
 from dstools.qt.widgets import Card, Grip, PillTabBar
 from dstools.shared.app_settings import (
     get_minimize_on_close, get_window_position, set_minimize_on_close, set_window_position,
@@ -340,6 +343,8 @@ class MainWindow(QWidget):
         self.current_page().load()
 
     def _make_page(self, key: str):
+        if key == "local":
+            return LocalServicePage(self.ctx)
         if key == "saves":
             return SaveInfoPage(self.ctx)
         if key == "world":
@@ -462,7 +467,7 @@ class MainWindow(QWidget):
         show = QAction(t("tray.show"), self)
         show.triggered.connect(self.restore_from_tray)
         exit_action = QAction(t("tray.exit"), self)
-        exit_action.triggered.connect(self.quit_app)
+        exit_action.triggered.connect(self._confirm_and_quit)
         menu.addAction(show)
         menu.addAction(exit_action)
         self.tray.setContextMenu(menu)
@@ -482,7 +487,20 @@ class MainWindow(QWidget):
         if get_minimize_on_close():
             self.hide()
         else:
+            self._confirm_and_quit()
+
+    def _confirm_and_quit(self) -> None:
+        """还有本地专服在跑时先问一句是否一并关闭；选"否"就是取消退出，不强行杀掉。"""
+        running = self.ctx.manager.running()
+        if not running:
             self.quit_app()
+            return
+        world_count = len(running)
+        cluster_count = len({str(proc.cluster_path) for proc in running})
+        if not dialogs.ask_yes_no(self, t("local.confirm_close_title"),
+                                   t("local.confirm_close_msg", cluster_count=cluster_count, world_count=world_count)):
+            return
+        self.ctx.manager.stop_all(on_all_done=lambda: post_to_ui(lambda _a: self.quit_app()))
 
     def quit_app(self) -> None:
         self._quitting = True

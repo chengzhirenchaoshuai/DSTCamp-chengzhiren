@@ -12,7 +12,8 @@ from dstools.features.local_service.dedicated_server import ServerManager, Serve
 from dstools.i18n import t
 from dstools.models import Cluster, Platform, SaveSource
 from dstools.shared.app_settings import (
-    get_last_cluster_path, get_last_platform, set_last_cluster_path, set_last_platform,
+    get_last_cluster_path, get_last_platform, get_lobby_accel_enabled,
+    set_last_cluster_path, set_last_platform,
 )
 from dstools.shared.discovery import discover_environment
 from dstools.shared.gui.cluster_select import cluster_label
@@ -33,6 +34,19 @@ class AppContext(QObject):
         # 跨页钩子：由对应页面迁移后接管，默认值等价于"没有这个功能在占用"
         self.mapping_owner = lambda cluster, shard: None   # 端口是否被映射接管："sakura"/"selfhost"/None
         self.token_uses = lambda: ()                        # 各存档正在使用的令牌（本地服务器页提供）
+        # 大厅加速：内网穿透页迁移后接管这两个钩子。关闭时视为"已就绪"直接放行；
+        # 开启但穿透页尚未迁移时明确失败，不能悄悄跳过用户已经打开的功能。
+        self.ensure_lobby_accel = lambda cluster, on_done: on_done(
+            not get_lobby_accel_enabled(),
+            "" if not get_lobby_accel_enabled() else "内网穿透管理器尚未就绪",
+        )
+        self.stop_lobby_accel_async = lambda: None
+        self.poll_lobby_accel = lambda: None
+        # 内网穿透页迁移后接管：某个世界停止后顺带停掉它的 frpc 客户端；某个世界启动后
+        # 按已有映射顺带拉起 frpc；这个世界的 frpc 是否正在转发（直连代码就绪判断用）。
+        self.stop_frpc_for_shard = lambda cluster, shard, on_done: on_done()
+        self.maybe_start_frpc = lambda cluster, shard: None
+        self.frpc_ready = lambda cluster: False
         self._platform = Platform.WEGAME if get_last_platform() == "WeGame" else Platform.STEAM
         self._selected: Cluster | None = None
         self._restore_selection(Path(get_last_cluster_path()) if get_last_cluster_path() else None)
