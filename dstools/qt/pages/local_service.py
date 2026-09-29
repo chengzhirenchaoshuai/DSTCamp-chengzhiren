@@ -109,6 +109,10 @@ class _ShardRow(QWidget):
         self.start_btn = QPushButton(t("local.start_btn"))
         self.stop_btn = QPushButton(t("local.stop_btn"))
         self.restart_btn = QPushButton(t("local.restart_btn"))
+        # 跟上方"全部启动/全部停止/..."一排统一字号，之前漏了这里，每个世界一行的
+        # 启动/停止/重启按钮还是默认大字号，真机反馈过两者明显不一致。
+        for button in (self.start_btn, self.stop_btn, self.restart_btn):
+            button.setFont(theme.font("FONT_SIZE_SM"))
         self.start_btn.clicked.connect(lambda: page.start_shard(page.get_cluster(), shard))
         self.stop_btn.clicked.connect(lambda: page.stop_shard(page.get_cluster(), shard))
         self.restart_btn.clicked.connect(lambda: page.restart_shard(page.get_cluster(), shard))
@@ -281,6 +285,8 @@ class LocalServicePage(Page):
         change_btn.clicked.connect(self._change_install_dir)
         update_btn = QPushButton(t("local.steam_update_btn"))
         update_btn.clicked.connect(self._on_steam_update_clicked)
+        for button in (change_btn, update_btn):
+            button.setFont(theme.font("FONT_SIZE_SM"))
         layout.addWidget(change_btn)
         layout.addWidget(update_btn)
         return row, path_label, change_btn, update_btn
@@ -299,6 +305,8 @@ class LocalServicePage(Page):
         install_btn.clicked.connect(self._on_luajit_install_clicked)
         uninstall_btn = QPushButton(t("local.luajit_uninstall_btn"))
         uninstall_btn.clicked.connect(self._on_luajit_uninstall_clicked)
+        for button in (help_btn, install_btn, uninstall_btn):
+            button.setFont(theme.font("FONT_SIZE_SM"))
         layout.addWidget(help_btn)
         layout.addWidget(install_btn)
         layout.addWidget(uninstall_btn)
@@ -329,6 +337,7 @@ class LocalServicePage(Page):
         self._wegame_banner = Banner()
         self._wegame_banner.set_text(t("local.wegame_manual_start_hint"))
         self._wegame_detect_btn = QPushButton(t("local.wegame_detect_btn"))
+        self._wegame_detect_btn.setFont(theme.font("FONT_SIZE_SM"))
         self._wegame_detect_btn.clicked.connect(self._on_wegame_detect)
         self._wegame_detect_text = QTextEdit()
         self._wegame_detect_text.setReadOnly(True)

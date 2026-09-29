@@ -148,6 +148,7 @@ class ConsolePane(QWidget):
         self.cmd_edit.returnPressed.connect(self._send)
         self.cmd_edit.installEventFilter(self)
         self.send_btn = QPushButton(t("local.console_send_btn"))
+        self.send_btn.setFont(theme.font("FONT_SIZE_SM"))
         self.send_btn.clicked.connect(self._send)
         bottom.addWidget(self.status_label)
         bottom.addWidget(self.cmd_edit, 1)
@@ -182,6 +183,10 @@ class ConsolePane(QWidget):
         self.close_btn.clicked.connect(self._on_close)
         quick.addWidget(self.close_btn)
         outer.addLayout(quick)
+        for button in (self.announce_btn, self.list_players_btn, self.rollback_btn, self.reset_world_btn,
+                      self.save_btn, self.copy_log_btn, self.close_btn):
+            if button is not None:
+                button.setFont(theme.font("FONT_SIZE_SM"))
 
         self.pump()
 
