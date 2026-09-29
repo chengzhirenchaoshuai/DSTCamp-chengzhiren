@@ -1,0 +1,855 @@
+"""内网穿透页（对应 Tk 版 features/sakura/tab.py + features/frp_selfhost/tab.py）。
+
+两个子页签共用同一套"把本地专用服务器映射到公网"的心智模型，服务端来源不同：
+樱花映射走 SakuraFrp 云端开放 API（本文件）；自建节点走用户自己的 VPS，见
+qt/selfhost_panel.py（SSH 部署、大厅加速）。跨页钩子（AppContext.mapping_owner/
+ensure_lobby_accel/...）在这里统一接管——local_service 页迁移时给的默认值到此
+真正生效。
+"""
+
+import time
+import webbrowser
+
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtWidgets import (
+    QDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QStackedWidget,
+    QVBoxLayout, QWidget,
+)
+
+from dstools.features.cluster_config.config_manager import (
+    get_cluster_option, get_shard_option, load_cluster_config, load_shard_config, save_shard_config,
+    set_shard_option,
+)
+from dstools.features.local_service.shard_helpers import RUNNING_LIKE
+from dstools.features.sakura import api as sakura_frp
+from dstools.features.sakura.frpc import FrpcManager, FrpcStatus
+from dstools.features.sakura.frpc_recovery import SakuraFrpcHealth, inspect_sakura_frpc
+from dstools.i18n import t
+from dstools.models import SaveSource
+from dstools.qt import dialogs
+from dstools.qt.pages.base import Page
+from dstools.qt.selfhost_panel import SelfHostPanel
+from dstools.qt.theme import theme
+from dstools.qt.threads import post_to_ui, run_async
+from dstools.qt.widgets import Card, PillTabBar
+from dstools.shared import app_settings
+from dstools.shared.lan_mapping_guard import ensure_lan_free_for_mapping
+from dstools.shared.server_ports import stable_path_key
+from dstools.shared.token_manager import is_valid_token, mask_token
+
+_FALLBACK_MAX_TUNNELS = 2
+_FRPC_CACHE_NAME = "frpc_config"
+_NODE_GRID_COLS = 3
+
+
+def _format_bytes_adaptive(num_bytes: float) -> str:
+    kib = num_bytes / 1024
+    if kib < 1024:
+        return f"{kib:.2f} KiB"
+    mib = kib / 1024
+    if mib < 1024:
+        return f"{mib:.2f} MiB"
+    return f"{mib / 1024:.2f} GiB"
+
+
+def _frpc_pointer_path(cluster_path, shard_name, app_env):
+    """本地隧道 ID 指针文件路径（不是完整 frpc 配置，见 dedicated_server 同类说明）。"""
+    from dstools.shared.resource_paths import data_dir
+    root = data_dir(_FRPC_CACHE_NAME, legacy_cache_name=_FRPC_CACHE_NAME)
+    current = root / f"{cluster_path.name}__{stable_path_key(cluster_path)}__{shard_name}.txt"
+    if current.exists():
+        return current
+    legacy = root / f"{cluster_path.name}__{shard_name}.txt"
+    if not legacy.exists():
+        return current
+    matches = [c for c in app_env.clusters if c.path.name == cluster_path.name
+               and any(s.name == shard_name for s in c.shards)]
+    if len(matches) == 1 and str(matches[0].path) == str(cluster_path):
+        try:
+            legacy.replace(current)
+        except OSError:
+            return legacy
+    return current
+
+
+class _NodeSelectDialog(QDialog):
+    """节点数量可能有几十上百个，改用弹窗里的多列按钮网格挑选，VIP 等级不够的置灰。"""
+
+    def __init__(self, parent, node_choices: list[tuple[int, dict, bool]], current_id: int | None):
+        super().__init__(parent)
+        self.setWindowTitle(t("sakura.node_picker_title"))
+        self.result_id: int | None = None
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.viewport().setAutoFillBackground(False)
+        grid_widget = QWidget()
+        grid = QGridLayout(grid_widget)
+        grid.setSpacing(6)
+        for idx, (node_id, node, eligible) in enumerate(node_choices):
+            tag = t("sakura.node_tag_free") if node.get("vip", 0) == 0 else t("sakura.node_tag_vip", level=node.get("vip"))
+            button = QPushButton(f"{node.get('name', node_id)}\n{tag}")
+            button.setEnabled(eligible)
+            button.setMinimumHeight(56)
+            button.setProperty("flat", node_id != current_id)
+            button.clicked.connect(lambda _c=False, nid=node_id: self._select(nid))
+            grid.addWidget(button, idx // _NODE_GRID_COLS, idx % _NODE_GRID_COLS)
+        area.setWidget(grid_widget)
+        layout = QVBoxLayout(self)
+        layout.addWidget(area)
+        self.resize(760, 560)
+
+    def _select(self, node_id: int) -> None:
+        self.result_id = node_id
+        self.accept()
+
+
+class _FrpcRecoveryDialog(dialogs.Dialog):
+    """樱花 frpc 缺失/被隔离时的人工恢复引导——只有这条链路会出现（自建节点用的
+    是随包分发的 frpc.exe 副本，不经历这个"被杀毒软件删除"的问题）。"""
+
+    def __init__(self, parent, initial: SakuraFrpcHealth):
+        super().__init__(parent, t("sakura.frpc_recovery_title"), 640, confirm_text=t("dlg.close_btn"))
+        self.restored = False
+        self._health = initial
+        self._message = self.text_label("")
+        self.body.addWidget(self._message)
+        self._path_label = self.text_label("", muted=True, size_key="FONT_SIZE_SM")
+        self.body.addWidget(self._path_label)
+        self._status_label = self.text_label("")
+        self.body.addWidget(self._status_label)
+        row = QHBoxLayout()
+        open_security = QPushButton(t("sakura.frpc_recovery_open_security"))
+        open_security.clicked.connect(self._open_security)
+        open_folder = QPushButton(t("sakura.frpc_recovery_open_folder"))
+        open_folder.clicked.connect(self._open_folder)
+        copy_path = QPushButton(t("sakura.frpc_recovery_copy_path"))
+        copy_path.clicked.connect(self._copy_path)
+        recheck = QPushButton(t("sakura.frpc_recovery_recheck"))
+        recheck.clicked.connect(self._recheck)
+        for button in (open_security, open_folder, copy_path, recheck):
+            row.addWidget(button)
+        self.body.addLayout(row)
+        self.body.addWidget(self.add_buttons())
+        self._render()
+
+    def _render(self) -> None:
+        key = {"missing": "sakura.frpc_recovery_missing", "blocked": "sakura.frpc_recovery_blocked",
+               "unreadable": "sakura.frpc_recovery_unreadable", "ready": "sakura.frpc_recovery_ready"}[self._health.status]
+        self._message.setText(t(key, error=self._health.detail))
+        self._path_label.setText(str(self._health.path))
+        self._status_label.setText(t("sakura.frpc_recovery_ready" if self._health.ready else "sakura.frpc_recovery_waiting"))
+        self._status_label.setStyleSheet(f"color: {theme.hex('ACCENT') if self._health.ready else theme.hex('ERROR')};")
+
+    def _open_security(self) -> None:
+        import os
+        import subprocess
+        import sys
+        if sys.platform != "win32":
+            return
+        try:
+            os.startfile("windowsdefender:")
+        except OSError:
+            try:
+                subprocess.Popen(["explorer.exe", "windowsdefender:"])
+            except OSError:
+                pass
+
+    def _open_folder(self) -> None:
+        import os
+        import sys
+        from dstools.shared.resource_paths import exe_dir
+        folder = exe_dir()
+        while not folder.exists() and folder != folder.parent:
+            folder = folder.parent
+        if sys.platform != "win32":
+            return
+        try:
+            os.startfile(str(folder))
+        except OSError:
+            pass
+
+    def _copy_path(self) -> None:
+        QGuiApplication.clipboard().setText(str(self._health.path))
+
+    def _recheck(self) -> None:
+        self._health = inspect_sakura_frpc()
+        self._render()
+        if self._health.ready:
+            self.restored = True
+            self.accept()
+
+
+class _SakuraMappingPanel(QWidget):
+    """"樱花映射"子页签内容。"""
+
+    _SHARD_ROW_PADY = 6
+
+    def __init__(self, ctx):
+        super().__init__()
+        self.ctx = ctx
+        self.frpc = FrpcManager()
+        self._current_cluster = None
+        self._tunnels_by_key: dict[tuple[str, str], dict] = {}
+        self._nodes: dict[str, dict] = {}
+        self._node_choices: list[tuple[int, dict, bool]] = []
+        self._selected_node_id: int | None = None
+        self._my_group_level = 0
+        self._max_tunnels = _FALLBACK_MAX_TUNNELS
+        self._tunnel_count = 0
+        self._tunnels_exhausted = False
+        self._reload_gen = 0
+        self._tunnel_occupants: list[str] = []
+        self._any_mapped = False
+        self._frpc_health: SakuraFrpcHealth | None = None
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(10, 10, 10, 10)
+
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel(t("sakura.token_label")))
+        self._token_label = QLabel()
+        self._token_label.setFont(theme.font("FONT_SIZE_SM"))
+        self._token_label.setStyleSheet(f"font-family: Consolas; color: {theme.hex('TEXT')};")
+        row1.addWidget(self._token_label, 1)
+        change_btn = QPushButton(t("token.change"))
+        change_btn.clicked.connect(self._change_token)
+        row1.addWidget(change_btn)
+        dashboard_btn = QPushButton(t("sakura.open_dashboard_btn"))
+        dashboard_btn.clicked.connect(lambda: webbrowser.open("https://www.natfrp.com/user/"))
+        row1.addWidget(dashboard_btn)
+        root.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel(t("sakura.node_label")))
+        self._node_btn = QPushButton(t("sakura.node_none_selected"))
+        self._node_btn.clicked.connect(self._open_node_picker)
+        row2.addWidget(self._node_btn)
+        refresh_btn = QPushButton(t("sakura.node_refresh_btn"))
+        refresh_btn.clicked.connect(self._reload_async)
+        row2.addWidget(refresh_btn)
+        row2.addStretch()
+        root.addLayout(row2)
+
+        account_grid = QGridLayout()
+        self._account_value_labels = []
+        for col, key in enumerate(("sakura.account_group", "sakura.account_speed", "sakura.account_traffic",
+                                    "sakura.account_tunnels", "sakura.account_tunnels_used")):
+            header = QLabel(t(key))
+            header.setProperty("muted", True)
+            header.setFont(theme.font("FONT_SIZE_SM"))
+            account_grid.addWidget(header, 0, col)
+            value = QLabel("--")
+            value.setFont(theme.font("FONT_SIZE_MD", bold=True))
+            account_grid.addWidget(value, 1, col)
+            self._account_value_labels.append(value)
+        root.addLayout(account_grid)
+
+        self._recent_traffic_label = QLabel("")
+        self._recent_traffic_label.setProperty("muted", True)
+        self._recent_traffic_label.setFont(theme.font("FONT_SIZE_SM"))
+        root.addWidget(self._recent_traffic_label)
+
+        self._status_label = QLabel("")
+        self._status_label.setStyleSheet(f"color: {theme.hex('ERROR')};")
+        self._status_label.setWordWrap(True)
+        root.addWidget(self._status_label)
+
+        self._shards_grid = QGridLayout()
+        root.addLayout(self._shards_grid)
+
+        action_row = QHBoxLayout()
+        self._action_btn = QPushButton(t("sakura.enable_btn"))
+        self._action_btn.clicked.connect(self._on_action_btn)
+        action_row.addWidget(self._action_btn)
+        action_row.addStretch()
+        root.addLayout(action_row)
+
+        self._frpc_row = QWidget()
+        frpc_layout = QHBoxLayout(self._frpc_row)
+        frpc_layout.setContentsMargins(0, 0, 0, 0)
+        self._frpc_status_label = QLabel(t("sakura.frpc_status_stopped"))
+        frpc_layout.addWidget(self._frpc_status_label)
+        self._frpc_toggle_btn = QPushButton(t("sakura.frpc_start_btn"))
+        self._frpc_toggle_btn.clicked.connect(self._on_frpc_toggle)
+        frpc_layout.addWidget(self._frpc_toggle_btn)
+        frpc_layout.addStretch()
+        root.addWidget(self._frpc_row)
+        self._frpc_row.setVisible(False)
+        root.addStretch()
+
+        self._render_account_info("--", "--", "--", "--", "--")
+        self._load_token_display()
+
+    # ── Token ───────────────────────────────────────────────────────────
+    def _load_token_display(self) -> None:
+        token = app_settings.get_sakura_token() or ""
+        self._token_label.setText(mask_token(token) if token else t("token.empty"))
+
+    def _change_token(self) -> None:
+        dialog = dialogs.TextInputDialog(
+            self.window(), t("token.change"), t("sakura.token_prompt"),
+            validator=lambda v: None if is_valid_token(v) else t("sakura.token_invalid_hint"))
+        if not dialog.exec() or not dialog.result_text:
+            return
+        app_settings.set_sakura_token(dialog.result_text)
+        self._load_token_display()
+        self._reload_async()
+
+    def _open_node_picker(self) -> None:
+        if not self._node_choices:
+            return
+        dialog = _NodeSelectDialog(self.window(), self._node_choices, self._selected_node_id)
+        if not dialog.exec() or dialog.result_id is None:
+            return
+        self._selected_node_id = dialog.result_id
+        app_settings.set_sakura_last_node_id(dialog.result_id)
+        self._update_node_display()
+
+    def _update_node_display(self) -> None:
+        node = self._nodes.get(str(self._selected_node_id), {}) if self._selected_node_id else {}
+        self._node_btn.setText(node.get("name") or t("sakura.node_none_selected"))
+
+    # ── 生命周期 ────────────────────────────────────────────────────────
+    def on_cluster_changed(self, cluster) -> None:
+        self._current_cluster = cluster
+        self._render_shard_placeholders()
+        self._reload_async()
+
+    # ── 后台加载 ────────────────────────────────────────────────────────
+    def _reload_async(self) -> None:
+        self._reload_gen += 1
+        gen = self._reload_gen
+        token = app_settings.get_sakura_token()
+        cluster = self._current_cluster
+        cluster_key = str(cluster.path) if cluster else None
+        self._status_label.setText("")
+        if not token:
+            self._render_account_info("--", "--", "--", "--", "--")
+            self._recent_traffic_label.setText("")
+            self._render_shard_placeholders(t("sakura.token_not_configured"))
+            return
+
+        def work():
+            user_info = sakura_frp.get_user_info(token)
+            nodes = sakura_frp.list_nodes(token)
+            tunnels = sakura_frp.list_tunnels(token)
+            by_key = {}
+            if cluster and cluster.source == SaveSource.SERVER:
+                for shard in cluster.shards:
+                    tunnel = self._find_cluster_tunnel(tunnels, cluster, shard)
+                    if tunnel:
+                        by_key[(str(cluster.path), shard.name)] = tunnel
+            recent_bytes = 0
+            now = time.time()
+            cutoff = now - 7 * 86400
+            for tunnel in by_key.values():
+                try:
+                    history = sakura_frp.get_traffic(token, tunnel["id"])
+                except sakura_frp.SakuraApiError:
+                    continue
+                for ts_str, val in history.items():
+                    try:
+                        ts = float(ts_str)
+                    except (TypeError, ValueError):
+                        continue
+                    if ts > now * 2:
+                        ts /= 1000
+                    if ts >= cutoff:
+                        recent_bytes += val
+            occupants = []
+            for c in self.ctx.env.clusters:
+                if c.source != SaveSource.SERVER:
+                    continue
+                for shard in c.shards:
+                    occupant_tunnel = self._find_cluster_tunnel(tunnels, c, shard)
+                    if occupant_tunnel:
+                        occupants.append(f"{c.name}（{shard.name}）")
+            return user_info, nodes, by_key, recent_bytes, len(tunnels), occupants
+
+        def done(result) -> None:
+            self._apply_loaded(*result, gen, cluster_key, token)
+
+        def error(exc: Exception) -> None:
+            self._apply_error(exc, gen, cluster_key, token)
+
+        run_async(work, done, error)
+
+    def _reload_is_current(self, gen, cluster_key, token) -> bool:
+        cluster = self._current_cluster
+        return (gen == self._reload_gen and cluster_key == (str(cluster.path) if cluster else None)
+                and token == (app_settings.get_sakura_token() or ""))
+
+    def _apply_error(self, exc, gen, cluster_key, token) -> None:
+        if not self._reload_is_current(gen, cluster_key, token):
+            return
+        self._render_account_info("--", "--", "--", "--", "--")
+        self._recent_traffic_label.setText("")
+        self._status_label.setText(t("sakura.api_error", detail=str(exc)))
+
+    def _apply_loaded(self, user_info, nodes, by_key, recent_bytes, tunnel_count, occupants, gen, cluster_key, token) -> None:
+        if not self._reload_is_current(gen, cluster_key, token):
+            return
+        self._nodes = nodes
+        self._tunnels_by_key = by_key
+        self._tunnel_count = tunnel_count
+        self._tunnel_occupants = list(occupants)
+        self._recent_traffic_label.setText(
+            t("sakura.recent_traffic", size=_format_bytes_adaptive(recent_bytes)) if by_key else "")
+        self._max_tunnels = user_info.get("tunnels") or _FALLBACK_MAX_TUNNELS
+        group = user_info.get("group") or {}
+        self._my_group_level = group.get("level", 0)
+        _today_used, remaining = (user_info.get("traffic") or [0, 0])[:2]
+        self._render_account_info(group.get("name", "--"), user_info.get("speed") or "--",
+                                   f"{remaining / (1024 ** 3):.2f} GiB", str(self._max_tunnels), str(self._tunnel_count))
+
+        self._node_choices = []
+        for node_id_str, node in nodes.items():
+            if not sakura_frp.node_supports_udp(node) or not sakura_frp.node_accepts_new_tunnel(node):
+                continue
+            eligible = node.get("vip", 0) <= self._my_group_level
+            self._node_choices.append((int(node_id_str), node, eligible))
+        self._node_choices.sort(key=lambda item: (not item[2], item[1].get("vip", 0)))
+
+        last_node_id = app_settings.get_sakura_last_node_id()
+        eligible_ids = [nid for nid, _n, ok in self._node_choices if ok]
+        if last_node_id in eligible_ids:
+            self._selected_node_id = last_node_id
+        elif self._selected_node_id not in eligible_ids:
+            self._selected_node_id = eligible_ids[0] if eligible_ids else None
+        self._update_node_display()
+        self._render_shard_rows()
+
+    def _render_account_info(self, *values) -> None:
+        for label, value in zip(self._account_value_labels, values):
+            label.setText(str(value))
+
+    def _clear_shards_grid(self) -> None:
+        while self._shards_grid.count():
+            item = self._shards_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                # deleteLater() 只是排队销毁，不会立刻从屏幕上摘掉——世界行在真实网络
+                # 响应到达时可能被连续重建好几次，旧控件在真正销毁前会一直停留在原来
+                # 的像素位置，跟新建的控件重叠（真机截图复现过的花屏）。hide()+
+                # setParent(None) 立即、同步地把它摘掉，不用等事件循环下一轮，跟
+                # save_info.py/server_config.py 清空表单的写法一致。
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def _render_shard_placeholders(self, status_text: str | None = None) -> None:
+        self._clear_shards_grid()
+        cluster = self._current_cluster
+        text = status_text if status_text is not None else t("sakura.loading")
+        if not cluster:
+            self._shards_grid.addWidget(QLabel(t("local.select_cluster_first")), 0, 0)
+            self._action_btn.setVisible(False)
+            return
+        self._action_btn.setVisible(True)
+        if not cluster.shards:
+            self._shards_grid.addWidget(QLabel(text), 0, 0)
+            return
+        for row, shard in enumerate(cluster.shards):
+            self._shards_grid.addWidget(QLabel(shard.name), row, 0)
+            muted = QLabel(text)
+            muted.setProperty("muted", True)
+            self._shards_grid.addWidget(muted, row, 1)
+
+    @staticmethod
+    def _is_master_shard(shard) -> bool:
+        return load_shard_config(shard.path).shard.get("is_master", True)
+
+    def _legacy_tunnel_name_is_unambiguous(self, cluster) -> bool:
+        matches = [c for c in self.ctx.env.clusters if c.source == cluster.source and c.platform == cluster.platform
+                   and c.path.name == cluster.path.name]
+        return len(matches) == 1
+
+    def _find_cluster_tunnel(self, tunnels, cluster, shard):
+        tunnel = sakura_frp.find_dstcamp_tunnel(
+            tunnels, cluster.path.name, shard.name, cluster.source.value, cluster.platform.value,
+            cluster_identity=stable_path_key(cluster.path),
+            allow_legacy=self._legacy_tunnel_name_is_unambiguous(cluster))
+        if tunnel:
+            return tunnel
+        pointer = _frpc_pointer_path(cluster.path, shard.name, self.ctx.env)
+        if not pointer.exists():
+            return None
+        try:
+            tunnel_id = int(pointer.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            return None
+        return next((item for item in tunnels if str(item.get("id", "")).isdigit() and int(item["id"]) == tunnel_id), None)
+
+    def _render_shard_rows(self) -> None:
+        self._clear_shards_grid()
+        cluster = self._current_cluster
+        if not cluster:
+            self._shards_grid.addWidget(QLabel(t("local.select_cluster_first")), 0, 0)
+            self._action_btn.setVisible(False)
+            return
+        if cluster.source != SaveSource.SERVER:
+            self._shards_grid.addWidget(QLabel(t("sakura.local_save_hint")), 0, 0)
+            self._action_btn.setVisible(False)
+            return
+        if not cluster.shards:
+            self._shards_grid.addWidget(QLabel(t("sakura.no_shards")), 0, 0)
+            self._action_btn.setVisible(False)
+            return
+        if len(cluster.shards) > self._max_tunnels:
+            label = QLabel(t("sakura.too_many_shards", count=len(cluster.shards), max=self._max_tunnels))
+            label.setStyleSheet(f"color: {theme.hex('ERROR')};")
+            self._shards_grid.addWidget(label, 0, 0)
+            self._action_btn.setVisible(False)
+            return
+
+        any_mapped = False
+        for row, shard in enumerate(cluster.shards):
+            key = (str(cluster.path), shard.name)
+            tunnel = self._tunnels_by_key.get(key)
+            self._shards_grid.addWidget(QLabel(shard.name), row, 0)
+            if tunnel:
+                any_mapped = True
+                remote = tunnel.get("remote", "?")
+                mapped_label = QLabel(t("sakura.shard_mapped"))
+                mapped_label.setStyleSheet(f"color: {theme.hex('ACCENT')};")
+                self._shards_grid.addWidget(mapped_label, row, 1)
+                port_label = QLabel(t("sakura.port_display", remote=remote))
+                local_port = tunnel.get("local_port", "?")
+                if str(local_port) != str(remote):
+                    port_label.setToolTip(t("sakura.port_mismatch_hint", local=local_port, remote=remote))
+                self._shards_grid.addWidget(port_label, row, 2)
+                is_master = self._is_master_shard(shard)
+                copy_btn = QPushButton(t("sakura.copy_connect_btn"))
+                copy_btn.setEnabled(is_master)
+                copy_btn.clicked.connect(lambda _c=False, tun=tunnel: self._copy_connect_string(tun))
+                if not is_master:
+                    copy_btn.setToolTip(t("sakura.copy_connect_master_only_hint"))
+                self._shards_grid.addWidget(copy_btn, row, 3)
+            else:
+                unmapped = QLabel(t("sakura.shard_unmapped"))
+                unmapped.setProperty("muted", True)
+                self._shards_grid.addWidget(unmapped, row, 1)
+
+        self._action_btn.setVisible(True)
+        self._action_btn.setText(t("sakura.disable_btn") if any_mapped else t("sakura.enable_btn"))
+        self._any_mapped = any_mapped
+        if any_mapped:
+            self._frpc_health = inspect_sakura_frpc()
+            self._frpc_row.setVisible(True)
+            self._refresh_frpc_row()
+        else:
+            self._frpc_health = None
+            self._frpc_row.setVisible(False)
+        self._tunnels_exhausted = not any_mapped and self._tunnel_count >= self._max_tunnels
+        self._action_btn.setEnabled(not self._tunnels_exhausted)
+        if self._tunnels_exhausted:
+            hint = t("sakura.tunnels_exhausted_hint", max=self._max_tunnels)
+            if self._tunnel_occupants:
+                hint += "\n" + t("sakura.tunnels_exhausted_occupants", names="、".join(self._tunnel_occupants))
+            self._action_btn.setToolTip(hint)
+        else:
+            self._action_btn.setToolTip("")
+
+    def _copy_connect_string(self, tunnel: dict) -> None:
+        node = self._nodes.get(str(tunnel.get("node")), {})
+        host = node.get("host", "")
+        remote = tunnel.get("remote", "")
+        cluster = self._current_cluster
+        password = get_cluster_option(load_cluster_config(cluster.path), "NETWORK", "cluster_password") if cluster else None
+        text = f'c_connect("{host}", {remote}, "{password}")' if password else f'c_connect("{host}", {remote})'
+        QGuiApplication.clipboard().setText(text)
+        dialogs.show_toast(self.window(), t("sakura.connect_copied"))
+
+    # ── frpc 本地进程 ───────────────────────────────────────────────────
+    def _mapped_shards(self, cluster):
+        return [s for s in cluster.shards if self.has_active_mapping(cluster, s)]
+
+    def has_pointer(self, cluster, shard) -> bool:
+        return _frpc_pointer_path(cluster.path, shard.name, self.ctx.env).exists()
+
+    def has_active_mapping(self, cluster, shard) -> bool:
+        return self.has_pointer(cluster, shard)
+
+    def frpc_all_running(self, cluster) -> bool:
+        shards = self._mapped_shards(cluster)
+        if not shards:
+            return False
+        return all((proc := self.frpc.get(cluster.path, s.name)) is not None and proc.status == FrpcStatus.RUNNING
+                   for s in shards)
+
+    def _frpc_failed_error(self, cluster) -> str | None:
+        health = self._frpc_health
+        if health is not None and not health.ready:
+            key = {"missing": "sakura.frpc_recovery_missing", "blocked": "sakura.frpc_recovery_blocked",
+                   "unreadable": "sakura.frpc_recovery_unreadable"}[health.status]
+            return t(key, error=health.detail)
+        for s in self._mapped_shards(cluster):
+            proc = self.frpc.get(cluster.path, s.name)
+            if proc is not None and proc.status == FrpcStatus.CRASHED and proc.error:
+                return proc.error
+        return None
+
+    def _ensure_frpc_available(self) -> SakuraFrpcHealth | None:
+        health = inspect_sakura_frpc()
+        self._frpc_health = health
+        if health.ready:
+            return health
+        dialog = _FrpcRecoveryDialog(self.window(), health)
+        dialog.exec()
+        self._frpc_health = inspect_sakura_frpc()
+        if self._any_mapped:
+            self._refresh_frpc_row()
+        if dialog.restored and self._frpc_health.ready:
+            return self._frpc_health
+        return None
+
+    def _refresh_frpc_row(self) -> None:
+        cluster = self._current_cluster
+        running = bool(cluster) and self.frpc_all_running(cluster)
+        error = self._frpc_failed_error(cluster) if cluster else None
+        if error:
+            text = t("sakura.frpc_status_file_missing") if (self._frpc_health and not self._frpc_health.ready) \
+                else t("sakura.frpc_status_failed")
+            color = theme.hex("ERROR")
+        elif running:
+            text, color = t("sakura.frpc_status_running"), theme.hex("ACCENT")
+        else:
+            text, color = t("sakura.frpc_status_stopped"), theme.hex("TEXT_MUTED")
+        self._frpc_status_label.setText(text)
+        self._frpc_status_label.setStyleSheet(f"color: {color};")
+        self._frpc_status_label.setToolTip(self._frpc_failed_error(cluster) or "" if cluster else "")
+        if self._frpc_health is not None and not self._frpc_health.ready:
+            button_text = t("sakura.frpc_recovery_btn")
+        else:
+            button_text = t("sakura.frpc_stop_btn" if running else "sakura.frpc_start_btn")
+        self._frpc_toggle_btn.setText(button_text)
+
+    def _on_frpc_toggle(self) -> None:
+        cluster = self._current_cluster
+        if not cluster:
+            return
+        shards = self._mapped_shards(cluster)
+        if not shards:
+            return
+        if self.frpc_all_running(cluster):
+            remaining = [len(shards)]
+
+            def one_done():
+                remaining[0] -= 1
+                if remaining[0] <= 0:
+                    self._refresh_frpc_row()
+
+            for s in shards:
+                self.stop_frpc_for_shard(cluster, s, on_done=lambda: post_to_ui(lambda _a: one_done()))
+        else:
+            health = self._ensure_frpc_available()
+            if health is None:
+                return
+            for s in shards:
+                self.maybe_start_frpc(cluster, s, frpc_exe=health.path)
+            self._refresh_frpc_row()
+
+    def maybe_start_frpc(self, cluster, shard, frpc_exe=None) -> None:
+        pointer_path = _frpc_pointer_path(cluster.path, shard.name, self.ctx.env)
+        if not pointer_path.exists():
+            return
+        health = SakuraFrpcHealth("ready", frpc_exe) if frpc_exe is not None else inspect_sakura_frpc()
+        self._frpc_health = health
+        existing = self.frpc.get(cluster.path, shard.name)
+        restartable = existing is None or existing.status in {FrpcStatus.CRASHED, FrpcStatus.STOPPED}
+        if health.ready and restartable:
+            token = app_settings.get_sakura_token()
+            tunnel_id = pointer_path.read_text(encoding="utf-8").strip()
+            if token and tunnel_id:
+                self.frpc.start(cluster.path, shard.name, health.path, token, int(tunnel_id))
+
+    def stop_frpc_for_shard(self, cluster, shard, on_done=None) -> None:
+        if self.frpc.get(cluster.path, shard.name):
+            self.frpc.stop(cluster.path, shard.name, on_done=lambda _p: on_done() if on_done else None)
+        elif on_done:
+            on_done()
+
+    def _running_shard_names(self, cluster) -> list[str]:
+        return [s.name for s in cluster.shards
+                if (proc := self.ctx.manager.get(cluster.path, s.name)) and proc.status in RUNNING_LIKE]
+
+    # ── 开启/关闭映射 ────────────────────────────────────────────────────
+    def _on_action_btn(self) -> None:
+        if self._any_mapped:
+            self._disable_mapping()
+        else:
+            self._enable_mapping()
+
+    def _enable_mapping(self) -> None:
+        cluster = self._current_cluster
+        if not cluster:
+            return
+        token = app_settings.get_sakura_token()
+        if not token:
+            dialogs.show_warning(self.window(), t("sakura.enable_btn"), t("sakura.token_missing"))
+            return
+        node_id = self._selected_node_id
+        if node_id is None:
+            dialogs.show_warning(self.window(), t("sakura.enable_btn"), t("sakura.select_node_first"))
+            return
+        running = self._running_shard_names(cluster)
+        if running:
+            dialogs.show_warning(self.window(), t("sakura.require_stopped_title"),
+                                  t("sakura.require_stopped_msg", shards="、".join(running)))
+            return
+        conflicting = [s.name for s in cluster.shards if self.ctx.mapping_owner(cluster, s) == "selfhost"]
+        if conflicting:
+            dialogs.show_warning(self.window(), t("sakura.enable_btn"),
+                                  t("sakura.other_mapping_conflict_msg", shards="、".join(conflicting)))
+            return
+        if self._ensure_frpc_available() is None:
+            return
+        if not ensure_lan_free_for_mapping(self.ctx, cluster):
+            return
+
+        progress = dialogs.LogDialog(self.window(), t("sakura.setup_progress_title"))
+        progress.show()
+        shards = list(cluster.shards)
+
+        def work():
+            for shard in shards:
+                post_to_ui(lambda _a, s=shard: progress.append(t("sakura.setup_step_creating", shard=s.name)))
+                shard_config = load_shard_config(shard.path)
+                local_port = get_shard_option(shard_config, "NETWORK", "server_port")
+                tunnels = sakura_frp.list_tunnels(token)
+                name = sakura_frp.sanitize_tunnel_name(cluster.path.name, shard.name, cluster.source.value,
+                                                        cluster.platform.value, cluster_identity=stable_path_key(cluster.path))
+                existing = self._find_cluster_tunnel(tunnels, cluster, shard)
+                if existing:
+                    tunnel_id, remote = existing["id"], existing.get("remote")
+                else:
+                    created = sakura_frp.create_tunnel(token, name=name, type="udp", node=node_id,
+                                                        local_ip="127.0.0.1", local_port=local_port,
+                                                        note=f"DSTCamp: {cluster.path.name}/{shard.name}")
+                    tunnel_id, remote = created["id"], created.get("remote")
+                remote_port = int(remote) if remote and str(remote).isdigit() else None
+                if remote_port is None or not (1 <= remote_port <= 65535):
+                    raise sakura_frp.SakuraApiError(f"invalid remote port for {name}: {remote}")
+                sakura_frp.edit_tunnel(token, tunnel_id, name=name, local_port=remote_port)
+                pointer_path = _frpc_pointer_path(cluster.path, shard.name, self.ctx.env)
+                pointer_path.parent.mkdir(parents=True, exist_ok=True)
+                pointer_path.write_text(str(tunnel_id), encoding="utf-8")
+                set_shard_option(shard_config, "NETWORK", "server_port", remote_port)
+                save_shard_config(shard_config, shard.path)
+                post_to_ui(lambda _a, s=shard, p=remote_port: progress.append(t("sakura.setup_step_ready", shard=s.name, port=p)))
+
+        def done(_result) -> None:
+            self._on_enable_done(progress)
+
+        def error(exc: Exception) -> None:
+            progress.append(t("sakura.api_error", detail=str(exc)))
+            progress.finish()
+            self._reload_async()
+            self.ctx.cluster_config_saved.emit(self._current_cluster)
+
+        run_async(work, done, error)
+
+    def _on_enable_done(self, progress) -> None:
+        progress.finish()
+        cluster = self._current_cluster
+        if cluster:
+            for shard in cluster.shards:
+                self.maybe_start_frpc(cluster, shard)
+        running = self._running_shard_names(cluster) if cluster else []
+        if running:
+            dialogs.show_info(self.window(), t("sakura.setup_done_title"),
+                               t("sakura.setup_done_msg_restart", shards="、".join(running)))
+        self._reload_async()
+        self.ctx.cluster_config_saved.emit(cluster)
+
+    def _disable_mapping(self) -> None:
+        cluster = self._current_cluster
+        if not cluster:
+            return
+        if not dialogs.ask_yes_no(self.window(), t("sakura.disable_confirm_title"), t("sakura.disable_confirm_msg")):
+            return
+        token = app_settings.get_sakura_token()
+        ids = [tunnel["id"] for (path, _name), tunnel in self._tunnels_by_key.items() if path == str(cluster.path)]
+
+        def work():
+            try:
+                if ids:
+                    sakura_frp.delete_tunnel(token, ids)
+            except sakura_frp.SakuraApiError:
+                pass
+            for shard in cluster.shards:
+                _frpc_pointer_path(cluster.path, shard.name, self.ctx.env).unlink(missing_ok=True)
+
+        def done(_result) -> None:
+            self._reload_async()
+            self.ctx.cluster_config_saved.emit(cluster)
+
+        run_async(work, done, lambda _exc: done(None))
+
+
+class SakuraPage(Page):
+    def __init__(self, ctx):
+        super().__init__(ctx)
+        self._mapping = _SakuraMappingPanel(ctx)
+        self._selfhost = SelfHostPanel(ctx)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        card = Card()
+        root.addWidget(card)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(0, 6, 0, 0)
+        self._tabs = PillTabBar([t("selfhost.tab_sakura"), t("selfhost.tab_selfhost")],
+                                 height=36, pill_height=28, font_size_key="FONT_SIZE_SM")
+        layout.addWidget(self._tabs)
+        self._stack = QStackedWidget()
+        self._stack.addWidget(self._mapping)
+        self._stack.addWidget(self._selfhost)
+        layout.addWidget(self._stack, 1)
+        self._tabs.current_changed.connect(self._on_sub_tab_changed)
+        initial = app_settings.get_nat_sub_tab()
+        if initial == "selfhost":
+            self._tabs.set_current_index(1)
+            self._stack.setCurrentIndex(1)
+
+        ctx.mapping_owner = self._mapping_owner
+        ctx.ensure_lobby_accel = self._selfhost.ensure_lobby_accel
+        ctx.stop_lobby_accel_async = self._selfhost.stop_lobby_accel_async
+        ctx.poll_lobby_accel = self._selfhost.poll_lobby_accel
+        ctx.stop_frpc_for_shard = self._stop_frpc_for_shard
+        ctx.maybe_start_frpc = self._maybe_start_frpc
+        ctx.frpc_ready = self._frpc_ready
+
+    def _on_sub_tab_changed(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
+        app_settings.set_nat_sub_tab("selfhost" if index == 1 else "sakura")
+
+    # ── 跨页钩子 ────────────────────────────────────────────────────────
+    def _mapping_owner(self, cluster, shard) -> str | None:
+        if self._mapping.has_pointer(cluster, shard):
+            return "sakura"
+        if self._selfhost.has_active_mapping(cluster, shard):
+            return "selfhost"
+        return None
+
+    def _stop_frpc_for_shard(self, cluster, shard, on_done=None) -> None:
+        if self._mapping.frpc.get(cluster.path, shard.name):
+            self._mapping.stop_frpc_for_shard(cluster, shard, on_done=on_done)
+        else:
+            self._selfhost.stop_frpc_for_shard(cluster, shard, on_done=on_done)
+
+    def _maybe_start_frpc(self, cluster, shard) -> None:
+        self._mapping.maybe_start_frpc(cluster, shard)
+        self._selfhost.maybe_start_frpc(cluster, shard)
+
+    def _frpc_ready(self, cluster) -> bool:
+        return self._mapping.frpc_all_running(cluster) or self._selfhost.frpc_running(cluster)
+
+    # ── Page 协议 ───────────────────────────────────────────────────────
+    def on_cluster_changed(self, cluster) -> None:
+        self._mapping.on_cluster_changed(cluster)
+        self._selfhost.on_cluster_changed(cluster)
+
+    def retranslate(self) -> None:
+        self._tabs.set_labels([t("selfhost.tab_sakura"), t("selfhost.tab_selfhost")])
+        self.on_cluster_changed(self.ctx.selected_cluster())

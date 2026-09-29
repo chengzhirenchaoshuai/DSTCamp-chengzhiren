@@ -330,7 +330,20 @@ class ServerConfigPage(Page):
             self._stack.addWidget(widget)
 
         theme.changed.connect(self._on_theme_changed)
+        # 内网穿透页开关映射会顺带把 server_port 改成只读/可编辑，这个页不一定
+        # 正在显示；跟主题切换同一套"正显示就立即重载，不然只标脏"的规则。
+        ctx.cluster_config_saved.connect(self._on_cluster_config_saved_elsewhere)
         self.retranslate()
+
+    def _on_cluster_config_saved_elsewhere(self, cluster) -> None:
+        # 只标脏、不在这里立即重载：这个页面自己保存时也会走到这个槽（先 emit 后
+        # 跟一段"只重建变化部分、保留当前世界选择"的精确刷新），这里如果跟着无条件
+        # 整页 load() 会跟那段精确刷新打架（把世界下拉框重置回 Master）。单窗口一次
+        # 只显示一个页签，只有自己保存能在"正显示时"触发这个槽，外部页（如内网穿透）
+        # 触发时这个页必然不在前台，标脏即可，下次切过来自然重新加载。
+        current = self.ctx.selected_cluster()
+        if current is not None and cluster is not None and str(current.path) == str(cluster.path):
+            self.stale = True
 
     @staticmethod
     def _page_with_save(content: QWidget, save_button: QPushButton) -> QWidget:

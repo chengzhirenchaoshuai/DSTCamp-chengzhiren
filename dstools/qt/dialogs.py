@@ -8,10 +8,10 @@ from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt, QTimer
-from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QIntValidator
+from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QIntValidator, QTextCursor
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
-    QMessageBox, QPlainTextEdit, QPushButton, QTableWidget, QTableWidgetItem, QToolTip, QVBoxLayout,
+    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QToolTip, QVBoxLayout,
 )
 
 from dstools.features.local_service.backup_manager import get_backup_summary
@@ -296,34 +296,68 @@ class BackupPolicyDialog(Dialog):
         self.accept()
 
 
+_LOG_TAG_STYLE = {
+    # (加粗, 颜色取的调色板键；None 表示跟随默认文字色)
+    "section": (True, "HEADING"),
+    "detail": (False, None),
+    "note": (False, "TEXT_MUTED"),
+    "result_success": (True, "ACCENT"),
+    "result_warning": (True, "ERROR"),
+    "result_error": (True, "ERROR"),
+}
+
+
 class LogDialog(Dialog):
     """实时追加日志的窗口：任务没跑完前不能关闭，finish() 之后才出现可点的"确认"。
 
     ``closable=True``（Steam 更新等：下载由 Steam 客户端自己完成，应用只是旁观打日志）
-    允许用户提前关闭窗口，不等待 finish()。"""
+    允许用户提前关闭窗口，不等待 finish()。``on_cancel``（内网穿透诊断等中途可取消的
+    耗时操作用）额外加一个"取消"按钮，点一次就禁用，不等待任务真正响应。"""
 
-    def __init__(self, parent, title: str, closable: bool = False):
+    def __init__(self, parent, title: str, closable: bool = False, on_cancel=None, cancel_text: str | None = None):
         super().__init__(parent, title, 640)
         self._finished = False
         self._closable = closable
-        self._view = QPlainTextEdit()
+        self._on_cancel = on_cancel
+        self._view = QTextEdit()
         self._view.setReadOnly(True)
         self._view.setMinimumHeight(280)
         self._view.setFont(theme.font("FONT_SIZE_SM"))
         self.body.addWidget(self._view, 1)
         row = QHBoxLayout()
         row.addStretch()
+        if on_cancel is not None:
+            self._cancel_btn = QPushButton(cancel_text or t("dlg.cancel_btn"))
+            self._cancel_btn.clicked.connect(self._on_cancel_clicked)
+            row.addWidget(self._cancel_btn)
         self._close = QPushButton(t("dlg.confirm_btn"))
         self._close.setEnabled(False)
         self._close.clicked.connect(self.accept)
         row.addWidget(self._close)
         self.body.addLayout(row)
 
-    def append(self, line: str) -> None:
-        self._view.appendPlainText(line)
+    def _on_cancel_clicked(self) -> None:
+        self._cancel_btn.setEnabled(False)  # 防止手滑连点多次重复触发 on_cancel
+        self._on_cancel()
+
+    def append(self, text: str, tag: str | None = None) -> None:
+        bold, color_key = _LOG_TAG_STYLE.get(tag, (False, None))
+        color = theme.hex(color_key) if color_key else theme.hex("TEXT")
+        escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+        weight = "bold" if bold else "normal"
+        self._view.append(f'<div style="color:{color}; font-weight:{weight};">{escaped}</div>')
+
+    def clear(self) -> None:
+        self._view.clear()
+
+    def scroll_to_start(self) -> None:
+        self._view.moveCursor(QTextCursor.MoveOperation.Start)
+        self._view.ensureCursorVisible()
 
     def finish(self) -> None:
         self._finished = True
+        if self._on_cancel is not None:
+            self._cancel_btn.setEnabled(False)
         self._close.setEnabled(True)
 
     def reject(self) -> None:

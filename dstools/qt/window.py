@@ -22,6 +22,7 @@ from dstools.qt.background import Background
 from dstools.qt.context import AppContext
 from dstools.qt.pages.local_service import LocalServicePage
 from dstools.qt.pages.placeholder import PlaceholderPage
+from dstools.qt.pages.sakura import SakuraPage
 from dstools.qt.pages.save_info import SaveInfoPage
 from dstools.qt.pages.server_config import ServerConfigPage
 from dstools.qt.pages.world_settings import WorldSettingsPage
@@ -351,6 +352,8 @@ class MainWindow(QWidget):
             return WorldSettingsPage(self.ctx)
         if key == "server":
             return ServerConfigPage(self.ctx)
+        if key == "sakura":
+            return SakuraPage(self.ctx)
         return PlaceholderPage(self.ctx, key)
 
     def goto_tab(self, key: str) -> None:
