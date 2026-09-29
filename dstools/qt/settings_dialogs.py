@@ -6,6 +6,7 @@
 里实现——这里只是补上让用户能操作这两项设置的界面。
 """
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -16,11 +17,14 @@ from dstools.i18n import t
 from dstools.qt import dialogs
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async
-from dstools.shared.app_settings import get_custom_bg_opacity, set_custom_bg_opacity
+from dstools.shared.app_settings import (
+    get_custom_bg_opacity, set_cache_dir_override, set_custom_bg_opacity,
+)
 from dstools.shared.custom_background import (
     clear_custom_bg_image, get_custom_bg_path, set_custom_bg_image,
 )
 from dstools.shared.gui.font_styles import FONT_FAMILY_BY_STYLE, FONT_STYLE_NAMES
+from dstools.shared.resource_paths import cache_root_dir, default_cache_root_dir, validate_cache_root
 from dstools.shared.windows_defender import (
     DefenderState, change_defender_exclusion, check_defender_exclusion,
     check_defender_exclusion_elevated, defender_target_is_safe, resolve_defender_targets,
@@ -321,3 +325,108 @@ class WindowsDefenderDialog(dialogs.Dialog):
                                t("settings.defender_change_failed", error=str(exc)))
 
         run_async(work, done, error)
+
+
+class CacheDirDialog(dialogs.Dialog):
+    """"设置"菜单"缓存目录…"——集中展示缓存路径及更改/恢复默认/打开目录三个操作。
+
+    "立即重启"目前只提示用户手动重启，不做任何自动重启动作：Tk 版的真正重启会
+    拉起一个等待型辅助进程、优雅停掉正在跑的本地专服、再退出重启，但那套辅助
+    进程当前唯一的共享入口 scripts/run_gui.py 只知道拉起 Tk；Qt 还没有成为正式
+    入口，在这之前接一个"看似重启、实际拉起 Tk"的假动作比"如实告诉用户自己
+    重启"更容易误导人，所以先不做。"""
+
+    def __init__(self, window):
+        super().__init__(window, t("settings.cache_dir_label"), 620)
+        heading = QLabel(t("settings.cache_dir_current"))
+        heading.setFont(theme.font("FONT_SIZE_BASE", bold=True))
+        self.body.addWidget(heading)
+        self._path_edit = QLineEdit(str(cache_root_dir()))
+        self._path_edit.setReadOnly(True)
+        self._path_edit.setFont(theme.font("FONT_SIZE_SM"))
+        self.body.addWidget(self._path_edit)
+        self.body.addWidget(self.text_label(t("settings.cache_dir_restart_hint"), muted=True, size_key="FONT_SIZE_SM"))
+
+        actions = QHBoxLayout()
+        change_btn = QPushButton(t("settings.cache_dir_change"))
+        change_btn.clicked.connect(self._on_change)
+        self._reset_btn = QPushButton(t("settings.cache_dir_reset"))
+        self._reset_btn.clicked.connect(self._on_reset)
+        open_btn = QPushButton(t("settings.cache_dir_open"))
+        open_btn.clicked.connect(self._on_open)
+        close_btn = QPushButton(t("dlg.close_btn"))
+        close_btn.clicked.connect(self.accept)
+        actions.addStretch()
+        actions.addWidget(change_btn)
+        actions.addWidget(self._reset_btn)
+        actions.addWidget(open_btn)
+        actions.addSpacing(12)
+        actions.addWidget(close_btn)
+        self.body.addLayout(actions)
+        self._refresh_reset_enabled()
+
+    def _refresh_path(self) -> None:
+        self._path_edit.setText(str(cache_root_dir()))
+        self._refresh_reset_enabled()
+
+    def _refresh_reset_enabled(self) -> None:
+        self._reset_btn.setEnabled(cache_root_dir() != default_cache_root_dir())
+
+    def _on_change(self) -> None:
+        current = cache_root_dir()
+        initial = current if current.is_dir() else current.parent
+        if not initial.is_dir():
+            initial = Path.home()
+        while True:
+            chosen = QFileDialog.getExistingDirectory(self, t("settings.cache_dir_picker_title"), str(initial))
+            if not chosen:
+                return
+            path = Path(chosen)
+            reason = validate_cache_root(path)
+            if reason is not None:
+                self._show_cache_dir_error(reason, path)
+                if path.is_dir():
+                    initial = path
+                continue
+            set_cache_dir_override(path)
+            self._refresh_path()
+            self._prompt_restart(t("settings.cache_dir_changed", path=str(path)))
+            return
+
+    def _on_reset(self) -> None:
+        target = default_cache_root_dir()
+        if cache_root_dir() == target:
+            dialogs.show_info(self, t("settings.cache_dir_label"),
+                              t("settings.cache_dir_already_default", path=str(target)))
+            return
+        reason = validate_cache_root(target)
+        if reason is not None:
+            key = {"non_ascii": "settings.cache_dir_default_non_ascii",
+                  "not_writable": "settings.cache_dir_default_not_writable"}.get(reason)
+            if key is not None:
+                dialogs.show_warning(self, t("settings.cache_dir_label"), t(key, path=str(target)))
+            else:
+                self._show_cache_dir_error(reason, target)
+            return
+        set_cache_dir_override(None)
+        self._refresh_path()
+        self._prompt_restart(t("settings.cache_dir_default_restored", path=str(target)))
+
+    def _on_open(self) -> None:
+        current = cache_root_dir()
+        current.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(current))
+
+    def _show_cache_dir_error(self, reason: str, path: Path) -> None:
+        key = {"not_absolute": "settings.cache_dir_not_absolute",
+              "non_ascii": "settings.cache_dir_non_ascii",
+              "not_writable": "settings.cache_dir_not_writable"}.get(reason, "settings.cache_dir_not_writable")
+        dialogs.show_error(self, t("settings.cache_dir_label"), t(key, path=str(path)))
+
+    def _prompt_restart(self, message: str) -> None:
+        choice = dialogs.ask_choice(
+            self, t("settings.cache_dir_label"), message,
+            [(t("settings.restart_now"), "restart"), (t("dlg.cancel_btn"), "cancel")],
+            default="restart", min_width=520)
+        if choice == "restart":
+            dialogs.show_info(self, t("settings.cache_dir_label"), t("settings.cache_dir_restart_hint"))
