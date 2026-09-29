@@ -91,7 +91,12 @@ class Theme(QObject):
     def apply_to_app(self) -> None:
         app = QApplication.instance()
         if app is not None:
-            app.setFont(self.font())
+            # 应用级默认字号用 FONT_SIZE_SM——真机反馈过本地服务器/Mod 管理/内网穿透
+            # 这几个页面里大量没有单独 setFont() 的标签/按钮继承的是这份默认值，
+            # 明显比服务器配置页 FormGrid 显式用 FONT_SIZE_SM 画的字段大一号、不统一；
+            # 已经显式调用过 theme.font(...) 的控件（对话框正文、标题、页签等）不受
+            # 影响，因为它们各自都传了自己的 size_key，不依赖这份继承值。
+            app.setFont(self.font("FONT_SIZE_SM"))
             app.setStyleSheet(self.qss())
 
     def qss(self) -> str:

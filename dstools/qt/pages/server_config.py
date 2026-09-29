@@ -282,7 +282,7 @@ class ServerConfigPage(Page):
         layout = QVBoxLayout(card)
         layout.setContentsMargins(14, 10, 14, 10)
         layout.setSpacing(6)
-        self._tabs = PillTabBar([""] * 5, height=32, pill_height=24, font_size_key="FONT_SIZE_SM")
+        self._tabs = PillTabBar([""] * 5, height=36, pill_height=28, font_size_key="FONT_SIZE_BASE")
         layout.addWidget(self._tabs)
         self._banner = Banner()
         layout.addWidget(self._banner)
