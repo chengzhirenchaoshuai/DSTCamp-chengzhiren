@@ -24,6 +24,7 @@ from dstools.features.mod.cache import load_cached_result, save_result
 from dstools.features.mod.icons import get_cached_mod_icon_path, get_mod_icon_path, load_mod_icon_image
 from dstools.features.mod.legacy_v1 import find_legacy_packages, materialize_legacy_package_for_read
 from dstools.features.mod.list_model import build_mod_rows, localize_mod_name, merge_visible_mod_ids
+from dstools.features.mod.local_version import resolve_local_version_target
 from dstools.features.mod.locations import resolve_mod_open_location
 from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
 from dstools.features.mod.parser import (
@@ -536,6 +537,7 @@ class ModPage(Page):
         """跑在线程池里——不能碰任何 Qt 对象。"""
         mod_data, mod_infos, mod_paths, icon_imgs = {}, {}, {}, {}
         icon_targets = []
+        version_targets = []
         luajit_active = False
         overrides = load_mod_overrides(overrides_path)
         overrides_dirty = luajit_injector.cleanup_legacy_local_mod_entry(overrides)
@@ -585,6 +587,11 @@ class ModPage(Page):
                         apply_full_sandbox_result(mod_info, result)
                         full_resolved_cache[wid] = mod_info
                 mod_infos[wid] = mod_info
+                # 快速静态解析（full=False）不保证拿到版本号（有些 mod 的 version
+                # 要跑一遍轻量沙箱才能确定），先收集起来，交给 _apply_loaded_mods
+                # 之后另起一个后台任务补上，不用等用户手动点"重新加载"才刷新。
+                if mod_info and mod_folder and not full and mod_info.version_status == "pending":
+                    version_targets.append((wid, mod_folder, mod_info.workshop_id))
                 if mod_info and mod_folder and wid not in icon_imgs:
                     cached_icon = get_cached_mod_icon_path(mod_info, mod_folder, platform)
                     if cached_icon is not None:
@@ -598,7 +605,8 @@ class ModPage(Page):
                 mod_infos.setdefault(wid, None)
         self.ctx.mod_catalog.publish(platform, mod_infos, mod_paths, icon_imgs, wegame_client_mods_dir)
         return dict(mod_data=mod_data, mod_infos=mod_infos, mod_paths=mod_paths, icon_imgs=icon_imgs,
-                   icon_targets=icon_targets, full_resolved_cache=full_resolved_cache,
+                   icon_targets=icon_targets, version_targets=version_targets,
+                   full_resolved_cache=full_resolved_cache,
                    luajit_active=luajit_active, platform=platform,
                    wegame_client_mods_dir=wegame_client_mods_dir)
 
@@ -640,6 +648,47 @@ class ModPage(Page):
                     return
                 self._icon_imgs.update(icons)
                 self.ctx.mod_catalog.update_icons(platform, icons, wegame_dir)
+                self._render_list()
+
+            run_async(work, done, lambda _exc: None)
+
+        version_targets = result["version_targets"]
+        if version_targets:
+            platform, wegame_dir = result["platform"], result["wegame_client_mods_dir"]
+
+            def work():
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                resolved = {}
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    futures = [pool.submit(resolve_local_version_target, target) for target in version_targets]
+                    for future in as_completed(futures):
+                        try:
+                            wid, normalized = future.result()
+                        except Exception:
+                            continue
+                        resolved[wid] = normalized
+                return resolved
+
+            def done(resolved: dict) -> None:
+                if gen != self._refresh_gen or not resolved:
+                    return
+                for wid, normalized in resolved.items():
+                    info = self._mod_infos.get(wid)
+                    if info is None:
+                        continue
+                    if normalized.name_status == "confirmed":
+                        info.name = normalized.name
+                    if normalized.icon_status == "confirmed":
+                        info.icon = normalized.icon
+                    if normalized.icon_atlas_status == "confirmed":
+                        info.icon_atlas = normalized.icon_atlas
+                    info.version = normalized.version
+                    info.version_status = normalized.status
+                    info.version_source = normalized.source
+                    info.version_compatible = normalized.version_compatible
+                    info.version_compatible_status = normalized.compatible_status
+                self.ctx.mod_catalog.publish(platform, self._mod_infos, self._mod_paths, self._icon_imgs, wegame_dir)
                 self._render_list()
 
             run_async(work, done, lambda _exc: None)
