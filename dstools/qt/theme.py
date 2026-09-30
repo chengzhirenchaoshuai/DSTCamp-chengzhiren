@@ -5,9 +5,9 @@ font_style_choice），两套界面互相可见。颜色一律通过 ``theme.col
 缓存；自绘控件在 paintEvent 里取色，切主题后整窗重绘即可，不需要逐个控件通知。
 """
 
-from PySide6.QtCore import QObject, QPoint, Signal
+from PySide6.QtCore import QObject, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QLabel
 
 from dstools.shared import app_settings, palettes
 from dstools.shared.gui.font_styles import (
@@ -31,6 +31,7 @@ def _rgba(hex_color: str, alpha: int) -> str:
 
 
 _ORIGINAL_COMBO_SHOW_POPUP = None
+_POPUP_BG_LABEL_NAME = "dstcamp_combo_popup_bg_snapshot"
 
 
 def _patch_combo_popup_width() -> None:
@@ -52,18 +53,55 @@ def _patch_combo_popup_width() -> None:
         popup = self.view().parentWidget()
         if popup is None:
             return
-        # 试过给弹出窗口开 WA_TranslucentBackground 来真正透出桌面背景——真机反馈
-        # 弹出列表直接变成一整块纯黑，Windows 上这类原生弹出窗口（raster 方式画的
-        # QComboBoxPrivateContainer）开逐像素透明经常因为合成没接好而整块画黑，比
-        # "不够透明"更糟，已经改回去。现在只做窄一点 + QSS rgba() 跟其自身不透明
-        # 底色混合出的"浅一点的实色"，不是真的透出桌面。
         width = max(10, self.width() - 6)
         popup.setFixedWidth(width)
         # 默认左对齐在下拉框左边缘，稍微收窄后会明显偏左——按下拉框居中重新摆放。
         left = self.mapToGlobal(QPoint(0, 0)).x() + (self.width() - width) // 2
         popup.move(left, popup.y())
+        _apply_fake_transparent_popup_bg(self, popup)
 
     QComboBox.showPopup = _show_popup
+
+
+def _apply_fake_transparent_popup_bg(combo, popup) -> None:
+    """给弹出列表做"看起来透明"的效果，但不碰窗口合成。
+
+    真开 WA_TranslucentBackground 真机反馈过弹出列表会整块画黑（Windows 上这类
+    原生弹出窗口走 raster 合成，逐像素透明经常接不上）。改成更保险的路子：弹出
+    前把下拉框所在主窗口在这块屏幕区域本来会画出来的内容（背景图、卡片……）截一
+    张图，铺在弹出窗口最底层当背景，列表控件本身走 QSS 半透明色叠在上面——视觉
+    上是"透出主窗口背景"，实际只是一张普通 QLabel+QPixmap，不涉及任何窗口级别
+    的透明合成，不会重演那次全黑。局限：只能透出这个应用自己窗口的内容，不是真
+    的透出桌面或其它窗口；截图失败（比如弹出位置跑到主窗口范围之外）就直接跳过，
+    退回目前"浅色实色"的效果，不报错、不留半成品背景。"""
+    window = combo.window()
+    if window is None or window is combo:
+        return  # 没有真正的顶层窗口可截（比如独立弹出的下拉框本身就是"窗口"）
+    top_left_local = window.mapFromGlobal(popup.mapToGlobal(QPoint(0, 0)))
+    grab_rect = QRect(top_left_local, popup.size()).intersected(window.rect())
+    if grab_rect.isEmpty():
+        return
+    pixmap = window.grab(grab_rect)
+    if pixmap.isNull():
+        return
+    # 不用 Python 动态属性存"这个弹出容器是不是已经贴过背景"——实测过 PySide6 这
+    # 里拿到的 popup 包装对象，跨几次 self.view().parentWidget() 调用不保证是同一
+    # 个 Python 包装实例（哪怕底层 C++ 对象相同），动态属性会丢。改用 Qt 自己的
+    # objectName + findChild()，查的是真正的 C++ 子控件树，不受包装对象身份影响。
+    label = popup.findChild(QLabel, _POPUP_BG_LABEL_NAME)
+    if label is None:
+        label = QLabel(popup)
+        label.setObjectName(_POPUP_BG_LABEL_NAME)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        popup.setStyleSheet("background: transparent;")
+    # grab_rect 可能因为 intersected() 比 popup 本身小（弹出位置部分跑出主窗口范
+    # 围），只把截到的那部分贴在 popup 内对应的偏移位置，其余留白，不拉伸变形。
+    offset = grab_rect.topLeft() - top_left_local
+    label.move(offset.x(), offset.y())
+    label.resize(grab_rect.size())
+    label.setPixmap(pixmap)
+    label.lower()
+    label.show()
 
 
 class Theme(QObject):
