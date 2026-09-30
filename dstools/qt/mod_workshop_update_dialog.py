@@ -19,6 +19,7 @@ from dstools.qt import dialogs
 from dstools.qt.imaging import pil_to_pixmap
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async
+from dstools.qt.widgets import PillTabBar
 
 _LATEST_LABELS = {
     WorkshopModState.CURRENT: "mod.update_latest_up_to_date",
@@ -57,6 +58,13 @@ class WorkshopUpdateDialog(QDialog):
         self._search.setMinimumWidth(220)
         self._search.textChanged.connect(self._render_rows)
         toolbar.addWidget(self._search)
+        # 跟 Tk 版一样，除了文字搜索还要能只看"待更新"的——这个弹窗里的 ID 列表本来
+        # 就已经限定在当前存档（page._workshop_mod_ids()），不需要 Tk 版"当前存档/
+        # 全部库"那第三档。
+        self._status_filter = PillTabBar([t("mod.show_all"), t("mod.update_filter_needs_update")],
+                                         height=32, pill_height=24, font_size_key="FONT_SIZE_SM")
+        self._status_filter.current_changed.connect(lambda _i: self._render_rows())
+        toolbar.addWidget(self._status_filter)
         self._refresh_btn = QPushButton(t("mod.update_refresh_states"))
         self._refresh_btn.clicked.connect(lambda: self._reload(force=True))
         toolbar.addWidget(self._refresh_btn)
@@ -98,10 +106,16 @@ class WorkshopUpdateDialog(QDialog):
         status = self._states.get(wid)
         return bool(status is not None and status.can_update)
 
+    def _pending_count(self) -> int:
+        return sum(1 for wid in self._ids if wid in self._states and self._states[wid].needs_action)
+
     def _filtered_ids(self) -> list[str]:
         needle = self._search.text().strip().casefold()
+        needs_update_only = self._status_filter.current_index() == 1
         result = []
         for wid in self._ids:
+            if needs_update_only and not (wid in self._states and self._states[wid].needs_action):
+                continue
             name = self._name_for(wid)
             if needle and needle not in f"{name} {wid}".casefold():
                 continue
@@ -165,6 +179,10 @@ class WorkshopUpdateDialog(QDialog):
 
     def _render_rows(self) -> None:
         self._clear_rows()
+        pending = self._pending_count()
+        needs_update_label = t("mod.update_filter_needs_update")
+        self._status_filter.set_labels(
+            [t("mod.show_all"), f"{needs_update_label}（{pending}）" if pending else needs_update_label])
         visible_ids = self._filtered_ids()
         self._count_label.setText(t("mod.update_selected_count", selected=len(self._selected), total=len(self._ids)))
         if not visible_ids:
