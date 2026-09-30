@@ -55,21 +55,34 @@ class Card(QWidget):
     """圆角半透明卡片：透出下面的背景图，只画描边和淡淡的底色。"""
 
     def __init__(self, parent=None, radius: int | None = None, alpha: int = 150,
-                 fill_key: str = "CARD_BG"):
+                 fill_key: str = "CARD_BG", border_key: str = "CARD_BORDER", border: bool | None = None):
         super().__init__(parent)
         self._radius = radius
         self._alpha = alpha
         self._fill_key = fill_key
+        self._border_key = border_key
+        # None：沿用旧行为，边框跟着底色一起显/隐（alpha<=0 时全透明，连边框也不画）。
+        # 显式传 True/False 可以让边框独立于底色——alpha=0 + border=True 就是"只有一
+        # 圈描边、内部完全透明"，服务器配置页"房间设置/世界设置"文字元素外圈边框用的
+        # 就是这个组合。
+        self._border = border
 
     def paintEvent(self, _event):
-        if self._alpha <= 0:
+        show_border = self._border if self._border is not None else (self._alpha > 0)
+        if self._alpha <= 0 and not show_border:
             return  # 全透明：连描边一起不画，等于没有这张卡片
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        fill = theme.color(self._fill_key)
-        fill.setAlpha(self._alpha)
-        painter.setBrush(fill)
-        painter.setPen(QPen(theme.color("CARD_BORDER"), 1))
+        if self._alpha > 0:
+            fill = theme.color(self._fill_key)
+            fill.setAlpha(self._alpha)
+            painter.setBrush(fill)
+        else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+        if show_border:
+            painter.setPen(QPen(theme.color(self._border_key), 1))
+        else:
+            painter.setPen(Qt.PenStyle.NoPen)
         radius = self._radius if self._radius is not None else 22
         painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
 
@@ -80,7 +93,8 @@ class PillTabBar(QWidget):
     current_changed = Signal(int)
 
     def __init__(self, labels: list[str], parent=None, height: int = 44, pill_height: int = 34,
-                 font_size_key: str | None = None, gap: int = 6, pad: int | None = None):
+                 font_size_key: str | None = None, gap: int = 6, pad: int | None = None,
+                 uniform_width: bool = False):
         super().__init__(parent)
         self._labels = list(labels)
         self._index = 0
@@ -92,6 +106,9 @@ class PillTabBar(QWidget):
         # 感觉不出变化：未选中的页签只画文字、没有底色，两个文字之间的视觉间隔其实主
         # 要来自这份内边距（默认公式每边着 16px），不是 gap 那几像素，两个都要收才有感觉。
         self._pad = pad if pad is not None else (44 if font_size_key is None else 32)
+        # 每个页签按自己文字宽度各算各的，字数不一样时看起来大小不一（真机反馈过
+        # "全部"比"已启用"窄一截不好看）；开了这个之后统一用最宽的那个宽度。
+        self._uniform_width = uniform_width
         self.setFixedHeight(height)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -113,6 +130,8 @@ class PillTabBar(QWidget):
         # 居中，窗口缩放时页签不会跟着左右移动。
         metrics = QFontMetrics(self._font())
         widths = [metrics.horizontalAdvance(text) + self._pad for text in self._labels]
+        if self._uniform_width and widths:
+            widths = [max(widths)] * len(widths)
         x = 24.0
         top = (self.height() - self._pill_h) / 2
         rects = []
