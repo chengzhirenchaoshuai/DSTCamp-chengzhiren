@@ -118,7 +118,7 @@ class ModPage(Page):
         filter_row.addWidget(self._filter_edit)
         self._filter_tabs = PillTabBar(
             [t("mod.show_all"), t("mod.show_enabled"), t("mod.show_disabled"), t("mod.show_custom")],
-            height=32, pill_height=24, font_size_key="FONT_SIZE_SM", gap=3)
+            height=32, pill_height=24, font_size_key="FONT_SIZE_SM", gap=2, pad=16)
         self._filter_tabs.current_changed.connect(lambda _i: self._render_list())
         filter_row.addWidget(self._filter_tabs)
         self._recommend_btn = QPushButton(t("mod.recommend_btn"))

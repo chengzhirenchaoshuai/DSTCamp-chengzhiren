@@ -80,7 +80,7 @@ class PillTabBar(QWidget):
     current_changed = Signal(int)
 
     def __init__(self, labels: list[str], parent=None, height: int = 44, pill_height: int = 34,
-                 font_size_key: str | None = None, gap: int = 6):
+                 font_size_key: str | None = None, gap: int = 6, pad: int | None = None):
         super().__init__(parent)
         self._labels = list(labels)
         self._index = 0
@@ -88,6 +88,10 @@ class PillTabBar(QWidget):
         self._pill_h = pill_height
         self._font_size_key = font_size_key  # None 表示用应用默认字体；子页签条传较小的字号键
         self._gap = gap  # 页签之间的间距；Mod 管理页筛选这排真机反馈过嫌宽，传小一点
+        # 每个页签自身文字左右的内边距——之前只调小 gap（页签之间的连接间隙）真机反馈
+        # 感觉不出变化：未选中的页签只画文字、没有底色，两个文字之间的视觉间隔其实主
+        # 要来自这份内边距（默认公式每边着 16px），不是 gap 那几像素，两个都要收才有感觉。
+        self._pad = pad if pad is not None else (44 if font_size_key is None else 32)
         self.setFixedHeight(height)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -108,8 +112,7 @@ class PillTabBar(QWidget):
         # 左对齐、固定在左边距起画（跟 Tk 版 pill_tabs.py._redraw() 一致）——不是
         # 居中，窗口缩放时页签不会跟着左右移动。
         metrics = QFontMetrics(self._font())
-        pad = 44 if self._font_size_key is None else 32
-        widths = [metrics.horizontalAdvance(text) + pad for text in self._labels]
+        widths = [metrics.horizontalAdvance(text) + self._pad for text in self._labels]
         x = 24.0
         top = (self.height() - self._pill_h) / 2
         rects = []
