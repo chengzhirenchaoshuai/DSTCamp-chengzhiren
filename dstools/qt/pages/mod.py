@@ -113,7 +113,7 @@ class ModPage(Page):
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel(t("mod.filter")))
         self._filter_edit = QLineEdit()
-        self._filter_edit.setFixedWidth(120)
+        self._filter_edit.setFixedWidth(200)
         self._filter_edit.textChanged.connect(lambda _t: self._filter_timer.start())
         filter_row.addWidget(self._filter_edit)
         self._filter_tabs = PillTabBar(
