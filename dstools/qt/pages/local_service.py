@@ -118,10 +118,10 @@ class _ShardRow(QWidget):
         self.restart_btn.clicked.connect(lambda: page.restart_shard(page.get_cluster(), shard))
         layout.addWidget(self.name_label)
         layout.addWidget(self.status_label)
-        layout.addStretch()
         layout.addWidget(self.start_btn)
         layout.addWidget(self.stop_btn)
         layout.addWidget(self.restart_btn)
+        layout.addStretch()
         self.cluster_path = cluster.path
         self.update_state()
 
@@ -345,7 +345,7 @@ class LocalServicePage(Page):
         buttons = (self._start_all_btn, self._stop_all_btn, self._restart_all_btn, self._logs_btn)
         for button in buttons:
             button.setFont(theme.font("FONT_SIZE_SM"))
-        fixed_width = max(button.sizeHint().width() for button in buttons) + 24
+        fixed_width = max(button.sizeHint().width() for button in buttons) + 8
         for button in buttons:
             button.setFixedWidth(fixed_width)
             btn_row.addWidget(button)
@@ -376,8 +376,10 @@ class LocalServicePage(Page):
         extra_row = QHBoxLayout()
         extra_row.addWidget(QLabel(t("local.extra_args_label")))
         self._extra_args_edit = QLineEdit(get_dedicated_server_extra_args())
+        self._extra_args_edit.setFixedWidth(240)
         self._extra_args_edit.editingFinished.connect(self._save_extra_args)
-        extra_row.addWidget(self._extra_args_edit, 1)
+        extra_row.addWidget(self._extra_args_edit)
+        extra_row.addStretch()
         layout.addLayout(extra_row)
 
         layout.addStretch()
