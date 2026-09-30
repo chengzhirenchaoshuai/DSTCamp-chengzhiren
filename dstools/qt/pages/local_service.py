@@ -331,9 +331,18 @@ class LocalServicePage(Page):
         self._restart_all_btn.clicked.connect(self._restart_all)
         self._logs_btn.clicked.connect(self._get_logs)
         # 直角边框已经是 QPushButton 的全局默认样式；这里只保留字号调小。
-        for button in (self._start_all_btn, self._stop_all_btn, self._restart_all_btn, self._logs_btn):
+        # QPushButton 默认横向 sizePolicy 是 Minimum（sizeHint 只是下限，布局有多余
+        # 空间时仍会把它撑大）——这一排 4 个按钮之前没设固定宽度，会随窗口拖拽跟着
+        # 变宽变窄，真机反馈过。统一取 4 个按钮里最宽的 sizeHint 加一点内边距，四个
+        # 按钮固定成同一个宽度，行尾用 addStretch() 吃掉多余空间，不再跟着布局撑大。
+        buttons = (self._start_all_btn, self._stop_all_btn, self._restart_all_btn, self._logs_btn)
+        for button in buttons:
             button.setFont(theme.font("FONT_SIZE_SM"))
+        fixed_width = max(button.sizeHint().width() for button in buttons) + 24
+        for button in buttons:
+            button.setFixedWidth(fixed_width)
             btn_row.addWidget(button)
+        btn_row.addStretch()
         layout.addLayout(btn_row)
 
         # WeGame 世界不能从这里启动，选中 WeGame 存档时用检测面板代替世界列表下方内容。
