@@ -78,7 +78,11 @@ def show_toast(parent, text: str, ms: int = 1400) -> None:
     anchor = parent.window() if parent is not None else None
     label = QLabel(text, anchor)
     label.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
-    label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    # 之前加了 WA_TranslucentBackground 想让淡入淡出更顺滑，真机反馈背景框直接看
+    # 不见了——跟下拉框那次一样的坑，这类原生弹出窗口开逐像素透明常常连累自己
+    # QSS 画的不透明底色一起失效。这个提示本来就是一整块不透明卡片，不需要真的
+    # 透明，去掉这个属性；QGraphicsOpacityEffect 照样能把整块（底色+边框+文字）
+    # 一起淡入淡出，效果不受影响。
     label.setFont(theme.font("FONT_SIZE_BASE"))
     label.setStyleSheet(f"QLabel {{ background: {theme.hex('CARD_BG')}; color: {theme.hex('TEXT')};"
                         f" border: 1px solid {theme.hex('CARD_BORDER')}; border-radius: 8px; padding: 8px 18px; }}")
