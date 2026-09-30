@@ -114,9 +114,8 @@ def _faded_popup_bg_pixmap(pixmap):
     faded = pixmap.copy()
     painter = QPainter(faded)
     painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-    # alpha 204/255 ≈ 80% 不透明白色叠加，背景大概还剩 20% 能看出来——真机反馈过
-    # 上一版 140（约 55%）背景太明显，要调得更不透明一些。
-    painter.fillRect(faded.rect(), QColor(255, 255, 255, 204))
+    # alpha 217/255 ≈ 85% 不透明白色叠加，背景大概还剩 15% 能看出来。
+    painter.fillRect(faded.rect(), QColor(255, 255, 255, 217))
     painter.end()
     return faded
 
