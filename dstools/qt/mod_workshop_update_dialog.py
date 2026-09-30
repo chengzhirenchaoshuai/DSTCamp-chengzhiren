@@ -191,8 +191,8 @@ class WorkshopUpdateDialog(QDialog):
         inner = QWidget()
         inner.setAutoFillBackground(False)
         self._rows_layout = QVBoxLayout(inner)
-        self._rows_layout.setContentsMargins(0, 6, 0, 6)
-        self._rows_layout.setSpacing(6)
+        self._rows_layout.setContentsMargins(0, 3, 0, 3)
+        self._rows_layout.setSpacing(3)
         area.setWidget(inner)
         list_layout.addWidget(area)
 
