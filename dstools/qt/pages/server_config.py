@@ -70,6 +70,11 @@ class IdListPanel(QWidget):
         self._title.setFont(theme.font("FONT_SIZE_BASE", bold=True))
         self._list = QListWidget()
         self._list.setFont(theme.font("FONT_SIZE_SM"))
+        # 全局 QSS 给 QListWidget 统一画了一层半透明白底（见 theme.qss()），管理员/
+        # 黑名单这两个列表真机反馈过想要全透明、透出背景图；只在这两个用到
+        # IdListPanel 的地方覆盖，不改全局规则（其它用 QListWidget 的弹窗列表还是
+        # 需要那层底色撑可读性）。
+        self._list.setStyleSheet("background: transparent;")
         self._list.itemSelectionChanged.connect(self._sync_remove_state)
         row = QHBoxLayout()
         self._add = QPushButton()
@@ -419,7 +424,7 @@ class ServerConfigPage(Page):
     def _rebuild_cluster_form(self, cluster) -> None:
         self._clear_cluster_form()
         for groups in form_logic.build_cluster_columns(cluster):
-            column = Card(radius=18, alpha=0)
+            column = Card(radius=18, alpha=0, border_key="PRIMARY", border=True)
             column_layout = QVBoxLayout(column)
             column_layout.setContentsMargins(14, 8, 14, 12)
             grid = FormGrid()
@@ -470,7 +475,7 @@ class ServerConfigPage(Page):
                 widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
-        card = Card(radius=18, alpha=0)
+        card = Card(radius=18, alpha=0, border_key="PRIMARY", border=True)
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(14, 8, 14, 12)
         grid = FormGrid()
@@ -479,7 +484,12 @@ class ServerConfigPage(Page):
             grid.add_header(f"[{section}]", size_key="FONT_SIZE_XS", heading=False, top_gap=6)
             for spec in fields:
                 is_master_field = form.is_server and spec.section == "SHARD_SHARD" and spec.key == "is_master"
-                grid.add_field(spec, on_toggled=self._on_is_master_toggled if is_master_field else None)
+                # "世界名称"/"世界编号"内容都很短（"Master"、一两位数字），文本框却
+                # 跟其它长文本字段一样撑满整列宽度，真机反馈过很奇怪；固定成跟端口
+                # 号输入框差不多的宽度。
+                is_short_text = spec.section == "SHARD_SHARD" and spec.key in ("name", "id")
+                grid.add_field(spec, on_toggled=self._on_is_master_toggled if is_master_field else None,
+                               fixed_width=160 if is_short_text else None)
         card_layout.addWidget(grid)
         card_layout.addStretch()
         self._shard_inner_layout.addWidget(card)

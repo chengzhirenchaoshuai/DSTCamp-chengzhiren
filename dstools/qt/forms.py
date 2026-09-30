@@ -42,20 +42,23 @@ class FormGrid(QWidget):
         self._grid.addWidget(label, self._row, 0, 1, 2, Qt.AlignmentFlag.AlignLeft)
         self._row += 1
 
-    def add_field(self, spec: FieldSpec, on_toggled=None) -> FieldEditor:
+    def add_field(self, spec: FieldSpec, on_toggled=None, fixed_width: int | None = None) -> FieldEditor:
         label = QLabel(f"{spec.label}:")
         label.setFont(theme.font("FONT_SIZE_SM"))
         if spec.description:
             label.setToolTip(spec.description)
         editor = self._make_editor(spec, on_toggled)
         self._grid.addWidget(label, self._row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        # 固定宽度的控件（端口号输入框/开关）必须显式加 AlignLeft，不然只给了纵向
-        # 对齐、横向没给的话 Qt 会把它摆在这一格（因为列 1 撑满宽度）里说不准的
-        # 位置——真机反馈过端口号输入框会跟着窗口宽度左右挪动。可以自然撑满宽度
-        # 的控件（文本框/下拉框）不加这个，让它们继续填满、不留空白。
+        # 固定宽度的控件（端口号输入框/开关，或调用方显式传入 fixed_width 的短文本
+        # 字段，比如世界名称/世界编号）必须显式加 AlignLeft，不然只给了纵向对齐、
+        # 横向没给的话 Qt 会把它摆在这一格（因为列 1 撑满宽度）里说不准的位置——
+        # 真机反馈过端口号输入框会跟着窗口宽度左右挪动。可以自然撑满宽度的控件
+        # （文本框/下拉框）不加这个，让它们继续填满、不留空白。
         editor_align = Qt.AlignmentFlag.AlignVCenter
-        if spec.kind in ("int", "bool"):
+        if spec.kind in ("int", "bool") or fixed_width is not None:
             editor_align |= Qt.AlignmentFlag.AlignLeft
+        if fixed_width is not None:
+            editor.widget.setFixedWidth(fixed_width)
         self._grid.addWidget(editor.widget, self._row, 1, editor_align)
         self._row += 1
         self.editors[(spec.section, spec.key)] = editor
