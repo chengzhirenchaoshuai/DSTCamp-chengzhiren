@@ -99,9 +99,24 @@ def _apply_fake_transparent_popup_bg(combo, popup) -> None:
     offset = grab_rect.topLeft() - top_left_local
     label.move(offset.x(), offset.y())
     label.resize(grab_rect.size())
-    label.setPixmap(pixmap)
+    label.setPixmap(_faded_popup_bg_pixmap(pixmap))
     label.lower()
     label.show()
+
+
+def _faded_popup_bg_pixmap(pixmap):
+    """背景截图直接贴上去太清楚，字不好认（真机反馈过）；在上面叠一层半透明白色
+    把它压淡，跟列表本身的 rgba() 半透明色是同一个"看得出背景、但不抢文字"的
+    思路，只是这里要用 QPainter 把颜色烧进图里——QLabel 没有单独调"贴图透明度"
+    的属性，要压淡只能在画出来的像素上动手，不是靠 QSS。"""
+    from PySide6.QtGui import QPainter
+
+    faded = pixmap.copy()
+    painter = QPainter(faded)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+    painter.fillRect(faded.rect(), QColor(255, 255, 255, 140))
+    painter.end()
+    return faded
 
 
 class Theme(QObject):
