@@ -7,11 +7,11 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, Qt, QTimer
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSequentialAnimationGroup, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QIntValidator, QTextCursor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
-    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QToolTip, QVBoxLayout,
+    QAbstractItemView, QDialog, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QListWidget, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QToolTip, QVBoxLayout,
 )
 
 from dstools.features.local_service.backup_manager import get_backup_summary
@@ -71,18 +71,46 @@ def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], de
 
 
 def show_toast(parent, text: str, ms: int = 1400) -> None:
-    """轻提示：浮在父窗口中央，自动消失，不抢焦点、不需要点击。"""
+    """轻提示：浮在父窗口中央，淡入淡出后自动消失，不抢焦点、不需要点击。
+    Tk 版靠逐帧手动改窗口 alpha 属性模拟淡入淡出；Qt 有现成的属性动画，直接对
+    QGraphicsOpacityEffect.opacity 做补间，比之前"啪一下出现、啪一下消失"要
+    顺滑（真机反馈过之前的效果不如 Tk 版）。"""
     anchor = parent.window() if parent is not None else None
     label = QLabel(text, anchor)
     label.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+    label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    label.setFont(theme.font("FONT_SIZE_BASE"))
     label.setStyleSheet(f"QLabel {{ background: {theme.hex('CARD_BG')}; color: {theme.hex('TEXT')};"
                         f" border: 1px solid {theme.hex('CARD_BORDER')}; border-radius: 8px; padding: 8px 18px; }}")
     label.adjustSize()
     if anchor is not None:
         center = anchor.mapToGlobal(anchor.rect().center())
         label.move(center.x() - label.width() // 2, center.y() - label.height() // 2)
+
+    effect = QGraphicsOpacityEffect(label)
+    effect.setOpacity(0.0)
+    label.setGraphicsEffect(effect)
     label.show()
-    QTimer.singleShot(ms, label.close)
+
+    fade_in = QPropertyAnimation(effect, b"opacity", label)
+    fade_in.setDuration(150)
+    fade_in.setStartValue(0.0)
+    fade_in.setEndValue(1.0)
+    fade_in.setEasingCurve(QEasingCurve.Type.OutCubic)
+    fade_out = QPropertyAnimation(effect, b"opacity", label)
+    fade_out.setDuration(300)
+    fade_out.setStartValue(1.0)
+    fade_out.setEndValue(0.0)
+    fade_out.setEasingCurve(QEasingCurve.Type.InCubic)
+
+    group = QSequentialAnimationGroup(label)
+    group.addAnimation(fade_in)
+    group.addPause(max(0, ms - fade_in.duration() - fade_out.duration()))
+    group.addAnimation(fade_out)
+    group.finished.connect(label.close)
+    # group 以 label 为 parent，Qt 的父子对象生命周期管理会让它跟 label 一起存活
+    # 到 close() 触发那一刻，不需要额外在 Python 侧保留引用防止被提前回收。
+    group.start()
 
 
 def show_file_location(parent, title: str, path, location_label: str, copied_message: str) -> None:
