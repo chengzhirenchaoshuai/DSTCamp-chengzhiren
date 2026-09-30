@@ -399,7 +399,10 @@ class MainWindow(QWidget):
         self._update_notice.linkActivated.connect(self._open_update_notice)
         self._update_release = None
         status_row = QHBoxLayout()
-        status_row.setContentsMargins(18, 4, 18, 6)
+        # 左边距跟各页面内容区左边缘对齐（本地服务器页"内网穿透代码:"这类标签的左边
+        # 缘实测在 X=10；之前 18 的左边距比页面内容多缩进了 10px，真机反馈过状态栏
+        # 文字和页面内容没对齐）。
+        status_row.setContentsMargins(8, 4, 18, 6)
         status_row.addWidget(self.status, 1)
         status_row.addWidget(self._update_notice)
         for widget in (self.titlebar, self.menu_strip, self.tabbar, self.cluster_bar):

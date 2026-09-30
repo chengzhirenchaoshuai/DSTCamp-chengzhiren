@@ -30,6 +30,32 @@ def _rgba(hex_color: str, alpha: int) -> str:
     return f"rgba({color.red()},{color.green()},{color.blue()},{alpha})"
 
 
+_ORIGINAL_COMBO_SHOW_POPUP = None
+
+
+def _patch_combo_popup_width() -> None:
+    """全局猴补丁 QComboBox.showPopup——Qt 默认展开列表按内容自适应宽度，内容一长
+    就比下拉框本身更宽（真机反馈过）；这里在原生展开完之后再把弹出窗口宽度收窄到
+    比下拉框自身略窄一点。改父类方法而不是给某几个下拉框单独加逻辑，是因为全应用
+    有 9 个文件各自直接 new 了 QComboBox()，没有统一的自定义子类可改，这样一次
+    生效全部下拉框，theme.apply_to_app() 可能被切主题/切字体反复调用，用模块级
+    变量确保只打一次补丁。"""
+    global _ORIGINAL_COMBO_SHOW_POPUP
+    if _ORIGINAL_COMBO_SHOW_POPUP is not None:
+        return
+    from PySide6.QtWidgets import QComboBox
+
+    _ORIGINAL_COMBO_SHOW_POPUP = QComboBox.showPopup
+
+    def _show_popup(self) -> None:
+        _ORIGINAL_COMBO_SHOW_POPUP(self)
+        popup = self.view().parentWidget()
+        if popup is not None:
+            popup.setFixedWidth(max(10, self.width() - 6))
+
+    QComboBox.showPopup = _show_popup
+
+
 class Theme(QObject):
     changed = Signal()
 
@@ -103,6 +129,7 @@ class Theme(QObject):
             # 影响，因为它们各自都传了自己的 size_key，不依赖这份继承值。
             app.setFont(self.font("FONT_SIZE_SM"))
             app.setStyleSheet(self.qss())
+            _patch_combo_popup_width()
 
     def qss(self) -> str:
         c = self.palette
@@ -125,7 +152,7 @@ class Theme(QObject):
             QComboBox:hover {{ border-color: {c['ACCENT']}; }}
             QComboBox::drop-down {{ border: none; width: 22px; }}
             QComboBox::down-arrow {{ image: url({_DOWN_ARROW_PATH}); width: 10px; height: 6px; }}
-            QComboBox QAbstractItemView {{ background: {_rgba(c['CARD_BG'], 220)}; color: {c['TEXT']};
+            QComboBox QAbstractItemView {{ background: {_rgba(c['CARD_BG'], 160)}; color: {c['TEXT']};
                 border: 1px solid {c['CARD_BORDER']}; selection-background-color: {c['PRIMARY_LIGHT']};
                 selection-color: {c['TEXT']}; outline: none; }}
             QComboBox QAbstractItemView::item {{ padding: 2px 6px; }}

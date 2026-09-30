@@ -16,7 +16,7 @@ import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSplitter, QTabWidget,
     QTextEdit, QVBoxLayout, QWidget,
@@ -180,6 +180,11 @@ class _RollbackDialog(dialogs.Dialog):
 class _ConnectRow(QWidget):
     """一行直连代码：标题 + 值（点击复制）+ 状态。"""
 
+    # 直连代码最长的现实样式——IPv4 最长形式 + 5 位端口 + 打码密码，用来给"值"这一
+    # 列定一个够用的固定宽度。之前值列跟着布局拉伸到填满整行剩余宽度，"未就绪"这
+    # 类状态文字被推到窗口最右边，跟真正的值文本之间空出一大截，真机反馈过。
+    _VALUE_SAMPLE = 'c_connect("255.255.255.255", 65535, "***")'
+
     def __init__(self, title: str, hint: str, on_click):
         super().__init__()
         layout = QHBoxLayout(self)
@@ -190,11 +195,13 @@ class _ConnectRow(QWidget):
         self._value = QLabel("")
         self._value.setCursor(Qt.CursorShape.PointingHandCursor)
         self._value.setToolTip(hint)
+        self._value.setFixedWidth(QFontMetrics(self._value.font()).horizontalAdvance(self._VALUE_SAMPLE) + 8)
         self._status = QLabel("")
         self._status.setFixedWidth(90)
         layout.addWidget(self._title)
-        layout.addWidget(self._value, 1)
+        layout.addWidget(self._value)
         layout.addWidget(self._status)
+        layout.addStretch()
         self._value.mousePressEvent = lambda _e: on_click()
         self._title.mousePressEvent = lambda _e: on_click()
         self._title.setCursor(Qt.CursorShape.PointingHandCursor)
