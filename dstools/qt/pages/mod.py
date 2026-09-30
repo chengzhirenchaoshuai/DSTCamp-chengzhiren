@@ -628,9 +628,7 @@ class ModPage(Page):
         self._loading = False
         self._loading_key = None
         self._mods_loaded = True
-        regular = sum(1 for wid in self._mod_data if not str(wid).removeprefix("workshop-").isdigit()
-                     or int(str(wid).removeprefix("workshop-")) <= 0)
-        self._scan_status_label.setText(t("mod.scan_found_breakdown", regular=len(self._mod_data) - regular, custom=regular))
+        self._update_scan_status_label()
         self._update_enabled_count()
         self._refresh_workshop_update_button_state()
         self._render_list()
@@ -909,8 +907,7 @@ class ModPage(Page):
             return
         ApplyPresetDialog(self).exec()
 
-    # ── Workshop 更新（简化版：检查 + 全部/选中更新；不含残留清理与 V1 详细处理，
-    # 这部分留到后续单独一批迁移） ─────────────────────────────────────────
+    # ── Workshop 更新 ────────────────────────────────────────────────────
     def _workshop_mod_ids(self) -> list[int]:
         ids = []
         for raw_id in self._mod_data:
@@ -918,6 +915,44 @@ class ModPage(Page):
             if text_id.isdigit() and int(text_id) > 0:
                 ids.append(int(text_id))
         return ids
+
+    def _workshop_candidate_ids(self) -> list[int]:
+        """合并本地目录、V1 包和存档配置中的项目；订阅项由 Steam 补入。更新弹窗要能
+        处理"已安装但当前世界没启用""残留文件""V1 包已就绪但还没展开"这些不只是
+        "当前已加载 mod 列表"能覆盖的场景，跟 Tk 版 _workshop_candidate_ids() 同一
+        个合并逻辑。"""
+        from dstools.features.mod.legacy_v1 import find_legacy_packages, find_legacy_runtime_residual_dirs
+        from dstools.features.mod.parser import find_workshop_residual_dirs
+        ids = list(self._workshop_mod_ids())
+        ids.extend(find_legacy_packages())
+        ids.extend(int(raw_id) for raw_id in self._current_cluster_workshop_ids())
+        ids.extend(find_workshop_residual_dirs())
+        ids.extend(find_legacy_runtime_residual_dirs())
+        return list(dict.fromkeys(item for item in ids if item > 0))
+
+    def _current_cluster_workshop_ids(self) -> set[str]:
+        """返回当前存档所有世界中出现过的 Workshop Mod key（数字 ID 字符串）。"""
+        ids: set[str] = set()
+        cluster = self.get_cluster()
+        if not cluster:
+            return ids
+        for shard in cluster.shards:
+            if not shard.mod_overrides_path:
+                continue
+            try:
+                overrides = load_mod_overrides(shard.mod_overrides_path)
+            except Exception:
+                continue
+            for raw_id in overrides.mods:
+                text_id = str(raw_id).removeprefix("workshop-")
+                if text_id.isdigit():
+                    ids.add(text_id)
+        return ids
+
+    def _update_scan_status_label(self) -> None:
+        regular = sum(1 for wid in self._mod_data if not str(wid).removeprefix("workshop-").isdigit()
+                     or int(str(wid).removeprefix("workshop-")) <= 0)
+        self._scan_status_label.setText(t("mod.scan_found_breakdown", regular=len(self._mod_data) - regular, custom=regular))
 
     def _refresh_workshop_update_button_state(self) -> None:
         ready = self._mods_loaded and not self._loading and not self._workshop_update_running

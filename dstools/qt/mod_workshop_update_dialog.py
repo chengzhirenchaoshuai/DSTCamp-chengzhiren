@@ -1,25 +1,35 @@
-"""Workshop 更新选择器（简化版，对应 Tk 版 ModManagerTab._open_workshop_update_dialog）。
+"""Workshop 更新选择器（对应 Tk 版 ModManagerTab._open_workshop_update_dialog 的完整功能）。
 
-保留最常用的核心流程：扫描已安装 Mod 的 Workshop 状态、按筛选/搜索挑选、批量或单个更新。
-残留文件清理、取消订阅引用移除、V1 包细节处理这几个次要分支留给后续单独一批迁移
-（真机反馈里出现频率低得多），这里不假装支持、按钮和入口都不会出现，不是静默阉割。
+核心流程：扫描 Workshop 状态、按筛选/搜索挑选、批量或单个更新，另加残留文件清理
+（单个/一键批量）、取消订阅引用移除——这三块跟“更新”共用同一份状态扫描结果
+（``WorkshopModStatus``），每行按状态优先级只显示一个最合适的操作按钮，跟 Tk 版
+逻辑一致：能更新优先显示"更新"；不能更新但存档里还引用着已取消订阅的项显示
+"移除引用"；都不是、但本地还留着残留文件显示"清理残留"。
 """
 
+import os
 import time
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QCheckBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from dstools.features.mod.list_model import localize_mod_name, version_display
+from dstools.features.mod.manager import load_mod_overrides, save_mod_overrides
+from dstools.features.mod.workshop_cleanup import (
+    ResidualCleanupContext, build_residual_cleanup_context, delete_legacy_runtime_residual,
+    delete_workshop_residual, format_residual_directory_tree,
+)
 from dstools.features.mod.workshop_status import WorkshopModState
 from dstools.i18n import t
+from dstools.models import Platform
 from dstools.qt import dialogs
 from dstools.qt.imaging import pil_to_pixmap
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async
-from dstools.qt.widgets import PillTabBar
+from dstools.qt.widgets import Card, PillTabBar
 
 _LATEST_LABELS = {
     WorkshopModState.CURRENT: "mod.update_latest_up_to_date",
@@ -38,6 +48,75 @@ _LATEST_LABELS = {
     WorkshopModState.DOWNLOAD_PENDING: "mod.update_latest_pending",
     WorkshopModState.UNKNOWN: "mod.update_latest_unknown",
 }
+_ROW_H = 84
+_ICON = 58
+
+
+def _cleanup_paths(status) -> tuple:
+    evidence = status.evidence if status is not None else None
+    content_path = (evidence.workshop_content_path or evidence.residual_path) if evidence is not None else None
+    runtime_paths = evidence.legacy_runtime_residual_paths if evidence is not None else ()
+    return tuple(path for path in (content_path, *runtime_paths) if path is not None)
+
+
+def _is_empty_directory(path) -> bool:
+    try:
+        return path.is_dir() and next(path.iterdir(), None) is None
+    except OSError:
+        return False
+
+
+class _ResidualConfirmDialog(dialogs.Dialog):
+    """单个 Mod 清理残留前的确认：展示完整确认文案（含浅层目录结构），额外带一个
+    "打开文件夹"按钮。"""
+
+    def __init__(self, parent, tree_text: str, folder_to_open):
+        super().__init__(parent, t("mod.update_cleanup_residual_title"), 720,
+                          confirm_text=t("dlg.confirm_btn"))
+        view = QTextEdit()
+        view.setReadOnly(True)
+        view.setPlainText(t("mod.update_cleanup_residual_confirm", tree=tree_text))
+        view.setFont(theme.font("FONT_SIZE_SM"))
+        view.setMinimumHeight(280)
+        self.body.addWidget(view, 1)
+        row = QHBoxLayout()
+        open_btn = QPushButton(t("mod.update_cleanup_open_btn"))
+        open_btn.clicked.connect(folder_to_open)
+        row.addWidget(open_btn)
+        row.addStretch()
+        self.body.addLayout(row)
+        self.add_buttons()
+
+
+class _BulkResidualChoiceDialog(dialogs.Dialog):
+    """一键清理残留前的确认：选"仅清空文件夹"还是"全部清理"，或取消。"""
+
+    def __init__(self, parent, count: int, tree_text: str):
+        super().__init__(parent, t("mod.update_cleanup_all_title"), 760)
+        self.mode: str | None = None
+        view = QTextEdit()
+        view.setReadOnly(True)
+        view.setPlainText(t("mod.update_cleanup_all_confirm", count=count, tree=tree_text))
+        view.setFont(theme.font("FONT_SIZE_SM"))
+        view.setMinimumHeight(320)
+        self.body.addWidget(view, 1)
+        row = QHBoxLayout()
+        cancel = QPushButton(t("dlg.cancel_btn"))
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        row.addStretch()
+        empty_btn = QPushButton(t("mod.update_cleanup_empty_only_btn"))
+        empty_btn.clicked.connect(lambda: self._choose("empty"))
+        row.addWidget(empty_btn)
+        all_btn = QPushButton(t("mod.update_cleanup_all_full_btn"))
+        all_btn.clicked.connect(lambda: self._choose("all"))
+        row.addWidget(all_btn)
+        self.body.addSpacing(8)
+        self.body.addLayout(row)
+
+    def _choose(self, mode: str) -> None:
+        self.mode = mode
+        self.accept()
 
 
 class WorkshopUpdateDialog(QDialog):
@@ -45,24 +124,38 @@ class WorkshopUpdateDialog(QDialog):
         super().__init__(page.window())
         self.page = page
         self.setWindowTitle(t("mod.update_title"))
-        self.resize(920, 640)
+        self.resize(980, 680)
+        self.setStyleSheet(f"QDialog {{ background: {theme.hex('BG_SOFT')}; }}")
         self._states: dict[str, object] = {str(k): v for k, v in page._workshop_status_cache.items()}
         self._loading = False
         self._selected: set[str] = set()
-        self._ids = [str(wid) for wid in page._workshop_mod_ids()]
+        self._cleanup_running: set[str] = set()
+        # 本地已安装/V1 包/存档引用/残留目录合并出的全量候选集——不止"当前已加载
+        # 的 mod 列表"，缓存里的订阅项也先参与首帧展示，避免刚检测出的缺失项在
+        # 关闭对话框后立刻消失（真正刷新时仍只把本地扫描项作为输入，Steam 重新
+        # 枚举订阅集合后，已取消订阅的陈旧项自然被移除）。
+        local_ids = [str(wid) for wid in page._workshop_candidate_ids()]
+        known = set(local_ids)
+        self._ids = list(local_ids)
+        self._ids.extend(str(wid) for wid in page._workshop_status_cache if str(wid) not in known)
+        self._current_ids = page._current_cluster_workshop_ids()
 
         root = QVBoxLayout(self)
-        toolbar = QHBoxLayout()
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(10)
+
+        toolbar_card = Card(radius=0)
+        root.addWidget(toolbar_card)
+        toolbar = QHBoxLayout(toolbar_card)
+        toolbar.setContentsMargins(12, 10, 12, 10)
         toolbar.addWidget(QLabel(t("mod.filter")))
         self._search = QLineEdit()
-        self._search.setMinimumWidth(220)
+        self._search.setMinimumWidth(200)
         self._search.textChanged.connect(self._render_rows)
         toolbar.addWidget(self._search)
-        # 跟 Tk 版一样，除了文字搜索还要能只看"待更新"的——这个弹窗里的 ID 列表本来
-        # 就已经限定在当前存档（page._workshop_mod_ids()），不需要 Tk 版"当前存档/
-        # 全部库"那第三档。
-        self._status_filter = PillTabBar([t("mod.show_all"), t("mod.update_filter_needs_update")],
-                                         height=32, pill_height=24, font_size_key="FONT_SIZE_SM")
+        self._status_filter = PillTabBar(
+            [t("mod.show_all"), t("mod.update_filter_needs_update"), t("mod.update_filter_current")],
+            height=32, pill_height=24, font_size_key="FONT_SIZE_SM", gap=3, pad=18)
         self._status_filter.current_changed.connect(lambda _i: self._render_rows())
         toolbar.addWidget(self._status_filter)
         self._refresh_btn = QPushButton(t("mod.update_refresh_states"))
@@ -72,16 +165,36 @@ class WorkshopUpdateDialog(QDialog):
         self._count_label = QLabel("")
         self._count_label.setProperty("muted", True)
         toolbar.addWidget(self._count_label)
-        root.addLayout(toolbar)
 
+        self._state_notice = QLabel("")
+        self._state_notice.setWordWrap(True)
+        self._state_notice.setVisible(False)
+        self._state_notice.setStyleSheet(
+            f"background: {theme.hex('BANNER_BG')}; color: {theme.hex('BANNER_TEXT')}; padding: 8px 12px;")
+        root.addWidget(self._state_notice)
+
+        header_card = Card(radius=0, alpha=255, fill_key="PRIMARY_LIGHT")
+        root.addWidget(header_card)
+        header = self._make_header()
+        header_layout = QHBoxLayout(header_card)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.addWidget(header)
+
+        list_card = Card(radius=0)
+        root.addWidget(list_card, 1)
+        list_layout = QVBoxLayout(list_card)
+        list_layout.setContentsMargins(0, 0, 0, 0)
         area = QScrollArea()
         area.setWidgetResizable(True)
+        area.setFrameShape(QScrollArea.Shape.NoFrame)
         area.viewport().setAutoFillBackground(False)
         inner = QWidget()
         inner.setAutoFillBackground(False)
         self._rows_layout = QVBoxLayout(inner)
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.setSpacing(0)
         area.setWidget(inner)
-        root.addWidget(area, 1)
+        list_layout.addWidget(area)
 
         footer = QHBoxLayout()
         self._update_selected_btn = QPushButton(t("mod.update_selected_btn"))
@@ -91,6 +204,9 @@ class WorkshopUpdateDialog(QDialog):
         self._update_all_btn = QPushButton(t("mod.update_all_btn"))
         self._update_all_btn.clicked.connect(self._update_all)
         footer.addWidget(self._update_all_btn)
+        self._cleanup_all_btn = QPushButton(t("mod.update_cleanup_all_btn"))
+        self._cleanup_all_btn.clicked.connect(self._cleanup_all_residuals)
+        footer.addWidget(self._cleanup_all_btn)
         root.addLayout(footer)
 
         self._render_rows()
@@ -111,10 +227,12 @@ class WorkshopUpdateDialog(QDialog):
 
     def _filtered_ids(self) -> list[str]:
         needle = self._search.text().strip().casefold()
-        needs_update_only = self._status_filter.current_index() == 1
+        mode = self._status_filter.current_index()
         result = []
         for wid in self._ids:
-            if needs_update_only and not (wid in self._states and self._states[wid].needs_action):
+            if mode == 1 and not (wid in self._states and self._states[wid].needs_action):
+                continue
+            if mode == 2 and wid not in self._current_ids:
                 continue
             name = self._name_for(wid)
             if needle and needle not in f"{name} {wid}".casefold():
@@ -168,6 +286,36 @@ class WorkshopUpdateDialog(QDialog):
         run_async(work, done, error)
 
     # ── 渲染 ────────────────────────────────────────────────────────────
+    def _make_header(self) -> QWidget:
+        header = QWidget()
+        header.setFixedHeight(34)
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(12, 4, 12, 4)
+        select_all = QCheckBox(t("mod.update_select_all"))
+        select_all.setTristate(False)
+        select_all.setFont(theme.font("FONT_SIZE_SM", bold=True))
+        select_all.clicked.connect(self._on_select_all_clicked)
+        self._select_all_box = select_all
+        layout.addWidget(select_all)
+        layout.addStretch()
+        for text, width in ((t("mod.update_latest_version"), 150), (t("mod.update_workshop_column"), 90),
+                            (t("mod.update_action"), 110)):
+            label = QLabel(text)
+            label.setFont(theme.font("FONT_SIZE_SM", bold=True))
+            label.setProperty("muted", True)
+            label.setFixedWidth(width)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(label)
+        return header
+
+    def _on_select_all_clicked(self, checked: bool) -> None:
+        selectable = [wid for wid in self._filtered_ids() if self._can_select(wid)]
+        if checked:
+            self._selected.update(selectable)
+        else:
+            self._selected.difference_update(selectable)
+        self._render_rows()
+
     def _clear_rows(self) -> None:
         while self._rows_layout.count():
             item = self._rows_layout.takeAt(0)
@@ -181,22 +329,41 @@ class WorkshopUpdateDialog(QDialog):
         self._clear_rows()
         pending = self._pending_count()
         needs_update_label = t("mod.update_filter_needs_update")
-        self._status_filter.set_labels(
-            [t("mod.show_all"), f"{needs_update_label}（{pending}）" if pending else needs_update_label])
+        self._status_filter.set_labels([
+            t("mod.show_all"),
+            f"{needs_update_label}（{pending}）" if pending else needs_update_label,
+            t("mod.update_filter_current"),
+        ])
         visible_ids = self._filtered_ids()
         self._count_label.setText(t("mod.update_selected_count", selected=len(self._selected), total=len(self._ids)))
+        selectable = [wid for wid in visible_ids if self._can_select(wid)]
+        self._select_all_box.setEnabled(bool(selectable))
+        self._select_all_box.setChecked(bool(selectable) and all(wid in self._selected for wid in selectable))
         if not visible_ids:
-            self._rows_layout.addWidget(QLabel(t("mod.no_filtered")))
-            return
-        for wid in visible_ids:
-            self._rows_layout.addWidget(self._make_row(wid))
+            empty = QLabel(t("mod.no_filtered"))
+            empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setContentsMargins(0, 24, 0, 24)
+            self._rows_layout.addWidget(empty)
+        else:
+            for index, wid in enumerate(visible_ids):
+                self._rows_layout.addWidget(self._make_row(wid, index))
         self._rows_layout.addStretch()
         actionable = [wid for wid in self._ids if self._can_select(wid)]
         self._update_all_btn.setEnabled(bool(actionable) and not self._loading)
+        has_residual = any(status.can_cleanup_residual and status.state != WorkshopModState.UNSUBSCRIBED_REFERENCED
+                           for status in self._states.values())
+        self._cleanup_all_btn.setEnabled(has_residual and not self._cleanup_running)
 
-    def _make_row(self, wid: str) -> QWidget:
-        row = QWidget()
+    def _make_row(self, wid: str, index: int) -> QWidget:
+        # "主题色和白色相间"——偶数行纯白、奇数行浅主题色，跟主页 Card 面板一个风格。
+        # 用 Card（QPainter 自绘）而不是 setStyleSheet("background: ...")：给容器
+        # 控件直接设不带选择器的 styleSheet 会连带压掉里面 QPushButton 的全局主题
+        # 样式（真机验证过，按钮会变得跟父容器同色、完全看不出是个按钮），Card 走
+        # paintEvent 画底色，不影响子控件正常吃到全局 QSS。
+        row = Card(radius=0, alpha=255, fill_key="CARD_BG" if index % 2 == 0 else "PRIMARY_LIGHT")
+        row.setFixedHeight(_ROW_H)
         layout = QHBoxLayout(row)
+        layout.setContentsMargins(12, 4, 12, 4)
         can_select = self._can_select(wid)
         checkbox = QCheckBox()
         checkbox.setEnabled(can_select)
@@ -207,35 +374,75 @@ class WorkshopUpdateDialog(QDialog):
         image = self.page._icon_imgs.get(f"workshop-{wid}") or self.page._icon_imgs.get(wid)
         icon_label = QLabel()
         if image is not None:
-            icon_label.setPixmap(pil_to_pixmap(image).scaled(58, 58, aspectMode=Qt.AspectRatioMode.KeepAspectRatio))
-        icon_label.setFixedSize(58, 58)
+            icon_label.setPixmap(pil_to_pixmap(image).scaled(
+                _ICON, _ICON, aspectMode=Qt.AspectRatioMode.KeepAspectRatio,
+                mode=Qt.TransformationMode.SmoothTransformation))
+        icon_label.setFixedSize(_ICON, _ICON)
         layout.addWidget(icon_label)
 
         text_col = QVBoxLayout()
+        text_col.setSpacing(1)
         name_label = QLabel(self._name_for(wid))
         name_label.setFont(theme.font("FONT_SIZE_BASE", bold=True))
         text_col.addWidget(name_label)
         id_label = QLabel(f"workshop-{wid}")
         id_label.setProperty("muted", True)
+        id_label.setFont(theme.font("FONT_SIZE_SM"))
         text_col.addWidget(id_label)
         info = self.page._mod_infos.get(f"workshop-{wid}") or self.page._mod_infos.get(wid)
         version_label = QLabel(version_display(info))
         version_label.setProperty("muted", True)
+        version_label.setFont(theme.font("FONT_SIZE_SM"))
         text_col.addWidget(version_label)
         layout.addLayout(text_col, 1)
 
         status = self._states.get(wid)
-        latest_text = t(_LATEST_LABELS.get(status.state, "mod.update_latest_unknown")) if status else t("mod.update_latest_checking")
+        latest_text = t(self._latest_key(status)) if status else t("mod.update_latest_checking")
         latest_label = QLabel(latest_text)
-        latest_label.setFixedWidth(160)
+        latest_label.setWordWrap(True)
+        latest_label.setFixedWidth(150)
         latest_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(latest_label)
 
-        if status is not None and status.can_update:
-            action_btn = QPushButton(t("mod.update_one_btn"))
-            action_btn.clicked.connect(lambda _c=False, w=wid: self._update_one(w))
-            layout.addWidget(action_btn)
+        link_label = QLabel(f'<a href="#" style="color:{theme.hex("ACCENT")};">{t("mod.workshop_link_btn")}</a>')
+        link_label.setFixedWidth(90)
+        link_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        link_label.linkActivated.connect(lambda _href, w=wid: self.page._on_link(f"workshop-{w}"))
+        layout.addWidget(link_label)
+
+        action_box = QWidget()
+        action_box.setFixedWidth(110)
+        action_layout = QHBoxLayout(action_box)
+        action_layout.setContentsMargins(0, 0, 0, 0)
+        action = self._row_action(wid, status)
+        if action is not None:
+            label, handler, busy = action
+            action_btn = QPushButton(label)
+            action_btn.setEnabled(not busy)
+            action_btn.setFont(theme.font("FONT_SIZE_SM"))
+            if not busy:
+                action_btn.clicked.connect(lambda _c=False, w=wid, h=handler: h(w))
+            action_layout.addWidget(action_btn)
+        layout.addWidget(action_box)
         return row
+
+    @staticmethod
+    def _latest_key(status) -> str:
+        if status.state == WorkshopModState.UNSUBSCRIBED_PENDING_CLEANUP:
+            return "mod.update_latest_unsubscribed_pending_cleanup"
+        return _LATEST_LABELS.get(status.state, "mod.update_latest_unknown")
+
+    def _row_action(self, wid: str, status):
+        """每行只显示一个最合适的操作，优先级：更新 > 移除失效引用 > 清理残留。"""
+        if status is None:
+            return None
+        if status.can_update:
+            return t("mod.update_one_btn"), self._update_one, False
+        if status.state == WorkshopModState.UNSUBSCRIBED_REFERENCED:
+            return t("mod.update_remove_reference_btn"), self._remove_reference, False
+        if status.can_cleanup_residual:
+            return t("mod.update_cleanup_residual_btn"), self._cleanup_residual, wid in self._cleanup_running
+        return None
 
     def _on_check(self, wid: str, checked: bool) -> None:
         if checked:
@@ -296,3 +503,180 @@ class WorkshopUpdateDialog(QDialog):
         self.page._update_workshop_mods(ids, expected_versions=expected_versions,
                                         force_redownload_ids=force_redownload_ids,
                                         on_progress=on_progress, on_line=on_line, on_finish=on_finish)
+
+    # ── 移除失效引用 ─────────────────────────────────────────────────────
+    def _remove_reference(self, wid: str) -> None:
+        if not dialogs.ask_yes_no(self, t("mod.update_remove_reference_title"),
+                                   t("mod.update_remove_reference_confirm", mod_id=f"workshop-{wid}")):
+            return
+        changed = 0
+        cluster = self.page.get_cluster()
+        for shard in cluster.shards if cluster else ():
+            if not shard.mod_overrides_path:
+                continue
+            overrides = load_mod_overrides(shard.mod_overrides_path)
+            removed = False
+            for key in (f"workshop-{wid}", wid):
+                removed = overrides.mods.pop(key, None) is not None or removed
+            if removed:
+                save_mod_overrides(overrides)
+                changed += 1
+        if not changed:
+            dialogs.show_info(self, t("mod.update_title"), t("mod.update_reference_not_found"))
+            return
+        self.page._workshop_status_checked_at = 0.0
+        self.accept()
+        self.page._refresh_mods(full=False)
+        dialogs.show_info(self.page.window(), t("mod.update_remove_reference_title"),
+                          t("mod.update_reference_removed", count=changed))
+
+    # ── 残留清理 ────────────────────────────────────────────────────────
+    def _cleanup_residual(self, wid: str) -> None:
+        if wid in self._cleanup_running:
+            return
+        status = self._states.get(wid)
+        paths = _cleanup_paths(status)
+        if not paths or status is None or not status.can_cleanup_residual:
+            dialogs.show_warning(self, t("mod.update_title"), t("mod.update_cannot_cleanup"))
+            return
+        tree_text = format_residual_directory_tree(paths)
+
+        def open_folder() -> None:
+            target = next((p for p in paths if p.is_dir()), None)
+            if target is not None:
+                try:
+                    os.startfile(str(target))
+                except OSError as exc:
+                    dialogs.show_error(self, t("mod.update_cleanup_residual_title"),
+                                       t("mod.update_cleanup_open_failed", error=exc))
+
+        dialog = _ResidualConfirmDialog(self, tree_text, open_folder)
+        if not dialog.exec():
+            return
+        self._start_residual_cleanup([wid], bulk=False)
+
+    def _cleanup_all_residuals(self) -> None:
+        if self._cleanup_running:
+            return
+        candidates = [wid for wid, status in self._states.items()
+                     if status.can_cleanup_residual and status.state != WorkshopModState.UNSUBSCRIBED_REFERENCED
+                     and _cleanup_paths(status)]
+        if not candidates:
+            dialogs.show_info(self, t("mod.update_cleanup_residual_title"), t("mod.update_cleanup_all_empty"))
+            return
+        paths = tuple(path for wid in candidates for path in _cleanup_paths(self._states.get(wid)))
+        tree_text = format_residual_directory_tree(paths)
+        dialog = _BulkResidualChoiceDialog(self, len(candidates), tree_text)
+        if not dialog.exec() or dialog.mode is None:
+            return
+        if dialog.mode == "empty":
+            candidates = [wid for wid in candidates
+                         if any(_is_empty_directory(p) for p in _cleanup_paths(self._states.get(wid)))]
+            if not candidates:
+                dialogs.show_info(self, t("mod.update_cleanup_all_title"), t("mod.update_cleanup_empty_none"))
+                return
+        self._start_residual_cleanup(candidates, bulk=True, empty_only=dialog.mode == "empty")
+
+    def _show_state_notice(self, message: str) -> None:
+        self._state_notice.setText(message)
+        self._state_notice.setVisible(bool(message))
+
+    def _start_residual_cleanup(self, ids: list[str], *, bulk: bool, empty_only: bool = False) -> None:
+        self._cleanup_running.update(ids)
+        self._show_state_notice(t("mod.update_cleanup_all_checking", count=len(ids)) if bulk
+                                else t("mod.update_cleanup_residual_checking"))
+        self._render_rows()
+
+        def work():
+            from dstools.features.mod.legacy_v1 import (
+                find_legacy_runtime_residual_dirs, running_dst_processes,
+            )
+            from dstools.features.mod.parser import find_workshop_content_dirs, find_workshop_residual_dirs
+            from dstools.features.mod.workshop_status import inspect_workshop_items
+            cleaned: list[str] = []
+            errors: dict[str, Exception] = {}
+            try:
+                processes = running_dst_processes()
+                context: ResidualCleanupContext = build_residual_cleanup_context(running_processes=processes)
+                numeric_ids = [int(wid) for wid in ids]
+                fresh_states = inspect_workshop_items(
+                    numeric_ids, query_source=False, residual_paths=find_workshop_residual_dirs(),
+                    workshop_content_paths=find_workshop_content_dirs(),
+                    legacy_runtime_residual_paths=find_legacy_runtime_residual_dirs(),
+                    running_dst_processes=processes)
+            except (OSError, ValueError, KeyError) as exc:
+                fresh_states = {}
+                errors.update({wid: exc for wid in ids})
+                context = None
+            for wid in ids:
+                if wid in errors:
+                    continue
+                try:
+                    fresh = fresh_states[int(wid)]
+                    if not fresh.can_cleanup_residual or fresh.evidence is None:
+                        raise ValueError(t("mod.update_cannot_cleanup"))
+                    content_path = fresh.evidence.workshop_content_path or fresh.evidence.residual_path
+                    deleted_any = False
+                    if content_path is not None and (not empty_only or _is_empty_directory(content_path)):
+                        delete_workshop_residual(int(wid), content_path, fresh.evidence.steam_state, context=context)
+                        deleted_any = True
+                    if not empty_only:
+                        for runtime_path in fresh.evidence.legacy_runtime_residual_paths:
+                            delete_legacy_runtime_residual(int(wid), runtime_path, fresh.evidence.steam_state,
+                                                           context=context)
+                            deleted_any = True
+                    if not deleted_any:
+                        raise ValueError(t("mod.update_cleanup_empty_changed"))
+                    cleaned.append(wid)
+                except (OSError, ValueError, KeyError) as exc:
+                    errors[wid] = exc
+            return cleaned, errors
+
+        def done(result) -> None:
+            cleaned, errors = result
+            self._cleanup_running.difference_update(ids)
+            self._apply_cleaned_items(cleaned)
+            self._show_state_notice("")
+            self._render_rows()
+            if errors:
+                details = "\n".join(f"workshop-{wid}: {error}"
+                                    for wid, error in sorted(errors.items(), key=lambda item: int(item[0])))
+                dialogs.show_error(self, t("mod.update_cleanup_residual_title"),
+                                   t("mod.update_cleanup_all_result", success=len(cleaned),
+                                     failed=len(errors), details=details))
+            elif bulk:
+                dialogs.show_toast(self, t("mod.update_cleanup_all_done_toast", count=len(cleaned)))
+            else:
+                dialogs.show_toast(self, t("mod.update_cleanup_residual_done_toast"))
+
+        def error(exc: Exception) -> None:
+            self._cleanup_running.difference_update(ids)
+            self._show_state_notice("")
+            self._render_rows()
+            dialogs.show_error(self, t("mod.update_cleanup_residual_title"), str(exc))
+
+        run_async(work, done, error)
+
+    def _apply_cleaned_items(self, cleaned_ids: list[str]) -> None:
+        changed_main_list = False
+        page = self.page
+        for wid in cleaned_ids:
+            self._states.pop(wid, None)
+            numeric_id = int(wid)
+            page._workshop_status_cache.pop(numeric_id, None)
+            page._workshop_status_cache.pop(wid, None)
+            self._selected.discard(wid)
+            self._ids = [item for item in self._ids if item != wid]
+            mod_keys = (wid, f"workshop-{wid}")
+            for key in mod_keys:
+                changed_main_list = page._mod_data.pop(key, None) is not None or changed_main_list
+                page._mod_infos.pop(key, None)
+                page._mod_paths.pop(key, None)
+                page._icon_imgs.pop(key, None)
+        if changed_main_list:
+            page._update_scan_status_label()
+            page._render_list()
+        if cleaned_ids:
+            page.ctx.mod_catalog.invalidate(Platform.STEAM)
+            page._workshop_status_checked_at = 0.0
+            page._update_workshop_update_hint()
