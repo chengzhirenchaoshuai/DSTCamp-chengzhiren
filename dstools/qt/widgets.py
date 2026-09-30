@@ -3,7 +3,7 @@
 颜色一律在 paintEvent 里现查 ``theme.color()``；子控件默认透明，能直接透出主窗口画的背景图。
 """
 
-from PySide6.QtCore import QRect, QRectF, Qt, Signal
+from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -119,6 +119,15 @@ class PillTabBar(QWidget):
 
     def _font(self):
         return theme.font(self._font_size_key) if self._font_size_key else self.font()
+
+    def sizeHint(self) -> QSize:
+        # 没有这个重写，装进 QHBoxLayout 跟别的控件抢横向空间（尤其是后面跟了
+        # addStretch() 时）会被挤成 0 宽——纯放在 QVBoxLayout 里独占一行时不会
+        # 出问题（布局本来就会把整行宽度让给唯一的子控件），Mod 管理页"筛选"这排
+        # 就是前一种布局，真机反馈过页签压根不可见/点不到。
+        rects = self._rects()
+        width = int(rects[-1].right()) + 24 if rects else 0
+        return QSize(width, self.height())
 
     def mouseMoveEvent(self, event):
         hover = next((i for i, r in enumerate(self._rects()) if r.contains(event.position())), -1)
