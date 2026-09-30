@@ -5,7 +5,7 @@ font_style_choice），两套界面互相可见。颜色一律通过 ``theme.col
 缓存；自绘控件在 paintEvent 里取色，切主题后整窗重绘即可，不需要逐个控件通知。
 """
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QPoint, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
@@ -50,8 +50,24 @@ def _patch_combo_popup_width() -> None:
     def _show_popup(self) -> None:
         _ORIGINAL_COMBO_SHOW_POPUP(self)
         popup = self.view().parentWidget()
-        if popup is not None:
-            popup.setFixedWidth(max(10, self.width() - 6))
+        if popup is None:
+            return
+        # 原生弹出窗口本身不透明——QSS 里给 QAbstractItemView 设的 rgba() 只是跟这
+        # 层不透明底色混合，画出来还是一块实色（真机验证过，grab() 出来的像素
+        # alpha 恒为 255）。要真的透出桌面背景，得让弹出窗口本身开启逐像素透明，
+        # Windows 上这个属性只有在窗口重新创建时才生效，切换后必须 hide()+show()
+        # 一次，不能只是设个 attribute 就完事。只需要在这一个 QComboBox 第一次弹出
+        # 时补一次，之后原生容器会被复用，不用每次都重来。
+        if not popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground):
+            popup.hide()
+            popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            popup.setStyleSheet("background: transparent;")
+            popup.show()
+        width = max(10, self.width() - 6)
+        popup.setFixedWidth(width)
+        # 默认左对齐在下拉框左边缘，稍微收窄后会明显偏左——按下拉框居中重新摆放。
+        left = self.mapToGlobal(QPoint(0, 0)).x() + (self.width() - width) // 2
+        popup.move(left, popup.y())
 
     QComboBox.showPopup = _show_popup
 
@@ -152,7 +168,7 @@ class Theme(QObject):
             QComboBox:hover {{ border-color: {c['ACCENT']}; }}
             QComboBox::drop-down {{ border: none; width: 22px; }}
             QComboBox::down-arrow {{ image: url({_DOWN_ARROW_PATH}); width: 10px; height: 6px; }}
-            QComboBox QAbstractItemView {{ background: {_rgba(c['CARD_BG'], 160)}; color: {c['TEXT']};
+            QComboBox QAbstractItemView {{ background: {_rgba(c['CARD_BG'], 110)}; color: {c['TEXT']};
                 border: 1px solid {c['CARD_BORDER']}; selection-background-color: {c['PRIMARY_LIGHT']};
                 selection-color: {c['TEXT']}; outline: none; }}
             QComboBox QAbstractItemView::item {{ padding: 2px 6px; }}
