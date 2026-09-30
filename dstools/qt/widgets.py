@@ -80,13 +80,14 @@ class PillTabBar(QWidget):
     current_changed = Signal(int)
 
     def __init__(self, labels: list[str], parent=None, height: int = 44, pill_height: int = 34,
-                 font_size_key: str | None = None):
+                 font_size_key: str | None = None, gap: int = 6):
         super().__init__(parent)
         self._labels = list(labels)
         self._index = 0
         self._hover = -1
         self._pill_h = pill_height
         self._font_size_key = font_size_key  # None 表示用应用默认字体；子页签条传较小的字号键
+        self._gap = gap  # 页签之间的间距；Mod 管理页筛选这排真机反馈过嫌宽，传小一点
         self.setFixedHeight(height)
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -114,7 +115,7 @@ class PillTabBar(QWidget):
         rects = []
         for width in widths:
             rects.append(QRectF(x, top, width, self._pill_h))
-            x += width + 6
+            x += width + self._gap
         return rects
 
     def _font(self):
