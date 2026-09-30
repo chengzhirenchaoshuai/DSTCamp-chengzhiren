@@ -215,7 +215,9 @@ class CreationWizardDialog(QDialog):
     def __init__(self, ctx):
         super().__init__()
         self.ctx = ctx
-        self.setWindowTitle(t("app.title") + " · " + t("save.create_server_save"))
+        # app.title 是"DSTCamp · 本地服务器管理"，这个向导窗口不属于本地服务器页，
+        # 只取品牌名前缀，不带"本地服务器管理"这半截（真机反馈过标题看着奇怪）。
+        self.setWindowTitle(t("app.title").split(" · ")[0] + " · " + t("save.create_server_save"))
         self.resize(1400, 860)
 
         self._plan_master: creation.WorldShardPlan | None = None
