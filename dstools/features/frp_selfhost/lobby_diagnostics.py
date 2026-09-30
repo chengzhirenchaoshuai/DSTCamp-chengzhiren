@@ -9,9 +9,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Callable
-
-import paramiko
+from typing import TYPE_CHECKING, Callable
 
 from dstools.features.frp_selfhost.mihomo_api import (
     MihomoApiError,
@@ -21,6 +19,8 @@ from dstools.features.frp_selfhost.mihomo_api import (
 from dstools.features.frp_selfhost.remote_deploy import KNOWN_HOSTS_PATH, SSH_KEY_PATH
 from dstools.features.frp_selfhost.wireguard import WIREGUARD_INTERFACE
 
+if TYPE_CHECKING:
+    import paramiko
 
 ProgressFn = Callable[[str, str], None]
 _EXTERNAL_PORT_RE = re.compile(r"mostRecentExternalPort first time set to (\d+)")
@@ -224,6 +224,8 @@ class _RemoteCollector:
         return channel
 
     def _read_capture(self, channel: paramiko.Channel, kind: str) -> None:
+        import paramiko
+
         buffer = ""
         try:
             while not self.cancel_event.is_set():
@@ -268,6 +270,8 @@ class _RemoteCollector:
                 self.evidence.wg_non_stun_bytes += length
 
     def _run(self) -> None:
+        import paramiko
+
         client = paramiko.SSHClient()
         self._client = client
         readers: list[threading.Thread] = []

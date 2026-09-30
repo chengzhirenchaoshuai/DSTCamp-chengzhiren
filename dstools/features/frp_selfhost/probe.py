@@ -8,10 +8,10 @@
 "探测不到"，调用方按"--"展示，不弹错误框打断用户。
 """
 
+from __future__ import annotations
+
 import time
 from dataclasses import dataclass, field
-
-import paramiko
 
 from dstools.features.frp_selfhost.remote_deploy import (
     KNOWN_HOSTS_PATH, SSH_KEY_PATH, classify_permission, has_local_key,
@@ -106,6 +106,8 @@ def probe_server_status(host: str, port: int, username: str, connect_timeout: fl
     """同步阻塞，调用方要自己放到后台线程跑。"""
     if not has_local_key():
         return ServerStatus(reachable=False, error="尚未完成初次鉴权")
+
+    import paramiko
 
     try:
         pkey = paramiko.Ed25519Key.from_private_key_file(str(SSH_KEY_PATH))

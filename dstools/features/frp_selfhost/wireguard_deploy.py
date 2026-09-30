@@ -6,8 +6,6 @@ import re
 import secrets
 from typing import Callable
 
-import paramiko
-
 from dstools.features.frp_selfhost.remote_deploy import (
     KNOWN_HOSTS_PATH,
     SSH_KEY_PATH,
@@ -156,6 +154,8 @@ def deploy_wireguard_via_ssh(
 
     if not SSH_KEY_PATH.is_file() or not KNOWN_HOSTS_PATH.is_file():
         raise RemoteDeployError("SSH 私钥或主机信任记录不存在，请重新完成初次鉴权")
+    import paramiko
+
     client = paramiko.SSHClient()
     client.load_host_keys(str(KNOWN_HOSTS_PATH))
     client.set_missing_host_key_policy(paramiko.RejectPolicy())

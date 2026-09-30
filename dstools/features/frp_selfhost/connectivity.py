@@ -9,10 +9,10 @@ UDP，没有连接语义，收不到响应是正常情况（协议不回应陌�
 应"，不当成"可达"。
 """
 
+from __future__ import annotations
+
 import socket
 import time
-
-import paramiko
 
 from dstools.features.frp_selfhost.remote_deploy import (
     KNOWN_HOSTS_PATH, SSH_KEY_PATH, check_remote_permission, has_local_key,
@@ -77,6 +77,8 @@ class TcpdumpProbe:
     """
 
     def __init__(self, ssh_host: str, ssh_port: int, ssh_username: str, connect_timeout: float = 8.0):
+        import paramiko
+
         self.available = False
         # "not_authenticated" / "connect_failed" / "no_permission" / "no_tcpdump"
         self.unavailable_reason: str | None = None

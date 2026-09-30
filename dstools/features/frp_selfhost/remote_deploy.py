@@ -26,12 +26,21 @@ deploy.py 生成的脚本和（架构匹配时）frps 二进制，不跑其它�
 小到"实际部署的这几秒钟"。
 """
 
+from __future__ import annotations
+
 import gzip
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
-import paramiko
+# `paramiko` 顶层 import 要经过 `cryptography` 的 OpenSSL 绑定初始化，单独这一句就要
+# 300ms+（真机测过）。这个模块是 qt/selfhost_panel.py 的必经依赖，而那个面板在应用
+# 启动时就被无条件构造（属于内网穿透页），所以之前每次启动都会白付这份代价，哪怕
+# 用户根本不用"自建节点"这个功能。改成按函数体内局部 import，只有真的发起 SSH 操
+# 作（生成密钥、授权、部署等）时才第一次真正付费；`from __future__ import annotations`
+# 让类型注解里的 `paramiko.SSHClient` 不需要在模块加载时就把它导入进来。
+if TYPE_CHECKING:
+    import paramiko
 
 from dstools.features.frp_selfhost import deploy
 from dstools.shared.resource_paths import security_dir, tool_binary_dir
@@ -70,23 +79,28 @@ class RemoteDeployCancelled(RemoteDeployError):
     "取消"和"真的失败"时用 isinstance 判断。"""
 
 
-class _TOFUPolicy(paramiko.MissingHostKeyPolicy):
+def _tofu_policy(confirm_host_key: ConfirmHostKeyFn) -> "paramiko.MissingHostKeyPolicy":
     """本地 known_hosts 里没有这个主机时才会被调用——如果本地已经记过
     这个主机但这次拿到的密钥对不上，paramiko 在调用这个策略之前就已经
     因为 load_host_keys() 里的记录不匹配而报错（见 deploy_via_ssh 里
     对 BadHostKeyException 的单独处理），根本不会走到这里，所以这里只
-    需要处理"完全没见过这个主机"的情况。"""
+    需要处理"完全没见过这个主机"的情况。类定义放函数体内部——基类要用
+    到 paramiko，不能在模块顶层 import（见文件顶部说明）。"""
+    import paramiko
 
-    def __init__(self, confirm_host_key: ConfirmHostKeyFn):
-        self._confirm = confirm_host_key
+    class _TOFUPolicy(paramiko.MissingHostKeyPolicy):
+        def __init__(self, confirm_host_key: ConfirmHostKeyFn):
+            self._confirm = confirm_host_key
 
-    def missing_host_key(self, client, hostname, key):
-        fingerprint = key.get_fingerprint().hex(":")
-        if not self._confirm(hostname, f"{key.get_name()} {fingerprint}"):
-            raise paramiko.SSHException("用户未确认信任该服务器的主机密钥，已取消连接")
-        client.get_host_keys().add(hostname, key.get_name(), key)
-        KNOWN_HOSTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        client.get_host_keys().save(str(KNOWN_HOSTS_PATH))
+        def missing_host_key(self, client, hostname, key):
+            fingerprint = key.get_fingerprint().hex(":")
+            if not self._confirm(hostname, f"{key.get_name()} {fingerprint}"):
+                raise paramiko.SSHException("用户未确认信任该服务器的主机密钥，已取消连接")
+            client.get_host_keys().add(hostname, key.get_name(), key)
+            KNOWN_HOSTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            client.get_host_keys().save(str(KNOWN_HOSTS_PATH))
+
+    return _TOFUPolicy(confirm_host_key)
 
 
 def classify_permission(uid: str, sudo_ok: bool) -> str:
@@ -156,10 +170,12 @@ def authorize_key_on_server(
     """用密码登录一次，把公钥追加进服务器的 ~/.ssh/authorized_keys——
     重复调用是幂等的（已经追加过同一行就不会再加一遍）。这一步之后就
     可以关掉密码连接，改用 verify_key_login() 验证私钥能不能登录。"""
+    import paramiko
+
     client = paramiko.SSHClient()
     if KNOWN_HOSTS_PATH.exists():
         client.load_host_keys(str(KNOWN_HOSTS_PATH))
-    client.set_missing_host_key_policy(_TOFUPolicy(confirm_host_key))
+    client.set_missing_host_key_policy(_tofu_policy(confirm_host_key))
     try:
         on_log(f"正在用密码连接 {host}:{port} ...")
         client.connect(hostname=host, port=port, username=username, password=password,
@@ -204,6 +220,8 @@ def verify_key_login(
     自己骗自己"应该成功了"，是真的拿这把钥匙敲一次门。失败直接抛
     RemoteDeployError，不返回 False 让调用方误以为是"可以重试"的普通
     情况。"""
+    import paramiko
+
     pkey = paramiko.Ed25519Key.from_private_key_file(str(SSH_KEY_PATH))
     client = paramiko.SSHClient()
     if KNOWN_HOSTS_PATH.exists():
@@ -233,6 +251,8 @@ def _detect_remote_arch(client: paramiko.SSHClient) -> str:
     deploy.py 里那份 case 分支的映射表一致，不是猜的。识别不出来（不
     认识的架构，或者命令本身失败）返回空字符串，调用方按"不匹配任何
     已打包的二进制"处理，退回脚本自己下载那条路径。"""
+    import paramiko
+
     try:
         _stdin, stdout, _stderr = client.exec_command("uname -m", timeout=10)
         machine = stdout.read().decode("utf-8", errors="replace").strip()
@@ -323,6 +343,8 @@ def deploy_via_ssh(
     程会话发 SIGHUP）再抛异常。"""
     import secrets
 
+    import paramiko
+
     def _check_cancelled():
         if cancel_event is not None and cancel_event.is_set():
             raise RemoteDeployCancelled("用户已取消部署")
@@ -330,7 +352,7 @@ def deploy_via_ssh(
     client = paramiko.SSHClient()
     if KNOWN_HOSTS_PATH.exists():
         client.load_host_keys(str(KNOWN_HOSTS_PATH))
-    client.set_missing_host_key_policy(_TOFUPolicy(confirm_host_key))
+    client.set_missing_host_key_policy(_tofu_policy(confirm_host_key))
 
     connect_kwargs = dict(hostname=host, port=port, username=username,
                           timeout=connect_timeout, banner_timeout=connect_timeout,
