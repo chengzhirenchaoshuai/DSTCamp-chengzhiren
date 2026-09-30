@@ -801,7 +801,7 @@ class SakuraPage(Page):
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
-        card = Card()
+        card = Card(alpha=0, border=True)  # 内部全透明，跟其它主页签统一
         root.addWidget(card)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(0, 6, 0, 0)

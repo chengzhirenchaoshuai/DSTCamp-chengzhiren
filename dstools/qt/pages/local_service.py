@@ -43,7 +43,7 @@ from dstools.qt.local_console import ConsolePane, status_color
 from dstools.qt.pages.base import Page
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async, run_async_with_log
-from dstools.qt.widgets import Banner
+from dstools.qt.widgets import Banner, Card
 from dstools.shared.app_settings import (
     get_backup_auto_enabled, get_backup_interval_minutes, get_dedicated_server_extra_args,
     get_global_tokens, get_sakura_token, get_selfhost_frp_mapping,
@@ -102,6 +102,7 @@ class _ShardRow(QWidget):
         self.shard = shard
         layout = QHBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(3)
         self.name_label = QLabel(shard.name)
         self.name_label.setFixedWidth(90)
         self.status_label = QLabel()
@@ -249,7 +250,14 @@ class LocalServicePage(Page):
         # 切换信号，不依赖 Page.load() 的懒加载闸门。
         ctx.cluster_changed.connect(self.on_cluster_changed)
 
-        root = QVBoxLayout(self)
+        # 跟世界设置/存档信息/内网穿透这几个主页签同一个外壳：外圈一圈主题色圆角
+        # 边框，内部全透明（alpha=0），透出主窗口背景图；之前这个页没套这层，真机
+        # 反馈过跟其它页签不统一。
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(24, 12, 24, 12)
+        card = Card(alpha=0, border=True)
+        page_layout.addWidget(card)
+        root = QVBoxLayout(card)
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(6)
 
@@ -329,6 +337,7 @@ class LocalServicePage(Page):
         layout.setContentsMargins(0, 0, 0, 0)
 
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(3)
         self._start_all_btn = QPushButton(t("local.start_all_btn"))
         self._stop_all_btn = QPushButton(t("local.stop_all_btn"))
         self._restart_all_btn = QPushButton(t("local.restart_all_btn"))
@@ -345,7 +354,7 @@ class LocalServicePage(Page):
         buttons = (self._start_all_btn, self._stop_all_btn, self._restart_all_btn, self._logs_btn)
         for button in buttons:
             button.setFont(theme.font("FONT_SIZE_SM"))
-        fixed_width = max(button.sizeHint().width() for button in buttons) + 8
+        fixed_width = max(button.sizeHint().width() for button in buttons)
         for button in buttons:
             button.setFixedWidth(fixed_width)
             btn_row.addWidget(button)

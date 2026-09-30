@@ -47,7 +47,7 @@ from dstools.qt.mod_recommend_dialog import RecommendModsDialog
 from dstools.qt.pages.base import Page
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
-from dstools.qt.widgets import Banner, PillTabBar
+from dstools.qt.widgets import Banner, Card, PillTabBar
 from dstools.shared import app_settings, tex_convert
 
 _FILTER_DEBOUNCE_MS = 150
@@ -82,7 +82,14 @@ class ModPage(Page):
         self._workshop_status_error = ""
         self._workshop_log_dialog = None
 
-        root = QVBoxLayout(self)
+        # 跟世界设置/存档信息/内网穿透这几个主页签同一个外壳：外圈一圈主题色圆角
+        # 边框，内部全透明（alpha=0），之前这个页没套这层，真机反馈过跟其它页签
+        # 不统一。
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(24, 12, 24, 12)
+        card = Card(alpha=0, border=True)
+        page_layout.addWidget(card)
+        root = QVBoxLayout(card)
         root.setContentsMargins(10, 10, 10, 10)
 
         location_row = QHBoxLayout()

@@ -283,8 +283,8 @@ class ServerConfigPage(Page):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 12, 24, 12)
         # 房间设置/世界设置两个子页签内部还各自套了一层 Card（见下方 column/card），
-        # 叠在一起看着深浅不一；先试试整页全部改成全透明（不画任何底色）的效果。
-        card = Card(alpha=0)
+        # 内部全透明（不画底色）；外层这圈边框跟其它主页签统一。
+        card = Card(alpha=0, border=True)
         outer.addWidget(card)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(14, 10, 14, 10)

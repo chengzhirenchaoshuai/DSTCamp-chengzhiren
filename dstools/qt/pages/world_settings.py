@@ -34,7 +34,7 @@ class WorldSettingsPage(Page):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(24, 12, 24, 12)
-        card = Card()
+        card = Card(alpha=0, border=True)  # 内部全透明，跟其它主页签统一
         outer.addWidget(card)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(18, 12, 18, 12)
