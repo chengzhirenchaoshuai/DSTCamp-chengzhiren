@@ -265,6 +265,9 @@ class LocalServicePage(Page):
         self._console_tabs = QTabWidget()
         splitter.addWidget(self._console_tabs)
         splitter.setSizes([320, 900])
+        # 默认隐藏：一进页面就占大半个页面宽度的空控制台很突兀，真机反馈过。
+        # QSplitter 对隐藏的子控件会自动收起宽度和拖拽手柄，不需要额外处理布局。
+        self._console_tabs.setVisible(False)
 
         self._detect_install_dir()
         self._poll_timer = QTimer(self, interval=_POLL_MS)
@@ -452,6 +455,11 @@ class LocalServicePage(Page):
         for (cluster_path, shard_name), pane in self._console_panes.items():
             if cluster_path == current_path:
                 self._console_tabs.addTab(pane, shard_name)
+        self._update_console_panel_visibility()
+
+    def _update_console_panel_visibility(self) -> None:
+        """没有任何控制台标签时收起右侧面板；启动第一个世界/切到有世界在跑的存档才展开。"""
+        self._console_tabs.setVisible(self._console_tabs.count() > 0)
 
     # ── 安装目录/Steam 更新 ─────────────────────────────────────────────
     def _detect_install_dir(self) -> None:
@@ -1051,6 +1059,7 @@ class LocalServicePage(Page):
             if str(cluster.path) == (str(self.get_cluster().path) if self.get_cluster() else None):
                 self._console_tabs.addTab(pane, shard.name)
                 self._console_tabs.setCurrentWidget(pane)
+        self._update_console_panel_visibility()
         self._refresh_shard_rows(self.get_cluster())
 
     def _close_console_pane(self, key, cluster, shard) -> None:
@@ -1075,6 +1084,7 @@ class LocalServicePage(Page):
             self._console_tabs.removeTab(index)
         pane.setParent(None)
         pane.deleteLater()
+        self._update_console_panel_visibility()
 
     def _stop_and_then(self, cluster, shard, on_done) -> None:
         def _dst_stopped(_proc) -> None:

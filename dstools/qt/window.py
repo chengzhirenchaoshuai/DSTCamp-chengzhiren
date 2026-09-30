@@ -301,7 +301,10 @@ class ClusterBar(QWidget):
         self._ctx = ctx
         self._populating = False
         row = QHBoxLayout(self)
-        row.setContentsMargins(24, 4, 24, 4)
+        # 右边距跟各页面内容区的 root.setContentsMargins(8, ...) 对齐（主窗口外壳本身
+        # 还有 2px 边框），"刷新"才能跟"校验服务器完整性"这类页面级按钮一样贴右边——
+        # 之前左右都用 24，"刷新"比页面按钮明显更靠里，真机反馈过。
+        row.setContentsMargins(24, 4, 8, 4)
         row.setSpacing(10)
         self._platform_label, self._archive_label = QLabel(), QLabel()
         for label in (self._platform_label, self._archive_label):
