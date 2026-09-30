@@ -191,8 +191,8 @@ class WorkshopUpdateDialog(QDialog):
         inner = QWidget()
         inner.setAutoFillBackground(False)
         self._rows_layout = QVBoxLayout(inner)
-        self._rows_layout.setContentsMargins(0, 0, 0, 0)
-        self._rows_layout.setSpacing(0)
+        self._rows_layout.setContentsMargins(0, 6, 0, 6)
+        self._rows_layout.setSpacing(6)
         area.setWidget(inner)
         list_layout.addWidget(area)
 
@@ -355,12 +355,15 @@ class WorkshopUpdateDialog(QDialog):
         self._cleanup_all_btn.setEnabled(has_residual and not self._cleanup_running)
 
     def _make_row(self, wid: str, index: int) -> QWidget:
-        # "主题色和白色相间"——偶数行纯白、奇数行浅主题色，跟主页 Card 面板一个风格。
+        # 偶数行/奇数行交替，颜色跟主 Mod 列表（mod_panel.py._paint_row）同一对
+        # CARD_BG/CARD_BG_ALT——真机反馈过用 PRIMARY_LIGHT 交替色太深，改回跟主
+        # 列表一致的浅色调；每行套一个 Card（自带 CARD_BORDER 描边）+ 行间距，
+        # 才有"跟外层一样带边框"的独立卡片感，不是几行贴在一起看不出分界。
         # 用 Card（QPainter 自绘）而不是 setStyleSheet("background: ...")：给容器
         # 控件直接设不带选择器的 styleSheet 会连带压掉里面 QPushButton 的全局主题
         # 样式（真机验证过，按钮会变得跟父容器同色、完全看不出是个按钮），Card 走
         # paintEvent 画底色，不影响子控件正常吃到全局 QSS。
-        row = Card(radius=0, alpha=255, fill_key="CARD_BG" if index % 2 == 0 else "PRIMARY_LIGHT")
+        row = Card(radius=0, alpha=255, fill_key="CARD_BG_ALT" if index % 2 == 0 else "CARD_BG")
         row.setFixedHeight(_ROW_H)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(12, 4, 12, 4)
