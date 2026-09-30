@@ -5,7 +5,7 @@ font_style_choice），两套界面互相可见。颜色一律通过 ``theme.col
 缓存；自绘控件在 paintEvent 里取色，切主题后整窗重绘即可，不需要逐个控件通知。
 """
 
-from PySide6.QtCore import QObject, QPoint, Qt, Signal
+from PySide6.QtCore import QObject, QPoint, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
@@ -52,17 +52,11 @@ def _patch_combo_popup_width() -> None:
         popup = self.view().parentWidget()
         if popup is None:
             return
-        # 原生弹出窗口本身不透明——QSS 里给 QAbstractItemView 设的 rgba() 只是跟这
-        # 层不透明底色混合，画出来还是一块实色（真机验证过，grab() 出来的像素
-        # alpha 恒为 255）。要真的透出桌面背景，得让弹出窗口本身开启逐像素透明，
-        # Windows 上这个属性只有在窗口重新创建时才生效，切换后必须 hide()+show()
-        # 一次，不能只是设个 attribute 就完事。只需要在这一个 QComboBox 第一次弹出
-        # 时补一次，之后原生容器会被复用，不用每次都重来。
-        if not popup.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground):
-            popup.hide()
-            popup.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-            popup.setStyleSheet("background: transparent;")
-            popup.show()
+        # 试过给弹出窗口开 WA_TranslucentBackground 来真正透出桌面背景——真机反馈
+        # 弹出列表直接变成一整块纯黑，Windows 上这类原生弹出窗口（raster 方式画的
+        # QComboBoxPrivateContainer）开逐像素透明经常因为合成没接好而整块画黑，比
+        # "不够透明"更糟，已经改回去。现在只做窄一点 + QSS rgba() 跟其自身不透明
+        # 底色混合出的"浅一点的实色"，不是真的透出桌面。
         width = max(10, self.width() - 6)
         popup.setFixedWidth(width)
         # 默认左对齐在下拉框左边缘，稍微收窄后会明显偏左——按下拉框居中重新摆放。
