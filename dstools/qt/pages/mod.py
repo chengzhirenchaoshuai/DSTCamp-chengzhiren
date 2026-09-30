@@ -23,7 +23,9 @@ from dstools.features.local_service.dedicated_server import detect_external_shar
 from dstools.features.mod.cache import load_cached_result, save_result
 from dstools.features.mod.icons import get_cached_mod_icon_path, get_mod_icon_path, load_mod_icon_image
 from dstools.features.mod.legacy_v1 import find_legacy_packages, materialize_legacy_package_for_read
-from dstools.features.mod.list_model import build_mod_rows, localize_mod_name, merge_visible_mod_ids
+from dstools.features.mod.list_model import (
+    build_mod_rows, localize_mod_name, merge_visible_mod_ids, sort_mod_data,
+)
 from dstools.features.mod.local_version import resolve_local_version_target
 from dstools.features.mod.locations import resolve_mod_open_location
 from dstools.features.mod.manager import enable_mod, load_mod_overrides, save_mod_overrides, sync_mods
@@ -613,7 +615,11 @@ class ModPage(Page):
     def _apply_loaded_mods(self, gen: int, result: dict) -> None:
         if gen != self._refresh_gen:
             return
-        self._mod_data = result["mod_data"]
+        # 排序只在这里（真正重新加载数据时）做一次，跟 Tk 版和创建向导一致；
+        # 单纯切换某个 mod 的启用开关（_on_toggle）不重新排序，保存后再刷新
+        # 一次才会跳到新位置，点开关那一下不会让这一行立刻跳动。
+        priority_mod_id = luajit_injector.WORKSHOP_MOD_KEY if result["luajit_active"] else None
+        self._mod_data = sort_mod_data(result["mod_data"], result["mod_infos"], priority_mod_id=priority_mod_id)
         self._mod_infos = result["mod_infos"]
         self._mod_paths = result["mod_paths"]
         self._icon_imgs = result["icon_imgs"]

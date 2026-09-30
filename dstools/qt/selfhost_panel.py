@@ -352,6 +352,9 @@ class SelfHostPanel(QWidget):
         self._status_error_label.setWordWrap(True)
         layout.addWidget(self._status_error_label)
         self._shards_grid = QGridLayout()
+        # 拉伸因子全部给数据列后面的空列，数据列紧凑排列——跟 qt/pages/sakura.py
+        # 的樱花映射面板同一个坑同一个修法，见那边的详细说明。
+        self._shards_grid.setColumnStretch(4, 1)
         layout.addLayout(self._shards_grid)
         action_row = QHBoxLayout()
         self._action_btn = QPushButton(t("selfhost.enable_btn"))

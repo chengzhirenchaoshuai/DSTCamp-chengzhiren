@@ -256,6 +256,11 @@ class _SakuraMappingPanel(QWidget):
         root.addWidget(self._status_label)
 
         self._shards_grid = QGridLayout()
+        # 4 个数据列都不给拉伸因子——QGridLayout 在所有列拉伸因子都是 0 时会把多
+        # 出来的宽度平均分给每一列（真机反馈过"分片名"和"未映射"离得很远）；这里
+        # 显式在数据列后面占一个空列并把拉伸因子全部给它，数据列就只按内容需要的
+        # 宽度紧凑排列，跟 forms.py::FormGrid 的思路一致。
+        self._shards_grid.setColumnStretch(4, 1)
         root.addLayout(self._shards_grid)
 
         action_row = QHBoxLayout()
