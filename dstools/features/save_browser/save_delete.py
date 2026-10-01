@@ -1,53 +1,49 @@
-"""删除整个存档目录。"""
+"""删除存档：一律优先移到 Windows 回收站。"""
 
 from __future__ import annotations
 
-import os
-import stat
+import ctypes
+from ctypes import wintypes
 from pathlib import Path
 
-
-def _is_link_or_junction(path: Path) -> bool:
-    return path.is_symlink() or (hasattr(os.path, "isjunction") and os.path.isjunction(path))
-
-
-def _remove_readonly_file(path: Path) -> None:
-    try:
-        path.unlink()
-    except PermissionError:
-        # 只读文件（例如从压缩包解出来的存档）先去掉只读属性再删。
-        os.chmod(path, stat.S_IWRITE)
-        path.unlink()
+_FO_DELETE = 0x0003
+_FOF_SILENT = 0x0004            # 不显示进度窗口
+_FOF_NOCONFIRMATION = 0x0010    # 不再弹系统的"确定要删除吗"（程序里已经确认过）
+_FOF_ALLOWUNDO = 0x0040         # 放进回收站而不是直接删除
+_FOF_NOERRORUI = 0x0400         # 出错时不弹系统错误框，由程序自己提示
+_FOF_WANTNUKEWARNING = 0x4000   # 放不进回收站（太大/该盘没有回收站）时，由系统询问是否永久删除
 
 
-def delete_cluster_dir(cluster_path: Path) -> None:
-    """删除整个存档目录。
+class _SHFILEOPSTRUCTW(ctypes.Structure):
+    _fields_ = [
+        ("hwnd", wintypes.HWND),
+        ("wFunc", wintypes.UINT),
+        ("pFrom", wintypes.LPCWSTR),
+        ("pTo", wintypes.LPCWSTR),
+        ("fFlags", ctypes.c_ushort),
+        ("fAnyOperationsAborted", wintypes.BOOL),
+        ("hNameMappings", ctypes.c_void_p),
+        ("lpszProgressTitle", wintypes.LPCWSTR),
+    ]
 
-    不用 shutil.rmtree：存档里可能有指向 Mod 目录的 junction/符号链接，这里只删
-    链接本身（目录联接用 os.rmdir，文件链接用 unlink），绝不进入链接目标删除里面的
-    内容。任何一步失败（文件被游戏或服务器进程占用等）直接抛出异常，已删掉的部分
-    不回滚，调用方提示用户。"""
-    root = Path(cluster_path)
-    if _is_link_or_junction(root):
-        raise ValueError(f"存档路径是链接，拒绝删除：{root}")
+
+def recycle_cluster_dir(cluster_path: Path) -> None:
+    """把整个存档目录移到回收站。
+
+    回收站是整目录搬走，里面指向 Mod 目录的 junction 随目录一起进回收站，不会进入
+    链接目标删除任何东西。失败（文件被占用等）或用户在系统询问里取消时抛异常。"""
+    root = Path(cluster_path).resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"存档目录不存在：{root}")
-
-    def remove_tree(directory: Path) -> None:
-        with os.scandir(directory) as entries:
-            children = [Path(entry.path) for entry in entries]
-        for child in children:
-            if _is_link_or_junction(child):
-                # junction/目录符号链接用 rmdir 只删链接本身（目标失效的悬空链接也一样）；
-                # 文件符号链接 rmdir 会失败，退回 unlink。
-                try:
-                    os.rmdir(child)
-                except NotADirectoryError:
-                    child.unlink()
-            elif child.is_dir():
-                remove_tree(child)
-            else:
-                _remove_readonly_file(child)
-        os.rmdir(directory)
-
-    remove_tree(root)
+    operation = _SHFILEOPSTRUCTW()
+    operation.wFunc = _FO_DELETE
+    operation.pFrom = str(root) + "\0"  # pFrom 必须以两个 \0 结尾（ctypes 会再补一个）
+    operation.fFlags = (_FOF_ALLOWUNDO | _FOF_NOCONFIRMATION | _FOF_SILENT
+                        | _FOF_NOERRORUI | _FOF_WANTNUKEWARNING)
+    result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operation))
+    if operation.fAnyOperationsAborted:
+        raise OSError("删除已取消")
+    if result != 0:
+        raise OSError(f"移到回收站失败（错误码 0x{result:X}），文件可能正被游戏或其它程序占用")
+    if root.exists():
+        raise OSError("移到回收站后存档目录仍然存在，可能有文件被占用")

@@ -20,7 +20,7 @@ from dstools.features.save_browser.cluster_copy import (
     copy_local_cluster_to_server, suggest_new_cluster_name, validate_cluster_folder_name,
 )
 from dstools.features.save_browser.save_bundle import create_save_bundle, default_save_bundle_output_dir
-from dstools.features.save_browser.save_delete import delete_cluster_dir
+from dstools.features.save_browser.save_delete import recycle_cluster_dir
 from dstools.i18n import t
 from dstools.models import SaveSource
 from dstools.qt import dialogs
@@ -358,7 +358,7 @@ class SaveInfoPage(Page):
             return False
 
     def _on_delete(self) -> None:
-        """删除当前存档：可选先打包 ZIP 备份（存到存档目录之外）再删除。"""
+        """删除当前存档（移到回收站）：可选先打包 ZIP 备份（存到存档目录之外）再删除。"""
         cluster = self.ctx.selected_cluster()
         if cluster is None or self._delete_running:
             return
@@ -381,7 +381,7 @@ class SaveInfoPage(Page):
 
         def work():
             backup = create_save_bundle(cluster_path) if choice == "backup" else None
-            delete_cluster_dir(cluster_path)
+            recycle_cluster_dir(cluster_path)  # 两种删除方式都是移到回收站
             return backup
 
         def finish() -> None:
