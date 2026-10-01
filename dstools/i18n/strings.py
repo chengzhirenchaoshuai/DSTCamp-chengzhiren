@@ -475,6 +475,8 @@ STRINGS = {
         "token.clear_hold_confirm": "这只会清除 DSTCamp 的等待标记，不能让 Klei 立即释放房间注册。确定允许再次使用该令牌吗？",
         "token.remove_held_confirm": "该令牌仍标记为等待 Klei 释放或注册冲突，确定要从令牌池删除吗？",
         # 樱花映射
+        "sakura.section_account": "账户与节点",
+        "sakura.section_shards": "世界映射",
         "sakura.token_label": "API Token:",
         "sakura.token_prompt": "输入樱花内网穿透 API Token:",
         "sakura.token_invalid_hint": "Token 格式不正确（太短），请检查是否完整复制。",
@@ -1572,6 +1574,8 @@ STRINGS = {
         "token.clear_hold_confirm": "This only clears DSTCamp's waiting marker; it cannot make Klei release the room immediately. Allow this token to be used again?",
         "token.remove_held_confirm": "This token is still marked as awaiting Klei release or conflicting. Remove it from the pool anyway?",
         # 樱花映射
+        "sakura.section_account": "Account & Node",
+        "sakura.section_shards": "World Mapping",
         "sakura.token_label": "API Token:",
         "sakura.token_prompt": "Enter your SakuraFrp API Token:",
         "sakura.token_invalid_hint": "That doesn't look like a valid token (too short) -- check you copied the whole thing.",

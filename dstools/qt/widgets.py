@@ -5,7 +5,7 @@
 
 from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from dstools.qt.theme import theme
 
@@ -85,6 +85,21 @@ class Card(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
         radius = self._radius if self._radius is not None else 22
         painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+
+
+def section_card(title: str | None = None) -> tuple[Card, QVBoxLayout]:
+    """带可选标题的内容分区卡片，样式跟存档信息页"玩家概览"卡片一致；
+    返回 (卡片, 卡片内的纵向布局)，调用方往布局里继续加内容。"""
+    card = Card(radius=14, alpha=220, fill_key="CARD_BG_ALT")
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(16, 12, 16, 14)
+    layout.setSpacing(8)
+    if title:
+        heading = QLabel(title)
+        heading.setProperty("heading", True)
+        heading.setFont(theme.font("FONT_SIZE_BASE", bold=True))
+        layout.addWidget(heading)
+    return card, layout
 
 
 class PillTabBar(QWidget):

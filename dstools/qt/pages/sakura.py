@@ -12,7 +12,7 @@ import webbrowser
 
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QDialog, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QStackedWidget,
+    QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -31,7 +31,7 @@ from dstools.qt.pages.base import Page
 from dstools.qt.selfhost_panel import SelfHostPanel
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
-from dstools.qt.widgets import Card, PillTabBar
+from dstools.qt.widgets import Card, PillTabBar, section_card
 from dstools.shared import app_settings
 from dstools.shared.lan_mapping_guard import ensure_lan_free_for_mapping
 from dstools.shared.server_ports import stable_path_key
@@ -203,10 +203,17 @@ class _SakuraMappingPanel(QWidget):
         self._frpc_health: SakuraFrpcHealth | None = None
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
+        root.setContentsMargins(0, 10, 0, 0)
+        root.setSpacing(12)
 
+        # ── 分区一：账户与节点（Token/节点两行用网格让标签列对齐，下面是账户数据）
+        account_card, account_layout = section_card(t("sakura.section_account"))
+        form = QGridLayout()
+        form.setHorizontalSpacing(10)
+        form.setVerticalSpacing(8)
+        form.addWidget(QLabel(t("sakura.token_label")), 0, 0)
         row1 = QHBoxLayout()
-        row1.addWidget(QLabel(t("sakura.token_label")))
+        row1.setSpacing(8)
         self._token_label = QLabel()
         self._token_label.setFont(theme.font("FONT_SIZE_SM"))
         self._token_label.setStyleSheet(f"font-family: Consolas; color: {theme.hex('TEXT')};")
@@ -218,10 +225,11 @@ class _SakuraMappingPanel(QWidget):
         dashboard_btn.clicked.connect(lambda: webbrowser.open("https://www.natfrp.com/user/"))
         row1.addWidget(dashboard_btn)
         row1.addStretch()
-        root.addLayout(row1)
+        form.addLayout(row1, 0, 1)
 
+        form.addWidget(QLabel(t("sakura.node_label")), 1, 0)
         row2 = QHBoxLayout()
-        row2.addWidget(QLabel(t("sakura.node_label")))
+        row2.setSpacing(8)
         self._node_btn = QPushButton(t("sakura.node_none_selected"))
         self._node_btn.clicked.connect(self._open_node_picker)
         row2.addWidget(self._node_btn)
@@ -229,9 +237,19 @@ class _SakuraMappingPanel(QWidget):
         refresh_btn.clicked.connect(self._reload_async)
         row2.addWidget(refresh_btn)
         row2.addStretch()
-        root.addLayout(row2)
+        form.addLayout(row2, 1, 1)
+        form.setColumnStretch(1, 1)
+        account_layout.addLayout(form)
 
+        # 账户数据跟上面的操作行之间用一条细分隔线隔开，数据列之间拉开间距。
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background: {theme.hex('CARD_BORDER')}; border: none;")
+        account_layout.addSpacing(2)
+        account_layout.addWidget(divider)
         account_grid = QGridLayout()
+        account_grid.setHorizontalSpacing(36)
+        account_grid.setVerticalSpacing(2)
         self._account_value_labels = []
         for col, key in enumerate(("sakura.account_group", "sakura.account_speed", "sakura.account_traffic",
                                     "sakura.account_tunnels", "sakura.account_tunnels_used")):
@@ -243,44 +261,54 @@ class _SakuraMappingPanel(QWidget):
             value.setFont(theme.font("FONT_SIZE_MD", bold=True))
             account_grid.addWidget(value, 1, col)
             self._account_value_labels.append(value)
-        root.addLayout(account_grid)
+        account_grid.setColumnStretch(5, 1)
+        account_layout.addLayout(account_grid)
 
         self._recent_traffic_label = QLabel("")
         self._recent_traffic_label.setProperty("muted", True)
         self._recent_traffic_label.setFont(theme.font("FONT_SIZE_SM"))
-        root.addWidget(self._recent_traffic_label)
+        account_layout.addWidget(self._recent_traffic_label)
+        root.addWidget(account_card)
 
+        # ── 分区二：世界映射（分片列表 + 开启/关闭 + frpc 状态）
+        shards_card, shards_layout = section_card(t("sakura.section_shards"))
         self._status_label = QLabel("")
         self._status_label.setStyleSheet(f"color: {theme.hex('ERROR')};")
         self._status_label.setWordWrap(True)
-        root.addWidget(self._status_label)
+        shards_layout.addWidget(self._status_label)
 
         self._shards_grid = QGridLayout()
+        self._shards_grid.setHorizontalSpacing(18)
+        self._shards_grid.setVerticalSpacing(8)
         # 4 个数据列都不给拉伸因子——QGridLayout 在所有列拉伸因子都是 0 时会把多
         # 出来的宽度平均分给每一列（真机反馈过"分片名"和"未映射"离得很远）；这里
         # 显式在数据列后面占一个空列并把拉伸因子全部给它，数据列就只按内容需要的
         # 宽度紧凑排列，跟 forms.py::FormGrid 的思路一致。
         self._shards_grid.setColumnStretch(4, 1)
-        root.addLayout(self._shards_grid)
+        shards_layout.addLayout(self._shards_grid)
 
         action_row = QHBoxLayout()
+        action_row.setSpacing(12)
         self._action_btn = QPushButton(t("sakura.enable_btn"))
         self._action_btn.clicked.connect(self._on_action_btn)
         action_row.addWidget(self._action_btn)
-        action_row.addStretch()
-        root.addLayout(action_row)
 
+        # frpc 状态和启停按钮跟"开启/关闭映射"放在同一行，不再单独占一行。
         self._frpc_row = QWidget()
         frpc_layout = QHBoxLayout(self._frpc_row)
         frpc_layout.setContentsMargins(0, 0, 0, 0)
+        frpc_layout.setSpacing(8)
         self._frpc_status_label = QLabel(t("sakura.frpc_status_stopped"))
         frpc_layout.addWidget(self._frpc_status_label)
         self._frpc_toggle_btn = QPushButton(t("sakura.frpc_start_btn"))
         self._frpc_toggle_btn.clicked.connect(self._on_frpc_toggle)
         frpc_layout.addWidget(self._frpc_toggle_btn)
-        frpc_layout.addStretch()
-        root.addWidget(self._frpc_row)
+        action_row.addWidget(self._frpc_row)
+        action_row.addStretch()
+        shards_layout.addSpacing(4)
+        shards_layout.addLayout(action_row)
         self._frpc_row.setVisible(False)
+        root.addWidget(shards_card)
         root.addStretch()
 
         self._render_account_info("--", "--", "--", "--", "--")

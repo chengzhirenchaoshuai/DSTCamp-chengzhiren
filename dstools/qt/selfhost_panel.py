@@ -33,7 +33,7 @@ from dstools.models import SaveSource
 from dstools.qt import dialogs
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
-from dstools.qt.widgets import PillTabBar, ToggleSwitch
+from dstools.qt.widgets import PillTabBar, ToggleSwitch, section_card
 from dstools.shared import app_settings
 from dstools.shared.lan_mapping_guard import ensure_lan_free_for_mapping
 from dstools.shared.resource_paths import data_dir, runtime_tool_path
@@ -278,10 +278,18 @@ class SelfHostPanel(QWidget):
         self._lobby_dialog: _LobbySettingsDialog | None = None
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
+        root.setContentsMargins(0, 10, 0, 0)
+        root.setSpacing(12)
 
+        # ── 服务器状态分区：标题和"立即检测/节点管理"按钮同一行，下面三行状态信息
+        status_card, status_layout = section_card()
+        status_layout.setSpacing(6)
         status_row = QHBoxLayout()
-        status_row.addWidget(self.text_label_bold(t("selfhost.server_status_title")))
+        status_row.setSpacing(8)
+        status_heading = QLabel(t("selfhost.server_status_title"))
+        status_heading.setProperty("heading", True)
+        status_heading.setFont(theme.font("FONT_SIZE_BASE", bold=True))
+        status_row.addWidget(status_heading)
         status_row.addStretch()
         self._probe_btn = QPushButton(t("selfhost.probe_now_btn"))
         self._probe_btn.clicked.connect(self._run_probe_manual)
@@ -289,15 +297,16 @@ class SelfHostPanel(QWidget):
         self._manage_btn = QPushButton(t("selfhost.node_manage_btn"))
         self._manage_btn.clicked.connect(self._open_node_settings)
         status_row.addWidget(self._manage_btn)
-        root.addLayout(status_row)
+        status_layout.addLayout(status_row)
 
         line1 = QHBoxLayout()
+        line1.setSpacing(12)
         self._status_label = QLabel(t("selfhost.status_unknown"))
         line1.addWidget(self._status_label)
         self._permission_label = _muted(t("selfhost.permission_display", permission=t("selfhost.permission_unknown")))
         line1.addWidget(self._permission_label)
         line1.addStretch()
-        root.addLayout(line1)
+        status_layout.addLayout(line1)
 
         line2 = QHBoxLayout()
         line2.addWidget(_muted(t("selfhost.server_ip_label")))
@@ -309,15 +318,17 @@ class SelfHostPanel(QWidget):
         self._ip_eye_btn.clicked.connect(self._toggle_ip_visibility)
         line2.addWidget(self._ip_eye_btn)
         line2.addStretch()
-        root.addLayout(line2)
+        status_layout.addLayout(line2)
 
         line3 = QHBoxLayout()
+        line3.setSpacing(16)
         self._resource_label = _muted(t("selfhost.resource_unknown"))
         line3.addWidget(self._resource_label)
         self._checked_label = _muted(t("selfhost.never_checked"))
         line3.addWidget(self._checked_label)
         line3.addStretch()
-        root.addLayout(line3)
+        status_layout.addLayout(line3)
+        root.addWidget(status_card)
 
         self._feature_tabs = _make_pill_bar([t("selfhost.feature_tab_frp"), t("selfhost.feature_tab_lobby")])
         root.addWidget(self._feature_tabs)
@@ -337,52 +348,55 @@ class SelfHostPanel(QWidget):
         self._refresh_server_status_card()
         self._maybe_start_probe_cycle()
 
-    @staticmethod
-    def text_label_bold(text: str) -> QLabel:
-        label = QLabel(text)
-        label.setFont(theme.font("FONT_SIZE_SM", bold=True))
-        return label
-
     # ── FRP 映射子页 ────────────────────────────────────────────────────
     def _build_frp_page(self, page: QWidget) -> None:
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 6, 0, 0)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 8, 0, 0)
+        card, layout = section_card(t("sakura.section_shards"))
         self._status_error_label = QLabel("")
         self._status_error_label.setStyleSheet(f"color: {theme.hex('ERROR')};")
         self._status_error_label.setWordWrap(True)
         layout.addWidget(self._status_error_label)
         self._shards_grid = QGridLayout()
+        self._shards_grid.setHorizontalSpacing(18)
+        self._shards_grid.setVerticalSpacing(8)
         # 拉伸因子全部给数据列后面的空列，数据列紧凑排列——跟 qt/pages/sakura.py
         # 的樱花映射面板同一个坑同一个修法，见那边的详细说明。
         self._shards_grid.setColumnStretch(4, 1)
         layout.addLayout(self._shards_grid)
         action_row = QHBoxLayout()
+        action_row.setSpacing(12)
         self._action_btn = QPushButton(t("selfhost.enable_btn"))
         self._action_btn.clicked.connect(self._on_action_btn)
         action_row.addWidget(self._action_btn)
         self._conn_check_btn = QPushButton(t("selfhost.conn_check_btn"))
         self._conn_check_btn.clicked.connect(self._check_connectivity)
         action_row.addWidget(self._conn_check_btn)
-        action_row.addStretch()
-        layout.addLayout(action_row)
+        # frpc 状态和启停按钮并入操作行，跟樱花映射面板一致。
         self._frpc_row = QWidget()
         frpc_layout = QHBoxLayout(self._frpc_row)
         frpc_layout.setContentsMargins(0, 0, 0, 0)
+        frpc_layout.setSpacing(8)
         self._frpc_status_label = QLabel(self._frpc_status_text(False))
         frpc_layout.addWidget(self._frpc_status_label)
         self._frpc_toggle_btn = QPushButton(t("sakura.frpc_start_btn"))
         self._frpc_toggle_btn.clicked.connect(self._on_frpc_toggle)
         frpc_layout.addWidget(self._frpc_toggle_btn)
-        frpc_layout.addStretch()
-        layout.addWidget(self._frpc_row)
+        action_row.addWidget(self._frpc_row)
+        action_row.addStretch()
+        layout.addSpacing(4)
+        layout.addLayout(action_row)
         self._frpc_row.setVisible(False)
-        layout.addStretch()
+        page_layout.addWidget(card)
+        page_layout.addStretch()
 
     # ── 大厅加速子页 ────────────────────────────────────────────────────
     def _build_lobby_page(self, page: QWidget) -> None:
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(0, 6, 0, 0)
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 8, 0, 0)
+        card, layout = section_card()
         row = QHBoxLayout()
+        row.setSpacing(10)
         row.addWidget(QLabel(t("selfhost.lobby_enable_label")))
         self._lobby_switch = ToggleSwitch(app_settings.get_lobby_accel_enabled())
         self._lobby_switch.toggled.connect(self._on_lobby_accel_toggle)
@@ -398,21 +412,27 @@ class SelfHostPanel(QWidget):
         row.addWidget(self._lobby_settings_btn)
         layout.addLayout(row)
 
-        mihomo_row = QHBoxLayout()
-        mihomo_row.addWidget(QLabel(t("selfhost.lobby_mihomo_label")))
-        self._mihomo_summary_label = _muted(t("selfhost.lobby_mihomo_not_selected"))
-        mihomo_row.addWidget(self._mihomo_summary_label)
-        mihomo_row.addStretch()
-        layout.addLayout(mihomo_row)
+        divider = QFrame()
+        divider.setFixedHeight(1)
+        divider.setStyleSheet(f"background: {theme.hex('CARD_BORDER')}; border: none;")
+        layout.addWidget(divider)
 
-        wg_row = QHBoxLayout()
-        wg_row.addWidget(QLabel(t("selfhost.lobby_wireguard_label")))
+        info_grid = QGridLayout()
+        info_grid.setHorizontalSpacing(10)
+        info_grid.setVerticalSpacing(6)
+        info_grid.addWidget(QLabel(t("selfhost.lobby_mihomo_label")), 0, 0)
+        self._mihomo_summary_label = _muted(t("selfhost.lobby_mihomo_not_selected"))
+        info_grid.addWidget(self._mihomo_summary_label, 0, 1)
+        info_grid.addWidget(QLabel(t("selfhost.lobby_wireguard_label")), 1, 0)
         self._wireguard_summary_label = _muted(t("selfhost.lobby_wireguard_not_deployed"))
-        wg_row.addWidget(self._wireguard_summary_label)
-        wg_row.addStretch()
-        layout.addLayout(wg_row)
-        layout.addWidget(_muted(t("selfhost.lobby_route_summary")))
-        layout.addStretch()
+        info_grid.addWidget(self._wireguard_summary_label, 1, 1)
+        info_grid.setColumnStretch(1, 1)
+        layout.addLayout(info_grid)
+        route = _muted(t("selfhost.lobby_route_summary"))
+        route.setWordWrap(True)
+        layout.addWidget(route)
+        page_layout.addWidget(card)
+        page_layout.addStretch()
 
     # ── 服务器连接信息 ───────────────────────────────────────────────────
     def _load_server_display(self) -> None:
