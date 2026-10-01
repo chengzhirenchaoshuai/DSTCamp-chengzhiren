@@ -7,7 +7,7 @@
 import ctypes
 from ctypes import wintypes
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
@@ -188,12 +188,13 @@ class MenuStrip(QWidget):
         self.retranslate()
 
     def paintEvent(self, _event):
-        # 菜单文字下方一条主题色分隔线，左右缩进 24 与各主页签外层圆角边框同宽
-        # （页面 page_layout 左右外边距都是 24，菜单条与页面堆栈同宽）。
+        # 菜单文字下方一条主题色分隔线，左右与菜单内容边距对齐；颜色和画法跟
+        # 主页签外层圆角边框（Card 描边）一致，PRIMARY 实线看起来又粗又深。
         painter = QPainter(self)
-        painter.setPen(QPen(theme.color("PRIMARY"), 1))
-        y = self.height() - 1
-        painter.drawLine(24, y, self.width() - 24, y)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QPen(theme.color("CARD_BORDER"), 1))
+        y = self.height() - 0.5
+        painter.drawLine(QPointF(8, y), QPointF(self.width() - 8, y))
 
     def retranslate(self) -> None:
         for key, button in self._buttons.items():
