@@ -579,11 +579,15 @@ def _find_dst_process_pids() -> dict[int, float]:
             out = subprocess.run(
                 ["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"],
                 capture_output=True, text=True, timeout=10,
+                # tasklist 按系统代码页输出（中文系统的"没有运行的任务"提示是 GBK）；
+                # Python 开了 UTF-8 模式时按 UTF-8 解码会失败、stdout 变成 None。
+                # 用系统代码页解码并容错，数据行本身是 ASCII，不受影响。
+                encoding="mbcs" if IS_WINDOWS else None, errors="replace",
                 creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0,
             ).stdout
         except (OSError, subprocess.TimeoutExpired):
             continue
-        for row in csv.reader(out.splitlines()):
+        for row in csv.reader((out or "").splitlines()):
             if len(row) < 5:
                 continue
             try:
@@ -606,11 +610,12 @@ def _udp_ports_by_pid() -> dict[int, set[int]]:
     try:
         out = subprocess.run(
             ["netstat", "-ano", "-p", "UDP"], capture_output=True, text=True, timeout=10,
+            encoding="mbcs" if IS_WINDOWS else None, errors="replace",  # 同 _find_dst_process_pids
             creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0,
         ).stdout
     except (OSError, subprocess.TimeoutExpired):
         return result
-    for line in out.splitlines():
+    for line in (out or "").splitlines():
         parts = line.split()
         if len(parts) < 3 or parts[0] != "UDP":
             continue
