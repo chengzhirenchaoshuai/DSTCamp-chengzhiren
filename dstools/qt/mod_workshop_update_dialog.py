@@ -7,6 +7,7 @@
 "移除引用"；都不是、但本地还留着残留文件显示"清理残留"。
 """
 
+import html
 import os
 import time
 
@@ -746,8 +747,13 @@ class WorkshopUpdateDialog(QDialog):
                     dialogs.show_info(self, t("mod.update_cleanup_residual_title"),
                                       t("mod.update_cleanup_all_empty"))
                 return
-            if dialogs.ask_yes_no(self, t("mod.acf_orphan_title"),
-                                  t("mod.acf_orphan_confirm", count=len(orphans))):
+            # 正文按 HTML 渲染：先转义纯文本，再把"完全退出 Steam"换成红色粗体
+            marker = "\x00"
+            body = html.escape(t("mod.acf_orphan_confirm", count=len(orphans), steam_exit=marker))
+            emphasis = (f'<b style="color:{theme.hex("ERROR")}">'
+                        f'{html.escape(t("mod.acf_orphan_steam_exit"))}</b>')
+            body = body.replace(marker, emphasis).replace("\n", "<br>")
+            if dialogs.ask_yes_no(self, t("mod.acf_orphan_title"), body, rich=True):
                 self._run_acf_cleanup(root, orphans)
 
         def error(exc: Exception) -> None:

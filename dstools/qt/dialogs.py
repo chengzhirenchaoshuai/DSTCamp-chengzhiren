@@ -208,13 +208,14 @@ def show_error(parent, title: str, text: str, min_width: int = 0) -> None:
                   size=width_tier(min_width)).ask()
 
 
-def ask_yes_no(parent, title: str, text: str, min_width: int = 0, danger: bool = False) -> bool:
+def ask_yes_no(parent, title: str, text: str, min_width: int = 0, danger: bool = False,
+               rich: bool = False) -> bool:
     """确认/取消。danger=True 时确认按钮用红色（删除等不可轻易撤回的操作），并且回车
-    默认落在"取消"上，误按回车不会直接执行危险操作。"""
+    默认落在"取消"上，误按回车不会直接执行危险操作。rich=True 时 text 按 HTML 渲染。"""
     buttons = [(t("dlg.cancel_btn"), False, "secondary"),
                (t("dlg.confirm_btn"), True, "danger" if danger else "primary")]
     return bool(MessageDialog(parent, "question", title, text, buttons, default=not danger, escape=False,
-                              size=width_tier(min_width)).ask())
+                              size=width_tier(min_width), rich=rich).ask())
 
 
 def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], default: str = "",
