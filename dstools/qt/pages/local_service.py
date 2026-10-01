@@ -1212,10 +1212,8 @@ class LocalServicePage(Page):
             self._release_token_reservation_if_stopped(cluster.path)
             dialogs.show_error(self.window(), t("local.install_title"), t("local.confdir_cross_drive_error"))
             return
+        # 已开启 LuaJIT 模式时副本过期就直接更新，不再询问：取消只会中止启动，没有别的选择。
         if luajit_injector.needs_regeneration(self._install_dir):
-            if not dialogs.ask_yes_no(self.window(), t("local.luajit_regenerate_title"), t("local.luajit_regenerate_confirm_msg")):
-                self._release_token_reservation_if_stopped(cluster.path)
-                return
             self._launching_keys.add((str(cluster.path), shard.name))
             self._regenerate_luajit_then_start(cluster, [shard], conf_dir_arg)
             return
@@ -1234,6 +1232,8 @@ class LocalServicePage(Page):
             log_dialog.finish()
             try:
                 if result.ok:
+                    # 成功后自动关闭进度窗口直接启动，不用再点"确认"。
+                    log_dialog.accept()
                     if on_success is not None:
                         on_success()
                     else:
@@ -1242,7 +1242,8 @@ class LocalServicePage(Page):
                         if len(shards) > 1:
                             self._select_master_console_tab(cluster)
                 else:
-                    dialogs.show_error(self.window(), t("local.luajit_regenerate_title"), "\n".join(result.errors))
+                    # 具体原因 regenerate 已逐条写进日志，这里只补一行结论，不再另弹错误框。
+                    log_dialog.append(t("local.luajit_regenerate_failed"), "result_error")
                     if on_failure is not None:
                         on_failure()
                     else:
@@ -1252,8 +1253,10 @@ class LocalServicePage(Page):
                     self._launching_keys.discard((str(cluster.path), target.name))
 
         def error(exc: Exception) -> None:
-            done(luajit_injector.InstallResult(ok=False, errors=[
-                t("local.luajit_error_operation_failed", detail=f"{type(exc).__name__}: {exc}")]))
+            # 异常没经过 regenerate 的日志，先把原因写进窗口。
+            detail = t("local.luajit_error_operation_failed", detail=f"{type(exc).__name__}: {exc}")
+            log_dialog.append(detail)
+            done(luajit_injector.InstallResult(ok=False, errors=[detail]))
 
         run_async_with_log(work, log_dialog.append, done, error)
 
@@ -1391,8 +1394,6 @@ class LocalServicePage(Page):
             self._stop_shards_and_then(cluster, targets, start_after_stop)
 
         if luajit_injector.needs_regeneration(self._install_dir):
-            if not dialogs.ask_yes_no(self.window(), t("local.luajit_regenerate_title"), t("local.luajit_regenerate_confirm_msg")):
-                return
             self._restarting_keys.update(keys)
             self._regenerate_luajit_then_start(cluster, targets, conf_dir_arg, on_success=stop_then_start, on_failure=clear_pending)
             return
@@ -1474,9 +1475,6 @@ class LocalServicePage(Page):
             dialogs.show_error(self.window(), t("local.install_title"), t("local.confdir_cross_drive_error"))
             return
         if luajit_injector.needs_regeneration(self._install_dir):
-            if not dialogs.ask_yes_no(self.window(), t("local.luajit_regenerate_title"), t("local.luajit_regenerate_confirm_msg")):
-                self._release_token_reservation_if_stopped(c.path)
-                return
             self._launching_keys.update((str(c.path), s.name) for s in targets)
             self._regenerate_luajit_then_start(c, targets, conf_dir_arg)
         else:
