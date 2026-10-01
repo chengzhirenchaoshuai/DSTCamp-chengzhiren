@@ -9,8 +9,10 @@ LuaJIT 性能补丁。内网穿透相关的"是否有映射/frpc 是否在转发
 
 import ipaddress
 import re
+import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -73,14 +75,19 @@ _PUBLIC_IP_SOURCES = (
     ("https://myip.ipip.net", "DSTCamp/1.0"),
     ("https://cdid.c-ctrip.com/model-poc2/h", "DSTCamp/1.0"),
 )
+# Clash/Mihomo/sing-box 等代理软件的 TUN 网卡地址和 fake-ip DNS 习惯用的网段。
+_PROXY_TUN_NETWORK = ipaddress.ip_network("198.18.0.0/15")
 
 
 def _fetch_public_ipv4() -> str | None:
     """依次查询公网 IPv4 地址；严格拒绝 IPv6 和无效响应。"""
+    # 不走系统代理：urlopen 默认读取 Windows 系统代理，开着代理软件时查到的是代理出口 IP。
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=default_ssl_context()))
     for url, user_agent in _PUBLIC_IP_SOURCES:
         try:
             request = urllib.request.Request(url, headers={"User-Agent": user_agent})
-            with urllib.request.urlopen(request, timeout=4, context=default_ssl_context()) as response:
+            with opener.open(request, timeout=4) as response:
                 body = response.read(256).decode("ascii", errors="ignore")
             for candidate in re.findall(r"(?<![\da-fA-F:])(?:\d{1,3}\.){3}\d{1,3}(?![\da-fA-F:])", body):
                 address = ipaddress.ip_address(candidate)
@@ -89,6 +96,29 @@ def _fetch_public_ipv4() -> str | None:
         except (OSError, ValueError, urllib.error.URLError):
             continue
     return None
+
+
+def _tun_proxy_detected() -> bool:
+    """默认出口或查询域名的解析结果落在 198.18.0.0/15 时，判定代理软件的 TUN 模式接管了流量。
+
+    TUN 模式在路由层接管流量，绕过系统代理也没用，查到的公网 IP 可能是代理出口。
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            # UDP connect 只做路由选择、不发包，getsockname 拿到默认出口的本机地址。
+            sock.connect(("8.8.8.8", 80))
+            if ipaddress.ip_address(sock.getsockname()[0]) in _PROXY_TUN_NETWORK:
+                return True
+    except (OSError, ValueError):
+        pass
+    for url, _user_agent in _PUBLIC_IP_SOURCES:
+        try:
+            infos = socket.getaddrinfo(urllib.parse.urlsplit(url).hostname, 443, socket.AF_INET)
+        except OSError:
+            continue
+        if any(ipaddress.ip_address(info[4][0]) in _PROXY_TUN_NETWORK for info in infos):
+            return True
+    return False
 
 
 def _show_not_found_warning(parent) -> None:
@@ -239,6 +269,7 @@ class LocalServicePage(Page):
         self._last_auto_backup_ts: dict[str, float] = {}
         self._lan_status_key = self._public_status_key = self._nat_status_key = None
         self._lan_code = self._public_code = self._nat_code = None
+        self._public_proxy_suspected = False
         self._public_pending_since: float | None = None
         self._public_timed_out = False
         self._nat_pending_since: float | None = None
@@ -1525,6 +1556,7 @@ class LocalServicePage(Page):
         self._lan_row.set_value(lan_codes[1], lan_codes[0]) if lan_codes else self._lan_row.set_value(t("local.connect_unavailable"))
         self._refresh_lan_status()
         self._public_code = None
+        self._public_proxy_suspected = False
         self._public_row.set_value(t("local.connect_loading"))
         self._public_row.set_status("", theme.hex("TEXT_MUTED"))
         self._public_pending_since = time.monotonic()
@@ -1534,8 +1566,8 @@ class LocalServicePage(Page):
         def public_done(result):
             if generation != self._connect_generation:
                 return
-            codes, ip_available = result
-            self._apply_public_result(codes, cluster_key, ip_available)
+            codes, ip_available, proxy_suspected = result
+            self._apply_public_result(codes, cluster_key, ip_available, proxy_suspected)
 
         run_async(lambda: self._fetch_public_result(cluster), public_done)
 
@@ -1566,14 +1598,16 @@ class LocalServicePage(Page):
                 port = get_shard_option(load_shard_config(master.path), "NETWORK", "server_port")
                 if port:
                     codes = self._build_connect_strings(public_ip, port, cluster, mask_ipv4=True)
-        return codes, public_ip is not None
+        proxy_suspected = public_ip is not None and _tun_proxy_detected()
+        return codes, public_ip is not None, proxy_suspected
 
-    def _apply_public_result(self, codes, cluster_key, ip_available) -> None:
+    def _apply_public_result(self, codes, cluster_key, ip_available, proxy_suspected=False) -> None:
         self._public_pending_since = None
         cluster = self.get_cluster()
         if cluster_key != (str(cluster.path) if cluster else None) or not self._connect_row.isVisible():
             return
         self._public_code = codes[0] if codes else None
+        self._public_proxy_suspected = proxy_suspected
         if codes:
             self._public_row.set_value(codes[1], codes[0])
         elif not ip_available:
@@ -1636,6 +1670,9 @@ class LocalServicePage(Page):
             key = "lan_only"
         elif not ip_available or self._public_code is None:
             key = "noip"
+        elif self._public_proxy_suspected:
+            # 疑似代理优先于"未启动"提示，未启动的原因附在悬停说明里。
+            key = "proxy_ready" if self._master_ready() else "proxy_nostart"
         elif not self._master_ready():
             key = "nostart"
         else:
@@ -1643,7 +1680,12 @@ class LocalServicePage(Page):
         if key == self._public_status_key:
             return
         self._public_status_key = key
-        if key == "ready":
+        if key.startswith("proxy_"):
+            reason = t("local.public_ip_proxy_reason")
+            if key == "proxy_nostart":
+                reason += "\n\n" + t("local.lan_not_ready_reason")
+            self._public_row.set_status(f"● {t('local.connect_proxy_suspected')}", theme.hex("ERROR"), reason)
+        elif key == "ready":
             self._public_row.set_status(f"● {t('local.connect_ready')}", theme.hex("ACCENT"))
         elif key == "lan_only":
             self._public_row.set_status(f"● {t('local.connect_not_ready')}", theme.hex("TEXT_MUTED"), t("local.external_lan_only_reason"))

@@ -865,6 +865,7 @@ def test_external_connect_status_rejects_lan_only() -> None:
         service.get_cluster = lambda: cluster
         service._master_ready = lambda: True
         service._public_code = "public-code"
+        service._public_proxy_suspected = False
         service._nat_code = "nat-code"
         service._public_status_key = None
         service._nat_status_key = None
@@ -1006,12 +1007,20 @@ def test_public_ipv4_prefers_cip_cc_plain_text() -> None:
             assert size == 256
             return "IP\t: 203.0.113.42\n地址\t: 中国 广东".encode("utf-8")
 
-    def fake_urlopen(request, *, timeout, context):
-        calls.append((request.full_url, request.get_header("User-agent"), timeout))
-        assert request.full_url == "https://cip.cc/"
-        return FakeResponse()
+    class FakeOpener:
+        @staticmethod
+        def open(request, *, timeout):
+            calls.append((request.full_url, request.get_header("User-agent"), timeout))
+            assert request.full_url == "https://cip.cc/"
+            return FakeResponse()
 
-    with patch.object(local_page.urllib.request, "urlopen", fake_urlopen):
+    def fake_build_opener(*handlers):
+        # 必须显式禁用系统代理，否则开着代理软件时查到的是代理出口 IP。
+        proxy_handlers = [h for h in handlers if isinstance(h, local_page.urllib.request.ProxyHandler)]
+        assert len(proxy_handlers) == 1 and proxy_handlers[0].proxies == {}
+        return FakeOpener()
+
+    with patch.object(local_page.urllib.request, "build_opener", fake_build_opener):
         assert local_page._fetch_public_ipv4() == "203.0.113.42"
 
     assert [source[0] for source in local_page._PUBLIC_IP_SOURCES] == [
