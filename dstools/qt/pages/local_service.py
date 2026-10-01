@@ -967,11 +967,52 @@ class LocalServicePage(Page):
             return True
         from dstools.features.mod.legacy_v1 import prepare_enabled_legacy_mods
         from dstools.features.mod.sync import get_enabled_mod_ids
-        prepared = prepare_enabled_legacy_mods(get_enabled_mod_ids(cluster), Path(server_dir) / "mods")
+        enabled_ids = get_enabled_mod_ids(cluster)
+        if not self._resolve_v1_shadows(enabled_ids, Path(server_dir) / "mods"):
+            return False
+        prepared = prepare_enabled_legacy_mods(enabled_ids, Path(server_dir) / "mods")
         if prepared.completed:
             return True
         dialogs.show_error(self.window(), t("local.install_title"), t("local.legacy_prepare_failed", detail="\n".join(prepared.errors)))
         return False
+
+    def _resolve_v1_shadows(self, enabled_ids, server_mods_root: Path) -> bool:
+        """启用的 V2 Mod 在专服 mods 下还有旧副本时询问处理（见 features/mod/v1_shadow.py）。
+        返回 False 表示用户取消启动。"""
+        import os
+
+        from dstools.features.mod.parser import find_shared_ugc_directory
+        from dstools.features.mod.v1_shadow import backup_root_for, find_shadowed_mods, quarantine_shadowed_mods
+
+        ugc_directory = find_shared_ugc_directory()
+        if ugc_directory is None:
+            return True  # 不传 -ugc_directory 时专服走自己的下载目录，不在这里判断
+        shadowed = find_shadowed_mods(enabled_ids, server_mods_root, Path(ugc_directory) / "content" / "322330")
+        if not shadowed:
+            return True
+        unknown = t("local.version_unknown")
+        details = "\n".join(
+            t("local.v1_shadow_line", name=item.name or f"workshop-{item.workshop_id}", mod_id=item.workshop_id,
+              old=item.shadow_version or unknown, new=item.v2_version or unknown)
+            for item in shadowed)
+        message = t("local.v1_shadow_msg", details=details, backup=str(backup_root_for(server_mods_root)))
+        if hasattr(os.path, "isjunction") and os.path.isjunction(server_mods_root):
+            message += t("local.v1_shadow_junction_note")
+        choice = dialogs.ask_choice(
+            self.window(), t("local.v1_shadow_title"), message,
+            [(t("local.v1_shadow_move_btn"), "move"), (t("local.v1_shadow_keep_btn"), "keep"),
+             (t("dlg.cancel_btn"), "cancel")],
+            default="move", min_width=560)
+        if choice == "keep":
+            return True
+        if choice != "move":
+            return False
+        try:
+            quarantine_shadowed_mods(shadowed, server_mods_root)
+        except OSError as exc:
+            dialogs.show_error(self.window(), t("local.v1_shadow_title"), t("local.v1_shadow_failed", error=str(exc)))
+            return False
+        return True
 
     # ── 启动/停止/重启 ──────────────────────────────────────────────────
     def start_shard(self, cluster, shard) -> None:

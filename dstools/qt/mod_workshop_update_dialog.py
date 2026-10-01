@@ -35,6 +35,7 @@ _LATEST_LABELS = {
     WorkshopModState.CURRENT: "mod.update_latest_up_to_date",
     WorkshopModState.UPDATE_AVAILABLE: "mod.update_latest_available",
     WorkshopModState.SUSPECTED_OUTDATED: "mod.update_latest_suspected_outdated",
+    WorkshopModState.SHADOWED_BY_V1: "mod.update_latest_v1_shadowed",
     WorkshopModState.MISSING: "mod.update_latest_missing",
     WorkshopModState.SOURCE_UNAVAILABLE: "mod.update_latest_source_unavailable",
     WorkshopModState.INTEGRITY_UNCONFIRMED: "mod.update_latest_integrity_unconfirmed",
@@ -249,6 +250,7 @@ class WorkshopUpdateDialog(QDialog):
             result.append(wid)
         priority = {WorkshopModState.DOWNLOADING: 0, WorkshopModState.DOWNLOAD_PENDING: 0,
                    WorkshopModState.UPDATE_AVAILABLE: 1, WorkshopModState.SUSPECTED_OUTDATED: 1,
+                   WorkshopModState.SHADOWED_BY_V1: 1,
                    WorkshopModState.MISSING: 2}
         return sorted(result, key=lambda wid: (
             priority.get(self._states[wid].state, 5) if wid in self._states else 5, self._name_for(wid).casefold()))
@@ -448,6 +450,9 @@ class WorkshopUpdateDialog(QDialog):
         """每行只显示一个最合适的操作，优先级：更新 > 移除失效引用 > 清理残留。"""
         if status is None:
             return None
+        if status.state == WorkshopModState.SHADOWED_BY_V1:
+            # 更新 V2 解决不了：专服加载的是 mods 里的旧副本，要把它移走
+            return t("mod.update_clean_shadow_btn"), self._clean_shadow, wid in self._cleanup_running
         if status.can_update:
             return t("mod.update_one_btn"), self._update_one, False
         if status.state == WorkshopModState.UNSUBSCRIBED_REFERENCED:
@@ -541,6 +546,30 @@ class WorkshopUpdateDialog(QDialog):
         self.page._refresh_mods(full=False)
         dialogs.show_info(self.page.window(), t("mod.update_remove_reference_title"),
                           t("mod.update_reference_removed", count=changed))
+
+    def _clean_shadow(self, wid: str) -> None:
+        """移走挡住 V2 的专服 mods 旧副本（移到同盘备份目录，不删除）。"""
+        from dstools.features.mod.v1_shadow import ShadowedMod, backup_root_for, quarantine_shadowed_mods
+
+        status = self._states.get(wid)
+        evidence = status.evidence if status is not None else None
+        shadow_path = evidence.v1_shadow_path if evidence is not None else None
+        mods_root = self.page._server_mods_root()
+        if shadow_path is None or mods_root is None or wid in self._cleanup_running:
+            return
+        unknown = t("local.version_unknown")
+        if not dialogs.ask_yes_no(self, t("mod.update_clean_shadow_btn"), t(
+                "mod.update_clean_shadow_confirm", path=str(shadow_path), old=status.local_version or unknown,
+                new=status.source_version or unknown, backup=str(backup_root_for(mods_root))),
+                min_width=560, danger=True):
+            return
+        try:
+            quarantine_shadowed_mods([ShadowedMod(str(wid), shadow_path, shadow_path)], mods_root)
+        except OSError as exc:
+            dialogs.show_error(self, t("mod.update_clean_shadow_btn"), t("local.v1_shadow_failed", error=str(exc)))
+            return
+        dialogs.show_toast(self, t("mod.update_clean_shadow_done"), ms=2400)
+        self._reload(force=True)
 
     # ── 残留清理 ────────────────────────────────────────────────────────
     def _cleanup_residual(self, wid: str) -> None:

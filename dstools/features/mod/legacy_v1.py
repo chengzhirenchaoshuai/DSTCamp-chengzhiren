@@ -453,10 +453,16 @@ def prepare_enabled_legacy_mods(
     并执行 ``cWorkshopMod::UnzipMod``；只有 ``modoverrides.lua`` 会静默
     跳过未展开的 V1。DSTCamp 已有自己的可追踪更新流程，因此启动前直接
     使用已下载且通过校验的包做本地原子部署，避免依赖旧版服务器下载链路。
-    V2 项目没有 ``*_legacy.bin``，不会进入这里。
+
+    创意工坊目录里已有 V2 内容（根目录有 ``modinfo.lua``）的项目一律跳过，即使
+    还残留着 ``*_legacy.bin``：专服 ``mods/workshop-<id>`` 会优先于 V2 加载，解压
+    出来就会用旧版挡住新版（真机案例见 v1_shadow.py）。
     """
+    from dstools.features.mod.parser import find_workshop_dir
+
     result = LegacyPreparationResult()
     packages = find_legacy_packages()
+    workshop_root = find_workshop_dir()
     root = Path(server_mods_root)
     normalized_ids = []
     for value in workshop_ids:
@@ -467,6 +473,8 @@ def prepare_enabled_legacy_mods(
         archive = packages.get(workshop_id)
         if archive is None:
             continue
+        if workshop_root is not None and (workshop_root / str(workshop_id) / "modinfo.lua").is_file():
+            continue  # 已经是 V2，不能再解压 V1 包去覆盖它
         result.checked.append(workshop_id)
         target = root / f"workshop-{workshop_id}"
         if legacy_runtime_matches_package(archive, target):

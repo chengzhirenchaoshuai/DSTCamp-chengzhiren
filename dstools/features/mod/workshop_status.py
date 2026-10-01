@@ -36,6 +36,8 @@ class WorkshopModState(str, Enum):
     UNSUBSCRIBED_PENDING_CLEANUP = "unsubscribed_pending_cleanup"
     UNSUBSCRIBED_REFERENCED = "unsubscribed_referenced"
     UPDATE_AVAILABLE = "update_available"
+    # V2 Mod 在专服 mods/workshop-<id> 还有一份旧副本，专服会优先加载旧副本
+    SHADOWED_BY_V1 = "shadowed_by_v1"
     SUSPECTED_OUTDATED = "suspected_outdated"
     CURRENT = "current"
     UNKNOWN = "unknown"
@@ -64,6 +66,9 @@ class WorkshopModEvidence:
     workshop_content_path: Path | None = None
     legacy_runtime_residual_paths: tuple[Path, ...] = ()
     running_dst_processes: tuple[str, ...] = ()
+    # 专服 mods/workshop-<id> 里挡住 V2 的旧副本（见 v1_shadow.py）及其版本
+    v1_shadow_path: Path | None = None
+    v1_shadow_version: LocalModVersion | None = None
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,7 @@ class WorkshopModStatus:
             WorkshopModState.MISSING,
             WorkshopModState.UPDATE_AVAILABLE,
             WorkshopModState.SUSPECTED_OUTDATED,
+            WorkshopModState.SHADOWED_BY_V1,
         }
 
     @property
@@ -367,6 +373,19 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
         )
     if active_path is not None and not active_path.is_dir():
         return result(WorkshopModState.MISSING, "服务器实际使用的 Mod 目录不存在")
+    if evidence.v1_shadow_path is not None:
+        # 专服会优先加载 mods/workshop-<id>，创意工坊这份 V2 再新也用不上；
+        # 本地版本显示旧副本的版本，也就是专服实际加载的版本。
+        shadow_version = evidence.v1_shadow_version or LocalModVersion()
+        status = result(
+            WorkshopModState.SHADOWED_BY_V1,
+            "专服 mods 目录里的旧副本会优先于创意工坊新版加载",
+            f"旧副本：{evidence.v1_shadow_path}",
+        )
+        from dataclasses import replace
+
+        return replace(status, local_version=(
+            shadow_version.version if shadow_version.status == VERSION_CONFIRMED else ""))
     integrity_note = (
         evidence.manifest_error or "mod.manifest 与实际文件不一致"
         if evidence.manifest_valid is False
@@ -530,6 +549,24 @@ def inspect_workshop_items(
             )
         elif active_path is not None:
             active_version = LocalModVersion()
+        # V2 Mod（有 modinfo.lua 的创意工坊目录、Steam 未标记为旧式）在专服 mods 下
+        # 还有普通文件夹副本时，专服会优先加载那份旧副本。链接跳过（见 v1_shadow.py）。
+        shadow_path = None
+        shadow_version = None
+        if (
+            legacy_active_root is not None
+            and not (state is not None and state.legacy_item)
+            and physical_path is not None
+            and (physical_path / "modinfo.lua").is_file()
+        ):
+            from dstools.features.mod.v1_shadow import find_shadowed_mods
+
+            found = find_shadowed_mods(
+                [workshop_id], Path(legacy_active_root), physical_path.parent, with_versions=False)
+            if found:
+                shadow_path = found[0].shadow_path
+                shadow_version = resolve_local_mod_version(
+                    str(workshop_id), shadow_path, f"workshop-{workshop_id}")
         source_details = details.get(workshop_id)
         live_remote_version = workshop_version_from_details(source_details)
         cached_remote_version = cached_manifest_versions.get(workshop_id, "")
@@ -571,6 +608,8 @@ def inspect_workshop_items(
                 workshop_id, ()
             ),
             running_dst_processes=running_dst_processes,
+            v1_shadow_path=shadow_path,
+            v1_shadow_version=shadow_version,
         )
         statuses[workshop_id] = evaluate_workshop_status(evidence)
     return statuses
