@@ -72,33 +72,35 @@ def _apply_fake_transparent_popup_bg(combo, popup) -> None:
     张图，铺在弹出窗口最底层当背景，列表控件本身走 QSS 半透明色叠在上面——视觉
     上是"透出主窗口背景"，实际只是一张普通 QLabel+QPixmap，不涉及任何窗口级别
     的透明合成，不会重演那次全黑。局限：只能透出这个应用自己窗口的内容，不是真
-    的透出桌面或其它窗口；截图失败（比如弹出位置跑到主窗口范围之外）就直接跳过，
+    的透出桌面或其它窗口；截图失败或列表有任何部分超出所在窗口就直接跳过，
     退回目前"浅色实色"的效果，不报错、不留半成品背景。"""
     window = combo.window()
     if window is None or window is combo:
         return  # 没有真正的顶层窗口可截（比如独立弹出的下拉框本身就是"窗口"）
     top_left_local = window.mapFromGlobal(popup.mapToGlobal(QPoint(0, 0)))
-    grab_rect = QRect(top_left_local, popup.size()).intersected(window.rect())
-    if grab_rect.isEmpty():
-        return
-    pixmap = window.grab(grab_rect)
-    if pixmap.isNull():
-        return
+    popup_rect = QRect(top_left_local, popup.size())
     # 不用 Python 动态属性存"这个弹出容器是不是已经贴过背景"——实测过 PySide6 这
     # 里拿到的 popup 包装对象，跨几次 self.view().parentWidget() 调用不保证是同一
     # 个 Python 包装实例（哪怕底层 C++ 对象相同），动态属性会丢。改用 Qt 自己的
     # objectName + findChild()，查的是真正的 C++ 子控件树，不受包装对象身份影响。
     label = popup.findChild(QLabel, _POPUP_BG_LABEL_NAME)
+    # 列表只要有一部分伸出所在窗口（如很矮的回档窗口里展开长列表），窗口外那块截
+    # 不到背景，而容器又被设成了透明，那块没有任何背景可画（用户反馈过像被挡住）。
+    # 此时整体退回实色，撤掉之前可能贴过的背景。
+    pixmap = window.grab(popup_rect) if window.rect().contains(popup_rect) else None
+    if pixmap is None or pixmap.isNull():
+        if label is not None:
+            label.hide()
+            popup.setStyleSheet("")
+        return
     if label is None:
         label = QLabel(popup)
         label.setObjectName(_POPUP_BG_LABEL_NAME)
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        popup.setStyleSheet("background: transparent;")
-    # grab_rect 可能因为 intersected() 比 popup 本身小（弹出位置部分跑出主窗口范
-    # 围），只把截到的那部分贴在 popup 内对应的偏移位置，其余留白，不拉伸变形。
-    offset = grab_rect.topLeft() - top_left_local
-    label.move(offset.x(), offset.y())
-    label.resize(grab_rect.size())
+    # 同一个弹出容器可能上次退回过实色，每次贴图都重新设成透明。
+    popup.setStyleSheet("background: transparent;")
+    label.move(0, 0)
+    label.resize(popup.size())
     label.setPixmap(_faded_popup_bg_pixmap(pixmap))
     label.lower()
     label.show()
