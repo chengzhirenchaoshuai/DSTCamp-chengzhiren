@@ -7,6 +7,7 @@ LuaJIT 性能补丁。内网穿透相关的"是否有映射/frpc 是否在转发
 "没有这个功能在占用/未就绪"，不是假数据——只是如实反映"这个功能还没迁移"。
 """
 
+import ctypes
 import ipaddress
 import re
 import socket
@@ -77,6 +78,47 @@ _PUBLIC_IP_SOURCES = (
 )
 # Clash/Mihomo/sing-box 等代理软件的 TUN 网卡地址和 fake-ip DNS 习惯用的网段。
 _PROXY_TUN_NETWORK = ipaddress.ip_network("198.18.0.0/15")
+# 局域网直连只认 RFC1918 私网段；198.18/15（代理 TUN）、100.64/10（Tailscale、运营商 NAT）都不算。
+_LAN_NETWORKS = tuple(ipaddress.ip_network(net) for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+_ERROR_INSUFFICIENT_BUFFER = 122
+
+
+class _IpForwardRow(ctypes.Structure):
+    """Windows MIB_IPFORWARDROW：IPv4 路由表的一行。"""
+    _fields_ = [(name, ctypes.c_ulong) for name in (
+        "dest", "mask", "policy", "next_hop", "if_index", "type", "proto", "age",
+        "next_hop_as", "metric1", "metric2", "metric3", "metric4", "metric5")]
+
+
+def _default_gateways() -> list[tuple[int, str]]:
+    """读取 IPv4 路由表里带网关的默认路由，返回 [(跃点, 网关地址)]；读取失败返回空列表。"""
+    get_table = ctypes.windll.iphlpapi.GetIpForwardTable
+    size = ctypes.c_ulong(0)
+    # 两次调用之间路由表可能变大，缓冲不够时按新大小重试。
+    for _ in range(3):
+        buffer = ctypes.create_string_buffer(max(size.value, 4))
+        result = get_table(buffer, ctypes.byref(size), False)
+        if result == 0:
+            break
+        if result != _ERROR_INSUFFICIENT_BUFFER:
+            return []
+    else:
+        return []
+    count = ctypes.c_ulong.from_buffer(buffer).value
+    rows = (_IpForwardRow * count).from_buffer(buffer, ctypes.sizeof(ctypes.c_ulong))
+    gateways = []
+    for row in rows:
+        # 地址字段按网络字节序存放；网关为 0 的是不经网关的直连路由（如 WireGuard 全局隧道），跳过。
+        if row.dest == 0 and row.mask == 0 and row.next_hop != 0:
+            gateways.append((row.metric1, socket.inet_ntoa(row.next_hop.to_bytes(4, "little"))))
+    return gateways
+
+
+def _route_source_ip(destination: str) -> str:
+    """访问 destination 时系统选用的本机地址；UDP connect 只做路由选择、不发包。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.connect((destination, 80))
+        return sock.getsockname()[0]
 
 
 def _fetch_public_ipv4() -> str | None:
@@ -104,11 +146,8 @@ def _tun_proxy_detected() -> bool:
     TUN 模式在路由层接管流量，绕过系统代理也没用，查到的公网 IP 可能是代理出口。
     """
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            # UDP connect 只做路由选择、不发包，getsockname 拿到默认出口的本机地址。
-            sock.connect(("8.8.8.8", 80))
-            if ipaddress.ip_address(sock.getsockname()[0]) in _PROXY_TUN_NETWORK:
-                return True
+        if ipaddress.ip_address(_route_source_ip("8.8.8.8")) in _PROXY_TUN_NETWORK:
+            return True
     except (OSError, ValueError):
         pass
     for url, _user_agent in _PUBLIC_IP_SOURCES:
@@ -1454,15 +1493,29 @@ class LocalServicePage(Page):
 
     @staticmethod
     def _get_lan_ip() -> str:
-        import socket
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        """本机局域网 IP：优先取默认网关对应的私网地址，多个时取跃点最小的。
+
+        只看"访问外网走哪张网卡"会被代理软件 TUN 模式或 Tailscale 出口节点抢走默认路由，
+        得到 198.18.x、100.x 这类别人连不上的虚拟地址。找不到时回退到原来的外网出口地址。
+        """
         try:
-            s.connect(("8.8.8.8", 80))
-            return s.getsockname()[0]
+            gateways = _default_gateways()
+        except (OSError, ValueError, AttributeError):
+            gateways = []
+        candidates = []
+        for metric, gateway in gateways:
+            try:
+                source = _route_source_ip(gateway)
+                if any(ipaddress.ip_address(source) in net for net in _LAN_NETWORKS):
+                    candidates.append((metric, source))
+            except (OSError, ValueError):
+                continue
+        if candidates:
+            return min(candidates)[1]
+        try:
+            return _route_source_ip("8.8.8.8")
         except OSError:
             return "127.0.0.1"
-        finally:
-            s.close()
 
     def _build_connect_strings(self, host, port, cluster, mask_ipv4=False) -> tuple[str, str]:
         password = get_cluster_option(load_cluster_config(cluster.path), "NETWORK", "cluster_password")
