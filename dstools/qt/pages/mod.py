@@ -90,7 +90,8 @@ class ModPage(Page):
         card = Card(alpha=0, border=True)
         page_layout.addWidget(card)
         root = QVBoxLayout(card)
-        root.setContentsMargins(10, 10, 10, 10)
+        # 跟其它主页签统一的内边距。
+        root.setContentsMargins(14, 10, 14, 10)
 
         location_row = QHBoxLayout()
         location_row.addWidget(QLabel(t("mod.location_label")))

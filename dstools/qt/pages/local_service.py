@@ -258,7 +258,8 @@ class LocalServicePage(Page):
         card = Card(alpha=0, border=True)
         page_layout.addWidget(card)
         root = QVBoxLayout(card)
-        root.setContentsMargins(8, 8, 8, 8)
+        # 跟其它主页签统一的内边距（之前 8 偏紧，内容几乎贴着边框）。
+        root.setContentsMargins(14, 10, 14, 10)
         root.setSpacing(6)
 
         self._install_row, self._install_path_label, self._install_change_btn, self._steam_update_btn = \
@@ -348,15 +349,17 @@ class LocalServicePage(Page):
         self._logs_btn.clicked.connect(self._get_logs)
         # 直角边框已经是 QPushButton 的全局默认样式；这里只保留字号调小。
         # QPushButton 默认横向 sizePolicy 是 Minimum（sizeHint 只是下限，布局有多余
-        # 空间时仍会把它撑大）——这一排 4 个按钮之前没设固定宽度，会随窗口拖拽跟着
-        # 变宽变窄，真机反馈过。统一取 4 个按钮里最宽的 sizeHint 加一点内边距，四个
-        # 按钮固定成同一个宽度，行尾用 addStretch() 吃掉多余空间，不再跟着布局撑大。
+        # 空间时仍会把它撑大）——这几个按钮之前没设固定宽度，会随窗口拖拽跟着变宽
+        # 变窄，真机反馈过。"全部启动/全部停止/全部重启"这 3 个固定成跟上面"更换
+        # 路径"按钮一样的宽度（真机反馈要求对齐这个参照）；"获取日志文件"文字更长，
+        # 不参与这个统一宽度，保持自己的 sizeHint。
         buttons = (self._start_all_btn, self._stop_all_btn, self._restart_all_btn, self._logs_btn)
         for button in buttons:
             button.setFont(theme.font("FONT_SIZE_SM"))
-        fixed_width = max(button.sizeHint().width() for button in buttons)
+        match_width = self._install_change_btn.sizeHint().width()
+        for button in (self._start_all_btn, self._stop_all_btn, self._restart_all_btn):
+            button.setFixedWidth(match_width)
         for button in buttons:
-            button.setFixedWidth(fixed_width)
             btn_row.addWidget(button)
         btn_row.addStretch()
         layout.addLayout(btn_row)
