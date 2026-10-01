@@ -11,6 +11,7 @@ import ctypes
 import ipaddress
 import re
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -304,6 +305,10 @@ class LocalServicePage(Page):
         self._steam_remote_build_id: str | None = None
         self._steam_remote_build_checked_at = 0.0
         self._steam_remote_build_fetching = False
+        self._steam_update_running = False
+        # 程序退出时通知 Steam 更新监控立即结束，否则线程池会等它最长 15 分钟，进程退不掉。
+        self._steam_monitor_cancel = threading.Event()
+        QGuiApplication.instance().aboutToQuit.connect(self._steam_monitor_cancel.set)
         self._connect_generation = 0
         self._last_auto_backup_ts: dict[str, float] = {}
         self._lan_status_key = self._public_status_key = self._nat_status_key = None
@@ -630,7 +635,8 @@ class LocalServicePage(Page):
         mode = steam_client_updater.action_for_snapshot(snapshot, remote_build_id=self._steam_remote_build_id)
         labels = {"install": "local.steam_install_btn", "update": "local.steam_update_btn", "validate": "local.steam_validate_btn"}
         self._steam_update_mode = mode
-        self._steam_update_btn.setText(t(labels[mode]))
+        # 更新进行中按钮保持"查看更新日志"，不被定时刷新改回去。
+        self._steam_update_btn.setText(t("local.steam_view_log_btn" if self._steam_update_running else labels[mode]))
         self._steam_update_hint.setVisible(mode == "update")
         if mode == "update":
             if steam_client_updater.remote_requires_update(snapshot, self._steam_remote_build_id):
@@ -658,8 +664,11 @@ class LocalServicePage(Page):
 
     def _on_steam_update_clicked(self) -> None:
         title = t("local.steam_update_title")
-        if self._steam_update_dialog is not None and self._steam_update_dialog.isVisible():
+        if self._steam_update_dialog is not None and (self._steam_update_running or self._steam_update_dialog.isVisible()):
+            # 更新仍在进行时只把日志窗口重新显示出来，不重复发请求、不叠加监控。
+            self._steam_update_dialog.show()
             self._steam_update_dialog.raise_()
+            self._steam_update_dialog.activateWindow()
             return
         if steam_client_updater.find_steam_executable() is None:
             dialogs.show_warning(self.window(), title, t("local.steam_update_no_client"))
@@ -678,7 +687,10 @@ class LocalServicePage(Page):
             dialog.append(t("local.steam_remote_fallback"))
         uri = steam_client_updater.build_update_uri(validate=mode == "validate")
         dialog.append(t("local.steam_update_requested", uri=uri))
+        dialog.show()
+        self._steam_update_running = True
         self._steam_update_btn.setText(t("local.steam_view_log_btn"))
+        cancel_event = self._steam_monitor_cancel
 
         last_state = [None]
 
@@ -689,13 +701,16 @@ class LocalServicePage(Page):
                 if state != last_state[0]:
                     last_state[0] = state
                     post_to_ui(lambda _s: dialog.append(t("local.steam_update_state", state=_s)), state)
-            steam_client_updater.monitor_update(before, on_snapshot=on_snapshot, remote_build_id=remote_build_id)
+            steam_client_updater.monitor_update(before, on_snapshot=on_snapshot, remote_build_id=remote_build_id,
+                                                cancel_event=cancel_event)
 
         def done(_result) -> None:
             dialog.append(t("local.steam_update_done"))
             self._finish_steam_update(dialog)
 
         def error(exc: Exception) -> None:
+            if isinstance(exc, InterruptedError):
+                return  # 程序正在退出
             if isinstance(exc, TimeoutError):
                 dialog.append(t("local.steam_update_timeout"))
             else:
@@ -705,6 +720,7 @@ class LocalServicePage(Page):
         run_async(work, done, error)
 
     def _finish_steam_update(self, dialog) -> None:
+        self._steam_update_running = False
         self._steam_update_btn.setEnabled(True)
         self._refresh_steam_update_button()
         self._detect_install_dir()

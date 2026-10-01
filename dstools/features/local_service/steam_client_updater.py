@@ -13,6 +13,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -412,14 +413,21 @@ def monitor_update(
     snapshot_reader: Callable[[], SteamAppSnapshot] | None = None,
     settle_polls: int = 3,
     remote_build_id: str | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> SteamAppSnapshot:
-    """轮询 manifest，供后台线程使用；超时抛出 TimeoutError。"""
+    """轮询 manifest，供后台线程使用；超时抛出 TimeoutError。
+
+    cancel_event 被置位时立即抛出 InterruptedError：程序退出时线程池要等后台任务
+    结束，不能让最长 15 分钟的轮询把进程拖住。
+    """
     read = snapshot_reader or (lambda: snapshot_app(app_id, libraries))
     deadline = time.monotonic() + max(0.0, timeout)
     latest = before
     unchanged_polls = 0
     ready_polls = 0
     while True:
+        if cancel_event is not None and cancel_event.is_set():
+            raise InterruptedError(f"Steam 更新监控已取消: {app_id}")
         latest = read()
         state = classify_snapshot(before, latest, remote_build_id=remote_build_id)
         if on_snapshot:
@@ -453,4 +461,7 @@ def monitor_update(
             unchanged_polls = 0
         if time.monotonic() >= deadline:
             raise TimeoutError(f"Steam 更新监控超时: {app_id}")
-        time.sleep(max(0.05, interval))
+        if cancel_event is not None:
+            cancel_event.wait(max(0.05, interval))
+        else:
+            time.sleep(max(0.05, interval))
