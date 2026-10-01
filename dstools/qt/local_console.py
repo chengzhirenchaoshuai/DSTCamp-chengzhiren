@@ -123,6 +123,8 @@ class ConsolePane(QWidget):
                                  (close_btn, self._close_search)):
             button.setFixedWidth(28)
             dialogs.style_button(button, "secondary")
+            # 浅色描边按钮默认左右内边距 15px，28px 宽的小按钮会把 ↑ ↓ × 挤没，这里清零
+            button.setStyleSheet("QPushButton { padding: 0px; }")
             button.clicked.connect(handler)
         search_row.addWidget(self._search_edit, 1)
         search_row.addWidget(self._search_count)

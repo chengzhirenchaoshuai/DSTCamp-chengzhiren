@@ -279,6 +279,7 @@ class Theme(QObject):
             FrostedMenu::item {{ padding: 6px 24px 6px 10px; border-radius: 4px; background: transparent; }}
             FrostedMenu::item:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; }}
             QScrollArea, WorldPanel, QListView {{ background: transparent; border: none; }}
+            QSplitter::handle {{ background: transparent; }}
             QTabWidget::pane {{ background: {_rgba(c['CARD_BG'], 150)}; border: 1px solid {c['CARD_BORDER']};
                 border-radius: 8px; top: -1px; }}
             QTabWidget > QWidget, QTabWidget QStackedWidget > QWidget {{ background: transparent; }}
