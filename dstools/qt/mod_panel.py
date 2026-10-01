@@ -224,13 +224,12 @@ class ModListPanel(QAbstractScrollArea):
             return
         from dstools.qt.widgets import mod_format_tag_colors
 
-        tag_font = QFont(id_font)
+        tag_font = QFont(id_font)  # 字号跟版本号文字一致，只加粗
         tag_font.setBold(True)
-        tag_font.setPointSizeF(max(6.0, id_font.pointSizeF() * 0.85))
         tag_fm = QFontMetricsF(tag_font)
         pad_x = 5 * s
         tag_w = tag_fm.horizontalAdvance(fmt) + 2 * pad_x
-        tag_h = tag_fm.height() + 2 * s
+        tag_h = tag_fm.height() + 3 * s
         x = version_rect.left() + id_fm.horizontalAdvance(version_text) + 6 * s
         if x + tag_w > version_rect.right():
             return  # 版本号太长被省略时不硬塞标签

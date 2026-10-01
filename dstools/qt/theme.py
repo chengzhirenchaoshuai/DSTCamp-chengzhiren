@@ -181,7 +181,45 @@ class Theme(QObject):
         self._font_style = choice
         app_settings.set_font_style_choice(choice)
         self.apply_to_app()
+        self._refresh_explicit_fonts()
         self.changed.emit()
+        self._refresh_explicit_fonts()  # 各页面响应 changed 时可能重建/重设了部分控件，再补一遍
+
+    def _refresh_explicit_fonts(self) -> None:
+        """apply_to_app() 只改了应用默认字体；各页面构造时用 setFont(theme.font(...)) 单独
+        设过字体的控件不会跟着变（真机反馈过切到"缝合像素字体"后很多页签文字没变）。
+
+        注意：重设样式表后 Qt 重新 polish，带字体相关 QSS（如按钮的 font-weight）的控件会被
+        还原成它创建时的字体，而不是上一次的字体。所以这里不按"旧样式"匹配，而是凡是用着
+        本项目任一字体样式字体族的控件都换成当前字体族，字号按它当前字体族对应的缩放系数
+        换算；特意用了别的字体（如 Consolas 等宽）的控件保持不动。必须在 apply_to_app() 之后调用。"""
+        app = QApplication.instance()
+        if app is None:
+            return
+        scale_by_family = {FONT_FAMILY_BY_STYLE[name]: FONT_SIZE_SCALE_BY_STYLE.get(name, 1.0)
+                           for name in FONT_STYLE_NAMES}
+        new_family = self.font_family
+        new_scale = FONT_SIZE_SCALE_BY_STYLE.get(self._font_style, 1.0)
+        # 父控件改字体时 Qt 会顺带改写部分子控件（如列表视口）的字体，重复到没有变化为止
+        for _ in range(3):
+            changed = 0
+            for widget in app.allWidgets():
+                if not widget.testAttribute(Qt.WidgetAttribute.WA_SetFont):
+                    continue  # 没单独设过字体的控件跟随应用默认字体，已经变了
+                # 从没显示过的控件（隐藏的对话框里）还没 polish，等它第一次显示时才 polish
+                # 又会把字体还原；先强制 polish，再改字体。
+                widget.ensurePolished()
+                font = widget.font()
+                old_scale = scale_by_family.get(font.family())
+                if old_scale is None or font.family() == new_family:
+                    continue
+                font.setFamily(new_family)
+                if font.pointSizeF() > 0 and old_scale > 0:
+                    font.setPointSizeF(max(6.0, round(font.pointSizeF() / old_scale * new_scale)))
+                widget.setFont(font)
+                changed += 1
+            if not changed:
+                break
 
     def apply_to_app(self) -> None:
         app = QApplication.instance()

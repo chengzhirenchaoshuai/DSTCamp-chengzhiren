@@ -456,7 +456,7 @@ class WorkshopUpdateDialog(QDialog):
             return None
         legacy = steam.legacy_item
         tag = QLabel("V1" if legacy else "V2")
-        tag.setFont(theme.font("FONT_SIZE_XS", bold=True))
+        tag.setFont(theme.font("FONT_SIZE_SM", bold=True))  # 跟版本号文字同字号
         tag.setToolTip(t("mod.format_tag_v1_tip" if legacy else "mod.format_tag_v2_tip"))
         background, color = mod_format_tag_colors("V1" if legacy else "V2")
         # 样式必须用对象名限定只作用于标签本身：悬停提示框（QTipLabel）会继承触发它的
