@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+    QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dstools.features.local_service.dedicated_server import ServerStatus, advance_world_ready_marker
@@ -115,17 +115,22 @@ class ConsolePane(QWidget):
         self._search_count.setFont(theme.font("FONT_SIZE_SM"))
         self._search_count.setProperty("muted", True)
         up_btn, down_btn, close_btn = QPushButton("↑"), QPushButton("↓"), QPushButton("×")
+        up_btn.setToolTip(t("local.console_search_prev"))
+        down_btn.setToolTip(t("local.console_search_next"))
+        close_btn.setToolTip(t("local.console_search_clear"))
         for button, handler in ((up_btn, lambda: self._search_step(-1)),
                                  (down_btn, lambda: self._search_step(1)),
                                  (close_btn, self._close_search)):
             button.setFixedWidth(28)
+            dialogs.style_button(button, "secondary")
             button.clicked.connect(handler)
         search_row.addWidget(self._search_edit, 1)
         search_row.addWidget(self._search_count)
         search_row.addWidget(up_btn)
         search_row.addWidget(down_btn)
         search_row.addWidget(close_btn)
-        self._search_bar.setVisible(False)
+        # 搜索栏常驻显示（之前默认隐藏、只能按 Ctrl+F 打开，界面上看不到入口）
+        self._search_edit.installEventFilter(self)  # Shift+Enter 跳到上一个
         outer.addWidget(self._search_bar)
 
         self.text = QPlainTextEdit()
@@ -209,7 +214,11 @@ class ConsolePane(QWidget):
         self._run_search()
 
     def _close_search(self) -> None:
-        self._search_bar.setVisible(False)
+        """× / Esc：清空搜索词和高亮（搜索栏本身常驻，不再隐藏）。"""
+        self._search_edit.blockSignals(True)
+        self._search_edit.clear()
+        self._search_edit.blockSignals(False)
+        self._search_count.setText("")
         self.text.setExtraSelections([])
         self._search_matches = []
         self._search_index = -1
@@ -244,7 +253,7 @@ class ConsolePane(QWidget):
     def _show_matches(self) -> None:
         selections = []
         for index, (start, end) in enumerate(self._search_matches):
-            selection = QPlainTextEdit.ExtraSelection()
+            selection = QTextEdit.ExtraSelection()  # PySide6 里 ExtraSelection 只挂在 QTextEdit 上
             cursor = QTextCursor(self.text.document())
             cursor.setPosition(start)
             cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
@@ -265,7 +274,13 @@ class ConsolePane(QWidget):
 
     # ── 命令输入 ────────────────────────────────────────────────────────
     def eventFilter(self, watched, event):
-        if watched is self.cmd_edit and event.type() == QEvent.Type.KeyPress:
+        if (watched is self._search_edit and event.type() == QEvent.Type.KeyPress
+                and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
+                and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+            self._search_step(-1)
+            return True
+        # 搜索框的过滤器在构造早期就装上了，那时命令输入框还没建
+        if watched is getattr(self, "cmd_edit", None) and event.type() == QEvent.Type.KeyPress:
             if event.key() == Qt.Key.Key_Up:
                 self._browse_history(-1)
                 return True

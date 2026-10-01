@@ -279,6 +279,14 @@ class Theme(QObject):
             FrostedMenu::item {{ padding: 6px 24px 6px 10px; border-radius: 4px; background: transparent; }}
             FrostedMenu::item:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; }}
             QScrollArea, WorldPanel, QListView {{ background: transparent; border: none; }}
+            QTabWidget::pane {{ background: {_rgba(c['CARD_BG'], 150)}; border: 1px solid {c['CARD_BORDER']};
+                border-radius: 8px; top: -1px; }}
+            QTabWidget > QWidget, QTabWidget QStackedWidget > QWidget {{ background: transparent; }}
+            QTabBar::tab {{ background: transparent; color: {c['TEXT_MUTED']}; border: none;
+                padding: 5px 16px; margin-right: 2px; border-top-left-radius: 6px;
+                border-top-right-radius: 6px; }}
+            QTabBar::tab:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; font-weight: bold; }}
+            QTabBar::tab:hover:!selected {{ background: {_rgba(c['PRIMARY_LIGHT'], 120)}; color: {c['TEXT']}; }}
             QDialog {{ background: {c['BG_SOFT']}; }}
             QListWidget, QPlainTextEdit {{ background: rgba(255,255,255,200); color: {c['TEXT']};
                 border: 1px solid {c['CARD_BORDER']}; border-radius: 8px; padding: 4px; }}
