@@ -189,7 +189,7 @@ class _LoadPresetDialog(dialogs.Dialog):
             self._list.setCurrentRow(0)
         self.body.addWidget(self._list, 1)
         row = QHBoxLayout()
-        delete_btn = QPushButton(t("preset.delete_btn"))
+        delete_btn = dialogs.style_button(QPushButton(t("preset.delete_btn")), "danger")
         delete_btn.clicked.connect(self._delete)
         row.addWidget(delete_btn)
         row.addStretch()
@@ -275,6 +275,7 @@ class CreationWizardDialog(QDialog):
         self._server_panel: DraftServerPanel | None = None
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(*dialogs.DIALOG_MARGINS)
         top = QHBoxLayout()
         top.addWidget(QLabel(t("world.creation_name_label")))
         self._name_edit = QLineEdit("Cluster_New")

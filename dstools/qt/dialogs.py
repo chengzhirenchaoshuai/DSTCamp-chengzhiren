@@ -376,36 +376,65 @@ def show_file_location(parent, title: str, path, location_label: str, copied_mes
 # ── 基础对话框 ──────────────────────────────────────────────────────────
 
 class Dialog(QDialog):
-    """带底部"取消（左）/确认（右）"按钮行的对话框基类，供本模块及各页面的一次性小对话框继承。"""
+    """通用小对话框基类：统一宽度档位、边距、字号和底部按钮行（取消靠左、主操作靠右）。
 
-    def __init__(self, parent, title: str, width: int, confirm_text: str | None = None):
+    width 可以传档位名（"sm"/"md"/"lg"）或旧的像素值（自动归到最近的档位），作为最小
+    宽度——内容更宽时仍可撑开。"""
+
+    def __init__(self, parent, title: str, width: int | str = "sm", confirm_text: str | None = None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(True)
-        self.setMinimumWidth(width)
+        tier = width if isinstance(width, str) else width_tier(width)
+        self.setMinimumWidth(DIALOG_WIDTHS.get(tier, DIALOG_WIDTHS["sm"]))
         self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(20, 20, 20, 16)
-        self.body.setSpacing(8)
+        self.body.setContentsMargins(*DIALOG_MARGINS)
+        self.body.setSpacing(DIALOG_SPACING)
         self._confirm_text = confirm_text or t("dlg.confirm_btn")
 
-    def add_buttons(self) -> QPushButton:
+    def add_footer(self, left=(), right=()) -> QHBoxLayout:
+        """底部按钮行：left 里的按钮靠左（取消、删除这类），right 里的靠右（主操作）。"""
         row = QHBoxLayout()
-        cancel = QPushButton(t("dlg.cancel_btn"))
+        row.setSpacing(8)
+        for button in left:
+            row.addWidget(button)
+        row.addStretch()
+        for button in right:
+            row.addWidget(button)
+        self.body.addSpacing(6)
+        self.body.addLayout(row)
+        return row
+
+    def add_buttons(self) -> QPushButton:
+        cancel = style_button(QPushButton(t("dlg.cancel_btn")), "secondary")
         confirm = QPushButton(self._confirm_text)
         cancel.clicked.connect(self.reject)
         confirm.clicked.connect(self.accept_if_valid)
+        cancel.setAutoDefault(False)
         confirm.setDefault(True)
-        row.addWidget(cancel)
-        row.addStretch()
-        row.addWidget(confirm)
-        self.body.addSpacing(8)
-        self.body.addLayout(row)
+        self.add_footer([cancel], [confirm])
         return confirm
+
+    def add_close_button(self, text: str | None = None) -> QPushButton:
+        """只有一个"关闭/确认"按钮的对话框：主题色、靠右。"""
+        close = QPushButton(text or t("dlg.close_btn"))
+        close.clicked.connect(self.accept)
+        close.setDefault(True)
+        self.add_footer([], [close])
+        return close
+
+    def heading_label(self, text: str) -> QLabel:
+        """对话框内的小标题：统一 FONT_SIZE_MD 加粗。"""
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setFont(theme.font("FONT_SIZE_MD", bold=True))
+        label.setProperty("heading", True)
+        return label
 
     def accept_if_valid(self) -> None:
         self.accept()
 
-    def text_label(self, text: str, muted: bool = False, size_key: str = "FONT_SIZE_BASE",
+    def text_label(self, text: str, muted: bool = False, size_key: str = "FONT_SIZE_SM",
                    wrap: bool = True) -> QLabel:
         label = QLabel(text)
         label.setWordWrap(wrap)
@@ -601,7 +630,7 @@ class LogDialog(Dialog):
         row = QHBoxLayout()
         row.addStretch()
         if on_cancel is not None:
-            self._cancel_btn = QPushButton(cancel_text or t("dlg.cancel_btn"))
+            self._cancel_btn = style_button(QPushButton(cancel_text or t("dlg.cancel_btn")), "secondary")
             self._cancel_btn.clicked.connect(self._on_cancel_clicked)
             row.addWidget(self._cancel_btn)
         self._close = QPushButton(t("dlg.confirm_btn"))
@@ -754,7 +783,7 @@ class GlobalTokensDialog(Dialog):
 
         row = QHBoxLayout()
         self._add = QPushButton(t("admin.add"))
-        self._remove = QPushButton(t("admin.remove"))
+        self._remove = style_button(QPushButton(t("admin.remove")), "danger")
         self._release = QPushButton(t("token.clear_hold"))
         self._use = QPushButton(t("token.global_use"))
         self._add.clicked.connect(self._on_add)

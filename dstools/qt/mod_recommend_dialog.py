@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QPushButton, QScroll
 
 from dstools.features.mod.parser import is_mod_subscribed
 from dstools.i18n import t
+from dstools.qt import dialogs
 from dstools.qt.theme import theme
 from dstools.shared.resource_paths import bundled_resource_dir
 
@@ -21,8 +22,10 @@ class RecommendModsDialog(QDialog):
         super().__init__(page.window())
         self.page = page
         self.setWindowTitle(t("mod.recommend_title"))
-        self.setMinimumWidth(760)
+        self.setMinimumWidth(dialogs.DIALOG_WIDTHS["lg"])
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(*dialogs.DIALOG_MARGINS)
+        layout.setSpacing(dialogs.DIALOG_SPACING)
         area = QScrollArea()
         area.setWidgetResizable(True)
         area.setMinimumHeight(420)
@@ -64,6 +67,6 @@ class RecommendModsDialog(QDialog):
         inner_layout.addStretch()
         area.setWidget(inner)
         layout.addWidget(area)
-        close_btn = QPushButton(t("dlg.close_btn"))
+        close_btn = dialogs.style_button(QPushButton(t("dlg.close_btn")), "secondary")
         close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)

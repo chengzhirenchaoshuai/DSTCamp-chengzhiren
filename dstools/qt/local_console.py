@@ -46,8 +46,10 @@ class _DiagnosticDetailDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
         self.setModal(False)
-        self.setMinimumWidth(640)
+        self.setMinimumWidth(dialogs.DIALOG_WIDTHS["lg"])
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(*dialogs.DIALOG_MARGINS)
+        layout.setSpacing(dialogs.DIALOG_SPACING)
         self._view = QPlainTextEdit()
         self._view.setReadOnly(True)
         self._view.setMinimumHeight(360)

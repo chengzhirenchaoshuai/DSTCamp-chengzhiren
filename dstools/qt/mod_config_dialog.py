@@ -24,6 +24,7 @@ from dstools.features.mod.parser import (
 )
 from dstools.features.mod.sandbox_apply import apply_full_sandbox_result
 from dstools.i18n import t
+from dstools.qt import dialogs
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async
 
@@ -121,6 +122,8 @@ class ModConfigDialog(QDialog):
         self.setMinimumSize(700, 480)
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(*dialogs.DIALOG_MARGINS)
+        root.setSpacing(dialogs.DIALOG_SPACING)
         remaining_dynamic = sum(1 for o in mod_info.config_options if o.is_dynamic)
         if read_only:
             banner_key = "mod.read_only_local" if read_only_reason == "client_only" else "mod.read_only_local_save"
@@ -169,18 +172,21 @@ class ModConfigDialog(QDialog):
             self._body_layout.addWidget(QLabel(t("mod.no_config_options")))
         self._body_layout.addStretch()
 
+        # 按弹窗规范：返回（取消类）、重置靠左用浅色描边，应用（主操作）靠右用主题色。
         btn_row = QHBoxLayout()
+        btn_row.setSpacing(8)
+        back_btn = dialogs.style_button(QPushButton(t("mod.back")), "secondary")
+        back_btn.clicked.connect(self.close)
+        btn_row.addWidget(back_btn)
+        if not read_only:
+            reset_btn = dialogs.style_button(QPushButton(t("mod.reset")), "secondary")
+            reset_btn.clicked.connect(self._reset)
+            btn_row.addWidget(reset_btn)
+        btn_row.addStretch()
         if not read_only:
             apply_btn = QPushButton(t("mod.apply"))
             apply_btn.clicked.connect(self._apply)
             btn_row.addWidget(apply_btn)
-            reset_btn = QPushButton(t("mod.reset"))
-            reset_btn.clicked.connect(self._reset)
-            btn_row.addWidget(reset_btn)
-        btn_row.addStretch()
-        back_btn = QPushButton(t("mod.back"))
-        back_btn.clicked.connect(self.close)
-        btn_row.addWidget(back_btn)
         root.addLayout(btn_row)
 
     @staticmethod

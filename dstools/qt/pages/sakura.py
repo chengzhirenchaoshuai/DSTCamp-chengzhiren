@@ -95,6 +95,7 @@ class _NodeSelectDialog(QDialog):
             grid.addWidget(button, idx // _NODE_GRID_COLS, idx % _NODE_GRID_COLS)
         area.setWidget(grid_widget)
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(*dialogs.DIALOG_MARGINS)
         layout.addWidget(area)
         self.resize(760, 560)
 

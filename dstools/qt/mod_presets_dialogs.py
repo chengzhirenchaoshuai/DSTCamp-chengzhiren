@@ -164,7 +164,7 @@ class ApplyPresetDialog(dialogs.Dialog):
         self._refill()
         # 底部按钮行："删除"在左、"应用"在右；不放"取消"，关闭窗口即可取消。
         row = QHBoxLayout()
-        delete_btn = QPushButton(t("preset.delete_btn"))
+        delete_btn = dialogs.style_button(QPushButton(t("preset.delete_btn")), "danger")
         delete_btn.clicked.connect(self._delete)
         apply_btn = QPushButton(t("preset.apply_btn"))
         apply_btn.clicked.connect(self.accept_if_valid)
