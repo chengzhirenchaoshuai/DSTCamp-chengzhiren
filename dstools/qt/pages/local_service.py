@@ -337,8 +337,8 @@ class LocalServicePage(Page):
         root.setContentsMargins(15, 13, 15, 13)
         root.setSpacing(6)
 
-        self._install_row, self._install_path_label, self._install_change_btn, self._steam_update_btn = \
-            self._build_install_row()
+        (self._install_row, self._install_path_label, self._steam_update_hint,
+         self._install_change_btn, self._steam_update_btn) = self._build_install_row()
         root.addWidget(self._install_row)
 
         self._luajit_row, self._luajit_status_label, self._luajit_install_btn, self._luajit_uninstall_btn = \
@@ -373,8 +373,14 @@ class LocalServicePage(Page):
         label = QLabel(t("local.install_status_label"))
         path_label = QLabel(t("local.install_not_found"))
         path_label.setProperty("muted", True)
+        # 有可用更新时紧跟在路径后面显示，没有时隐藏。
+        update_hint = QLabel(f"● {t('local.steam_update_available')}")
+        update_hint.setStyleSheet(f"color: {theme.hex('ERROR')};")
+        update_hint.hide()
         layout.addWidget(label)
-        layout.addWidget(path_label, 1)
+        layout.addWidget(path_label)
+        layout.addWidget(update_hint)
+        layout.addStretch(1)
         change_btn = QPushButton(t("local.install_change_btn"))
         change_btn.clicked.connect(self._change_install_dir)
         update_btn = QPushButton(t("local.steam_update_btn"))
@@ -383,7 +389,7 @@ class LocalServicePage(Page):
             button.setFont(theme.font("FONT_SIZE_SM"))
         layout.addWidget(change_btn)
         layout.addWidget(update_btn)
-        return row, path_label, change_btn, update_btn
+        return row, path_label, update_hint, change_btn, update_btn
 
     def _build_luajit_row(self):
         row = QWidget()
@@ -625,6 +631,14 @@ class LocalServicePage(Page):
         labels = {"install": "local.steam_install_btn", "update": "local.steam_update_btn", "validate": "local.steam_validate_btn"}
         self._steam_update_mode = mode
         self._steam_update_btn.setText(t(labels[mode]))
+        self._steam_update_hint.setVisible(mode == "update")
+        if mode == "update":
+            if steam_client_updater.remote_requires_update(snapshot, self._steam_remote_build_id):
+                reason = t("local.steam_update_available_build",
+                           remote=self._steam_remote_build_id, local=snapshot.build_id or "-")
+            else:
+                reason = t("local.steam_update_available_pending")
+            self._steam_update_hint.setToolTip(reason)
 
     def _refresh_steam_remote_build_async(self, force: bool = False) -> None:
         if self._steam_remote_build_fetching:
@@ -956,7 +970,13 @@ class LocalServicePage(Page):
         if cluster.platform == Platform.STEAM:
             server_snapshot = steam_client_updater.snapshot_app()
             if steam_client_updater.action_for_snapshot(server_snapshot, remote_build_id=self._steam_remote_build_id) == "update":
-                dialogs.show_warning(self.window(), t("local.steam_update_title"), t("local.server_update_required"))
+                # 被拦下时直接给出更新入口，不让用户自己去找"通过 Steam 更新"按钮。
+                choice = dialogs.ask_choice(
+                    self.window(), t("local.steam_update_title"), t("local.server_update_required"),
+                    [(t("dlg.cancel_btn"), "cancel"), (t("local.steam_update_now_btn"), "update")],
+                    default="update")
+                if choice == "update":
+                    self._on_steam_update_clicked()
                 return False
         if not restarting and not self._prepare_legacy_mods_for_start(cluster):
             return False
