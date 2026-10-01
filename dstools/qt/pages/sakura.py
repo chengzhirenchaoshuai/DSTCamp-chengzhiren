@@ -33,7 +33,7 @@ from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
 from dstools.qt.widgets import AutoHideLabel, Card, PillTabBar, section_card
 from dstools.shared import app_settings
-from dstools.shared.lan_mapping_guard import ensure_lan_free_for_mapping
+from dstools.qt.lan_mapping_guard import ensure_lan_free_for_mapping
 from dstools.shared.server_ports import stable_path_key
 from dstools.shared.token_manager import is_valid_token, mask_token
 
@@ -739,7 +739,7 @@ class _SakuraMappingPanel(QWidget):
             return
         if self._ensure_frpc_available() is None:
             return
-        if not ensure_lan_free_for_mapping(self.ctx, cluster):
+        if not ensure_lan_free_for_mapping(self.window(), self.ctx, cluster):
             return
 
         progress = dialogs.LogDialog(self.window(), t("sakura.setup_progress_title"))

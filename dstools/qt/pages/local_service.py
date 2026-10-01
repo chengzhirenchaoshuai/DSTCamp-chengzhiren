@@ -249,6 +249,8 @@ class LocalServicePage(Page):
         # 不能等用户"切回来"才刷新——不像其它纯配置页可以懒加载，这里直接订阅存档
         # 切换信号，不依赖 Page.load() 的懒加载闸门。
         ctx.cluster_changed.connect(self.on_cluster_changed)
+        # F5/刷新全部：重新探测专用服务器工具（运行期间才装好的专服也能识别），WeGame 存档顺带重查进程
+        ctx.env_changed.connect(self._on_env_refreshed)
 
         # 跟世界设置/存档信息/内网穿透这几个主页签同一个外壳：外圈一圈主题色圆角
         # 边框，内部全透明（alpha=0），透出主窗口背景图；之前这个页没套这层，真机
@@ -495,6 +497,10 @@ class LocalServicePage(Page):
         self._console_tabs.setVisible(self._console_tabs.count() > 0)
 
     # ── 安装目录/Steam 更新 ─────────────────────────────────────────────
+    def _on_env_refreshed(self) -> None:
+        self._detect_install_dir()
+        self._on_wegame_detect()
+
     def _detect_install_dir(self) -> None:
         self._install_dir = find_dedicated_server_dir()
         self._install_path_label.setText(str(self._install_dir) if self._install_dir else t("local.install_not_found"))
