@@ -12,7 +12,7 @@ DSTCamp is a Windows desktop manager for local *Don't Starve Together* servers. 
 
 ## ✨ 1.5.0 highlights
 
-- 🖥️ **Brand-new Qt interface**: rebuilt with Qt (PySide6) with every existing feature kept, unified visuals and dialogs, proper support for 125%/175% display scaling, and a smaller build (117 MB → 89 MB).
+- 🖥️ **Brand-new Qt interface**: rebuilt with Qt (PySide6) with every existing feature kept, unified visuals and dialogs, and proper support for 125%/175% display scaling.
 - 🔁 **Auto-restart on crash**: worlds that crash while running are restarted automatically, including handling of new-format tokens Klei has not released yet.
 - 🛰️ **More accurate lobby-acceleration diagnostics**: each player's connection type (Steam P2P / FRP / LAN / direct IP) is identified from the server log.
 - 👥 **Easier player management**: pick administrators and blocklist entries from players seen in any save; the save page shows Klei IDs, nicknames, and sharper avatars.
@@ -94,7 +94,6 @@ The build uses an explicit tool allowlist, stages resources under `build/`, and 
 
 - Rebuilt with Qt (PySide6) with every existing feature kept; visuals, dialogs, font sizes, and themes are unified, and details such as copy toasts and drop-down lists were reworked.
 - High-DPI aware: the default window fits the screen work area, the last window size is remembered, large dialogs no longer overflow the screen, and the window cannot be dragged off the desktop.
-- Build size reduced from 117 MB to 89 MB.
 
 ### ✨ New features
 
