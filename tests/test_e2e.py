@@ -1623,12 +1623,12 @@ def test_world_ocean_frequency_labels():
     uncommon/default/often/mostly/always/insane 各自加上 "ocean_" 前
     缀），显示文案跟不带前缀的版本完全一样（源码里是
     `{text = data.text, data = "ocean_"..data.data}`，文案字段原样复
-    用）。之前 render.py 的 _VALUE_LABELS 只补了 "ocean_uncommon" 一
+    用）。之前 _VALUE_LABELS 只补了 "ocean_uncommon" 一
     个，漏了其它 7 档，包括这次实际触发问题的 "ocean_default"。"""
     print("\n" + "=" * 60)
     print("Test 38: World Ocean Frequency Value Labels")
 
-    from dstools.features.world.render import get_value_label
+    from dstools.features.world.value_labels import get_value_label
 
     expected = {
         "ocean_never": "无",
@@ -3245,102 +3245,36 @@ def test_steam_library_folder_casing():
 
 
 def test_font_style_switch():
-    """测试字体样式一键切换功能的核心逻辑（纯逻辑，不需要真实 Tk 窗口）。
-    验证：(a) shared/gui/fonts.py 的 set_font_style() 正确切
-    换 PIL 渲染用的字体文件路径，且切换后清空缓存；(b) theme.py 的
-    set_font_style_choice() 正确联动 FONT_FAMILY，并且同步更新了
-    fonts.py 那一侧（Tk 和 PIL 两条渲染路径不能各用各的字体）；(c) 字
-    体样式是跟颜色主题解耦的独立设置——切换颜色主题（set_theme()）不
-    会改动已经选好的样式；(d) font_tuple() 的显式 bold=True 覆盖依然
-    生效（不依赖任何全局字重状态）；(e) app_settings.py 的持久化读写
-    能正确往返；(f) 打包进 tools/fonts/ 的可爱风字体文件确实存在（防
-    止以后重构不小心把这个资源文件弄丢，PIL 侧会静默 fallback 到雅
-    黑，不会报错提醒，容易被忽略）。"""
+    """字体样式是独立于颜色主题的设置（Qt 版 theme）：切样式会换字体族并按比例
+    放大字号，显式 bold 始终生效，切颜色主题不改样式，选择可持久化；打包的
+    字体文件必须都在（缺文件时 Qt 静默回退系统字体，不会报错提醒）。"""
     print("\n" + "=" * 60)
     print("Test 35: Font Style Switch")
 
-    from pathlib import Path
-
-    from dstools.shared.gui import fonts, theme
+    from dstools.qt.theme import FONT_FAMILY_BY_STYLE, FONT_STYLES, Theme
     from dstools.shared import app_settings
 
-    cute_font_path = (
-        Path(__file__).resolve().parent.parent
-        / "tools"
-        / "fonts"
-        / "KNMaiyuan-Regular.ttf"
-    )
-    assert cute_font_path.exists(), f"可爱风字体文件缺失: {cute_font_path}"
-    print("  PASS: tools/fonts/KNMaiyuan-Regular.ttf 确实打包在仓库里")
+    fonts_dir = Path(__file__).resolve().parent.parent / "tools" / "fonts"
+    for style in FONT_STYLES:
+        if style.filename:
+            assert (fonts_dir / style.filename).is_file(), f"字体文件缺失: {style.filename}"
+    print("  PASS: 各字体样式引用的字体文件都打包在 tools/fonts/ 里")
 
-    original_choice = theme.FONT_STYLE_CHOICE
-    try:
-        fonts.set_font_style("cute")
-        assert fonts.get_font_style() == "cute"
-        assert fonts.get_font(20) is not None, "切换样式后 PIL 侧仍应能正常取到字体对象"
-        print("  PASS: fonts.set_font_style() 切换 PIL 渲染用的字体文件并清空缓存")
+    with _isolated_settings_dir():
+        theme = Theme()
+        default_font = theme.font("FONT_SIZE_BASE")
+        theme.set_font_style("cute")
+        cute_font = theme.font("FONT_SIZE_BASE")
+        assert cute_font.family() == FONT_FAMILY_BY_STYLE["cute"] == "KN Maiyuan"
+        assert cute_font.pointSize() > default_font.pointSize(), "可爱风笔画粗，字号需整体放大"
+        assert theme.font("FONT_SIZE_BASE", bold=True).bold()
+        print("  PASS: 切换样式后字体族与字号缩放生效，显式 bold 保留")
 
-        theme.set_font_style_choice("cute")
-        assert theme.FONT_STYLE_CHOICE == "cute"
-        assert theme.FONT_FAMILY == "KN Maiyuan"
-        assert fonts.get_font_style() == "cute", (
-            "theme.set_font_style_choice() 必须同步联动 fonts.py 那一侧"
-        )
-        print(
-            "  PASS: theme.set_font_style_choice() 联动 Tk 侧(FONT_FAMILY)与 PIL 侧(fonts.py)"
-        )
-
-        theme.set_font_style_choice("default")
-        assert theme.FONT_FAMILY == "Microsoft YaHei UI Light"
-        assert theme.font_tuple(12) == ("Microsoft YaHei UI Light", 12), (
-            "没有显式 bold 参数时不应该额外带 bold 样式串"
-        )
-        assert theme.font_tuple(12, bold=True) == (
-            "Microsoft YaHei UI Light",
-            12,
-            "bold",
-        ), "显式 bold=True 是控件自身的强调，必须始终生效"
-        print(
-            "  PASS: font_tuple() 正确反映当前字体样式，且 bold=True 显式覆盖始终生效"
-        )
-
-        theme.set_font_style_choice("cute")
         theme.set_theme("mint")
-        assert theme.FONT_STYLE_CHOICE == "cute", (
-            "字体样式是独立于颜色主题的设置，切主题不应该改动它"
-        )
-        theme.set_theme("gray")
-        assert theme.FONT_STYLE_CHOICE == "cute"
-        print("  PASS: 切换颜色主题(set_theme())不会连带改动已选好的字体样式")
-
-        # 荆南麦圆体笔画粗壮，跟微软雅黑用一样的字号看着更拥挤，需要整
-        # 体放大——验证切到 cute 后字号阶梯按 FONT_SIZE_SCALE_BY_STYLE
-        # 放大了，且切换颜色主题不会打乱这个放大倍数。
-        theme.set_font_style_choice("default")
-        default_base = theme.FONT_SIZE_BASE
-        theme.set_font_style_choice("cute")
-        cute_scale = theme.FONT_SIZE_SCALE_BY_STYLE["cute"]
-        assert theme.FONT_SIZE_BASE == round(default_base * cute_scale), (
-            "字体样式切到 cute 后，全局字号阶梯必须按 FONT_SIZE_SCALE_BY_STYLE 整体放大"
-        )
-        assert theme.FONT_SIZE_BASE > default_base, (
-            "cute 的缩放系数应该让字号变大，不是不变或变小"
-        )
-        theme.set_theme("mint")
-        assert theme.FONT_SIZE_BASE == round(default_base * cute_scale), (
-            "切换颜色主题不应该打乱已经生效的字体样式缩放倍数"
-        )
-        theme.set_theme("gray")
-        print("  PASS: 字体样式切换会按比例放大全局字号阶梯，且不受颜色主题切换影响")
-
-        app_settings.set_font_style_choice("cute")
+        assert theme.font_style == "cute", "切颜色主题不应改动字体样式"
+        assert Theme().font_style == "cute", "新启动应读回已保存的字体样式"
         assert app_settings.get_font_style_choice() == "cute"
-        app_settings.set_font_style_choice("default")
-        assert app_settings.get_font_style_choice() == "default"
-        print("  PASS: app_settings.py 的字体样式持久化读写往返正确")
-    finally:
-        theme.set_font_style_choice(original_choice)
-        app_settings.set_font_style_choice(original_choice)
+        print("  PASS: 字体样式独立于颜色主题，并且持久化往返正确")
 
 
 def test_frp_selfhost_port_conflict_detection():
