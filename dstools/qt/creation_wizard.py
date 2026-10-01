@@ -121,6 +121,9 @@ class DraftServerPanel(ServerConfigPage):
         cluster = self.ctx.selected_cluster()
         if any(s.name == shard_name for s in cluster.shards):
             return
+        # 下面的 load() 会按草稿文件重建表单；先把表单当前值（房间名等）写进草稿，
+        # 否则还没落盘的修改会被冲掉（真机反馈过删掉 Master 后房间名变回 Cluster_New）。
+        self.read_creation_settings()
         from dstools.shared.ini_parser import write_server_ini
         path = cluster.path / shard_name
         path.mkdir()
@@ -136,6 +139,7 @@ class DraftServerPanel(ServerConfigPage):
         target = next((s for s in cluster.shards if s.name == shard_name), None)
         if target is None:
             return
+        self.read_creation_settings()  # 同 add_shard：load() 前先把表单当前值写进草稿
         (target.path / "server.ini").unlink(missing_ok=True)
         target.path.rmdir()
         cluster.shards.remove(target)
@@ -236,6 +240,10 @@ class CreationWizardDialog(QDialog):
         self._plan_caves: creation.WorldShardPlan | None = None
         # 用户删掉的 Master/Caves；_reload_template() 不能再按模板把它们补回来。
         self._removed_fixed_shards: set[str] = set()
+        # 关闭前确认用：世界/Mod 页的用户操作直接置 _dirty；服务器配置表单字段太多，
+        # 改为关闭时跟打开时的快照比对（_server_baseline）。
+        self._dirty = False
+        self._server_baseline: dict | None = None
         self._extra_plans: dict[str, creation.WorldShardPlan] = {}
         self._location_drafts: dict[tuple[str, str], creation.WorldShardPlan] = {}
         self._user_selected_location_shards: set[str] = set()
@@ -333,6 +341,7 @@ class CreationWizardDialog(QDialog):
         self._initialized_pages.add(key)
 
     def _on_name_changed(self, text: str) -> None:
+        self._dirty = True
         if self._server_panel is not None and not self._default_room_name:
             self._server_panel.set_cluster_name(text)
 
@@ -358,6 +367,7 @@ class CreationWizardDialog(QDialog):
             token_path=draft_root / "cluster_token.txt")
         draft_ctx = _DraftContext(self.ctx.env, draft_cluster)
         self._server_panel = DraftServerPanel(draft_ctx, self._default_room_name or cluster_name)
+        self._server_baseline = self._server_panel.read_creation_settings()
         layout = QVBoxLayout(self._server_page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._server_panel)
@@ -368,11 +378,16 @@ class CreationWizardDialog(QDialog):
         toolbar = QHBoxLayout()
         toolbar.addWidget(QLabel(t("world.creation_world_label")))
         self._shard_combo = QComboBox()
+        # 宽度跟最长的世界名走；展开列表用更不透明的底色（QSS 的 #opaquePopup 规则）。
+        self._shard_combo.setObjectName("opaquePopup")
+        self._shard_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._shard_combo.addItems([MASTER_SHARD, CAVES_SHARD])
         self._shard_combo.activated.connect(self._on_shard_changed)
         toolbar.addWidget(self._shard_combo)
         toolbar.addWidget(QLabel(t("world.creation_select_world")))
         self._location_combo = QComboBox()
+        self._location_combo.setObjectName("opaquePopup")
+        self._location_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._location_combo.activated.connect(self._on_location_changed)
         toolbar.addWidget(self._location_combo)
         add_btn = QPushButton(t("world.creation_add_world"))
@@ -485,6 +500,7 @@ class CreationWizardDialog(QDialog):
         location = self._location_combo.currentData()
         if not location:
             return
+        self._dirty = True
         self._user_selected_location_shards.add(shard)
         self._switch_shard_location(shard, location)
 
@@ -509,6 +525,7 @@ class CreationWizardDialog(QDialog):
                                       choices, default=locations[0], min_width=420)
         if not location:
             return
+        self._dirty = True
         shard_name = self._next_extra_shard_name(location)
         plan = copy.deepcopy(defaults.default_plan_for_location(location))
         self._extra_plans[shard_name] = plan
@@ -528,6 +545,7 @@ class CreationWizardDialog(QDialog):
         if not dialogs.ask_yes_no(self, t("world.creation_remove_world"),
                                   t("world.creation_remove_world_confirm", name=shard_name)):
             return
+        self._dirty = True
         if shard_name == MASTER_SHARD:
             self._plan_master = None
             self._removed_fixed_shards.add(shard_name)
@@ -616,6 +634,7 @@ class CreationWizardDialog(QDialog):
         plan = self._active_preset()
         if not plan:
             return
+        self._dirty = True
         values = get_value_set(key, self._active_mod_settings, location=plan.location, is_rule=True)
         current = plan.overrides.get(key, "default")
         idx = values.index(current) if current in values else 0
@@ -828,6 +847,7 @@ class CreationWizardDialog(QDialog):
         mod = self._mod_data.get(mod_id)
         if mod is None:
             return
+        self._dirty = True
         mod.enabled = not mod.enabled
         if mod.enabled:
             self._selected_mod_ids.add(mod_id)
@@ -879,7 +899,10 @@ class CreationWizardDialog(QDialog):
         info = self._mod_infos.get(mod_id)
         if not mod or not info or not (info.config_options or info.unsupported_schema):
             return
+        before = copy.deepcopy(mod.configuration_options)
         open_mod_config(self, mod_id, mod, info, read_only=False, read_only_reason="")
+        if mod.configuration_options != before:
+            self._dirty = True
 
     def _open_mod_link(self, mod_id: str) -> None:
         numeric_id = str(mod_id).removeprefix("workshop-")
@@ -928,6 +951,7 @@ class CreationWizardDialog(QDialog):
         _LoadPresetDialog(self).exec()
 
     def _apply_preset_to_session(self, preset) -> None:
+        self._dirty = True
         self._mod_overrides = copy.deepcopy(preset.mods)
         self._selected_mod_ids = {wid for wid, saved in preset.mods.items()
                                   if isinstance(saved, dict) and bool(saved.get("enabled", True))}
@@ -979,7 +1003,7 @@ class CreationWizardDialog(QDialog):
             t("world.create_port_conflict_detail", details="\n".join(lines)),
             [(t("world.allocate_ports_btn"), "allocate"), (t("dlg.no_btn"), "cancel"), (t("dlg.yes_btn"), "create")],
             default="allocate", min_width=420)
-        if choice is None or choice == "cancel":
+        if choice not in ("allocate", "create"):  # 取消或直接关闭窗口
             return False
         if choice == "create":
             return True
@@ -1083,7 +1107,28 @@ class CreationWizardDialog(QDialog):
             self._bg_cache = cache
         painter.drawPixmap(0, 0, self._bg_cache)
 
-    def closeEvent(self, event) -> None:
+    def _has_unsaved_changes(self) -> bool:
+        if self._dirty:
+            return True
+        if self._server_panel is None or self._server_baseline is None:
+            return False
+        try:
+            return self._server_panel.read_creation_settings() != self._server_baseline
+        except Exception:
+            return True  # 读不出来就当有改动，宁可多问一次
+
+    def reject(self) -> None:
+        # 点右上角关闭（QDialog.closeEvent 会转调 reject）和按 Esc 都走这里；
+        # 有改动时先确认，避免误关把辛苦配好的东西全丢掉。
+        if self._has_unsaved_changes() and not dialogs.ask_yes_no(
+                self, t("world.creation_discard_title"), t("world.creation_discard_confirm")):
+            return
+        super().reject()
+
+    def done(self, result: int) -> None:
+        # 创建成功（accept）或确认关闭（reject）最终都经过 done()，在这里清理草稿目录；
+        # 不放在 closeEvent 里——用户取消关闭时窗口还开着，草稿不能先被删掉。
+        super().done(result)
         if self._draft_dir_ctx is not None:
             self._draft_dir_ctx.cleanup()
-        super().closeEvent(event)
+            self._draft_dir_ctx = None

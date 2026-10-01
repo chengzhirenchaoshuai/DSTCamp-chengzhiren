@@ -71,13 +71,26 @@ def ask_yes_no(parent, title: str, text: str, min_width: int = 0) -> bool:
 
 def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], default: str = "",
                min_width: int = 0) -> str:
-    """多选项询问：choices 是 [(按钮文字, 返回值)]；关闭窗口/按 Esc 返回 default。"""
+    """多选项询问：choices 是 [(按钮文字, 返回值)]，default 是默认（回车）按钮。
+
+    关闭窗口/按 Esc：有返回值为 "cancel" 的选项就等同点它，否则返回空串——调用方
+    一律按"取消"处理。QMessageBox 只有存在"取消类"按钮时才启用标题栏关闭按钮，之前
+    全是 ActionRole 按钮，关闭按钮一直是灰的（真机反馈过）；没有现成取消项时补一个
+    隐藏的 Cancel 按钮当 Esc/关闭目标。"""
     box = _box(parent, QMessageBox.Icon.Question, title, text, with_ok=False, min_width=min_width)
     buttons = {}
     for label, value in choices:
         buttons[box.addButton(label, QMessageBox.ButtonRole.ActionRole)] = value
+    escape = next((button for button, value in buttons.items() if value == "cancel"), None)
+    if escape is None:
+        escape = box.addButton(QMessageBox.StandardButton.Cancel)
+        escape.hide()
+    box.setEscapeButton(escape)
+    default_button = next((button for button, value in buttons.items() if value == default), None)
+    if default_button is not None:
+        box.setDefaultButton(default_button)
     box.exec()
-    return buttons.get(box.clickedButton(), default)
+    return buttons.get(box.clickedButton(), "")
 
 
 class _Toast(QWidget):

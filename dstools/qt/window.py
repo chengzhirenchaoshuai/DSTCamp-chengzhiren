@@ -5,6 +5,7 @@
 """
 
 import ctypes
+import os
 from ctypes import wintypes
 
 from PySide6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, Signal
@@ -344,6 +345,9 @@ class ClusterBar(QWidget):
         # 放在全局存档选择器右侧，跟 Tk 版 gui/app.py 的 _create_save_btn 位置一致。
         # 字号跟全局按钮保持一致（不再单独放大），真机反馈过这两个按钮没必要
         # 跟别处不一样。
+        # "打开位置"从存档信息页挪到这里，放在"创建服务器存档"左侧，打开当前选中存档的文件夹。
+        self._open_location = QPushButton()
+        self._open_location.clicked.connect(self._on_open_location)
         self._create_save = QPushButton()
         self._create_save.clicked.connect(window.open_creation_wizard)
         self._refresh = QPushButton()
@@ -353,6 +357,7 @@ class ClusterBar(QWidget):
         row.addSpacing(8)
         row.addWidget(self._archive_label)
         row.addWidget(self._cluster)
+        row.addWidget(self._open_location)
         row.addWidget(self._create_save)
         row.addStretch()
         row.addWidget(self._refresh)
@@ -367,10 +372,16 @@ class ClusterBar(QWidget):
     def retranslate(self) -> None:
         self._platform_label.setText(t("selector.save_type"))
         self._archive_label.setText(t("selector.archive"))
+        self._open_location.setText(t("env.open_location"))
         self._create_save.setText(t("save.create_server_save"))
         self._refresh.setText(t("save.refresh"))
         # "刷新"至少跟本地服务器页"更换路径"按钮一样宽（约 4 个字），不再只按两个字收窄。
         self._refresh.setMinimumWidth(QPushButton(t("local.install_change_btn")).sizeHint().width())
+
+    def _on_open_location(self) -> None:
+        cluster = self._ctx.selected_cluster()
+        if cluster is not None and cluster.path.is_dir():
+            os.startfile(str(cluster.path))
 
     def reload(self) -> None:
         self._populating = True

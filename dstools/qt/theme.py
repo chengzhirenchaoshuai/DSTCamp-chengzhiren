@@ -220,6 +220,7 @@ class Theme(QObject):
                 border: 1px solid {c['CARD_BORDER']}; selection-background-color: {c['PRIMARY_LIGHT']};
                 selection-color: {c['TEXT']}; outline: none; }}
             QComboBox QAbstractItemView::item {{ padding: 2px 6px; }}
+            QComboBox#opaquePopup QAbstractItemView {{ background: {_rgba(c['CARD_BG'], 230)}; }}
             QLineEdit {{ background: rgba(255,255,255,200); border: 1px solid {c['CARD_BORDER']};
                 border-radius: 8px; padding: 5px 10px; color: {c['TEXT']}; }}
             QLineEdit:focus {{ border-color: {c['ACCENT']}; }}

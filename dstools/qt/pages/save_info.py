@@ -14,11 +14,13 @@ from PySide6.QtWidgets import (
 )
 
 from dstools.features.local_service.backup_manager import create_backup, list_backups, restore_backup
+from dstools.features.local_service.dedicated_server import detect_external_shard_processes
 from dstools.features.save_browser import view_data
 from dstools.features.save_browser.cluster_copy import (
     copy_local_cluster_to_server, suggest_new_cluster_name, validate_cluster_folder_name,
 )
-from dstools.features.save_browser.save_bundle import create_save_bundle
+from dstools.features.save_browser.save_bundle import create_save_bundle, default_save_bundle_output_dir
+from dstools.features.save_browser.save_delete import delete_cluster_dir
 from dstools.i18n import t
 from dstools.models import SaveSource
 from dstools.qt import dialogs
@@ -95,10 +97,12 @@ class SaveInfoPage(Page):
         overview_row.addLayout(overview_text, 1)
         self._copy_to_server = QPushButton()
         self._copy_to_server.clicked.connect(self._on_copy_to_server)
-        self._open_location = QPushButton()
-        self._open_location.clicked.connect(self._on_open_location)
+        # "打开位置"挪到了顶部存档选择栏（"创建服务器存档"左侧），这里换成"删除存档"。
+        self._delete_button = QPushButton()
+        self._delete_button.clicked.connect(self._on_delete)
+        self._delete_running = False
         overview_row.addWidget(self._copy_to_server, 0, Qt.AlignmentFlag.AlignVCenter)
-        overview_row.addWidget(self._open_location, 0, Qt.AlignmentFlag.AlignVCenter)
+        overview_row.addWidget(self._delete_button, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self._overview)
 
         shard_row = QHBoxLayout()
@@ -138,7 +142,7 @@ class SaveInfoPage(Page):
         self._basic_title.setText(t("save.basic_info"))
         self._shard_label.setText(t("save.shard"))
         self._players_title.setText(t("save.players_section"))
-        self._open_location.setText(t("env.open_location"))
+        self._delete_button.setText(t("save.delete_busy") if self._delete_running else t("save.delete_btn"))
         self._copy_to_server.setText(t("save.copy_to_server"))
         self._bundle_button.setText(t("save.bundle_running") if self._bundle_running else t("save.bundle_btn"))
         self._manage_button.setText(t("save.backup_management"))
@@ -198,7 +202,7 @@ class SaveInfoPage(Page):
         for label in (self._storage_label, self._detail_label, self._shards_label):
             label.setText("")
         self._storage_label.setText(t("save.loading"))
-        self._open_location.setEnabled(True)
+        self._delete_button.setEnabled(not self._delete_running)
 
         def done(overview: view_data.ClusterOverview) -> None:
             if generation != self._generation:
@@ -343,10 +347,64 @@ class SaveInfoPage(Page):
         self._rows_layout.insertWidget(self._rows_layout.count() - 1, row)
 
     # ── 动作 ────────────────────────────────────────────────────────────
-    def _on_open_location(self) -> None:
+    def _cluster_in_use(self, cluster) -> bool:
+        """本程序启动的世界，或外部启动的专服进程正在用这个存档。"""
+        if self.ctx.running_shard_names(cluster):
+            return True
+        try:
+            external = detect_external_shard_processes(cluster)
+            return any(info.get("running") for info in external.values())
+        except (OSError, ValueError, KeyError):
+            return False
+
+    def _on_delete(self) -> None:
+        """删除当前存档：可选先打包 ZIP 备份（存到存档目录之外）再删除。"""
         cluster = self.ctx.selected_cluster()
-        if cluster is not None:
-            self._open_path(cluster.path)
+        if cluster is None or self._delete_running:
+            return
+        title = t("save.delete_title")
+        if self._cluster_in_use(cluster):
+            dialogs.show_warning(self._window(), title, t("save.delete_running", name=cluster.name))
+            return
+        choice = dialogs.ask_choice(
+            self._window(), title,
+            t("save.delete_confirm", name=cluster.name, dir=str(default_save_bundle_output_dir())),
+            [(t("save.delete_backup_btn"), "backup"), (t("save.delete_direct_btn"), "delete"),
+             (t("dlg.cancel_btn"), "cancel")],
+            default="cancel", min_width=420)
+        if choice not in ("backup", "delete"):
+            return
+        self._delete_running = True
+        self._delete_button.setEnabled(False)
+        self._delete_button.setText(t("save.delete_busy"))
+        cluster_path = cluster.path
+
+        def work():
+            backup = create_save_bundle(cluster_path) if choice == "backup" else None
+            delete_cluster_dir(cluster_path)
+            return backup
+
+        def finish() -> None:
+            self._delete_running = False
+            self._delete_button.setText(t("save.delete_btn"))
+            self._delete_button.setEnabled(True)
+
+        def done(backup) -> None:
+            finish()
+            self.ctx.refresh_env()
+            if backup is not None:
+                dialogs.show_file_location(self._window(), title, backup,
+                                           t("save.delete_done_backup", name=cluster.name, path="").strip(),
+                                           "")
+            else:
+                dialogs.show_info(self._window(), title, t("save.delete_done", name=cluster.name))
+
+        def failed(exc: Exception) -> None:
+            finish()
+            self.ctx.refresh_env()
+            dialogs.show_error(self._window(), title, t("save.delete_failed", error=str(exc)))
+
+        run_async(work, done, failed)
 
     @staticmethod
     def _open_path(path) -> None:
