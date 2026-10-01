@@ -145,7 +145,7 @@ python scripts/build_exe.py
 - 部分系统上读取进程/端口信息时解码失败导致崩溃。
 - 缓存目录设置中的"立即重启"没有真正重启。
 - 管理员列表刷新后出现重复项。
-- 检查更新时 Gitee 源一直请求失败、只能退回 GitHub，国内网络下检查和下载更新更稳定。
+- 检查更新时 Gitee 源时常被拒绝（HTTP 403）而退回 GitHub，现在国内网络下检查和下载更新更稳定。
 
 <details>
 <summary><strong>历史版本（1.1.0 ~ 1.4.0）</strong></summary>

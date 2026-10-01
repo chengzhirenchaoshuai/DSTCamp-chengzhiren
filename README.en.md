@@ -119,7 +119,7 @@ The build uses an explicit tool allowlist, stages resources under `build/`, and 
 - Crashes caused by decoding process/port information on some systems.
 - "Restart now" in cache-folder settings did not restart.
 - Duplicate entries in the administrator list after refreshing.
-- The Gitee update source always failed and fell back to GitHub; checking and downloading updates is now more reliable in mainland China.
+- The Gitee update source was often rejected (HTTP 403) and fell back to GitHub; checking and downloading updates is now more reliable in mainland China.
 
 <details>
 <summary><strong>Earlier versions (1.3.5 ~ 1.4.0)</strong></summary>
