@@ -50,7 +50,7 @@ class SaveInfoPage(Page):
         outer.setContentsMargins(24, 12, 24, 12)
         # 外层边框内部全透明，跟其它主页签统一；下面玩家概览/每行玩家卡片是内容级
         # 的 Card，不受这个影响，各自保留自己的底色。
-        card = Card(radius=10, alpha=0, border=True)
+        card = Card(radius=15, alpha=0, border=True)
         outer.addWidget(card)
         layout = QVBoxLayout(card)
         layout.setContentsMargins(22, 14, 22, 14)

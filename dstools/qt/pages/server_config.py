@@ -284,10 +284,10 @@ class ServerConfigPage(Page):
         outer.setContentsMargins(24, 12, 24, 12)
         # 房间设置/世界设置两个子页签内部还各自套了一层 Card（见下方 column/card），
         # 内部全透明（不画底色）；外层这圈边框跟其它主页签统一。
-        card = Card(radius=10, alpha=0, border=True)
+        card = Card(radius=15, alpha=0, border=True)
         outer.addWidget(card)
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setContentsMargins(15, 13, 15, 13)
         layout.setSpacing(6)
         self._tabs = PillTabBar([""] * 5, height=36, pill_height=28, font_size_key="FONT_SIZE_BASE")
         layout.addWidget(self._tabs)
