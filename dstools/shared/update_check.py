@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
@@ -14,6 +16,17 @@ _SOURCES = (
     ("gitee", "https://gitee.com/api/v5/repos/orange-blade/DSTCamp-chengzhiren/releases/latest"),
     ("github", "https://api.github.com/repos/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases/latest"),
 )
+# 本地端到端验证自动更新用：设置这个环境变量后，只从该地址读取发布信息（格式同
+# Gitee/GitHub releases/latest），不再访问真实发布源。为避免被利用把更新源指向
+# 外部服务器，只接受本机回环地址（127.0.0.1 / localhost），其它地址一律忽略。
+_TEST_FEED_ENV = "DSTCAMP_UPDATE_FEED"
+
+
+def _release_sources() -> tuple[tuple[str, str], ...]:
+    feed = os.environ.get(_TEST_FEED_ENV, "").strip()
+    if feed and urllib.parse.urlparse(feed).hostname in ("127.0.0.1", "localhost"):
+        return (("local-test", feed),)
+    return _SOURCES
 
 
 @dataclass(frozen=True)
@@ -83,7 +96,7 @@ def _parse_release(data: dict, source: str) -> UpdateRelease | None:
 def check_latest_release() -> UpdateRelease | None:
     """选择两个源的最高版本；同版本优先可自动更新，其次优先 Gitee。"""
     releases = []
-    for source, url in _SOURCES:
+    for source, url in _release_sources():
         try:
             release = _parse_release(
                 _request_json(url, accept="application/vnd.github+json"), source
