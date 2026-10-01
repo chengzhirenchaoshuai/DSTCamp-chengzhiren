@@ -3,7 +3,7 @@
 颜色一律在 paintEvent 里现查 ``theme.color()``；子控件默认透明，能直接透出主窗口画的背景图。
 """
 
-from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QMenu, QVBoxLayout, QWidget
 
@@ -244,9 +244,18 @@ class Banner(QWidget):
 
     def set_text(self, text: str) -> None:
         self._text = text
-        self.setVisible(bool(text))
+        # 还没放进布局（没有父控件）时不能 setVisible(True)：没有父控件的控件一显示就是
+        # 独立顶层窗口，启动时会在屏幕中间闪一下（真机反馈过）。先只记下文字，等放进
+        # 布局、收到 ParentChange 时再按文字决定显隐。
+        if self.parentWidget() is not None:
+            self.setVisible(bool(text))
         self._relayout()
         self.update()
+
+    def event(self, event):
+        if event.type() == QEvent.Type.ParentChange and self.parentWidget() is not None:
+            self.setVisible(bool(self._text))
+        return super().event(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

@@ -648,9 +648,15 @@ class MainWindow(QWidget):
         """切换界面语言：静态文案（标题栏/菜单/存档栏/页签名/托盘）立即全量刷新；
         当前页签内容跟切主题/切存档同一套骨架——重的整页重建只做当前页，其余标脏，
         真正切过去时再补。"""
-        if get_lang() == lang:
+        old_lang = get_lang()
+        if old_lang == lang:
             return
         set_lang(lang)
+        # 先把所有已创建控件上的静态文字按对照表换掉（各页面构造时写死的按钮/标签），
+        # 再走下面各部分自己的 retranslate 和页面刷新，补上带参数的动态文字。
+        from dstools.qt.retranslate import retranslate_all_widgets
+
+        retranslate_all_widgets(old_lang, lang)
         self.setWindowTitle(t("app.title"))
         self.titlebar.retranslate()
         self.menu_strip.retranslate()

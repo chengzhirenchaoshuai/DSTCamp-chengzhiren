@@ -76,3 +76,29 @@ def set_lang(lang: str):
 def get_lang() -> str:
     """获取当前语言代码。"""
     return _i18n.lang
+
+
+def build_text_translation(from_lang: str, to_lang: str) -> dict[str, str]:
+    """切换语言时用的"旧语言原文 -> 新语言译文"对照表，只收不带格式参数的文案
+    （带 {参数} 的是动态文字，由各页面刷新逻辑重新生成）。同一句原文对应多个
+    key 时取第一个。"""
+    source = STRINGS.get(from_lang, {})
+    target = STRINGS.get(to_lang, {})
+    mapping: dict[str, str] = {}
+    for key, text in source.items():
+        if "{" in text or key not in target or text in mapping:
+            continue
+        mapping[text] = target[key]
+    return mapping
+
+
+def translate_static_text(text: str, mapping: dict[str, str]) -> str | None:
+    """按对照表翻译一段界面文字；兼容末尾手动拼接的冒号（"标签:"）。找不到返回 None。"""
+    if not text:
+        return None
+    if text in mapping:
+        return mapping[text]
+    for colon in (":", "："):
+        if text.endswith(colon) and text[:-1] in mapping:
+            return mapping[text[:-1]] + colon
+    return None

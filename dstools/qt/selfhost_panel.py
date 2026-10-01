@@ -307,7 +307,7 @@ class SelfHostPanel(QWidget):
         line1.setSpacing(12)
         self._status_label = QLabel(t("selfhost.status_unknown"))
         line1.addWidget(self._status_label)
-        self._permission_label = _muted(t("selfhost.permission_display", permission=t("selfhost.permission_unknown")))
+        self._permission_label = _muted(t("selfhost.permission_display", permission="--"))
         line1.addWidget(self._permission_label)
         line1.addStretch()
         status_layout.addLayout(line1)
@@ -679,7 +679,9 @@ class SelfHostPanel(QWidget):
     def _permission_text(self) -> str:
         status = self._last_status
         if status is None or not status.reachable or not status.permission:
-            return t("selfhost.permission_unknown")
+            # 外层文案已是"SSH 权限：{permission}"，未知时只填"--"
+            # （permission_unknown 自带"权限:"前缀，会显示成"SSH 权限：权限: --"）
+            return "--"
         return {"root": t("selfhost.permission_root"), "sudo_nopasswd": t("selfhost.permission_sudo"),
                 "no_permission": t("selfhost.permission_denied")}[status.permission]
 
@@ -715,6 +717,7 @@ class SelfHostPanel(QWidget):
     # ── FRP 映射：世界行渲染 ─────────────────────────────────────────────
     def on_cluster_changed(self, cluster) -> None:
         self._current_cluster = cluster
+        self._refresh_server_status_card()  # 状态文字是带参数的动态文案，切换语言后也要重算
         self._render_shard_rows()
         self._maybe_start_probe_cycle()
         if self._is_authenticated():

@@ -2,7 +2,7 @@
 
 import sys
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QLoggingCategory, QTimer
 from PySide6.QtWidgets import QApplication
 
 from dstools.qt.context import AppContext
@@ -22,6 +22,9 @@ def main() -> int:
 
     cleanup_stale_update_artifacts()
     cleanup_vestigial_external_tools()
+    # Qt 枚举系统字体时，Fixedsys/Terminal 等老式位图字体 DirectWrite 不支持，会刷一串
+    # "CreateFontFaceFromHDC() failed" 警告（从终端启动时可见）。不影响任何显示，屏蔽这一类。
+    QLoggingCategory.setFilterRules("qt.qpa.fonts.warning=false")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # 托盘常驻：关闭窗口不等于退出
     window = create_window(app)
