@@ -33,7 +33,7 @@ from dstools.models import SaveSource
 from dstools.qt import dialogs
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
-from dstools.qt.widgets import PillTabBar, ToggleSwitch, section_card
+from dstools.qt.widgets import AutoHideLabel, PillTabBar, ToggleSwitch, section_card
 from dstools.shared import app_settings
 from dstools.shared.lan_mapping_guard import ensure_lan_free_for_mapping
 from dstools.shared.resource_paths import data_dir, runtime_tool_path
@@ -353,7 +353,7 @@ class SelfHostPanel(QWidget):
         page_layout = QVBoxLayout(page)
         page_layout.setContentsMargins(0, 8, 0, 0)
         card, layout = section_card(t("sakura.section_shards"))
-        self._status_error_label = QLabel("")
+        self._status_error_label = AutoHideLabel()
         self._status_error_label.setStyleSheet(f"color: {theme.hex('ERROR')};")
         self._status_error_label.setWordWrap(True)
         layout.addWidget(self._status_error_label)

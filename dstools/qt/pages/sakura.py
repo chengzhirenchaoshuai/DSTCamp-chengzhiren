@@ -31,7 +31,7 @@ from dstools.qt.pages.base import Page
 from dstools.qt.selfhost_panel import SelfHostPanel
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
-from dstools.qt.widgets import Card, PillTabBar, section_card
+from dstools.qt.widgets import AutoHideLabel, Card, PillTabBar, section_card
 from dstools.shared import app_settings
 from dstools.shared.lan_mapping_guard import ensure_lan_free_for_mapping
 from dstools.shared.server_ports import stable_path_key
@@ -272,7 +272,7 @@ class _SakuraMappingPanel(QWidget):
 
         # ── 分区二：世界映射（分片列表 + 开启/关闭 + frpc 状态）
         shards_card, shards_layout = section_card(t("sakura.section_shards"))
-        self._status_label = QLabel("")
+        self._status_label = AutoHideLabel()
         self._status_label.setStyleSheet(f"color: {theme.hex('ERROR')};")
         self._status_label.setWordWrap(True)
         shards_layout.addWidget(self._status_label)
