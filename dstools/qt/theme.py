@@ -218,7 +218,6 @@ class Theme(QObject):
                 border-radius: 5px; padding: 2px 8px; }}
             QPushButton[flat="true"]:hover {{ background: {c['PRIMARY_LIGHT']}; }}
             QPushButton[flat="true"]::menu-indicator {{ width: 0px; image: none; }}
-            QPushButton#titleClose:hover {{ background: #e53935; color: white; }}
             QComboBox {{ background: rgba(255,255,255,200); border: 1px solid {c['CARD_BORDER']};
                 border-radius: 8px; padding: 4px 10px; color: {c['TEXT']}; min-height: 22px; }}
             QComboBox:hover {{ border-color: {c['ACCENT']}; }}

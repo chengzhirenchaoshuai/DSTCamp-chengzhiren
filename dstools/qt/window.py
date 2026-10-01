@@ -8,8 +8,8 @@ import ctypes
 import os
 from ctypes import wintypes
 
-from PySide6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
     QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
@@ -111,6 +111,81 @@ def keep_on_desktop(rect: RECT) -> None:
     rect.left, rect.top, rect.right, rect.bottom = x, y, x + width, y + height
 
 
+class _TitleButton(QWidget):
+    """标题栏的最小化/最大化/关闭按钮：QPainter 画细线图标，悬停时圆角浅色底，
+    关闭按钮悬停为红底白叉；最大化状态下画"还原"图标（两个错开的方框）。"""
+
+    clicked = Signal()
+
+    def __init__(self, kind: str, window: "MainWindow"):
+        super().__init__()
+        self._kind = kind  # "min" / "max" / "close"
+        self._window = window
+        self._hover = False
+        self._pressed = False
+        self.setFixedSize(40, 28)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = self._pressed = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._pressed:
+            self._pressed = False
+            self.update()
+            if self.rect().contains(event.position().toPoint()):
+                self.clicked.emit()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        close = self._kind == "close"
+        if self._hover:
+            if close:
+                bg = QColor("#c62828" if self._pressed else "#e53935")
+            else:
+                bg = theme.color("PRIMARY_DARK" if self._pressed else "PRIMARY_LIGHT")
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(bg)
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(2, 2, -2, -2), 6, 6)
+        color = QColor("white") if (close and self._hover) else theme.color("TEXT")
+        pen = QPen(color, 1.3)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        cx, cy = self.width() / 2, self.height() / 2
+        r = 5.0  # 图标半边长，三个图标同样大小
+        if self._kind == "min":
+            painter.drawLine(QPointF(cx - r, cy), QPointF(cx + r, cy))
+        elif self._kind == "max":
+            # 主窗口是保持 16:9 的"伪最大化"，状态看 _restore_geometry，不是 isMaximized()
+            if getattr(self._window, "_restore_geometry", None) is not None:
+                # 还原：后面一个方框只露出上边和右边，前面一个完整方框
+                painter.drawRoundedRect(QRectF(cx - r, cy - r + 2.5, 2 * r - 2.5, 2 * r - 2.5), 1.5, 1.5)
+                painter.drawLine(QPointF(cx - r + 2.5, cy - r + 2.5), QPointF(cx - r + 2.5, cy - r))
+                painter.drawLine(QPointF(cx - r + 2.5, cy - r), QPointF(cx + r, cy - r))
+                painter.drawLine(QPointF(cx + r, cy - r), QPointF(cx + r, cy + r - 2.5))
+                painter.drawLine(QPointF(cx + r, cy + r - 2.5), QPointF(cx + r - 2.5, cy + r - 2.5))
+            else:
+                painter.drawRoundedRect(QRectF(cx - r, cy - r, 2 * r, 2 * r), 1.5, 1.5)
+        else:
+            painter.drawLine(QPointF(cx - r, cy - r), QPointF(cx + r, cy + r))
+            painter.drawLine(QPointF(cx + r, cy - r), QPointF(cx - r, cy + r))
+
+
 class TitleBar(QWidget):
     def __init__(self, window: "MainWindow"):
         super().__init__()
@@ -127,19 +202,16 @@ class TitleBar(QWidget):
         layout.addSpacing(6)
         layout.addWidget(self.title)
         layout.addStretch()
-        self.max_button = self._button("□", window.toggle_maximize)
-        for button in (self._button("–", window.showMinimized), self.max_button,
-                       self._button("×", window.request_close, close=True)):
+        self.max_button = self._button("max", window.toggle_maximize)
+        for button in (self._button("min", window.showMinimized), self.max_button,
+                       self._button("close", window.request_close)):
             layout.addWidget(button)
         self.retranslate()
 
-    def _button(self, text, slot, close=False) -> QPushButton:
-        button = QPushButton(text)
-        button.setFlat(True)
-        button.setFixedSize(42, 26)
-        if close:
-            button.setObjectName("titleClose")
+    def _button(self, kind: str, slot) -> "_TitleButton":
+        button = _TitleButton(kind, self._window)
         button.clicked.connect(slot)
+        button.clicked.connect(button.update)  # 最大化/还原后图标跟着切换
         return button
 
     def retranslate(self) -> None:

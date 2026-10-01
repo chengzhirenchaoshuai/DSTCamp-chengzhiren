@@ -157,7 +157,8 @@ class WorkshopUpdateDialog(QDialog):
         toolbar.addWidget(self._search)
         self._status_filter = PillTabBar(
             [t("mod.show_all"), t("mod.update_filter_needs_update"), t("mod.update_filter_current")],
-            height=32, pill_height=24, font_size_key="FONT_SIZE_SM", gap=3, pad=18)
+            height=32, pill_height=24, font_size_key="FONT_SIZE_SM", gap=3, pad=18,
+            uniform_width=True)  # "全部"两个字太窄，跟"待更新"等统一宽度
         self._status_filter.current_changed.connect(lambda _i: self._render_rows())
         toolbar.addWidget(self._status_filter)
         self._refresh_btn = QPushButton(t("mod.update_refresh_states"))
