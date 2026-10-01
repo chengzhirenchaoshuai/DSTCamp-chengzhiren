@@ -685,7 +685,11 @@ class LocalServicePage(Page):
             dialog.append(t("local.steam_remote_build", remote=remote_build_id, local=before.build_id or "-"))
         else:
             dialog.append(t("local.steam_remote_fallback"))
-        uri = steam_client_updater.build_update_uri(validate=mode == "validate")
+        # 已安装时"更新"也必须发 validate：Steam 对已安装 App 的 steam://install 直接忽略，
+        # 而且会把从未运行过的专服的自动更新推迟数天；validate 会立即以最高优先级先更新
+        # 到最新 Build 再校验（真机 content_log 已核实）。
+        validate = mode != "install"
+        uri = steam_client_updater.build_update_uri(validate=validate)
         dialog.append(t("local.steam_update_requested", uri=uri))
         dialog.show()
         self._steam_update_running = True
@@ -695,7 +699,7 @@ class LocalServicePage(Page):
         last_state = [None]
 
         def work():
-            steam_client_updater.request_update(validate=mode == "validate")
+            steam_client_updater.request_update(validate=validate)
 
             def on_snapshot(_snapshot, state):
                 if state != last_state[0]:
