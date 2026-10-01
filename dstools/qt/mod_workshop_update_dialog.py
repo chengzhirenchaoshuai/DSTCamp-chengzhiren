@@ -464,7 +464,7 @@ class WorkshopUpdateDialog(QDialog):
         # 控件的样式表，不加选择器时提示框也被画成圆角，四个角露出黑点（真机反馈过）。
         tag.setObjectName("modFormatTag")
         tag.setStyleSheet(f"QLabel#modFormatTag {{ background: {background.name()}; color: {color.name()}; "
-                          "border-radius: 4px; padding: 0px 5px; }}")
+                          "border-radius: 4px; padding: 0px 5px; }")
         return tag
 
     @staticmethod
