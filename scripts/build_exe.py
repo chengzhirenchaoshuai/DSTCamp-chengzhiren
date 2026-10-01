@@ -58,6 +58,7 @@ REQUIRED_ICON_FILES = (
     "app/icon.ico",
     "app/icon.png",
     "ui/character_icon_default.png",
+    "ui/combo_arrow.png",  # Qt 版下拉框箭头（QSS 引用）
     "ui/mod_icon_default.png",
 )
 
@@ -133,6 +134,10 @@ def build() -> None:
         import PyInstaller.__main__
     except ImportError as exc:
         raise SystemExit('请先运行 pip install -e ".[build]"') from exc
+    try:
+        import PySide6  # noqa: F401  发布入口是 Qt 版界面，缺 PySide6 打出来的 EXE 无法启动
+    except ImportError as exc:
+        raise SystemExit('缺少 PySide6，请先运行 pip install -e ".[build]"') from exc
 
     project_root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(project_root))
@@ -167,6 +172,15 @@ def build() -> None:
         "--hidden-import=lupa.lua51",
         "--collect-data=certifi",
         "--exclude-module=numpy",
+        # 界面只用 QtCore/QtGui/QtWidgets；排除用不到的大体积 Qt 模块，避免被
+        # PyInstaller 的 PySide6 钩子顺带收进单文件 EXE。
+        *(f"--exclude-module=PySide6.{name}" for name in (
+            "QtWebEngineCore", "QtWebEngineWidgets", "QtWebEngineQuick", "QtWebChannel", "QtWebSockets",
+            "QtQml", "QtQuick", "QtQuickWidgets", "QtQuick3D", "Qt3DCore", "Qt3DRender", "QtMultimedia",
+            "QtMultimediaWidgets", "QtPdf", "QtPdfWidgets", "QtCharts", "QtDataVisualization", "QtGraphs",
+            "QtBluetooth", "QtPositioning", "QtLocation", "QtSensors", "QtSerialPort", "QtSql", "QtTest",
+            "QtDesigner", "QtHelp", "QtOpenGL", "QtOpenGLWidgets", "QtSvgWidgets", "QtTextToSpeech",
+        )),
     ]
     PyInstaller.__main__.run(args)
 

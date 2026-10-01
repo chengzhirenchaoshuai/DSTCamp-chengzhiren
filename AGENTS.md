@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本仓库当前版本为 `1.3.8`。DSTCamp 是 Windows 上的《饥荒：联机版》存档、Mod、世界、专服、内网穿透和大厅加速管理工具，包名为 `dstools`，入口为 `dstools.gui.app.main`。
+本仓库当前版本为 `1.3.8`。DSTCamp 是 Windows 上的《饥荒：联机版》存档、Mod、世界、专服、内网穿透和大厅加速管理工具，包名为 `dstools`，入口为 `dstools.qt.app.main`（Qt 版界面；旧 Tk 版 `dstools/gui/` 仍保留在源码中，不再作为发布入口）。
 
 适用于本仓库的编码代理。默认中文交流、中文文档与注释；保留标识符、协议字段和第三方 API 原文。
 
@@ -18,9 +18,9 @@
 
 ## 项目结构
 
-DSTCamp 通过 Tkinter GUI 管理 Steam/WeGame 存档、Mod、世界设置、专用服务器和内网穿透。
+DSTCamp 通过 Qt（PySide6）GUI 管理 Steam/WeGame 存档、Mod、世界设置、专用服务器和内网穿透。
 
-- `dstools/gui/app.py`：应用装配与 `main()`。
+- `dstools/qt/app.py`：Qt 版应用装配与 `main()`；`dstools/qt/` 为 Qt 界面代码。
 - `dstools/features/<feature>/`：单功能业务与 UI。
 - `dstools/shared/`：至少两个功能共用的基础设施；`shared/gui/` 是通用控件。
 - `dstools/i18n/strings.py`：中英文案唯一来源。
@@ -38,7 +38,7 @@ DSTCamp 通过 Tkinter GUI 管理 Steam/WeGame 存档、Mod、世界设置、专
 
 ```powershell
 pip install -e .
-python -m dstools.gui.app
+python -m dstools.qt.app
 python tests/run_all.py
 pip install -e ".[build]"
 python scripts/build_exe.py

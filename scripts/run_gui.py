@@ -1,4 +1,4 @@
-"""DSTCamp GUI、冻结版 Worker 与发布冒烟测试入口。"""
+"""DSTCamp GUI（Qt 版）、冻结版 Worker 与发布冒烟测试入口。"""
 
 import sys
 import os
@@ -63,18 +63,28 @@ if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--smoke-test":
         from dstools.features.mod._sandbox_worker import run_worker_main
         from dstools.features.mod.workshop_worker import main as workshop_worker_main
-        from dstools.gui.app import DSToolsApp
         from dstools.shared.resource_paths import bundled_resource_dir, tool_binary_dir
 
         required = (
             bundled_resource_dir() / "icons" / "app" / "icon.png",
             bundled_resource_dir() / "icons" / "ui" / "mod_icon_default.png",
+            bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png",
             tool_binary_dir() / "ktools" / "ktech.exe",
         )
         missing = [str(path) for path in required if not path.is_file()]
         if missing:
             raise SystemExit(f"缺少发布资源：{missing}")
-        assert DSToolsApp and run_worker_main and workshop_worker_main
+        # 真正创建一次 QApplication：只 import 发现不了缺少 Qt 平台插件（qwindows.dll）
+        # 这类打包问题，那种情况下 EXE 一启动就闪退。不创建主窗口、不碰用户的存档和设置。
+        from PySide6.QtWidgets import QApplication
+
+        from dstools.qt.theme import theme
+        from dstools.qt.window import MainWindow
+
+        smoke_app = QApplication([sys.argv[0]])
+        theme.load_fonts()
+        theme.apply_to_app()
+        assert MainWindow and run_worker_main and workshop_worker_main and smoke_app
         raise SystemExit(0)
 
     # onefile 子进程通过参数复用当前 EXE，必须在导入 GUI 前分流。
@@ -101,9 +111,11 @@ if __name__ == "__main__":
     if gui_instance is None:
         raise SystemExit(0)
 
-    from dstools.gui.app import main
+    # 发布入口：Qt 版界面（旧 Tk 版 dstools.gui.app 仍保留在源码中，不再作为入口）
+    from dstools.qt.app import main
 
     try:
-        main()
+        exit_code = main()
     finally:
         gui_instance.close()
+    raise SystemExit(exit_code)
