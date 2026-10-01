@@ -8,9 +8,9 @@
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QGuiApplication, QPixmap
+from PySide6.QtGui import QGuiApplication, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from dstools.features.local_service.backup_manager import create_backup, list_backups, restore_backup
@@ -25,7 +25,7 @@ from dstools.qt import dialogs
 from dstools.qt.pages.base import Page
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async, run_async_with_log
-from dstools.qt.widgets import Card, FrostedMenu
+from dstools.qt.widgets import Card, FrostedMenu, MenuTextItem
 from dstools.shared.app_settings import set_player_note
 from dstools.shared.clipboard import copy_file_to_clipboard
 
@@ -67,13 +67,13 @@ class SaveInfoPage(Page):
         # 自然宽度的较大值、两边设成同宽（见 _sync_manage_width），菜单文字不被挤占。
         self._manage_button = QPushButton()
         self._manage_menu = FrostedMenu(self._manage_button)
-        self._backup_now_action = QAction(self)
-        self._backup_now_action.triggered.connect(self._on_backup_now)
-        self._backup_policy_action = QAction(self)
-        self._backup_policy_action.triggered.connect(self._on_backup_policy)
-        self._restore_action = QAction(self)
-        self._restore_action.triggered.connect(self._on_restore)
-        for action in (self._backup_now_action, self._backup_policy_action, self._restore_action):
+        # 菜单项文字居中：QMenu 原生菜单项改不了对齐，用自绘的 MenuTextItem。
+        self._backup_now_item = MenuTextItem(self._manage_menu, "", self._on_backup_now)
+        self._backup_policy_item = MenuTextItem(self._manage_menu, "", self._on_backup_policy)
+        self._restore_item = MenuTextItem(self._manage_menu, "", self._on_restore)
+        for item in (self._backup_now_item, self._backup_policy_item, self._restore_item):
+            action = QWidgetAction(self._manage_menu)
+            action.setDefaultWidget(item)
             self._manage_menu.addAction(action)
         self._manage_button.setMenu(self._manage_menu)
         title_row.addWidget(self._bundle_button)
@@ -142,9 +142,9 @@ class SaveInfoPage(Page):
         self._copy_to_server.setText(t("save.copy_to_server"))
         self._bundle_button.setText(t("save.bundle_running") if self._bundle_running else t("save.bundle_btn"))
         self._manage_button.setText(t("save.backup_management"))
-        self._backup_now_action.setText(t("save.backup_now"))
-        self._backup_policy_action.setText(t("save.backup_policy_btn"))
-        self._restore_action.setText(t("save.restore_backup"))
+        self._backup_now_item.setText(t("save.backup_now"))
+        self._backup_policy_item.setText(t("save.backup_policy_btn"))
+        self._restore_item.setText(t("save.restore_backup"))
         self._sync_manage_width()
 
     def _sync_manage_width(self) -> None:

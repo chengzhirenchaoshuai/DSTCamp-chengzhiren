@@ -374,3 +374,58 @@ class ThemeMenuItem(QWidget):
             painter.drawText(QRect(0, 0, self._PAD_LEFT, self.height()), int(Qt.AlignmentFlag.AlignCenter), "✓")
         painter.drawText(self.rect().adjusted(self._PAD_LEFT, 0, 0, 0),
                          int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), self._text)
+
+
+class MenuTextItem(QWidget):
+    """菜单里一项可点击的纯文字（默认居中）。QSS 改不了 QMenu 菜单项的文字对齐，
+    需要居中时用 QWidgetAction 包这个自绘控件。"""
+
+    _PAD_X = 20
+
+    def __init__(self, menu: QMenu, text: str, on_click,
+                 align: Qt.AlignmentFlag = Qt.AlignmentFlag.AlignHCenter):
+        super().__init__(menu)
+        self._menu = menu
+        self._text = text
+        self._on_click = on_click
+        self._align = align
+        self._hover = False
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def setText(self, text: str) -> None:
+        self._text = text
+        self.updateGeometry()
+        self.update()
+
+    def sizeHint(self) -> QSize:
+        metrics = QFontMetrics(self.font())
+        return QSize(metrics.horizontalAdvance(self._text) + 2 * self._PAD_X, metrics.height() + 12)
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self._menu.hide()
+            self._on_click()
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._hover:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(theme.color("PRIMARY_LIGHT"))
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 0, -1, 0), 4, 4)
+        painter.setPen(theme.color("TEXT"))
+        painter.setFont(self.font())
+        painter.drawText(self.rect().adjusted(self._PAD_X, 0, -self._PAD_X, 0),
+                         int(self._align | Qt.AlignmentFlag.AlignVCenter), self._text)

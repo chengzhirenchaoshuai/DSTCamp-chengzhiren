@@ -41,7 +41,9 @@ def _box(parent, icon, title: str, text: str, with_ok: bool = True, min_width: i
     box.setWindowTitle(title)
     box.setText(text)
     if min_width:
-        box.setStyleSheet(f"QLabel {{ min-width: {min_width}px; }}")
+        # 只撑宽正文标签：之前写成 "QLabel { ... }" 会连左侧图标标签也撑到同样宽，
+        # 弹窗左边出现一大片空白、文字被挤到右半边（真机反馈过）。
+        box.setStyleSheet(f"QLabel#qt_msgbox_label {{ min-width: {min_width}px; }}")
     if with_ok:  # 默认按钮文字是英文 OK，统一成项目里的"确认"
         box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.AcceptRole)
     return box
@@ -176,18 +178,62 @@ def _apply_toast_fade(toast: "_Toast", pixmap) -> None:
     toast.set_background_snapshot(faded)
 
 
-def _open_in_explorer_foreground(path: Path) -> None:
-    """在资源管理器里选中文件，并让它出现在最上层。
+def _find_explorer_window(folder: Path) -> int:
+    """找显示 folder 的资源管理器窗口（窗口类 CabinetWClass），返回 HWND，找不到返回 0。
+    标题栏按系统设置显示文件夹名或完整路径，两种都认。"""
+    # 单独加载一份 user32：别的模块给 windll.user32.EnumWindows 设过 argtypes（回调
+    # 类型不同），共用同一个函数对象会类型不匹配。
+    user32 = ctypes.WinDLL("user32")
+    titles = {folder.name.casefold(), str(folder).casefold()}
+    found: list[int] = []
 
-    /select 通常复用已在运行的 explorer 进程，它没有前台权限，新窗口会被压在本
-    应用下面（真机反馈过"弹出来了但在下层"）。本进程此刻是前台进程，先调用
-    AllowSetForegroundWindow(ASFW_ANY) 把前台权限让出去，explorer 才能把窗口提到最前。"""
-    if sys.platform == "win32":
-        try:
-            ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
-        except (AttributeError, OSError):
-            pass
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def callback(hwnd, _lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        class_name = ctypes.create_unicode_buffer(64)
+        user32.GetClassNameW(hwnd, class_name, 64)
+        if class_name.value != "CabinetWClass":
+            return True
+        length = user32.GetWindowTextLengthW(hwnd)
+        title = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, title, length + 1)
+        if title.value.casefold() in titles:
+            found.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(callback, 0)
+    return found[0] if found else 0
+
+
+def _open_in_explorer_foreground(path: Path) -> None:
+    """在资源管理器里选中文件，并把它的窗口提到最上层。
+
+    /select 会转交给已在运行的 explorer 进程去开窗口，它没有前台权限，窗口会被压
+    在本应用下面（真机反馈过；先调 AllowSetForegroundWindow 让出前台权限实测也没
+    用）。改为由本进程（此刻就是前台进程，有权切换前台窗口）轮询找到那个资源管理器
+    窗口，再自己调 SetForegroundWindow 把它提上来；最多等约 3 秒，找不到就算了。"""
     subprocess.Popen(["explorer.exe", "/select,", str(path)])
+    if sys.platform != "win32":
+        return
+    folder = path.parent
+    attempts = {"left": 20}
+
+    def poll() -> None:
+        hwnd = _find_explorer_window(folder)
+        if hwnd:
+            user32 = ctypes.windll.user32
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            user32.SetForegroundWindow(hwnd)
+            return
+        attempts["left"] -= 1
+        if attempts["left"] > 0:
+            QTimer.singleShot(150, poll)
+
+    # 资源管理器本来就开着这个文件夹时窗口立刻能找到，但它要先处理完 /select，稍等再提。
+    QTimer.singleShot(300, poll)
 
 
 def show_file_location(parent, title: str, path, location_label: str, copied_message: str) -> None:
@@ -200,11 +246,15 @@ def show_file_location(parent, title: str, path, location_label: str, copied_mes
     lines = [location_label, link, *(line for line in copied_message.splitlines() if line.strip())]
     box.setText("".join(f'<p style="margin: 0 0 10px 0;">{line}</p>' for line in lines))
     # "打包存档"和"获取日志文件"共用这个弹窗，正文行数不同；给正文固定最小宽高，
-    # 两处弹出来的窗口大小一致。
-    box.setStyleSheet("QLabel#qt_msgbox_label { min-width: 460px; min-height: 150px; }")
+    # 两处弹出来的窗口大小一致。字体也必须写在 QSS 里：QMessageBox 显示时会把正文
+    # 标签重设成系统消息框字体（实测 9pt，比界面正文小），setFont() 会被覆盖。
+    # 字号跟本地服务器页"局域网直连代码"等正文一致（应用默认字号 FONT_SIZE_SM）。
+    body_font = theme.font("FONT_SIZE_SM")
+    box.setStyleSheet(
+        "QLabel#qt_msgbox_label { min-width: 460px; min-height: 150px; "
+        f"font-family: '{body_font.family()}'; font-size: {body_font.pointSize()}pt; }}")
     label = box.findChild(QLabel, "qt_msgbox_label")
     if label is not None:
-        label.setFont(theme.font("FONT_SIZE_BASE"))  # 比全局默认字号大一档
         # QMessageBox 的正文标签默认 openExternalLinks=True，点链接时 Qt 自己去"打开"
         # href，不会发 linkActivated——之前"点我打开"点了没反应就是这个原因。
         label.setOpenExternalLinks(False)

@@ -965,11 +965,20 @@ class CreationWizardDialog(QDialog):
                     if any(claim.owner_key in planned_keys for claim in c.claims)]
         if not conflicts:
             return True
-        ports = "、".join(str(c.port) for c in conflicts[:8]) + ("……" if len(conflicts) > 8 else "")
+        # 每个冲突端口一行，写明是跟哪个现有存档的哪个世界冲突（之前只列端口号，
+        # 用户看不出是哪个存档）。
+        lines = []
+        for conflict in conflicts[:8]:
+            owners = sorted({f"{claim.cluster_name}（{claim.shard_name}）" if claim.shard_name else claim.cluster_name
+                             for claim in conflict.claims if claim.owner_key not in planned_keys})
+            lines.append(t("world.create_port_conflict_line", port=conflict.port, owners="、".join(owners)))
+        if len(conflicts) > 8:
+            lines.append("……")
         choice = dialogs.ask_choice(
-            self, t("world.create_port_conflict_title"), t("world.create_port_conflict_confirm", ports=ports),
+            self, t("world.create_port_conflict_title"),
+            t("world.create_port_conflict_detail", details="\n".join(lines)),
             [(t("world.allocate_ports_btn"), "allocate"), (t("dlg.no_btn"), "cancel"), (t("dlg.yes_btn"), "create")],
-            default="allocate", min_width=780)
+            default="allocate", min_width=420)
         if choice is None or choice == "cancel":
             return False
         if choice == "create":
