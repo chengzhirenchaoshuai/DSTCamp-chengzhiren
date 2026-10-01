@@ -448,7 +448,7 @@ class ModPage(Page):
 
     def _remove_mod_sync_junction(self, cluster) -> None:
         if not dialogs.ask_yes_no(self.window(), t("local.remove_junction_btn"),
-                                   t("local.remove_junction_confirm_msg"), min_width=720):
+                                   t("local.remove_junction_confirm_msg"), min_width=560):
             return
         install_dir, client_mods_dir = self._passive_sync_dirs(cluster)
         if install_dir is None:
