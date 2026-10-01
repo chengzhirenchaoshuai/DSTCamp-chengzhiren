@@ -4,6 +4,7 @@ import tempfile
 import threading
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image
@@ -15,6 +16,7 @@ from dstools.features.mod.icons import load_mod_icon_image
 from dstools.features.mod.list_model import (
     build_mod_rows,
     merge_visible_mod_ids,
+    referenced_missing_status_text,
     sort_mod_data,
 )
 from dstools.features.mod.parser import (
@@ -214,6 +216,11 @@ def test_visible_mod_ids_include_enabled_missing_references_only():
     assert merge_visible_mod_ids(
         ["workshop-10", "workshop-20", "workshop-10"], configured
     ) == ["workshop-10", "workshop-20", "workshop-40"]
+
+    # 存档启用了但本机没有文件的 Mod：第三行写明原因，不能留空
+    assert "本机未安装" in referenced_missing_status_text(None)
+    unsubscribed = SimpleNamespace(state=WorkshopModState.UNSUBSCRIBED_REFERENCED)
+    assert "未订阅" in referenced_missing_status_text(unsubscribed)
 
 
 def test_missing_mod_scan_summary_stays_compact():

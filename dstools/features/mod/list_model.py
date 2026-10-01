@@ -120,6 +120,24 @@ def merge_visible_mod_ids(installed_ids, configured_mods: dict) -> list[str]:
     return result
 
 
+def referenced_missing_status_text(status) -> str:
+    """存档引用了、本机却没有文件的 Mod：列表第三行说明原因（未订阅、下载中等）。
+
+    status 是该 Mod 的 Workshop 状态（还没查到时为 None）。"""
+    from dstools.features.mod.workshop_status import WorkshopModState
+
+    labels = {
+        WorkshopModState.UNSUBSCRIBED_REFERENCED: "mod.update_latest_unsubscribed_referenced",
+        WorkshopModState.MISSING: "mod.update_latest_missing",
+        WorkshopModState.NOT_INSTALLED: "mod.update_latest_not_installed",
+        WorkshopModState.SOURCE_UNAVAILABLE: "mod.update_latest_source_unavailable",
+        WorkshopModState.DOWNLOADING: "mod.update_latest_downloading",
+        WorkshopModState.DOWNLOAD_PENDING: "mod.update_latest_pending",
+    }
+    key = labels.get(getattr(status, "state", None))
+    return t(key) if key else t("mod.reference_missing_local")
+
+
 def build_mod_rows(
     mod_data: dict,
     mod_infos: dict,

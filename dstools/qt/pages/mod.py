@@ -24,7 +24,7 @@ from dstools.features.mod.cache import load_cached_result, save_result
 from dstools.features.mod.icons import get_cached_mod_icon_path, get_mod_icon_path, load_mod_icon_image
 from dstools.features.mod.legacy_v1 import find_legacy_packages, materialize_legacy_package_for_read
 from dstools.features.mod.list_model import (
-    build_mod_rows, localize_mod_name, merge_visible_mod_ids, sort_mod_data,
+    build_mod_rows, localize_mod_name, merge_visible_mod_ids, referenced_missing_status_text, sort_mod_data,
 )
 from dstools.features.mod.local_version import resolve_local_version_target
 from dstools.features.mod.locations import resolve_mod_open_location
@@ -726,6 +726,11 @@ class ModPage(Page):
             status = self._workshop_status_cache.get(int(numeric)) if numeric.isdigit() else None
             steam = status.evidence.steam_state if status is not None and status.evidence is not None else None
             row["mod_format"] = None if row.get("is_local") else detect_mod_format(numeric, workshop_root, steam)
+            if not row["has_folder"] and row["enabled"] and self._mod_infos.get(row["workshop_id"]) is None:
+                # 存档 modoverrides.lua 启用了、本机却没有文件（多半是没订阅）：读不到 modinfo，
+                # 名称和版本都是空的，用户不知道这一行从哪来——写明来源和原因。
+                row["name"] = row["name"] or t("mod.reference_missing_name")
+                row["version_text"] = referenced_missing_status_text(status)
         return rows
 
     def _render_list(self) -> None:
