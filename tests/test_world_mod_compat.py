@@ -5,7 +5,6 @@
 location_profiles.py、catalog_resolver.py 和 mod_settings.py 的登记表中。
 """
 
-import inspect
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -49,27 +48,15 @@ from dstools.features.world.location_profiles import (  # noqa: E402
     resolve_world_location_profile,
 )
 from dstools.features.world.mod_settings import get_mod_world_settings  # noqa: E402
-from dstools.features.world.icons import get_pil_icon  # noqa: E402
-from dstools.features.world.render import (  # noqa: E402
-    _world_panel_layout,
-    _wrap_text_to_width,
-    render_world_panel,
-    world_panel_height,
-)
 from dstools.features.world.value_sets import get_value_set  # noqa: E402
 from dstools.features.world.reader import WorldOverride, WorldPreset  # noqa: E402
 from dstools.features.world.view_model import build_world_view_model  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
 from dstools.features.mod.presets import ModPreset  # noqa: E402
-from dstools.features.mod import render as mod_render  # noqa: E402
-from dstools.features.mod.tab import ModManagerTab  # noqa: E402
-from dstools.features.world import render as world_render  # noqa: E402
-from dstools.features.world.tab import WorldSettingsTab  # noqa: E402
-from dstools.features.world.creation_tab import WorldCreationTab  # noqa: E402
+from dstools.qt.creation_wizard import CreationWizardDialog  # noqa: E402
+from dstools.qt.pages.mod import ModPage  # noqa: E402
 from dstools.features.cluster_config.config_manager import load_shard_config  # noqa: E402
 from dstools.models import ModEntry, SaveSource  # noqa: E402
-from PIL import Image, ImageChops, ImageDraw  # noqa: E402
-from dstools.shared.gui.fonts import get_font  # noqa: E402
 from dstools.shared.lua_parser import (  # noqa: E402
     LuaParseError,
     parse_lua_file,
@@ -353,7 +340,7 @@ def test_island_writer_repairs_partial_legacy_plan() -> None:
 
 def test_island_cross_shard_reuses_verified_vanilla_template() -> None:
     """森林/洞穴互换槽位时必须复制完整官方模板，而非创建空计划。"""
-    tab = WorldCreationTab.__new__(WorldCreationTab)
+    tab = CreationWizardDialog.__new__(CreationWizardDialog)
     forest = WorldShardPlan(
         FOREST_LOCATION, "SURVIVAL_TOGETHER", "森林",
         overrides={"task_set": "default"}, level_data={"version": 4},
@@ -443,204 +430,18 @@ def test_en_zh_mod_metadata() -> None:
         assert info.description == "核心内容"
 
 
-def test_world_setting_icon_rendering() -> None:
-    # 原版图标仍从内置素材加载。
-    assert get_pil_icon("autumn", 48, FOREST_LOCATION) is not None
-    assert get_pil_icon("task_set", 48, SHIPWRECKED_LOCATION) is not None
-    assert get_pil_icon("worm_boss_setting", 48, CAVE_LOCATION) is not None
-    assert get_pil_icon("cave_season_start", 48, CAVE_LOCATION) is not None
 
-    # Mod 图标由创建向导扫描线程解析后传给同一个渲染器。用唯一的洋红色
-    # 合成图验证渲染器确实把传入图标画进最终面板，而不是只画占位背景。
-    mod_icon = Image.new("RGBA", (48, 48), (255, 0, 255, 255))
-    panel, _hits = render_world_panel(
-        [("mod_test", "测试 Mod")],
-        {"mod_test": [WorldOverride("test_mod_icon", "default", name="测试设置")]},
-        {"mod_test": "#ffffff"},
-        editable=False,
-        location=SHIPWRECKED_LOCATION,
-        mod_icons={"test_mod_icon": mod_icon},
-    )
-    assert (255, 0, 255) in set(panel.getdata())
-
-
-def test_dimension_keyed_render_caches_are_bounded() -> None:
-    icon_cache = {}
-    rows = [
-        {
-            "workshop_id": "workshop-1",
-            "name": "缓存测试",
-            "version_text": "",
-            "enabled": True,
-            "has_config": False,
-            "has_link": False,
-        }
-    ]
-    icons = {"workshop-1": Image.new("RGBA", (128, 128), "#ff00ff")}
-    for width in range(900, 1500, 20):
-        mod_render.render_mod_list(
-            rows,
-            icons,
-            ref_width=width,
-            icon_thumb_cache=icon_cache,
-            viewport_height=120,
-        )
-    assert len(icon_cache) == 1
-    assert next(iter(icon_cache))[0] == "workshop-1"
-
-    mod_render._default_icon_cache.clear()
-    for size in range(20, 60):
-        mod_render._get_default_icon(size)
-    assert len(mod_render._default_icon_cache) == mod_render._SMALL_ICON_CACHE_LIMIT
-
-    mod_render._open_folder_icon_cache.clear()
-    folder_canvas = Image.new("RGBA", (160, 160))
-    for size in range(20, 60):
-        mod_render._paste_folder_icon(folder_canvas, 20, 80, size)
-    assert (
-        len(mod_render._open_folder_icon_cache)
-        == mod_render._SMALL_ICON_CACHE_LIMIT
-    )
-
-    world_render._arrow_cache.clear()
-    for height in range(20, 80):
-        world_render._get_arrow("arrow_left", height)
-    assert len(world_render._arrow_cache) == world_render._ARROW_CACHE_LIMIT
-
-
-def test_world_setting_name_wrap_keeps_full_text() -> None:
-    image = Image.new("RGB", (300, 120), "white")
-    draw = ImageDraw.Draw(image)
-    font = get_font(18)
-    original = "超长的世界设置名称"
-    wrapped = _wrap_text_to_width(draw, original, font, 72)
-    lines = wrapped.splitlines()
-    assert len(lines) > 1
-    assert "".join(lines) == original
-    assert all(draw.textlength(line, font=font) <= 72 for line in lines)
-
-    value_font = get_font(16)
-    four_char_width = draw.textlength("汉字汉字", font=value_font)
-    wrapped_value = _wrap_text_to_width(
-        draw, "五个汉字取值", value_font, four_char_width,
-    )
-    assert len(wrapped_value.splitlines()) > 1
-    assert "".join(wrapped_value.splitlines()) == "五个汉字取值"
-
-
-def test_world_panel_viewport_matches_full_image_crop() -> None:
-    overrides = [
-        WorldOverride(
-            "autumn" if index % 2 == 0 else "winter",
-            "default",
-            name=f"季节设置 {index}",
-        )
-        for index in range(30)
-    ]
-    categories = [("seasons", "季节")]
-    grouped = {"seasons": overrides}
-    colors = {"seasons": "#336699"}
-    clicked = []
-    full, _full_hits = render_world_panel(
-        categories,
-        grouped,
-        colors,
-        editable=True,
-        on_click=lambda key, delta: clicked.append((key, delta)),
-        ref_width=1300,
-    )
-    view_y = 373
-    view_height = 421
-    viewport, hits = render_world_panel(
-        categories,
-        grouped,
-        colors,
-        editable=True,
-        on_click=lambda key, delta: clicked.append((key, delta)),
-        ref_width=1300,
-        viewport_y=view_y,
-        viewport_height=view_height,
-    )
-
-    assert full.height == world_panel_height(categories, grouped, 1300)
-    assert viewport.size == (1300, view_height)
-    expected = full.crop((0, view_y, 1300, view_y + view_height))
-    assert ImageChops.difference(viewport, expected).getbbox() is None
-    assert hits
-    assert all(y2 >= view_y and y1 <= view_y + view_height for _, y1, _, y2, _ in hits)
-    hits[0][4]()
-    assert clicked
-
-
-def test_world_panel_compact_mode_shows_three_rows_in_default_viewport() -> None:
-    overrides = [
-        WorldOverride("autumn", "default", name=f"季节设置 {index}")
-        for index in range(12)
-    ]
-    categories = [("seasons", "季节")]
-    grouped = {"seasons": overrides}
-    viewport_height = 428
-    ref_width = 1475
-
-    _, standard = _world_panel_layout(categories, grouped, ref_width)
-    _, compact = _world_panel_layout(
-        categories, grouped, ref_width, compact=True,
-    )
-    standard_items_top = standard[0][4]
-    compact_items_top = compact[0][4]
-    standard_row_h = (standard[0][5] - standard_items_top) / 4
-    compact_row_h = (compact[0][5] - compact_items_top) / 4
-
-    assert standard_items_top + 3 * standard_row_h > viewport_height
-    assert compact_items_top + 3 * compact_row_h <= viewport_height
-
-    full, _ = render_world_panel(
-        categories,
-        grouped,
-        {"seasons": "#8DB97D"},
-        editable=False,
-        ref_width=ref_width,
-        compact=True,
-    )
-    viewport, _ = render_world_panel(
-        categories,
-        grouped,
-        {"seasons": "#8DB97D"},
-        editable=False,
-        ref_width=ref_width,
-        viewport_y=0,
-        viewport_height=viewport_height,
-        compact=True,
-    )
-    expected = full.crop((0, 0, ref_width, viewport_height))
-    assert ImageChops.difference(viewport, expected).getbbox() is None
-
-    rules_source = inspect.getsource(WorldSettingsTab._render_rules)
-    gen_source = inspect.getsource(WorldSettingsTab._render_gen)
-    creation_source = inspect.getsource(WorldCreationTab._render)
-    assert rules_source.count("compact=True") == 2
-    assert gen_source.count("compact=True") == 2
-    assert creation_source.count("compact=True") == 2
-    assert "set_virtual_image" in creation_source
-
-
-class _StatusProbe:
+class _LabelProbe:
     def __init__(self):
         self.value = ""
 
-    def set(self, value):
+    def setText(self, value):
         self.value = value
 
 
-class _FrameProbe:
-    def winfo_toplevel(self):
-        return self
-
-
-def _dependency_tab() -> WorldCreationTab:
-    tab = WorldCreationTab.__new__(WorldCreationTab)
-    tab.frame = _FrameProbe()
-    tab.status_var = _StatusProbe()
+def _dependency_wizard() -> CreationWizardDialog:
+    tab = CreationWizardDialog.__new__(CreationWizardDialog)
+    tab._status_label = _LabelProbe()
     tab._selected_mod_ids = {f"workshop-{IA_SHIPWRECKED_MOD_ID}"}
     tab._mod_data = {
         f"workshop-{IA_SHIPWRECKED_MOD_ID}": ModEntry(
@@ -653,35 +454,10 @@ def _dependency_tab() -> WorldCreationTab:
     return tab
 
 
-def test_creation_dependency_confirmation() -> None:
-    accepted = _dependency_tab()
-    with patch(
-        "dstools.features.world.creation_tab.dlg.ask_yes_no", return_value=True,
-    ) as confirm:
-        assert accepted._ensure_island_adventures_dependency(show_dialog=True)
-    confirm.assert_called_once()
-    core_key = f"workshop-{IA_CORE_MOD_ID}"
-    child_key = f"workshop-{IA_SHIPWRECKED_MOD_ID}"
-    assert accepted._mod_data[core_key].enabled
-    assert core_key in accepted._selected_mod_ids
-
-    declined = _dependency_tab()
-    with patch(
-        "dstools.features.world.creation_tab.dlg.ask_yes_no", return_value=False,
-    ):
-        assert not declined._ensure_island_adventures_dependency(show_dialog=True)
-    assert not declined._mod_data[child_key].enabled
-    assert child_key not in declined._selected_mod_ids
-    assert not declined._mod_data[core_key].enabled
-
-
-def _main_mod_dependency_tab() -> ModManagerTab:
-    tab = ModManagerTab.__new__(ModManagerTab)
-    tab.app = SimpleNamespace(
-        root=object(),
-        mark_world_tab_stale=lambda: setattr(tab, "world_stale", True),
-    )
-    tab._get_cluster = lambda: SimpleNamespace(source=SaveSource.SERVER)
+def _main_mod_dependency_page() -> ModPage:
+    tab = ModPage.__new__(ModPage)
+    tab.get_cluster = lambda: SimpleNamespace(source=SaveSource.SERVER)
+    tab.window = lambda: None
     tab._luajit_mod_locked = False
     tab._mod_data = {
         f"workshop-{IA_SHIPWRECKED_MOD_ID}": ModEntry(
@@ -691,63 +467,62 @@ def _main_mod_dependency_tab() -> ModManagerTab:
             workshop_id=f"workshop-{IA_CORE_MOD_ID}", enabled=False,
         ),
     }
-    tab._mark_dirty = lambda: setattr(tab, "dirty_marked", True)
-    tab._render_list = lambda: None
-    tab._enabled_count_var = SimpleNamespace(
-        set=lambda value: setattr(tab, "enabled_count_text", value),
-    )
-    tab.enabled_count_text = ""
     tab.dirty_marked = False
-    tab.world_stale = False
+    tab._mark_dirty = lambda: setattr(tab, "dirty_marked", True)
+    tab._update_enabled_count = lambda: None
+    tab._render_list = lambda: None
     return tab
+
+
+def test_creation_dependency_confirmation() -> None:
+    accepted = _dependency_wizard()
+    with patch(
+        "dstools.qt.creation_wizard.dialogs.ask_yes_no", return_value=True,
+    ) as confirm:
+        assert accepted._ensure_island_adventures_dependency(show_dialog=True)
+    confirm.assert_called_once()
+    core_key = f"workshop-{IA_CORE_MOD_ID}"
+    child_key = f"workshop-{IA_SHIPWRECKED_MOD_ID}"
+    assert accepted._mod_data[core_key].enabled
+    assert core_key in accepted._selected_mod_ids
+
+    declined = _dependency_wizard()
+    with patch(
+        "dstools.qt.creation_wizard.dialogs.ask_yes_no", return_value=False,
+    ):
+        assert not declined._ensure_island_adventures_dependency(show_dialog=True)
+    assert not declined._mod_data[child_key].enabled
+    assert child_key not in declined._selected_mod_ids
+    assert not declined._mod_data[core_key].enabled
 
 
 def test_main_mod_dependency_confirmation() -> None:
     child_key = f"workshop-{IA_SHIPWRECKED_MOD_ID}"
     core_key = f"workshop-{IA_CORE_MOD_ID}"
 
-    accepted = _main_mod_dependency_tab()
+    accepted = _main_mod_dependency_page()
     with patch(
-        "dstools.features.mod.tab.dlg.ask_yes_no", return_value=True,
+        "dstools.qt.pages.mod.dialogs.ask_yes_no", return_value=True,
     ) as confirm:
         accepted._on_toggle(child_key)
     confirm.assert_called_once()
     assert accepted._mod_data[child_key].enabled
     assert accepted._mod_data[core_key].enabled
-    assert accepted.dirty_marked and accepted.world_stale
-    assert accepted.enabled_count_text.endswith("2")
+    assert accepted.dirty_marked
 
-    declined = _main_mod_dependency_tab()
+    declined = _main_mod_dependency_page()
     with patch(
-        "dstools.features.mod.tab.dlg.ask_yes_no", return_value=False,
+        "dstools.qt.pages.mod.dialogs.ask_yes_no", return_value=False,
     ):
         declined._on_toggle(child_key)
     assert not declined._mod_data[child_key].enabled
     assert not declined._mod_data[core_key].enabled
-    assert not declined.dirty_marked and not declined.world_stale
-    assert declined.enabled_count_text == ""
-
-
-def test_creation_error_dialog_uses_wizard_parent() -> None:
-    tab = WorldCreationTab.__new__(WorldCreationTab)
-    tab.frame = _FrameProbe()
-    tab._ensure_page = lambda _key: None
-    tab._mod_scan_running = False
-    tab._plan_master = object()
-    tab._plan_caves = object()
-    tab.name_var = SimpleNamespace(get=lambda: "Cluster_Test")
-    tab._template_root = None
-
-    with patch("dstools.features.world.creation_tab.dlg.show_error") as error:
-        tab._create()
-    error.assert_called_once()
-    assert error.call_args.args[0] is tab.frame
-    assert "未找到默认世界模板" in error.call_args.args[2]
+    assert not declined.dirty_marked
 
 
 def test_pending_mod_world_preview() -> None:
     cluster = SimpleNamespace(name="Cluster_Test", path=Path("C:/saves/Cluster_Test"))
-    tab = ModManagerTab.__new__(ModManagerTab)
+    tab = ModPage.__new__(ModPage)
     tab._dirty = True
     tab._loading = False
     tab._loading_key = (cluster.name, "Master")
@@ -759,7 +534,7 @@ def test_pending_mod_world_preview() -> None:
             workshop_id="workshop-3322803908", enabled=False,
         ),
     }
-    tab._get_cluster = lambda: cluster
+    tab.get_cluster = lambda: cluster
     assert tab.get_pending_enabled_mod_ids(cluster) == frozenset({CHERRY_FOREST_MOD_ID})
 
     # 没有待保存状态，或请求的是另一个存档时，必须退回磁盘数据。
@@ -770,98 +545,10 @@ def test_pending_mod_world_preview() -> None:
     assert tab.get_pending_enabled_mod_ids(other) is None
 
 
-def test_creation_mod_list_uses_native_canvas_width() -> None:
-    captured = {}
-    virtual = {}
-
-    def set_virtual_image(ref_width, total_height, renderer, **kwargs):
-        virtual.update(
-            ref_width=ref_width,
-            total_height=total_height,
-            renderer=renderer,
-            kwargs=kwargs,
-        )
-
-    panel = SimpleNamespace(
-        current_width=lambda _default: 777,
-        set_image=lambda *_args, **_kwargs: None,
-        set_virtual_image=set_virtual_image,
-    )
-    tab = WorldCreationTab.__new__(WorldCreationTab)
-    tab._mod_panel = panel
-    tab._mod_filter_var = None
-    tab._mod_show_var = None
-    tab._mod_data = {
-        "workshop-1": ModEntry(workshop_id="workshop-1", name="清晰名称", enabled=True),
-    }
-    tab._mod_infos = {}
-    tab._icon_imgs = {}
-    tab._icon_thumb_cache = {}
-
-    def render_probe(*_args, **kwargs):
-        captured.update(kwargs)
-        return Image.new("RGB", (kwargs["ref_width"], 60)), [], []
-
-    with patch("dstools.features.world.creation_tab.render_mod_list", side_effect=render_probe):
-        tab._render_list()
-        image, _hits, _hovers = virtual["renderer"](120, 60)
-    assert captured["ref_width"] == 777
-    assert captured["viewport_y"] == 120
-    assert captured["viewport_height"] == 60
-    assert image.size == (777, 60)
-    assert virtual["ref_width"] == 777
-    assert virtual["kwargs"] == {"keep_scroll": True}
-
-    tab._sub_tab_key = "server"
-    virtual.clear()
-    with patch(
-        "dstools.features.world.creation_tab.render_mod_list",
-        side_effect=AssertionError("隐藏 Mod 页不应重绘"),
-    ):
-        tab._render_list()
-    assert not virtual
-
-
-def test_creation_hidden_pages_release_images() -> None:
-    class FakePanel:
-        def __init__(self):
-            self.releases = 0
-            self.packed = False
-            self.frame = self
-
-        def release_image(self):
-            self.releases += 1
-
-        def pack_forget(self):
-            self.packed = False
-
-        def pack(self, **_kwargs):
-            self.packed = True
-
-    tab = WorldCreationTab.__new__(WorldCreationTab)
-    tab._rules_panel = FakePanel()
-    tab._gen_panel = FakePanel()
-    tab._mod_panel = FakePanel()
-    tab._world_sub_tab_key = "rules"
-    renders = []
-    tab._render = lambda: renders.append(True)
-
-    tab._release_page_images("world")
-    tab._release_page_images("mod")
-    assert tab._rules_panel.releases == 1
-    assert tab._gen_panel.releases == 1
-    assert tab._mod_panel.releases == 1
-
-    tab._on_world_sub_tab_select("generation")
-    assert tab._rules_panel.releases == 2
-    assert tab._gen_panel.packed is True
-    assert renders == [True]
-
-
 def test_creation_preset_apply_refreshes_mod_list() -> None:
     refreshed = []
     statuses = []
-    tab = WorldCreationTab.__new__(WorldCreationTab)
+    tab = CreationWizardDialog.__new__(CreationWizardDialog)
     tab._mod_overrides = {}
     tab._selected_mod_ids = set()
     tab._mod_data = {
@@ -870,7 +557,7 @@ def test_creation_preset_apply_refreshes_mod_list() -> None:
     tab._initialized_pages = set()
     tab._ensure_island_adventures_dependency = lambda show_dialog: True
     tab._scan_installed_mods = lambda force=False: refreshed.append(force)
-    tab.status_var = SimpleNamespace(set=statuses.append)
+    tab._status_label = SimpleNamespace(setText=statuses.append)
     preset = ModPreset(
         name="启用测试",
         mods={
@@ -1038,47 +725,6 @@ def test_multi_shard_mod_templates_require_enabled_mods() -> None:
         assert parse_lua_file(output / "Volcano" / "leveldataoverride.lua")["location"] == VOLCANO_LOCATION
 
 
-def test_world_tab_keeps_only_the_visible_panel_image() -> None:
-    class FakePanel:
-        def __init__(self):
-            self.releases = 0
-            self.packed = False
-            self.frame = self
-
-        def release_image(self):
-            self.releases += 1
-
-        def pack_forget(self):
-            self.packed = False
-
-        def pack(self, **_kwargs):
-            self.packed = True
-
-    tab = object.__new__(WorldSettingsTab)
-    tab._rules_panel = FakePanel()
-    tab._gen_panel = FakePanel()
-    tab._rules_panel.packed = True
-    tab._sub_tab_key = "rules"
-    tab._rules_rendered = True
-    tab._gen_rendered = False
-    tab._page_visible = True
-    tab._flash_after_id = None
-    gen_renders = []
-    tab._render_gen = lambda: gen_renders.append(True)
-    tab._render_rules = lambda: None
-
-    tab._on_sub_tab_select("gen")
-    assert tab._rules_panel.releases == 1
-    assert tab._rules_rendered is False
-    assert tab._gen_panel.packed is True and gen_renders == [True]
-
-    tab.on_hidden()
-    assert tab._rules_panel.releases == 2
-    assert tab._gen_panel.releases == 1
-    assert not tab._rules_rendered and not tab._gen_rendered
-    assert tab._page_visible is False
-
-
 def main() -> None:
     tests = (
         test_location_profiles,
@@ -1094,24 +740,15 @@ def main() -> None:
         test_lua_value_rejects_function_call_instead_of_guessing,
         test_lua_value_rejects_bare_identifier_without_trailing_tokens,
         test_en_zh_mod_metadata,
-        test_world_setting_icon_rendering,
-        test_dimension_keyed_render_caches_are_bounded,
-        test_world_setting_name_wrap_keeps_full_text,
-        test_world_panel_viewport_matches_full_image_crop,
-        test_world_panel_compact_mode_shows_three_rows_in_default_viewport,
         test_creation_dependency_confirmation,
         test_main_mod_dependency_confirmation,
-        test_creation_error_dialog_uses_wizard_parent,
         test_pending_mod_world_preview,
-        test_creation_mod_list_uses_native_canvas_width,
-        test_creation_hidden_pages_release_images,
         test_creation_preset_apply_refreshes_mod_list,
         test_creation_matrix,
         test_creation_rejects_invalid_combinations,
         test_porkland_creation,
         test_multi_shard_creation,
         test_multi_shard_mod_templates_require_enabled_mods,
-        test_world_tab_keeps_only_the_visible_panel_image,
     )
     for test in tests:
         test()

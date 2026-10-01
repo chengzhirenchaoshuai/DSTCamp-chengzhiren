@@ -23,18 +23,11 @@ from dstools.features.frp_selfhost.mihomo import (
     build_mihomo_config,
     sha256_file,
 )
-from dstools.features.frp_selfhost.tab import (
-    MIHOMO_LANZOU_CODE,
-    MIHOMO_LANZOU_URL,
-    MIHOMO_RELEASES_URL,
-    SelfHostFrpPage,
-)
 from dstools.features.frp_selfhost.wireguard import (
     WireGuardClientConfig,
     ensure_client_keypair,
 )
 from dstools.features.frp_selfhost.wireguard_deploy import build_install_script
-from dstools.features.local_service.tab import LocalServiceTab
 from dstools.shared import app_settings
 
 
@@ -113,59 +106,6 @@ def test_mihomo_selection_persists_hash_and_wireguard_metadata() -> None:
             }
 
 
-def test_mihomo_download_opens_official_release_page() -> None:
-    page = object.__new__(SelfHostFrpPage)
-    page.app = SimpleNamespace(root=object())
-    with (
-        patch(
-            "dstools.features.frp_selfhost.tab.dlg.ask_choice",
-            return_value="official",
-        ),
-        patch(
-            "dstools.features.frp_selfhost.tab.webbrowser.open",
-            return_value=True,
-        ) as open_browser,
-    ):
-        page._open_mihomo_download()
-    open_browser.assert_called_once_with(MIHOMO_RELEASES_URL)
-    assert MIHOMO_RELEASES_URL == "https://github.com/MetaCubeX/mihomo/releases"
-
-
-def test_mihomo_download_lanzou_copies_code_before_opening() -> None:
-    page = object.__new__(SelfHostFrpPage)
-    events = []
-    root = SimpleNamespace(
-        clipboard_clear=lambda: events.append(("clipboard_clear",)),
-        clipboard_append=lambda value: events.append(("clipboard_append", value)),
-        update=lambda: events.append(("update",)),
-    )
-    page.app = SimpleNamespace(root=root)
-    with (
-        patch(
-            "dstools.features.frp_selfhost.tab.dlg.ask_choice",
-            return_value="lanzou",
-        ),
-        patch(
-            "dstools.features.frp_selfhost.tab.dlg.show_toast",
-            side_effect=lambda *_args: events.append(("toast",)),
-        ),
-        patch(
-            "dstools.features.frp_selfhost.tab.webbrowser.open",
-            side_effect=lambda url: events.append(("open", url)) or True,
-        ),
-    ):
-        page._open_mihomo_download()
-    assert events == [
-        ("clipboard_clear",),
-        ("clipboard_append", MIHOMO_LANZOU_CODE),
-        ("update",),
-        ("toast",),
-        ("open", MIHOMO_LANZOU_URL),
-    ]
-    assert MIHOMO_LANZOU_CODE == "c0mu"
-    assert MIHOMO_LANZOU_URL == "https://wwblt.lanzout.com/iN5Vd4714e6h"
-
-
 def test_all_shards_must_be_mapped() -> None:
     cluster = SimpleNamespace(
         path=Path("Cluster_1"),
@@ -236,54 +176,14 @@ def test_coordinator_passes_wireguard_config_and_rolls_back() -> None:
     assert events[-1] == ("stop",)
 
 
-def test_local_service_poll_waits_for_sakura_tab_initialization() -> None:
-    service = LocalServiceTab.__new__(LocalServiceTab)
-    service.app = SimpleNamespace()
-    service._console_panes = {}
-    service._shard_rows = {}
-    service._connect_row = SimpleNamespace(winfo_ismapped=lambda: False)
-    service._get_cluster = lambda: None
-    for method_name in (
-        "_drain_steam_remote_build_result",
-        "_refresh_steam_remote_build_async",
-        "_drain_connect_results",
-        "_update_start_lock_state",
-        "_update_stop_all_btn_state",
-        "_update_restart_all_btn_state",
-        "_update_logs_btn_state",
-        "_update_luajit_row",
-        "_maybe_periodic_backup",
-    ):
-        setattr(service, method_name, lambda *_args: None)
-    scheduled = []
-    service.frame = SimpleNamespace(
-        after=lambda delay, callback: scheduled.append((delay, callback)) or "next"
-    )
-
-    # 应用构造期间 SakuraTab 尚未赋给 app，整轮刷新仍须完成并安排下一轮。
-    service._poll()
-    assert service._poll_after_id == "next"
-    assert len(scheduled) == 1
-
-    calls = []
-    service.app.sakura_tab = SimpleNamespace(
-        poll_lobby_accel=lambda: calls.append("poll")
-    )
-    service._poll_lobby_accel_if_ready()
-    assert calls == ["poll"]
-
-
 def main() -> int:
     tests = [
         test_mihomo_config_routes_server_tcp_and_udp,
         test_wireguard_keypair_is_valid_and_stable,
         test_wireguard_install_script_is_scoped_and_idempotent,
         test_mihomo_selection_persists_hash_and_wireguard_metadata,
-        test_mihomo_download_opens_official_release_page,
-        test_mihomo_download_lanzou_copies_code_before_opening,
         test_all_shards_must_be_mapped,
         test_coordinator_passes_wireguard_config_and_rolls_back,
-        test_local_service_poll_waits_for_sakura_tab_initialization,
     ]
     for test in tests:
         test()
