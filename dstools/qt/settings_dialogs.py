@@ -436,7 +436,11 @@ class CacheDirDialog(dialogs.Dialog):
             [(t("settings.restart_now"), "restart"), (t("dlg.cancel_btn"), "cancel")],
             default="restart", min_width=520)
         if choice == "restart":
-            dialogs.show_info(self, t("settings.cache_dir_label"), t("settings.cache_dir_restart_hint"))
+            # 之前这里只弹一句"重启后生效"的提示，并没有真正重启
+            window = self.parent()
+            self.accept()
+            if hasattr(window, "restart_app"):
+                window.restart_app()
 
 
 class ManualUpdateDialog(dialogs.Dialog):

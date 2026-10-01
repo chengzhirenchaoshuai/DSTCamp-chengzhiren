@@ -129,6 +129,80 @@ def _run_smoke_test(executable: Path) -> None:
         raise RuntimeError(f"产物冒烟测试失败：{executable}\n{detail}")
 
 
+# 界面只用 QtCore/QtGui/QtWidgets。下面这些 Python 模块不打包：
+_EXCLUDED_MODULES = (
+    "numpy",
+    # Pillow 的 AVIF 编解码（4MB+），项目只处理 PNG/JPG/TEX 转出的图片
+    "PIL._avif", "PIL.AvifImagePlugin",
+    *(f"PySide6.{name}" for name in (
+        "QtNetwork", "QtWebEngineCore", "QtWebEngineWidgets", "QtWebEngineQuick", "QtWebChannel",
+        "QtWebSockets", "QtQml", "QtQuick", "QtQuickWidgets", "QtQuick3D", "Qt3DCore", "Qt3DRender",
+        "QtMultimedia", "QtMultimediaWidgets", "QtPdf", "QtPdfWidgets", "QtCharts", "QtDataVisualization",
+        "QtGraphs", "QtBluetooth", "QtPositioning", "QtLocation", "QtSensors", "QtSerialPort", "QtSql",
+        "QtTest", "QtDesigner", "QtHelp", "QtOpenGL", "QtOpenGLWidgets", "QtSvg", "QtSvgWidgets",
+        "QtTextToSpeech",
+    )),
+)
+
+# PySide6 钩子会按插件顺带收集 Qt 动态库和插件；命令行排除模块管不到这些文件，
+# 在 spec 里按打包后的路径过滤（路径统一用小写、正斜杠比较）。
+_DROPPED_QT_FILES = (
+    "pyside6/opengl32sw.dll",                     # 软件渲染 OpenGL（7MB+），界面不用 OpenGL
+    "pyside6/qt6quick", "pyside6/qt6qml", "pyside6/qt6pdf", "pyside6/qt6network",
+    "pyside6/qt6opengl", "pyside6/qt6svg", "pyside6/qt6virtualkeyboard",
+    "pyside6/plugins/platforms/qdirect2d", "pyside6/plugins/platforms/qminimal",
+    "pyside6/plugins/platforms/qoffscreen",       # 平台插件只需要 qwindows
+    "pyside6/plugins/tls/", "pyside6/plugins/networkinformation/", "pyside6/plugins/generic/",
+    "pyside6/plugins/platforminputcontexts/",     # 虚拟键盘，输入法走系统原生
+    "pyside6/plugins/iconengines/",               # SVG 图标引擎，界面图标都是 PNG
+    # 图片解码插件：背景图只允许 png/jpg/jpeg/bmp/gif（png/bmp 内置），保留 jpeg/gif/ico
+    "pyside6/plugins/imageformats/qpdf", "pyside6/plugins/imageformats/qsvg",
+    "pyside6/plugins/imageformats/qwebp", "pyside6/plugins/imageformats/qtiff",
+    "pyside6/plugins/imageformats/qtga", "pyside6/plugins/imageformats/qwbmp",
+    "pyside6/plugins/imageformats/qicns",
+)
+# Qt 自带的界面翻译只保留简体中文（英文是 Qt 内置原文，不需要翻译文件）
+_KEPT_QT_TRANSLATIONS = ("qt_zh_cn.qm", "qtbase_zh_cn.qm")
+
+
+def _drop_bundled_file(dest_name: str) -> bool:
+    """spec 里 Analysis 结果的过滤规则：返回 True 表示这个文件不打进 EXE。"""
+    name = dest_name.replace("\\", "/").lower()
+    if name.startswith("pyside6/translations/"):
+        return name.rsplit("/", 1)[-1] not in _KEPT_QT_TRANSLATIONS
+    return any(name.startswith(prefix) for prefix in _DROPPED_QT_FILES)
+
+
+def _spec_source(script: Path, project_root: Path, exe_name: str, icon: Path,
+                 datas: list[tuple[Path, str]]) -> str:
+    """生成 PyInstaller spec：单文件、无控制台，Analysis 之后按 _drop_bundled_file 裁剪。"""
+    return f"""# 由 scripts/build_exe.py 自动生成，不要手改
+import sys
+sys.path.insert(0, {str(project_root / "scripts")!r})
+from build_exe import _drop_bundled_file, _EXCLUDED_MODULES
+from PyInstaller.utils.hooks import collect_data_files
+
+a = Analysis(
+    [{str(script)!r}],
+    pathex=[{str(project_root)!r}],
+    datas={[(str(src), dest) for src, dest in datas]!r} + collect_data_files("certifi"),
+    hiddenimports=["lupa.lua51"],
+    excludes=list(_EXCLUDED_MODULES),
+    noarchive=False,
+)
+a.binaries = [entry for entry in a.binaries if not _drop_bundled_file(entry[0])]
+a.datas = [entry for entry in a.datas if not _drop_bundled_file(entry[0])]
+pyz = PYZ(a.pure)
+exe = EXE(
+    pyz, a.scripts, a.binaries, a.datas, [],
+    name={exe_name!r},
+    icon={str(icon)!r},
+    console=False,
+    upx=False,
+)
+"""
+
+
 def build() -> None:
     try:
         import PyInstaller.__main__
@@ -152,37 +226,30 @@ def build() -> None:
     staged_tools = _stage_tools(project_root, cache_root)
     staged_icons = _stage_icons(project_root, cache_root)
 
-    sep = ";" if sys.platform == "win32" else ":"
-    args = [
-        str(project_root / "scripts" / "run_gui.py"),
-        "--windowed",
-        "--onefile",
+    spec_path = cache_root / f"{exe_name}.spec"
+    spec_path.write_text(
+        _spec_source(
+            script=project_root / "scripts" / "run_gui.py",
+            project_root=project_root,
+            exe_name=exe_name,
+            icon=staged_icons / "app" / "icon.ico",
+            datas=[
+                (staged_icons / "world", "icons/world"),
+                (staged_icons / "ui", "icons/ui"),
+                (staged_icons / "app", "icons/app"),
+                (staged_icons / "recommended", "icons/recommended"),
+                (staged_tools, "tools"),
+            ],
+        ),
+        encoding="utf-8",
+    )
+    PyInstaller.__main__.run([
+        str(spec_path),
         "--noconfirm",
         "--clean",
-        f"--name={exe_name}",
         f"--distpath={dist_root}",
         f"--workpath={cache_root / ('build_' + exe_name)}",
-        f"--specpath={cache_root / ('spec_' + exe_name)}",
-        f"--icon={staged_icons / 'app' / 'icon.ico'}",
-        f"--add-data={staged_icons / 'world'}{sep}icons{os.sep}world",
-        f"--add-data={staged_icons / 'ui'}{sep}icons{os.sep}ui",
-        f"--add-data={staged_icons / 'app'}{sep}icons{os.sep}app",
-        f"--add-data={staged_icons / 'recommended'}{sep}icons{os.sep}recommended",
-        f"--add-data={staged_tools}{sep}tools",
-        "--hidden-import=lupa.lua51",
-        "--collect-data=certifi",
-        "--exclude-module=numpy",
-        # 界面只用 QtCore/QtGui/QtWidgets；排除用不到的大体积 Qt 模块，避免被
-        # PyInstaller 的 PySide6 钩子顺带收进单文件 EXE。
-        *(f"--exclude-module=PySide6.{name}" for name in (
-            "QtWebEngineCore", "QtWebEngineWidgets", "QtWebEngineQuick", "QtWebChannel", "QtWebSockets",
-            "QtQml", "QtQuick", "QtQuickWidgets", "QtQuick3D", "Qt3DCore", "Qt3DRender", "QtMultimedia",
-            "QtMultimediaWidgets", "QtPdf", "QtPdfWidgets", "QtCharts", "QtDataVisualization", "QtGraphs",
-            "QtBluetooth", "QtPositioning", "QtLocation", "QtSensors", "QtSerialPort", "QtSql", "QtTest",
-            "QtDesigner", "QtHelp", "QtOpenGL", "QtOpenGLWidgets", "QtSvgWidgets", "QtTextToSpeech",
-        )),
-    ]
-    PyInstaller.__main__.run(args)
+    ])
 
     onefile_exe = dist_root / f"{exe_name}.exe"
     _run_smoke_test(onefile_exe)

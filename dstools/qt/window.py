@@ -799,6 +799,45 @@ class MainWindow(QWidget):
             return
         self.ctx.manager.stop_all(on_all_done=lambda: post_to_ui(lambda _a: self.quit_app()))
 
+    def restart_app(self) -> None:
+        """重启 DSTCamp：有专服在跑时先确认并安全关闭，再启动等待型辅助进程
+        （scripts/run_gui.py --restart-helper），它等本进程退出、单实例锁释放后
+        再重新启动程序。跟 Tk 版 _restart_app()/_quit_and_restart() 同一套做法。"""
+        running = self.ctx.manager.running()
+        if running:
+            world_count = len(running)
+            cluster_count = len({str(proc.cluster_path) for proc in running})
+            if not dialogs.ask_yes_no(self, t("local.confirm_close_title"),
+                                       t("local.confirm_close_msg", cluster_count=cluster_count,
+                                         world_count=world_count)):
+                return
+            self.ctx.manager.stop_all(on_all_done=lambda: post_to_ui(lambda _a: self._spawn_restart_and_quit()))
+            return
+        self._spawn_restart_and_quit()
+
+    def _spawn_restart_and_quit(self) -> None:
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        original_args = sys.argv[1:]
+        if getattr(sys, "frozen", False):
+            launcher = [sys.executable]
+        else:
+            launcher = [sys.executable, str(Path(__file__).resolve().parents[2] / "scripts" / "run_gui.py")]
+        env = os.environ.copy()
+        if getattr(sys, "frozen", False):
+            # 辅助进程比当前进程活得久，不能复用当前单文件 EXE 的解压目录（_MEI），
+            # 否则当前进程退出清理时会删掉辅助进程还在用的文件。
+            env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+        try:
+            subprocess.Popen([*launcher, "--restart-helper", str(os.getpid()), *original_args], env=env,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except OSError as exc:
+            dialogs.show_error(self, t("settings.cache_dir_label"), t("settings.restart_failed", error=str(exc)))
+            return
+        self.quit_app()
+
     def quit_app(self) -> None:
         self._quitting = True
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
