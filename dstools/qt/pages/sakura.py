@@ -10,6 +10,7 @@ ensure_lobby_accel/...）在这里统一接管——local_service 页迁移时�
 import time
 import webbrowser
 
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QStackedWidget,
@@ -294,7 +295,7 @@ class _SakuraMappingPanel(QWidget):
         self._action_btn.clicked.connect(self._on_action_btn)
         action_row.addWidget(self._action_btn)
 
-        # frpc 状态和启停按钮跟"开启/关闭映射"放在同一行，不再单独占一行。
+        # frpc 状态和启停按钮放在"开启/关闭映射"的下一行。
         self._frpc_row = QWidget()
         frpc_layout = QHBoxLayout(self._frpc_row)
         frpc_layout.setContentsMargins(0, 0, 0, 0)
@@ -304,11 +305,17 @@ class _SakuraMappingPanel(QWidget):
         self._frpc_toggle_btn = QPushButton(t("sakura.frpc_start_btn"))
         self._frpc_toggle_btn.clicked.connect(self._on_frpc_toggle)
         frpc_layout.addWidget(self._frpc_toggle_btn)
-        action_row.addWidget(self._frpc_row)
+        frpc_layout.addStretch()
         action_row.addStretch()
         shards_layout.addSpacing(4)
         shards_layout.addLayout(action_row)
+        shards_layout.addWidget(self._frpc_row)
         self._frpc_row.setVisible(False)
+        self._frpc_shown_running = False
+        # frpc 会被本地服务器页的停服流程停掉、也可能自己退出，状态行要定时跟上实际状态
+        self._frpc_timer = QTimer(self, interval=1000)
+        self._frpc_timer.timeout.connect(self._tick_frpc_row)
+        self._frpc_timer.start()
         root.addWidget(shards_card)
         root.addStretch()
 
@@ -647,9 +654,10 @@ class _SakuraMappingPanel(QWidget):
                 else t("sakura.frpc_status_failed")
             color = theme.hex("ERROR")
         elif running:
-            text, color = t("sakura.frpc_status_running"), theme.hex("ACCENT")
+            text, color = t("sakura.frpc_status_running"), theme.hex("SUCCESS")
         else:
             text, color = t("sakura.frpc_status_stopped"), theme.hex("TEXT_MUTED")
+        self._frpc_shown_running = running
         self._frpc_status_label.setText(text)
         self._frpc_status_label.setStyleSheet(f"color: {color};")
         self._frpc_status_label.setToolTip(self._frpc_failed_error(cluster) or "" if cluster else "")
@@ -666,7 +674,12 @@ class _SakuraMappingPanel(QWidget):
         shards = self._mapped_shards(cluster)
         if not shards:
             return
-        if self.frpc_all_running(cluster):
+        running = self.frpc_all_running(cluster)
+        if running != self._frpc_shown_running:
+            # 显示的状态已过期（如 frpc 已随停服结束），先刷新，不能反过来执行相反的操作
+            self._refresh_frpc_row()
+            return
+        if running:
             remaining = [len(shards)]
 
             def one_done():
@@ -682,6 +695,19 @@ class _SakuraMappingPanel(QWidget):
                 return
             for s in shards:
                 self.maybe_start_frpc(cluster, s, frpc_exe=health.path)
+            self._refresh_frpc_row()
+
+    def _tick_frpc_row(self) -> None:
+        """把已退出的 frpc 标记为失败，并在显示状态与实际不一致时刷新状态行。"""
+        exited = False
+        for proc in self.frpc.processes():
+            if proc.status == FrpcStatus.RUNNING and (code := proc.poll_exit_code()) is not None:
+                proc.status = FrpcStatus.CRASHED
+                proc.error = t("sakura.frpc_exited", code=code)
+                exited = True
+        cluster = self._current_cluster
+        if cluster and self._frpc_row.isVisible() and (
+                exited or self.frpc_all_running(cluster) != self._frpc_shown_running):
             self._refresh_frpc_row()
 
     def maybe_start_frpc(self, cluster, shard, frpc_exe=None) -> None:

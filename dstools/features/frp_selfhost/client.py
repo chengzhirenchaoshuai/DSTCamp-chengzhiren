@@ -246,6 +246,9 @@ class FrpcManager:
     def get(self, cluster_path: Path) -> FrpcProcess | None:
         return self._procs.get(str(cluster_path))
 
+    def processes(self) -> list[FrpcProcess]:
+        return list(self._procs.values())
+
     def reconcile(self, cluster_path: Path, frpc_exe: Path, config_path: Path) -> FrpcProcess | None:
         """用到某个存档的 frpc 状态前调用——已跟踪的直接返回，不重复
         扫描；没跟踪就按配置文件路径找孤儿进程认领进来（见模块顶部说

@@ -150,6 +150,9 @@ class FrpcManager:
     def get(self, cluster_path: Path, shard_name: str) -> FrpcProcess | None:
         return self._procs.get(self._key(cluster_path, shard_name))
 
+    def processes(self) -> list[FrpcProcess]:
+        return list(self._procs.values())
+
     def stop(self, cluster_path: Path, shard_name: str, on_done=None) -> None:
         key = self._key(cluster_path, shard_name)
         proc = self._procs.get(key)

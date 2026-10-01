@@ -376,7 +376,7 @@ class SelfHostPanel(QWidget):
         self._conn_check_btn = QPushButton(t("selfhost.conn_check_btn"))
         self._conn_check_btn.clicked.connect(self._check_connectivity)
         action_row.addWidget(self._conn_check_btn)
-        # frpc 状态和启停按钮并入操作行，跟樱花映射面板一致。
+        # frpc 状态和启停按钮放在操作行的下一行，跟樱花映射面板一致。
         self._frpc_row = QWidget()
         frpc_layout = QHBoxLayout(self._frpc_row)
         frpc_layout.setContentsMargins(0, 0, 0, 0)
@@ -386,11 +386,17 @@ class SelfHostPanel(QWidget):
         self._frpc_toggle_btn = QPushButton(t("sakura.frpc_start_btn"))
         self._frpc_toggle_btn.clicked.connect(self._on_frpc_toggle)
         frpc_layout.addWidget(self._frpc_toggle_btn)
-        action_row.addWidget(self._frpc_row)
+        frpc_layout.addStretch()
         action_row.addStretch()
         layout.addSpacing(4)
         layout.addLayout(action_row)
+        layout.addWidget(self._frpc_row)
         self._frpc_row.setVisible(False)
+        self._frpc_shown_running = False
+        # frpc 会被本地服务器页的停服流程停掉、也可能自己退出，状态行要定时跟上实际状态
+        self._frpc_timer = QTimer(self, interval=1000)
+        self._frpc_timer.timeout.connect(self._tick_frpc_row)
+        self._frpc_timer.start()
         page_layout.addWidget(card)
         page_layout.addStretch()
 
@@ -877,13 +883,31 @@ class SelfHostPanel(QWidget):
         exe = _frpc_exe_path()
         if not config_path.exists():
             return
-        if self.frpc.reconcile(cluster.path, exe, config_path):
-            return
+        existing = self.frpc.reconcile(cluster.path, exe, config_path)
+        if existing is not None and existing.status not in (FrpcStatus.CRASHED, FrpcStatus.STOPPED):
+            return  # 已在运行/启停中；崩溃或已停止的才重新拉起
         self.frpc.start(cluster.path, exe, config_path)
 
     def stop_frpc_for_shard(self, cluster, shard, on_done=None) -> None:
         if on_done:
             on_done()
+
+    def _tick_frpc_row(self) -> None:
+        """把自己启动后已退出的 frpc 标记为失败，并在显示状态与实际不一致时刷新状态行。
+        只看已跟踪的进程，不做 reconcile 的进程表扫描（每秒跑一次太重）。"""
+        exited = False
+        for proc in self.frpc.processes():
+            if proc.proc is not None and proc.status == FrpcStatus.RUNNING                     and (code := proc.poll_exit_code()) is not None:
+                proc.status = FrpcStatus.CRASHED
+                proc.error = t("sakura.frpc_exited", code=code)
+                exited = True
+        cluster = self._current_cluster
+        if not cluster or not self._frpc_row.isVisible():
+            return
+        tracked = self.frpc.get(cluster.path)
+        running = tracked is not None and tracked.status == FrpcStatus.RUNNING
+        if exited or running != self._frpc_shown_running:
+            self._refresh_frpc_row()
 
     def frpc_running(self, cluster) -> bool:
         self.frpc.reconcile(cluster.path, _frpc_exe_path(), self._frpc_config_path(cluster.path))
@@ -907,9 +931,10 @@ class SelfHostPanel(QWidget):
         if error:
             text, color = t("selfhost.frpc_status_failed"), theme.hex("ERROR")
         elif running:
-            text, color = t("selfhost.frpc_status_running"), theme.hex("ACCENT")
+            text, color = t("selfhost.frpc_status_running"), theme.hex("SUCCESS")
         else:
             text, color = t("selfhost.frpc_status_stopped"), theme.hex("TEXT_MUTED")
+        self._frpc_shown_running = running
         self._frpc_status_label.setText(text)
         self._frpc_status_label.setStyleSheet(f"color: {color};")
         self._frpc_status_label.setToolTip(error or "")
@@ -919,7 +944,12 @@ class SelfHostPanel(QWidget):
         cluster = self._current_cluster
         if not cluster:
             return
-        if self.frpc_running(cluster):
+        running = self.frpc_running(cluster)
+        if running != self._frpc_shown_running:
+            # 显示的状态已过期（如 frpc 已随停服结束），先刷新，不能反过来执行相反的操作
+            self._refresh_frpc_row()
+            return
+        if running:
             self.frpc.stop(cluster.path, on_done=lambda _p: post_to_ui(lambda _a: self._refresh_frpc_row()))
         else:
             for shard in cluster.shards:
