@@ -87,7 +87,7 @@ class ModPage(Page):
         # 不统一。
         page_layout = QVBoxLayout(self)
         page_layout.setContentsMargins(24, 12, 24, 12)
-        card = Card(alpha=0, border=True)
+        card = Card(radius=10, alpha=0, border=True)
         page_layout.addWidget(card)
         root = QVBoxLayout(card)
         # 跟其它主页签统一的内边距。

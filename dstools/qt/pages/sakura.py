@@ -802,7 +802,7 @@ class SakuraPage(Page):
         root = QVBoxLayout(self)
         # 跟其它主页签统一外边距（之前左右只有 12，边框比别的页签明显偏左）。
         root.setContentsMargins(24, 12, 24, 12)
-        card = Card(alpha=0, border=True)  # 内部全透明，跟其它主页签统一
+        card = Card(radius=10, alpha=0, border=True)  # 内部全透明，跟其它主页签统一
         root.addWidget(card)
         layout = QVBoxLayout(card)
         # 内容跟边框之间留出跟其它页签一致的间距，之前左右几乎贴边。
