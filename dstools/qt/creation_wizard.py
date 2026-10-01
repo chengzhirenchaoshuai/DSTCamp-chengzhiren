@@ -14,7 +14,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QGuiApplication, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QStackedWidget,
     QVBoxLayout, QWidget,
@@ -62,7 +62,7 @@ from dstools.qt.theme import theme
 from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.shared.steam_discovery import read_steam_persona_name
 from dstools.qt.threads import run_async
-from dstools.qt.widgets import PillTabBar
+from dstools.qt.widgets import Grip, PillTabBar, TitleButton
 from dstools.qt.world_panel import WorldPanel
 
 FLASH_MS = 200
@@ -217,6 +217,22 @@ class _LoadPresetDialog(dialogs.Dialog):
         self.accept()
 
 
+class _WizardTitleBar(QWidget):
+    """创建存档窗口的自绘标题栏：按住拖动（交给系统原生移动，支持贴边吸附），双击最大化/还原。"""
+
+    def __init__(self, wizard: "CreationWizardDialog"):
+        super().__init__()
+        self._wizard = wizard
+        self.setFixedHeight(32)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._wizard.windowHandle().startSystemMove()
+
+    def mouseDoubleClickEvent(self, _event):
+        self._wizard._toggle_maximize()
+
+
 class CreationWizardDialog(QDialog):
     def __init__(self, ctx, background=None):
         super().__init__()
@@ -235,6 +251,11 @@ class CreationWizardDialog(QDialog):
         persona = read_steam_persona_name()
         self._default_room_name = t("world.creation_default_room_name", name=persona) if persona else ""
         self.resize(1400, 860)
+        # 无边框 + 自绘标题栏（主题底色、跟主窗口同款最小化/最大化/关闭按钮）。原生标题栏
+        # 在 Windows 10 上改不了颜色（DWM 标题栏着色只有 Windows 11 支持）。
+        # WindowMinMaxButtonsHint 保留系统层面的最小化能力：最小化后能从任务栏点回来。
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
+                            | Qt.WindowType.WindowMinMaxButtonsHint)
 
         self._plan_master: creation.WorldShardPlan | None = None
         self._plan_caves: creation.WorldShardPlan | None = None
@@ -274,7 +295,13 @@ class CreationWizardDialog(QDialog):
         self._draft_dir_ctx: TemporaryDirectory | None = None
         self._server_panel: DraftServerPanel | None = None
 
-        root = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(2, 2, 2, 2)  # 留出 2px 画外框
+        outer.setSpacing(0)
+        outer.addWidget(self._build_title_bar())
+        content = QWidget()
+        outer.addWidget(content, 1)
+        root = QVBoxLayout(content)
         root.setContentsMargins(*dialogs.DIALOG_MARGINS)
         top = QHBoxLayout()
         top.addWidget(QLabel(t("world.creation_name_label")))
@@ -1090,12 +1117,74 @@ class CreationWizardDialog(QDialog):
         except Exception as exc:
             dialogs.show_error(self, t("world.creation_failed_title"), str(exc))
 
+    # ── 无边框窗口：标题栏、缩放热区、外框 ────────────────────────────────
+    def _build_title_bar(self) -> QWidget:
+        bar = _WizardTitleBar(self)
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(10, 0, 4, 0)
+        layout.setSpacing(2)
+        icon = QLabel()
+        icon.setPixmap(QPixmap(str(bundled_resource_dir() / "icons" / "app" / "icon.png")).scaled(
+            18, 18, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        layout.addWidget(icon)
+        layout.addSpacing(6)
+        layout.addWidget(QLabel(self.windowTitle()))
+        layout.addStretch()
+        self._max_button = TitleButton("max", self.isMaximized)
+        for kind, slot, button in (("min", self.showMinimized, None), ("max", self._toggle_maximize, self._max_button),
+                                   ("close", self.close, None)):
+            button = button or TitleButton(kind, self.isMaximized)
+            button.clicked.connect(slot)
+            layout.addWidget(button)
+        self._grips = [Grip(self, edges, cursor) for edges, cursor in (
+            (Qt.Edge.LeftEdge, Qt.CursorShape.SizeHorCursor), (Qt.Edge.RightEdge, Qt.CursorShape.SizeHorCursor),
+            (Qt.Edge.TopEdge, Qt.CursorShape.SizeVerCursor), (Qt.Edge.BottomEdge, Qt.CursorShape.SizeVerCursor),
+            (Qt.Edge.LeftEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeFDiagCursor),
+            (Qt.Edge.RightEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeFDiagCursor),
+            (Qt.Edge.RightEdge | Qt.Edge.TopEdge, Qt.CursorShape.SizeBDiagCursor),
+            (Qt.Edge.LeftEdge | Qt.Edge.BottomEdge, Qt.CursorShape.SizeBDiagCursor),
+        )]
+        return bar
+
+    def _toggle_maximize(self) -> None:
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        # setWindowFlags()/resize() 在标题栏建好之前就会触发这些事件，先判空。
+        if event.type() == event.Type.WindowStateChange and hasattr(self, "_grips"):
+            self._max_button.update()  # 最大化/还原图标跟着切换
+            for grip in self._grips:
+                grip.setVisible(not self.isMaximized())  # 最大化时不允许拖边缩放
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if not hasattr(self, "_grips"):
+            return
+        w, h, g, c = self.width(), self.height(), 6, 12
+        rects = [
+            (0, c, g, h - 2 * c), (w - g, c, g, h - 2 * c), (c, 0, w - 2 * c, g), (c, h - g, w - 2 * c, g),
+            (0, 0, c, c), (w - c, h - c, c, c), (w - c, 0, c, c), (0, h - c, c, c),
+        ]
+        for grip, rect in zip(self._grips, rects):
+            grip.setGeometry(*rect)
+            grip.raise_()
+
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.fillRect(self.rect(), theme.color("BG_SOFT"))
-        if self._background is None or not self._background.active:
+        if self._background is not None and self._background.active:
+            self._paint_background(painter)
+        else:
             self._bg_cache = None
-            return
+        # 外框跟主窗口一致
+        painter.setPen(QPen(theme.color("CARD_BORDER"), 2))
+        painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
+
+    def _paint_background(self, painter: QPainter) -> None:
         dpr = self.devicePixelRatioF()
         size = self.size() * dpr
         if self._bg_cache is None or self._bg_cache.size() != size:

@@ -188,11 +188,17 @@ class WorkshopUpdateDialog(QDialog):
         list_layout = QVBoxLayout(list_card)
         list_layout.setContentsMargins(0, 0, 0, 0)
         area = QScrollArea()
+        area.setObjectName("updateListArea")
         area.setWidgetResizable(True)
         area.setFrameShape(QScrollArea.Shape.NoFrame)
         area.viewport().setAutoFillBackground(False)
         inner = QWidget()
+        inner.setObjectName("updateListInner")
         inner.setAutoFillBackground(False)
+        # 显式透明：本窗口设置过自己的样式表，滚动区视口和内容控件会露出系统调色板
+        # 的纯灰底（真机反馈"整个 Mod 列表区域都是灰色"），这里让它透出主题底色。
+        area.setStyleSheet("#updateListArea, #updateListArea > QWidget, #updateListInner "
+                           "{ background: transparent; border: none; }")
         self._rows_layout = QVBoxLayout(inner)
         self._rows_layout.setContentsMargins(0, 3, 0, 3)
         self._rows_layout.setSpacing(3)

@@ -3,7 +3,7 @@
 颜色一律在 paintEvent 里现查 ``theme.color()``；子控件默认透明，能直接透出主窗口画的背景图。
 """
 
-from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QMenu, QVBoxLayout, QWidget
 
@@ -429,3 +429,79 @@ class MenuTextItem(QWidget):
         painter.setFont(self.font())
         painter.drawText(self.rect().adjusted(self._PAD_X, 0, -self._PAD_X, 0),
                          int(self._align | Qt.AlignmentFlag.AlignVCenter), self._text)
+
+
+class TitleButton(QWidget):
+    """标题栏的最小化/最大化/关闭按钮：QPainter 画细线图标，悬停时圆角浅色底，
+    关闭按钮悬停为红底白叉；最大化状态下画"还原"图标（两个错开的方框）。"""
+
+    clicked = Signal()
+
+    def __init__(self, kind: str, is_maximized=None):
+        super().__init__()
+        self._kind = kind  # "min" / "max" / "close"
+        # 返回窗口当前是否处于最大化（决定画"最大化"还是"还原"图标）；
+        # 主窗口是保持 16:9 的伪最大化，由调用方自己提供判断。
+        self._is_maximized = is_maximized or (lambda: False)
+        self._hover = False
+        self._pressed = False
+        self.setFixedSize(40, 28)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = self._pressed = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._pressed = True
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self._pressed:
+            self._pressed = False
+            self.update()
+            if self.rect().contains(event.position().toPoint()):
+                self.clicked.emit()
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        close = self._kind == "close"
+        if self._hover:
+            if close:
+                bg = QColor("#c62828" if self._pressed else "#e53935")
+            else:
+                bg = theme.color("PRIMARY_DARK" if self._pressed else "PRIMARY_LIGHT")
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(bg)
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(2, 2, -2, -2), 6, 6)
+        color = QColor("white") if (close and self._hover) else theme.color("TEXT")
+        pen = QPen(color, 1.3)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        cx, cy = self.width() / 2, self.height() / 2
+        r = 5.0  # 图标半边长，三个图标同样大小
+        if self._kind == "min":
+            painter.drawLine(QPointF(cx - r, cy), QPointF(cx + r, cy))
+        elif self._kind == "max":
+            if self._is_maximized():
+                # 还原：后面一个方框只露出上边和右边，前面一个完整方框
+                painter.drawRoundedRect(QRectF(cx - r, cy - r + 2.5, 2 * r - 2.5, 2 * r - 2.5), 1.5, 1.5)
+                painter.drawLine(QPointF(cx - r + 2.5, cy - r + 2.5), QPointF(cx - r + 2.5, cy - r))
+                painter.drawLine(QPointF(cx - r + 2.5, cy - r), QPointF(cx + r, cy - r))
+                painter.drawLine(QPointF(cx + r, cy - r), QPointF(cx + r, cy + r - 2.5))
+                painter.drawLine(QPointF(cx + r, cy + r - 2.5), QPointF(cx + r - 2.5, cy + r - 2.5))
+            else:
+                painter.drawRoundedRect(QRectF(cx - r, cy - r, 2 * r, 2 * r), 1.5, 1.5)
+        else:
+            painter.drawLine(QPointF(cx - r, cy - r), QPointF(cx + r, cy + r))
+            painter.drawLine(QPointF(cx + r, cy - r), QPointF(cx - r, cy + r))
