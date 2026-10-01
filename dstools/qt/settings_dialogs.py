@@ -10,10 +10,11 @@ import os
 import webbrowser
 from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QGuiApplication
+from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
-    QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSlider, QVBoxLayout,
+    QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QSlider,
+    QVBoxLayout, QWidget,
 )
 
 from dstools import __version__
@@ -21,7 +22,7 @@ from dstools.i18n import t
 from dstools.qt import dialogs
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async
-from dstools.qt.widgets import ToggleSwitch
+from dstools.qt.widgets import ToggleSwitch, section_card
 from dstools.shared.app_settings import (
     get_custom_bg_opacity, get_remind_update_enabled, set_cache_dir_override,
     set_custom_bg_opacity, set_remind_update_enabled,
@@ -104,37 +105,119 @@ class BackgroundImageDialog(dialogs.Dialog):
         self._window.update()
 
 
+class _FontChoiceCard(QWidget):
+    """字体选择卡片：上面用该字体写字体名，下面用该字体写一行示例；选中时主题色描边 + 右上角勾，
+    悬停时浅色底。三张卡片同样大小。"""
+
+    clicked = Signal(str)
+
+    _SAMPLE = "饥荒 Aa 123"
+
+    def __init__(self, style: str):
+        super().__init__()
+        self._style = style
+        self._selected = False
+        self._hover = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+        self.setMinimumSize(150, 86)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def set_selected(self, selected: bool) -> None:
+        self._selected = selected
+        self.update()
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit(self._style)
+
+    def paintEvent(self, _event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        background = theme.color("PRIMARY_LIGHT") if (self._selected or self._hover) else theme.color("CARD_BG")
+        if not self._selected and self._hover:
+            background.setAlpha(140)
+        painter.setBrush(background)
+        painter.setPen(QPen(theme.color("PRIMARY" if self._selected else "CARD_BORDER"), 2 if self._selected else 1))
+        painter.drawRoundedRect(rect, 10, 10)
+
+        family = FONT_FAMILY_BY_STYLE[self._style]
+        name_font = QFont(family, theme.palette["FONT_SIZE_MD"])
+        name_font.setBold(True)
+        painter.setFont(name_font)
+        painter.setPen(theme.color("TEXT"))
+        painter.drawText(rect.adjusted(12, 10, -28, -rect.height() / 2),
+                         int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
+                         t(f"settings.font_style_{self._style}"))
+        painter.setFont(QFont(family, theme.palette["FONT_SIZE_BASE"]))
+        painter.setPen(theme.color("TEXT_MUTED"))
+        painter.drawText(rect.adjusted(12, rect.height() / 2, -12, -8),
+                         int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), self._SAMPLE)
+        if self._selected:
+            badge = QRectF(rect.right() - 24, rect.top() + 8, 16, 16)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(theme.color("PRIMARY"))
+            painter.drawEllipse(badge)
+            pen = QPen(QColor("white"), 2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(pen)
+            painter.drawPolyline([QPointF(badge.left() + 4, badge.center().y()),
+                                  QPointF(badge.left() + 7, badge.bottom() - 4.5),
+                                  QPointF(badge.right() - 3.5, badge.top() + 5)])
+
+
 class FontSettingsDialog(dialogs.Dialog):
-    """字体样式按钮从 FONT_STYLE_NAMES 生成，每个按钮直接用它自己代表的那款
-    字体渲染文字——选字体这件事本身就该"所见即所选"。选中立即生效（复用
-    theme.set_font_style()，跟颜色主题菜单同一套"点了立刻切换"体验）。"""
+    """字体设置：三种字体样式做成同样大小的卡片，卡片里直接用该字体渲染（所见即所选）。
+    点卡片立即生效便于对比；"取消"恢复成打开窗口前的字体，"确定"保留当前选择。"""
 
     def __init__(self, window):
-        super().__init__(window, t("settings.font_settings_title"), 360)
-        self._buttons: dict[str, QPushButton] = {}
-        row = QHBoxLayout()
-        for style in FONT_STYLE_NAMES:
-            button = QPushButton(t(f"settings.font_style_{style}"))
-            button.setFont(QFont(FONT_FAMILY_BY_STYLE[style], theme.palette["FONT_SIZE_LG"]))
-            button.setCheckable(True)
-            button.setChecked(style == theme.font_style)
-            button.clicked.connect(lambda _checked=False, s=style: self._on_select(s))
-            row.addWidget(button)
-            self._buttons[style] = button
-        row.addStretch()
-        self.body.addLayout(row)
+        super().__init__(window, t("settings.font_settings_title"), "md")
+        self._original_style = theme.font_style
+        self._cards: dict[str, _FontChoiceCard] = {}
+        self.body.addWidget(self.heading_label(t("settings.font_choose_label")))
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        for column, style in enumerate(FONT_STYLE_NAMES):
+            card = _FontChoiceCard(style)
+            card.set_selected(style == theme.font_style)
+            card.clicked.connect(self._on_select)
+            grid.addWidget(card, 0, column)
+            grid.setColumnStretch(column, 1)  # 三张卡片等宽
+            self._cards[style] = card
+        self.body.addLayout(grid)
 
+        preview_card, preview_layout = section_card(t("settings.font_preview_title"))
         self._preview = QLabel(t("settings.font_preview_text"))
+        self._preview.setWordWrap(True)
         self._preview.setFont(QFont(theme.font_family, _PREVIEW_FONT_SIZE))
-        self.body.addWidget(self._preview)
+        preview_layout.addWidget(self._preview)
+        self.body.addSpacing(4)
+        self.body.addWidget(preview_card)
 
         self.add_buttons()
 
     def _on_select(self, style: str) -> None:
         theme.set_font_style(style)
-        for name, button in self._buttons.items():
-            button.setChecked(name == style)
+        for name, card in self._cards.items():
+            card.set_selected(name == style)
         self._preview.setFont(QFont(theme.font_family, _PREVIEW_FONT_SIZE))
+
+    def reject(self) -> None:
+        # 取消：恢复打开窗口时的字体
+        if theme.font_style != self._original_style:
+            theme.set_font_style(self._original_style)
+        super().reject()
 
 
 _DEFENDER_TARGET_LABEL_KEYS = {
