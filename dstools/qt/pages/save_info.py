@@ -63,11 +63,10 @@ class SaveInfoPage(Page):
         # "打包存档"直接放标题行；立即备份/备份策略/恢复统一收进"备份管理"菜单
         self._bundle_button = QPushButton()
         self._bundle_button.clicked.connect(self._on_bundle)
-        # "备份管理"保持主题色按钮外观；展开菜单用假透明底，宽度跟按钮一致。
+        # "备份管理"保持主题色按钮外观；展开菜单用假透明底。按钮和菜单取两者
+        # 自然宽度的较大值、两边设成同宽（见 _sync_manage_width），菜单文字不被挤占。
         self._manage_button = QPushButton()
         self._manage_menu = FrostedMenu(self._manage_button)
-        self._manage_menu.aboutToShow.connect(
-            lambda: self._manage_menu.setFixedWidth(self._manage_button.width()))
         self._backup_now_action = QAction(self)
         self._backup_now_action.triggered.connect(self._on_backup_now)
         self._backup_policy_action = QAction(self)
@@ -146,9 +145,20 @@ class SaveInfoPage(Page):
         self._backup_now_action.setText(t("save.backup_now"))
         self._backup_policy_action.setText(t("save.backup_policy_btn"))
         self._restore_action.setText(t("save.restore_backup"))
+        self._sync_manage_width()
+
+    def _sync_manage_width(self) -> None:
+        self._manage_button.setMinimumWidth(0)
+        self._manage_button.setMaximumWidth(16777215)
+        self._manage_menu.setMinimumWidth(0)
+        self._manage_menu.setMaximumWidth(16777215)
+        width = max(self._manage_button.sizeHint().width(), self._manage_menu.sizeHint().width())
+        self._manage_button.setFixedWidth(width)
+        self._manage_menu.setFixedWidth(width)
 
     def _on_theme_changed(self) -> None:
         # 字体样式/字号可能变了：整页重新取数重建，颜色由 QSS/自绘控件自己跟随
+        self._sync_manage_width()
         if self.isVisible():
             self.load()
         else:

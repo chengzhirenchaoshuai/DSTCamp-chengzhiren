@@ -247,13 +247,16 @@ class MenuStrip(QWidget):
     def _on_file_menu_hovered(self, action: QAction) -> None:
         if action is self._vcredist_action:
             menu = self.sender()
+            # 提示显示在这一项的右侧，跟菜单项同一高度。
             rect = menu.actionGeometry(action)
-            QToolTip.showText(menu.mapToGlobal(rect.bottomLeft()), action.toolTip(), menu)
+            QToolTip.showText(menu.mapToGlobal(rect.topRight()) + QPoint(8, 0), action.toolTip(), menu)
         else:
             QToolTip.hideText()
 
     def _theme_menu(self) -> QMenu:
         menu = FrostedMenu(self)
+        # 主题菜单里普通项（背景/字体设置）的文字起点跟上面自绘主题项对齐。
+        menu.setStyleSheet(f"FrostedMenu::item {{ padding-left: {ThemeMenuItem._PAD_LEFT}px; }}")
         # 每个主题名用该主题自己的主色显示（QAction 设不了单独文字颜色，用自绘项）；
         # 当前主题打勾加粗，直接现查 theme.name，不需要 QActionGroup 维护选中态。
         for name in THEME_NAMES:

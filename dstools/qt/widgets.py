@@ -313,7 +313,7 @@ class ThemeMenuItem(QWidget):
     """"主题"菜单里的一项：文字用该主题自己的主色画，当前主题前面打勾。
     QAction 没法单独设文字颜色，所以用 QWidgetAction 包这个自绘控件。"""
 
-    _PAD_LEFT = 30   # 跟普通菜单项文字起点大致对齐（左侧留出勾选标记位置）
+    _PAD_LEFT = 24   # 左侧留出勾选标记位置；主题菜单里其它普通项的左内边距也设成同值对齐
     _PAD_RIGHT = 24
 
     def __init__(self, menu: QMenu, name: str, text: str, on_pick):

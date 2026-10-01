@@ -619,7 +619,8 @@ class CreationWizardDialog(QDialog):
         filter_row.addWidget(self._mod_filter_edit)
         self._mod_filter_tabs = PillTabBar(
             [t("mod.show_all"), t("mod.show_enabled"), t("mod.show_disabled"), t("mod.show_custom")],
-            height=32, pill_height=24, font_size_key="FONT_SIZE_SM")
+            # 间距参数跟主页面 Mod 管理的同一排筛选页签一致（qt/pages/mod.py）。
+            height=32, pill_height=24, font_size_key="FONT_SIZE_SM", gap=2, pad=16, uniform_width=True)
         self._mod_filter_tabs.current_changed.connect(lambda _i: self._render_list())
         filter_row.addWidget(self._mod_filter_tabs)
         rescan_btn = QPushButton(t("world.creation_rescan"))

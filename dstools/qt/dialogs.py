@@ -3,7 +3,9 @@
 对话框沿用 Tk 版的形态（原生标题栏 + 主题底色），样式由全局 QSS 统一提供。
 """
 
+import ctypes
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -174,23 +176,40 @@ def _apply_toast_fade(toast: "_Toast", pixmap) -> None:
     toast.set_background_snapshot(faded)
 
 
+def _open_in_explorer_foreground(path: Path) -> None:
+    """在资源管理器里选中文件，并让它出现在最上层。
+
+    /select 通常复用已在运行的 explorer 进程，它没有前台权限，新窗口会被压在本
+    应用下面（真机反馈过"弹出来了但在下层"）。本进程此刻是前台进程，先调用
+    AllowSetForegroundWindow(ASFW_ANY) 把前台权限让出去，explorer 才能把窗口提到最前。"""
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)  # ASFW_ANY
+        except (AttributeError, OSError):
+            pass
+    subprocess.Popen(["explorer.exe", "/select,", str(path)])
+
+
 def show_file_location(parent, title: str, path, location_label: str, copied_message: str) -> None:
     """显示文件位置，点链接在资源管理器里选中该文件。"""
     path = Path(path).resolve()
     box = _box(parent, QMessageBox.Icon.Information, title, "", with_ok=False)
     link = f'<a href="open" style="color:{theme.hex("PRIMARY")}">点我打开</a>'
     box.setTextFormat(Qt.TextFormat.RichText)
-    box.setText(f"{location_label}<br>{link}<br>{copied_message.replace(chr(10), '<br>')}")
+    # 每行单独一段、段间留白，比 <br> 硬换行的行距更舒展；文案里的空行跳过。
+    lines = [location_label, link, *(line for line in copied_message.splitlines() if line.strip())]
+    box.setText("".join(f'<p style="margin: 0 0 10px 0;">{line}</p>' for line in lines))
     # "打包存档"和"获取日志文件"共用这个弹窗，正文行数不同；给正文固定最小宽高，
     # 两处弹出来的窗口大小一致。
-    box.setStyleSheet("QLabel#qt_msgbox_label { min-width: 420px; min-height: 120px; }")
+    box.setStyleSheet("QLabel#qt_msgbox_label { min-width: 460px; min-height: 150px; }")
     label = box.findChild(QLabel, "qt_msgbox_label")
     if label is not None:
+        label.setFont(theme.font("FONT_SIZE_BASE"))  # 比全局默认字号大一档
         # QMessageBox 的正文标签默认 openExternalLinks=True，点链接时 Qt 自己去"打开"
         # href，不会发 linkActivated——之前"点我打开"点了没反应就是这个原因。
         label.setOpenExternalLinks(False)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
-        label.linkActivated.connect(lambda _href: subprocess.Popen(["explorer.exe", "/select,", str(path)]))
+        label.linkActivated.connect(lambda _href: _open_in_explorer_foreground(path))
     box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.AcceptRole)
     box.exec()
 

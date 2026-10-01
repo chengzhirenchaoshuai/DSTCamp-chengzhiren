@@ -230,7 +230,7 @@ class Theme(QObject):
             QMenu::separator {{ height: 1px; background: {c['CARD_BORDER']}; margin: 4px 8px; }}
             FrostedMenu {{ background: {_rgba(c['CARD_BG'], 200)}; border: 1px solid {c['CARD_BORDER']};
                 padding: 5px; }}
-            FrostedMenu::item {{ padding: 6px 24px 6px 30px; border-radius: 4px; background: transparent; }}
+            FrostedMenu::item {{ padding: 6px 24px 6px 10px; border-radius: 4px; background: transparent; }}
             FrostedMenu::item:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; }}
             QScrollArea, WorldPanel, QListView {{ background: transparent; border: none; }}
             QDialog {{ background: {c['BG_SOFT']}; }}

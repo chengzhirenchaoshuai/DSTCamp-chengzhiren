@@ -389,6 +389,9 @@ class LocalServicePage(Page):
         extra_row.addWidget(QLabel(t("local.extra_args_label")))
         self._extra_args_edit = QLineEdit(get_dedicated_server_extra_args())
         self._extra_args_edit.setFixedWidth(240)
+        # 只接受鼠标点击获得焦点：旁边"获取日志文件"等按钮点击后会暂时禁用自己，
+        # Qt 会把焦点顺延给 Tab 链上的下一个控件，之前就是这样平白落到这个输入框上。
+        self._extra_args_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._extra_args_edit.editingFinished.connect(self._save_extra_args)
         extra_row.addWidget(self._extra_args_edit)
         extra_row.addStretch()

@@ -1,5 +1,6 @@
 """页签基类：约定"当前页立即刷新、其余页标脏、切过去时再补"，跟 Tk 版主窗口的规则一致。"""
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget
 
 from dstools.qt.context import AppContext
@@ -10,6 +11,13 @@ class Page(QWidget):
         super().__init__(parent)
         self.ctx = ctx
         self.stale = True  # 还没按当前存档加载过
+        # 点页面空白处（标签、卡片等不接收焦点的区域，鼠标事件会一路冒泡到这里）
+        # 时由页面接走焦点，输入框随之退出编辑状态。
+        self.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+
+    def mousePressEvent(self, event):
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        super().mousePressEvent(event)
 
     def on_cluster_changed(self, cluster) -> None:
         """选中的存档变了（或需要重新加载）时调用；子类重写，负责按存档刷新内容。"""
