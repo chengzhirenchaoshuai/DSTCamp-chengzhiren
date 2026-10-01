@@ -217,55 +217,6 @@ def test_cleanup_keeps_external_tools_when_not_yet_embedded() -> None:
         assert needed.exists()
 
 
-def test_update_progress_state_is_clamped_and_redrawn() -> None:
-    from dstools.gui.app import DSToolsApp
-
-    app = DSToolsApp.__new__(DSToolsApp)
-    redraws = []
-    app._redraw_status_bar = lambda: redraws.append(True)
-    app._update_progress_percent = None
-
-    app._set_update_progress(135)
-    assert app._update_progress_percent == 100
-    app._set_update_progress(-2)
-    assert app._update_progress_percent == 0
-    app._set_update_progress(None)
-    assert app._update_progress_percent is None
-    assert len(redraws) == 3
-
-
-def test_update_progress_replaces_notice_at_status_bar_right() -> None:
-    from dstools.gui.app import DSToolsApp
-
-    class FakeStatusBar:
-        def __init__(self):
-            self.rectangles = []
-            self.texts = []
-
-        @staticmethod
-        def winfo_width():
-            return 1000
-
-        def create_rectangle(self, *coords, **options):
-            self.rectangles.append((coords, options))
-
-        def create_text(self, *coords, **options):
-            self.texts.append((coords, options))
-
-    app = DSToolsApp.__new__(DSToolsApp)
-    app._status_bar = FakeStatusBar()
-    app._status_text_h = 24
-    app._status_font = object()
-    app._update_notice = UpdateRelease("1.3.6", "https://example", "gitee")
-    app._update_progress_percent = 42
-
-    app._draw_update_status()
-
-    assert len(app._status_bar.rectangles) == 2
-    assert app._status_bar.texts[-1][1]["text"] == "42%"
-    assert app._status_bar.texts[-1][0][0] == 992
-
-
 def main() -> None:
     test_release_manifest_enables_auto_update()
     test_download_requires_matching_hash_and_size()
@@ -275,8 +226,6 @@ def main() -> None:
     test_cleanup_is_noop_when_not_frozen()
     test_cleanup_removes_vestigial_external_tools_once_embedded()
     test_cleanup_keeps_external_tools_when_not_yet_embedded()
-    test_update_progress_state_is_clamped_and_redrawn()
-    test_update_progress_replaces_notice_at_status_bar_right()
     print("自动更新测试通过")
 
 

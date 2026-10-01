@@ -748,7 +748,7 @@ def test_modinfo_reader():
         # _raw_value_to_lines() 之前只认原生 list，任何真实存过的数组都
         # 会被当成"形状不对"兜底成空列表，编辑器显示成空的，点应用还会
         # 把这份假的空列表覆盖写回文件，真正清空原有数据。
-        from dstools.features.mod.tab import ModConfigDialog
+        from dstools.qt.mod_config_dialog import ModConfigDialog
 
         parsed_array_shape = {
             "1": "torch",
@@ -876,7 +876,7 @@ def test_workshop_content_directory_filter():
 
 def test_admin_manager():
     """测试 adminlist.txt 读写往返（admin_manager.py）。"""
-    from dstools.features.cluster_config.tab import _is_valid_dst_user_id
+    from dstools.features.cluster_config.form_logic import is_valid_dst_user_id as _is_valid_dst_user_id
 
     print("\n" + "=" * 60)
     print("Test 15: Admin List Manager")
@@ -1190,93 +1190,35 @@ def test_app_settings_toggles():
 
 
 def test_cache_path_user_guidance():
-    """缓存路径异常应在启动时提醒，恢复无效默认值时使用专门提示。"""
+    """缓存路径含非 ASCII 字符时启动即提醒；重启走等待旧实例退出的辅助进程。"""
     print("\n" + "=" * 60)
     print("Test 20b: Cache Path User Guidance")
+    import subprocess
     from types import SimpleNamespace
     from unittest.mock import Mock, patch
 
-    from dstools.gui.app import DSToolsApp
-    from dstools.gui import app as gui_app
+    from dstools.qt import window as qt_window
     from dstools.shared import resource_paths
 
     invalid_path = Path("C:/Users/中文用户/AppData/Roaming/DSTCamp/cache")
-    choose_cache = Mock()
-    dummy = SimpleNamespace(root=object(), _choose_cache_dir=choose_cache)
+    dummy = SimpleNamespace(show_cache_dir_dialog=Mock())
     with (
         patch.object(resource_paths, "cache_root_dir", return_value=invalid_path),
         patch.object(resource_paths, "path_is_ascii", return_value=False),
-        patch.object(gui_app.dlg, "ask_choice", return_value="fix") as ask_choice,
+        patch.object(qt_window.dialogs, "ask_choice", return_value="fix") as ask_choice,
     ):
-        DSToolsApp._check_cache_dir_on_startup(dummy)
-    ask_choice.assert_called_once()
+        qt_window.MainWindow.check_cache_dir_on_startup(dummy)
     assert str(invalid_path) in ask_choice.call_args.args[2]
-    choose_cache.assert_called_once_with()
+    dummy.show_cache_dir_dialog.assert_called_once_with()
 
-    dummy._show_cache_dir_error = Mock()
+    dummy.show_cache_dir_dialog.reset_mock()
     with (
-        patch.object(
-            resource_paths,
-            "cache_root_dir",
-            return_value=Path("D:/DSTCampData/cache"),
-        ),
-        patch.object(
-            resource_paths, "default_cache_root_dir", return_value=invalid_path
-        ),
-        patch.object(resource_paths, "validate_cache_root", return_value="non_ascii"),
-        patch.object(gui_app.dlg, "show_warning") as show_warning,
+        patch.object(resource_paths, "path_is_ascii", return_value=True),
+        patch.object(qt_window.dialogs, "ask_choice") as ask_choice,
     ):
-        assert DSToolsApp._restore_default_cache_dir(dummy) is False
-    show_warning.assert_called_once()
-    assert str(invalid_path) in show_warning.call_args.args[2]
-    dummy._show_cache_dir_error.assert_not_called()
-
-    default_path = Path("C:/Users/Administrator/AppData/Roaming/DSTCamp/cache")
-    dummy._prompt_restart_after_cache_change = Mock()
-    with (
-        patch.object(resource_paths, "cache_root_dir", return_value=default_path),
-        patch.object(
-            resource_paths, "default_cache_root_dir", return_value=default_path
-        ),
-        patch.object(resource_paths, "validate_cache_root") as validate_cache,
-        patch.object(gui_app, "set_cache_dir_override") as save_cache_dir,
-        patch.object(gui_app.dlg, "show_info") as show_info,
-    ):
-        assert DSToolsApp._restore_default_cache_dir(dummy) is False
-    validate_cache.assert_not_called()
-    save_cache_dir.assert_not_called()
-    dummy._prompt_restart_after_cache_change.assert_not_called()
-    show_info.assert_called_once()
-    assert str(default_path) in show_info.call_args.args[2]
-
-    valid_path = Path("D:/DSTCampData/cache")
-    dummy._show_cache_dir_error = Mock()
-    prompt_restart = Mock()
-    dummy._prompt_restart_after_cache_change = prompt_restart
-    with (
-        patch.object(resource_paths, "cache_root_dir", return_value=invalid_path),
-        patch.object(
-            resource_paths,
-            "validate_cache_root",
-            side_effect=["non_ascii", None],
-        ),
-        patch.object(
-            gui_app.filedialog,
-            "askdirectory",
-            side_effect=[str(invalid_path), str(valid_path)],
-        ) as ask_directory,
-        patch.object(gui_app, "set_cache_dir_override") as save_cache_dir,
-    ):
-        assert DSToolsApp._choose_cache_dir(dummy) is True
-    assert ask_directory.call_count == 2
-    dummy._show_cache_dir_error.assert_called_once()
-    save_cache_dir.assert_called_once_with(valid_path)
-    assert str(valid_path) in prompt_restart.call_args.args[1]
-
-    dummy._restart_app = Mock()
-    with patch.object(gui_app.dlg, "ask_choice", return_value="restart"):
-        DSToolsApp._prompt_restart_after_cache_change(dummy, dummy.root, "saved")
-    dummy._restart_app.assert_called_once_with(dummy.root)
+        qt_window.MainWindow.check_cache_dir_on_startup(dummy)
+    ask_choice.assert_not_called()
+    print("  PASS: 非 ASCII 缓存路径启动时提醒并可直接打开设置，ASCII 路径不打扰")
 
     import scripts.run_gui as run_gui
 
@@ -1288,25 +1230,19 @@ def test_cache_path_user_guidance():
         run_gui._run_restart_helper(12345, ["--example"])
     wait_for_exit.assert_called_once_with(12345)
     assert start_process.call_args.args[0][-1] == "--example"
-    assert (
-        start_process.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"]
-        == "1"
-    )
+    assert start_process.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
 
-    dummy._restart_helper_command = Mock(return_value=["DSTCamp.exe", "--helper"])
-    dummy._quit_app = Mock()
+    dummy = SimpleNamespace(quit_app=Mock())
     with (
-        patch.object(gui_app.sys, "frozen", True, create=True),
-        patch.object(gui_app.subprocess, "Popen") as start_helper,
+        patch.object(sys, "frozen", True, create=True),
+        patch.object(subprocess, "Popen") as start_helper,
     ):
-        DSToolsApp._quit_and_restart(dummy)
-    assert start_helper.call_args.args[0] == ["DSTCamp.exe", "--helper"]
-    assert (
-        start_helper.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"]
-        == "1"
-    )
-    dummy._quit_app.assert_called_once_with()
-    print("  PASS: 有效路径保存后可立即重启，辅助进程会等待旧实例退出")
+        qt_window.MainWindow._spawn_restart_and_quit(dummy)
+    command = start_helper.call_args.args[0]
+    assert "--restart-helper" in command and str(os.getpid()) in command
+    assert start_helper.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
+    dummy.quit_app.assert_called_once_with()
+    print("  PASS: 重启拉起辅助进程（等待旧实例退出），再退出当前实例")
 
 
 def test_mod_sync_junction():
@@ -1446,41 +1382,18 @@ def test_mod_sync_junction():
 
 
 def test_theme_set_theme():
-    """测试 theme.py 的 set_theme()——实时切换主题的机制。纯逻辑（模块级
-    颜色变量重新赋值），不需要真实 Tk 窗口。验证：(a) 切换主题（如
-    gray/mint）确实会重新赋值调色板；(b) 未知主题名回退到 "gray" 而不是
-    抛异常；(c) 背景图相关字段（BG_IMAGE_ENABLED）已经从 theme.py 彻底
-    移除——背景图现在跟主题解耦，不管当前是哪个主题都会叠加显示（见
-    custom_background.py）。"""
+    """每套主题必须提供与默认主题完全相同的颜色/字号键，切到任一主题都不能 KeyError。"""
     print("\n" + "=" * 60)
-    print("Test 22: Theme Live Switch")
+    print("Test 22: Theme Palettes Complete")
 
-    from dstools.shared.gui import theme
+    from dstools.shared import palettes
 
-    original_primary = theme.PRIMARY
-    try:
-        theme.set_theme("gray")
-        assert theme.PRIMARY == "#8A97A3"
-        assert not hasattr(theme, "BG_IMAGE_ENABLED"), (
-            "背景图已跟主题解耦，theme.py 不应再有这个字段"
-        )
-        assert theme.WINDOW_ALPHA == 1.0, (
-            "整窗透明效果已经按用户要求去掉，只保留图片自身的透明度"
-        )
-        print("  PASS: set_theme() reassigns theme.py's module-level color constants")
-
-        theme.set_theme("mint")
-        assert theme.PRIMARY == "#6FCF97"
-        theme.set_theme("gray")
-        assert theme.PRIMARY == "#8A97A3"
-        print("  PASS: switching between real themes (gray/mint) reassigns the palette")
-
-        theme.set_theme("some_removed_theme_name")
-        assert theme.PRIMARY == "#8A97A3"
-        print("  PASS: unknown theme name falls back to gray instead of raising")
-    finally:
-        theme.set_theme("gray")
-        theme.PRIMARY = original_primary  # 双保险，确保测试不影响后续状态
+    base = set(palettes.THEMES["gray"])
+    assert set(palettes.THEME_NAMES) <= set(palettes.THEMES)
+    for name in palettes.THEME_NAMES:
+        keys = set(palettes.THEMES[name])
+        assert keys == base, f"{name}: 缺 {base - keys}，多 {keys - base}"
+    print(f"  PASS: {len(palettes.THEME_NAMES)} 套主题的键与默认主题一致")
 
 
 def test_world_reader_and_view_model():
@@ -3568,21 +3481,26 @@ def test_connect_fetch_timeout_watchdog():
     卡住不动：urllib 的 timeout= 只管连接建立后的收发，不管 DNS 解析，
     后台线程可能真的几十秒都不返回。这里直接测 _check_connect_fetch_
     timeouts() 本身的判断逻辑（不搭真实 GUI，用 object.__new__ 绕开
-    __init__，跟 test_world_mod_compat.py 里
-    test_world_tab_keeps_only_the_visible_panel_image 同一个手法）：
+    __init__）：
     没到阈值不动作、过了阈值只触发一次、公网和穿透两条互不影响。"""
     print("\n" + "=" * 60)
     print("Test: Connect Fetch Timeout Watchdog")
 
-    from dstools.features.local_service.tab import LocalServiceTab
-    from dstools.i18n import t
+    from types import SimpleNamespace
 
-    tab = object.__new__(LocalServiceTab)
+    from dstools.i18n import t
+    from dstools.qt.pages.local_service import LocalServicePage
+
+    tab = LocalServicePage.__new__(LocalServicePage)
     calls = {"public_text": [], "public_status": [], "nat_text": [], "nat_status": []}
-    tab._public_set_text = lambda *a, **k: calls["public_text"].append(a)
-    tab._public_set_status = lambda *a, **k: calls["public_status"].append(a)
-    tab._nat_set_text = lambda *a, **k: calls["nat_text"].append(a)
-    tab._nat_set_status = lambda *a, **k: calls["nat_status"].append(a)
+    tab._public_row = SimpleNamespace(
+        set_value=lambda *a, **k: calls["public_text"].append(a),
+        set_status=lambda *a, **k: calls["public_status"].append(a),
+    )
+    tab._nat_row = SimpleNamespace(
+        set_value=lambda *a, **k: calls["nat_text"].append(a),
+        set_status=lambda *a, **k: calls["nat_status"].append(a),
+    )
 
     now = time.monotonic()
     tab._public_pending_since = now
