@@ -199,11 +199,15 @@ def find_mod_character_name(mod_folder: Path, prefab: str) -> str | None:
 
 
 def get_mod_avatar_path(mod_folder: Path, workshop_id: str, prefab: str) -> Path | None:
-    """模组自带的角色头像：优先制作栏高清头像 images/crafting_menu_avatars/avatar_<prefab>.tex，
-    再找 Tab 键头像——实测常见路径是 images/avatars/avatar_<prefab>.tex，也顺带试一下
-    images/ 根目录（不是所有模组都建 avatars/ 子目录）。"""
+    """模组自带的角色头像，按清晰度依次找：
+    1. 制作栏头像 images/crafting_menu_avatars/avatar_<prefab>.tex（约 256 像素，少数模组才有）；
+    2. 存档栏头像 images/saveslot_portraits/<prefab>.tex（同画风，多为 128 像素，本机统计 77 个
+       模组角色里 66 个都有）；
+    3. Tab 键头像 images/avatars/avatar_<prefab>.tex（多为 64 像素），也顺带试一下 images/ 根目录
+       （不是所有模组都建 avatars/ 子目录）。"""
     for tex_path, cache_prefix in (
         (mod_folder / "images" / "crafting_menu_avatars" / f"avatar_{prefab}.tex", "avatar_hd_mod"),
+        (mod_folder / "images" / "saveslot_portraits" / f"{prefab}.tex", "avatar_slot_mod"),
         (mod_folder / "images" / "avatars" / f"avatar_{prefab}.tex", "avatar_mod"),
         (mod_folder / "images" / f"avatar_{prefab}.tex", "avatar_mod"),
     ):
