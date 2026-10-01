@@ -7,11 +7,17 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QSequentialAnimationGroup, Qt, QTimer
-from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QIntValidator, QTextCursor
+from PySide6.QtCore import (
+    QEasingCurve, QPoint, QPropertyAnimation, QRect, QRectF, QSequentialAnimationGroup, Qt, QTimer,
+)
+from PySide6.QtGui import (
+    QBrush, QColor, QFont, QFontMetrics, QGuiApplication, QIntValidator, QPainter, QPainterPath, QPen,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QListWidget, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QToolTip, QVBoxLayout,
+    QWidget,
 )
 
 from dstools.features.local_service.backup_manager import get_backup_summary
@@ -70,51 +76,102 @@ def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], de
     return buttons.get(box.clickedButton(), default)
 
 
+class _Toast(QWidget):
+    """自己画圆角底色+边框+文字，不靠 QSS——QSS 的 border-radius 画在一个本身还是
+    矩形的原生窗口上，四个圆角外侧那块没画到的区域会露出窗口本身的底色（真机反馈
+    过是刺眼的黑块，"圆角框好像架在一个黑色长方体上"）。开 WA_TranslucentBackground
+    配合手工画的圆角裁剪区才能让四角真正透明；这个属性对这种"整个窗口就是我自己画
+    的一张位图"的简单自绘场景是安全的，跟 QComboBoxPrivateContainer 那种复杂原生
+    容器开出全黑是两回事，不是同一个坑。"""
+
+    _PAD_X, _PAD_Y, _RADIUS = 18, 8, 8
+
+    def __init__(self, parent, text: str):
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._text = text
+        self._font = theme.font("FONT_SIZE_BASE")
+        self._bg_pixmap = None
+        bounds = QFontMetrics(self._font).boundingRect(text)
+        self.resize(bounds.width() + self._PAD_X * 2, bounds.height() + self._PAD_Y * 2)
+
+    def set_background_snapshot(self, pixmap) -> None:
+        self._bg_pixmap = pixmap
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), self._RADIUS, self._RADIUS)
+        painter.setClipPath(path)
+        if self._bg_pixmap is not None:
+            painter.drawPixmap(self.rect(), self._bg_pixmap)
+        else:
+            painter.fillPath(path, QBrush(theme.color("CARD_BG")))
+        painter.setClipping(False)
+        painter.setPen(QPen(theme.color("CARD_BORDER"), 1))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(path)
+        painter.setPen(theme.color("TEXT"))
+        painter.setFont(self._font)
+        painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._text)
+
+
 def show_toast(parent, text: str, ms: int = 1400) -> None:
     """轻提示：浮在父窗口中央，淡入淡出后自动消失，不抢焦点、不需要点击。
     Tk 版靠逐帧手动改窗口 alpha 属性模拟淡入淡出；Qt 有现成的属性动画，直接对
     QGraphicsOpacityEffect.opacity 做补间，比之前"啪一下出现、啪一下消失"要
-    顺滑（真机反馈过之前的效果不如 Tk 版）。"""
+    顺滑。背景跟下拉展开列表同一个"假透明"思路：截一张父窗口当时的内容贴上去、
+    叠一层白色压淡到约 15% 透明度，不是真的透出桌面。"""
     anchor = parent.window() if parent is not None else None
-    label = QLabel(text, anchor)
-    label.setWindowFlags(Qt.WindowType.ToolTip | Qt.WindowType.FramelessWindowHint)
-    # 之前加了 WA_TranslucentBackground 想让淡入淡出更顺滑，真机反馈背景框直接看
-    # 不见了——跟下拉框那次一样的坑，这类原生弹出窗口开逐像素透明常常连累自己
-    # QSS 画的不透明底色一起失效。这个提示本来就是一整块不透明卡片，不需要真的
-    # 透明，去掉这个属性；QGraphicsOpacityEffect 照样能把整块（底色+边框+文字）
-    # 一起淡入淡出，效果不受影响。
-    label.setFont(theme.font("FONT_SIZE_BASE"))
-    label.setStyleSheet(f"QLabel {{ background: {theme.hex('CARD_BG')}; color: {theme.hex('TEXT')};"
-                        f" border: 1px solid {theme.hex('CARD_BORDER')}; border-radius: 8px; padding: 8px 18px; }}")
-    label.adjustSize()
+    toast = _Toast(anchor, text)
     if anchor is not None:
         center = anchor.mapToGlobal(anchor.rect().center())
-        label.move(center.x() - label.width() // 2, center.y() - label.height() // 2)
+        toast.move(center.x() - toast.width() // 2, center.y() - toast.height() // 2)
+        top_left_local = anchor.mapFromGlobal(toast.mapToGlobal(QPoint(0, 0)))
+        grab_rect = QRect(top_left_local, toast.size()).intersected(anchor.rect())
+        if not grab_rect.isEmpty():
+            pixmap = anchor.grab(grab_rect)
+            if not pixmap.isNull():
+                _apply_toast_fade(toast, pixmap)
 
-    effect = QGraphicsOpacityEffect(label)
+    effect = QGraphicsOpacityEffect(toast)
     effect.setOpacity(0.0)
-    label.setGraphicsEffect(effect)
-    label.show()
+    toast.setGraphicsEffect(effect)
+    toast.show()
 
-    fade_in = QPropertyAnimation(effect, b"opacity", label)
+    fade_in = QPropertyAnimation(effect, b"opacity", toast)
     fade_in.setDuration(150)
     fade_in.setStartValue(0.0)
     fade_in.setEndValue(1.0)
     fade_in.setEasingCurve(QEasingCurve.Type.OutCubic)
-    fade_out = QPropertyAnimation(effect, b"opacity", label)
+    fade_out = QPropertyAnimation(effect, b"opacity", toast)
     fade_out.setDuration(300)
     fade_out.setStartValue(1.0)
     fade_out.setEndValue(0.0)
     fade_out.setEasingCurve(QEasingCurve.Type.InCubic)
 
-    group = QSequentialAnimationGroup(label)
+    group = QSequentialAnimationGroup(toast)
     group.addAnimation(fade_in)
     group.addPause(max(0, ms - fade_in.duration() - fade_out.duration()))
     group.addAnimation(fade_out)
-    group.finished.connect(label.close)
-    # group 以 label 为 parent，Qt 的父子对象生命周期管理会让它跟 label 一起存活
+    group.finished.connect(toast.close)
+    # group 以 toast 为 parent，Qt 的父子对象生命周期管理会让它跟 toast 一起存活
     # 到 close() 触发那一刻，不需要额外在 Python 侧保留引用防止被提前回收。
     group.start()
+
+
+def _apply_toast_fade(toast: "_Toast", pixmap) -> None:
+    """跟下拉展开列表（theme._apply_fake_transparent_popup_bg）同一个压法：白色
+    叠 217/255 ≈ 85% 不透明，背景大概还剩 15% 能看出来。"""
+    faded = pixmap.copy()
+    painter = QPainter(faded)
+    painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+    painter.fillRect(faded.rect(), QColor(255, 255, 255, 217))
+    painter.end()
+    toast.set_background_snapshot(faded)
 
 
 def show_file_location(parent, title: str, path, location_label: str, copied_message: str) -> None:
