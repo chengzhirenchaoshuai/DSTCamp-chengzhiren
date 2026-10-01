@@ -785,6 +785,7 @@ STRINGS = {
         "world.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再查看世界设置。",
         # 创建服务器存档向导
         "world.creation_name_label": "存档名称",
+        "world.creation_default_room_name": "{name}的世界",
         "world.creation_server_tab": "服务器配置",
         "world.creation_world_tab": "世界设置",
         "world.creation_mod_tab": "Mod 管理",
@@ -1884,6 +1885,7 @@ STRINGS = {
         "world.no_save_banner": "No saves were detected. Create or import a save before viewing world settings.",
         # 创建服务器存档向导
         "world.creation_name_label": "Save Name",
+        "world.creation_default_room_name": "{name}'s World",
         "world.creation_server_tab": "Server Config",
         "world.creation_world_tab": "World Settings",
         "world.creation_mod_tab": "Mods",

@@ -60,6 +60,7 @@ from dstools.qt.mod_presets_dialogs import SavePresetDialog
 from dstools.qt.pages.server_config import ServerConfigPage
 from dstools.qt.theme import theme
 from dstools.shared.resource_paths import bundled_resource_dir
+from dstools.shared.steam_discovery import read_steam_persona_name
 from dstools.qt.threads import run_async
 from dstools.qt.widgets import PillTabBar
 from dstools.qt.world_panel import WorldPanel
@@ -222,9 +223,13 @@ class CreationWizardDialog(QDialog):
         # 按窗口尺寸缓存一张缩放好的成品图，重绘时只做贴图，不再每次平滑缩放。
         self._background = background
         self._bg_cache: QPixmap | None = None
-        # app.title 是"DSTCamp · 本地服务器管理"，这个向导窗口不属于本地服务器页，
-        # 只取品牌名前缀，不带"本地服务器管理"这半截（真机反馈过标题看着奇怪）。
-        self.setWindowTitle(t("app.title").split(" · ")[0] + " · " + t("save.create_server_save"))
+        # 标题（含任务栏显示）只写"创建服务器存档"，不带 DSTCamp 前缀。
+        self.setWindowTitle(t("save.create_server_save"))
+        # 默认房间名跟游戏创建界面一致："{Steam 昵称}的世界"（STRINGS.UI.
+        # SERVERCREATIONSCREEN.NEWGAME_FMT）；读不到昵称时退回旧行为——房间名
+        # 跟着存档名称输入框同步。
+        persona = read_steam_persona_name()
+        self._default_room_name = t("world.creation_default_room_name", name=persona) if persona else ""
         self.resize(1400, 860)
 
         self._plan_master: creation.WorldShardPlan | None = None
@@ -283,13 +288,19 @@ class CreationWizardDialog(QDialog):
         for page in (self._server_page, self._world_page, self._mod_page):
             self._stack.addWidget(page)
 
-        bottom = QHBoxLayout()
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
-        bottom.addWidget(self._status_label, 1)
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        root.addWidget(self._status_label)
+        # "创建存档"是整个向导的最终动作：居中放置，字号和内边距都比普通按钮大一档。
+        bottom = QHBoxLayout()
+        bottom.addStretch()
         self._create_btn = QPushButton(t("world.creation_create_btn"))
+        self._create_btn.setFont(theme.font("FONT_SIZE_MD", bold=True))
+        self._create_btn.setStyleSheet("padding: 10px 48px;")
         self._create_btn.clicked.connect(self._create)
         bottom.addWidget(self._create_btn)
+        bottom.addStretch()
         root.addLayout(bottom)
 
         self._ensure_page("server")
@@ -320,7 +331,7 @@ class CreationWizardDialog(QDialog):
         self._initialized_pages.add(key)
 
     def _on_name_changed(self, text: str) -> None:
-        if self._server_panel is not None:
+        if self._server_panel is not None and not self._default_room_name:
             self._server_panel.set_cluster_name(text)
 
     # ── 服务器配置子页签 ────────────────────────────────────────────────
@@ -344,7 +355,7 @@ class CreationWizardDialog(QDialog):
             adminlist_path=draft_root / "adminlist.txt", blocklist_path=draft_root / "blocklist.txt",
             token_path=draft_root / "cluster_token.txt")
         draft_ctx = _DraftContext(self.ctx.env, draft_cluster)
-        self._server_panel = DraftServerPanel(draft_ctx, cluster_name)
+        self._server_panel = DraftServerPanel(draft_ctx, self._default_room_name or cluster_name)
         layout = QVBoxLayout(self._server_page)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._server_panel)
@@ -601,6 +612,9 @@ class CreationWizardDialog(QDialog):
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel(t("world.creation_search_mod")))
         self._mod_filter_edit = QLineEdit()
+        # 固定宽度：QLineEdit 默认横向可伸缩，右侧扫描状态文字变长/变短时会挤压
+        # 搜索框，连带后面的筛选页签和按钮一起左右移动。
+        self._mod_filter_edit.setFixedWidth(220)
         self._mod_filter_edit.textChanged.connect(lambda _t: self._render_list())
         filter_row.addWidget(self._mod_filter_edit)
         self._mod_filter_tabs = PillTabBar(

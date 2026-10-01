@@ -150,7 +150,9 @@ class WorkshopUpdateDialog(QDialog):
         toolbar.setContentsMargins(12, 10, 12, 10)
         toolbar.addWidget(QLabel(t("mod.filter")))
         self._search = QLineEdit()
-        self._search.setMinimumWidth(200)
+        # 固定宽度：QLineEdit 默认横向可伸缩，点"刷新"后右侧计数文字变成较长的
+        # "正在检查..."会挤压搜索框，连带筛选页签和按钮一起移动。
+        self._search.setFixedWidth(220)
         self._search.textChanged.connect(self._render_rows)
         toolbar.addWidget(self._search)
         self._status_filter = PillTabBar(

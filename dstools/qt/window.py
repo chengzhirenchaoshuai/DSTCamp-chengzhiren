@@ -11,7 +11,7 @@ from PySide6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
-    QSystemTrayIcon, QVBoxLayout, QWidget, QWidgetAction,
+    QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from dstools import __version__
@@ -216,7 +216,10 @@ class MenuStrip(QWidget):
 
     def _file_menu(self) -> QMenu:
         menu = FrostedMenu(self)
-        menu.setToolTipsVisible(True)  # "安装运行库"要在悬停时显示用途提示
+        # "安装运行库"的用途提示：不走 Qt 默认的悬停延迟（鼠标稍动就重新计时，
+        # 时有时无），悬停到这一项时立即显示，移到别的项或关闭菜单时收起。
+        menu.hovered.connect(self._on_file_menu_hovered)
+        menu.aboutToHide.connect(QToolTip.hideText)
         refresh = QAction(t("app.refresh"), self)
         refresh.setShortcut(QKeySequence(Qt.Key.Key_F5))
         refresh.triggered.connect(self._window.refresh_all)
@@ -240,6 +243,14 @@ class MenuStrip(QWidget):
         menu.addAction(vcredist)
         self._vcredist_action = vcredist
         return menu
+
+    def _on_file_menu_hovered(self, action: QAction) -> None:
+        if action is self._vcredist_action:
+            menu = self.sender()
+            rect = menu.actionGeometry(action)
+            QToolTip.showText(menu.mapToGlobal(rect.bottomLeft()), action.toolTip(), menu)
+        else:
+            QToolTip.hideText()
 
     def _theme_menu(self) -> QMenu:
         menu = FrostedMenu(self)
@@ -355,6 +366,8 @@ class ClusterBar(QWidget):
         self._archive_label.setText(t("selector.archive"))
         self._create_save.setText(t("save.create_server_save"))
         self._refresh.setText(t("save.refresh"))
+        # "刷新"至少跟本地服务器页"更换路径"按钮一样宽（约 4 个字），不再只按两个字收窄。
+        self._refresh.setMinimumWidth(QPushButton(t("local.install_change_btn")).sizeHint().width())
 
     def reload(self) -> None:
         self._populating = True

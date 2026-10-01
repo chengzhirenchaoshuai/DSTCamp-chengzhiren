@@ -8,7 +8,7 @@
 
 import webbrowser
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit, QPushButton, QScrollArea,
@@ -74,7 +74,11 @@ class IdListPanel(QWidget):
         # 黑名单这两个列表真机反馈过想要全透明、透出背景图；只在这两个用到
         # IdListPanel 的地方覆盖，不改全局规则（其它用 QListWidget 的弹窗列表还是
         # 需要那层底色撑可读性）。
-        self._list.setStyleSheet("background: transparent;")
+        # 切到管理员/黑名单页时，列表会自动拿到焦点并画出一圈浅色（近白）边框/焦点框，
+        # 看起来像"被选中"；外层卡片已经有主题色描边，这里去掉列表自身的边框和焦点框，
+        # 也不再让它在切页时自动抢焦点（点击列表仍可获得焦点、正常选中行）。
+        self._list.setStyleSheet("QListWidget { background: transparent; border: none; outline: 0; }")
+        self._list.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._list.itemSelectionChanged.connect(self._sync_remove_state)
         row = QHBoxLayout()
         self._add = QPushButton()

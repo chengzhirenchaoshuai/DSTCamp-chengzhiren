@@ -181,8 +181,15 @@ def show_file_location(parent, title: str, path, location_label: str, copied_mes
     link = f'<a href="open" style="color:{theme.hex("PRIMARY")}">点我打开</a>'
     box.setTextFormat(Qt.TextFormat.RichText)
     box.setText(f"{location_label}<br>{link}<br>{copied_message.replace(chr(10), '<br>')}")
+    # "打包存档"和"获取日志文件"共用这个弹窗，正文行数不同；给正文固定最小宽高，
+    # 两处弹出来的窗口大小一致。
+    box.setStyleSheet("QLabel#qt_msgbox_label { min-width: 420px; min-height: 120px; }")
     label = box.findChild(QLabel, "qt_msgbox_label")
     if label is not None:
+        # QMessageBox 的正文标签默认 openExternalLinks=True，点链接时 Qt 自己去"打开"
+        # href，不会发 linkActivated——之前"点我打开"点了没反应就是这个原因。
+        label.setOpenExternalLinks(False)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
         label.linkActivated.connect(lambda _href: subprocess.Popen(["explorer.exe", "/select,", str(path)]))
     box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.AcceptRole)
     box.exec()

@@ -109,6 +109,37 @@ def find_steam_root() -> Path | None:
     return libs[0] if libs else None
 
 
+def read_steam_persona_name() -> str | None:
+    """读取本机最近登录的 Steam 账号昵称（config/loginusers.vdf 的 PersonaName）。
+
+    优先取标了 MostRecent=1 的账号（键名大小写各版本 Steam 不一致）；真机上
+    见过整份文件都没有 MostRecent 字段，此时退回 Timestamp 最大的那个。读不到
+    返回 None，调用方自行回退默认值。"""
+    roots = [find_steam_root_from_registry(), find_steam_root()]
+    for root in roots:
+        if root is None:
+            continue
+        vdf_path = root / "config" / "loginusers.vdf"
+        try:
+            text = vdf_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        best: tuple[int, int, str] | None = None
+        for match in re.finditer(r'"\d+"\s*\{([^{}]*)\}', text):
+            fields = {key.lower(): value for key, value in re.findall(r'"(\w+)"\s+"([^"]*)"', match.group(1))}
+            name = fields.get("personaname", "").strip()
+            if not name:
+                continue
+            most_recent = 1 if fields.get("mostrecent") == "1" else 0
+            timestamp = int(fields["timestamp"]) if fields.get("timestamp", "").isdigit() else 0
+            candidate = (most_recent, timestamp, name)
+            if best is None or candidate[:2] > best[:2]:
+                best = candidate
+        if best is not None:
+            return best[2]
+    return None
+
+
 def read_game_version_file(install_dir: Path) -> str | None:
     """读 install_dir 下游戏自己写的 version.txt——Klei 自己维护的内部版
     本号（真机验证过，跟 Steam appmanifest 的 buildid 是两个独立编号：

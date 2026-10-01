@@ -63,11 +63,11 @@ class SaveInfoPage(Page):
         # "打包存档"直接放标题行；立即备份/备份策略/恢复统一收进"备份管理"菜单
         self._bundle_button = QPushButton()
         self._bundle_button.clicked.connect(self._on_bundle)
-        # "备份管理"外观跟顶部"存档/存档类型"下拉框一致（QSS 的 combo 属性），
-        # 展开菜单也用同一种假透明底。
+        # "备份管理"保持主题色按钮外观；展开菜单用假透明底，宽度跟按钮一致。
         self._manage_button = QPushButton()
-        self._manage_button.setProperty("combo", True)
         self._manage_menu = FrostedMenu(self._manage_button)
+        self._manage_menu.aboutToShow.connect(
+            lambda: self._manage_menu.setFixedWidth(self._manage_button.width()))
         self._backup_now_action = QAction(self)
         self._backup_now_action.triggered.connect(self._on_backup_now)
         self._backup_policy_action = QAction(self)
