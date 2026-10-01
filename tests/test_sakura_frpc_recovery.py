@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from dstools.features.sakura import frpc_recovery
-from dstools.features.sakura.tab import SakuraTab
+from dstools.qt.pages import sakura as sakura_page
 
 
 def test_inspect_distinguishes_ready_and_missing() -> None:
@@ -47,16 +47,18 @@ def test_enable_mapping_aborts_before_remote_changes_when_client_is_missing() ->
         _current_cluster=cluster,
         _selected_node_id=1,
         _running_shard_names=lambda _cluster: [],
-        selfhost_page=SimpleNamespace(has_active_mapping=lambda _cluster, _shard: False),
+        ctx=SimpleNamespace(mapping_owner=lambda _cluster, _shard: None),
         _ensure_frpc_available=lambda: None,
-        app=SimpleNamespace(root=None),
+        window=lambda: None,
     )
-    with patch(
-        "dstools.features.sakura.tab.app_settings.get_sakura_token",
-        return_value="token",
-    ), patch("dstools.features.sakura.tab.sakura_frp.list_tunnels") as list_tunnels:
-        SakuraTab._enable_mapping(page)
+    with patch.object(
+        sakura_page.app_settings, "get_sakura_token", return_value="token",
+    ), patch.object(sakura_page.sakura_frp, "list_tunnels") as list_tunnels, patch.object(
+        sakura_page.dialogs, "LogDialog",
+    ) as progress:
+        sakura_page._SakuraMappingPanel._enable_mapping(page)
     list_tunnels.assert_not_called()
+    progress.assert_not_called()
 
 
 def main() -> None:

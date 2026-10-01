@@ -148,8 +148,8 @@ def main() -> None:
         crash_cluster.mkdir()
         from dstools.shared.token_manager import write_token
         write_token(crash_cluster / "cluster_token.txt", NEW_A)
-        from dstools.features.local_service.tab import LocalServiceTab
-        crash_service = LocalServiceTab.__new__(LocalServiceTab)
+        from dstools.qt.pages.local_service import LocalServicePage
+        crash_service = LocalServicePage.__new__(LocalServicePage)
         crash_service._token_reservations = {str(crash_cluster): NEW_A}
         app_settings.set_global_tokens([NEW_A])
         # 验证 Master 诊断回调会持久化，并在后续明确注册成功后清除。
@@ -185,9 +185,9 @@ def main() -> None:
         )
         assert token_fingerprint(NEW_B) not in app_settings.get_token_holds()
 
-    # LocalServiceTab 的启动入口应在 Popen 前写入替代令牌并建立预占。
-    from dstools.features.local_service import tab as local_module
-    from dstools.features.local_service.tab import LocalServiceTab
+    # 本地服务器页的启动入口应在 Popen 前写入替代令牌并建立预占。
+    from dstools.qt.pages import local_service as local_module
+    from dstools.qt.pages.local_service import LocalServicePage
     from dstools.shared.token_manager import read_token, write_token
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -198,12 +198,11 @@ def main() -> None:
         cluster = SimpleNamespace(
             path=cluster_path, name="Cluster_B", token_path=token_path,
         )
-        service = LocalServiceTab.__new__(LocalServiceTab)
+        service = LocalServicePage.__new__(LocalServicePage)
+        service.window = lambda: None
         service._token_reservations = {}
         service.manager = SimpleNamespace(running=lambda: [])
-        service.app = SimpleNamespace(
-            root=object(), env=SimpleNamespace(clusters=[cluster]),
-        )
+        service.ctx = SimpleNamespace(env=SimpleNamespace(clusters=[cluster]))
         active = (TokenUse(NEW_A, "Cluster_A", "Cluster_A"),)
         service.token_usage_snapshot = Mock(return_value=active)
         with (
@@ -211,7 +210,7 @@ def main() -> None:
             patch.object(local_module, "get_global_tokens", return_value=[NEW_A, NEW_B]),
             patch.object(local_module, "get_token_holds", return_value={}),
             patch.object(local_module, "prune_token_holds") as prune_holds,
-            patch.object(local_module.dlg, "show_toast") as toast,
+            patch.object(local_module.dialogs, "show_toast") as toast,
         ):
             assert service._prepare_token_for_start(cluster)
         assert read_token(token_path) == NEW_B
@@ -227,7 +226,7 @@ def main() -> None:
             patch.object(local_module, "get_global_tokens", return_value=[NEW_A]),
             patch.object(local_module, "get_token_holds", return_value={}),
             patch.object(local_module, "prune_token_holds"),
-            patch.object(local_module.dlg, "show_warning") as warning,
+            patch.object(local_module.dialogs, "show_warning") as warning,
         ):
             assert not service._prepare_token_for_start(cluster)
         assert read_token(token_path) == NEW_A
@@ -245,7 +244,7 @@ def main() -> None:
                 return_value={token_fingerprint(NEW_A): {"state": "conflict"}},
             ),
             patch.object(local_module, "prune_token_holds") as prune_holds,
-            patch.object(local_module.dlg, "show_toast") as toast,
+            patch.object(local_module.dialogs, "show_toast") as toast,
         ):
             assert service._prepare_token_for_start(cluster)
         assert read_token(token_path) == NEW_A

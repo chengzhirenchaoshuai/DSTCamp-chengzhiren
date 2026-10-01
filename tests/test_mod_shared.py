@@ -4,10 +4,9 @@ import tempfile
 import threading
 from pathlib import Path
 import sys
-from types import SimpleNamespace
 from unittest.mock import patch
 
-from PIL import Image, ImageChops
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -24,17 +23,8 @@ from dstools.features.mod.parser import (
     find_workshop_residual_dirs,
     list_installed_mod_ids,
 )
-from dstools.features.mod.render import mod_list_height, render_mod_list
-from dstools.features.mod.tab import (
-    ModManagerTab,
-    RECOMMENDED_MODS,
-    _can_open_mod_update_hint,
-    _prune_full_resolved_cache,
-    _referenced_missing_status_text,
-    _workshop_actionable_update_ids,
-    _workshop_needs_update_count,
-    _workshop_modinfo_signature,
-)
+from dstools.qt.mod_recommend_dialog import RECOMMENDED_MODS
+from dstools.qt.pages.mod import ModPage
 from dstools.models import ModEntry, Platform
 from dstools.features.mod.workshop_api import (
     SteamWorkshopSession,
@@ -151,14 +141,6 @@ def test_catalog_releases_stale_icons_and_old_source_snapshots():
     assert store.get(Platform.WEGAME, second_root) is not None
 
 
-def test_full_resolved_cache_keeps_only_current_mods():
-    kept_info = ModInfo(name="保留")
-    stale_info = ModInfo(name="已卸载")
-    assert _prune_full_resolved_cache(
-        {"kept": kept_info, "stale": stale_info}, {"kept": object()}
-    ) == {"kept": kept_info}
-
-
 def test_loaded_mod_icons_have_a_resident_size_limit():
     with tempfile.TemporaryDirectory() as tmp:
         large_path = Path(tmp) / "large.png"
@@ -171,107 +153,6 @@ def test_loaded_mod_icons_have_a_resident_size_limit():
 
         assert large.mode == "RGBA" and large.size == (192, 96)
         assert small.mode == "RGBA" and small.size == (64, 32)
-
-
-def test_mod_list_viewport_matches_full_image_crop():
-    rows = [
-        {
-            "workshop_id": f"workshop-{index}",
-            "name": f"测试 Mod {index}",
-            "version_text": f"版本 {index}",
-            "enabled": index % 2 == 0,
-            "has_config": True,
-            "has_link": True,
-            "has_folder": False,
-        }
-        for index in range(12)
-    ]
-    toggled = []
-    full, _full_hits, _full_hovers = render_mod_list(
-        rows,
-        {},
-        on_toggle=toggled.append,
-        ref_width=650,
-    )
-    view_y = 173
-    view_height = 241
-    viewport, hits, _hovers = render_mod_list(
-        rows,
-        {},
-        on_toggle=toggled.append,
-        ref_width=650,
-        viewport_y=view_y,
-        viewport_height=view_height,
-    )
-
-    assert full.height == mod_list_height(len(rows), 650)
-    assert viewport.size == (650, view_height)
-    expected = full.crop((0, view_y, 650, view_y + view_height))
-    assert ImageChops.difference(viewport, expected).getbbox() is None
-    assert hits
-    assert all(y2 >= view_y and y1 <= view_y + view_height for _, y1, _, y2, _ in hits)
-    hits[0][4]()
-    assert toggled
-
-
-def test_mod_list_copy_name_and_copy_id_hit_regions_do_not_overlap():
-    rows = [
-        {
-            "workshop_id": "workshop-123",
-            "name": "示例 Mod",
-            "version_text": "版本 1",
-            "enabled": True,
-            "has_config": False,
-            "has_link": False,
-            "has_folder": False,
-        }
-    ]
-    id_calls = []
-    name_calls = []
-    _img, hits, _hovers = render_mod_list(
-        rows,
-        {},
-        on_copy_id=id_calls.append,
-        on_copy_name=name_calls.append,
-        ref_width=650,
-    )
-    assert len(hits) == 2
-    (_x1a, y1a, _x2a, y2a, cb_a), (_x1b, y1b, _x2b, y2b, cb_b) = hits
-    # 两个点击区域竖直范围不能重叠——ImageScrollPanel._on_click() 命中第
-    # 一个匹配的区域就返回，重叠会导致其中一个点不到。
-    assert y2a <= y1b or y2b <= y1a
-    cb_a()
-    cb_b()
-    assert id_calls == ["workshop-123"]
-    assert name_calls == ["workshop-123"]
-
-
-def test_mod_tab_releases_and_rebuilds_hidden_list_image():
-    tab = object.__new__(ModManagerTab)
-    released = []
-    rendered = []
-    tab._mods_loaded = True
-    tab._loading = False
-    tab._list_image_released = False
-    tab._page_visible = True
-    tab._on_mod_list_hover = lambda *_args: None
-    tab.list_panel = SimpleNamespace(release_image=lambda: released.append(True))
-    tab._render_list = lambda: rendered.append(True)
-
-    tab.on_hidden()
-    assert released == [True] and tab._list_image_released is True
-    assert tab._page_visible is False
-    tab.on_hidden()
-    assert released == [True]
-
-    tab.on_shown()
-    assert rendered == [True] and tab._page_visible is True
-
-    tab._page_visible = False
-    tab._list_image_released = True
-    tab._loading = True
-    tab.on_shown()
-    assert rendered == [True, True]
 
 
 def test_shared_rows_keep_filter_and_sort_consistent():
@@ -334,12 +215,6 @@ def test_visible_mod_ids_include_enabled_missing_references_only():
         ["workshop-10", "workshop-20", "workshop-10"], configured
     ) == ["workshop-10", "workshop-20", "workshop-40"]
 
-    assert "本机未安装" in _referenced_missing_status_text(None)
-    unsubscribed = SimpleNamespace(
-        state=WorkshopModState.UNSUBSCRIBED_REFERENCED
-    )
-    assert "未订阅" in _referenced_missing_status_text(unsubscribed)
-
 
 def test_missing_mod_scan_summary_stays_compact():
     values = {"total": 155, "custom": 0, "missing": 16}
@@ -348,38 +223,6 @@ def test_missing_mod_scan_summary_stays_compact():
     assert zh == "已安装155个模组（自定义0个）· 存档缺少16个"
     assert len(zh) <= 28
     assert len(en) <= 52
-
-
-def test_mod_update_hint_click_rules():
-    assert _can_open_mod_update_hint("pending", False) is False
-    assert _can_open_mod_update_hint("updating", True) is True
-    assert _can_open_mod_update_hint("done", True) is True
-    assert _can_open_mod_update_hint("checking", False) is False
-    assert _can_open_mod_update_hint("current", False) is False
-    assert _can_open_mod_update_hint("error", False) is False
-
-
-def test_workshop_needs_update_count():
-    states = {
-        "1": SimpleNamespace(needs_action=True),
-        "2": SimpleNamespace(needs_action=False),
-        "3": SimpleNamespace(needs_action=True),
-    }
-    assert _workshop_needs_update_count(states) == 2
-    assert _workshop_needs_update_count({}) == 0
-
-
-def test_workshop_update_all_only_returns_actionable_items_in_display_order():
-    states = {
-        "1": SimpleNamespace(needs_action=True, can_update=True),
-        "2": SimpleNamespace(needs_action=False, can_update=True),
-        "3": SimpleNamespace(needs_action=True, can_update=False),
-        "4": SimpleNamespace(needs_action=True, can_update=True),
-    }
-    assert _workshop_actionable_update_ids(["4", "2", "1", "3"], states) == [
-        "4",
-        "1",
-    ]
 
 
 def test_workshop_worker_can_be_stopped_by_cancel_event():
@@ -413,32 +256,18 @@ def test_workshop_worker_can_be_stopped_by_cancel_event():
     assert process.terminated is True
 
 
-def test_workshop_status_cache_tracks_modinfo_edits():
-    with tempfile.TemporaryDirectory() as tmp:
-        folder = Path(tmp) / "3553731526"
-        folder.mkdir()
-        modinfo = folder / "modinfo.lua"
-        modinfo.write_text('version = "1"', encoding="utf-8")
-        paths = {"workshop-3553731526": folder}
-        before = _workshop_modinfo_signature([3553731526], paths)
-        modinfo.write_text('version = "changed"', encoding="utf-8")
-        after = _workshop_modinfo_signature([3553731526], paths)
-        assert before != after
-
-
 def test_workshop_candidates_do_not_require_installed_client_files():
-    tab = object.__new__(ModManagerTab)
-    tab._mod_data = {"workshop-11": ModEntry("workshop-11")}
-    tab._workshop_status_cache = {44: object()}
+    tab = ModPage.__new__(ModPage)
+    tab._workshop_mod_ids = lambda: [11]
     tab._current_cluster_workshop_ids = lambda: {"33"}
     with patch(
         "dstools.features.mod.legacy_v1.find_legacy_packages",
         return_value={22: Path("C:/fake/22_legacy.bin")},
     ), patch(
-        "dstools.features.mod.tab.find_workshop_residual_dirs",
+        "dstools.features.mod.parser.find_workshop_residual_dirs",
         return_value={},
     ), patch(
-        "dstools.features.mod.tab.find_legacy_runtime_residual_dirs",
+        "dstools.features.mod.legacy_v1.find_legacy_runtime_residual_dirs",
         return_value={},
     ):
         assert tab._workshop_candidate_ids() == [11, 22, 33]
@@ -739,20 +568,12 @@ if __name__ == "__main__":
     test_recommended_mods_include_ping_server_with_icon()
     test_catalog_icons_and_platform_invalidation()
     test_catalog_releases_stale_icons_and_old_source_snapshots()
-    test_full_resolved_cache_keeps_only_current_mods()
     test_loaded_mod_icons_have_a_resident_size_limit()
-    test_mod_list_viewport_matches_full_image_crop()
-    test_mod_list_copy_name_and_copy_id_hit_regions_do_not_overlap()
-    test_mod_tab_releases_and_rebuilds_hidden_list_image()
     test_shared_rows_keep_filter_and_sort_consistent()
     test_luajit_mod_is_first_only_when_prioritized()
     test_visible_mod_ids_include_enabled_missing_references_only()
     test_missing_mod_scan_summary_stays_compact()
-    test_mod_update_hint_click_rules()
-    test_workshop_needs_update_count()
-    test_workshop_update_all_only_returns_actionable_items_in_display_order()
     test_workshop_worker_can_be_stopped_by_cancel_event()
-    test_workshop_status_cache_tracks_modinfo_edits()
     test_workshop_candidates_do_not_require_installed_client_files()
     test_residual_directory_is_not_treated_as_installed_or_updateable()
     test_unsubscribed_v2_item_cannot_fall_back_to_legacy()

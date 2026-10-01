@@ -211,21 +211,23 @@ def test_shutdown_text_inside_other_command_does_not_hide_crash() -> None:
 
 
 def test_console_command_history_supports_up_down_and_draft() -> None:
-    from dstools.features.local_service.tab import _ConsolePane
+    from dstools.qt.local_console import ConsolePane
 
-    class _FakeVar:
+    class _FakeEdit:
         def __init__(self) -> None:
             self.value = ""
 
-        def get(self) -> str:
+        def text(self) -> str:
             return self.value
 
-        def set(self, value: str) -> None:
+        def setText(self, value: str) -> None:
             self.value = value
 
-    pane = _ConsolePane.__new__(_ConsolePane)
-    pane.cmd_var = _FakeVar()
-    pane.cmd_entry = type("_FakeEntry", (), {"icursor": lambda *_args: None})()
+        def end(self, _mark: bool) -> None:
+            pass
+
+    pane = ConsolePane.__new__(ConsolePane)
+    pane.cmd_edit = _FakeEdit()
     pane.proc = type(
         "_FakeServer",
         (),
@@ -236,18 +238,18 @@ def test_console_command_history_supports_up_down_and_draft() -> None:
     pane._command_draft = ""
 
     for command in ("c_save()", "c_listallplayers()"):
-        pane.cmd_var.set(command)
+        pane.cmd_edit.setText(command)
         pane._send()
 
-    pane.cmd_var.set("c_announce(\"草稿\")")
-    assert pane._browse_command_history(-1) == "break"
-    assert pane.cmd_var.get() == "c_listallplayers()"
-    pane._browse_command_history(-1)
-    assert pane.cmd_var.get() == "c_save()"
-    pane._browse_command_history(1)
-    assert pane.cmd_var.get() == "c_listallplayers()"
-    pane._browse_command_history(1)
-    assert pane.cmd_var.get() == 'c_announce("草稿")'
+    pane.cmd_edit.setText("c_announce(\"草稿\")")
+    pane._browse_history(-1)
+    assert pane.cmd_edit.text() == "c_listallplayers()"
+    pane._browse_history(-1)
+    assert pane.cmd_edit.text() == "c_save()"
+    pane._browse_history(1)
+    assert pane.cmd_edit.text() == "c_listallplayers()"
+    pane._browse_history(1)
+    assert pane.cmd_edit.text() == 'c_announce("草稿")'
 
 
 def test_stop_blocking_prefers_shutdown_command_over_force() -> None:
