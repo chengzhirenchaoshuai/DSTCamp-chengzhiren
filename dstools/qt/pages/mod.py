@@ -724,7 +724,9 @@ class ModPage(Page):
     def _render_list(self) -> None:
         if self._loading:
             self._list_panel.clear()
+            self._list_panel.set_center_message(t("mod.loading_full") if self._loading_full else t("mod.loading"))
             return
+        self._list_panel.set_center_message("")
         rows = self._build_rows()
         c = self.get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)

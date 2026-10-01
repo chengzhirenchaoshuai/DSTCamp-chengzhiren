@@ -69,6 +69,7 @@ class ModListPanel(QAbstractScrollArea):
         self._total_h = 0
         self._default_icon_cache: dict[int, QPixmap] = {}
         self._folder_icon_cache: dict[int, QPixmap] = {}
+        self._center_message = ""  # 列表为空时画在正中央的提示（如"正在加载 Mod 列表..."）
         self.setFrameShape(QAbstractScrollArea.Shape.NoFrame)
         self.viewport().setAutoFillBackground(False)
         self.viewport().setMouseTracking(True)
@@ -92,6 +93,12 @@ class ModListPanel(QAbstractScrollArea):
 
     def clear(self) -> None:
         self.set_rows([], {})
+
+    def set_center_message(self, text: str) -> None:
+        """设置列表为空时正中央显示的提示文字；传空串取消。"""
+        if text != self._center_message:
+            self._center_message = text
+            self.viewport().update()
 
     def _ensure_layout(self) -> None:
         width = self.viewport().width()
@@ -183,6 +190,14 @@ class ModListPanel(QAbstractScrollArea):
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        if not self._rows and self._center_message:
+            # 没有行可画时（加载中），在 mod 显示区域正中央画一行提示，跟 Tk 版一致。
+            painter.setFont(theme.font("FONT_SIZE_BASE"))
+            painter.setPen(theme.color("TEXT_MUTED"))
+            painter.drawText(QRectF(self.viewport().rect()).adjusted(12, 0, -12, 0),
+                             int(Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap),
+                             self._center_message)
+            return
         offset = self.verticalScrollBar().value()
         view_h = self.viewport().height()
         width = self.viewport().width()

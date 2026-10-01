@@ -11,7 +11,7 @@ from PySide6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
-    QSystemTrayIcon, QVBoxLayout, QWidget,
+    QSystemTrayIcon, QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from dstools import __version__
@@ -29,7 +29,7 @@ from dstools.qt.pages.server_config import ServerConfigPage
 from dstools.qt.pages.world_settings import WorldSettingsPage
 from dstools.qt.theme import THEME_NAMES, theme
 from dstools.qt.threads import post_to_ui, run_async
-from dstools.qt.widgets import Grip, PillTabBar
+from dstools.qt.widgets import FrostedMenu, Grip, PillTabBar, ThemeMenuItem
 from dstools.shared.app_settings import (
     get_minimize_on_close, get_window_position, set_minimize_on_close, set_window_position,
 )
@@ -166,7 +166,7 @@ class MenuStrip(QWidget):
         self._layout.setContentsMargins(6, 0, 6, 3)
         self._layout.setSpacing(10)
         self._buttons: dict[str, QPushButton] = {}
-        self._theme_actions: dict[str, QAction] = {}
+        self._theme_actions: dict[str, ThemeMenuItem] = {}
         for key, builder in (("menu.file", self._file_menu), ("menu.theme", self._theme_menu),
                              ("menu.settings", self._settings_menu)):
             button = QPushButton()
@@ -215,7 +215,7 @@ class MenuStrip(QWidget):
         self._lang_actions["en"].setText(t("menu.lang_en"))
 
     def _file_menu(self) -> QMenu:
-        menu = QMenu(self)
+        menu = FrostedMenu(self)
         menu.setToolTipsVisible(True)  # "安装运行库"要在悬停时显示用途提示
         refresh = QAction(t("app.refresh"), self)
         refresh.setShortcut(QKeySequence(Qt.Key.Key_F5))
@@ -242,15 +242,15 @@ class MenuStrip(QWidget):
         return menu
 
     def _theme_menu(self) -> QMenu:
-        menu = QMenu(self)
-        group = QActionGroup(self)
+        menu = FrostedMenu(self)
+        # 每个主题名用该主题自己的主色显示（QAction 设不了单独文字颜色，用自绘项）；
+        # 当前主题打勾加粗，直接现查 theme.name，不需要 QActionGroup 维护选中态。
         for name in THEME_NAMES:
-            action = QAction(t(f"theme.{name}"), self, checkable=True)
-            action.setChecked(name == theme.name)
-            action.triggered.connect(lambda _checked=False, n=name: theme.set_theme(n))
-            group.addAction(action)
+            item = ThemeMenuItem(menu, name, t(f"theme.{name}"), theme.set_theme)
+            action = QWidgetAction(menu)
+            action.setDefaultWidget(item)
             menu.addAction(action)
-            self._theme_actions[name] = action
+            self._theme_actions[name] = item
         menu.addSeparator()
         # 背景图/字体样式是跟颜色主题解耦的全局设置，点开只弹设置窗口，不切主题。
         bg_settings = QAction(t("theme.custom_bg_settings"), self)
@@ -264,8 +264,8 @@ class MenuStrip(QWidget):
         return menu
 
     def _settings_menu(self) -> QMenu:
-        menu = QMenu(self)
-        lang_menu = QMenu(t("settings.language_label"), self)
+        menu = FrostedMenu(self)
+        lang_menu = FrostedMenu(t("settings.language_label"), self)
         lang_group = QActionGroup(self)
         self._lang_actions: dict[str, QAction] = {}
         for code, key in (("zh", "menu.lang_zh"), ("en", "menu.lang_en")):
@@ -402,7 +402,7 @@ class MainWindow(QWidget):
         # 全局默认字号改成 FONT_SIZE_SM 后主页签跟着变小了，真机反馈偏小；
         # 显式指定比子页签（FONT_SIZE_BASE）再大一档，维持"主页签 > 子页签 > 正文"
         # 的层级。
-        self.tabbar = PillTabBar([t(f"tab.{key}") for key in TAB_KEYS], font_size_key="FONT_SIZE_MD")
+        self.tabbar = PillTabBar([t(f"tab.{key}") for key in TAB_KEYS], font_size_key="FONT_SIZE_MD", bold=True)
         self.cluster_bar = ClusterBar(ctx, self)
         self.stack = QStackedWidget()
         self.status = QLabel()
@@ -616,7 +616,7 @@ class MainWindow(QWidget):
     def open_creation_wizard(self) -> None:
         from dstools.qt.creation_wizard import CreationWizardDialog
 
-        dialog = CreationWizardDialog(self.ctx)
+        dialog = CreationWizardDialog(self.ctx, background=self.background)
         dialog.move(self.geometry().center() - dialog.rect().center())
         dialog.exec()
 

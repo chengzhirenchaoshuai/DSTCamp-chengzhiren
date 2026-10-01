@@ -13,8 +13,8 @@ import webbrowser
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QStackedWidget,
     QVBoxLayout, QWidget,
@@ -59,6 +59,7 @@ from dstools.qt.mod_panel import ModListPanel
 from dstools.qt.mod_presets_dialogs import SavePresetDialog
 from dstools.qt.pages.server_config import ServerConfigPage
 from dstools.qt.theme import theme
+from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.qt.threads import run_async
 from dstools.qt.widgets import PillTabBar
 from dstools.qt.world_panel import WorldPanel
@@ -212,9 +213,15 @@ class _LoadPresetDialog(dialogs.Dialog):
 
 
 class CreationWizardDialog(QDialog):
-    def __init__(self, ctx):
+    def __init__(self, ctx, background=None):
         super().__init__()
         self.ctx = ctx
+        # 无父窗口的顶层对话框不会继承主窗口图标，任务栏和左上角都会是空白——显式设置。
+        self.setWindowIcon(QIcon(str(bundled_resource_dir() / "icons" / "app" / "icon.png")))
+        # 直接复用主窗口已加载的 Background（同一张 QPixmap，不重复读图）；
+        # 按窗口尺寸缓存一张缩放好的成品图，重绘时只做贴图，不再每次平滑缩放。
+        self._background = background
+        self._bg_cache: QPixmap | None = None
         # app.title 是"DSTCamp · 本地服务器管理"，这个向导窗口不属于本地服务器页，
         # 只取品牌名前缀，不带"本地服务器管理"这半截（真机反馈过标题看着奇怪）。
         self.setWindowTitle(t("app.title").split(" · ")[0] + " · " + t("save.create_server_save"))
@@ -992,6 +999,24 @@ class CreationWizardDialog(QDialog):
             self.accept()
         except Exception as exc:
             dialogs.show_error(self, t("world.creation_failed_title"), str(exc))
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), theme.color("BG_SOFT"))
+        if self._background is None or not self._background.active:
+            self._bg_cache = None
+            return
+        dpr = self.devicePixelRatioF()
+        size = self.size() * dpr
+        if self._bg_cache is None or self._bg_cache.size() != size:
+            cache = QPixmap(size)
+            cache.setDevicePixelRatio(dpr)
+            cache.fill(Qt.GlobalColor.transparent)
+            cache_painter = QPainter(cache)
+            self._background.paint(cache_painter, self.width(), self.height(), smooth=True)
+            cache_painter.end()
+            self._bg_cache = cache
+        painter.drawPixmap(0, 0, self._bg_cache)
 
     def closeEvent(self, event) -> None:
         if self._draft_dir_ctx is not None:

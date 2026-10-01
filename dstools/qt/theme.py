@@ -228,6 +228,17 @@ class Theme(QObject):
             QMenu::item {{ padding: 6px 22px; border-radius: 4px; }}
             QMenu::item:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; }}
             QMenu::separator {{ height: 1px; background: {c['CARD_BORDER']}; margin: 4px 8px; }}
+            FrostedMenu {{ background: {_rgba(c['CARD_BG'], 110)}; border: 1px solid {c['CARD_BORDER']};
+                padding: 5px; }}
+            FrostedMenu::item {{ padding: 6px 24px 6px 30px; border-radius: 4px; background: transparent; }}
+            FrostedMenu::item:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; }}
+            QPushButton[combo="true"] {{ background: rgba(255,255,255,200); border: 1px solid {c['CARD_BORDER']};
+                border-radius: 8px; padding: 4px 30px 4px 10px; color: {c['TEXT']}; font-weight: normal;
+                min-height: 22px; text-align: left; }}
+            QPushButton[combo="true"]:hover, QPushButton[combo="true"]:pressed {{
+                background: rgba(255,255,255,200); border-color: {c['ACCENT']}; }}
+            QPushButton[combo="true"]::menu-indicator {{ image: url({_DOWN_ARROW_PATH}); width: 10px; height: 6px;
+                subcontrol-origin: padding; subcontrol-position: center right; right: 10px; }}
             QScrollArea, WorldPanel, QListView {{ background: transparent; border: none; }}
             QDialog {{ background: {c['BG_SOFT']}; }}
             QListWidget, QPlainTextEdit {{ background: rgba(255,255,255,200); color: {c['TEXT']};

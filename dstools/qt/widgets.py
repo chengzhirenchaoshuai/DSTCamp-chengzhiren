@@ -4,8 +4,8 @@
 """
 
 from PySide6.QtCore import QRect, QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import QLabel, QMenu, QVBoxLayout, QWidget
 
 from dstools.qt.theme import theme
 
@@ -121,9 +121,10 @@ class PillTabBar(QWidget):
 
     def __init__(self, labels: list[str], parent=None, height: int = 44, pill_height: int = 34,
                  font_size_key: str | None = None, gap: int = 6, pad: int | None = None,
-                 uniform_width: bool = False):
+                 uniform_width: bool = False, bold: bool = False):
         super().__init__(parent)
         self._labels = list(labels)
+        self._bold = bold  # 主页签文字加粗，子页签保持常规字重
         self._index = 0
         self._hover = -1
         self._pill_h = pill_height
@@ -168,7 +169,11 @@ class PillTabBar(QWidget):
         return rects
 
     def _font(self):
-        return theme.font(self._font_size_key) if self._font_size_key else self.font()
+        if self._font_size_key:
+            return theme.font(self._font_size_key, bold=self._bold)
+        font = self.font()
+        font.setBold(self._bold)
+        return font
 
     def sizeHint(self) -> QSize:
         # 没有这个重写，装进 QHBoxLayout 跟别的控件抢横向空间（尤其是后面跟了
@@ -268,3 +273,104 @@ class Banner(QWidget):
         rect = self.rect().adjusted(self._PAD_X, self._PAD_Y, -self._PAD_X, -self._PAD_Y)
         painter.drawText(rect, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter) | int(Qt.TextFlag.TextWordWrap),
                           self._text)
+
+
+class FrostedMenu(QMenu):
+    """跟下拉框展开列表同一种"假透明"效果的菜单：弹出时截一张主窗口在这块区域的
+    画面并压淡，画在菜单最底层，菜单自身的半透明底色（QSS 里 FrostedMenu 规则）
+    叠在上面。不开 WA_TranslucentBackground，避免 Windows 上弹出窗口整块发黑。
+    截图失败（弹出位置跑出主窗口、托盘菜单等）就退回实色底，不报错。"""
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self._snapshot: QPixmap | None = None
+
+    def showEvent(self, event):
+        self._snapshot = None
+        anchor = self.parentWidget()
+        window = anchor.window() if anchor is not None else None
+        if window is not None and window is not self:
+            top_left = window.mapFromGlobal(self.pos())
+            grab_rect = QRect(top_left, self.size()).intersected(window.rect())
+            if not grab_rect.isEmpty():
+                pixmap = window.grab(grab_rect)
+                if not pixmap.isNull():
+                    from dstools.qt.theme import _faded_popup_bg_pixmap
+                    self._snapshot = (_faded_popup_bg_pixmap(pixmap), grab_rect.topLeft() - top_left)
+        super().showEvent(event)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), theme.color("CARD_BG"))
+        if self._snapshot is not None:
+            pixmap, offset = self._snapshot
+            painter.drawPixmap(offset, pixmap)
+        painter.end()
+        super().paintEvent(event)
+
+
+class ThemeMenuItem(QWidget):
+    """"主题"菜单里的一项：文字用该主题自己的主色画，当前主题前面打勾。
+    QAction 没法单独设文字颜色，所以用 QWidgetAction 包这个自绘控件。"""
+
+    _PAD_LEFT = 30   # 跟普通菜单项文字起点大致对齐（左侧留出勾选标记位置）
+    _PAD_RIGHT = 24
+
+    def __init__(self, menu: QMenu, name: str, text: str, on_pick):
+        super().__init__(menu)
+        self._menu = menu
+        self._name = name
+        self._text = text
+        self._on_pick = on_pick
+        self._hover = False
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover)
+
+    def setText(self, text: str) -> None:
+        self._text = text
+        self.updateGeometry()
+        self.update()
+
+    def sizeHint(self) -> QSize:
+        metrics = QFontMetrics(self._item_font())
+        return QSize(metrics.horizontalAdvance(self._text) + self._PAD_LEFT + self._PAD_RIGHT,
+                     metrics.height() + 12)
+
+    def _item_font(self):
+        font = self.font()
+        font.setBold(self._name == theme.name)
+        return font
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and self.rect().contains(event.position().toPoint()):
+            self._menu.hide()
+            self._on_pick(self._name)
+            return
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, _event):
+        from dstools.shared import palettes
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._hover:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(theme.color("PRIMARY_LIGHT"))
+            painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 0, -1, 0), 4, 4)
+        color = QColor(palettes.THEMES[self._name]["PRIMARY_DARK"])
+        painter.setPen(color)
+        painter.setFont(self._item_font())
+        if self._name == theme.name:
+            painter.drawText(QRect(0, 0, self._PAD_LEFT, self.height()), int(Qt.AlignmentFlag.AlignCenter), "✓")
+        painter.drawText(self.rect().adjusted(self._PAD_LEFT, 0, 0, 0),
+                         int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), self._text)
