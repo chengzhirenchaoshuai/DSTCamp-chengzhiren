@@ -42,8 +42,10 @@ class WorldShardPlan:
 @dataclass(frozen=True)
 class WorldCreationPlan:
     cluster_name: str
-    master: WorldShardPlan
-    caves: WorldShardPlan
+    # 两者都可以为 None：创建向导允许删掉主世界或洞穴（至少保留一个世界）。
+    # 哪个分片是主世界以 shard_configs 里 [SHARD] is_master 为准，见 shard_is_master()。
+    master: WorldShardPlan | None
+    caves: WorldShardPlan | None
     cluster_ini: ClusterConfig = field(default_factory=ClusterConfig)
     mod_ids: frozenset[str] = frozenset()
     # workshop id -> modoverrides.lua entry.  This is intentionally kept
@@ -92,6 +94,21 @@ def copy_mod_overrides(source: dict[str, dict]) -> dict[str, dict]:
     return result
 
 
+def creation_shards(plan: WorldCreationPlan) -> list[tuple[str, WorldShardPlan]]:
+    """按写盘顺序返回实际要创建的分片（目录名, 世界计划），跳过被删掉的 Master/Caves。"""
+    fixed = [(name, shard) for name, shard in (("Master", plan.master), ("Caves", plan.caves)) if shard is not None]
+    return [*fixed, *plan.extra_shards.items()]
+
+
+def shard_is_master(plan: WorldCreationPlan, shard_name: str) -> bool:
+    """分片是否为主世界：优先看 shard_configs 的 [SHARD] is_master；没给配置时
+    沿用旧约定——只有 Master 目录是主世界（旧版 Tk 向导走这条路径）。"""
+    config = plan.shard_configs.get(shard_name)
+    if config is not None and "is_master" in config.shard:
+        return bool(config.shard["is_master"])
+    return shard_name == "Master"
+
+
 def validate_creation_plan(plan: WorldCreationPlan) -> None:
     if not plan.cluster_name or any(ch in plan.cluster_name for ch in '\\/:*?"<>|'):
         raise ValueError("非法存档名称")
@@ -103,7 +120,11 @@ def validate_creation_plan(plan: WorldCreationPlan) -> None:
         raise ValueError(profile.warnings[0])
 
     all_locations = set(profile.master_locations) | set(profile.caves_locations)
-    shards = [("Master", plan.master), ("Caves", plan.caves), *plan.extra_shards.items()]
+    shards = creation_shards(plan)
+    if not shards:
+        raise ValueError("至少需要保留一个世界")
+    if sum(1 for name, _shard in shards if shard_is_master(plan, name)) != 1:
+        raise ValueError("必须有且只有一个主世界")
     seen_names: set[str] = set()
     for shard_name, shard_plan in shards:
         if (not shard_name or shard_name in seen_names
@@ -277,14 +298,16 @@ def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
         (temp_dir / "blocklist.txt").write_text(
             "\n".join(plan.block_ids) + ("\n" if plan.block_ids else ""), encoding="utf-8"
         )
-        _write_shard(
-            temp_dir / "Master", plan.master, effective_mod_ids, effective_mod_overrides,
-            plan.shard_configs.get("Master"),
-        )
-        _write_shard(
-            temp_dir / "Caves", plan.caves, effective_mod_ids, effective_mod_overrides,
-            plan.shard_configs.get("Caves"),
-        )
+        if plan.master is not None:
+            _write_shard(
+                temp_dir / "Master", plan.master, effective_mod_ids, effective_mod_overrides,
+                plan.shard_configs.get("Master"),
+            )
+        if plan.caves is not None:
+            _write_shard(
+                temp_dir / "Caves", plan.caves, effective_mod_ids, effective_mod_overrides,
+                plan.shard_configs.get("Caves"),
+            )
         for shard_index, (shard_name, shard_plan) in enumerate(plan.extra_shards.items(), start=2):
             _write_shard(
                 temp_dir / shard_name,

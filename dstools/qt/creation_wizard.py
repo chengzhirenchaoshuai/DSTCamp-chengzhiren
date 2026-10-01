@@ -134,7 +134,7 @@ class DraftServerPanel(ServerConfigPage):
     def remove_shard(self, shard_name: str) -> None:
         cluster = self.ctx.selected_cluster()
         target = next((s for s in cluster.shards if s.name == shard_name), None)
-        if target is None or shard_name in (MASTER_SHARD, CAVES_SHARD):
+        if target is None:
             return
         (target.path / "server.ini").unlink(missing_ok=True)
         target.path.rmdir()
@@ -234,6 +234,8 @@ class CreationWizardDialog(QDialog):
 
         self._plan_master: creation.WorldShardPlan | None = None
         self._plan_caves: creation.WorldShardPlan | None = None
+        # 用户删掉的 Master/Caves；_reload_template() 不能再按模板把它们补回来。
+        self._removed_fixed_shards: set[str] = set()
         self._extra_plans: dict[str, creation.WorldShardPlan] = {}
         self._location_drafts: dict[tuple[str, str], creation.WorldShardPlan] = {}
         self._user_selected_location_shards: set[str] = set()
@@ -377,9 +379,9 @@ class CreationWizardDialog(QDialog):
         add_btn.clicked.connect(self._add_world)
         toolbar.addWidget(add_btn)
         self._remove_world_btn = QPushButton(t("world.creation_remove_world"))
-        self._remove_world_btn.setEnabled(False)
         self._remove_world_btn.clicked.connect(self._remove_world)
         toolbar.addWidget(self._remove_world_btn)
+        self._update_remove_world_btn()
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
@@ -462,9 +464,20 @@ class CreationWizardDialog(QDialog):
             self._location_combo.setCurrentIndex(index)
         self._location_combo.blockSignals(False)
 
+    def _live_shard_names(self) -> list[str]:
+        """当前保留的全部世界（下拉框顺序）。"""
+        return [self._shard_combo.itemText(i) for i in range(self._shard_combo.count())]
+
+    def _live_fixed_shards(self) -> list[str]:
+        return [shard for shard in (MASTER_SHARD, CAVES_SHARD) if shard not in self._removed_fixed_shards]
+
+    def _update_remove_world_btn(self) -> None:
+        # 任何世界都可以删，只剩最后一个世界时不能再删。
+        self._remove_world_btn.setEnabled(self._shard_combo.count() > 1)
+
     def _on_shard_changed(self, _index: int) -> None:
         self._refresh_location_combo()
-        self._remove_world_btn.setEnabled(self._shard_combo.currentText() in self._extra_plans)
+        self._update_remove_world_btn()
         self._render_world()
 
     def _on_location_changed(self, _index: int) -> None:
@@ -504,18 +517,25 @@ class CreationWizardDialog(QDialog):
             self._server_panel.add_shard(shard_name)
         self._shard_combo.addItem(shard_name)
         self._shard_combo.setCurrentText(shard_name)
-        self._remove_world_btn.setEnabled(True)
+        self._update_remove_world_btn()
         self._refresh_location_combo()
         self._render_world()
 
     def _remove_world(self) -> None:
         shard_name = self._shard_combo.currentText()
-        if shard_name not in self._extra_plans:
+        if self._shard_combo.count() <= 1 or not shard_name:
             return
         if not dialogs.ask_yes_no(self, t("world.creation_remove_world"),
                                   t("world.creation_remove_world_confirm", name=shard_name)):
             return
-        self._extra_plans.pop(shard_name, None)
+        if shard_name == MASTER_SHARD:
+            self._plan_master = None
+            self._removed_fixed_shards.add(shard_name)
+        elif shard_name == CAVES_SHARD:
+            self._plan_caves = None
+            self._removed_fixed_shards.add(shard_name)
+        else:
+            self._extra_plans.pop(shard_name, None)
         for key in [key for key in self._location_drafts if key[0] == shard_name]:
             self._location_drafts.pop(key, None)
         self._user_selected_location_shards.discard(shard_name)
@@ -524,8 +544,8 @@ class CreationWizardDialog(QDialog):
         index = self._shard_combo.findText(shard_name)
         if index >= 0:
             self._shard_combo.removeItem(index)
-        self._shard_combo.setCurrentText(MASTER_SHARD)
-        self._remove_world_btn.setEnabled(False)
+        self._shard_combo.setCurrentIndex(0)
+        self._update_remove_world_btn()
         self._refresh_location_combo()
         self._render_world()
 
@@ -542,21 +562,22 @@ class CreationWizardDialog(QDialog):
             except FileNotFoundError:
                 template_plans = (defaults.default_plan_for_location("forest"), defaults.default_plan_for_location("cave"))
                 self._template_root = None
-            if self._plan_master is None or self._plan_caves is None:
-                master, caves = template_plans
-                self._plan_master, self._plan_caves = master, caves
-                self._location_drafts[(MASTER_SHARD, master.location)] = master
-                self._location_drafts[(CAVES_SHARD, caves.location)] = caves
+            missing = [(shard, plan) for shard, plan in zip((MASTER_SHARD, CAVES_SHARD), template_plans)
+                       if shard not in self._removed_fixed_shards and self._plan_for_shard(shard) is None]
+            for shard, plan in missing:
+                self._set_plan_for_shard(shard, plan)
+                self._location_drafts[(shard, plan.location)] = plan
+            if missing:
                 apply_profile_defaults = True
 
             profile = resolve_world_location_profile(self._selected_mod_ids)
             profile_changed = profile.effective_mod_ids != self._world_profile.effective_mod_ids
             self._world_profile = profile
             if apply_profile_defaults and profile_changed:
-                for shard in (MASTER_SHARD, CAVES_SHARD):
+                for shard in self._live_fixed_shards():
                     if shard not in self._user_selected_location_shards:
                         self._switch_shard_location(shard, profile.default_location(shard), render=False)
-            for shard in (MASTER_SHARD, CAVES_SHARD):
+            for shard in self._live_fixed_shards():
                 plan = self._plan_for_shard(shard)
                 if plan and plan.location not in profile.available_locations(shard):
                     self._switch_shard_location(shard, profile.default_location(shard), render=False)
@@ -922,7 +943,7 @@ class CreationWizardDialog(QDialog):
 
     # ── 创建 ────────────────────────────────────────────────────────────
     def _prepare_unique_creation_ports(self, name, destination, cluster_ini, shard_configs) -> bool:
-        shard_names = (MASTER_SHARD, CAVES_SHARD, *self._extra_plans)
+        shard_names = (*self._live_fixed_shards(), *self._extra_plans)
         for shard_index, shard_name in enumerate(shard_names):
             shard_configs.setdefault(shard_name, creation.default_shard_config(
                 shard_name == MASTER_SHARD, shard_name, max(1, shard_index)))
@@ -966,6 +987,24 @@ class CreationWizardDialog(QDialog):
             config.steam["authentication_port"] = ports_for_shard["authentication_port"]
         return True
 
+    def _ensure_master_shard(self, shard_configs: dict) -> bool:
+        """删掉主世界后，剩下的世界里没有 is_master=true 的分片：提醒并让用户选一个
+        设为主世界。只改该世界 server.ini 的 [SHARD] is_master，不改文件夹名。"""
+        live = self._live_shard_names()
+        if any(shard_configs.get(name) is not None and shard_configs[name].shard.get("is_master")
+               for name in live):
+            return True
+        choice = dialogs.ask_choice(
+            self, t("world.creation_no_master_title"), t("world.creation_no_master_prompt"),
+            [(name, name) for name in live], default=live[0], min_width=420)
+        if not choice:
+            return False
+        config = shard_configs.get(choice)
+        if config is None:
+            config = shard_configs[choice] = creation.default_shard_config(True, choice)
+        config.shard["is_master"] = True
+        return True
+
     def _create(self) -> None:
         self._ensure_page("server")
         self._ensure_page("world")
@@ -973,7 +1012,7 @@ class CreationWizardDialog(QDialog):
         if self._mod_scan_running:
             self._status_label.setText(t("world.creation_mod_scanning_hint"))
             return
-        if not self._plan_master or not self._plan_caves:
+        if any(self._plan_for_shard(shard) is None for shard in self._live_fixed_shards()):
             dialogs.show_error(self, t("world.creation_dialog_title"), t("world.creation_no_default_plan"))
             return
         if not self._server_root and self._template_root is None:
@@ -999,6 +1038,8 @@ class CreationWizardDialog(QDialog):
             server_settings = self._server_panel.read_creation_settings() if self._server_panel else {}
             cluster_ini = copy.deepcopy(server_settings.get("cluster_ini") or creation.default_cluster_config(name))
             shard_configs = copy.deepcopy(server_settings.get("shard_configs", {}))
+            if not self._ensure_master_shard(shard_configs):
+                return
             if not self._prepare_unique_creation_ports(name, destination, cluster_ini, shard_configs):
                 return
             out = creation.create_world(
