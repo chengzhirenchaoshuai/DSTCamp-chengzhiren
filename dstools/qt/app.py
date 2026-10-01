@@ -17,6 +17,11 @@ def create_window(app: QApplication) -> MainWindow:
 
 
 def main() -> int:
+    # 清理上次自动更新留下的临时文件、旧版 EXE 备份等（尽力而为，失败不影响启动）
+    from dstools.shared.auto_update import cleanup_stale_update_artifacts, cleanup_vestigial_external_tools
+
+    cleanup_stale_update_artifacts()
+    cleanup_vestigial_external_tools()
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # 托盘常驻：关闭窗口不等于退出
     window = create_window(app)

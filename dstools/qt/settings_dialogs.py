@@ -465,16 +465,14 @@ class ManualUpdateDialog(dialogs.Dialog):
 
 
 class AboutDialog(dialogs.Dialog):
-    """"关于"——版本/简介/作者信息 + 项目地址链接 + 提醒更新开关 + 只读检查更新。
+    """"关于"——版本/简介/作者信息 + 项目地址链接 + 提醒更新开关 + 检查更新。
 
-    "检查更新"只查 GitHub/Gitee 最新 Release 版本号（只读网络请求），查到新版本
-    只给一条可点击跳转到发布页的链接；真正的"自动下载并替换正在运行的 EXE"
-    （对应 Tk 版 _show_update_prompt() 里"立即更新"选项、shared/auto_update.py）
-    这次没有搬，留到 Qt 真正成为发布入口前后再做——点链接跳到发布页，用户仍然
-    能靠"手动更新"或者去发布页自己下载新版 EXE。"""
+    "检查更新"查到新版本时显示一条链接，点开就是跟启动时一样的更新窗口（立即更新/
+    打开下载页），自动下载替换走 qt/self_update.py。"""
 
     def __init__(self, window):
         super().__init__(window, t("menu.about"), 520)
+        self._window = window
         message = t("about.message", version=__version__)
         header_text, _, rest = message.partition("\n\n")
         desc_text, _, contact_text = rest.partition("\n\n")
@@ -532,8 +530,14 @@ class AboutDialog(dialogs.Dialog):
         self.body.addLayout(btn_row)
 
     def _open_release_page(self, _url: str) -> None:
-        if self._found_release is not None:
-            webbrowser.open(self._found_release.page_url)
+        if self._found_release is None:
+            return
+        release = self._found_release
+        if hasattr(self._window, "open_update_prompt"):
+            self.accept()  # 先关掉"关于"，再弹更新窗口
+            self._window.open_update_prompt(release)
+        else:
+            webbrowser.open(release.page_url)
 
     def _check_update(self) -> None:
         self._check_btn.setEnabled(False)

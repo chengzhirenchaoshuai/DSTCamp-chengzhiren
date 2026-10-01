@@ -12,7 +12,7 @@ from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
-    QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
+    QProgressBar, QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from dstools import __version__
@@ -30,9 +30,11 @@ from dstools.qt.pages.server_config import ServerConfigPage
 from dstools.qt.pages.world_settings import WorldSettingsPage
 from dstools.qt.theme import THEME_NAMES, theme
 from dstools.qt.threads import post_to_ui, run_async
+from dstools.qt.self_update import SelfUpdater, is_update_available
 from dstools.qt.widgets import FrostedMenu, Grip, PillTabBar, ThemeMenuItem, TitleButton
 from dstools.shared.app_settings import (
-    get_minimize_on_close, get_window_position, set_minimize_on_close, set_window_position,
+    get_minimize_on_close, get_remind_update_enabled, get_window_position, set_minimize_on_close,
+    set_window_position,
 )
 from dstools.shared.resource_paths import bundled_resource_dir
 
@@ -434,12 +436,21 @@ class MainWindow(QWidget):
         self._update_notice = QLabel("")
         self._update_notice.linkActivated.connect(self._open_update_notice)
         self._update_release = None
+        # 下载更新时在状态栏右侧原位显示进度条（跟 Tk 版一致），平时隐藏
+        self._update_progress = QProgressBar()
+        self._update_progress.setRange(0, 100)
+        self._update_progress.setTextVisible(False)
+        self._update_progress.setFixedSize(160, 8)
+        self._update_progress.setVisible(False)
+        self._updater = SelfUpdater(self)
         status_row = QHBoxLayout()
         # 左边距跟各页面内容区左边缘对齐（本地服务器页"内网穿透代码:"这类标签的左边
         # 缘实测在 X=10；之前 18 的左边距比页面内容多缩进了 10px，真机反馈过状态栏
         # 文字和页面内容没对齐）。
         status_row.setContentsMargins(8, 4, 18, 6)
         status_row.addWidget(self.status, 1)
+        status_row.addWidget(self._update_progress)
+        status_row.addSpacing(8)
         status_row.addWidget(self._update_notice)
         for widget in (self.titlebar, self.menu_strip, self.tabbar, self.cluster_bar):
             root.addWidget(widget)
@@ -592,30 +603,46 @@ class MainWindow(QWidget):
             self.show_cache_dir_dialog()
 
     def start_update_check(self) -> None:
-        """启动时后台查一次最新 Release；查不到/没有更新就什么都不做，不弹窗、
-        不重试。发现新版本只点亮状态栏右侧那行提示（跟 Tk 版一样不受"提醒更新"
-        开关影响，本来就很克制，不算"提醒"）。Tk 版这里还会在"提醒更新"开启时
-        额外弹出一个"立即更新/打开下载页"的选择窗——那个窗口背后连着真正的自动
-        下载替换 EXE 逻辑（shared/auto_update.py），这次连同"关于"弹窗的"检查
-        更新"一起，都只做到只读检查，没有一起搬（见 reference/qt_migration_
-        verification.md 的说明），所以这里也不弹那个窗口，只点亮状态栏，用户
-        自己点"关于"→"检查更新"能看到同样的结果。"""
-        from dstools.shared.update_check import check_latest_release, is_newer_version
+        """启动时后台查一次最新 Release；查不到/没有更新就什么都不做，不重试。
+        有新版本时始终点亮状态栏右侧那行提示（不受"提醒更新"开关影响）；"提醒更新"
+        开着（默认开）才额外弹出更新窗口——跟 Tk 版 _start_update_check() 一致。"""
+        from dstools.shared.update_check import check_latest_release
 
         def done(result) -> None:
-            if result is not None and is_newer_version(__version__, result.version):
-                self._update_release = result
-                self._update_notice.setText(
-                    f'<a href="{result.page_url}" style="color: {theme.hex("PRIMARY")};">'
-                    f'{t("app.update_available", version=result.version)}</a>')
+            if not is_update_available(result):
+                return
+            self.show_update_notice(result)
+            if get_remind_update_enabled():
+                self._updater.prompt(result)
 
         run_async(check_latest_release, done, lambda _exc: None)
 
+    def show_update_notice(self, release) -> None:
+        self._update_release = release
+        self._update_notice.setText(
+            f'<a href="update" style="color: {theme.hex("PRIMARY")};">'
+            f'{t("app.update_available", version=release.version)}</a>')
+
+    def open_update_prompt(self, release) -> None:
+        """"关于"里检查到新版本、或点状态栏提示时调用：弹出更新窗口。"""
+        self.show_update_notice(release)
+        self._updater.prompt(release)
+
     def _open_update_notice(self, _url: str) -> None:
         if self._update_release is not None:
-            import webbrowser
+            self._updater.prompt(self._update_release)
 
-            webbrowser.open(self._update_release.page_url)
+    def set_update_progress(self, percent: int | None) -> None:
+        """下载中显示进度条和百分比；None 恢复成"发现新版本"链接。"""
+        if percent is None:
+            self._update_progress.setVisible(False)
+            if self._update_release is not None:
+                self.show_update_notice(self._update_release)
+            return
+        self._update_progress.setVisible(True)
+        self._update_progress.setValue(percent)
+        version = self._update_release.version if self._update_release is not None else ""
+        self._update_notice.setText(t("update.downloading", version=version, percent=percent))
 
     def switch_language(self, lang: str) -> None:
         """切换界面语言：静态文案（标题栏/菜单/存档栏/页签名/托盘）立即全量刷新；
