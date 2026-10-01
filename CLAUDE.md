@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-本仓库当前版本为 `1.3.8`。DSTCamp 是 Windows 上的《饥荒：联机版》存档、Mod、世界、专服、内网穿透和大厅加速管理工具，包名为 `dstools`，入口为 `dstools.qt.app.main`（Qt 版界面；旧 Tk 版 `dstools/gui/` 仍保留在源码中，不再作为发布入口）。
+DSTCamp 是 Windows 上的《饥荒：联机版》存档、Mod、世界、专服、内网穿透和大厅加速管理工具，包名为 `dstools`，入口为 `dstools.qt.app.main`（Qt 版界面；旧 Tk 版 `dstools/gui/` 仍保留在源码中，不再作为发布入口）。
 
 适用于本仓库的编码代理。默认中文交流、中文文档与注释；保留标识符、协议字段和第三方 API 原文。
 
@@ -44,7 +44,7 @@ pip install -e ".[build]"
 python scripts/build_exe.py
 ```
 
-测试脚本不使用 pytest/unittest，`tests/run_all.py` 自动发现全部 `tests/test_*.py` 并在隔离子进程中执行。发布时同步修改 `pyproject.toml` 与 `dstools/__init__.py`；构建脚本只收固定资源白名单并在 `build/` 暂存，禁止包含缓存、持久数据、安全材料和 `reference/`；验证 EXE、`sha256.json` 后再提交、推送、打 `vX.Y.Z` 标签并创建 Release。打包完成后实际启动生成的 EXE；静态导入和冒烟测试不能替代 GUI、Steam、frpc 或游戏内验证。
+测试脚本不使用 pytest/unittest，`tests/run_all.py` 自动发现全部 `tests/test_*.py` 并在隔离子进程中执行。当前版本以 `pyproject.toml` 与 `dstools/__init__.py` 为准，文档里不写死版本号；发布时同步修改这两处；构建脚本只收固定资源白名单并在 `build/` 暂存，禁止包含缓存、持久数据、安全材料和 `reference/`；验证 EXE、`sha256.json` 后再提交、推送、打 `vX.Y.Z` 标签并创建 Release。打包完成后实际启动生成的 EXE；静态导入和冒烟测试不能替代 GUI、Steam、frpc 或游戏内验证。
 
 ## 更新日志编写规则
 
