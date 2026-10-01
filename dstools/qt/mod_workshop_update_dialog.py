@@ -571,23 +571,16 @@ class WorkshopUpdateDialog(QDialog):
                           t("mod.update_reference_removed", count=changed))
 
     def _clean_shadow(self, wid: str) -> None:
-        """移走挡住 V2 的专服 mods 旧副本（移到同盘备份目录，不删除）。"""
-        from dstools.features.mod.v1_shadow import ShadowedMod, backup_root_for, quarantine_shadowed_mods
+        """清理挡住 V2 的专服 mods 旧副本（文件夹进回收站、链接只删链接），完成后渐隐提示。"""
+        from dstools.features.mod.v1_shadow import ShadowedMod, remove_shadowed_mods
 
         status = self._states.get(wid)
         evidence = status.evidence if status is not None else None
         shadow_path = evidence.v1_shadow_path if evidence is not None else None
-        mods_root = self.page._server_mods_root()
-        if shadow_path is None or mods_root is None or wid in self._cleanup_running:
-            return
-        unknown = t("local.version_unknown")
-        if not dialogs.ask_yes_no(self, t("mod.update_clean_shadow_btn"), t(
-                "mod.update_clean_shadow_confirm", path=str(shadow_path), old=status.local_version or unknown,
-                new=status.source_version or unknown, backup=str(backup_root_for(mods_root))),
-                min_width=560, danger=True):
+        if shadow_path is None or wid in self._cleanup_running:
             return
         try:
-            quarantine_shadowed_mods([ShadowedMod(str(wid), shadow_path, shadow_path)], mods_root)
+            remove_shadowed_mods([ShadowedMod(str(wid), shadow_path, shadow_path)])
         except OSError as exc:
             dialogs.show_error(self, t("mod.update_clean_shadow_btn"), t("local.v1_shadow_failed", error=str(exc)))
             return

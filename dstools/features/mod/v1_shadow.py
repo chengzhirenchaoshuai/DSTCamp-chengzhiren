@@ -5,8 +5,9 @@
 不会清理它，于是 V2 怎么更新、重新订阅都没用，专服一直加载这份旧副本（真机案例：
 378160973 Global Positions，V2 是 1.7.6，专服 mods 里旧副本是 1.7.5）。
 
-这里只做检测和"移走"，不删除：旧副本移到同一磁盘上的备份目录（原子改名，不复制、
-不递归删除 Mod 目录），需要时可以手动移回。
+检测到就清理：普通文件夹移到 Windows 回收站（可还原）；``workshop-<id>`` 本身是
+目录联接/符号链接的，只删除链接本身（os.rmdir/unlink），绝不进入链接目标。游戏自己
+也会在 V2 可用时淘汰旧 V1 副本，所以不再逐个询问。
 """
 
 from __future__ import annotations
@@ -14,10 +15,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-
-BACKUP_DIR_NAME = "dstcamp_mod_backup"
 
 
 @dataclass(frozen=True)
@@ -57,9 +55,8 @@ def find_shadowed_mods(workshop_ids, server_mods_root: Path, workshop_content_ro
                        with_versions: bool = True) -> list[ShadowedMod]:
     """列出被专服 mods 旧副本挡住的 V2 Mod。
 
-    条件：创意工坊 V2 目录有 ``modinfo.lua``，且专服 ``mods/workshop-<id>`` 是一个普通
-    文件夹。旧副本本身是 junction/符号链接的跳过——可能就是指向 V2 目录的链接，
-    按项目约定链接只能由专门逻辑处理，这里不碰。"""
+    条件：创意工坊 V2 目录有 ``modinfo.lua``，且专服 ``mods/workshop-<id>`` 存在
+    （普通文件夹或链接都算：专服都会优先读它）。"""
     if workshop_content_root is None:
         return []
     mods_root = Path(server_mods_root)
@@ -75,7 +72,7 @@ def find_shadowed_mods(workshop_ids, server_mods_root: Path, workshop_content_ro
         shadow_path = mods_root / f"workshop-{workshop_id}"
         if not (v2_path / "modinfo.lua").is_file():
             continue
-        if not os.path.lexists(shadow_path) or _is_link(shadow_path) or not shadow_path.is_dir():
+        if not os.path.lexists(shadow_path):
             continue
         result.append(ShadowedMod(
             workshop_id, shadow_path, v2_path,
@@ -86,21 +83,19 @@ def find_shadowed_mods(workshop_ids, server_mods_root: Path, workshop_content_ro
     return result
 
 
-def backup_root_for(server_mods_root: Path) -> Path:
-    """备份目录放在 mods 真实所在目录的同级（同一磁盘，移动是原子改名）。
-    mods 本身是联接（"添加mod软链接"）时按联接目标的真实位置算。"""
-    real_mods = Path(os.path.realpath(server_mods_root))
-    return real_mods.parent / BACKUP_DIR_NAME
+def remove_shadowed_mods(shadowed: list[ShadowedMod]) -> None:
+    """清理旧副本：普通文件夹移到回收站；链接只删链接本身（项目约定：联接用 os.rmdir，
+    不能用 rmtree，否则会删到链接目标里的文件）。任一项失败抛 OSError，已处理的保持已处理。"""
+    from dstools.shared.recycle_bin import move_to_recycle_bin
 
-
-def quarantine_shadowed_mods(shadowed: list[ShadowedMod], server_mods_root: Path) -> Path:
-    """把旧副本整体移到 ``<mods 同级>/dstcamp_mod_backup/<时间>/workshop-<id>``，返回本次备份目录。
-    任一项失败（被游戏占用等）抛 OSError，已经移走的保持移走状态（都可从备份目录找回）。"""
-    target_root = backup_root_for(server_mods_root) / datetime.now().strftime("%Y%m%d_%H%M%S")
-    target_root.mkdir(parents=True, exist_ok=True)
     for item in shadowed:
-        if _is_link(item.shadow_path):
+        path = item.shadow_path
+        if not os.path.lexists(path):
             continue
-        target = target_root / item.shadow_path.name
-        os.rename(item.shadow_path, target)  # 同盘原子改名，不复制、不递归删除
-    return target_root
+        if _is_link(path):
+            try:
+                os.rmdir(path)      # 目录联接/目录符号链接：只删链接
+            except NotADirectoryError:
+                os.unlink(path)     # 指向文件的符号链接
+        else:
+            move_to_recycle_bin(path)

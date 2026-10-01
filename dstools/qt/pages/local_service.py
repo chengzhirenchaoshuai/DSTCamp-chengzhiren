@@ -977,41 +977,26 @@ class LocalServicePage(Page):
         return False
 
     def _resolve_v1_shadows(self, enabled_ids, server_mods_root: Path) -> bool:
-        """启用的 V2 Mod 在专服 mods 下还有旧副本时询问处理（见 features/mod/v1_shadow.py）。
-        返回 False 表示用户取消启动。"""
-        import os
-
+        """启用的 V2 Mod 在专服 mods 下还有旧副本时直接清理（见 features/mod/v1_shadow.py）：
+        文件夹移到回收站、链接只删链接，完成后弹一个渐隐提示，不打断启动。
+        清理失败（文件被占用）返回 False 并报错——否则专服会照样加载旧版本。"""
         from dstools.features.mod.parser import find_shared_ugc_directory
-        from dstools.features.mod.v1_shadow import backup_root_for, find_shadowed_mods, quarantine_shadowed_mods
+        from dstools.features.mod.v1_shadow import find_shadowed_mods, remove_shadowed_mods
 
         ugc_directory = find_shared_ugc_directory()
         if ugc_directory is None:
             return True  # 不传 -ugc_directory 时专服走自己的下载目录，不在这里判断
-        shadowed = find_shadowed_mods(enabled_ids, server_mods_root, Path(ugc_directory) / "content" / "322330")
+        shadowed = find_shadowed_mods(enabled_ids, server_mods_root, Path(ugc_directory) / "content" / "322330",
+                                      with_versions=False)
         if not shadowed:
             return True
-        unknown = t("local.version_unknown")
-        details = "\n".join(
-            t("local.v1_shadow_line", name=item.name or f"workshop-{item.workshop_id}", mod_id=item.workshop_id,
-              old=item.shadow_version or unknown, new=item.v2_version or unknown)
-            for item in shadowed)
-        message = t("local.v1_shadow_msg", details=details, backup=str(backup_root_for(server_mods_root)))
-        if hasattr(os.path, "isjunction") and os.path.isjunction(server_mods_root):
-            message += t("local.v1_shadow_junction_note")
-        choice = dialogs.ask_choice(
-            self.window(), t("local.v1_shadow_title"), message,
-            [(t("local.v1_shadow_move_btn"), "move"), (t("local.v1_shadow_keep_btn"), "keep"),
-             (t("dlg.cancel_btn"), "cancel")],
-            default="move", min_width=560)
-        if choice == "keep":
-            return True
-        if choice != "move":
-            return False
         try:
-            quarantine_shadowed_mods(shadowed, server_mods_root)
+            remove_shadowed_mods(shadowed)
         except OSError as exc:
             dialogs.show_error(self.window(), t("local.v1_shadow_title"), t("local.v1_shadow_failed", error=str(exc)))
             return False
+        names = "、".join(item.name or f"workshop-{item.workshop_id}" for item in shadowed)
+        dialogs.show_toast(self.window(), t("local.v1_shadow_cleaned", count=len(shadowed), names=names), ms=3000)
         return True
 
     # ── 启动/停止/重启 ──────────────────────────────────────────────────
