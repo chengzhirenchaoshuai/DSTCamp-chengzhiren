@@ -11,9 +11,9 @@ mod 自己声明的默认值，不写盘；"返回"直接关闭、丢弃未应�
 
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
+    QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
 )
 
@@ -27,6 +27,7 @@ from dstools.i18n import t
 from dstools.qt import dialogs
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async
+from dstools.qt.widgets import Card
 
 
 def _resolve_mod_config(page, workshop_id: str, mod_info) -> bool:
@@ -80,23 +81,29 @@ def open_mod_config(page, workshop_id: str, mod, mod_info, read_only: bool, read
         ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason).show()
         return
 
-    loading = QDialog(page.window())
-    loading.setWindowTitle(t("mod.config_loading_title"))
-    loading.setModal(False)
-    layout = QVBoxLayout(loading)
-    label = QLabel(f"{t('mod.config_loading')}...")
-    label.setContentsMargins(28, 22, 28, 22)
-    layout.addWidget(label)
-    loading.show()
+    # 解析通常很快；之前每次都弹一个"正在加载"小窗、解析完立刻关掉，看起来像闪了一下
+    # （真机反馈过）。改成忙碌光标，只有解析超过 0.4 秒时才在主窗口上渐隐提示一句。
+    QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
+    pending = {"active": True}
+
+    def slow_hint() -> None:
+        if pending["active"]:
+            dialogs.show_toast(page.window(), f"{t('mod.config_loading')}…", ms=1800)
+
+    QTimer.singleShot(400, slow_hint)
+
+    def finish() -> None:
+        pending["active"] = False
+        QApplication.restoreOverrideCursor()
 
     def done(changed: bool) -> None:
-        loading.close()
+        finish()
         if changed:
             page._render_list()
         ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason).show()
 
     def error(_exc: Exception) -> None:
-        loading.close()
+        finish()
         ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason).show()
 
     run_async(lambda: _resolve_mod_config(page, workshop_id, mod_info), done, error)
@@ -134,12 +141,19 @@ class ModConfigDialog(QDialog):
             root.addWidget(self._banner(t("mod.dynamic_banner", count=remaining_dynamic), "#8d6e00"))
 
         area = QScrollArea()
+        area.setObjectName("modConfigArea")
         area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
         area.viewport().setAutoFillBackground(False)
         body = QWidget()
+        body.setObjectName("modConfigBody")
         body.setAutoFillBackground(False)
+        # 显式透明：否则滚动区视口和内容控件露出系统调色板的纯灰底（真机反馈过）
+        area.setStyleSheet("#modConfigArea, #modConfigArea > QWidget, #modConfigBody "
+                           "{ background: transparent; border: none; }")
         self._body_layout = QVBoxLayout(body)
-        self._body_layout.setContentsMargins(6, 6, 6, 6)
+        self._body_layout.setContentsMargins(2, 2, 8, 2)
+        self._body_layout.setSpacing(8)
         area.setWidget(body)
         root.addWidget(area, 1)
 
@@ -148,14 +162,15 @@ class ModConfigDialog(QDialog):
             if opt.is_header:
                 label_text = opt.label.strip()
                 if label_text:
-                    sep = QFrame()
-                    sep.setFrameShape(QFrame.Shape.HLine)
-                    self._body_layout.addWidget(sep)
                     header = QLabel(label_text)
-                    header.setAlignment(Qt.AlignmentFlag.AlignCenter)
                     header.setFont(theme.font("FONT_SIZE_LG", bold=True))
-                    header.setStyleSheet(f"color: {theme.hex('HEADING')};")
+                    header.setStyleSheet(f"color: {theme.hex('PRIMARY_DARK')};")
+                    self._body_layout.addSpacing(6)
                     self._body_layout.addWidget(header)
+                    line = QFrame()
+                    line.setFixedHeight(2)
+                    line.setStyleSheet(f"background: {theme.hex('PRIMARY_LIGHT')}; border: none;")
+                    self._body_layout.addWidget(line)
                 else:
                     spacer = QWidget()
                     spacer.setFixedHeight(10)
@@ -197,10 +212,17 @@ class ModConfigDialog(QDialog):
         label.setFont(theme.font("FONT_SIZE_XS", bold=True))
         return label
 
+    @staticmethod
+    def _option_card() -> tuple[QWidget, QVBoxLayout]:
+        """单个配置项的容器：主题卡片底色 + 浅描边圆角（替代系统灰色 StyledPanel）。"""
+        card = Card(radius=10, alpha=200, fill_key="CARD_BG", border=True)
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(4)
+        return card, layout
+
     def _render_choice_row(self, opt) -> QWidget:
-        row = QFrame()
-        row.setFrameShape(QFrame.Shape.StyledPanel)
-        layout = QVBoxLayout(row)
+        row, layout = self._option_card()
         top = QHBoxLayout()
         label_full = opt.label or opt.name
         name_label = QLabel(label_full)
@@ -254,9 +276,7 @@ class ModConfigDialog(QDialog):
 
     # ── Configs Extended 风格的集合/数组/字典/文本编辑器 ────────────────
     def _render_raw_value_editor(self, opt, current_value) -> QWidget:
-        row = QFrame()
-        row.setFrameShape(QFrame.Shape.StyledPanel)
-        layout = QVBoxLayout(row)
+        row, layout = self._option_card()
         header = QLabel(opt.label or opt.name)
         header.setFont(theme.font("FONT_SIZE_MD", bold=True))
         layout.addWidget(header)
