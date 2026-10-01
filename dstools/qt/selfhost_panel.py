@@ -256,6 +256,7 @@ class _LobbySettingsDialog(QDialog):
         wireguard = app_settings.get_lobby_accel_wireguard()
         self._wireguard_value_label.setText(
             t("selfhost.lobby_wireguard_deployed") if wireguard else t("selfhost.lobby_wireguard_not_deployed"))
+        self._wireguard_value_label.setStyleSheet(f"color: {theme.hex('SUCCESS')};" if wireguard else "")
         self._wg_deploy_btn.setEnabled(not self.panel._wireguard_deploying)
         self._wg_deploy_btn.setText(
             t("selfhost.lobby_accel_redeploy_wireguard") if wireguard else t("selfhost.lobby_accel_deploy_wireguard"))
@@ -1157,7 +1158,7 @@ class SelfHostPanel(QWidget):
         if self._lobby_accel_busy:
             text, color = t("selfhost.lobby_accel_status_starting"), theme.hex("TEXT_MUTED")
         elif self.lobby_accel.is_healthy():
-            text, color = t("selfhost.lobby_accel_status_running"), theme.hex("ACCENT")
+            text, color = t("selfhost.lobby_accel_status_running"), theme.hex("SUCCESS")
         elif self.lobby_accel.status == LobbyAccelStatus.CRASHED:
             text, color = t("selfhost.lobby_accel_status_failed"), theme.hex("ERROR")
         elif not app_settings.get_lobby_accel_enabled():
@@ -1174,14 +1175,14 @@ class SelfHostPanel(QWidget):
         mihomo_path = app_settings.get_lobby_accel_mihomo_path()
         if mihomo_path:
             self._mihomo_summary_label.setText(t("selfhost.lobby_mihomo_selected", name=mihomo_path.name))
-            self._mihomo_summary_label.setStyleSheet(f"color: {theme.hex('ACCENT')};")
+            self._mihomo_summary_label.setStyleSheet(f"color: {theme.hex('SUCCESS')};")
         else:
             self._mihomo_summary_label.setText(t("selfhost.lobby_mihomo_not_selected"))
             self._mihomo_summary_label.setStyleSheet(f"color: {theme.hex('TEXT_MUTED')};")
         wireguard = app_settings.get_lobby_accel_wireguard()
         if wireguard:
             self._wireguard_summary_label.setText(t("selfhost.lobby_wireguard_summary", port=wireguard["port"]))
-            self._wireguard_summary_label.setStyleSheet(f"color: {theme.hex('ACCENT')};")
+            self._wireguard_summary_label.setStyleSheet(f"color: {theme.hex('SUCCESS')};")
         else:
             self._wireguard_summary_label.setText(t("selfhost.lobby_wireguard_not_deployed"))
             self._wireguard_summary_label.setStyleSheet(f"color: {theme.hex('TEXT_MUTED')};")
