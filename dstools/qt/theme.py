@@ -5,7 +5,7 @@ font_style_choice），两套界面互相可见。颜色一律通过 ``theme.col
 缓存；自绘控件在 paintEvent 里取色，切主题后整窗重绘即可，不需要逐个控件通知。
 """
 
-from PySide6.QtCore import QObject, QPoint, QRect, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QLabel
 
@@ -31,36 +31,60 @@ def _rgba(hex_color: str, alpha: int) -> str:
 
 
 _ORIGINAL_COMBO_SHOW_POPUP = None
+_POPUP_SHOW_FILTER = None
 _POPUP_BG_LABEL_NAME = "dstcamp_combo_popup_bg_snapshot"
+_POPUP_FILTER_PROPERTY = "dstcamp_popup_show_filter"
 
 
 def _patch_combo_popup_width() -> None:
     """全局猴补丁 QComboBox.showPopup——Qt 默认展开列表按内容自适应宽度，内容一长
-    就比下拉框本身更宽（真机反馈过）；这里在原生展开完之后再把弹出窗口宽度收窄到
-    比下拉框自身略窄一点。改父类方法而不是给某几个下拉框单独加逻辑，是因为全应用
+    就比下拉框本身更宽（真机反馈过）；这里在弹出窗口显示前（Show 事件）把宽度收窄到
+    比下拉框自身略窄一点，并贴好假透明背景。改父类方法而不是给某几个下拉框单独加逻辑，是因为全应用
     有 9 个文件各自直接 new 了 QComboBox()，没有统一的自定义子类可改，这样一次
     生效全部下拉框，theme.apply_to_app() 可能被切主题/切字体反复调用，用模块级
     变量确保只打一次补丁。"""
-    global _ORIGINAL_COMBO_SHOW_POPUP
+    global _ORIGINAL_COMBO_SHOW_POPUP, _POPUP_SHOW_FILTER
     if _ORIGINAL_COMBO_SHOW_POPUP is not None:
         return
     from PySide6.QtWidgets import QComboBox
 
     _ORIGINAL_COMBO_SHOW_POPUP = QComboBox.showPopup
+    _POPUP_SHOW_FILTER = _PopupShowFilter()
+    # 关掉 Windows 的下拉展开动画：动画期间画的是 Qt 预先截下的默认样式列表，
+    # 展开时会先闪一下默认背景再变成半透明，动画本身也让展开显得慢半拍。
+    QApplication.setEffectEnabled(Qt.UIEffect.UI_AnimateCombo, False)
 
     def _show_popup(self) -> None:
-        _ORIGINAL_COMBO_SHOW_POPUP(self)
         popup = self.view().parentWidget()
-        if popup is None:
-            return
-        width = max(10, self.width() - 6)
-        popup.setFixedWidth(width)
-        # 默认左对齐在下拉框左边缘，稍微收窄后会明显偏左——按下拉框居中重新摆放。
-        left = self.mapToGlobal(QPoint(0, 0)).x() + (self.width() - width) // 2
-        popup.move(left, popup.y())
-        _apply_fake_transparent_popup_bg(self, popup)
+        # 弹出容器是 Qt 懒创建、之后复用的；用 Qt 动态属性（存在 C++ 对象上）标记只装
+        # 一次过滤器，不用 Python 属性——包装对象身份不稳定，见下方 findChild 的说明。
+        if popup is not None and not popup.property(_POPUP_FILTER_PROPERTY):
+            popup.installEventFilter(_POPUP_SHOW_FILTER)
+            popup.setProperty(_POPUP_FILTER_PROPERTY, True)
+        _ORIGINAL_COMBO_SHOW_POPUP(self)
 
     QComboBox.showPopup = _show_popup
+
+
+class _PopupShowFilter(QObject):
+    """在弹出列表真正画到屏幕之前（Show 事件早于原生窗口显示）调整宽度、位置并贴好
+    背景，第一帧就是最终样式。之前是原生展开之后才改，会先闪一帧默认样式。"""
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.Type.Show:
+            combo = obj.parentWidget()
+            if combo is not None and combo.inherits("QComboBox"):
+                _adjust_combo_popup(combo, obj)
+        return False
+
+
+def _adjust_combo_popup(combo, popup) -> None:
+    width = max(10, combo.width() - 6)
+    popup.setFixedWidth(width)
+    # 默认左对齐在下拉框左边缘，稍微收窄后会明显偏左——按下拉框居中重新摆放。
+    left = combo.mapToGlobal(QPoint(0, 0)).x() + (combo.width() - width) // 2
+    popup.move(left, popup.y())
+    _apply_fake_transparent_popup_bg(combo, popup)
 
 
 def _apply_fake_transparent_popup_bg(combo, popup) -> None:
@@ -89,7 +113,7 @@ def _apply_fake_transparent_popup_bg(combo, popup) -> None:
     if pixmap is None or pixmap.isNull():
         if label is not None:
             label.hide()
-            popup.setStyleSheet("")
+            _set_popup_style(popup, "")
         return
     if grab_rect != popup_rect:
         # 列表有一部分伸出所在窗口（如很矮的回档窗口里展开长列表）：窗口外那块截不到，
@@ -101,13 +125,19 @@ def _apply_fake_transparent_popup_bg(combo, popup) -> None:
         label = QLabel(popup)
         label.setObjectName(_POPUP_BG_LABEL_NAME)
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-    # 同一个弹出容器可能上次退回过实色，每次贴图都重新设成透明。
-    popup.setStyleSheet("background: transparent;")
+    # 同一个弹出容器可能上次退回过实色，每次贴图都确认一下是透明。
+    _set_popup_style(popup, "background: transparent;")
     label.move(0, 0)
     label.resize(popup.size())
     label.setPixmap(_faded_popup_bg_pixmap(pixmap))
     label.lower()
     label.show()
+
+
+def _set_popup_style(popup, style: str) -> None:
+    """只在样式真的变化时才设置：setStyleSheet 会让容器和列表整套重算样式，每次展开都设会拖慢。"""
+    if popup.styleSheet() != style:
+        popup.setStyleSheet(style)
 
 
 def _extend_popup_bg_pixmap(partial, offset, size):
