@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -69,6 +70,35 @@ def _write_cluster(root: Path, name: str, *, master_port: int = 10888,
         )
         shards.append(Shard("Caves", cave))
     return Cluster(name, path, shards=shards)
+
+
+def _local_page(clusters=(), *, manager=None, mapping=None, jumps=None):
+    """构造不建控件的 Qt 本地服务器页，只挂启动预检等业务流程用到的属性。"""
+    from dstools.qt.pages.local_service import LocalServicePage
+
+    service = LocalServicePage.__new__(LocalServicePage)
+    service.window = lambda: None
+    service.ctx = SimpleNamespace(
+        env=SimpleNamespace(clusters=list(clusters)),
+        mapping_owner=lambda *_args: mapping,
+        goto_tab=jumps.append if jumps is not None else (lambda _key: None),
+        cluster_config_saved=SimpleNamespace(emit=lambda _cluster: None),
+    )
+    service.manager = manager or SimpleNamespace(running=lambda: [])
+    service._launching_keys = set()
+    service._steam_remote_build_id = None
+    service._prepare_legacy_mods_for_start = lambda _cluster: True
+    return service
+
+
+@contextmanager
+def _no_steam_update():
+    """启动预检会读本机 Steam 清单判断专服是否要更新，测试里固定为无需更新。"""
+    from dstools.qt.pages import local_service as local_page
+
+    with patch.object(local_page.steam_client_updater, "snapshot_app", return_value=None), \
+            patch.object(local_page.steam_client_updater, "action_for_snapshot", return_value="none"):
+        yield
 
 
 def test_effective_defaults_and_internal_ports() -> None:
@@ -332,8 +362,7 @@ def test_atomic_lan_port_rewrite_rolls_back() -> None:
 
 
 def test_local_service_batch_preflight() -> None:
-    from types import SimpleNamespace
-    from dstools.features.local_service import tab as local_tab
+    from dstools.qt.pages import local_service as local_page
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -345,22 +374,12 @@ def test_local_service_batch_preflight() -> None:
             shard_name="Master", proc=None,
         )
         manager = SimpleNamespace(running=lambda: [running_proc])
-        fake_sakura = SimpleNamespace(has_active_mapping=lambda *_args: True)
-        app = SimpleNamespace(
-            root=None, env=SimpleNamespace(clusters=[running_cluster, target]),
-            sakura_tab=fake_sakura,
-        )
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-        service.app = app
-        service.manager = manager
-        service._launching_keys = set()
+        service = _local_page([running_cluster, target], manager=manager, mapping="sakura")
 
-        old_scan = local_tab.scan_udp_ports
-        old_ask_choice = local_tab.dlg.ask_choice
-        try:
-            local_tab.scan_udp_ports = lambda: UdpPortScan(True, {})
+        with _no_steam_update(), \
+                patch.object(local_page, "scan_udp_ports", return_value=UdpPortScan(True, {})), \
+                patch.object(local_page.dialogs, "ask_choice", return_value="cancel"):
             # 用户选择“否”（取消），预检必须拦截这次启动。
-            local_tab.dlg.ask_choice = lambda *_args, **_kwargs: "cancel"
             assert not service._preflight_start(target, target.shards)
 
             running_claims, _ = collect_cluster_port_claims(running_cluster)
@@ -372,29 +391,15 @@ def test_local_service_batch_preflight() -> None:
             # 重启是在停服前做预检：当前目标进程自己的端口应被排除，不能
             # 把它误报成外部占用；普通启动模式下同一证据仍必须报冲突。
             running_proc.proc = SimpleNamespace(pid=4321)
-            manager.running = lambda: [running_proc]
-            master_claims, _ = collect_cluster_port_claims(
-                running_cluster, ["Master"]
-            )
-            own_ports = frozenset(
-                claim.port for claim in master_claims if claim.binding
-            )
-            local_tab.scan_udp_ports = lambda: UdpPortScan(
-                True, {4321: own_ports}
-            )
-            assert not service._preflight_start(
-                running_cluster, running_cluster.shards
-            )
-            assert service._preflight_start(
-                running_cluster, running_cluster.shards, restarting=True
-            )
-        finally:
-            local_tab.scan_udp_ports = old_scan
-            local_tab.dlg.ask_choice = old_ask_choice
+            master_claims, _ = collect_cluster_port_claims(running_cluster, ["Master"])
+            own_ports = frozenset(claim.port for claim in master_claims if claim.binding)
+            with patch.object(local_page, "scan_udp_ports", return_value=UdpPortScan(True, {4321: own_ports})):
+                assert not service._preflight_start(running_cluster, running_cluster.shards)
+                assert service._preflight_start(running_cluster, running_cluster.shards, restarting=True)
 
 
 def test_local_service_lan_preflight_repair() -> None:
-    from dstools.features.local_service import tab as local_tab
+    from dstools.qt.pages import local_service as local_page
     from dstools.shared.ini_parser import parse_server_ini
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -402,21 +407,12 @@ def test_local_service_lan_preflight_repair() -> None:
             Path(tmp), "LAN_Invalid", lan_only=True,
             master_game_port=10002, caves_game_port=10001,
         )
-        manager = SimpleNamespace(running=lambda: [])
-        app = SimpleNamespace(
-            root=None,
-            env=SimpleNamespace(clusters=[cluster]),
-            sakura_tab=SimpleNamespace(has_active_mapping=lambda *_args: False),
-        )
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-        service.app = app
-        service.manager = manager
-        service._launching_keys = set()
-        service._prepare_legacy_mods_for_start = lambda _cluster: True
+        service = _local_page([cluster])
 
-        with patch.object(local_tab, "scan_udp_ports", return_value=UdpPortScan(True, {})), \
-                patch.object(local_tab.dlg, "ask_choice", return_value="allocate"), \
-                patch.object(local_tab.dlg, "show_info"):
+        with _no_steam_update(), \
+                patch.object(local_page, "scan_udp_ports", return_value=UdpPortScan(True, {})), \
+                patch.object(local_page.dialogs, "ask_choice", return_value="allocate"), \
+                patch.object(local_page.dialogs, "show_info"):
             assert service._preflight_start(cluster, cluster.shards)
 
         ports = {
@@ -427,39 +423,28 @@ def test_local_service_lan_preflight_repair() -> None:
 
 
 def test_local_service_lan_blocked_by_mapping_or_running() -> None:
-    from dstools.features.local_service import tab as local_tab
+    from dstools.qt.pages import local_service as local_page
     from dstools.shared.ini_parser import parse_cluster_ini
 
     def make_service(cluster, *, running):
         jumps = []
-        app = SimpleNamespace(
-            root=None,
-            env=SimpleNamespace(clusters=[cluster]),
-            sakura_tab=SimpleNamespace(has_active_mapping=lambda *_args: True),
-            goto_tab=jumps.append,
-            mark_server_tab_stale=lambda: None,
-        )
         proc = SimpleNamespace(cluster_path=cluster.path, shard_name="Master")
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-        service.app = app
-        service.manager = SimpleNamespace(running=lambda: [proc] if running else [])
-        service._launching_keys = set()
-        service._prepare_legacy_mods_for_start = lambda _cluster: True
-        return service, jumps
+        manager = SimpleNamespace(running=lambda: [proc] if running else [])
+        return _local_page([cluster], manager=manager, mapping="sakura", jumps=jumps), jumps
 
     def offline_flag(cluster) -> bool:
         return bool(parse_cluster_ini(cluster.path / "cluster.ini").network["offline_cluster"])
 
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, _no_steam_update():
         cluster = _write_cluster(
             Path(tmp), "Mapped_Offline", offline=True,
             master_game_port=39491, caves_game_port=12256,
         )
         service, jumps = make_service(cluster, running=False)
-        with patch.object(local_tab, "scan_udp_ports", return_value=UdpPortScan(True, {})):
-            # 取消：不改配置、不跳转，也不能落到只有“确认”的旧错误框。
-            with patch.object(local_tab.dlg, "ask_choice", return_value="cancel") as ask, \
-                    patch.object(local_tab.dlg, "show_error") as error:
+        with patch.object(local_page, "scan_udp_ports", return_value=UdpPortScan(True, {})):
+            # 取消：不改配置、不跳转，也不能落到只有“确认”的错误框。
+            with patch.object(local_page.dialogs, "ask_choice", return_value="cancel") as ask, \
+                    patch.object(local_page.dialogs, "show_error") as error:
                 assert not service._preflight_start(cluster, cluster.shards)
                 assert not error.called
                 message = ask.call_args.args[2]
@@ -469,12 +454,12 @@ def test_local_service_lan_blocked_by_mapping_or_running() -> None:
                 ]
             assert offline_flag(cluster) and not jumps
 
-            with patch.object(local_tab.dlg, "ask_choice", return_value="goto"):
+            with patch.object(local_page.dialogs, "ask_choice", return_value="goto"):
                 assert not service._preflight_start(cluster, cluster.shards)
             assert jumps == ["sakura"] and offline_flag(cluster)
 
             # 关闭离线模式后重新预检，不再有 LAN 端口问题。
-            with patch.object(local_tab.dlg, "ask_choice", return_value="disable"):
+            with patch.object(local_page.dialogs, "ask_choice", return_value="disable"):
                 assert service._preflight_start(cluster, cluster.shards)
             assert not offline_flag(cluster)
 
@@ -483,16 +468,17 @@ def test_local_service_lan_blocked_by_mapping_or_running() -> None:
             master_game_port=39491, caves_game_port=12256,
         )
         service, _ = make_service(running_cluster, running=True)
-        with patch.object(local_tab.dlg, "ask_choice") as ask, \
-                patch.object(local_tab.dlg, "show_error") as error:
+        with patch.object(local_page.dialogs, "ask_choice") as ask, \
+                patch.object(local_page.dialogs, "show_error") as error:
             assert not service._preflight_start(running_cluster, running_cluster.shards)
             assert error.called and not ask.called
         assert offline_flag(running_cluster)
 
 
 def test_config_editor_lan_port_repair_and_lock() -> None:
-    from dstools.features.cluster_config import tab as cluster_tab
+    from dstools.features.cluster_config import save_checks
     from dstools.features.cluster_config.config_manager import load_cluster_config
+    from dstools.qt.pages import server_config as config_page
     from dstools.shared.ini_parser import parse_server_ini
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -500,16 +486,16 @@ def test_config_editor_lan_port_repair_and_lock() -> None:
             Path(tmp), "LAN_Invalid", lan_only=False,
             master_game_port=10002, caves_game_port=10001,
         )
-        editor = cluster_tab.ClusterConfigTab.__new__(cluster_tab.ClusterConfigTab)
-        manager = SimpleNamespace(running=lambda: [])
-        mapping = SimpleNamespace(has_active_mapping=lambda *_args: False)
-        editor.app = SimpleNamespace(
-            root=None,
+        running, mapping, jumps = [], [], []
+        editor = config_page.ServerConfigPage.__new__(config_page.ServerConfigPage)
+        editor._window = lambda: None
+        editor.on_cluster_changed = lambda _cluster: None
+        editor.ctx = SimpleNamespace(
             env=SimpleNamespace(clusters=[cluster]),
-            local_tab=SimpleNamespace(manager=manager),
-            sakura_tab=mapping,
+            cluster_running=lambda _cluster: bool(running),
+            mapping_owner=lambda *_args: mapping[0] if mapping else None,
+            goto_tab=jumps.append,
         )
-        editor._load_config = lambda: None
         proposed = load_cluster_config(cluster.path)
         proposed.network["lan_only_cluster"] = True
         _, issues = collect_cluster_port_claims(
@@ -517,12 +503,10 @@ def test_config_editor_lan_port_repair_and_lock() -> None:
         )
         lan_issues = [issue for issue in issues if issue.code == "lan_server_port_range"]
 
-        with patch.object(cluster_tab, "scan_udp_ports", return_value=UdpPortScan(True, {})), \
-                patch.object(cluster_tab.dlg, "ask_choice", return_value="allocate"), \
-                patch.object(cluster_tab.dlg, "show_info"):
-            assert editor._repair_lan_ports_while_saving(
-                cluster, proposed, lan_issues,
-            )
+        with patch.object(config_page, "scan_udp_ports", return_value=UdpPortScan(True, {})), \
+                patch.object(config_page.dialogs, "ask_choice", return_value="allocate"), \
+                patch.object(config_page.dialogs, "show_info"):
+            assert editor._repair_lan_ports(cluster, proposed, lan_issues)
         assert load_cluster_config(cluster.path).network["lan_only_cluster"] is True
         ports = {
             parse_server_ini(shard.path / "server.ini").network["server_port"]
@@ -535,25 +519,17 @@ def test_config_editor_lan_port_repair_and_lock() -> None:
             shard.path: (shard.path / "server.ini").read_bytes()
             for shard in cluster.shards
         }
-        editor.app.sakura_tab = SimpleNamespace(
-            has_active_mapping=lambda *_args: True
+        mapping.append("sakura")
+        assert save_checks.cluster_ports_locked(
+            cluster, editor.ctx.cluster_running, lambda c, s: bool(editor.ctx.mapping_owner(c, s)),
         )
-        jumps = []
-        editor.app.goto_tab = jumps.append
-        assert editor._cluster_ports_locked(cluster)
-        with patch.object(cluster_tab.dlg, "ask_choice", return_value="cancel"):
-            assert not editor._resolve_lan_lock_while_saving(
-                cluster, proposed, lan_issues,
-            )
-        with patch.object(cluster_tab.dlg, "ask_choice", return_value="goto"):
-            assert not editor._resolve_lan_lock_while_saving(
-                cluster, proposed, lan_issues,
-            )
+        with patch.object(config_page.dialogs, "ask_choice", return_value="cancel"):
+            assert not editor._resolve_lan_lock(cluster, proposed, lan_issues)
+        with patch.object(config_page.dialogs, "ask_choice", return_value="goto"):
+            assert not editor._resolve_lan_lock(cluster, proposed, lan_issues)
         assert jumps == ["sakura"] and proposed.network["lan_only_cluster"] is True
-        with patch.object(cluster_tab.dlg, "ask_choice", return_value="disable") as ask:
-            assert editor._resolve_lan_lock_while_saving(
-                cluster, proposed, lan_issues,
-            )
+        with patch.object(config_page.dialogs, "ask_choice", return_value="disable") as ask:
+            assert editor._resolve_lan_lock(cluster, proposed, lan_issues)
             assert "仅限局域网" in ask.call_args.args[2]
         assert proposed.network["lan_only_cluster"] is False
         assert proposed.network["offline_cluster"] is False
@@ -564,57 +540,54 @@ def test_config_editor_lan_port_repair_and_lock() -> None:
 
         # 运行中只提示先停止，不提供修改类按钮。
         proposed.network["lan_only_cluster"] = True
-        editor.app.local_tab = SimpleNamespace(manager=SimpleNamespace(running=lambda: [
-            SimpleNamespace(cluster_path=cluster.path),
-        ]))
-        with patch.object(cluster_tab.dlg, "ask_choice") as ask, \
-                patch.object(cluster_tab.dlg, "show_error") as error:
-            assert not editor._resolve_lan_lock_while_saving(
-                cluster, proposed, lan_issues,
-            )
+        running.append(True)
+        with patch.object(config_page.dialogs, "ask_choice") as ask, \
+                patch.object(config_page.dialogs, "show_error") as error:
+            assert not editor._resolve_lan_lock(cluster, proposed, lan_issues)
             assert error.called and not ask.called
 
 
 def test_mapping_enable_guard_for_lan_saves() -> None:
-    from dstools.shared import lan_mapping_guard
+    from dstools.qt import lan_mapping_guard
     from dstools.shared.ini_parser import parse_cluster_ini
 
     with tempfile.TemporaryDirectory() as tmp:
         lan_cluster = _write_cluster(Path(tmp), "Offline_Save", offline=True)
-        app = SimpleNamespace(root=None, mark_server_tab_stale=lambda: None)
+        saved = []
+        ctx = SimpleNamespace(cluster_config_saved=SimpleNamespace(emit=saved.append))
 
-        with patch.object(lan_mapping_guard.dlg, "ask_choice", return_value="cancel"):
-            assert not lan_mapping_guard.ensure_lan_free_for_mapping(app, lan_cluster)
+        with patch.object(lan_mapping_guard.dialogs, "ask_choice", return_value="cancel"):
+            assert not lan_mapping_guard.ensure_lan_free_for_mapping(None, ctx, lan_cluster)
         assert parse_cluster_ini(lan_cluster.path / "cluster.ini").network["offline_cluster"]
+        assert not saved
 
-        with patch.object(lan_mapping_guard.dlg, "ask_choice", return_value="disable"):
-            assert lan_mapping_guard.ensure_lan_free_for_mapping(app, lan_cluster)
+        with patch.object(lan_mapping_guard.dialogs, "ask_choice", return_value="disable"):
+            assert lan_mapping_guard.ensure_lan_free_for_mapping(None, ctx, lan_cluster)
         assert not parse_cluster_ini(lan_cluster.path / "cluster.ini").network["offline_cluster"]
+        assert saved == [lan_cluster], "关闭 LAN 限制后要通知其它页刷新"
 
         # 已经不带 LAN 限制的存档不弹任何窗口。
-        with patch.object(lan_mapping_guard.dlg, "ask_choice") as ask:
-            assert lan_mapping_guard.ensure_lan_free_for_mapping(app, lan_cluster)
+        with patch.object(lan_mapping_guard.dialogs, "ask_choice") as ask:
+            assert lan_mapping_guard.ensure_lan_free_for_mapping(None, ctx, lan_cluster)
             assert not ask.called
 
 
 def test_config_editor_effective_conflicts() -> None:
-    from types import SimpleNamespace
+    from dstools.features.cluster_config import save_checks
     from dstools.features.cluster_config.config_manager import load_shard_config
-    from dstools.features.cluster_config.tab import ClusterConfigTab
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         cluster = _write_cluster(root, "Cluster_A")
         other = _write_cluster(root, "Cluster_B")
-        editor = ClusterConfigTab.__new__(ClusterConfigTab)
-        editor.app = SimpleNamespace(env=SimpleNamespace(clusters=[cluster, other]))
+        clusters = [cluster, other]
         master = next(shard for shard in cluster.shards if shard.name == "Master")
         config = load_shard_config(master.path)
         config.network["server_port"] = 10888
-        assert editor._find_port_conflict(cluster, master, config)
+        assert save_checks.find_port_conflict(cluster, master, config)
 
         config.network["server_port"] = 10999
-        warnings = editor._find_cross_cluster_port_conflicts(cluster, master, config)
+        warnings = save_checks.find_cross_cluster_port_conflicts(cluster, master, config, clusters)
         assert any("10999" in warning for warning in warnings)
         assert not any("10888" in warning for warning in warnings), (
             "保存 server.ini 时不得校验从 cluster.ini 继承的 master_port"
@@ -625,9 +598,8 @@ def test_config_editor_effective_conflicts() -> None:
             for warning in warnings
         )
 
-        cluster_config = cluster.config
-        cluster_warnings = editor._find_cross_cluster_cluster_port_conflicts(
-            cluster, cluster_config,
+        cluster_warnings = save_checks.find_cross_cluster_cluster_port_conflicts(
+            cluster, cluster.config, clusters,
         )
         assert any(
             warning.startswith("10888: ")
@@ -638,7 +610,7 @@ def test_config_editor_effective_conflicts() -> None:
 
 
 def test_config_editor_port_ranges() -> None:
-    from dstools.features.cluster_config import tab as cluster_tab
+    from dstools.features.cluster_config import save_checks
     from dstools.features.cluster_config.ini_field_info import get_range_limits
 
     port_fields = (
@@ -649,92 +621,70 @@ def test_config_editor_port_ranges() -> None:
     )
     assert all(get_range_limits(*field) == (1, 65535) for field in port_fields)
 
-    editor = cluster_tab.ClusterConfigTab.__new__(cluster_tab.ClusterConfigTab)
-    editor.app = SimpleNamespace(root=None)
-    errors = []
-    old_show_error = cluster_tab.dlg.show_error
-    cluster_tab.dlg.show_error = lambda *_args, **_kwargs: errors.append(True)
-    try:
-        def check(section, key, value, *, shard):
-            editor._entries = {
-                (section, key): (SimpleNamespace(get=lambda: value), False),
-            }
-            errors.clear()
-            return editor._validate_entry_ranges(shard=shard)
+    def check(section, key, value, *, shard):
+        return save_checks.validate_ranges({(section, key): value}, shard=shard) is None
 
-        assert check("SHARD_NETWORK", "server_port", "1", shard=True)
-        assert check("SHARD_NETWORK", "server_port", "65535", shard=True)
-        assert not check("SHARD_NETWORK", "server_port", "0", shard=True)
-        assert errors
-        assert not check("SHARD_NETWORK", "server_port", "65536", shard=True)
-        assert errors
-        assert not check("SHARD_NETWORK", "server_port", "-1", shard=True)
-        assert errors
-        assert check("SHARD_STEAM", "master_server_port", "", shard=True), (
-            "可选 Steam 端口仍应允许留空"
-        )
-        assert check("SHARD", "master_port", "10888", shard=False)
-        assert not check("SHARD", "master_port", "abc", shard=False)
-        assert errors
-    finally:
-        cluster_tab.dlg.show_error = old_show_error
+    assert check("SHARD_NETWORK", "server_port", "1", shard=True)
+    assert check("SHARD_NETWORK", "server_port", "65535", shard=True)
+    assert not check("SHARD_NETWORK", "server_port", "0", shard=True)
+    assert not check("SHARD_NETWORK", "server_port", "65536", shard=True)
+    assert not check("SHARD_NETWORK", "server_port", "-1", shard=True)
+    assert check("SHARD_STEAM", "master_server_port", "", shard=True), (
+        "可选 Steam 端口仍应允许留空"
+    )
+    assert check("SHARD", "master_port", "10888", shard=False)
+    assert not check("SHARD", "master_port", "abc", shard=False)
 
 
 def test_world_creation_port_conflict_choices() -> None:
-    from dstools.features.world import creation_tab
     from dstools.features.world.creation import default_cluster_config, default_shard_config
+    from dstools.qt import creation_wizard
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         existing = _write_cluster(root, "Existing")
-        tab = creation_tab.WorldCreationTab.__new__(creation_tab.WorldCreationTab)
-        tab.app = SimpleNamespace(env=SimpleNamespace(clusters=[existing]))
-        tab.frame = SimpleNamespace(winfo_toplevel=lambda: None)
+        tab = creation_wizard.CreationWizardDialog.__new__(creation_wizard.CreationWizardDialog)
+        tab.ctx = SimpleNamespace(env=SimpleNamespace(clusters=[existing]))
+        tab._live_fixed_shards = lambda: ("Master", "Caves")
+        tab._extra_plans = {}
 
-        old_ask_choice = creation_tab.dlg.ask_choice
-        old_scan = creation_tab.scan_udp_ports
-        try:
-            creation_tab.scan_udp_ports = lambda: UdpPortScan(True, {})
-
-            def prepare(choice):
-                cluster_ini = default_cluster_config("New")
-                shard_configs = {
-                    "Master": default_shard_config(True),
-                    "Caves": default_shard_config(False),
-                }
-                creation_tab.dlg.ask_choice = lambda *_args, **_kwargs: choice
+        def prepare(choice):
+            cluster_ini = default_cluster_config("New")
+            shard_configs = {
+                "Master": default_shard_config(True),
+                "Caves": default_shard_config(False),
+            }
+            with patch.object(creation_wizard.dialogs, "ask_choice", return_value=choice), \
+                    patch.object(creation_wizard, "scan_udp_ports", return_value=UdpPortScan(True, {})):
                 result = tab._prepare_unique_creation_ports(
                     "New", root / "New", cluster_ini, shard_configs,
                 )
-                return result, cluster_ini, shard_configs
+            return result, cluster_ini, shard_configs
 
-            result, cluster_ini, shard_configs = prepare("create")
-            assert result
-            assert cluster_ini.shard["master_port"] == 10888
-            assert shard_configs["Master"].network["server_port"] == 10999
-            assert shard_configs["Caves"].network["server_port"] == 10998
+        result, cluster_ini, shard_configs = prepare("create")
+        assert result
+        assert cluster_ini.shard["master_port"] == 10888
+        assert shard_configs["Master"].network["server_port"] == 10999
+        assert shard_configs["Caves"].network["server_port"] == 10998
 
-            result, cluster_ini, shard_configs = prepare("cancel")
-            assert not result
-            assert cluster_ini.shard["master_port"] == 10888
-            assert shard_configs["Master"].network["server_port"] == 10999
+        result, cluster_ini, shard_configs = prepare("cancel")
+        assert not result
+        assert cluster_ini.shard["master_port"] == 10888
+        assert shard_configs["Master"].network["server_port"] == 10999
 
-            result, cluster_ini, shard_configs = prepare("allocate")
-            assert result
-            allocated = {
-                cluster_ini.shard["master_port"],
-                *(value for config in shard_configs.values()
-                  for value in (
-                      config.network["server_port"],
-                      config.steam["master_server_port"],
-                      config.steam["authentication_port"],
-                  )),
-            }
-            assert len(allocated) == 7
-            assert not allocated & {10888, 10998, 10999, 27016, 27017, 8766, 8767}
-        finally:
-            creation_tab.dlg.ask_choice = old_ask_choice
-            creation_tab.scan_udp_ports = old_scan
+        result, cluster_ini, shard_configs = prepare("allocate")
+        assert result
+        allocated = {
+            cluster_ini.shard["master_port"],
+            *(value for config in shard_configs.values()
+              for value in (
+                  config.network["server_port"],
+                  config.steam["master_server_port"],
+                  config.steam["authentication_port"],
+              )),
+        }
+        assert len(allocated) == 7
+        assert not allocated & {10888, 10998, 10999, 27016, 27017, 8766, 8767}
 
 
 def test_server_manager_rejects_duplicate_start() -> None:
@@ -760,7 +710,6 @@ def test_server_manager_rejects_duplicate_start() -> None:
 
 
 def test_restart_all_preserves_stopped_shards_and_rejects_transitions() -> None:
-    from dstools.features.local_service import tab as local_tab
     from dstools.features.local_service.dedicated_server import ServerStatus
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -769,8 +718,8 @@ def test_restart_all_preserves_stopped_shards_and_rejects_transitions() -> None:
             "Master": ServerStatus.RUNNING,
             "Caves": ServerStatus.STOPPED,
         }
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-        service._get_cluster = lambda: cluster
+        service = _local_page([cluster])
+        service.get_cluster = lambda: cluster
         service.manager = SimpleNamespace(
             get=lambda _path, name: SimpleNamespace(status=statuses[name])
         )
@@ -789,11 +738,9 @@ def test_restart_all_preserves_stopped_shards_and_rejects_transitions() -> None:
 
 
 def test_restart_stop_barrier_waits_for_every_shard() -> None:
-    from dstools.features.local_service import tab as local_tab
-
     with tempfile.TemporaryDirectory() as tmp:
         cluster = _write_cluster(Path(tmp), "Cluster_A")
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service = _local_page([cluster])
         callbacks = {}
         service._stop_and_then = lambda _cluster, shard, callback: callbacks.setdefault(
             shard.name, callback
@@ -809,21 +756,22 @@ def test_restart_stop_barrier_waits_for_every_shard() -> None:
 
 def test_restart_prepares_legacy_after_stop() -> None:
     """重启必须先停服，再部署 V1，最后才重新创建专服进程。"""
-    from dstools.features.local_service import tab as local_tab
     from dstools.features.local_service.dedicated_server import ServerStatus
+    from dstools.qt.pages import local_service as local_page
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         cluster = _write_cluster(root, "Cluster_A", caves=False)
         shard = cluster.shards[0]
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-        service.app = SimpleNamespace(env=SimpleNamespace(klei_root=root), root=None)
+        service = _local_page([cluster])
+        service.ctx.env.klei_root = root
+        service.ctx.ensure_lobby_accel = lambda _cluster, callback: callback(True, "")
         service.manager = SimpleNamespace(
             get=lambda _path, _name: SimpleNamespace(status=ServerStatus.RUNNING)
         )
         service._restarting_keys = set()
         service._install_dir = root / "server"
-        service._confirm_token_ok = lambda _cluster: True
+        service._prepare_token_for_start = lambda _cluster: True
         events = []
         service._preflight_start = lambda *_args, **kwargs: events.append(
             ("preflight", kwargs.get("restarting"))
@@ -838,14 +786,11 @@ def test_restart_prepares_legacy_after_stop() -> None:
         service._continue_start_shard = lambda *_args: events.append(("started", True))
         service._select_master_console_tab = lambda _cluster: None
         service._refresh_shard_rows = lambda _cluster: None
-        service._get_cluster = lambda: cluster
+        service.get_cluster = lambda: cluster
         service._update_restart_all_btn_state = lambda _cluster: None
 
-        with patch.object(
-            local_tab.luajit_injector, "needs_regeneration", return_value=False
-        ), patch.object(
-            local_tab, "resolve_conf_dir_arg", return_value=None
-        ), patch.object(local_tab, "get_lobby_accel_enabled", return_value=False):
+        with patch.object(local_page.luajit_injector, "needs_regeneration", return_value=False), \
+                patch.object(local_page, "resolve_conf_dir_arg", return_value=None):
             service._restart_shards(cluster, [shard])
 
         assert events == [
@@ -854,10 +799,10 @@ def test_restart_prepares_legacy_after_stop() -> None:
             ("prepared", True),
             ("started", True),
         ]
+        assert not service._restarting_keys, "重启完成后要清掉进行中标记"
 
 
 def test_connect_code_display_masks_secrets() -> None:
-    from dstools.features.local_service import tab as local_tab
     from dstools.shared.ini_parser import parse_cluster_ini, write_cluster_ini
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -866,7 +811,7 @@ def test_connect_code_display_masks_secrets() -> None:
         config = parse_cluster_ini(cluster_ini)
         config.network["cluster_password"] = "secret123"
         write_cluster_ini(config, cluster_ini)
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service = _local_page([cluster])
 
         original, display = service._build_connect_strings(
             "203.0.113.42", 10999, cluster, mask_ipv4=True
@@ -884,33 +829,29 @@ def test_connect_code_display_masks_secrets() -> None:
 
 def test_connect_code_waits_for_master_world_ready() -> None:
     """主世界进程刚创建时仍不可直连，消费到世界就绪标记后才算就绪。"""
-    from dstools.features.local_service import tab as local_tab
+    from dstools.features.local_service.dedicated_server import ServerStatus
 
     with tempfile.TemporaryDirectory() as tmp:
         cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
-        proc = SimpleNamespace(
-            status=local_tab.ServerStatus.STARTING,
-            world_ready=False,
-        )
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-        service._get_cluster = lambda: cluster
+        proc = SimpleNamespace(status=ServerStatus.STARTING, world_ready=False)
+        service = _local_page([cluster])
+        service.get_cluster = lambda: cluster
         service.manager = SimpleNamespace(get=lambda *_args: proc)
 
         assert service._master_ready() is False
 
-        proc.status = local_tab.ServerStatus.RUNNING
+        proc.status = ServerStatus.RUNNING
         assert service._master_ready() is False
 
         proc.world_ready = True
         assert service._master_ready() is True
 
-        proc.status = local_tab.ServerStatus.STOPPED
+        proc.status = ServerStatus.STOPPED
         assert service._master_ready() is False
 
 
 def test_external_connect_status_rejects_lan_only() -> None:
     """仅局域网存档即使服务、IP 和 frpc 都正常，外部直连仍必须显示未就绪。"""
-    from dstools.features.local_service import tab as local_tab
     from dstools.i18n import t
     from dstools.shared.ini_parser import parse_cluster_ini, write_cluster_ini
 
@@ -918,18 +859,24 @@ def test_external_connect_status_rejects_lan_only() -> None:
         cluster = _write_cluster(
             Path(tmp), "Cluster_A", caves=False, lan_only=True,
         )
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-        service._get_cluster = lambda: cluster
+        service = _local_page([cluster])
+        service.ctx.frpc_ready = lambda _cluster: True
+        service.get_cluster = lambda: cluster
         service._master_ready = lambda: True
-        service._nat_frpc_ready = lambda: True
         service._public_code = "public-code"
         service._nat_code = "nat-code"
         service._public_status_key = None
         service._nat_status_key = None
+        service._lan_only_cache_key = None
+        service._lan_only_cache_value = False
         public_status = []
         nat_status = []
-        service._public_set_status = lambda *args: public_status.append(args)
-        service._nat_set_status = lambda *args: nat_status.append(args)
+        service._public_row = SimpleNamespace(
+            set_status=lambda *args: public_status.append(args), set_value=lambda *_args: None,
+        )
+        service._nat_row = SimpleNamespace(
+            set_status=lambda *args: nat_status.append(args), set_value=lambda *_args: None,
+        )
 
         service._refresh_public_status(ip_available=True)
         service._refresh_nat_status()
@@ -943,8 +890,7 @@ def test_external_connect_status_rejects_lan_only() -> None:
 
         # 穿透映射的异步结果首次回填时也要直接显示 LAN 限制，不能先短暂
         # 闪成“已就绪”，等下一次轮询才纠正。
-        service._connect_row = SimpleNamespace(winfo_ismapped=lambda: True)
-        service._nat_set_text = lambda *_args: None
+        service._connect_row = SimpleNamespace(isVisible=lambda: True)
         service._nat_status_key = None
         service._apply_nat_result(
             ("c_connect('example.com', 11000)", "masked"),
@@ -968,135 +914,74 @@ def test_external_connect_status_rejects_lan_only() -> None:
 
 
 def test_local_refresh_redetects_server_tool() -> None:
-    """顶部刷新必须重新探测专用服务器工具，而不只刷新存档列表。"""
-    from dstools.features.local_service import tab as local_tab
-    from dstools.models import Platform
-
+    """F5/刷新全部必须重新探测专用服务器工具，而不只刷新存档列表。"""
+    service = _local_page()
     calls = []
-    cluster = SimpleNamespace(platform=Platform.STEAM)
-    service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-    service.app = SimpleNamespace(get_selected_cluster=lambda: cluster)
     service._detect_install_dir = lambda: calls.append("detect_install")
-    service.on_cluster_changed = lambda current: calls.append(("cluster", current))
     service._on_wegame_detect = lambda: calls.append("detect_wegame")
 
-    service.refresh()
-    assert calls == ["detect_install", ("cluster", cluster)]
-
-    cluster.platform = Platform.WEGAME
-    calls.clear()
-    service.refresh()
-    assert calls == ["detect_install", ("cluster", cluster), "detect_wegame"]
-
-
-def test_connect_results_return_through_main_thread_poll() -> None:
-    """网络线程只能写结果队列，Tk 更新由主线程轮询完成。"""
-    import inspect
-    import queue
-
-    from dstools.features.local_service import tab as local_tab
-
-    public_source = inspect.getsource(
-        local_tab.LocalServiceTab._fetch_public_connect_async
-    )
-    nat_source = inspect.getsource(local_tab.LocalServiceTab._fetch_nat_connect_async)
-    assert ".after(" not in public_source
-    assert ".after(" not in nat_source
-
-    service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-    service._connect_result_queue = queue.SimpleQueue()
-    service._connect_fetch_generation = 2
-    applied = []
-    service._apply_public_result = lambda codes, key, available: applied.append(
-        ("public", codes, key, available)
-    )
-    service._apply_nat_result = lambda codes, key: applied.append(
-        ("nat", codes, key)
-    )
-    service._connect_result_queue.put(("public", 1, "old", "old-key", True))
-    service._connect_result_queue.put(("public", 2, "public", "key", True))
-    service._connect_result_queue.put(("nat", 2, "nat", "key", None))
-
-    service._drain_connect_results()
-
-    assert applied == [
-        ("public", "public", "key", True),
-        ("nat", "nat", "key"),
-    ]
+    service._on_env_refreshed()
+    assert calls == ["detect_install", "detect_wegame"]
 
 
 def test_nat_without_configuration_skips_loading_and_network_thread() -> None:
-    """没有樱花 Token 和自建映射时应立即显示未映射。"""
-    from dstools.features.local_service import tab as local_tab
+    """没有樱花映射和自建映射时应立即显示未映射，只发起公网 IP 查询。"""
     from dstools.i18n import t
+    from dstools.qt.pages import local_service as local_page
 
     with tempfile.TemporaryDirectory() as tmp:
         cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-        service._get_cluster = lambda: cluster
-        service._connect_fetch_generation = 0
-        service._lan_status_key = None
-        service._public_status_key = None
-        service._nat_status_key = None
-        service._lan_connect_code = lambda: None
+        service = _local_page([cluster])
+        service.get_cluster = lambda: cluster
+        service._connect_generation = 0
+        service._lan_connect_code = lambda _cluster: None
         service._refresh_lan_status = lambda: None
-        service._lan_set_text = lambda *_args: None
-        service._public_set_text = lambda *_args: None
-        service._public_set_status = lambda *_args: None
+        silent = SimpleNamespace(set_value=lambda *_args: None, set_status=lambda *_args: None)
+        service._lan_row = silent
+        service._public_row = silent
         nat_text = []
         nat_status = []
-        service._nat_set_text = lambda *args: nat_text.append(args)
-        service._nat_set_status = lambda *args: nat_status.append(args)
-        started_targets = []
+        service._nat_row = SimpleNamespace(
+            set_value=lambda *args: nat_text.append(args),
+            set_status=lambda *args: nat_status.append(args),
+        )
+        started = []
 
-        class _FakeThread:
-            def __init__(self, *, target, args, daemon):
-                self.target = target
-                assert args
-                assert daemon is True
-
-            def start(self):
-                started_targets.append(self.target)
-
-        with patch.object(local_tab, "get_sakura_token", return_value=None), \
-                patch.object(local_tab, "get_selfhost_frp_server", return_value=None), \
-                patch.object(local_tab.threading, "Thread", _FakeThread):
+        with patch.object(local_page, "get_selfhost_frp_server", return_value=None), \
+                patch.object(local_page, "run_async", side_effect=lambda work, done: started.append(work)):
             service._refresh_connect_labels()
 
         assert nat_text[-1] == (t("local.nat_not_mapped_short"),)
         assert t("local.connect_not_ready") in nat_status[-1][0]
         assert service._nat_status_key == "nomap"
-        assert started_targets == [service._fetch_public_connect_async]
+        assert len(started) == 1, "只应发起公网 IP 查询，不能为穿透代码再起后台任务"
 
 
 def test_saved_sakura_token_without_local_mapping_skips_lookup() -> None:
     """仅保存过 Token 不代表当前存档有映射，不能因此进入网络等待。"""
-    from dstools.features.local_service import tab as local_tab
+    from dstools.qt.pages import local_service as local_page
 
     with tempfile.TemporaryDirectory() as tmp:
         cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
-        service.app = SimpleNamespace(
-            sakura_tab=SimpleNamespace(has_active_mapping=lambda *_args: False)
-        )
+        service = _local_page([cluster])
 
-        with patch.object(local_tab, "get_sakura_token", return_value="old-token"), \
-                patch.object(local_tab, "get_selfhost_frp_server", return_value=None):
+        with patch.object(local_page, "get_sakura_token", return_value="old-token"), \
+                patch.object(local_page, "get_selfhost_frp_server", return_value=None):
             assert service._nat_lookup_needed(cluster) is False
 
 
 def test_nat_without_matching_sakura_tunnel_skips_nodes_request() -> None:
     """樱花隧道列表没有当前存档时，不应继续等待节点列表。"""
-    from dstools.features.local_service import tab as local_tab
+    from dstools.qt.pages import local_service as local_page
 
     with tempfile.TemporaryDirectory() as tmp:
         cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
-        service = local_tab.LocalServiceTab.__new__(local_tab.LocalServiceTab)
+        service = _local_page([cluster])
 
-        with patch.object(local_tab, "get_sakura_token", return_value="token"), \
-                patch.object(local_tab.sakura_frp, "list_tunnels", return_value=[]), \
-                patch.object(local_tab.sakura_frp, "list_nodes") as list_nodes, \
-                patch.object(local_tab, "get_selfhost_frp_server", return_value=None):
+        with patch.object(local_page, "get_sakura_token", return_value="token"), \
+                patch.object(local_page.sakura_frp, "list_tunnels", return_value=[]), \
+                patch.object(local_page.sakura_frp, "list_nodes") as list_nodes, \
+                patch.object(local_page, "get_selfhost_frp_server", return_value=None):
             assert service._nat_connect_info(cluster) == (None, None)
 
         list_nodes.assert_not_called()
@@ -1104,7 +989,7 @@ def test_nat_without_matching_sakura_tunnel_skips_nodes_request() -> None:
 
 def test_public_ipv4_prefers_cip_cc_plain_text() -> None:
     """优先使用响应更快的 cip.cc，并采用它的命令行纯文本格式。"""
-    from dstools.features.local_service import tab as local_tab
+    from dstools.qt.pages import local_service as local_page
 
     calls = []
 
@@ -1125,10 +1010,10 @@ def test_public_ipv4_prefers_cip_cc_plain_text() -> None:
         assert request.full_url == "https://cip.cc/"
         return FakeResponse()
 
-    with patch.object(local_tab.urllib.request, "urlopen", fake_urlopen):
-        assert local_tab.LocalServiceTab._fetch_public_ipv4() == "203.0.113.42"
+    with patch.object(local_page.urllib.request, "urlopen", fake_urlopen):
+        assert local_page._fetch_public_ipv4() == "203.0.113.42"
 
-    assert [source[0] for source in local_tab._PUBLIC_IP_SOURCES] == [
+    assert [source[0] for source in local_page._PUBLIC_IP_SOURCES] == [
         "https://cip.cc/",
         "https://myip.ipip.net",
         "https://cdid.c-ctrip.com/model-poc2/h",
@@ -1163,7 +1048,6 @@ def main() -> None:
         test_connect_code_waits_for_master_world_ready,
         test_external_connect_status_rejects_lan_only,
         test_local_refresh_redetects_server_tool,
-        test_connect_results_return_through_main_thread_poll,
         test_nat_without_configuration_skips_loading_and_network_thread,
         test_saved_sakura_token_without_local_mapping_skips_lookup,
         test_nat_without_matching_sakura_tunnel_skips_nodes_request,
