@@ -351,6 +351,38 @@ def is_steam_running() -> bool:
     return any(line.lower().startswith("steam.exe") for line in result.stdout.splitlines())
 
 
+def shutdown_steam(timeout: float = 60.0) -> None:
+    """请求 Steam 正常退出并等待 steam.exe 结束；超时抛 RuntimeError。"""
+    exe = find_steam_executable()
+    if exe is None:
+        raise RuntimeError("找不到 steam.exe，请手动完全退出 Steam 后重试")
+    subprocess.Popen(
+        [str(exe), "-shutdown"],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        time.sleep(1.0)
+        if not is_steam_running():
+            # Steam 进程消失后再稍等，让它写完退出时的清单
+            time.sleep(2.0)
+            return
+    raise RuntimeError("Steam 未在限定时间内退出，请手动完全退出 Steam 后重试")
+
+
+def launch_steam() -> None:
+    """重新启动 Steam 客户端；找不到时静默跳过，由用户自行启动。"""
+    exe = find_steam_executable()
+    if exe is None:
+        return
+    subprocess.Popen(
+        [str(exe)],
+        close_fds=True,
+        creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+        | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    )
+
+
 def build_update_uri(app_id: str = DEDICATED_SERVER_APP_ID, *, validate: bool = False) -> str:
     """构造 Steam 客户端请求；validate 仅用于已安装 App 的校验请求。"""
     action = "validate" if validate else "install"

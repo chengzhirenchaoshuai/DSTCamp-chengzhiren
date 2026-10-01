@@ -1,0 +1,272 @@
+"""读取并精确修改 Steam 的 ``appworkshop_322330.acf`` Workshop 安装清单。
+
+只删除目录不够：清单里仍记录为"已安装"的条目，Steam 发现目录缺失后会在
+下次启动游戏时当成损坏重新下载。这里在 Steam 完全退出后，把未订阅条目从
+``WorkshopItemsInstalled`` / ``WorkshopItemDetails`` 中整行删除并同步
+``SizeOnDisk``；其余字节保持原样，原子替换写入。
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from dataclasses import dataclass
+from pathlib import Path
+
+DST_APP_ID = "322330"
+ACF_NAME = f"appworkshop_{DST_APP_ID}.acf"
+
+_TOKEN_RE = re.compile(
+    r'\s+|//[^\r\n]*|(?P<quoted>"(?:\\.|[^"\\])*")|(?P<brace>[{}])', re.S
+)
+
+
+class WorkshopAcfError(ValueError):
+    """清单格式异常或安全检查未通过，不允许改写。"""
+
+
+@dataclass(frozen=True)
+class _Node:
+    key: str
+    start: int
+    end: int
+    value: str | None = None
+    value_start: int = 0
+    value_end: int = 0
+    children: tuple["_Node", ...] = ()
+
+    @property
+    def is_object(self) -> bool:
+        return self.value is None
+
+    def child(self, key: str, *, obj: bool) -> "_Node":
+        matches = [node for node in self.children if node.key == key]
+        if len(matches) != 1 or matches[0].is_object != obj:
+            raise WorkshopAcfError(f"清单中 {key} 缺失、重复或类型错误")
+        return matches[0]
+
+
+@dataclass(frozen=True)
+class AcfWorkshopItem:
+    workshop_id: str
+    size: int
+    subscribed: bool
+
+
+@dataclass(frozen=True)
+class WorkshopAcf:
+    path: Path
+    raw: bytes
+    items: dict[str, AcfWorkshopItem]
+
+
+def workshop_acf_path(content_root: Path) -> Path:
+    """``.../workshop/content/322330`` 对应的清单路径。"""
+    return Path(content_root).parent.parent / ACF_NAME
+
+
+def _tokens(text: str) -> list[tuple[str, str, int, int]]:
+    tokens = []
+    offset = 0
+    while offset < len(text):
+        match = _TOKEN_RE.match(text, offset)
+        if match is None or match.end() == offset:
+            raise WorkshopAcfError(f"清单格式无法解析，字符位置 {offset}")
+        if match.group("quoted"):
+            tokens.append(("str", match.group(), offset, match.end()))
+        elif match.group("brace"):
+            tokens.append((match.group(), match.group(), offset, match.end()))
+        offset = match.end()
+    return tokens
+
+
+def _parse_node(tokens, pos: int) -> tuple[_Node, int]:
+    if pos >= len(tokens) or tokens[pos][0] != "str":
+        raise WorkshopAcfError("清单缺少键名")
+    key_tok = tokens[pos]
+    key = key_tok[1][1:-1]
+    pos += 1
+    if pos >= len(tokens):
+        raise WorkshopAcfError(f"清单键 {key} 没有值")
+    val_tok = tokens[pos]
+    pos += 1
+    if val_tok[0] == "str":
+        return _Node(key, key_tok[2], val_tok[3], val_tok[1][1:-1], val_tok[2], val_tok[3]), pos
+    if val_tok[0] != "{":
+        raise WorkshopAcfError(f"清单键 {key} 后需要值或左花括号")
+    children = []
+    while pos < len(tokens) and tokens[pos][0] != "}":
+        node, pos = _parse_node(tokens, pos)
+        children.append(node)
+    if pos >= len(tokens):
+        raise WorkshopAcfError(f"清单键 {key} 缺少右花括号")
+    return _Node(key, key_tok[2], tokens[pos][3], children=tuple(children)), pos + 1
+
+
+def _parse(text: str) -> _Node:
+    tokens = _tokens(text)
+    root, pos = _parse_node(tokens, 0)
+    if pos != len(tokens) or root.key != "AppWorkshop" or not root.is_object:
+        raise WorkshopAcfError("清单顶层结构不是单个 AppWorkshop 对象")
+    if root.child("appid", obj=False).value != DST_APP_ID:
+        raise WorkshopAcfError("清单 AppID 不匹配")
+    return root
+
+
+def _entries(section: _Node, name: str) -> dict[str, _Node]:
+    found: dict[str, _Node] = {}
+    for node in section.children:
+        if not node.is_object or not node.key.isdigit() or node.key in found:
+            raise WorkshopAcfError(f"{name} 含异常或重复条目")
+        found[node.key] = node
+    return found
+
+
+def _decode(raw: bytes) -> str:
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise WorkshopAcfError("清单不是有效的 UTF-8 文本") from exc
+
+
+def _sections(root: _Node) -> tuple[dict[str, _Node], dict[str, _Node]]:
+    installed = _entries(root.child("WorkshopItemsInstalled", obj=True), "WorkshopItemsInstalled")
+    details = _entries(root.child("WorkshopItemDetails", obj=True), "WorkshopItemDetails")
+    return installed, details
+
+
+def read_workshop_acf(path: Path) -> WorkshopAcf:
+    """解析清单；``subscribed`` 以详情条目里的 ``subscribedby`` 为准。"""
+    path = Path(path)
+    raw = path.read_bytes()
+    installed, details = _sections(_parse(_decode(raw)))
+    items = {}
+    for wid, node in installed.items():
+        size_text = node.child("size", obj=False).value or "0"
+        if not size_text.isdigit():
+            raise WorkshopAcfError(f"条目 {wid} 的大小无效")
+        detail = details.get(wid)
+        subscribed = detail is not None and any(c.key == "subscribedby" for c in detail.children)
+        items[wid] = AcfWorkshopItem(wid, int(size_text), subscribed)
+    return WorkshopAcf(path, raw, items)
+
+
+def _line_span(text: str, node: _Node) -> tuple[int, int]:
+    """返回条目所在的完整行区间；条目必须独占这些行。"""
+    line_start = text.rfind("\n", 0, node.start) + 1
+    if text[line_start:node.start].strip(" \t"):
+        raise WorkshopAcfError(f"清单条目 {node.key} 不是独立行")
+    end = node.end
+    while end < len(text) and text[end] != "\n":
+        if text[end] not in " \t\r":
+            raise WorkshopAcfError(f"清单条目 {node.key} 的结束行含有其它内容")
+        end += 1
+    return line_start, min(end + 1, len(text))
+
+
+def build_pruned_text(text: str, workshop_ids) -> str:
+    """生成删除指定未订阅条目后的清单文本；任何一项不满足条件都整体拒绝。"""
+    root = _parse(text)
+    installed, details = _sections(root)
+    size_node = root.child("SizeOnDisk", obj=False)
+    if not (size_node.value or "").isdigit():
+        raise WorkshopAcfError("清单 SizeOnDisk 无效")
+    edits: list[tuple[int, int, str]] = []
+    removed_size = 0
+    for wid in sorted(set(str(w) for w in workshop_ids)):
+        node = installed.get(wid)
+        if node is None:
+            continue
+        detail = details.get(wid)
+        if detail is not None and any(c.key == "subscribedby" for c in detail.children):
+            raise WorkshopAcfError(f"Steam 仍标记已订阅，拒绝清除：{wid}")
+        removed_size += int(node.child("size", obj=False).value or "0")
+        start, end = _line_span(text, node)
+        edits.append((start, end, ""))
+        if detail is not None:
+            start, end = _line_span(text, detail)
+            edits.append((start, end, ""))
+    if not edits:
+        return text
+    new_size = max(0, int(size_node.value) - removed_size)
+    edits.append((size_node.value_start, size_node.value_end, f'"{new_size}"'))
+    result = text
+    for start, end, replacement in sorted(edits, reverse=True):
+        result = result[:start] + replacement + result[end:]
+    _parse(result)  # 改写后必须仍是合法清单
+    return result
+
+
+def prune_workshop_acf(acf: WorkshopAcf, workshop_ids) -> bool:
+    """把指定未订阅条目从清单删除；返回是否实际改写。
+
+    调用方必须保证 Steam 已完全退出，否则 Steam 退出时会用内存状态覆盖。
+    """
+    path = Path(acf.path)
+    current = path.read_bytes()
+    if current != acf.raw:
+        raise WorkshopAcfError("清单在检查期间发生变化，已停止写入")
+    text = _decode(current)
+    updated = build_pruned_text(text, workshop_ids)
+    if updated == text:
+        return False
+    temporary = path.with_name(f"{path.name}.tmp.{os.getpid()}")
+    try:
+        temporary.write_bytes(updated.encode("utf-8"))
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return True
+
+
+def find_orphan_records(acf: WorkshopAcf, content_root: Path, exclude_ids=()) -> list[str]:
+    """未订阅、内容目录已不存在且未被排除的记录——Steam 会把它们重新下载。"""
+    excluded = {str(wid) for wid in exclude_ids}
+    root = Path(content_root)
+    return sorted(
+        (wid for wid, item in acf.items.items()
+         if not item.subscribed and wid not in excluded and not os.path.lexists(root / wid)),
+        key=int,
+    )
+
+
+@dataclass(frozen=True)
+class OrphanCleanupResult:
+    cleared: tuple[str, ...]
+    steam_restarted: bool
+
+
+def clear_orphan_records(
+    content_root: Path,
+    workshop_ids,
+    *,
+    is_steam_running,
+    shutdown_steam,
+    launch_steam,
+    running_dst_processes,
+) -> OrphanCleanupResult:
+    """退出 Steam 后清除孤立记录，再按原状态重启 Steam。
+
+    退出 Steam 之后重新读取清单并重新筛选，只清除仍满足条件的条目。
+    """
+    if running_dst_processes():
+        raise WorkshopAcfError("游戏或专用服务器正在运行，请退出后再清理")
+    path = workshop_acf_path(content_root)
+    if not path.is_file():
+        raise WorkshopAcfError(f"找不到 Steam 清单：{path}")
+    was_running = bool(is_steam_running())
+    if was_running:
+        shutdown_steam()
+    try:
+        acf = read_workshop_acf(path)
+        still_orphan = set(find_orphan_records(acf, content_root))
+        targets = [wid for wid in (str(w) for w in workshop_ids) if wid in still_orphan]
+        if is_steam_running():
+            raise WorkshopAcfError("Steam 已重新启动，已停止写入")
+        if targets:
+            prune_workshop_acf(acf, targets)
+    finally:
+        if was_running:
+            launch_steam()
+    return OrphanCleanupResult(tuple(targets), was_running)

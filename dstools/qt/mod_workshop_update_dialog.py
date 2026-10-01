@@ -622,7 +622,8 @@ class WorkshopUpdateDialog(QDialog):
                      if status.can_cleanup_residual and status.state != WorkshopModState.UNSUBSCRIBED_REFERENCED
                      and _cleanup_paths(status)]
         if not candidates:
-            dialogs.show_info(self, t("mod.update_cleanup_residual_title"), t("mod.update_cleanup_all_empty"))
+            # 目录早已删掉的用户：残留没有了，但 Steam 清单里的记录仍会触发重新下载
+            self._offer_acf_cleanup(show_empty=True)
             return
         paths = tuple(path for wid in candidates for path in _cleanup_paths(self._states.get(wid)))
         tree_text = format_residual_directory_tree(paths)
@@ -708,12 +709,82 @@ class WorkshopUpdateDialog(QDialog):
                 dialogs.show_toast(self, t("mod.update_cleanup_all_done_toast", count=len(cleaned)))
             else:
                 dialogs.show_toast(self, t("mod.update_cleanup_residual_done_toast"))
+            if cleaned:
+                self._offer_acf_cleanup(show_empty=False)
 
         def error(exc: Exception) -> None:
             self._cleanup_running.difference_update(ids)
             self._show_state_notice("")
             self._render_rows()
             dialogs.show_error(self, t("mod.update_cleanup_residual_title"), str(exc))
+
+        run_async(work, done, error)
+
+    # ── Steam 下载记录清理 ──────────────────────────────────────────────
+    def _offer_acf_cleanup(self, *, show_empty: bool) -> None:
+        """删掉目录后 appworkshop_322330.acf 仍记录"已安装"，Steam 会重新下载；
+        找出未订阅、目录已不存在且未被存档引用的记录，确认后清除。"""
+        if self._cleanup_running:
+            return
+        referenced = {wid for wid, status in self._states.items()
+                      if status.evidence is not None and status.evidence.configured}
+
+        def work():
+            from dstools.features.mod.parser import find_workshop_dir
+            from dstools.features.mod.workshop_acf import (
+                find_orphan_records, read_workshop_acf, workshop_acf_path,
+            )
+            root = find_workshop_dir()
+            if root is None or not workshop_acf_path(root).is_file():
+                return root, []
+            return root, find_orphan_records(read_workshop_acf(workshop_acf_path(root)), root, referenced)
+
+        def done(result) -> None:
+            root, orphans = result
+            if not orphans:
+                if show_empty:
+                    dialogs.show_info(self, t("mod.update_cleanup_residual_title"),
+                                      t("mod.update_cleanup_all_empty"))
+                return
+            if dialogs.ask_yes_no(self, t("mod.acf_orphan_title"),
+                                  t("mod.acf_orphan_confirm", count=len(orphans))):
+                self._run_acf_cleanup(root, orphans)
+
+        def error(exc: Exception) -> None:
+            dialogs.show_error(self, t("mod.acf_orphan_title"), str(exc))
+
+        run_async(work, done, error)
+
+    def _run_acf_cleanup(self, root, orphans: list[str]) -> None:
+        self._cleanup_running.update(orphans)
+        self._show_state_notice(t("mod.acf_orphan_running"))
+        self._render_rows()
+
+        def work():
+            from dstools.features.local_service.steam_client_updater import (
+                is_steam_running, launch_steam, shutdown_steam,
+            )
+            from dstools.features.mod.legacy_v1 import running_dst_processes
+            from dstools.features.mod.workshop_acf import clear_orphan_records
+            return clear_orphan_records(
+                root, orphans, is_steam_running=is_steam_running, shutdown_steam=shutdown_steam,
+                launch_steam=launch_steam, running_dst_processes=running_dst_processes)
+
+        def finish() -> None:
+            self._cleanup_running.difference_update(orphans)
+            self._show_state_notice("")
+            self._render_rows()
+
+        def done(result) -> None:
+            finish()
+            if result.cleared:
+                dialogs.show_toast(self, t("mod.acf_orphan_done_toast", count=len(result.cleared)), ms=2400)
+            else:
+                dialogs.show_info(self, t("mod.acf_orphan_title"), t("mod.acf_orphan_none"))
+
+        def error(exc: Exception) -> None:
+            finish()
+            dialogs.show_error(self, t("mod.acf_orphan_title"), str(exc))
 
         run_async(work, done, error)
 
