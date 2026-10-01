@@ -90,7 +90,7 @@ class Card(QWidget):
 def section_card(title: str | None = None) -> tuple[Card, QVBoxLayout]:
     """带可选标题的内容分区卡片，样式跟存档信息页"玩家概览"卡片一致；
     返回 (卡片, 卡片内的纵向布局)，调用方往布局里继续加内容。"""
-    card = Card(radius=14, alpha=160, fill_key="CARD_BG_ALT")
+    card = Card(radius=14, alpha=128, fill_key="CARD_BG_ALT")
     layout = QVBoxLayout(card)
     layout.setContentsMargins(16, 12, 16, 14)
     layout.setSpacing(6)

@@ -80,7 +80,7 @@ class SaveInfoPage(Page):
         self._bundle_running = False
         self._log_dialog = None  # 复制为服务器存档的日志窗口，保持引用避免被回收
 
-        self._overview = Card(radius=14, alpha=220, fill_key="CARD_BG_ALT")
+        self._overview = Card(radius=14, alpha=128, fill_key="CARD_BG_ALT")
         overview_row = QHBoxLayout(self._overview)
         overview_row.setContentsMargins(14, 8, 14, 8)
         overview_text = QVBoxLayout()
@@ -259,7 +259,7 @@ class SaveInfoPage(Page):
         self._rows_layout.insertWidget(self._rows_layout.count() - 1, label)
 
     def _add_player_row(self, player: view_data.PlayerView) -> None:
-        row = Card(radius=14, alpha=220, fill_key="CARD_BG_ALT")
+        row = Card(radius=14, alpha=128, fill_key="CARD_BG_ALT")
         row_layout = QHBoxLayout(row)
         row_layout.setContentsMargins(12, 8, 12, 8)
         row_layout.setSpacing(10)
@@ -304,6 +304,9 @@ class SaveInfoPage(Page):
         note = QLineEdit(player.note)
         note.setFixedWidth(180)
         note.setFont(theme.font("FONT_SIZE_XS"))
+        # 备注框比全局输入框矮一些：上下内边距收小并固定高度。
+        note.setStyleSheet("padding: 1px 8px;")
+        note.setFixedHeight(22)
         # 按玩家标识全局存一份备注；回车/失焦提交（输入法组词时 Qt 不会提前触发 editingFinished）
         note.editingFinished.connect(
             lambda pid=player.player_id, edit=note: set_player_note(pid, edit.text().strip()))
