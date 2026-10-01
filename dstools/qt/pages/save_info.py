@@ -287,14 +287,16 @@ class SaveInfoPage(Page):
         if player.icon_path:
             pixmap = QPixmap(str(player.icon_path))
             if not pixmap.isNull():
-                # 头像素材本身（游戏自带的 Tab 键小图标）通常就比 AVATAR_SIZE 小；
-                # 只在源图比目标框大时才缩小，绝不放大——放大会把本来就小的原图
-                # 拉糊。跟 Tk 版 PIL 的 img.thumbnail() 语义一致（那个方法本来就
-                # 只缩小不放大），Qt 的 QPixmap.scaled() 没有这个保证，需要自己判断。
-                if pixmap.width() > AVATAR_SIZE or pixmap.height() > AVATAR_SIZE:
-                    pixmap = pixmap.scaled(
-                        AVATAR_SIZE, AVATAR_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation)
+                # 按物理像素缩放：头像框在 125%/175% 缩放的屏幕上实际有 AVATAR_SIZE×缩放比 个
+                # 物理像素。高清头像（制作栏头像，约 150~190 像素）直接缩到这个物理尺寸并标上
+                # 像素比，Qt 不再二次放大；只有 Tab 键小头像（约 60 像素）可用时绝不放大，
+                # 按原尺寸显示——放大只会把本来就小的原图拉糊。
+                dpr = self.devicePixelRatioF()
+                box = round(AVATAR_SIZE * dpr)
+                if pixmap.width() > box or pixmap.height() > box:
+                    pixmap = pixmap.scaled(box, box, Qt.AspectRatioMode.KeepAspectRatio,
+                                           Qt.TransformationMode.SmoothTransformation)
+                    pixmap.setDevicePixelRatio(dpr)
                 avatar.setPixmap(pixmap)
         row_layout.addWidget(avatar)
 

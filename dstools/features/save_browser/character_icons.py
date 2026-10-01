@@ -11,6 +11,11 @@ Tab 键头像，通常在自己文件夹的 `images/avatars/avatar_<prefab>.tex`
 同名 .xml）——在真实安装的一个模组里验证过这个路径，且模组自己画的这批
 图通常是彩色的（跟官方风格不同，这是模组作者自己的美术选择）。
 
+Tab 键头像每个只有约 60 像素，在 125%/175% 缩放的屏幕上会被放大发虚。游戏里
+还有一套同画风的"制作栏角色头像"（`images/crafting_menu_avatars.tex`+`.xml`，
+每格约 256 像素，元素名同样是 `avatar_<prefab>.tex`），官方角色全部收录，部分
+模组也自带（`images/crafting_menu_avatars/avatar_<prefab>.tex`）——优先用它，
+找不到再退回 Tab 键头像。
 模组自定义角色的中文名来自该模组自己 scripts/prefabs/<prefab>.lua 里的
 `STRINGS.CHARACTER_NAMES.<prefab> = "..."` 这一行字面量赋值（在真实安装
 的模组里验证过这个写法），用正则整段扫描该模组全部 .lua 文件即可，不需
@@ -39,10 +44,12 @@ _mod_name_cache: dict[str, dict[str, str]] = {}
 
 _ALL_NAMES_RE = re.compile(r'STRINGS\s*\.\s*CHARACTER_NAMES\s*\.\s*(\w+)\s*=\s*"([^"]*)"')
 
-# 官方 Tab 键头像图集（元素名 -> (u1,u2,v1,v2)）解析结果只需要按 images.zip
-# 的 mtime 失效一次，不必每次都重新读 zip；None 表示"确认取不到"，同样值
-# 得缓存，避免每个未知角色都重新尝试一次注定失败的 zip 读取。
-_official_atlas_cache: dict[str, tuple[Path, dict[str, tuple[float, float, float, float]]] | None] = {}
+# 官方头像图集（元素名 -> (u1,u2,v1,v2)）解析结果只需要按 images.zip 的 mtime
+# 失效一次，不必每次都重新读 zip；None 表示"确认取不到"，同样值得缓存，避免
+# 每个未知角色都重新尝试一次注定失败的 zip 读取。键是 (zip 路径, 图集名)。
+_official_atlas_cache: dict[tuple[str, str], tuple[Path, dict[str, tuple[float, float, float, float]]] | None] = {}
+# 高清优先：制作栏角色头像（约 256 像素一格）→ Tab 键头像（约 95 像素一格）
+_OFFICIAL_ATLASES = (("crafting_menu_avatars", "avatar_hd_official"), ("avatars", "avatar_official"))
 
 
 def _crop_by_uv_trimmed(img: Image.Image, uv: tuple[float, float, float, float]) -> Image.Image:
@@ -105,10 +112,10 @@ def _find_official_install_dir() -> Path | None:
     return None
 
 
-def _get_official_avatar_atlas():
-    """返回 (整张 Tab 键头像图集转换后的 PNG 路径, {元素名: uv})，取不到
-    就是 None。官方这批头像打包在 images.zip 里，不是松散文件，要先解压
-    .tex 出来转换一次再缓存，不必每次都重新解压 + 跑 ktech.exe。"""
+def _get_official_avatar_atlas(atlas_name: str = "avatars"):
+    """返回 (整张官方头像图集转换后的 PNG 路径, {元素名: uv})，取不到就是 None。
+    官方头像打包在 images.zip 里，不是松散文件，要先解压 .tex 出来转换一次再
+    缓存，不必每次都重新解压 + 跑 ktech.exe。"""
     install_dir = _find_official_install_dir()
     if not install_dir:
         return None
@@ -116,20 +123,21 @@ def _get_official_avatar_atlas():
     if not zip_path.exists():
         return None
 
-    cache_key = str(zip_path)
+    cache_key = (str(zip_path), atlas_name)
     src_mtime = zip_path.stat().st_mtime
-    cached = _official_atlas_cache.get(cache_key)
-    if cached is not None and cached[0].exists() and cached[0].stat().st_mtime >= src_mtime:
-        return cached
+    if cache_key in _official_atlas_cache:
+        cached = _official_atlas_cache[cache_key]
+        if cached is None or (cached[0].exists() and cached[0].stat().st_mtime >= src_mtime):
+            return cached
 
-    full_png = _CACHE_DIR / "official_avatars_atlas.png"
+    full_png = _CACHE_DIR / f"official_{atlas_name}_atlas.png"
     try:
         with zipfile.ZipFile(zip_path) as z:
-            xml_text = z.read("images/avatars.xml").decode("utf-8", errors="replace")
+            xml_text = z.read(f"images/{atlas_name}.xml").decode("utf-8", errors="replace")
             if not (full_png.exists() and full_png.stat().st_mtime >= src_mtime):
                 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-                raw_tex = _CACHE_DIR / "_raw_official_avatars_atlas.tex"
-                raw_tex.write_bytes(z.read("images/avatars.tex"))
+                raw_tex = _CACHE_DIR / f"_raw_official_{atlas_name}_atlas.tex"
+                raw_tex.write_bytes(z.read(f"images/{atlas_name}.tex"))
                 try:
                     if not tex_to_png(raw_tex, full_png):
                         _official_atlas_cache[cache_key] = None
@@ -147,25 +155,25 @@ def _get_official_avatar_atlas():
 
 
 def get_official_avatar_path(prefab: str) -> Path | None:
-    """官方角色的 Tab 键头像 PNG，找不到源数据或转换失败都返回 None。"""
-    atlas = _get_official_avatar_atlas()
-    if not atlas:
-        return None
-    full_png, elements = atlas
-    uv = elements.get(f"avatar_{prefab}.tex")
-    if not uv:
-        return None
-
-    cache_path = _CACHE_DIR / f"avatar_official_{prefab}.png"
-    src_mtime = full_png.stat().st_mtime
-    if cache_path.exists() and cache_path.stat().st_mtime >= src_mtime:
+    """官方角色头像 PNG：优先制作栏高清头像，没有再用 Tab 键头像；都取不到返回 None。"""
+    for atlas_name, cache_prefix in _OFFICIAL_ATLASES:
+        atlas = _get_official_avatar_atlas(atlas_name)
+        if not atlas:
+            continue
+        full_png, elements = atlas
+        uv = elements.get(f"avatar_{prefab}.tex")
+        if not uv:
+            continue
+        cache_path = _CACHE_DIR / f"{cache_prefix}_{prefab}.png"
+        if cache_path.exists() and cache_path.stat().st_mtime >= full_png.stat().st_mtime:
+            return cache_path
+        try:
+            with Image.open(full_png) as img:
+                _crop_by_uv_trimmed(img.convert("RGBA"), uv).save(cache_path)
+        except Exception:
+            continue
         return cache_path
-    try:
-        with Image.open(full_png) as img:
-            _crop_by_uv_trimmed(img.convert("RGBA"), uv).save(cache_path)
-    except Exception:
-        return None
-    return cache_path
+    return None
 
 
 def _scan_mod_character_names(mod_folder: Path) -> dict[str, str]:
@@ -191,16 +199,20 @@ def find_mod_character_name(mod_folder: Path, prefab: str) -> str | None:
 
 
 def get_mod_avatar_path(mod_folder: Path, workshop_id: str, prefab: str) -> Path | None:
-    """模组自带的 Tab 键头像——实测常见路径是 images/avatars/avatar_<prefab>.tex，
-    也顺带试一下 images/ 根目录（不是所有模组都建 avatars/ 子目录）。"""
-    for tex_path in (
-        mod_folder / "images" / "avatars" / f"avatar_{prefab}.tex",
-        mod_folder / "images" / f"avatar_{prefab}.tex",
+    """模组自带的角色头像：优先制作栏高清头像 images/crafting_menu_avatars/avatar_<prefab>.tex，
+    再找 Tab 键头像——实测常见路径是 images/avatars/avatar_<prefab>.tex，也顺带试一下
+    images/ 根目录（不是所有模组都建 avatars/ 子目录）。"""
+    for tex_path, cache_prefix in (
+        (mod_folder / "images" / "crafting_menu_avatars" / f"avatar_{prefab}.tex", "avatar_hd_mod"),
+        (mod_folder / "images" / "avatars" / f"avatar_{prefab}.tex", "avatar_mod"),
+        (mod_folder / "images" / f"avatar_{prefab}.tex", "avatar_mod"),
     ):
         if tex_path.exists():
             xml_path = tex_path.with_suffix(".xml")
-            return _convert_and_crop(tex_path, xml_path if xml_path.exists() else None,
-                                      f"avatar_mod_{workshop_id}_{prefab}")
+            icon = _convert_and_crop(tex_path, xml_path if xml_path.exists() else None,
+                                     f"{cache_prefix}_{workshop_id}_{prefab}")
+            if icon is not None:
+                return icon
     return None
 
 
