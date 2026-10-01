@@ -11,5 +11,11 @@ import certifi
 
 
 def default_ssl_context() -> ssl.SSLContext:
-    """返回使用随程序分发 CA 包的默认 HTTPS 校验上下文。"""
-    return ssl.create_default_context(cafile=certifi.where())
+    """返回使用随程序分发 CA 包的默认 HTTPS 校验上下文。
+
+    同时声明 ALPN http/1.1：urllib 自己创建连接时会声明，传入自定义上下文时不会；
+    Gitee 会对不带 ALPN 的 TLS 握手返回 403（实测），导致 Gitee 更新源一直不可用、
+    只能退回 GitHub。"""
+    context = ssl.create_default_context(cafile=certifi.where())
+    context.set_alpn_protocols(["http/1.1"])
+    return context
