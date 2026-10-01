@@ -250,7 +250,7 @@ class CreationWizardDialog(QDialog):
         # 跟着存档名称输入框同步。
         persona = read_steam_persona_name()
         self._default_room_name = t("world.creation_default_room_name", name=persona) if persona else ""
-        self.resize(1400, 860)
+        dialogs.fit_to_screen(self, 1400, 860)
         # 无边框 + 自绘标题栏（主题底色、跟主窗口同款最小化/最大化/关闭按钮）。原生标题栏
         # 在 Windows 10 上改不了颜色（DWM 标题栏着色只有 Windows 11 支持）。
         # WindowMinMaxButtonsHint 保留系统层面的最小化能力：最小化后能从任务栏点回来。

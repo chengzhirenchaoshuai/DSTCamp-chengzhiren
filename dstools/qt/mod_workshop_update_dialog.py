@@ -125,7 +125,7 @@ class WorkshopUpdateDialog(QDialog):
         super().__init__(page.window())
         self.page = page
         self.setWindowTitle(t("mod.update_title"))
-        self.resize(980, 680)
+        dialogs.fit_to_screen(self, 980, 680)
         self.setStyleSheet(f"QDialog {{ background: {theme.hex('BG_SOFT')}; }}")
         self._states: dict[str, object] = {str(k): v for k, v in page._workshop_status_cache.items()}
         self._loading = False

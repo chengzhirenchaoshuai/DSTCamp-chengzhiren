@@ -39,6 +39,32 @@ from dstools.shared.app_settings import (
 DIALOG_WIDTHS = {"sm": 420, "md": 560, "lg": 760}
 DIALOG_MARGINS = (20, 18, 20, 16)  # 左、上、右、下
 DIALOG_SPACING = 10
+SCREEN_FILL_RATIO = 0.9  # 大窗口最多占所在显示器工作区的比例，留出边距避免贴边或越界
+
+
+def screen_work_area(widget: QWidget | None = None) -> QRect:
+    """控件所在（或其父窗口所在）显示器的工作区，逻辑像素，已扣除任务栏。"""
+    screen = None
+    if widget is not None:
+        anchor = widget.parentWidget() or widget
+        screen = anchor.screen() if anchor.isVisible() else None
+        if screen is None:
+            screen = QGuiApplication.screenAt(anchor.mapToGlobal(anchor.rect().center()))
+    return (screen or QGuiApplication.primaryScreen()).availableGeometry()
+
+
+def fit_to_screen(widget: QWidget, width: int, height: int, area: QRect | None = None) -> None:
+    """按期望尺寸 resize，但不超过工作区的 SCREEN_FILL_RATIO；最小尺寸也一并压到工作区以内。
+
+    高缩放（如 2K@175%、1080p@150% 以上）时逻辑工作区只有 1100~1460 宽、600~800 高，
+    写死的 1400x860 之类会超出屏幕，底部按钮点不到。"""
+    area = area or screen_work_area(widget)
+    max_w = int(area.width() * SCREEN_FILL_RATIO)
+    max_h = int(area.height() * SCREEN_FILL_RATIO)
+    minimum = widget.minimumSize()
+    if minimum.width() > area.width() or minimum.height() > area.height():
+        widget.setMinimumSize(min(minimum.width(), area.width()), min(minimum.height(), area.height()))
+    widget.resize(min(width, max_w), min(height, max_h))
 
 
 def width_tier(min_width: int) -> str:

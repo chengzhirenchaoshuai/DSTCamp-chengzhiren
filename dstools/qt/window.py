@@ -42,6 +42,7 @@ TAB_KEYS = ["local", "world", "mods", "server", "saves", "sakura"]
 BASE_W, BASE_H = 1600, 900  # 默认尺寸（逻辑像素，Qt 自动按显示器缩放，不需要 DPI 补丁）
 MIN_W, MIN_H = 960, 540
 ASPECT = BASE_W / BASE_H
+START_FILL = 0.85  # 默认尺寸最多占工作区的比例（宽高各自计）
 MIN_VISIBLE = 100  # 窗口挪到桌面边缘时至少留这么多像素在屏幕里
 
 WM_SIZING, WM_MOVING = 0x0214, 0x0216
@@ -418,7 +419,6 @@ class MainWindow(QWidget):
         self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
         self.setWindowTitle(t("app.title"))
         self.setWindowIcon(QIcon(str(bundled_resource_dir() / "icons" / "app" / "icon.png")))
-        self.setMinimumSize(MIN_W, MIN_H)
         self._place_initially()
 
         root = QVBoxLayout(self)
@@ -675,7 +675,12 @@ class MainWindow(QWidget):
         from dstools.qt.creation_wizard import CreationWizardDialog
 
         dialog = CreationWizardDialog(self.ctx, background=self.background)
-        dialog.move(self.geometry().center() - dialog.rect().center())
+        # 向导是无父窗口的顶层窗，按主窗口所在显示器重新限尺寸，并把位置夹在工作区内
+        area = (self.screen() or QGuiApplication.primaryScreen()).availableGeometry()
+        dialogs.fit_to_screen(dialog, 1400, 860, area)
+        pos = self.geometry().center() - dialog.rect().center()
+        dialog.move(max(area.left(), min(pos.x(), area.right() - dialog.width() + 1)),
+                    max(area.top(), min(pos.y(), area.bottom() - dialog.height() + 1)))
         dialog.exec()
 
     def _update_status(self) -> None:
@@ -687,10 +692,12 @@ class MainWindow(QWidget):
 
     # ── 位置/尺寸 ───────────────────────────────────────────────────────
     def _place_initially(self) -> None:
-        screen = QGuiApplication.primaryScreen()
-        avail = screen.availableGeometry()
-        shrink = min(1.0, avail.width() * 0.98 / BASE_W, avail.height() * 0.98 / BASE_H)
-        width, height = round(BASE_W * shrink), round(BASE_H * shrink)
+        avail = QGuiApplication.primaryScreen().availableGeometry()
+        # 最小尺寸不能大于工作区，否则高缩放屏（如 1080p@200%）窗口一出来就超出屏幕且缩不回去
+        self.setMinimumSize(min(MIN_W, avail.width()), min(MIN_H, avail.height()))
+        shrink = min(1.0, avail.width() * START_FILL / BASE_W, avail.height() * START_FILL / BASE_H)
+        width = max(self.minimumWidth(), round(BASE_W * shrink))
+        height = max(self.minimumHeight(), round(BASE_H * shrink))
         self.resize(width, height)
         self.move(self._startup_position(width, height))
 
@@ -705,6 +712,11 @@ class MainWindow(QWidget):
             x, y = round(saved[0] / dpr), round(saved[1] / dpr)
             if (virtual.left() - width + MIN_VISIBLE <= x <= virtual.right() - MIN_VISIBLE
                     and virtual.top() <= y <= virtual.bottom() - MIN_VISIBLE):
+                # 启动时整窗放进所在显示器工作区：上次的位置配上现在的尺寸可能半截落在屏幕外
+                screen = QGuiApplication.screenAt(QPoint(x + MIN_VISIBLE, y)) or QGuiApplication.primaryScreen()
+                area = screen.availableGeometry()
+                x = max(area.left(), min(x, area.right() - width + 1))
+                y = max(area.top(), min(y, area.bottom() - height + 1))
                 return QPoint(x, y)
         avail = QGuiApplication.primaryScreen().availableGeometry()
         return QPoint(avail.left() + max(0, (avail.width() - width) // 2),

@@ -125,8 +125,8 @@ class ModConfigDialog(QDialog):
         self.raw_widgets: dict[str, tuple[str, dict]] = {}
 
         self.setWindowTitle(t("mod.config_dialog_title", name=mod_info.name or workshop_id))
-        self.resize(900, 680)
         self.setMinimumSize(700, 480)
+        dialogs.fit_to_screen(self, 900, 680)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(*dialogs.DIALOG_MARGINS)

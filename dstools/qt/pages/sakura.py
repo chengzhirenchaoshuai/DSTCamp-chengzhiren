@@ -97,7 +97,7 @@ class _NodeSelectDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(*dialogs.DIALOG_MARGINS)
         layout.addWidget(area)
-        self.resize(760, 560)
+        dialogs.fit_to_screen(self, 760, 560)
 
     def _select(self, node_id: int) -> None:
         self.result_id = node_id
