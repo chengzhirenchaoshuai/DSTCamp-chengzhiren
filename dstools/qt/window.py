@@ -162,8 +162,9 @@ class MenuStrip(QWidget):
         super().__init__()
         self._window = window
         self._layout = QHBoxLayout(self)
-        self._layout.setContentsMargins(6, 0, 6, 0)
-        self._layout.setSpacing(0)
+        # 底部留 3px 给主题色分隔线（见 paintEvent），菜单项之间拉开一点间距。
+        self._layout.setContentsMargins(6, 0, 6, 3)
+        self._layout.setSpacing(10)
         self._buttons: dict[str, QPushButton] = {}
         self._theme_actions: dict[str, QAction] = {}
         for key, builder in (("menu.file", self._file_menu), ("menu.theme", self._theme_menu),
@@ -182,8 +183,16 @@ class MenuStrip(QWidget):
         self._buttons["menu.about"] = about_button
         self._layout.addWidget(about_button)
         self._layout.addStretch()
-        self.setFixedHeight(28)
+        self.setFixedHeight(31)
+        theme.changed.connect(self.update)
         self.retranslate()
+
+    def paintEvent(self, _event):
+        # 菜单文字下方一条主题色分隔线，左右与菜单内容边距对齐。
+        painter = QPainter(self)
+        painter.setPen(QPen(theme.color("PRIMARY"), 1))
+        y = self.height() - 1
+        painter.drawLine(8, y, self.width() - 8, y)
 
     def retranslate(self) -> None:
         for key, button in self._buttons.items():

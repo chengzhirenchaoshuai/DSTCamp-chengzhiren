@@ -12,6 +12,7 @@ from dstools.features.mod.list_model import localize_mod_name
 from dstools.i18n import t
 from dstools.qt import dialogs
 from dstools.qt.theme import theme
+from dstools.qt.widgets import Card
 
 
 class SavePresetDialog(dialogs.Dialog):
@@ -29,12 +30,20 @@ class SavePresetDialog(dialogs.Dialog):
         self.body.addLayout(self._name_edit_row)
         self.body.addWidget(self.text_label(t("preset.save_select_hint"), size_key="FONT_SIZE_SM"))
 
+        # 启用/未启用 mod 列表外面套一圈主题色圆角框，框内底色走主题卡片色；
+        # 滚动区和内容控件显式透明，否则视口会露出系统调色板的纯灰底。
+        list_card = Card(radius=12, alpha=255, fill_key="CARD_BG", border_key="PRIMARY", border=True)
+        card_layout = QVBoxLayout(list_card)
+        card_layout.setContentsMargins(6, 6, 6, 6)
         area = QScrollArea()
+        area.setObjectName("presetModArea")
         area.setWidgetResizable(True)
         area.setMinimumHeight(360)
         area.viewport().setAutoFillBackground(False)
         inner = QWidget()
+        inner.setObjectName("presetModInner")
         inner.setAutoFillBackground(False)
+        area.setStyleSheet("#presetModArea, #presetModInner { background: transparent; border: none; }")
         layout = QVBoxLayout(inner)
 
         ordered_ids = sorted(page._mod_data.keys(),
@@ -73,7 +82,8 @@ class SavePresetDialog(dialogs.Dialog):
             layout.addWidget(disabled_container)
         layout.addStretch()
         area.setWidget(inner)
-        self.body.addWidget(area, 1)
+        card_layout.addWidget(area)
+        self.body.addWidget(list_card, 1)
         self._error = self.error_label()
         self.body.addWidget(self._error)
         self.add_buttons()
@@ -151,14 +161,19 @@ class ApplyPresetDialog(dialogs.Dialog):
         self._list = QListWidget()
         self._list.setMinimumHeight(220)
         self.body.addWidget(self._list, 1)
+        self._refill()
+        # 底部按钮行："删除"在左、"应用"在右；不放"取消"，关闭窗口即可取消。
         row = QHBoxLayout()
         delete_btn = QPushButton(t("preset.delete_btn"))
         delete_btn.clicked.connect(self._delete)
+        apply_btn = QPushButton(t("preset.apply_btn"))
+        apply_btn.clicked.connect(self.accept_if_valid)
+        apply_btn.setDefault(True)
         row.addWidget(delete_btn)
         row.addStretch()
+        row.addWidget(apply_btn)
+        self.body.addSpacing(8)
         self.body.addLayout(row)
-        self._refill()
-        self.add_buttons().setText(t("preset.apply_btn"))
 
     def _refill(self) -> None:
         self._list.clear()
