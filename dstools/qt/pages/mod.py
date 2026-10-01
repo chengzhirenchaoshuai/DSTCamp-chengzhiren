@@ -421,7 +421,7 @@ class ModPage(Page):
                 detail = t("local.sync_replace_nothing_lost")
             if not dialogs.ask_yes_no(self.window(), t("local.sync_mods_btn"),
                                        t("local.sync_replace_confirm_msg", path=str(Path(install_dir) / "mods"), detail=detail),
-                                       min_width=720):
+                                       min_width=560):
                 return
 
         self._sync_btn.setEnabled(False)
