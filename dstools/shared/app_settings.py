@@ -44,6 +44,7 @@ _KEY_LOBBY_ACCEL_WG_PORT = "lobby_accel_wireguard_port"
 _KEY_LOBBY_ACCEL_WG_SERVER_PUBLIC_KEY = "lobby_accel_wireguard_server_public_key"
 _KEY_GLOBAL_TOKENS = "global_tokens"
 _KEY_TOKEN_HOLDS = "token_holds"
+_KEY_AUTO_RESTART_CLUSTERS = "auto_restart_clusters"
 _KEY_MOD_PRESETS = "mod_presets"
 _KEY_DEDICATED_SERVER_EXTRA_ARGS = "dedicated_server_extra_args"
 
@@ -567,7 +568,10 @@ def set_global_tokens(tokens: list[str]) -> None:
 
 
 def get_token_holds() -> dict[str, dict]:
-    """读取新令牌在 Klei 端疑似尚未释放的本机记录。"""
+    """读取新令牌在 Klei 端疑似尚未释放的本机记录。
+
+    ``retry_at`` 之前不再自动选用这个令牌；``failures`` 是连续注册冲突次数，
+    决定下一次等待多久。旧版本写入的记录没有这两项，按"可立即重试"处理。"""
     raw = load_settings().get(_KEY_TOKEN_HOLDS) or {}
     if not isinstance(raw, dict):
         return {}
@@ -582,18 +586,30 @@ def get_token_holds() -> dict[str, dict]:
                 since = float(item.get("since", 0) or 0)
             except (TypeError, ValueError):
                 since = 0.0
+            try:
+                retry_at = float(item.get("retry_at", 0) or 0)
+                failures = int(item.get("failures", 0) or 0)
+            except (TypeError, ValueError):
+                retry_at, failures = 0.0, 0
             result[fingerprint] = {
                 "state": item["state"],
                 "cluster_key": str(item.get("cluster_key", "")),
                 "cluster_name": str(item.get("cluster_name", "")),
                 "since": since,
+                "retry_at": retry_at,
+                "failures": failures,
             }
     return result
 
 
+def blocking_token_holds(now: float) -> dict[str, dict]:
+    """仍在等待期内（``retry_at`` 未到）的令牌记录；过了等待期的令牌允许再试一次。"""
+    return {fingerprint: item for fingerprint, item in get_token_holds().items() if item["retry_at"] > now}
+
+
 def set_token_hold(
     fingerprint: str, *, state: str, cluster_key: str,
-    cluster_name: str, since: float,
+    cluster_name: str, since: float, retry_at: float = 0.0, failures: int = 0,
 ) -> None:
     if state not in ("crashed", "conflict"):
         raise ValueError(f"unsupported token hold state: {state}")
@@ -604,6 +620,8 @@ def set_token_hold(
         "cluster_key": cluster_key,
         "cluster_name": cluster_name,
         "since": float(since),
+        "retry_at": float(retry_at),
+        "failures": int(failures),
     }
     data[_KEY_TOKEN_HOLDS] = holds
     save_settings(data)
@@ -619,6 +637,26 @@ def clear_token_hold(fingerprint: str) -> None:
         data[_KEY_TOKEN_HOLDS] = holds
     else:
         data.pop(_KEY_TOKEN_HOLDS, None)
+    save_settings(data)
+
+
+def get_auto_restart_enabled(cluster_key: str) -> bool:
+    """存档是否开启崩溃自动重启（按存档单独设置，默认关闭）。"""
+    raw = load_settings().get(_KEY_AUTO_RESTART_CLUSTERS) or []
+    return isinstance(raw, list) and cluster_key in raw
+
+
+def set_auto_restart_enabled(cluster_key: str, enabled: bool) -> None:
+    data = load_settings()
+    raw = data.get(_KEY_AUTO_RESTART_CLUSTERS)
+    keys = [key for key in raw if isinstance(key, str)] if isinstance(raw, list) else []
+    keys = [key for key in keys if key != cluster_key]
+    if enabled:
+        keys.append(cluster_key)
+    if keys:
+        data[_KEY_AUTO_RESTART_CLUSTERS] = keys
+    else:
+        data.pop(_KEY_AUTO_RESTART_CLUSTERS, None)
     save_settings(data)
 
 

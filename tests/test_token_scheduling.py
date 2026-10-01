@@ -251,7 +251,42 @@ def main() -> None:
         prune_holds.assert_called_once_with([NEW_B])
         toast.assert_not_called()
 
+    test_auto_restart_rules_and_hold_retry_window()
     print("服务器令牌分类与调度测试全部通过")
+
+
+def test_auto_restart_rules_and_hold_retry_window() -> None:
+    """自动重启只针对跑起来后崩溃的世界并限流；令牌等待标记过了重试时间就放行。"""
+    from dstools.features.local_service import auto_restart
+    from dstools.shared import app_settings
+
+    assert auto_restart.is_restartable("unknown", world_ready=True, auto_attempt=False)
+    assert not auto_restart.is_restartable("unknown", world_ready=False, auto_attempt=False), "手动启动就失败不重启"
+    assert auto_restart.is_restartable("mod_conflict", world_ready=False, auto_attempt=True)
+    assert not auto_restart.is_restartable("port", world_ready=True, auto_attempt=True)
+    assert not auto_restart.is_restartable("token_conflict", world_ready=True, auto_attempt=True)
+
+    budget = auto_restart.CrashBudget()
+    assert all(budget.allow(100.0 + i) for i in range(auto_restart.MAX_CRASH_RESTARTS))
+    assert not budget.allow(110.0), "时间窗内超过次数上限必须停止自动重启"
+    assert budget.allow(100.0 + auto_restart.CRASH_WINDOW + 1), "旧崩溃滑出时间窗后恢复"
+
+    assert auto_restart.token_retry_delay(0) == auto_restart.TOKEN_RETRY_DELAYS[0]
+    assert auto_restart.token_retry_delay(99) == auto_restart.TOKEN_RETRY_DELAYS[-1]
+
+    with tempfile.TemporaryDirectory() as settings_tmp, patch.dict(os.environ, {"APPDATA": settings_tmp}):
+        fingerprint = token_fingerprint(NEW_A)
+        app_settings.set_token_hold(fingerprint, state="crashed", cluster_key="A", cluster_name="A",
+                                    since=1000.0, retry_at=1300.0, failures=0)
+        assert fingerprint in app_settings.blocking_token_holds(1299.0)
+        assert fingerprint not in app_settings.blocking_token_holds(1300.0), "过了重试时间要允许再试"
+        assert app_settings.get_token_holds()[fingerprint]["failures"] == 0
+
+        assert not app_settings.get_auto_restart_enabled("C:/saves/A")
+        app_settings.set_auto_restart_enabled("C:/saves/A", True)
+        assert app_settings.get_auto_restart_enabled("C:/saves/A")
+        app_settings.set_auto_restart_enabled("C:/saves/A", False)
+        assert not app_settings.get_auto_restart_enabled("C:/saves/A")
 
 
 if __name__ == "__main__":
