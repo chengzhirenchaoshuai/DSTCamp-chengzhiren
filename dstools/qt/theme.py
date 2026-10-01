@@ -72,7 +72,7 @@ def _apply_fake_transparent_popup_bg(combo, popup) -> None:
     张图，铺在弹出窗口最底层当背景，列表控件本身走 QSS 半透明色叠在上面——视觉
     上是"透出主窗口背景"，实际只是一张普通 QLabel+QPixmap，不涉及任何窗口级别
     的透明合成，不会重演那次全黑。局限：只能透出这个应用自己窗口的内容，不是真
-    的透出桌面或其它窗口；截图失败或列表有任何部分超出所在窗口就直接跳过，
+    的透出桌面或其它窗口；列表部分超出所在窗口时，超出部分用窗口底色补齐；截图失败就直接跳过，
     退回目前"浅色实色"的效果，不报错、不留半成品背景。"""
     window = combo.window()
     if window is None or window is combo:
@@ -84,15 +84,19 @@ def _apply_fake_transparent_popup_bg(combo, popup) -> None:
     # 个 Python 包装实例（哪怕底层 C++ 对象相同），动态属性会丢。改用 Qt 自己的
     # objectName + findChild()，查的是真正的 C++ 子控件树，不受包装对象身份影响。
     label = popup.findChild(QLabel, _POPUP_BG_LABEL_NAME)
-    # 列表只要有一部分伸出所在窗口（如很矮的回档窗口里展开长列表），窗口外那块截
-    # 不到背景，而容器又被设成了透明，那块没有任何背景可画（用户反馈过像被挡住）。
-    # 此时整体退回实色，撤掉之前可能贴过的背景。
-    pixmap = window.grab(popup_rect) if window.rect().contains(popup_rect) else None
+    grab_rect = popup_rect.intersected(window.rect())
+    pixmap = window.grab(grab_rect) if not grab_rect.isEmpty() else None
     if pixmap is None or pixmap.isNull():
         if label is not None:
             label.hide()
             popup.setStyleSheet("")
         return
+    if grab_rect != popup_rect:
+        # 列表有一部分伸出所在窗口（如很矮的回档窗口里展开长列表）：窗口外那块截不到，
+        # 只贴截到的部分会留下没有背景的空洞（用户反馈过像被挡住）。先用截图底边中点
+        # 的颜色（通常就是窗口底色）铺满整块，再把截到的部分贴回原位，观感与完全在
+        # 窗口内的下拉框一致。
+        pixmap = _extend_popup_bg_pixmap(pixmap, grab_rect.topLeft() - popup_rect.topLeft(), popup_rect.size())
     if label is None:
         label = QLabel(popup)
         label.setObjectName(_POPUP_BG_LABEL_NAME)
@@ -104,6 +108,22 @@ def _apply_fake_transparent_popup_bg(combo, popup) -> None:
     label.setPixmap(_faded_popup_bg_pixmap(pixmap))
     label.lower()
     label.show()
+
+
+def _extend_popup_bg_pixmap(partial, offset, size):
+    """把只截到一部分的背景补成 size 大小：底色取截图底边中点，截图贴在 offset 处。"""
+    from PySide6.QtGui import QPainter, QPixmap
+
+    ratio = partial.devicePixelRatio()
+    image = partial.toImage()
+    fill = image.pixelColor(image.width() // 2, image.height() - 1)
+    full = QPixmap(round(size.width() * ratio), round(size.height() * ratio))
+    full.setDevicePixelRatio(ratio)
+    full.fill(fill)
+    painter = QPainter(full)
+    painter.drawPixmap(offset, partial)
+    painter.end()
+    return full
 
 
 def _faded_popup_bg_pixmap(pixmap):
