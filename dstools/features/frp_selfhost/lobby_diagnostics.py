@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import re
 import shlex
 import threading
@@ -24,6 +25,14 @@ if TYPE_CHECKING:
 
 ProgressFn = Callable[[str, str], None]
 _EXTERNAL_PORT_RE = re.compile(r"mostRecentExternalPort first time set to (\d+)")
+# 专服日志里每个玩家进服的固定序列（据真机 server_log 统计）：
+#   Steam/WeGame P2P：[P2P] ... '<SteamID 或 R:WeGameID>' → Client connected from <伪地址>|1 → Client authenticated
+#   直连：Client connected from [LAN] <真实地址>|<端口> → Client authenticated
+# P2P 的地址是饥荒按会话生成的伪地址（端口恒为 1，常落在组播/保留网段），不是对端真实 IP，
+# 所以日志只能区分"走 Steam/WeGame 网络"还是"IP 直连"，看不出 Steam 内部是打洞直连还是 Valve 中继。
+_CONNECTED_RE = re.compile(r"Client connected from (\[LAN\] )?(\d{1,3}(?:\.\d{1,3}){3})\|\d+")
+_AUTHENTICATED_RE = re.compile(r"Client authenticated: \(([^)]*)\)\s*(.*)$")
+_P2P_PEER_RE = re.compile(r"\[P2P\] (?:Create session:|Received from|Sent to) \S+ '(R:)?")
 _UDP_LENGTH_RE = re.compile(r"UDP, length (\d+)")
 _SAFE_INTERFACE_RE = re.compile(r"[A-Za-z0-9_.:-]+")
 _SERVER_EXE_NAMES = {
@@ -37,7 +46,61 @@ class DiagnosticRoute(Enum):
     WIREGUARD = "wireguard"
     SIGNAL_ONLY = "signal_only"
     BYPASS = "bypass"
+    DIRECT = "direct"
     INCONCLUSIVE = "inconclusive"
+
+
+class ConnectionKind(Enum):
+    STEAM_P2P = "steam_p2p"    # 经 Steam 网络（打洞或 Valve 中继由 Steam 决定，日志不可分）
+    RAIL_P2P = "rail_p2p"      # WeGame（Rail）P2P
+    LOOPBACK = "loopback"      # 本机回环：FRP 等本地转发进来，或本机玩家
+    LAN = "lan"                # 局域网地址直连
+    DIRECT_IP = "direct_ip"    # 公网 IP / 虚拟局域网（Radmin、ZeroTier 等）直连
+
+
+@dataclass(frozen=True)
+class PlayerConnection:
+    player: str
+    kind: ConnectionKind
+
+
+def classify_connected_line(line: str, rail_peer: bool = False) -> ConnectionKind | None:
+    """解析 ``Client connected from`` 行；不是该行返回 None。rail_peer 表示前面的 [P2P] 行是 WeGame ID。"""
+    match = _CONNECTED_RE.search(line)
+    if not match:
+        return None
+    if not match.group(1):
+        return ConnectionKind.RAIL_P2P if rail_peer else ConnectionKind.STEAM_P2P
+    address = ipaddress.ip_address(match.group(2))
+    if address.is_loopback:
+        return ConnectionKind.LOOPBACK
+    if address.is_private:
+        return ConnectionKind.LAN
+    return ConnectionKind.DIRECT_IP
+
+
+class ConnectionTracker:
+    """逐行跟踪一个世界日志，把每次 ``Client authenticated`` 关联到它之前的连接方式。"""
+
+    def __init__(self):
+        self._rail_peer = False
+        self._pending: ConnectionKind | None = None
+
+    def feed(self, line: str) -> PlayerConnection | None:
+        peer = _P2P_PEER_RE.search(line)
+        if peer:
+            self._rail_peer = bool(peer.group(1))
+            return None
+        kind = classify_connected_line(line, self._rail_peer)
+        if kind is not None:
+            self._pending, self._rail_peer = kind, False
+            return None
+        auth = _AUTHENTICATED_RE.search(line)
+        if auth and self._pending is not None:
+            player = auth.group(2).strip() or auth.group(1)
+            result, self._pending = PlayerConnection(player, self._pending), None
+            return result
+        return None
 
 
 @dataclass
@@ -75,6 +138,7 @@ class RemoteEvidence:
 @dataclass
 class DiagnosticEvidence:
     mapped_ports: set[int]
+    players: list[PlayerConnection] = field(default_factory=list)
     authenticated: bool = False
     loopback_connection: bool = False
     p2p_connection: bool = False
@@ -135,10 +199,17 @@ def decide_route(evidence: DiagnosticEvidence) -> LobbyDiagnosticReport:
         evidence.mihomo_wg_stun_bytes > 0 or remote.wg_stun_packets > 0
     )
 
+    # 本次进服的玩家全部是局域网/IP 直连：没有经过 FRP 回环，也不是 Steam P2P，
+    # 大厅加速与 FRP 都不在这条路上——这是日志本身就能确定的结论。
+    direct_kinds = {ConnectionKind.LAN, ConnectionKind.DIRECT_IP}
+    direct_only = bool(evidence.players) and all(item.kind in direct_kinds for item in evidence.players)
+
     if frp_confirmed:
         return LobbyDiagnosticReport(DiagnosticRoute.FRP, "high", evidence)
     if wg_confirmed:
         return LobbyDiagnosticReport(DiagnosticRoute.WIREGUARD, "high", evidence)
+    if evidence.authenticated and direct_only:
+        return LobbyDiagnosticReport(DiagnosticRoute.DIRECT, "high", evidence)
     if evidence.authenticated and evidence.p2p_connection:
         if evidence.mihomo_api_available and remote.remote_available:
             return LobbyDiagnosticReport(DiagnosticRoute.BYPASS, "medium", evidence)
@@ -380,6 +451,7 @@ class LobbyDiagnosticSession:
         self.cancel_event = threading.Event()
         self._log_offsets: dict[Path, int] = {}
         self._log_fragments: dict[Path, str] = {}
+        self._trackers: dict[Path, ConnectionTracker] = {}
         self._connection_max: dict[str, MihomoConnection] = {}
 
     def cancel(self) -> None:
@@ -393,8 +465,9 @@ class LobbyDiagnosticSession:
             except OSError:
                 self._log_offsets[path] = 0
             self._log_fragments[path] = ""
+            self._trackers[path] = ConnectionTracker()
 
-    def _read_new_log_lines(self) -> list[str]:
+    def _read_new_log_lines(self) -> list[tuple[Path, str]]:
         lines = []
         for path, offset in tuple(self._log_offsets.items()):
             try:
@@ -413,17 +486,25 @@ class LobbyDiagnosticSession:
             if parts and not parts[-1].endswith(("\n", "\r")):
                 fragment = parts.pop()
             self._log_fragments[path] = fragment
-            lines.extend(item.rstrip("\r\n") for item in parts)
+            lines.extend((path, item.rstrip("\r\n")) for item in parts)
         return lines
 
     @staticmethod
-    def _consume_server_line(evidence: DiagnosticEvidence, line: str) -> None:
+    def _consume_server_line(evidence: DiagnosticEvidence, line: str, tracker: ConnectionTracker | None = None) -> None:
         if "Client authenticated:" in line:
             evidence.authenticated = True
         if "[P2P] Create session:" in line or "[P2P] Session request" in line:
             evidence.p2p_connection = True
         if "Client connected from [LAN] 127.0.0.1" in line:
             evidence.loopback_connection = True
+        player = tracker.feed(line) if tracker is not None else None
+        if player is not None:
+            evidence.players.append(player)
+            # 玩家重连时会话已存在，日志里没有 Create session，只能从连接行认出 P2P
+            if player.kind in (ConnectionKind.STEAM_P2P, ConnectionKind.RAIL_P2P):
+                evidence.p2p_connection = True
+            elif player.kind == ConnectionKind.LOOPBACK:
+                evidence.loopback_connection = True
         match = _EXTERNAL_PORT_RE.search(line)
         if match:
             evidence.external_ports.add(int(match.group(1)))
@@ -484,8 +565,8 @@ class LobbyDiagnosticSession:
         announced_auth = False
         announced_mihomo = False
         while time.monotonic() < deadline and not self.cancel_event.is_set():
-            for line in self._read_new_log_lines():
-                self._consume_server_line(evidence, line)
+            for path, line in self._read_new_log_lines():
+                self._consume_server_line(evidence, line, self._trackers.get(path))
             if evidence.authenticated and authenticated_at is None:
                 authenticated_at = time.monotonic()
             if evidence.authenticated and not announced_auth:

@@ -13,6 +13,8 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dstools.features.frp_selfhost.lobby_diagnostics import (
+    ConnectionKind,
+    ConnectionTracker,
     DiagnosticEvidence,
     DiagnosticRoute,
     LobbyDiagnosticSession,
@@ -213,6 +215,64 @@ def test_server_and_tcpdump_lines_are_classified() -> None:
     assert collector.evidence.frp_packets == 1
 
 
+def test_player_connection_kind_from_server_log() -> None:
+    """按真机 server_log 的进服序列识别每个玩家的连接方式（IP 已换成文档保留网段）。
+
+    P2P 行里的地址是饥荒生成的伪地址（端口恒为 1），玩家重连时没有 Create session，
+    只出现 Received from，也必须认成 P2P。"""
+    tracker = ConnectionTracker()
+    log = [
+        # Steam P2P：首次进服
+        "[00:29:31]: [P2P] Session request for '76561198000000001'",
+        "[00:29:31]: [P2P] Create session: 245.123.0.7|1 '76561198000000001'",
+        "[00:29:32]: [P2P] Received from 245.123.0.7|1 '76561198000000001'",
+        "[00:29:32]: New incoming connection 245.123.0.7|1 <4765974800076024005>",
+        "[00:29:33]: Client connected from 245.123.0.7|1 <4765974800076024005>",
+        "[00:29:35]: Client authenticated: (KU_aaaaaaaa) 玩家甲",
+        # Steam P2P：重连，没有 Create session
+        "[00:40:10]: [P2P] Received from 237.143.0.9|1 '76561198000000001'",
+        "[00:40:11]: Client connected from 237.143.0.9|1 <4765974800076024006>",
+        "[00:40:12]: Client authenticated: (KU_aaaaaaaa) 玩家甲",
+        # WeGame P2P
+        "[00:24:10]: [P2P] Received from 180.192.0.1|1 'R:76561197980899793'",
+        "[00:24:11]: Client connected from 180.192.0.1|1 <4112125956419898428>",
+        "[00:24:12]: Client authenticated: (KU_bbbbbbbb) 玩家乙",
+        # FRP 转发 / 本机玩家
+        "[00:01:21]: Client connected from [LAN] 127.0.0.1|53709 <6752044356186620099>",
+        "[00:01:23]: Client authenticated: (KU_cccccccc) 玩家丙",
+        # 局域网、虚拟局域网（Radmin 26.x）直连
+        "[00:05:00]: Client connected from [LAN] 192.168.1.20|52000 <1>",
+        "[00:05:02]: Client authenticated: (KU_dddddddd) 玩家丁",
+        "[00:06:00]: Client connected from [LAN] 26.57.0.3|52001 <2>",
+        "[00:06:02]: Client authenticated: (KU_eeeeeeee) ",
+    ]
+    players = [item for line in log if (item := tracker.feed(line)) is not None]
+    assert [(item.player, item.kind) for item in players] == [
+        ("玩家甲", ConnectionKind.STEAM_P2P),
+        ("玩家甲", ConnectionKind.STEAM_P2P),
+        ("玩家乙", ConnectionKind.RAIL_P2P),
+        ("玩家丙", ConnectionKind.LOOPBACK),
+        ("玩家丁", ConnectionKind.LAN),
+        ("KU_eeeeeeee", ConnectionKind.DIRECT_IP),
+    ]
+
+    # 只有重连日志时，整体证据也要认出 P2P
+    evidence = DiagnosticEvidence(mapped_ports={10006})
+    tracker = ConnectionTracker()
+    for line in log[6:9]:
+        LobbyDiagnosticSession._consume_server_line(evidence, line, tracker)
+    assert evidence.p2p_connection and evidence.authenticated
+
+    # 进服玩家全部是 IP 直连：日志即可确定没经过 FRP 和大厅加速
+    evidence = DiagnosticEvidence(mapped_ports={10006})
+    tracker = ConnectionTracker()
+    for line in log[14:]:
+        LobbyDiagnosticSession._consume_server_line(evidence, line, tracker)
+    report = decide_route(evidence)
+    assert report.route == DiagnosticRoute.DIRECT and report.confidence == "high"
+    assert not report.through_vps
+
+
 def main() -> int:
     tests = [
         test_mihomo_diagnostic_api_is_loopback_and_protected,
@@ -223,6 +283,7 @@ def main() -> int:
         test_stun_only_is_not_reported_as_game_acceleration,
         test_wireguard_counter_delta_alone_is_not_reported_as_signal,
         test_server_and_tcpdump_lines_are_classified,
+        test_player_connection_kind_from_server_log,
     ]
     for test in tests:
         test()

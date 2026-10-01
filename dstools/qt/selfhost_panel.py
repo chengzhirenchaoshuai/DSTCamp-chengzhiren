@@ -24,7 +24,7 @@ from dstools.features.cluster_config.config_manager import (
 from dstools.features.frp_selfhost import connectivity, deploy, probe, remote_deploy, wireguard_deploy
 from dstools.features.frp_selfhost.client import FrpcManager, FrpcStatus, build_frpc_toml
 from dstools.features.frp_selfhost.lobby_accel import LobbyAccelCoordinator, LobbyAccelError, LobbyAccelStatus
-from dstools.features.frp_selfhost.lobby_diagnostics import DiagnosticRoute, LobbyDiagnosticSession
+from dstools.features.frp_selfhost.lobby_diagnostics import ConnectionKind, DiagnosticRoute, LobbyDiagnosticSession
 from dstools.features.frp_selfhost.mihomo import MihomoError, sha256_file
 from dstools.features.frp_selfhost.wireguard import DEFAULT_WIREGUARD_PORT, ensure_client_keypair
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE
@@ -1361,9 +1361,11 @@ class SelfHostPanel(QWidget):
             status_key = "selfhost.lobby_diag_status_inconclusive"
         route_key = {DiagnosticRoute.FRP: "selfhost.lobby_diag_route_frp", DiagnosticRoute.WIREGUARD: "selfhost.lobby_diag_route_wireguard",
                      DiagnosticRoute.SIGNAL_ONLY: "selfhost.lobby_diag_route_signal_only", DiagnosticRoute.BYPASS: "selfhost.lobby_diag_route_bypass",
+                     DiagnosticRoute.DIRECT: "selfhost.lobby_diag_route_direct",
                      DiagnosticRoute.INCONCLUSIVE: "selfhost.lobby_diag_route_inconclusive"}[route]
         judgment_key = {DiagnosticRoute.FRP: "selfhost.lobby_diag_judgment_frp", DiagnosticRoute.WIREGUARD: "selfhost.lobby_diag_judgment_wireguard",
                         DiagnosticRoute.SIGNAL_ONLY: "selfhost.lobby_diag_judgment_signal_only", DiagnosticRoute.BYPASS: "selfhost.lobby_diag_judgment_bypass",
+                        DiagnosticRoute.DIRECT: "selfhost.lobby_diag_judgment_direct",
                         DiagnosticRoute.INCONCLUSIVE: "selfhost.lobby_diag_judgment_inconclusive"}[route]
         confidence_key = {"high": "selfhost.lobby_diag_confidence_high", "medium": "selfhost.lobby_diag_confidence_medium",
                           "low": "selfhost.lobby_diag_confidence_low"}.get(report.confidence, "selfhost.lobby_diag_confidence_low")
@@ -1388,7 +1390,13 @@ class SelfHostPanel(QWidget):
         progress.append(t(route_key), "detail")
         section("selfhost.lobby_diag_connection_title")
         detail("selfhost.lobby_diag_player_auth", value=t("dlg.yes_btn") if evidence.authenticated else t("dlg.no_btn"))
-        detail("selfhost.lobby_diag_connection_type", value=t(connection_key))
+        if evidence.players:
+            # 逐个玩家列出日志里识别到的连接方式（同一玩家进出多次只列最后一次）
+            latest = {item.player: item.kind for item in evidence.players}
+            for player, kind in latest.items():
+                detail("selfhost.lobby_diag_player_line", player=player, kind=t(f"selfhost.lobby_diag_kind_{kind.value}"))
+        else:
+            detail("selfhost.lobby_diag_connection_type", value=t(connection_key))
         detail("selfhost.lobby_diag_loopback", value=t("dlg.yes_btn") if evidence.loopback_connection else t("dlg.no_btn"))
         detail("selfhost.lobby_diag_external_ports", value=external_ports)
         section("selfhost.lobby_diag_wg_title")
@@ -1407,6 +1415,8 @@ class SelfHostPanel(QWidget):
                                       evidence.mihomo_wg_stun_bytes, evidence.mihomo_wg_non_stun_bytes))
         if (remote.wg_rx_delta or remote.wg_tx_delta) and not identified_wg_traffic:
             progress.append(t("selfhost.lobby_diag_counter_only_note"), "note")
+        if any(item.kind == ConnectionKind.STEAM_P2P for item in evidence.players):
+            progress.append(t("selfhost.lobby_diag_p2p_note"), "note")
         warnings = []
         if remote.error:
             warnings.append(t("selfhost.lobby_diag_remote_error", detail=remote.error))
