@@ -188,11 +188,12 @@ class MenuStrip(QWidget):
         self.retranslate()
 
     def paintEvent(self, _event):
-        # 菜单文字下方一条主题色分隔线，左右与菜单内容边距对齐。
+        # 菜单文字下方一条主题色分隔线，左右缩进 24 与各主页签外层圆角边框同宽
+        # （页面 page_layout 左右外边距都是 24，菜单条与页面堆栈同宽）。
         painter = QPainter(self)
         painter.setPen(QPen(theme.color("PRIMARY"), 1))
         y = self.height() - 1
-        painter.drawLine(8, y, self.width() - 8, y)
+        painter.drawLine(24, y, self.width() - 24, y)
 
     def retranslate(self) -> None:
         for key, button in self._buttons.items():
