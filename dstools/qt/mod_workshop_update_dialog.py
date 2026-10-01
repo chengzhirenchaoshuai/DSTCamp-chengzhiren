@@ -407,7 +407,14 @@ class WorkshopUpdateDialog(QDialog):
         version_label = QLabel(version_display(info))
         version_label.setProperty("muted", True)
         version_label.setFont(theme.font("FONT_SIZE_SM"))
-        text_col.addWidget(version_label)
+        version_row = QHBoxLayout()
+        version_row.setSpacing(6)
+        version_row.addWidget(version_label)
+        tag = self._format_tag(self._states.get(wid))
+        if tag is not None:
+            version_row.addWidget(tag)
+        version_row.addStretch()
+        text_col.addLayout(version_row)
         layout.addLayout(text_col, 1)
 
         status = self._states.get(wid)
@@ -439,6 +446,22 @@ class WorkshopUpdateDialog(QDialog):
             action_layout.addWidget(action_btn)
         layout.addWidget(action_box)
         return row
+
+    @staticmethod
+    def _format_tag(status) -> QLabel | None:
+        """版本号后面的 V1/V2 小标签，依据是 Steam 自己的 LegacyItem 状态位；
+        Steam 还没返回状态（检查中、查询失败）时不显示，不靠猜。"""
+        steam = status.evidence.steam_state if status is not None and status.evidence is not None else None
+        if steam is None:
+            return None
+        legacy = steam.legacy_item
+        tag = QLabel("V1" if legacy else "V2")
+        tag.setFont(theme.font("FONT_SIZE_XS", bold=True))
+        tag.setToolTip(t("mod.format_tag_v1_tip" if legacy else "mod.format_tag_v2_tip"))
+        # V1 用琥珀色（项目里已有的提醒色），V2 用主题浅色
+        background, color = ("#F6E3B4", "#8d6e00") if legacy else (theme.hex("PRIMARY_LIGHT"), theme.hex("TEXT"))
+        tag.setStyleSheet(f"background: {background}; color: {color}; border-radius: 4px; padding: 0px 5px;")
+        return tag
 
     @staticmethod
     def _latest_key(status) -> str:
