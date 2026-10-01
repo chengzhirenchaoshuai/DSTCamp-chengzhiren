@@ -29,7 +29,7 @@ from dstools.qt import dialogs
 from dstools.qt.imaging import pil_to_pixmap
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async
-from dstools.qt.widgets import Card, PillTabBar
+from dstools.qt.widgets import Card, PillTabBar, mod_format_tag_colors
 
 _LATEST_LABELS = {
     WorkshopModState.CURRENT: "mod.update_latest_up_to_date",
@@ -458,9 +458,12 @@ class WorkshopUpdateDialog(QDialog):
         tag = QLabel("V1" if legacy else "V2")
         tag.setFont(theme.font("FONT_SIZE_XS", bold=True))
         tag.setToolTip(t("mod.format_tag_v1_tip" if legacy else "mod.format_tag_v2_tip"))
-        # V1 用琥珀色（项目里已有的提醒色），V2 用主题浅色
-        background, color = ("#F6E3B4", "#8d6e00") if legacy else (theme.hex("PRIMARY_LIGHT"), theme.hex("TEXT"))
-        tag.setStyleSheet(f"background: {background}; color: {color}; border-radius: 4px; padding: 0px 5px;")
+        background, color = mod_format_tag_colors("V1" if legacy else "V2")
+        # 样式必须用对象名限定只作用于标签本身：悬停提示框（QTipLabel）会继承触发它的
+        # 控件的样式表，不加选择器时提示框也被画成圆角，四个角露出黑点（真机反馈过）。
+        tag.setObjectName("modFormatTag")
+        tag.setStyleSheet(f"QLabel#modFormatTag {{ background: {background.name()}; color: {color.name()}; "
+                          "border-radius: 4px; padding: 0px 5px; }}")
         return tag
 
     @staticmethod

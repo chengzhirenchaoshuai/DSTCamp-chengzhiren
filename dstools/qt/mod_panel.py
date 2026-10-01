@@ -217,6 +217,34 @@ class ModListPanel(QAbstractScrollArea):
                 continue
             self._paint_row(painter, m, cols, row, i, top, width, name_font, id_font, btn_font, name_fm, id_fm)
 
+    @staticmethod
+    def _paint_format_tag(painter, fmt, version_rect: QRectF, version_text: str, id_font, id_fm, s: float) -> None:
+        """在版本号文字后面画 V1/V2 小圆角标签（跟更新 Mod 窗口同款颜色）；没有格式信息不画。"""
+        if fmt not in ("V1", "V2"):
+            return
+        from dstools.qt.widgets import mod_format_tag_colors
+
+        tag_font = QFont(id_font)
+        tag_font.setBold(True)
+        tag_font.setPointSizeF(max(6.0, id_font.pointSizeF() * 0.85))
+        tag_fm = QFontMetricsF(tag_font)
+        pad_x = 5 * s
+        tag_w = tag_fm.horizontalAdvance(fmt) + 2 * pad_x
+        tag_h = tag_fm.height() + 2 * s
+        x = version_rect.left() + id_fm.horizontalAdvance(version_text) + 6 * s
+        if x + tag_w > version_rect.right():
+            return  # 版本号太长被省略时不硬塞标签
+        rect = QRectF(x, version_rect.center().y() - tag_h / 2, tag_w, tag_h)
+        background, color = mod_format_tag_colors(fmt)
+        painter.save()
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(background)
+        painter.drawRoundedRect(rect, 4 * s, 4 * s)
+        painter.setPen(color)
+        painter.setFont(tag_font)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, fmt)
+        painter.restore()
+
     def _paint_row(self, painter, m, cols, row, index, top, width, name_font, id_font, btn_font, name_fm, id_fm):
         wid = row["workshop_id"]
         bg = theme.color("CARD_BG_ALT") if index % 2 == 0 else theme.color("CARD_BG")
@@ -242,8 +270,9 @@ class ModListPanel(QAbstractScrollArea):
         painter.drawText(QRectF(cols["name_x"], top + m.row_h * 0.4, cols["name_w"], m.row_h * 0.28),
                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, str(wid))
         version_text = self._elide(row.get("version_text", ""), id_fm, cols["name_w"])
-        painter.drawText(QRectF(cols["name_x"], top + m.row_h * 0.68, cols["name_w"], m.row_h * 0.28),
-                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, version_text)
+        version_rect = QRectF(cols["name_x"], top + m.row_h * 0.68, cols["name_w"], m.row_h * 0.28)
+        painter.drawText(version_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, version_text)
+        self._paint_format_tag(painter, row.get("mod_format"), version_rect, version_text, id_font, id_fm, m.s)
 
         # 开关 / 本地徽章
         if row.get("is_local"):

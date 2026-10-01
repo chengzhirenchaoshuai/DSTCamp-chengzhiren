@@ -716,9 +716,16 @@ class ModPage(Page):
         rows = build_mod_rows(self._mod_data, self._mod_infos, self._filter_edit.text(),
                               show_map[self._filter_tabs.current_index()], platform,
                               show_local=self._show_local, separate_client_mods=True, locked_mod_id=locked_id)
+        from dstools.features.mod.parser import detect_mod_format, find_workshop_dir
+
+        workshop_root = find_workshop_dir()
         for row in rows:
             path = self._mod_paths.get(row["workshop_id"])
             row["has_folder"] = bool(path and Path(path).is_dir())
+            numeric = str(row["workshop_id"]).removeprefix("workshop-")
+            status = self._workshop_status_cache.get(int(numeric)) if numeric.isdigit() else None
+            steam = status.evidence.steam_state if status is not None and status.evidence is not None else None
+            row["mod_format"] = None if row.get("is_local") else detect_mod_format(numeric, workshop_root, steam)
         return rows
 
     def _render_list(self) -> None:

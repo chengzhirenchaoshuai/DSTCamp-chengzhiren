@@ -362,6 +362,28 @@ def is_mod_subscribed(workshop_id: str) -> bool:
     return candidate.exists() and (candidate / "modinfo.lua").exists()
 
 
+def detect_mod_format(workshop_id, workshop_root: Path | None, steam_state=None) -> str | None:
+    """返回创意工坊 Mod 的格式 "V1" / "V2"，判断不了返回 None（本地手动安装的 Mod 等）。
+
+    有 Steam 状态（更新检测的结果）时以 Steam 的 LegacyItem 状态位为准；没有时看本地
+    创意工坊目录：根目录有 modinfo.lua 是 V2，只有 *_legacy.bin 是 V1——跟启动专服前
+    判断要不要解压 V1 包是同一条规则。"""
+    if steam_state is not None:
+        return "V1" if steam_state.legacy_item else "V2"
+    text = str(workshop_id).removeprefix("workshop-")
+    if workshop_root is None or not text.isdigit():
+        return None
+    item_dir = workshop_root / text
+    if (item_dir / "modinfo.lua").is_file():
+        return "V2"
+    try:
+        if any(path.is_file() for path in item_dir.glob("*_legacy.bin")):
+            return "V1"
+    except OSError:
+        return None
+    return None
+
+
 def find_shared_ugc_directory() -> Path | None:
     """专用服务器 `-ugc_directory` 启动参数要用的路径——真机验证过：直接
     传这台机器 Steam 自己维护的 `steamapps/workshop` 目录（`content/322330/

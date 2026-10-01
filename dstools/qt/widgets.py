@@ -102,6 +102,15 @@ def section_card(title: str | None = None) -> tuple[Card, QVBoxLayout]:
     return card, layout
 
 
+def mod_format_tag_colors(fmt: str) -> tuple[QColor, QColor]:
+    """V1/V2 小标签的（底色, 文字色）。V1 用很浅的琥珀色提醒，V2 用主题浅色再冲淡一半。"""
+    if fmt == "V1":
+        return QColor("#FBF3DC"), QColor("#8d6e00")
+    light = theme.color("PRIMARY_LIGHT")
+    background = QColor((light.red() + 255) // 2, (light.green() + 255) // 2, (light.blue() + 255) // 2)
+    return background, theme.color("TEXT")
+
+
 class AutoHideLabel(QLabel):
     """文字为空时自动隐藏的标签：平时为空的错误提示不再白占一行高度。"""
 

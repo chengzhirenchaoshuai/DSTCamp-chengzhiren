@@ -861,9 +861,13 @@ class CreationWizardDialog(QDialog):
         rows = build_mod_rows(self._mod_data, self._mod_infos, self._mod_filter_edit.text(),
                               show_map[self._mod_filter_tabs.current_index()], self._mod_scan_platform,
                               show_local=False, separate_client_mods=True)
+        from dstools.features.mod.parser import detect_mod_format, find_workshop_dir
+
+        workshop_root = find_workshop_dir()
         for row in rows:
             path = self._mod_paths.get(row["workshop_id"])
             row["has_folder"] = bool(path and Path(path).is_dir())
+            row["mod_format"] = None if row.get("is_local") else detect_mod_format(row["workshop_id"], workshop_root)
         return rows
 
     def _render_list(self) -> None:
