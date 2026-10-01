@@ -371,7 +371,7 @@ class SaveInfoPage(Page):
             t("save.delete_confirm", name=cluster.name, dir=str(default_save_bundle_output_dir())),
             [(t("save.delete_backup_btn"), "backup"), (t("save.delete_direct_btn"), "delete"),
              (t("dlg.cancel_btn"), "cancel")],
-            default="cancel", min_width=420)
+            default="cancel", min_width=420, danger_values=("backup", "delete"))
         if choice not in ("backup", "delete"):
             return
         self._delete_running = True
@@ -445,7 +445,7 @@ class SaveInfoPage(Page):
         if running:
             dialogs.show_warning(self._window(), title, t("save.restore_shards_running", shards="、".join(running)))
             return
-        if not dialogs.ask_yes_no(self._window(), title, t("save.restore_confirm")):
+        if not dialogs.ask_yes_no(self._window(), title, t("save.restore_confirm"), danger=True):
             return
         backup = picker.result_backup
 

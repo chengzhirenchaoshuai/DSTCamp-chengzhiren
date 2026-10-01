@@ -315,7 +315,7 @@ class ConsolePane(QWidget):
     def _reset_world(self) -> None:
         if not dialogs.ask_yes_no(
                 self.window(), t("local.console_reset_world_confirm_title"),
-                t("local.console_reset_world_confirm_msg"), min_width=520):
+                t("local.console_reset_world_confirm_msg"), min_width=520, danger=True):
             return
         self.proc.send_command("c_regenerateworld()")
 

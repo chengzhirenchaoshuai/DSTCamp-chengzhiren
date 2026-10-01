@@ -206,6 +206,14 @@ class Theme(QObject):
             QPushButton:hover {{ background: {c['PRIMARY_DARK']}; }}
             QPushButton:pressed {{ background: {c['PRIMARY_DARK']}; }}
             QPushButton:disabled {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT_MUTED']}; }}
+            QPushButton[variant="secondary"] {{ background: transparent; color: {c['TEXT']};
+                border: 1px solid {c['CARD_BORDER']}; padding: 5px 15px; font-weight: normal; }}
+            QPushButton[variant="secondary"]:hover {{ background: {c['PRIMARY_LIGHT']}; }}
+            QPushButton[variant="danger"] {{ background: {c['ERROR']}; color: white; }}
+            QPushButton[variant="danger"]:hover, QPushButton[variant="danger"]:pressed {{
+                background: {QColor(c['ERROR']).darker(120).name()}; }}
+            QPushButton[variant="secondary"]:disabled, QPushButton[variant="danger"]:disabled {{
+                background: {c['PRIMARY_LIGHT']}; color: {c['TEXT_MUTED']}; }}
             QPushButton[flat="true"] {{ background: transparent; color: {c['TEXT']}; font-weight: normal;
                 border-radius: 5px; padding: 2px 8px; }}
             QPushButton[flat="true"]:hover {{ background: {c['PRIMARY_LIGHT']}; }}

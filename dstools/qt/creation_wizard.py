@@ -201,7 +201,7 @@ class _LoadPresetDialog(dialogs.Dialog):
         if not 0 <= row < len(self._presets):
             return
         preset = self._presets[row]
-        if not dialogs.ask_yes_no(self, t("preset.delete_btn"), t("preset.delete_confirm", name=preset.name)):
+        if not dialogs.ask_yes_no(self, t("preset.delete_btn"), t("preset.delete_confirm", name=preset.name), danger=True):
             return
         presets.delete_preset(preset.name)
         self._presets = presets.list_presets()
@@ -543,7 +543,7 @@ class CreationWizardDialog(QDialog):
         if self._shard_combo.count() <= 1 or not shard_name:
             return
         if not dialogs.ask_yes_no(self, t("world.creation_remove_world"),
-                                  t("world.creation_remove_world_confirm", name=shard_name)):
+                                  t("world.creation_remove_world_confirm", name=shard_name), danger=True):
             return
         self._dirty = True
         if shard_name == MASTER_SHARD:

@@ -512,7 +512,7 @@ class WorkshopUpdateDialog(QDialog):
     # ── 移除失效引用 ─────────────────────────────────────────────────────
     def _remove_reference(self, wid: str) -> None:
         if not dialogs.ask_yes_no(self, t("mod.update_remove_reference_title"),
-                                   t("mod.update_remove_reference_confirm", mod_id=f"workshop-{wid}")):
+                                   t("mod.update_remove_reference_confirm", mod_id=f"workshop-{wid}"), danger=True):
             return
         changed = 0
         cluster = self.page.get_cluster()

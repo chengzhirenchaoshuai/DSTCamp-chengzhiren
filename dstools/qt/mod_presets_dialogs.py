@@ -98,7 +98,7 @@ class SavePresetDialog(dialogs.Dialog):
             self._error.setText(t("preset.save_none_selected"))
             return
         if presets.find_preset(name) and not dialogs.ask_yes_no(
-                self, t("preset.save_dialog_title"), t("preset.save_overwrite_confirm", name=name)):
+                self, t("preset.save_dialog_title"), t("preset.save_overwrite_confirm", name=name), danger=True):
             return
         cluster = self.page.get_cluster()
         platform = cluster.platform.value if cluster else ""
@@ -195,7 +195,7 @@ class ApplyPresetDialog(dialogs.Dialog):
         preset = self._selected_preset()
         if preset is None:
             return
-        if not dialogs.ask_yes_no(self, t("preset.delete_btn"), t("preset.delete_confirm", name=preset.name)):
+        if not dialogs.ask_yes_no(self, t("preset.delete_btn"), t("preset.delete_confirm", name=preset.name), danger=True):
             return
         presets.delete_preset(preset.name)
         self._presets = presets.list_presets()

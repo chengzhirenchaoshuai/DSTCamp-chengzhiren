@@ -18,7 +18,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QGraphicsOpacityEffect, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QListWidget, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QToolTip, QVBoxLayout,
+    QListWidget, QPushButton, QTableWidget, QTableWidgetItem, QTextEdit, QToolTip, QVBoxLayout,
     QWidget,
 )
 
@@ -33,64 +33,175 @@ from dstools.shared.app_settings import (
 )
 
 
+# ── 弹窗规范 ────────────────────────────────────────────────────────────
+# 所有弹窗只在这三档宽度里选，不再各自写具体像素（数值待真机肉眼确认后微调）：
+#   sm：提示、确认类短消息；md：表单、列表、较长说明；lg：日志、报告、多段详情。
+DIALOG_WIDTHS = {"sm": 420, "md": 560, "lg": 760}
+DIALOG_MARGINS = (20, 18, 20, 16)  # 左、上、右、下
+DIALOG_SPACING = 10
+
+
+def width_tier(min_width: int) -> str:
+    """把旧调用方传的 min_width 像素值归到最接近的宽度档位。"""
+    if min_width <= 460:
+        return "sm"
+    if min_width <= 640:
+        return "md"
+    return "lg"
+
+
+def style_button(button: QPushButton, variant: str) -> QPushButton:
+    """按钮外观：primary 主题色实心（默认）、secondary 浅色描边（取消类）、danger 红色（删除类）。"""
+    button.setProperty("variant", variant)
+    button.style().unpolish(button)
+    button.style().polish(button)
+    return button
+
+
 # ── 消息框 ──────────────────────────────────────────────────────────────
 
-def _box(parent, icon, title: str, text: str, with_ok: bool = True, min_width: int = 0) -> QMessageBox:
-    box = QMessageBox(parent)
-    box.setIcon(icon)
-    box.setWindowTitle(title)
-    box.setText(text)
-    if min_width:
-        # 只撑宽正文标签：之前写成 "QLabel { ... }" 会连左侧图标标签也撑到同样宽，
-        # 弹窗左边出现一大片空白、文字被挤到右半边（真机反馈过）。
-        box.setStyleSheet(f"QLabel#qt_msgbox_label {{ min-width: {min_width}px; }}")
-    if with_ok:  # 默认按钮文字是英文 OK，统一成项目里的"确认"
-        box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.AcceptRole)
-    return box
+# 图标：底色键（None 表示固定色）、固定色、符号。警告用固定琥珀色，五套主题里都醒目。
+_MESSAGE_ICONS = {
+    "info": ("PRIMARY", "", "i"),
+    "warning": (None, "#E6A23C", "!"),
+    "error": ("ERROR", "", "×"),
+    "question": ("ACCENT", "", "?"),
+}
+
+
+class _MessageIcon(QWidget):
+    """消息框左侧的圆形图标，自绘、跟随主题色，不用系统图标。"""
+
+    _SIZE = 34
+
+    def __init__(self, kind: str, parent=None):
+        super().__init__(parent)
+        self._kind = kind
+        self.setFixedSize(self._SIZE, self._SIZE)
+
+    def paintEvent(self, _event):
+        color_key, fixed, glyph = _MESSAGE_ICONS.get(self._kind, _MESSAGE_ICONS["info"])
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme.color(color_key) if color_key else QColor(fixed))
+        painter.drawEllipse(QRectF(self.rect()).adjusted(1, 1, -1, -1))
+        font = theme.font("FONT_SIZE_LG", bold=True)
+        painter.setFont(font)
+        painter.setPen(QColor("white"))
+        painter.drawText(self.rect(), int(Qt.AlignmentFlag.AlignCenter), glyph)
+
+
+class MessageDialog(QDialog):
+    """统一样式的消息框，替代 QMessageBox（后者会把正文重设成 9pt 系统字体、图标列
+    宽度不受控、按钮样式不统一）。
+
+    buttons 是 [(文字, 返回值, 样式)]，样式取 primary/secondary/danger；secondary
+    按钮靠左（取消类），其余按传入顺序靠右。关闭窗口/按 Esc 返回 escape。"""
+
+    def __init__(self, parent, kind: str, title: str, text: str, buttons: list[tuple[str, object, str]],
+                 default=None, escape=None, size: str = "sm", rich: bool = False,
+                 on_link=None, min_body_height: int = 0):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.setFixedWidth(DIALOG_WIDTHS.get(size, DIALOG_WIDTHS["sm"]))
+        self.result_value = escape
+        self._escape = escape
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(*DIALOG_MARGINS)
+        root.setSpacing(DIALOG_SPACING + 6)
+        top = QHBoxLayout()
+        top.setSpacing(14)
+        top.addWidget(_MessageIcon(kind), 0, Qt.AlignmentFlag.AlignTop)
+        self.body = QLabel(text)
+        self.body.setObjectName("messageBody")
+        self.body.setWordWrap(True)
+        self.body.setTextFormat(Qt.TextFormat.RichText if rich else Qt.TextFormat.PlainText)
+        self.body.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        if min_body_height:
+            self.body.setMinimumHeight(min_body_height)
+        if on_link is not None:
+            self.body.setOpenExternalLinks(False)
+            self.body.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
+            self.body.linkActivated.connect(lambda _href: on_link())
+        else:
+            # 错误信息里常有路径/报错原文，允许鼠标选中复制。
+            self.body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        top.addWidget(self.body, 1)
+        root.addLayout(top)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        left = [b for b in buttons if b[2] == "secondary"]
+        right = [b for b in buttons if b[2] != "secondary"]
+        for label, value, variant in left:
+            row.addWidget(self._make_button(label, value, variant, default))
+        row.addStretch()
+        for label, value, variant in right:
+            row.addWidget(self._make_button(label, value, variant, default))
+        root.addLayout(row)
+
+    def _make_button(self, label: str, value, variant: str, default) -> QPushButton:
+        button = style_button(QPushButton(label), variant)
+        button.setAutoDefault(False)
+        if value == default:
+            button.setDefault(True)
+            button.setFocus()
+        button.clicked.connect(lambda _c=False, v=value: self._pick(v))
+        return button
+
+    def _pick(self, value) -> None:
+        self.result_value = value
+        self.accept()
+
+    def reject(self) -> None:
+        self.result_value = self._escape
+        super().reject()
+
+    def ask(self):
+        self.exec()
+        return self.result_value
+
+
+def _ok_buttons() -> list[tuple[str, object, str]]:
+    return [(t("dlg.confirm_btn"), True, "primary")]
 
 
 def show_info(parent, title: str, text: str) -> None:
-    _box(parent, QMessageBox.Icon.Information, title, text).exec()
+    MessageDialog(parent, "info", title, text, _ok_buttons(), default=True).ask()
 
 
 def show_warning(parent, title: str, text: str) -> None:
-    _box(parent, QMessageBox.Icon.Warning, title, text).exec()
+    MessageDialog(parent, "warning", title, text, _ok_buttons(), default=True).ask()
 
 
 def show_error(parent, title: str, text: str, min_width: int = 0) -> None:
-    _box(parent, QMessageBox.Icon.Critical, title, text, min_width=min_width).exec()
+    MessageDialog(parent, "error", title, text, _ok_buttons(), default=True,
+                  size=width_tier(min_width)).ask()
 
 
-def ask_yes_no(parent, title: str, text: str, min_width: int = 0) -> bool:
-    box = _box(parent, QMessageBox.Icon.Question, title, text, with_ok=False, min_width=min_width)
-    yes = box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.YesRole)
-    box.addButton(t("dlg.cancel_btn"), QMessageBox.ButtonRole.NoRole)
-    box.exec()
-    return box.clickedButton() is yes
+def ask_yes_no(parent, title: str, text: str, min_width: int = 0, danger: bool = False) -> bool:
+    """确认/取消。danger=True 时确认按钮用红色（删除等不可轻易撤回的操作），并且回车
+    默认落在"取消"上，误按回车不会直接执行危险操作。"""
+    buttons = [(t("dlg.cancel_btn"), False, "secondary"),
+               (t("dlg.confirm_btn"), True, "danger" if danger else "primary")]
+    return bool(MessageDialog(parent, "question", title, text, buttons, default=not danger, escape=False,
+                              size=width_tier(min_width)).ask())
 
 
 def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], default: str = "",
-               min_width: int = 0) -> str:
+               min_width: int = 0, danger_values: tuple[str, ...] = ()) -> str:
     """多选项询问：choices 是 [(按钮文字, 返回值)]，default 是默认（回车）按钮。
 
-    关闭窗口/按 Esc：有返回值为 "cancel" 的选项就等同点它，否则返回空串——调用方
-    一律按"取消"处理。QMessageBox 只有存在"取消类"按钮时才启用标题栏关闭按钮，之前
-    全是 ActionRole 按钮，关闭按钮一直是灰的（真机反馈过）；没有现成取消项时补一个
-    隐藏的 Cancel 按钮当 Esc/关闭目标。"""
-    box = _box(parent, QMessageBox.Icon.Question, title, text, with_ok=False, min_width=min_width)
-    buttons = {}
-    for label, value in choices:
-        buttons[box.addButton(label, QMessageBox.ButtonRole.ActionRole)] = value
-    escape = next((button for button, value in buttons.items() if value == "cancel"), None)
-    if escape is None:
-        escape = box.addButton(QMessageBox.StandardButton.Cancel)
-        escape.hide()
-    box.setEscapeButton(escape)
-    default_button = next((button for button, value in buttons.items() if value == default), None)
-    if default_button is not None:
-        box.setDefaultButton(default_button)
-    box.exec()
-    return buttons.get(box.clickedButton(), "")
+    返回值为 "cancel" 的选项当作取消类按钮放在左侧；关闭窗口/按 Esc 返回 "cancel"
+    （有这一项时）或空串——调用方一律按"取消"处理。danger_values 里的选项用红色按钮。"""
+    has_cancel = any(value == "cancel" for _label, value in choices)
+    buttons = [(label, value, "secondary" if value == "cancel" else
+                "danger" if value in danger_values else "primary") for label, value in choices]
+    return MessageDialog(parent, "question", title, text, buttons, default=default,
+                         escape="cancel" if has_cancel else "", size=width_tier(min_width)).ask()
 
 
 class _Toast(QWidget):
@@ -250,31 +361,16 @@ def _open_in_explorer_foreground(path: Path) -> None:
 
 
 def show_file_location(parent, title: str, path, location_label: str, copied_message: str) -> None:
-    """显示文件位置，点链接在资源管理器里选中该文件。"""
+    """显示文件位置，点链接在资源管理器里选中该文件（并把资源管理器窗口提到最前）。"""
     path = Path(path).resolve()
-    box = _box(parent, QMessageBox.Icon.Information, title, "", with_ok=False)
     link = f'<a href="open" style="color:{theme.hex("PRIMARY")}">点我打开</a>'
-    box.setTextFormat(Qt.TextFormat.RichText)
     # 每行单独一段、段间留白，比 <br> 硬换行的行距更舒展；文案里的空行跳过。
     lines = [location_label, link, *(line for line in copied_message.splitlines() if line.strip())]
-    box.setText("".join(f'<p style="margin: 0 0 10px 0;">{line}</p>' for line in lines))
-    # "打包存档"和"获取日志文件"共用这个弹窗，正文行数不同；给正文固定最小宽高，
-    # 两处弹出来的窗口大小一致。字体也必须写在 QSS 里：QMessageBox 显示时会把正文
-    # 标签重设成系统消息框字体（实测 9pt，比界面正文小），setFont() 会被覆盖。
-    # 字号跟本地服务器页"局域网直连代码"等正文一致（应用默认字号 FONT_SIZE_SM）。
-    body_font = theme.font("FONT_SIZE_SM")
-    box.setStyleSheet(
-        "QLabel#qt_msgbox_label { min-width: 460px; min-height: 150px; "
-        f"font-family: '{body_font.family()}'; font-size: {body_font.pointSize()}pt; }}")
-    label = box.findChild(QLabel, "qt_msgbox_label")
-    if label is not None:
-        # QMessageBox 的正文标签默认 openExternalLinks=True，点链接时 Qt 自己去"打开"
-        # href，不会发 linkActivated——之前"点我打开"点了没反应就是这个原因。
-        label.setOpenExternalLinks(False)
-        label.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse)
-        label.linkActivated.connect(lambda _href: _open_in_explorer_foreground(path))
-    box.addButton(t("dlg.confirm_btn"), QMessageBox.ButtonRole.AcceptRole)
-    box.exec()
+    text = "".join(f'<p style="margin: 0 0 10px 0;">{line}</p>' for line in lines)
+    # "打包存档"和"获取日志文件"共用这个弹窗、正文行数不同：同一档宽度 + 正文最小高度，
+    # 两处弹出来大小一致。
+    MessageDialog(parent, "info", title, text, _ok_buttons(), default=True, size="md", rich=True,
+                  on_link=lambda: _open_in_explorer_foreground(path), min_body_height=110).ask()
 
 
 # ── 基础对话框 ──────────────────────────────────────────────────────────
