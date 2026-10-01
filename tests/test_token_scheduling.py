@@ -3,6 +3,7 @@
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -150,6 +151,7 @@ def main() -> None:
         write_token(crash_cluster / "cluster_token.txt", NEW_A)
         from dstools.qt.pages.local_service import LocalServicePage
         crash_service = LocalServicePage.__new__(LocalServicePage)
+        crash_service._auto_restart = Mock()
         crash_service._token_reservations = {str(crash_cluster): NEW_A}
         app_settings.set_global_tokens([NEW_A])
         # 验证 Master 诊断回调会持久化，并在后续明确注册成功后清除。
@@ -208,7 +210,7 @@ def main() -> None:
         with (
             patch.object(local_module, "load_cluster_config", return_value=SimpleNamespace(network={})),
             patch.object(local_module, "get_global_tokens", return_value=[NEW_A, NEW_B]),
-            patch.object(local_module, "get_token_holds", return_value={}),
+            patch.object(local_module, "blocking_token_holds", return_value={}),
             patch.object(local_module, "prune_token_holds") as prune_holds,
             patch.object(local_module.dialogs, "show_toast") as toast,
         ):
@@ -224,7 +226,7 @@ def main() -> None:
         with (
             patch.object(local_module, "load_cluster_config", return_value=SimpleNamespace(network={})),
             patch.object(local_module, "get_global_tokens", return_value=[NEW_A]),
-            patch.object(local_module, "get_token_holds", return_value={}),
+            patch.object(local_module, "blocking_token_holds", return_value={}),
             patch.object(local_module, "prune_token_holds"),
             patch.object(local_module.dialogs, "show_warning") as warning,
         ):
@@ -240,7 +242,7 @@ def main() -> None:
             patch.object(local_module, "get_global_tokens", return_value=[NEW_B]),
             patch.object(
                 local_module,
-                "get_token_holds",
+                "blocking_token_holds",
                 return_value={token_fingerprint(NEW_A): {"state": "conflict"}},
             ),
             patch.object(local_module, "prune_token_holds") as prune_holds,
@@ -252,6 +254,7 @@ def main() -> None:
         toast.assert_not_called()
 
     test_auto_restart_rules_and_hold_retry_window()
+    test_auto_restart_controller_flow()
     print("服务器令牌分类与调度测试全部通过")
 
 
@@ -287,6 +290,119 @@ def test_auto_restart_rules_and_hold_retry_window() -> None:
         assert app_settings.get_auto_restart_enabled("C:/saves/A")
         app_settings.set_auto_restart_enabled("C:/saves/A", False)
         assert not app_settings.get_auto_restart_enabled("C:/saves/A")
+
+
+def test_auto_restart_controller_flow() -> None:
+    """用假页面驱动真实调度器：直接触发定时器回调，覆盖换令牌重启、等令牌、冲突、成功、限流与取消。"""
+    from PySide6.QtCore import QCoreApplication
+
+    from dstools.features.local_service.auto_restart import MAX_CRASH_RESTARTS, TOKEN_RETRY_DELAYS
+    from dstools.features.local_service.dedicated_server import ServerStatus
+    from dstools.qt import auto_restart as controller_module
+
+    app = QCoreApplication.instance() or QCoreApplication([])  # QTimer 需要应用对象，保持引用
+    assert app is not None
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        cluster = SimpleNamespace(name="Cluster_A", path=root / "Cluster_A", token_path=None,
+                                  shards=[SimpleNamespace(name="Master"), SimpleNamespace(name="Caves")])
+        cluster.path.mkdir()
+        procs = {}
+        events = []
+        tokens = {"available": True}
+
+        def make_proc(name, *, ready=True, status=ServerStatus.RUNNING):
+            procs[name] = SimpleNamespace(cluster_path=cluster.path, shard_name=name, is_master=name == "Master",
+                                          world_ready=ready, status=status)
+            return procs[name]
+
+        def stop_then(_cluster, shards, on_done):
+            for shard in shards:
+                procs.pop(shard.name, None)
+            events.append(("stop", tuple(s.name for s in shards)))
+            on_done()
+
+        page = SimpleNamespace(
+            ctx=SimpleNamespace(env=SimpleNamespace(clusters=[cluster], klei_root=root),
+                                ensure_lobby_accel=lambda _c, callback: callback(True, "")),
+            manager=SimpleNamespace(get=lambda _path, name: procs.get(name)),
+            _cluster_for_running_process=lambda _proc, _current: cluster,
+            _master_shard=lambda _c: cluster.shards[0],
+            _stop_shards_and_then=stop_then,
+            _choose_start_token=lambda _c: tokens["available"],
+            _install_dir=root, _detect_install_dir=lambda: None, _launching_keys=set(),
+            _release_token_reservation_if_stopped=lambda _path: None,
+            _continue_start_shard=lambda _c, shard, _arg: (events.append(("start", shard.name)),
+                                                           make_proc(shard.name, ready=False)),
+            _select_master_console_tab=lambda _c: None,
+            window=lambda: None,
+        )
+        crash = SimpleNamespace(category="unknown", title="服务器启动失败")
+        conflict = SimpleNamespace(category="token_conflict", title="令牌注册冲突")
+        key = str(cluster.path)
+        with patch.object(controller_module, "data_dir", return_value=root / "logs"), \
+                patch.object(controller_module, "get_auto_restart_enabled", return_value=True), \
+                patch.object(controller_module, "blocking_token_holds", return_value={}), \
+                patch.object(controller_module, "load_cluster_config",
+                             return_value=SimpleNamespace(network={})), \
+                patch.object(controller_module.luajit_injector, "needs_regeneration", return_value=False), \
+                patch.object(controller_module, "resolve_conf_dir_arg", return_value=None):
+            controller = controller_module.AutoRestartController.__new__(controller_module.AutoRestartController)
+            controller_module.QObject.__init__(controller)
+            controller._page, controller._states = page, {}
+            controller._log_path = root / "logs" / "auto_restart.log"
+
+            # 1. 手动启动就失败（世界没就绪过）：不重启
+            controller.on_failure(make_proc("Master", ready=False, status=ServerStatus.CRASHED), crash)
+            assert key not in controller._states or controller._states[key].phase == "idle"
+
+            # 2. 主世界跑起来后崩溃、洞穴还在：整组重启（先停洞穴再全部拉起）
+            make_proc("Caves")
+            controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
+            state = controller._states[key]
+            assert state.phase == "scheduled" and state.full
+            controller._run(key)
+            assert ("stop", ("Master", "Caves")) in events or ("stop", ("Caves",)) in events
+            assert [e for e in events if e[0] == "start"] == [("start", "Master"), ("start", "Caves")]
+            assert state.phase == "starting" and state.attempts == 1
+
+            # 3. 拉起后注册冲突：停掉整组，按冲突次数等待
+            events.clear()
+            controller.on_failure(procs["Master"], conflict)
+            assert state.phase == "waiting_token" and state.conflicts == 1
+            assert abs(state.due - (time.time() + TOKEN_RETRY_DELAYS[1])) < 5
+            assert not procs, "冲突的那一轮要整组停掉，不能留着反复重试注册"
+
+            # 4. 等待期结束再试，这次没有可用令牌：继续等待而不是放弃
+            tokens["available"] = False
+            controller._run(key)
+            assert state.phase == "waiting_token"
+            tokens["available"] = True
+            controller._run(key)
+            assert state.phase == "starting" and state.attempts == 2
+
+            # 5. 世界就绪 + 注册成功：本轮结束
+            for proc in procs.values():
+                proc.world_ready, proc.status = True, ServerStatus.RUNNING
+            controller.poll()
+            assert state.phase == "starting", "主世界要等注册成功才算恢复"
+            controller.on_registered(procs["Master"])
+            assert state.phase == "idle"
+
+            # 6. 手动操作取消排队中的重启
+            controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
+            assert state.phase == "scheduled"
+            controller.cancel(cluster)
+            assert state.phase == "idle"
+
+            # 7. 30 分钟内崩溃超过上限：放弃并给出原因
+            for _ in range(MAX_CRASH_RESTARTS):
+                controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
+                controller.cancel(cluster)
+            controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
+            assert state.phase == "gave_up" and str(MAX_CRASH_RESTARTS) in state.reason
+            assert "放弃自动重启" in (root / "logs" / "auto_restart.log").read_text(encoding="utf-8")
 
 
 if __name__ == "__main__":

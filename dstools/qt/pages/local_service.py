@@ -34,6 +34,7 @@ from dstools.features.local_service.dedicated_server import (
 )
 from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE, STATUS_TEXT_KEYS, ordered_shards, max_rollback_days
+from dstools.features.local_service.auto_restart import token_retry_delay
 from dstools.features.local_service.token_scheduler import TokenUse, select_token_for_cluster
 from dstools.features.sakura import api as sakura_frp
 from dstools.i18n import t
@@ -43,11 +44,12 @@ from dstools.qt.local_console import ConsolePane, status_color
 from dstools.qt.pages.base import Page
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async, run_async_with_log
-from dstools.qt.widgets import Banner, Card
+from dstools.qt.auto_restart import AutoRestartController
+from dstools.qt.widgets import Banner, Card, ToggleSwitch
 from dstools.shared.app_settings import (
-    get_backup_auto_enabled, get_backup_interval_minutes, get_dedicated_server_extra_args,
-    get_global_tokens, get_sakura_token, get_selfhost_frp_mapping,
-    get_selfhost_frp_server, get_token_holds, clear_token_hold, prune_token_holds,
+    blocking_token_holds, get_auto_restart_enabled, get_backup_auto_enabled, get_backup_interval_minutes,
+    get_dedicated_server_extra_args, get_global_tokens, get_sakura_token, get_selfhost_frp_mapping,
+    get_selfhost_frp_server, get_token_holds, clear_token_hold, prune_token_holds, set_auto_restart_enabled,
     set_dedicated_server_extra_args, set_dedicated_server_path, set_token_hold,
 )
 from dstools.shared.clipboard import copy_file_to_clipboard
@@ -227,6 +229,7 @@ class LocalServicePage(Page):
         self._launching_keys: set[tuple[str, str]] = set()
         self._restarting_keys: set[tuple[str, str]] = set()
         self._token_reservations: dict[str, str] = {}
+        self._auto_restart = AutoRestartController(self)
         self._install_dir: Path | None = None
         self._steam_update_dialog: dialogs.LogDialog | None = None
         self._steam_remote_build_id: str | None = None
@@ -366,6 +369,19 @@ class LocalServicePage(Page):
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
+        auto_row = QHBoxLayout()
+        auto_label = QLabel(t("local.auto_restart_label"))
+        auto_label.setToolTip(t("local.auto_restart_tooltip"))
+        self._auto_restart_switch = ToggleSwitch()
+        self._auto_restart_switch.setToolTip(t("local.auto_restart_tooltip"))
+        self._auto_restart_switch.toggled.connect(self._on_auto_restart_toggled)
+        auto_row.addWidget(auto_label)
+        auto_row.addWidget(self._auto_restart_switch)
+        auto_row.addStretch()
+        layout.addLayout(auto_row)
+        self._auto_restart_banner = Banner()
+        layout.addWidget(self._auto_restart_banner)
+
         # WeGame 世界不能从这里启动，选中 WeGame 存档时用检测面板代替世界列表下方内容。
         self._wegame_banner = Banner()
         self._wegame_banner.set_text(t("local.wegame_manual_start_hint"))
@@ -461,6 +477,19 @@ class LocalServicePage(Page):
         self._sync_console_tabs_visibility(c if is_server else None)
         self._update_start_lock_state(c)
         self._update_luajit_row(c)
+        can_auto_restart = is_server and not is_wegame
+        self._auto_restart_switch.setEnabled(can_auto_restart)
+        self._auto_restart_switch.setChecked(can_auto_restart and get_auto_restart_enabled(str(c.path)))
+        self._auto_restart_banner.set_text(self._auto_restart.banner_text(c) if can_auto_restart else "")
+
+    def _on_auto_restart_toggled(self, checked: bool) -> None:
+        cluster = self.get_cluster()
+        if not cluster:
+            return
+        set_auto_restart_enabled(str(cluster.path), checked)
+        if not checked:
+            self._auto_restart.cancel(cluster)
+            self._auto_restart_banner.set_text("")
 
     def _refresh_shard_rows(self, cluster) -> None:
         if cluster is None:
@@ -729,15 +758,21 @@ class LocalServicePage(Page):
 
     def _token_unavailable_details(self) -> str:
         active = [use.cluster_name for use in self.token_usage_snapshot() if classify_token(use.token) == ServerTokenKind.NEW]
-        held = [item.get("cluster_name") or item.get("cluster_key") or "-" for item in get_token_holds().values()]
+        holds = blocking_token_holds(time.time())
+        held = [item.get("cluster_name") or item.get("cluster_key") or "-" for item in holds.values()]
         lines = []
         if active:
             lines.append(t("local.token_active_detail", names="、".join(sorted(set(active)))))
         if held:
             lines.append(t("local.token_held_detail", names="、".join(sorted(set(held)))))
+            retry_at = min(item["retry_at"] for item in holds.values())
+            lines.append(t("local.token_held_retry_detail", time=time.strftime("%H:%M", time.localtime(retry_at))))
         return "\n".join(lines) or t("local.token_pool_empty_detail")
 
-    def _prepare_token_for_start(self, cluster) -> bool:
+    def _choose_start_token(self, cluster) -> bool | str:
+        """为启动选令牌并写入存档，不弹窗。没有可用令牌返回 False；换了令牌返回 "changed"。
+
+        仍在 Klei 释放等待期内的新令牌不选；过了等待期允许再试（冲突时会重新进入等待）。"""
         config = load_cluster_config(cluster.path)
         if config.network.get("offline_cluster", False):
             self._token_reservations.pop(str(cluster.path), None)
@@ -749,16 +784,23 @@ class LocalServicePage(Page):
         prune_token_holds(pool)
         selection = select_token_for_cluster(
             current_token=current, pool=pool, target_cluster_key=cluster_key,
-            active_uses=self.token_usage_snapshot(), held_fingerprints=get_token_holds().keys())
+            active_uses=self.token_usage_snapshot(), held_fingerprints=blocking_token_holds(time.time()).keys())
         if selection.token is None:
-            dialogs.show_warning(self.window(), t("local.token_unavailable_title"),
-                                  t("local.token_unavailable_msg", details=self._token_unavailable_details()))
             return False
         if selection.changed:
             write_token(token_path, selection.token)
             cluster.token_path = token_path
-            dialogs.show_toast(self.window(), t("local.token_auto_selected", cluster=cluster.name))
         self._token_reservations[cluster_key] = selection.token
+        return "changed" if selection.changed else True
+
+    def _prepare_token_for_start(self, cluster) -> bool:
+        chosen = self._choose_start_token(cluster)
+        if not chosen:
+            dialogs.show_warning(self.window(), t("local.token_unavailable_title"),
+                                  t("local.token_unavailable_msg", details=self._token_unavailable_details()))
+            return False
+        if chosen == "changed":
+            dialogs.show_toast(self.window(), t("local.token_auto_selected", cluster=cluster.name))
         return True
 
     def _release_token_reservation_if_stopped(self, cluster_path) -> None:
@@ -771,6 +813,11 @@ class LocalServicePage(Page):
         return read_token(Path(proc.cluster_path) / "cluster_token.txt")
 
     def _on_server_failure(self, proc, report) -> None:
+        self._record_token_hold(proc, report)
+        self._auto_restart.on_failure(proc, report)  # 要在令牌等待标记更新之后，它按标记决定等多久
+
+    def _record_token_hold(self, proc, report) -> None:
+        """主世界崩溃或注册冲突时，记下新令牌在 Klei 端尚未释放，按连续冲突次数拉长重试间隔。"""
         if not getattr(proc, "is_master", True) and report.category != "token_conflict":
             return
         token = self._process_token(proc)
@@ -779,9 +826,15 @@ class LocalServicePage(Page):
         fingerprint = token_fingerprint(token)
         if not any(token_fingerprint(candidate) == fingerprint for candidate in get_global_tokens()):
             return
-        set_token_hold(fingerprint, state="conflict" if report.category == "token_conflict" else "crashed",
-                        cluster_key=str(proc.cluster_path),
-                        cluster_name=getattr(proc, "cluster_name", Path(proc.cluster_path).name), since=time.time())
+        now = time.time()
+        if report.category == "token_conflict":
+            previous = get_token_holds().get(fingerprint)
+            state, failures = "conflict", (previous["failures"] + 1 if previous else 1)
+        else:
+            state, failures = "crashed", 0
+        set_token_hold(fingerprint, state=state, cluster_key=str(proc.cluster_path),
+                        cluster_name=getattr(proc, "cluster_name", Path(proc.cluster_path).name), since=now,
+                        retry_at=now + token_retry_delay(failures), failures=failures)
         self._token_reservations.pop(str(proc.cluster_path), None)
 
     def _on_server_registered(self, proc) -> None:
@@ -790,6 +843,7 @@ class LocalServicePage(Page):
         token = self._process_token(proc)
         if classify_token(token) == ServerTokenKind.NEW:
             clear_token_hold(token_fingerprint(token))
+        self._auto_restart.on_registered(proc)
 
     # ── 启动前预检 ──────────────────────────────────────────────────────
     def _lan_port_blocked(self, cluster, shards, issues, target_running, restarting=False) -> bool:
@@ -1009,6 +1063,7 @@ class LocalServicePage(Page):
     def start_shard(self, cluster, shard) -> None:
         if not cluster or (str(cluster.path), shard.name) in self._restarting_keys:
             return
+        self._auto_restart.cancel(cluster)
         if not self._prepare_token_for_start(cluster):
             return
         if not self._preflight_start(cluster, [shard]):
@@ -1160,6 +1215,7 @@ class LocalServicePage(Page):
     def stop_shard(self, cluster, shard) -> None:
         if not cluster or (str(cluster.path), shard.name) in self._restarting_keys:
             return
+        self._auto_restart.cancel(cluster)
         self._stop_and_then(cluster, shard, lambda: self._on_stop_done(cluster))
 
     def restart_shard(self, cluster, shard) -> None:
@@ -1168,6 +1224,7 @@ class LocalServicePage(Page):
         proc = self.manager.get(cluster.path, shard.name)
         if proc is None or proc.status != ServerStatus.RUNNING:
             return
+        self._auto_restart.cancel(cluster)
         self._restart_shards(cluster, [shard])
 
     def _restart_shards(self, cluster, shards) -> None:
@@ -1268,6 +1325,7 @@ class LocalServicePage(Page):
         if not c.shards:
             dialogs.show_warning(self.window(), t("local.install_title"), t("local.no_shards"))
             return
+        self._auto_restart.cancel(c)
         if not self._prepare_token_for_start(c):
             return
         targets = [s for s in ordered_shards(c)
@@ -1346,6 +1404,7 @@ class LocalServicePage(Page):
                 targets.append(shard)
             elif proc is not None and proc.status in (ServerStatus.STARTING, ServerStatus.STOPPING):
                 return
+        self._auto_restart.cancel(c)
         self._restart_shards(c, targets)
 
     def _open_rollback_dialog(self) -> None:
@@ -1777,6 +1836,11 @@ class LocalServicePage(Page):
             self._update_logs_btn_state(cluster)
             self._update_luajit_row(cluster)
             self.ctx.poll_lobby_accel()
+            self._auto_restart.poll()
+            if cluster is not None and cluster.platform != Platform.WEGAME:
+                banner_text = self._auto_restart.banner_text(cluster)
+                if banner_text != self._auto_restart_banner.text():
+                    self._auto_restart_banner.set_text(banner_text)
             if self._connect_row.isVisible():
                 self._refresh_lan_status()
                 self._refresh_public_status()

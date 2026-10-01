@@ -88,6 +88,7 @@ def _local_page(clusters=(), *, manager=None, mapping=None, jumps=None):
     service._launching_keys = set()
     service._steam_remote_build_id = None
     service._prepare_legacy_mods_for_start = lambda _cluster: True
+    service._auto_restart = SimpleNamespace(cancel=lambda _cluster: None)
     return service
 
 

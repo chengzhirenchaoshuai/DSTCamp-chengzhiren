@@ -1,0 +1,272 @@
+"""本地服务器页的崩溃自动重启调度（Qt 侧）。
+
+判定规则与时长见 features/local_service/auto_restart.py。流程：
+
+1. 世界跑起来后崩溃 → 稍等 CRASH_RESTART_DELAY 秒再拉起；主世界崩溃（或主世界已不在运行）
+   时整组重启，只有洞穴等从世界崩溃时只重启它自己。
+2. 拉起前选令牌：令牌池有别的可用令牌就换用；原令牌还在 Klei 释放等待期内且没有替代时，
+   等到等待期结束再试。
+3. 拉起后若注册冲突（E_ROWID_EXIST），停掉整组，按逐级拉长的间隔再等再试，从崩溃起最多等
+   TOKEN_WAIT_LIMIT；注册成功即结束本轮，并把用时写进日志。
+
+全程不弹模态对话框（用户可能不在电脑前），失败原因显示在页面横幅并发托盘通知。
+"""
+
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+
+from PySide6.QtCore import QObject, QTimer
+
+from dstools.features.cluster_config.config_manager import load_cluster_config
+from dstools.features.local_service import luajit_injector
+from dstools.features.local_service.auto_restart import (
+    CRASH_RESTART_DELAY, MAX_CRASH_RESTARTS, TOKEN_WAIT_LIMIT, CrashBudget, append_log, is_restartable,
+    token_retry_delay,
+)
+from dstools.features.local_service.dedicated_server import ConfDirCrossDriveError, resolve_conf_dir_arg
+from dstools.features.local_service.shard_helpers import RUNNING_LIKE, ordered_shards
+from dstools.i18n import t
+from dstools.shared.app_settings import blocking_token_holds, get_auto_restart_enabled
+from dstools.shared.resource_paths import data_dir
+from dstools.shared.token_manager import read_token, token_fingerprint
+
+
+@dataclass
+class _ClusterState:
+    budget: CrashBudget = field(default_factory=CrashBudget)
+    phase: str = "idle"          # idle / scheduled / waiting_token / starting / gave_up
+    due: float = 0.0             # 下一次动作的时刻（time.time()）
+    full: bool = False           # True：整组重启；False：只重启 shards
+    shards: set[str] = field(default_factory=set)
+    crashed_at: float = 0.0
+    attempts: int = 0            # 本轮崩溃后已拉起几次
+    conflicts: int = 0           # 本轮注册冲突次数
+    registered: bool = False
+    reason: str = ""             # gave_up 的原因
+    timer: QTimer | None = None
+
+
+class AutoRestartController(QObject):
+    def __init__(self, page):
+        super().__init__(page)
+        self._page = page
+        self._states: dict[str, _ClusterState] = {}
+        self._log_path = data_dir("auto_restart") / "auto_restart.log"
+
+    # ── 页面回调 ────────────────────────────────────────────────────────
+    def on_failure(self, proc, report) -> None:
+        """控制台诊断出一次失败（每个进程最多一次）。页面已先更新令牌等待标记。"""
+        cluster = self._page._cluster_for_running_process(proc, None)
+        if cluster is None or not get_auto_restart_enabled(str(cluster.path)):
+            return
+        state = self._state(cluster)
+        now = time.time()
+        in_attempt = state.phase == "starting" and (state.full or proc.shard_name in state.shards)
+        if report.category == "token_conflict":
+            if in_attempt:
+                state.conflicts += 1
+                self._log(cluster, f"{proc.shard_name} 注册冲突（E_ROWID_EXIST），距崩溃 {self._elapsed(state)}，"
+                                   f"第 {state.conflicts} 次")
+                self._stop_cluster_then(cluster, lambda: self._wait_for_token(cluster, state))
+            return
+        if not is_restartable(report.category, proc.world_ready, in_attempt):
+            if in_attempt:
+                self._give_up(cluster, state, report.title)
+            return
+        if state.phase in ("scheduled", "waiting_token"):
+            # 已在排队：又有世界崩溃，主世界崩溃时升级为整组重启
+            state.full |= bool(getattr(proc, "is_master", True))
+            state.shards.add(proc.shard_name)
+            return
+        if not state.budget.allow(now):
+            self._give_up(cluster, state, t("local.auto_restart_reason_limit", count=MAX_CRASH_RESTARTS))
+            return
+        state.crashed_at = now
+        state.full = bool(getattr(proc, "is_master", True))
+        state.shards = {proc.shard_name}
+        state.attempts = state.conflicts = 0
+        state.registered = False
+        self._schedule(cluster, state, "scheduled", now + CRASH_RESTART_DELAY)
+        self._log(cluster, f"{proc.shard_name} 崩溃（{report.title}），{int(CRASH_RESTART_DELAY)} 秒后自动重启，"
+                           f"30 分钟内第 {len(state.budget.times)} 次")
+        self._notify(t("local.auto_restart_tray_crashed", cluster=cluster.name, shard=proc.shard_name))
+
+    def on_registered(self, proc) -> None:
+        state = self._states.get(str(proc.cluster_path))
+        if state is None or state.phase != "starting":
+            return
+        state.registered = True
+        cluster = self._page._cluster_for_running_process(proc, None)
+        if cluster is not None:
+            self._log(cluster, f"注册成功，距崩溃 {self._elapsed(state)}，共拉起 {state.attempts} 次")
+        self._finish_if_ready(str(proc.cluster_path), state)
+
+    def poll(self) -> None:
+        for key, state in list(self._states.items()):
+            if state.phase == "starting":
+                self._finish_if_ready(key, state)
+
+    def cancel(self, cluster) -> None:
+        """用户手动启停/重启或关闭开关：取消排队中的自动重启，清掉放弃提示。"""
+        state = self._states.get(str(cluster.path))
+        if state is None or state.phase == "idle":
+            return
+        if state.phase in ("scheduled", "waiting_token", "starting"):
+            self._log(cluster, "用户手动操作，取消本轮自动重启")
+        self._stop_timer(state)
+        state.phase = "idle"
+
+    def banner_text(self, cluster) -> str:
+        state = self._states.get(str(cluster.path)) if cluster else None
+        if state is None:
+            return ""
+        if state.phase == "scheduled":
+            return t("local.auto_restart_scheduled", seconds=max(0, int(state.due - time.time())))
+        if state.phase == "waiting_token":
+            return t("local.auto_restart_waiting_token", time=datetime.fromtimestamp(state.due).strftime("%H:%M"),
+                     minutes=int((time.time() - state.crashed_at) // 60))
+        if state.phase == "starting":
+            return t("local.auto_restart_starting", attempt=state.attempts)
+        if state.phase == "gave_up":
+            return t("local.auto_restart_gave_up", reason=state.reason)
+        return ""
+
+    # ── 流程 ────────────────────────────────────────────────────────────
+    def _run(self, key: str) -> None:
+        state = self._states.get(key)
+        cluster = next((c for c in self._page.ctx.env.clusters if str(c.path) == key), None)
+        if state is None or state.phase not in ("scheduled", "waiting_token"):
+            return
+        if cluster is None or not get_auto_restart_enabled(key):
+            state.phase = "idle"
+            return
+        state.phase = "starting"
+        master = self._page._master_shard(cluster)
+        master_running = master is not None and self._running(cluster, master.name)
+        state.full = state.full or not master_running
+        targets = list(ordered_shards(cluster)) if state.full else [s for s in cluster.shards if s.name in state.shards]
+        stop_first = [s for s in (cluster.shards if state.full else targets) if self._running(cluster, s.name)]
+        self._page._stop_shards_and_then(cluster, stop_first, lambda: self._start(cluster, state, targets))
+
+    def _start(self, cluster, state: _ClusterState, targets) -> None:
+        if state.phase != "starting":
+            return  # 停服期间被用户取消
+        if not self._page._choose_start_token(cluster):
+            self._wait_for_token(cluster, state)
+            return
+        page = self._page
+        if page._install_dir is None:
+            page._detect_install_dir()
+        if page._install_dir is None:
+            self._give_up(cluster, state, t("local.auto_restart_reason_install"))
+            return
+        try:
+            conf_dir_arg = resolve_conf_dir_arg(page.ctx.env.klei_root)
+        except ConfDirCrossDriveError:
+            self._give_up(cluster, state, t("local.confdir_cross_drive_error"))
+            return
+        if luajit_injector.needs_regeneration(page._install_dir):
+            self._give_up(cluster, state, t("local.auto_restart_reason_luajit"))
+            return
+        keys = {(str(cluster.path), shard.name) for shard in targets}
+        page._launching_keys.update(keys)
+
+        def after_accel(ok, detail):
+            page._launching_keys.difference_update(keys)
+            if state.phase != "starting":
+                page._release_token_reservation_if_stopped(cluster.path)
+                return
+            if not ok:
+                self._give_up(cluster, state, t("selfhost.lobby_accel_start_failed", detail=detail))
+                return
+            state.attempts += 1
+            token = read_token(cluster.token_path or (cluster.path / "cluster_token.txt"))
+            self._log(cluster, f"第 {state.attempts} 次拉起 {'、'.join(s.name for s in targets)}，"
+                               f"令牌 {token_fingerprint(token)[:8] if token else '-'}，距崩溃 {self._elapsed(state)}")
+            for shard in targets:
+                page._continue_start_shard(cluster, shard, conf_dir_arg)
+            page._select_master_console_tab(cluster)
+
+        page.ctx.ensure_lobby_accel(cluster, after_accel)
+
+    def _wait_for_token(self, cluster, state: _ClusterState) -> None:
+        """当前没有可用令牌：等到原令牌的等待期结束再试；超过总时长就放弃。"""
+        now = time.time()
+        token = read_token(cluster.token_path or (cluster.path / "cluster_token.txt"))
+        hold = blocking_token_holds(now).get(token_fingerprint(token)) if token else None
+        due = hold["retry_at"] if hold else now + token_retry_delay(state.conflicts)
+        if due - state.crashed_at > TOKEN_WAIT_LIMIT:
+            self._give_up(cluster, state, t("local.auto_restart_reason_token_timeout",
+                                             hours=TOKEN_WAIT_LIMIT // 3600))
+            return
+        self._schedule(cluster, state, "waiting_token", due)
+        self._log(cluster, f"等待 Klei 释放令牌，{datetime.fromtimestamp(due):%H:%M:%S} 重试")
+
+    def _finish_if_ready(self, key: str, state: _ClusterState) -> None:
+        cluster = next((c for c in self._page.ctx.env.clusters if str(c.path) == key), None)
+        if cluster is None:
+            state.phase = "idle"
+            return
+        names = [s.name for s in cluster.shards] if state.full else list(state.shards)
+        procs = [self._page.manager.get(cluster.path, name) for name in names]
+        if not procs or any(proc is None or proc.status not in RUNNING_LIKE or not proc.world_ready for proc in procs):
+            return
+        master = self._page._master_shard(cluster)
+        needs_registration = master is not None and master.name in names \
+            and not load_cluster_config(cluster.path).network.get("offline_cluster", False)
+        if needs_registration and not state.registered:
+            return  # 主世界要等 Klei 注册成功才算恢复，注册冲突可能在世界就绪之后才出现
+        state.phase = "idle"
+        self._log(cluster, f"自动重启完成，距崩溃 {self._elapsed(state)}")
+        self._notify(t("local.auto_restart_tray_done", cluster=cluster.name))
+
+    # ── 工具 ────────────────────────────────────────────────────────────
+    def _state(self, cluster) -> _ClusterState:
+        return self._states.setdefault(str(cluster.path), _ClusterState())
+
+    def _running(self, cluster, shard_name: str) -> bool:
+        proc = self._page.manager.get(cluster.path, shard_name)
+        return proc is not None and proc.status in RUNNING_LIKE
+
+    def _stop_cluster_then(self, cluster, on_done) -> None:
+        running = [s for s in cluster.shards if self._running(cluster, s.name)]
+        self._page._stop_shards_and_then(cluster, running, on_done)
+
+    def _schedule(self, cluster, state: _ClusterState, phase: str, due: float) -> None:
+        self._stop_timer(state)
+        state.phase, state.due = phase, due
+        key = str(cluster.path)
+        timer = QTimer(self, singleShot=True)
+        timer.timeout.connect(lambda: self._run(key))
+        timer.start(max(0, int((due - time.time()) * 1000)))
+        state.timer = timer
+
+    @staticmethod
+    def _stop_timer(state: _ClusterState) -> None:
+        if state.timer is not None:
+            state.timer.stop()
+            state.timer.deleteLater()
+            state.timer = None
+
+    def _give_up(self, cluster, state: _ClusterState, reason: str) -> None:
+        self._stop_timer(state)
+        state.phase, state.reason = "gave_up", reason
+        self._page._release_token_reservation_if_stopped(cluster.path)
+        self._log(cluster, f"放弃自动重启：{reason}")
+        self._notify(t("local.auto_restart_tray_gave_up", cluster=cluster.name, reason=reason))
+
+    @staticmethod
+    def _elapsed(state: _ClusterState) -> str:
+        seconds = int(time.time() - state.crashed_at)
+        return f"{seconds // 60} 分 {seconds % 60} 秒"
+
+    def _log(self, cluster, message: str) -> None:
+        append_log(self._log_path, cluster.name, message)
+
+    def _notify(self, message: str) -> None:
+        tray = getattr(self._page.window(), "tray", None)
+        if tray is not None and tray.isVisible():
+            tray.showMessage(t("local.auto_restart_tray_title"), message)

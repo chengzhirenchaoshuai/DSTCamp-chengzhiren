@@ -251,6 +251,9 @@ class Banner(QWidget):
         self.setVisible(False)
         self.setFixedHeight(self._MIN_HEIGHT)
 
+    def text(self) -> str:
+        return self._text
+
     def set_text(self, text: str) -> None:
         self._text = text
         # 还没放进布局（没有父控件）时不能 setVisible(True)：没有父控件的控件一显示就是
