@@ -680,7 +680,7 @@ class SelfHostPanel(QWidget):
         status = self._last_status
         if status is None or not status.reachable:
             return theme.hex("TEXT_MUTED")
-        return theme.hex("ACCENT") if status.service_active else theme.hex("ERROR")
+        return theme.hex("SUCCESS") if status.service_active else theme.hex("ERROR")
 
     def _permission_text(self) -> str:
         status = self._last_status
