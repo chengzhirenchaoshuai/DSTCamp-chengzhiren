@@ -21,6 +21,7 @@ _KEY_CUSTOM_BG_FILENAME = "custom_bg_filename"
 _KEY_CUSTOM_BG_OPACITY = "custom_bg_opacity"
 _DEFAULT_CUSTOM_BG_OPACITY = 0.35
 _KEY_WINDOW_POS = "window_pos"
+_KEY_WINDOW_SIZE = "window_size"
 _KEY_BACKUP_RETENTION = "backup_retention"
 _DEFAULT_BACKUP_RETENTION = 10
 _KEY_BACKUP_INTERVAL_MIN = "backup_interval_minutes"
@@ -229,6 +230,25 @@ def set_window_position(x: int, y: int) -> None:
     默认行为原来总是贴着屏幕左上角，见 gui/app.py.__init__ 的说明）。"""
     data = load_settings()
     data[_KEY_WINDOW_POS] = [x, y]
+    save_settings(data)
+
+
+def get_window_size() -> tuple[int, int] | None:
+    """返回主窗口上次关闭时的宽高（Qt 逻辑像素）；是否放得下由 GUI 校验。"""
+    raw = load_settings().get(_KEY_WINDOW_SIZE)
+    if not raw or not isinstance(raw, list) or len(raw) != 2:
+        return None
+    try:
+        width, height = int(raw[0]), int(raw[1])
+    except (TypeError, ValueError):
+        return None
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def set_window_size(width: int, height: int) -> None:
+    """记住主窗口关闭前的宽高，下次启动沿用，不用每次重新拖。"""
+    data = load_settings()
+    data[_KEY_WINDOW_SIZE] = [width, height]
     save_settings(data)
 
 

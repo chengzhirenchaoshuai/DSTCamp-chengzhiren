@@ -33,8 +33,8 @@ from dstools.qt.threads import post_to_ui, run_async
 from dstools.qt.self_update import SelfUpdater, is_update_available
 from dstools.qt.widgets import FrostedMenu, Grip, PillTabBar, ThemeMenuItem, TitleButton
 from dstools.shared.app_settings import (
-    get_minimize_on_close, get_remind_update_enabled, get_window_position, set_minimize_on_close,
-    set_window_position,
+    get_minimize_on_close, get_remind_update_enabled, get_window_position, get_window_size,
+    set_minimize_on_close, set_window_position, set_window_size,
 )
 from dstools.shared.resource_paths import bundled_resource_dir
 
@@ -42,7 +42,7 @@ TAB_KEYS = ["local", "world", "mods", "server", "saves", "sakura"]
 BASE_W, BASE_H = 1600, 900  # 默认尺寸（逻辑像素，Qt 自动按显示器缩放，不需要 DPI 补丁）
 MIN_W, MIN_H = 960, 540
 ASPECT = BASE_W / BASE_H
-START_FILL = 0.85  # 默认尺寸最多占工作区的比例（宽高各自计）
+START_FILL = 0.8  # 首次启动默认尺寸最多占工作区的比例（宽高各自计）；之后沿用上次关闭时的尺寸
 MIN_VISIBLE = 100  # 窗口挪到桌面边缘时至少留这么多像素在屏幕里
 
 WM_SIZING, WM_MOVING = 0x0214, 0x0216
@@ -695,11 +695,20 @@ class MainWindow(QWidget):
         avail = QGuiApplication.primaryScreen().availableGeometry()
         # 最小尺寸不能大于工作区，否则高缩放屏（如 1080p@200%）窗口一出来就超出屏幕且缩不回去
         self.setMinimumSize(min(MIN_W, avail.width()), min(MIN_H, avail.height()))
-        shrink = min(1.0, avail.width() * START_FILL / BASE_W, avail.height() * START_FILL / BASE_H)
-        width = max(self.minimumWidth(), round(BASE_W * shrink))
-        height = max(self.minimumHeight(), round(BASE_H * shrink))
+        width, height = self._startup_size(avail)
         self.resize(width, height)
         self.move(self._startup_position(width, height))
+
+    def _startup_size(self, avail: QRect) -> tuple[int, int]:
+        """有上次保存的尺寸就沿用（放不下时按比例缩到工作区内），否则按工作区的 START_FILL 计算。"""
+        saved = get_window_size()
+        if saved is not None:
+            base_w, base_h, fill = saved[0], saved[1], 1.0
+        else:
+            base_w, base_h, fill = BASE_W, BASE_H, START_FILL
+        shrink = min(1.0, avail.width() * fill / base_w, avail.height() * fill / base_h)
+        return (max(self.minimumWidth(), round(base_w * shrink)),
+                max(self.minimumHeight(), round(base_h * shrink)))
 
     def _startup_position(self, width: int, height: int) -> QPoint:
         """优先用上次关闭时保存的坐标（校验仍落在当前显示器布局内），否则屏幕居中。"""
@@ -860,6 +869,9 @@ class MainWindow(QWidget):
         self._quitting = True
         dpr = self.screen().devicePixelRatio() if self.screen() else 1.0
         set_window_position(round(self.x() * dpr), round(self.y() * dpr))
+        # "伪最大化"状态下记还原前的尺寸，免得下次一启动就是铺满的
+        size = (self._restore_geometry or self.geometry()).size()
+        set_window_size(size.width(), size.height())
         self.tray.hide()
         QApplication.quit()
 
