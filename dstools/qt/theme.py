@@ -284,6 +284,7 @@ class Theme(QObject):
             app.setFont(self.font("FONT_SIZE_SM"))
             app.setStyleSheet(self.qss())
             _patch_combo_popup_width()
+            _apply_tooltip_style(app)
 
     def qss(self) -> str:
         c = self.palette
@@ -358,3 +359,36 @@ class Theme(QObject):
 
 
 theme = Theme()
+
+
+_TOOLTIP_STYLE_APPLIED = False
+
+
+def _apply_tooltip_style(app: QApplication) -> None:
+    """统一 QToolTip 的背景与弹出延迟。
+
+    QSS 里的 QToolTip 背景在 Windows 上可能不生效（QToolTip 默认走系统原生
+    渲染，实际显示系统浅灰而非浅黄），这里改用 setPalette 直接设
+    ToolTipBase/ToolTipText，跟 Tk 版 Tooltip 的浅黄底深字（#ffffe0）一致；
+    延迟从 Qt 默认 700ms 缩短到 400ms（跟 Tk 版 Tooltip.DELAY_MS 一致），用
+    QProxyStyle 覆盖 SH_ToolTip_WakeUpDelay。
+    """
+    global _TOOLTIP_STYLE_APPLIED
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QProxyStyle, QStyle, QToolTip
+
+    pal = QToolTip.palette()
+    pal.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffe0"))
+    pal.setColor(QPalette.ColorRole.ToolTipText, QColor("#2e3438"))
+    QToolTip.setPalette(pal)
+
+    if not _TOOLTIP_STYLE_APPLIED:
+        _TOOLTIP_STYLE_APPLIED = True
+
+        class _ToolTipDelayStyle(QProxyStyle):
+            def styleHint(self, hint, opt=None, widget=None, returnData=None):
+                if hint == QStyle.StyleHint.SH_ToolTip_WakeUpDelay:
+                    return 400
+                return super().styleHint(hint, opt, widget, returnData)
+
+        app.setStyle(_ToolTipDelayStyle(app.style()))
