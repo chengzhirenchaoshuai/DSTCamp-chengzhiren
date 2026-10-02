@@ -33,8 +33,8 @@ from dstools.qt.threads import post_to_ui, run_async
 from dstools.qt.self_update import SelfUpdater, is_update_available
 from dstools.qt.widgets import FrostedMenu, Grip, PillTabBar, ThemeMenuItem, TitleButton
 from dstools.shared.app_settings import (
-    get_minimize_on_close, get_remind_update_enabled, get_window_position, get_window_size,
-    set_minimize_on_close, set_window_position, set_window_size,
+    get_creation_wizard_size, get_minimize_on_close, get_remind_update_enabled, get_window_position,
+    get_window_size, set_creation_wizard_size, set_minimize_on_close, set_window_position, set_window_size,
 )
 from dstools.shared.resource_paths import bundled_resource_dir
 
@@ -680,10 +680,18 @@ class MainWindow(QWidget):
         # 向导是无父窗口的顶层窗，按主窗口所在显示器重新限尺寸，并把位置夹在工作区内
         area = (self.screen() or QGuiApplication.primaryScreen()).availableGeometry()
         dialogs.fit_to_screen(dialog, 1400, 860, area)
+        saved = get_creation_wizard_size()
+        if saved is not None:
+            # 沿用上次调整过的尺寸，只按当前显示器工作区封顶
+            dialog.resize(max(dialog.minimumWidth(), min(saved[0], area.width())),
+                          max(dialog.minimumHeight(), min(saved[1], area.height())))
         pos = self.geometry().center() - dialog.rect().center()
         dialog.move(max(area.left(), min(pos.x(), area.right() - dialog.width() + 1)),
                     max(area.top(), min(pos.y(), area.bottom() - dialog.height() + 1)))
         dialog.exec()
+        # 最大化关闭时记还原前的尺寸，免得下次一打开就铺满
+        size = (dialog.normalGeometry() if dialog.isMaximized() else dialog.geometry()).size()
+        set_creation_wizard_size(size.width(), size.height())
 
     def _update_status(self) -> None:
         self.status.setText(self.ctx.status_text())

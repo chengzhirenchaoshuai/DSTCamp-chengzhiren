@@ -233,6 +233,20 @@ class _WizardTitleBar(QWidget):
         self._wizard._toggle_maximize()
 
 
+class _AttentionFrame(QWidget):
+    """闪烁提示时盖在最上层画高亮边框：窗口外框只留 2px 边距，画在窗口底层会被内容挡住。"""
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setPen(QPen(theme.color("ACCENT"), 4))
+        painter.drawRect(self.rect().adjusted(2, 2, -2, -2))
+
+
 class CreationWizardDialog(QDialog):
     def __init__(self, ctx, background=None):
         super().__init__()
@@ -249,6 +263,7 @@ class CreationWizardDialog(QDialog):
         self._attention_on = False
         self._attention_timer = QTimer(self, interval=70)
         self._attention_timer.timeout.connect(self._attention_step)
+        self._attention_frame: _AttentionFrame | None = None
         # 标题（含任务栏显示）只写"创建服务器存档"，不带 DSTCamp 前缀。
         self.setWindowTitle(t("save.create_server_save"))
         # 默认房间名跟游戏创建界面一致："{Steam 昵称}的世界"（STRINGS.UI.
@@ -1195,9 +1210,6 @@ class CreationWizardDialog(QDialog):
             highlight = theme.color("ACCENT")
             highlight.setAlpha(70)
             painter.fillRect(0, 0, self.width(), self._title_bar.height(), highlight)
-            painter.setPen(QPen(theme.color("ACCENT"), 4))
-            painter.drawRect(self.rect().adjusted(2, 2, -2, -2))
-            return
         # 外框跟主窗口一致
         painter.setPen(QPen(theme.color("CARD_BORDER"), 2))
         painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
@@ -1220,6 +1232,11 @@ class CreationWizardDialog(QDialog):
         self._attention_on = self._attention_ticks % 2 == 1 and self._attention_ticks < 8
         if self._attention_ticks >= 8:
             self._attention_timer.stop()
+        if self._attention_frame is None:
+            self._attention_frame = _AttentionFrame(self)
+        self._attention_frame.setGeometry(self.rect())
+        self._attention_frame.raise_()
+        self._attention_frame.setVisible(self._attention_on)
         self.update()
 
     def _paint_background(self, painter: QPainter) -> None:

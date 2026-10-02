@@ -22,6 +22,7 @@ _KEY_CUSTOM_BG_OPACITY = "custom_bg_opacity"
 _DEFAULT_CUSTOM_BG_OPACITY = 0.35
 _KEY_WINDOW_POS = "window_pos"
 _KEY_WINDOW_SIZE = "window_size"
+_KEY_CREATION_WIZARD_SIZE = "creation_wizard_size"
 _KEY_BACKUP_RETENTION = "backup_retention"
 _DEFAULT_BACKUP_RETENTION = 10
 _KEY_BACKUP_INTERVAL_MIN = "backup_interval_minutes"
@@ -250,6 +251,25 @@ def set_window_size(width: int, height: int) -> None:
     """记住主窗口关闭前的宽高，下次启动沿用，不用每次重新拖。"""
     data = load_settings()
     data[_KEY_WINDOW_SIZE] = [width, height]
+    save_settings(data)
+
+
+def get_creation_wizard_size() -> tuple[int, int] | None:
+    """返回"创建服务器存档"窗口上次关闭时的宽高（Qt 逻辑像素）；是否放得下由 GUI 校验。"""
+    raw = load_settings().get(_KEY_CREATION_WIZARD_SIZE)
+    if not raw or not isinstance(raw, list) or len(raw) != 2:
+        return None
+    try:
+        width, height = int(raw[0]), int(raw[1])
+    except (TypeError, ValueError):
+        return None
+    return (width, height) if width > 0 and height > 0 else None
+
+
+def set_creation_wizard_size(width: int, height: int) -> None:
+    """记住"创建服务器存档"窗口关闭前的宽高，下次打开沿用。"""
+    data = load_settings()
+    data[_KEY_CREATION_WIZARD_SIZE] = [width, height]
     save_settings(data)
 
 
