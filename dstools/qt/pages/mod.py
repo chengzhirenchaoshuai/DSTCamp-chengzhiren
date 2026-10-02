@@ -197,6 +197,19 @@ class ModPage(Page):
         root.addLayout(bottom_row)
 
         ctx.pending_enabled_mod_ids = self.get_pending_enabled_mod_ids
+        ctx.workshop_mods_changed.connect(self._on_workshop_mods_changed)
+
+    def _on_workshop_mods_changed(self) -> None:
+        """别处（如启动前一键订阅）下载了 Mod：作废更新状态缓存，并在切回本页时重新扫描。
+        有未保存的勾选改动时不整页重载（会从磁盘重读 modoverrides 冲掉改动），只作废缓存。"""
+        self._workshop_status_cache.clear()
+        self._workshop_status_checked_at = 0.0
+        if self._dirty:
+            return
+        if self.isVisible():
+            self.load()
+        else:
+            self.stale = True
 
     # ── Cluster/世界选择 ────────────────────────────────────────────────
     def get_cluster(self):

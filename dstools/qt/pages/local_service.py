@@ -1190,10 +1190,13 @@ class LocalServicePage(Page):
         def done(ready: int) -> None:
             log_dialog.append(t("local.missing_mods_done", ready=ready, total=len(ids)))
             log_dialog.finish()
+            self.ctx.workshop_mods_changed.emit()
 
         def error(exc: Exception) -> None:
             log_dialog.append(t("local.missing_mods_error", detail=f"{type(exc).__name__}: {exc}"))
             log_dialog.finish()
+            # 中途出错时可能已有部分 Mod 订阅、下载成功
+            self.ctx.workshop_mods_changed.emit()
 
         run_async_with_log(work, log_dialog.append, done, error)
 
