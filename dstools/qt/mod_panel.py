@@ -5,7 +5,7 @@ ttk.Treeview 局限性的说明）——Qt 版沿用 qt/world_panel.py 的思路
 在 QAbstractScrollArea 的视口上画可见行，不需要整图缓存/裁剪那一套。
 """
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QAbstractScrollArea, QToolTip
 
@@ -70,6 +70,14 @@ class ModListPanel(QAbstractScrollArea):
         self._default_icon_cache: dict[int, QPixmap] = {}
         self._folder_icon_cache: dict[int, QPixmap] = {}
         self._center_message = ""  # 列表为空时画在首行位置的提示（如"正在加载 Mod 列表..."）
+        # 锁定开关的"LuaJIT 补丁生效中"提示延迟显示：悬停满 0.7 秒才弹，
+        # 0.7 秒内移开就取消（这是自绘列表上的即时提示，不走 QToolTip 的
+        # 全局悬停延迟）。
+        self._locked_tip_timer = QTimer(self)
+        self._locked_tip_timer.setSingleShot(True)
+        self._locked_tip_timer.setInterval(700)
+        self._locked_tip_timer.timeout.connect(self._show_locked_tip)
+        self._locked_tip_pos = None
         self.setFrameShape(QAbstractScrollArea.Shape.NoFrame)
         self.viewport().setAutoFillBackground(False)
         self.viewport().setMouseTracking(True)
@@ -411,15 +419,22 @@ class ModListPanel(QAbstractScrollArea):
 
     def mouseMoveEvent(self, event):
         hit = self._hit_test(event.position())
-        if hit and hit[0] != "locked":
-            self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
-            QToolTip.hideText()
-        elif hit and hit[0] == "locked":
+        if hit and hit[0] == "locked":
             self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
-            QToolTip.showText(event.globalPosition().toPoint(), t("mod.locked_switch_hover"), self)
+            self._locked_tip_pos = event.globalPosition().toPoint()
+            if not self._locked_tip_timer.isActive():
+                self._locked_tip_timer.start()
         else:
-            self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+            self._locked_tip_timer.stop()
             QToolTip.hideText()
+            if hit and hit[0] != "locked":
+                self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.viewport().setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _show_locked_tip(self) -> None:
+        if self._locked_tip_pos is not None:
+            QToolTip.showText(self._locked_tip_pos, t("mod.locked_switch_hover"), self)
 
     def mousePressEvent(self, event):
         if event.button() != Qt.MouseButton.LeftButton:
