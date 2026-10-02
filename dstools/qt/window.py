@@ -48,6 +48,9 @@ MIN_VISIBLE = 100  # 窗口挪到桌面边缘时至少留这么多像素在屏�
 WM_SIZING, WM_MOVING = 0x0214, 0x0216
 # 客户区/非客户区的左、右、中键按下：主窗口被模态窗口阻挡时用来提醒用户
 _MOUSE_DOWN_MESSAGES = {0x0201, 0x0204, 0x0207, 0x00A1, 0x00A4, 0x00A7}
+# 模态期间 Qt 会禁用主窗口，真实点击不再产生上面的消息，系统只发 WM_SETCURSOR：
+# lParam 低位是命中码 HTERROR（-2），高位是触发它的鼠标消息
+WM_SETCURSOR, HTERROR = 0x0020, 0xFFFE
 (WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
  WMSZ_BOTTOM, WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT) = range(1, 9)
 
@@ -768,7 +771,9 @@ class MainWindow(QWidget):
             if msg.message == WM_MOVING:
                 keep_on_desktop(RECT.from_address(msg.lParam))
                 return True, 1
-            if msg.message in _MOUSE_DOWN_MESSAGES:
+            blocked_click = (msg.message == WM_SETCURSOR and (msg.lParam & 0xFFFF) == HTERROR
+                             and ((msg.lParam >> 16) & 0xFFFF) in _MOUSE_DOWN_MESSAGES)
+            if blocked_click or msg.message in _MOUSE_DOWN_MESSAGES:
                 # 有系统标题栏的弹窗由 Windows 自己闪烁；自绘标题栏的（如创建存档窗口）
                 # 没有这个效果，交给它自己闪
                 modal = QApplication.activeModalWidget()
