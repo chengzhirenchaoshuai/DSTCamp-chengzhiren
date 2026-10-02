@@ -38,6 +38,7 @@ from dstools.features.mod.workshop_api import (
 )
 from dstools.features.mod.workshop_cleanup import (
     ResidualCleanupContext,
+    delete_legacy_runtime_residual,
     delete_workshop_residual,
     format_residual_directory_tree,
 )
@@ -535,7 +536,6 @@ def test_residual_cleanup_deletes_and_rejects_steam_managed_items():
             context = ResidualCleanupContext(
                 workshop_root=root,
                 legacy_runtime_roots=(),
-                legacy_package_ids=frozenset(),
                 running_processes=(),
             )
             with patch(
@@ -549,6 +549,35 @@ def test_residual_cleanup_deletes_and_rejects_steam_managed_items():
                     context=context,
                 )
             assert not shared_context_residue.exists()
+
+            # 已取消订阅的 V1：同一批次先删 *_legacy.bin 包目录，再删 mods 运行目录
+            v1_package = root / "3671964434"
+            v1_package.mkdir()
+            (v1_package / "3671964434_legacy.bin").write_bytes(b"zip")
+            runtime_root = Path(tmp) / "mods"
+            v1_runtime = runtime_root / "workshop-3671964434"
+            v1_runtime.mkdir(parents=True)
+            (v1_runtime / "modinfo.lua").write_text("name='v1'", encoding="utf-8")
+            v1_context = ResidualCleanupContext(
+                workshop_root=root,
+                legacy_runtime_roots=(runtime_root,),
+                running_processes=(),
+            )
+            try:
+                delete_legacy_runtime_residual(
+                    3671964434, v1_runtime, WorkshopItemState(4), context=v1_context
+                )
+            except ValueError as exc:
+                assert "Legacy 下载包仍然存在" in str(exc)
+            else:
+                raise AssertionError("包仍在时不能删除运行目录")
+            delete_workshop_residual(
+                3671964434, v1_package, WorkshopItemState(4), context=v1_context
+            )
+            delete_legacy_runtime_residual(
+                3671964434, v1_runtime, WorkshopItemState(4), context=v1_context
+            )
+            assert not v1_package.exists() and not v1_runtime.exists()
 
         running_residue = root / "3671964431"
         running_residue.mkdir()

@@ -17,7 +17,6 @@ class ResidualCleanupContext:
 
     workshop_root: Path | None
     legacy_runtime_roots: tuple[Path, ...]
-    legacy_package_ids: frozenset[int]
     running_processes: tuple[str, ...]
 
 
@@ -27,7 +26,6 @@ def build_residual_cleanup_context(
     """集中读取一次进程、根目录和 Legacy 包证据，避免逐项重复扫描。"""
     from dstools.features.mod.legacy_v1 import (
         discover_legacy_runtime_roots,
-        find_legacy_package_ids,
         running_dst_processes,
     )
 
@@ -39,7 +37,6 @@ def build_residual_cleanup_context(
     return ResidualCleanupContext(
         workshop_root=find_workshop_dir(),
         legacy_runtime_roots=tuple(discover_legacy_runtime_roots()),
-        legacy_package_ids=frozenset(find_legacy_package_ids()),
         running_processes=processes,
     )
 
@@ -95,8 +92,7 @@ def delete_workshop_residual(
         raise ValueError("拒绝处理链接或目录联接")
     if not candidate.is_dir():
         raise ValueError("残留目录不存在")
-    if any(path.is_file() for path in candidate.glob("*_legacy.bin")):
-        raise ValueError("目录仍包含 Legacy 下载包，不能按残留文件处理")
+    # 已取消订阅的 V1 Mod 在这里只剩 *_legacy.bin 下载包，与 V2 目录同样按残留清理
     if steam_state is None:
         raise ValueError("无法确认 Steam 状态")
     if (
@@ -151,18 +147,29 @@ def delete_legacy_runtime_residual(
         raise ValueError("拒绝处理链接或目录联接")
     if not candidate.is_dir() or not (candidate / "modinfo.lua").is_file():
         raise ValueError("V1 残留目录不存在或内容不完整")
-    package_ids = (
-        context.legacy_package_ids
-        if context is not None
-        else frozenset(find_legacy_package_ids())
-    )
-    if int(text_id) in package_ids:
+    # 批量清理会先删 322330 下的包再删运行目录，必须按当前磁盘状态重新确认，
+    # 不能沿用批量开始时的快照
+    if context is not None:
+        content_dir = (
+            context.workshop_root / text_id if context.workshop_root is not None else None
+        )
+        package_exists = content_dir is not None and any(
+            path.is_file() for path in content_dir.glob("*_legacy.bin")
+        )
+    else:
+        package_exists = int(text_id) in find_legacy_package_ids()
+        root = find_workshop_dir()
+        content_dir = root / text_id if root is not None else None
+    if package_exists:
         raise ValueError("Legacy 下载包仍然存在，不能按取消订阅残留处理")
     if steam_state is None:
         raise ValueError("无法确认 Steam 状态")
+    # Installed 位只在内容目录仍存在时才代表 Steam 管理着它；目录已删时只是
+    # 清单里的陈旧记录（另由 Steam 下载记录清理处理）
+    content_present = content_dir is not None and os.path.lexists(content_dir)
     if (
         steam_state.subscribed
-        or steam_state.installed
+        or (steam_state.installed and content_present)
         or steam_state.downloading
         or steam_state.download_pending
     ):

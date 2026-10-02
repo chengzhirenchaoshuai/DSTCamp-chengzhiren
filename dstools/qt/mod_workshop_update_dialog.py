@@ -701,8 +701,14 @@ class WorkshopUpdateDialog(QDialog):
             self._show_state_notice("")
             self._render_rows()
             if errors:
-                details = "\n".join(f"workshop-{wid}: {error}"
-                                    for wid, error in sorted(errors.items(), key=lambda item: int(item[0])))
+                # 同一原因合并成一组，避免几十个 Mod 逐条重复同一句话
+                groups: dict[str, list[str]] = {}
+                for wid, error in sorted(errors.items(), key=lambda item: int(item[0])):
+                    groups.setdefault(str(error), []).append(wid)
+                details = "\n\n".join(
+                    t("mod.update_cleanup_error_group", reason=reason, count=len(wids),
+                      ids=", ".join(wids))
+                    for reason, wids in sorted(groups.items(), key=lambda item: -len(item[1])))
                 dialogs.show_error(self, t("mod.update_cleanup_residual_title"),
                                    t("mod.update_cleanup_all_result", success=len(cleaned),
                                      failed=len(errors), details=details))
