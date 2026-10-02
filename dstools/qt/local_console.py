@@ -9,7 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
-    QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dstools.features.local_service.dedicated_server import ServerStatus, advance_world_ready_marker
@@ -24,6 +24,7 @@ from dstools.qt.theme import theme
 from dstools.shared.clipboard import copy_file_to_clipboard
 
 _COMMAND_HISTORY_LIMIT = 100
+_SEARCH_HISTORY_LIMIT = 20
 _SEARCH_HIGHLIGHT = "#ffd54f"
 _SEARCH_HIGHLIGHT_CURRENT = "#ff9800"
 _SEARCH_HIGHLIGHT_FG = "#000000"
@@ -106,11 +107,15 @@ class ConsolePane(QWidget):
         self._search_bar = QWidget()
         search_row = QHBoxLayout(self._search_bar)
         search_row.setContentsMargins(0, 0, 0, 4)
-        self._search_edit = QLineEdit()
-        self._search_edit.setFont(theme.font("FONT_SIZE_SM"))
-        self._search_edit.setPlaceholderText(t("local.console_search_placeholder"))
-        self._search_edit.textChanged.connect(self._run_search)
-        self._search_edit.returnPressed.connect(lambda: self._search_step(1))
+        # 搜索框用可编辑 QComboBox，既保留实时搜索，又能在下拉里留存历史搜索词
+        self._search_edit = QComboBox()
+        self._search_edit.setEditable(True)
+        self._search_edit.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._search_line = self._search_edit.lineEdit()
+        self._search_line.setFont(theme.font("FONT_SIZE_SM"))
+        self._search_line.setPlaceholderText(t("local.console_search_placeholder"))
+        self._search_line.textChanged.connect(self._run_search)
+        self._search_line.returnPressed.connect(lambda: self._search_step(1))
         self._search_count = QLabel()
         self._search_count.setFont(theme.font("FONT_SIZE_SM"))
         self._search_count.setProperty("muted", True)
@@ -132,7 +137,7 @@ class ConsolePane(QWidget):
         search_row.addWidget(down_btn)
         search_row.addWidget(close_btn)
         # 搜索栏常驻显示（之前默认隐藏、只能按 Ctrl+F 打开，界面上看不到入口）
-        self._search_edit.installEventFilter(self)  # Shift+Enter 跳到上一个
+        self._search_line.installEventFilter(self)  # Shift+Enter 跳到上一个
         outer.addWidget(self._search_bar)
 
         self.text = QPlainTextEdit()
@@ -211,23 +216,46 @@ class ConsolePane(QWidget):
     # ── 搜索 ────────────────────────────────────────────────────────────
     def _open_search(self) -> None:
         self._search_bar.setVisible(True)
-        self._search_edit.setFocus()
-        self._search_edit.selectAll()
+        self._search_line.setFocus()
+        self._search_line.selectAll()
         self._run_search()
 
     def _close_search(self) -> None:
         """× / Esc：清空搜索词和高亮（搜索栏本身常驻，不再隐藏）。"""
+        self._remember_search()
         self._search_edit.blockSignals(True)
-        self._search_edit.clear()
+        self._search_line.blockSignals(True)
+        self._search_edit.clearEditText()
         self._search_edit.blockSignals(False)
+        self._search_line.blockSignals(False)
         self._search_count.setText("")
         self.text.setExtraSelections([])
         self._search_matches = []
         self._search_index = -1
         self.text.setFocus()
 
+    def _remember_search(self) -> None:
+        """把当前搜索词加入下拉历史（去重、置顶、限量），供下次快速重选。"""
+        text = self._search_edit.currentText().strip()
+        if not text:
+            return
+        self._search_edit.blockSignals(True)
+        self._search_line.blockSignals(True)
+        try:
+            index = self._search_edit.findText(text)
+            if index >= 0:
+                self._search_edit.removeItem(index)
+            self._search_edit.insertItem(0, text)
+            while self._search_edit.count() > _SEARCH_HISTORY_LIMIT:
+                self._search_edit.removeItem(self._search_edit.count() - 1)
+            # insertItem 会改变 currentIndex（把输入框显示带成相邻历史词），这里拉回当前搜索词
+            self._search_edit.setCurrentText(text)
+        finally:
+            self._search_edit.blockSignals(False)
+            self._search_line.blockSignals(False)
+
     def _run_search(self) -> None:
-        query = self._search_edit.text()
+        query = self._search_edit.currentText()
         self._search_matches = []
         self._search_index = -1
         if not query:
@@ -247,6 +275,7 @@ class ConsolePane(QWidget):
             self._search_count.setText(t("local.console_search_no_match"))
 
     def _search_step(self, direction: int) -> None:
+        self._remember_search()
         if not self._search_matches:
             return
         self._search_index = (self._search_index + direction) % len(self._search_matches)
@@ -276,7 +305,7 @@ class ConsolePane(QWidget):
 
     # ── 命令输入 ────────────────────────────────────────────────────────
     def eventFilter(self, watched, event):
-        if (watched is self._search_edit and event.type() == QEvent.Type.KeyPress
+        if (watched is self._search_line and event.type() == QEvent.Type.KeyPress
                 and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
                 and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
             self._search_step(-1)
