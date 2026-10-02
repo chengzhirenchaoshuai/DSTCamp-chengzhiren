@@ -273,24 +273,18 @@ class ModConfigDialog(QDialog):
                 break
         combo.setCurrentIndex(initial)
 
-        # 当前选中项自己的说明直接显示在下拉框下一行小字，没有就整行隐藏
-        # ——而不是塞进 tooltip 要悬停才看得到。这个 mod 大量"同名启用、靠
-        # 各自 hover 区分"的选项，悬停才显示会分不清谁是谁。
-        choice_hint = self._desc_label("")
-        choice_hint.setVisible(False)
-
-        def update_hint(_index=None) -> None:
+        # 每个选项值自己的说明（hover）用 tooltip 显示——鼠标悬停到下拉框
+        # 时才看得到。仍先 strip 掉 mod 用来对齐的首尾空格。
+        def update_tooltip(_index=None) -> None:
             idx = combo.currentIndex()
             text = (hovers[idx] or "").strip() if 0 <= idx < len(hovers) else ""
-            choice_hint.setText(text)
-            choice_hint.setVisible(bool(text))
+            combo.setToolTip(text)
 
-        combo.currentIndexChanged.connect(update_hint)
-        update_hint()
+        combo.currentIndexChanged.connect(update_tooltip)
+        update_tooltip()
         self.vars[opt.name] = combo
         top.addWidget(combo)
         layout.addLayout(top)
-        layout.addWidget(choice_hint)
         if opt.hover:
             layout.addWidget(self._desc_label(opt.hover))
         return row
