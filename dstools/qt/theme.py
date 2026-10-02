@@ -367,11 +367,11 @@ _TOOLTIP_STYLE_APPLIED = False
 def _apply_tooltip_style(app: QApplication) -> None:
     """统一 QToolTip 的背景与弹出延迟。
 
-    QSS 里的 QToolTip 背景在 Windows 上可能不生效（QToolTip 默认走系统原生
-    渲染，实际显示系统浅灰而非浅黄），这里改用 setPalette 直接设
-    ToolTipBase/ToolTipText，跟 Tk 版 Tooltip 的浅黄底深字（#ffffe0）一致；
-    延迟从 Qt 默认 700ms 缩短到 400ms（跟 Tk 版 Tooltip.DELAY_MS 一致），用
-    QProxyStyle 覆盖 SH_ToolTip_WakeUpDelay。
+    QToolTip 在 Windows 上默认走系统原生渲染——用户开深色系统主题时背景会
+    跟着变黑，QSS 里的 QToolTip 背景和 setPalette 都不生效（真机反馈过）。
+    这里用 QProxyStyle 覆盖 PE_PanelTipLabel，强制用 palette 的 ToolTipBase
+    自绘浅黄背景（跟 Tk 版 Tooltip 的浅黄底深字一致）。延迟从 Qt 默认
+    700ms 缩短到 100ms，用 styleHint 覆盖 SH_ToolTip_WakeUpDelay。
     """
     global _TOOLTIP_STYLE_APPLIED
     from PySide6.QtGui import QPalette
@@ -385,10 +385,16 @@ def _apply_tooltip_style(app: QApplication) -> None:
     if not _TOOLTIP_STYLE_APPLIED:
         _TOOLTIP_STYLE_APPLIED = True
 
-        class _ToolTipDelayStyle(QProxyStyle):
+        class _ToolTipStyle(QProxyStyle):
             def styleHint(self, hint, opt=None, widget=None, returnData=None):
                 if hint == QStyle.StyleHint.SH_ToolTip_WakeUpDelay:
-                    return 400
+                    return 100
                 return super().styleHint(hint, opt, widget, returnData)
 
-        app.setStyle(_ToolTipDelayStyle(app.style()))
+            def drawPrimitive(self, elem, opt, painter, widget=None):
+                if elem == QStyle.PrimitiveElement.PE_PanelTipLabel:
+                    painter.fillRect(opt.rect, opt.palette.color(QPalette.ColorRole.ToolTipBase))
+                    return
+                super().drawPrimitive(elem, opt, painter, widget)
+
+        app.setStyle(_ToolTipStyle(app.style()))
