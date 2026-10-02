@@ -489,7 +489,7 @@ class Theme(QObject):
             QTabBar::tab:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; font-weight: {fw_bold}; }}
             QTabBar::tab:hover:!selected {{ background: {_rgba(c['PRIMARY_LIGHT'], 120)}; color: {c['TEXT']}; }}
             QDialog {{ background: {c['BG_SOFT']}; }}
-            QListWidget, QPlainTextEdit {{ background: rgba(255,255,255,200); color: {c['TEXT']};
+            QListWidget, QPlainTextEdit, QTextEdit {{ background: rgba(255,255,255,200); color: {c['TEXT']};
                 border: 1px solid {c['CARD_BORDER']}; border-radius: 8px; padding: 4px; }}
             QListWidget::item {{ padding: 4px 6px; border-radius: 4px; }}
             QListWidget::item:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; }}
