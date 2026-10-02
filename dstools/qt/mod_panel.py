@@ -182,7 +182,11 @@ class ModListPanel(QAbstractScrollArea):
         name_font.setPixelSize(max(6, round(15 * s)))
         id_font.setPixelSize(max(6, round(12 * s)))
         btn_font.setPixelSize(max(6, round(13 * s)))
-        return name_font, id_font, btn_font
+        # "配置"按钮文字单独用更大字号（跟 mod 名字一致），比链接文字
+        # （btn_font）更醒目——之前跟链接文字共用 13，真机反馈偏小看不清。
+        cfg_font = QFont(theme.font_family)
+        cfg_font.setPixelSize(max(6, round(15 * s)))
+        return name_font, id_font, btn_font, cfg_font
 
     # ── 绘制 ────────────────────────────────────────────────────────────
     def paintEvent(self, _event):
@@ -205,7 +209,7 @@ class ModListPanel(QAbstractScrollArea):
         painter.translate(0, -offset)
         m = _Metrics(width)
         cols = self._columns(m, width)
-        name_font, id_font, btn_font = self._fonts(m.s)
+        name_font, id_font, btn_font, cfg_font = self._fonts(m.s)
         name_fm, id_fm = QFontMetricsF(name_font), QFontMetricsF(id_font)
 
         first = max(0, int((offset - m.pad_x) // m.row_step) - 1)
@@ -215,7 +219,7 @@ class ModListPanel(QAbstractScrollArea):
             top = m.pad_x + i * m.row_step
             if top + m.row_h < offset or top > offset + view_h:
                 continue
-            self._paint_row(painter, m, cols, row, i, top, width, name_font, id_font, btn_font, name_fm, id_fm)
+            self._paint_row(painter, m, cols, row, i, top, width, name_font, id_font, btn_font, cfg_font, name_fm, id_fm)
 
     @staticmethod
     def _paint_format_tag(painter, fmt, version_rect: QRectF, version_text: str, id_font, id_fm, s: float) -> None:
@@ -244,7 +248,7 @@ class ModListPanel(QAbstractScrollArea):
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, fmt)
         painter.restore()
 
-    def _paint_row(self, painter, m, cols, row, index, top, width, name_font, id_font, btn_font, name_fm, id_fm):
+    def _paint_row(self, painter, m, cols, row, index, top, width, name_font, id_font, btn_font, cfg_font, name_fm, id_fm):
         wid = row["workshop_id"]
         bg = theme.color("CARD_BG_ALT") if index % 2 == 0 else theme.color("CARD_BG")
         painter.setPen(QPen(theme.color("CARD_BORDER"), 1))
@@ -282,7 +286,7 @@ class ModListPanel(QAbstractScrollArea):
 
         # 配置按钮
         self._paint_pill(painter, cols["cfg_x1"], cy - m.cfg_h / 2, m.cfg_w, m.cfg_h,
-                         t("mod.config_btn"), btn_font, enabled=row.get("has_config", False))
+                         t("mod.config_btn"), cfg_font, enabled=row.get("has_config", False))
 
         # 创意工坊链接 + 打开目录——打开目录图标紧跟在链接文字实际宽度之后画，不是
         # 固定贴在整个链接列的最右端；之前固定在列宽最右端时，中文"创意工坊"这种
@@ -370,7 +374,7 @@ class ModListPanel(QAbstractScrollArea):
             return None
         wid = row["workshop_id"]
         x = pos.x()
-        name_font, id_font, btn_font = self._fonts(m.s)
+        name_font, id_font, btn_font, _cfg_font = self._fonts(m.s)
         if cols["name_x"] <= x <= cols["name_x"] + cols["name_w"]:
             name_fm = QFontMetricsF(name_font)
             full_name = row["name"] or wid
