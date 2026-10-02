@@ -282,6 +282,10 @@ class Theme(QObject):
             # 已经显式调用过 theme.font(...) 的控件（对话框正文、标题、页签等）不受
             # 影响，因为它们各自都传了自己的 size_key，不依赖这份继承值。
             app.setFont(self.font("FONT_SIZE_SM"))
+            # 强制 Fusion style：windowsvista 在系统深色主题下会把 QToolTip
+            # 交给系统原生渲染成黑底（QSS/setPalette/QProxyStyle 都压不住），
+            # Fusion 全程 Qt 自绘、用 palette，QToolTip 才能显示成浅黄。
+            app.setStyle("Fusion")
             app.setStyleSheet(self.qss())
             _patch_combo_popup_width()
             _apply_tooltip_style(app)
