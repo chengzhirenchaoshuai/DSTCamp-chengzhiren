@@ -19,6 +19,14 @@ if ([string]::IsNullOrWhiteSpace($token)) {
 }
 
 $headers = @{ 'User-Agent' = 'DSTCamp-release-sync' }
+
+# Gitee 发行版说明不支持表情符号，同步前去掉表情及其后的一个空格，
+# "## ✨ 1.5.1 亮点" 变为 "## 1.5.1 亮点"。
+# 注意：Gitee 还会审核说明文字，含"代理"等字样时整段被替换成"内容可能含有违规信息"
+# （1.5.1 实测），这类措辞只能在 Gitee 上手动改写，同步后要回读确认。
+function Remove-Emoji([string]$Text) {
+    return $Text -replace '(?:[\uD800-\uDBFF][\uDC00-\uDFFF]|[☀-➿⬀-⯿])[️‍]*[ \t]?', ''
+}
 $retainedReleases = @((Invoke-WebRequest -Uri "https://api.github.com/repos/$githubRepo/releases?per_page=100" -Headers $headers).Content | ConvertFrom-Json) |
     Where-Object { [version]($_.tag_name.TrimStart('v')) -ge [version]'1.0.0' } |
     Sort-Object { [version]$_.tag_name.TrimStart('v') } -Descending |
@@ -58,7 +66,7 @@ try {
                 access_token = $token
                 tag_name = $release.tag_name
                 name = $release.name
-                body = $release.body
+                body = Remove-Emoji $release.body
                 prerelease = [bool]$release.prerelease
                 target_commitish = $release.target_commitish
             } | ConvertTo-Json -Depth 3
