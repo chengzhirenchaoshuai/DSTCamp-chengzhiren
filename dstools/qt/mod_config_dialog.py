@@ -119,10 +119,9 @@ class ModConfigDialog(QDialog):
         self.mod_info = mod_info
         self.read_only = read_only
         self.vars: dict[str, QComboBox] = {}
-        # 按下拉框项的顺序记录 data 与 hover（与 combo 的 item 索引一一对
-        # 应），不再用显示文本当字典键——见 _render_choice_row() 的说明。
+        # 按下拉框项的顺序记录 data（与 combo 的 item 索引一一对应），不再
+        # 用显示文本当字典键——见 _render_choice_row() 的说明。
         self.choice_maps: dict[str, list[Any]] = {}
-        self.choice_hovers: dict[str, list[str]] = {}
         # "Configs Extended"(工坊 3317960157) 风格的集合/数组/文本/字典配置项，见
         # _render_raw_value_editor() —— 不走 self.vars/choice_maps 那套下拉框机制。
         self.raw_widgets: dict[str, tuple[str, dict]] = {}
@@ -258,7 +257,7 @@ class ModConfigDialog(QDialog):
         # 把它们合并、悄悄丢掉其中一个（真机复现过：土地夯实器兑换沙之石
         # 实际 3 个选项，只显示了 2 个）。
         self.choice_maps[opt.name] = [data for _desc, data in items]
-        self.choice_hovers[opt.name] = [str(c.get("hover", "") or "") for c in choices]
+        hovers = [str(c.get("hover", "") or "") for c in choices]
         combo = QComboBox()
         combo.setMinimumWidth(260)
         combo.setEnabled(not self.read_only)
@@ -274,16 +273,24 @@ class ModConfigDialog(QDialog):
                 break
         combo.setCurrentIndex(initial)
 
-        def update_tooltip(_index=None) -> None:
-            hovers = self.choice_hovers.get(opt.name, [])
-            idx = combo.currentIndex()
-            combo.setToolTip(hovers[idx] if 0 <= idx < len(hovers) else "")
+        # 当前选中项自己的说明直接显示在下拉框下一行小字，没有就整行隐藏
+        # ——而不是塞进 tooltip 要悬停才看得到。这个 mod 大量"同名启用、靠
+        # 各自 hover 区分"的选项，悬停才显示会分不清谁是谁。
+        choice_hint = self._desc_label("")
+        choice_hint.setVisible(False)
 
-        combo.currentIndexChanged.connect(update_tooltip)
-        update_tooltip()
+        def update_hint(_index=None) -> None:
+            idx = combo.currentIndex()
+            text = (hovers[idx] or "").strip() if 0 <= idx < len(hovers) else ""
+            choice_hint.setText(text)
+            choice_hint.setVisible(bool(text))
+
+        combo.currentIndexChanged.connect(update_hint)
+        update_hint()
         self.vars[opt.name] = combo
         top.addWidget(combo)
         layout.addLayout(top)
+        layout.addWidget(choice_hint)
         if opt.hover:
             layout.addWidget(self._desc_label(opt.hover))
         return row
