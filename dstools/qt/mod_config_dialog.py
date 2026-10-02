@@ -117,6 +117,8 @@ class ModConfigDialog(QDialog):
         # "Configs Extended"(工坊 3317960157) 风格的集合/数组/文本/字典配置项，见
         # _render_raw_value_editor() —— 不走 self.vars/choice_maps 那套下拉框机制。
         self.raw_widgets: dict[str, tuple[str, dict]] = {}
+        # 搜索过滤用的行索引：每项 (widget, 已 casefold 的搜索文本, 是否分组标题)。
+        self._search_items: list[tuple[QWidget, str, bool]] = []
 
         self.setWindowTitle(t("mod.config_dialog_title", name=mod_info.name or workshop_id))
         self.setMinimumSize(700, 480)
@@ -133,6 +135,14 @@ class ModConfigDialog(QDialog):
             root.addWidget(self._banner(t("mod.unsupported_schema"), theme.hex("ERROR")))
         elif remaining_dynamic:
             root.addWidget(self._banner(t("mod.dynamic_banner", count=remaining_dynamic), "#8d6e00"))
+
+        # 搜索框：按配置项标题（label/name）与注释（hover 及每个选项值的
+        # description/hover）过滤下方列表，实时过滤、不重建控件。
+        search = QLineEdit()
+        search.setPlaceholderText(t("mod.search_placeholder"))
+        search.setClearButtonEnabled(True)
+        search.textChanged.connect(self._apply_search)
+        root.addWidget(search)
 
         area = QScrollArea()
         area.setObjectName("modConfigArea")
@@ -155,27 +165,38 @@ class ModConfigDialog(QDialog):
         for opt in visible_config_options(mod_info.config_options):
             if opt.is_header:
                 label_text = opt.label.strip()
+                # 分组标题放进一个容器，搜索时整体隐藏/显示——标题、分隔线、
+                # 留白本来是散开的多个控件，无法一并控制可见性。
+                header_box = QWidget()
+                header_box.setAutoFillBackground(False)
+                hbox = QVBoxLayout(header_box)
+                hbox.setContentsMargins(0, 0, 0, 0)
+                hbox.setSpacing(8)
                 if label_text:
+                    hbox.addSpacing(6)
                     header = QLabel(label_text)
                     header.setFont(theme.font("FONT_SIZE_LG", bold=True))
                     header.setStyleSheet(f"color: {theme.hex('PRIMARY_DARK')};")
-                    self._body_layout.addSpacing(6)
-                    self._body_layout.addWidget(header)
+                    hbox.addWidget(header)
                     line = QFrame()
                     line.setFixedHeight(2)
                     line.setStyleSheet(f"background: {theme.hex('PRIMARY_LIGHT')}; border: none;")
-                    self._body_layout.addWidget(line)
+                    hbox.addWidget(line)
                 else:
                     spacer = QWidget()
                     spacer.setFixedHeight(10)
-                    self._body_layout.addWidget(spacer)
+                    hbox.addWidget(spacer)
+                self._body_layout.addWidget(header_box)
+                self._search_items.append((header_box, "", True))
                 continue
             real_options += 1
             if opt.is_set_config or opt.is_array_config or opt.is_text_config or opt.is_dictionary_config:
                 current_value = mod.configuration_options.get(opt.name, opt.default)
-                self._body_layout.addWidget(self._render_raw_value_editor(opt, current_value))
-                continue
-            self._body_layout.addWidget(self._render_choice_row(opt))
+                widget = self._render_raw_value_editor(opt, current_value)
+            else:
+                widget = self._render_choice_row(opt)
+            self._body_layout.addWidget(widget)
+            self._search_items.append((widget, self._opt_search_text(opt), False))
 
         if not real_options and not mod_info.unsupported_schema:
             self._body_layout.addWidget(QLabel(t("mod.no_config_options")))
@@ -290,6 +311,43 @@ class ModConfigDialog(QDialog):
         label.setStyleSheet(f"color: {theme.hex('TEXT_MUTED')};")
         label.setFont(theme.font("FONT_SIZE_XS"))
         return label
+
+    @staticmethod
+    def _opt_search_text(opt) -> str:
+        """一个配置项用于搜索匹配的全部文本：标题（label/name）、选项级注释
+        （hover），以及每个选项值的描述和注释。返回已 casefold 的字符串。"""
+        parts = [str(opt.label or ""), str(opt.name or ""), str(opt.hover or "")]
+        for c in opt.choices:
+            parts.append(str(c.get("description", "") or ""))
+            parts.append(str(c.get("hover", "") or ""))
+        return " ".join(parts).casefold()
+
+    def _apply_search(self, text: str) -> None:
+        """按搜索框内容过滤配置列表：匹配标题或注释的选项显示、其余隐藏；
+        分组标题只要下面还有匹配项就显示。空搜索恢复全部。"""
+        needle = text.strip().casefold()
+        items = self._search_items
+        n = len(items)
+        # 第一遍：计算每个选项是否匹配并设置其可见性。
+        matched = [False] * n
+        for idx, (widget, search_text, is_header) in enumerate(items):
+            if is_header:
+                continue
+            visible = (not needle) or (needle in search_text)
+            matched[idx] = visible
+            widget.setVisible(visible)
+        # 第二遍：分组标题的可见性 = 后面（到下一个标题为止）有匹配项。
+        for idx, (widget, _search_text, is_header) in enumerate(items):
+            if not is_header:
+                continue
+            any_match = False
+            for j in range(idx + 1, n):
+                if items[j][2]:
+                    break
+                if matched[j]:
+                    any_match = True
+                    break
+            widget.setVisible(not needle or any_match)
 
     # ── Configs Extended 风格的集合/数组/字典/文本编辑器 ────────────────
     def _render_raw_value_editor(self, opt, current_value) -> QWidget:
