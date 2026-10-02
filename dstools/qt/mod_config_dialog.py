@@ -11,7 +11,7 @@ mod 自己声明的默认值，不写盘；"返回"直接关闭、丢弃未应�
 
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
@@ -81,19 +81,11 @@ def open_mod_config(page, workshop_id: str, mod, mod_info, read_only: bool, read
         ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason).show()
         return
 
-    # 解析通常很快；之前每次都弹一个"正在加载"小窗、解析完立刻关掉，看起来像闪了一下
-    # （真机反馈过）。改成忙碌光标，只有解析超过 0.4 秒时才在主窗口上渐隐提示一句。
+    # 解析通常很快；加载期间只显示忙碌光标，不弹任何提示小窗——之前"正在
+    # 加载"的提示在设置项多的 mod 上会闪一下（真机反馈过），改成纯光标提示。
     QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
-    pending = {"active": True}
-
-    def slow_hint() -> None:
-        if pending["active"]:
-            dialogs.show_toast(page.window(), f"{t('mod.config_loading')}…", ms=1800)
-
-    QTimer.singleShot(400, slow_hint)
 
     def finish() -> None:
-        pending["active"] = False
         QApplication.restoreOverrideCursor()
 
     def done(changed: bool) -> None:
