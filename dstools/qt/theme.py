@@ -393,7 +393,9 @@ def _apply_tooltip_style(app: QApplication) -> None:
 
             def drawPrimitive(self, elem, opt, painter, widget=None):
                 if elem == QStyle.PrimitiveElement.PE_PanelTipLabel:
-                    painter.fillRect(opt.rect, opt.palette.color(QPalette.ColorRole.ToolTipBase))
+                    # 固定浅黄背景，不取 opt.palette 的 ToolTipBase——深色系统
+                    # 主题下 QTipLabel 传入的 palette 是黑色，取它又会画成黑底。
+                    painter.fillRect(opt.rect, QColor("#ffffe0"))
                     return
                 super().drawPrimitive(elem, opt, painter, widget)
 
