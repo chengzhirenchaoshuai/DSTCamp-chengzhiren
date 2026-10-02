@@ -528,7 +528,12 @@ class LocalServicePage(Page):
         title_fm = QFontMetrics(self._lan_row._title.font())
         title_w = max(title_fm.horizontalAdvance(r._title.text()) for r in rows) + 4
         status_fm = QFontMetrics(self._lan_row._status.font())
-        status_texts = [r._status.text() for r in rows if r._status.text()]
+        # 状态列宽不能只看当前显示文字：初始三行都还没 set_status 会退化成最小值 60，
+        # 容不下"● 疑似代理"这类较长状态（真机反馈过"理"被截一半）。把可能出现的状态
+        # 文案一并纳入宽度计算。
+        status_texts = [f"● {t(key)}" for key in (
+            "local.connect_ready", "local.connect_not_ready", "local.connect_proxy_suspected")]
+        status_texts += [r._status.text() for r in rows if r._status.text()]
         status_w = max((status_fm.horizontalAdvance(t) for t in status_texts), default=0) + 12
         status_w = max(status_w, 60)
         for row in rows:
