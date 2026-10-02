@@ -119,7 +119,10 @@ class ModConfigDialog(QDialog):
         self.mod_info = mod_info
         self.read_only = read_only
         self.vars: dict[str, QComboBox] = {}
-        self.choice_maps: dict[str, dict[str, Any]] = {}
+        # 按下拉框项的顺序记录 data 与 hover（与 combo 的 item 索引一一对
+        # 应），不再用显示文本当字典键——见 _render_choice_row() 的说明。
+        self.choice_maps: dict[str, list[Any]] = {}
+        self.choice_hovers: dict[str, list[str]] = {}
         # "Configs Extended"(工坊 3317960157) 风格的集合/数组/文本/字典配置项，见
         # _render_raw_value_editor() —— 不走 self.vars/choice_maps 那套下拉框机制。
         self.raw_widgets: dict[str, tuple[str, dict]] = {}
@@ -232,9 +235,14 @@ class ModConfigDialog(QDialog):
 
         current_value = self.mod.configuration_options.get(opt.name, opt.default)
         choices, current_display, _valid = resolve_config_value(self.mod_info, opt.name, current_value)
-        desc_to_data = {c["description"]: c["data"] for c in choices}
 
-        if not desc_to_data:
+        # 显示文本去掉首尾空格：部分 mod 靠补空格在游戏内用等宽字体对齐下
+        # 拉选项文本（如 "禁用" 补尾空格、"空格 + 启用"），这里用比例字体，
+        # 保留空格会显得像夹了空白字符、文本也不居中。只影响显示，写回
+        # modoverrides.lua 的仍是每个选项自己的 data 值。
+        items = [(str(c["description"]).strip(), c["data"]) for c in choices]
+
+        if not items:
             reason = t("mod.dynamic_option") if opt.is_dynamic else t("mod.no_choices")
             hint = QLabel(f"{current_display}  ({reason})")
             hint.setStyleSheet(f"color: {theme.hex('TEXT_MUTED')}; font-style: italic;")
@@ -244,18 +252,32 @@ class ModConfigDialog(QDialog):
                 layout.addWidget(self._desc_label(opt.hover))
             return row
 
-        desc_to_hover = {c["description"]: c.get("hover", "") for c in choices}
-        self.choice_maps[opt.name] = desc_to_data
+        # 按下拉框项的顺序记录 data 与 hover，用索引取值而不是用显示文本当
+        # 键查字典——同一个 mod 可能有两个选项显示文本完全相同（仅 data 和
+        # hover 不同，如 "启用" 同时对应 true 和 -1 两个值），按文本当键会
+        # 把它们合并、悄悄丢掉其中一个（真机复现过：土地夯实器兑换沙之石
+        # 实际 3 个选项，只显示了 2 个）。
+        self.choice_maps[opt.name] = [data for _desc, data in items]
+        self.choice_hovers[opt.name] = [str(c.get("hover", "") or "") for c in choices]
         combo = QComboBox()
         combo.setMinimumWidth(260)
         combo.setEnabled(not self.read_only)
-        for desc in desc_to_data:
+        for desc, _data in items:
             combo.addItem(desc)
-        index = combo.findText(current_display)
-        combo.setCurrentIndex(index if index >= 0 else 0)
+        # 按当前保存的 data 值定位初始选中项，而不是按显示文本 findText
+        # （显示文本可能重复，findText 只会命中第一个，会把 -1 值误选成
+        # true 值那一条）。
+        initial = 0
+        for idx, (_desc, data) in enumerate(items):
+            if data == current_value:
+                initial = idx
+                break
+        combo.setCurrentIndex(initial)
 
         def update_tooltip(_index=None) -> None:
-            combo.setToolTip(desc_to_hover.get(combo.currentText(), ""))
+            hovers = self.choice_hovers.get(opt.name, [])
+            idx = combo.currentIndex()
+            combo.setToolTip(hovers[idx] if 0 <= idx < len(hovers) else "")
 
         combo.currentIndexChanged.connect(update_tooltip)
         update_tooltip()
@@ -449,12 +471,11 @@ class ModConfigDialog(QDialog):
                 continue
             if opt.name not in self.vars:
                 continue
-            desc_to_data = self.choice_maps[opt.name]
-            default_desc = next((desc for desc, data in desc_to_data.items() if data == opt.default), None)
-            if default_desc is not None:
-                index = self.vars[opt.name].findText(default_desc)
-                if index >= 0:
-                    self.vars[opt.name].setCurrentIndex(index)
+            datas = self.choice_maps[opt.name]
+            for idx, data in enumerate(datas):
+                if data == opt.default:
+                    self.vars[opt.name].setCurrentIndex(idx)
+                    break
 
     def _apply(self) -> None:
         for opt in self.mod_info.config_options:
@@ -466,10 +487,11 @@ class ModConfigDialog(QDialog):
                 continue
             if opt.name not in self.vars:
                 continue
-            desc = self.vars[opt.name].currentText()
-            desc_to_data = self.choice_maps[opt.name]
-            if desc in desc_to_data:
-                self.mod.configuration_options[opt.name] = desc_to_data[desc]
+            combo = self.vars[opt.name]
+            datas = self.choice_maps[opt.name]
+            idx = combo.currentIndex()
+            if 0 <= idx < len(datas):
+                self.mod.configuration_options[opt.name] = datas[idx]
         # 立刻写进当前世界的 modoverrides.lua（跟游戏内配置界面一致）；"应用到所有
         # 世界"还没做，标脏让 保存/应用 按钮保持可点。
         self.page._mark_dirty()
