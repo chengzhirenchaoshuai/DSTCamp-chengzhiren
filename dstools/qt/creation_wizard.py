@@ -243,8 +243,9 @@ class _AttentionFrame(QWidget):
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
-        painter.setPen(QPen(theme.color("ACCENT"), 4))
-        painter.drawRect(self.rect().adjusted(2, 2, -2, -2))
+        # 6px 宽：太细时跟大面积的标题栏闪烁放在一起几乎看不出来（真机反馈）
+        painter.setPen(QPen(theme.color("ACCENT"), 6))
+        painter.drawRect(self.rect().adjusted(3, 3, -3, -3))
 
 
 class CreationWizardDialog(QDialog):
@@ -261,7 +262,7 @@ class CreationWizardDialog(QDialog):
         # 这里自己闪几下边框和标题栏（见 flash_attention）
         self._attention_ticks = 0
         self._attention_on = False
-        self._attention_timer = QTimer(self, interval=70)
+        self._attention_timer = QTimer(self, interval=100)
         self._attention_timer.timeout.connect(self._attention_step)
         self._attention_frame: _AttentionFrame | None = None
         # 标题（含任务栏显示）只写"创建服务器存档"，不带 DSTCamp 前缀。
