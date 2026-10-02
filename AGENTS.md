@@ -57,12 +57,9 @@ python scripts/build_exe.py
 
 ## Gitee 发行版注意事项
 
-Gitee 发行版由 `scripts/sync_gitee_releases.ps1` 从 GitHub Release 同步（附件与说明），以下是 1.5.1 发布时踩过的坑：
-
-- 表情符号：Gitee 发行版说明不支持表情符号，同步脚本已自动去掉（如 `## ✨ 1.5.1 亮点` 变为 `## 1.5.1 亮点`），README 与 GitHub Release 照常使用。
-- 敏感字样：Gitee 会审核说明文字，出现"代理"等字样（如"代理 TUN""代理出口 IP""疑似代理"）时，整段说明会被替换成"内容可能含有违规信息"，去掉表情也没用。写更新日志时就避开这类字样，改用"TUN 虚拟网卡""系统网络设置"等说法；确需保留时，只在 Gitee 上改写，GitHub 与 README 不动。
-- 同步后必须回读：`GET https://gitee.com/api/v5/repos/orange-blade/DSTCamp-chengzhiren/releases/tags/vX.Y.Z`，确认说明不是"内容可能含有违规信息"、附件齐全。被替换时先逐段去掉可疑行定位，再用 `PATCH /api/v5/repos/orange-blade/DSTCamp-chengzhiren/releases/{id}`（带 `access_token`、`tag_name`、`name`、`body`）更新。
-- 推送凭据：本机未配置 git 凭据，`git push gitee` 会卡在看不见的用户名/密码提示上。推送时通过临时 `GIT_ASKPASS` 脚本读取 `reference/gitee_token.txt`（用户名 `orange-blade`，并设 `GIT_TERMINAL_PROMPT=0`），不要把令牌写进远程 URL、命令行参数或 git 配置。
+- 说明不能含表情符号（同步脚本已自动去掉），也不能出现"代理"等字样，否则整段被替换成"内容可能含有违规信息"；写更新日志时改用"TUN 虚拟网卡"等说法。
+- 同步后用 `GET /api/v5/repos/orange-blade/DSTCamp-chengzhiren/releases/tags/vX.Y.Z` 回读确认说明与附件，被替换时改写后用 `PATCH .../releases/{id}` 更新。
+- 本机没有 git 凭据，`git push gitee` 会卡住；用临时 `GIT_ASKPASS` 读 `reference/gitee_token.txt`（用户名 `orange-blade`），令牌不写进 URL、命令行或配置。
 
 ## 关键约束
 
