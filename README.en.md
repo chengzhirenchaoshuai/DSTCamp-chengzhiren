@@ -1,7 +1,7 @@
 # DSTCamp
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.5.0-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.5.1-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="UI" src="https://img.shields.io/badge/UI-Qt%20(PySide6)-41cd52">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
@@ -10,14 +10,14 @@
 
 DSTCamp is a Windows desktop manager for local *Don't Starve Together* servers. It brings save management, world configuration, Workshop Mods, dedicated-server operations, backups, tunneling, and lobby acceleration into one Qt (PySide6) interface.
 
-## ✨ 1.5.0 highlights
+## ✨ 1.5.1 highlights
 
-- 🖥️ **Brand-new Qt interface**: rebuilt with Qt (PySide6) with every existing feature kept, unified visuals and dialogs, and proper support for 125%/175% display scaling.
-- 🔁 **Auto-restart on crash**: worlds that crash while running are restarted automatically, including handling of new-format tokens Klei has not released yet.
-- 🛰️ **More accurate lobby-acceleration diagnostics**: each player's connection type (Steam P2P / FRP / LAN / direct IP) is identified from the server log.
-- 👥 **Easier player management**: pick administrators and blocklist entries from players seen in any save; the save page shows Klei IDs, nicknames, and sharper avatars.
+- 🧩 **Missing Mods are caught before launch**: if a save enables Mods that are not on this computer, starting is paused and you can subscribe and download them in one click, so the save is not run and saved without them.
+- 🧹 **Cleaned-up Mods stay gone**: after removing leftovers, Steam's download records are cleared too, so joining another server no longer downloads them again.
+- ⬆️ **Smoother server updates**: when a launch is blocked by a pending update you can update right away, and "Update via Steam" now really updates and no longer hangs on exit.
+- 🌐 **Accurate direct-connect codes**: with a TUN-mode proxy on, LAN and public direct-connect codes no longer show the proxy's virtual address or exit IP.
 
-See [1.5.0 changes](#150-changes) below for the full list.
+See [1.5.1 changes](#151-changes) below for the full list.
 
 ## Features
 
@@ -34,10 +34,10 @@ WeGame does not provide one-click dedicated-server launching. DSTCamp does not b
 
 Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
 
-- `DSTCamp-1.5.0.exe`: single-file build with all required resources embedded; no installation needed.
-- `DSTCamp-1.5.0.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
+- `DSTCamp-1.5.1.exe`: single-file build with all required resources embedded; no installation needed.
+- `DSTCamp-1.5.1.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
 
-Users on 1.4.0 can update in place from the About dialog or the update prompt at startup.
+Users on 1.4.0 or later can update in place from the About dialog or the update prompt at startup.
 
 To run from source:
 
@@ -88,14 +88,38 @@ python scripts/build_exe.py
 
 The build uses an explicit tool allowlist, stages resources under `build/`, and smoke-tests the frozen executable. Real Windows GUI, Steam, frpc, and game behavior still require manual validation.
 
-## 1.5.0 changes
+## 1.5.1 changes
 
-### 🖥️ New interface
+### ✨ New features
+
+- **Check for missing Mods before launch**: when a save enables Mods that are not on this computer (usually not subscribed, common with saves copied from elsewhere), starting the dedicated server is paused and the Mods are listed. Otherwise the server would skip them, and once the save is saved, items, creatures and structures that depend on them could be lost for good. Choose "Subscribe & Download" (subscribes with the current Steam account and waits for the downloads; the Mod page refreshes afterwards), "Start Anyway", or cancel.
+- **Guided update when the server is out of date**: when a launch is blocked by a pending update, the dialog offers "Update now"; a red "Update available" appears after the dedicated-server path, with remote/local build numbers on hover.
+- **Outdated LuaJIT copies update automatically**: starting, starting all, and restarting no longer ask for confirmation; launching continues once the update succeeds, and failures are explained in the progress window.
+- **Create server save window**: clicking the main window while it is open now flashes its title bar and border, like other dialogs; the window remembers the size you last set.
+
+### 🐞 Fixes
+
+- Mods removed with leftover cleanup were downloaded again by Steam when joining another server. Cleanup now checks Steam's download records and, after confirmation, closes Steam, clears the records, and restarts Steam.
+- Unsubscribed legacy (V1) Mods were listed as cleanable but always failed to clean; batch-cleanup failures are now grouped by reason.
+- V1/V2 badges in the Mod update window were unstyled and flooded the log with stylesheet parse warnings.
+- "Update via Steam" showed no window after clicking, and exiting during an update hung the app.
+- "Update via Steam" did not actually update (Steam ignored the request when the server was already installed).
+- Drop-down lists extending outside their window were missing their background (e.g. the rollback-days list looked cut off).
+- Drop-down lists briefly flashed a default background when opening.
+- With a TUN-mode proxy on, the LAN direct-connect code showed a 198.18.x virtual address.
+- The public direct-connect code reported the proxy's exit IP; a TUN proxy is now flagged as "Proxy?" with directions for a direct connection.
+
+<details>
+<summary><strong>Earlier versions (1.3.5 ~ 1.5.0)</strong></summary>
+
+### 1.5.0
+
+#### 🖥️ New interface
 
 - Rebuilt with Qt (PySide6) with every existing feature kept; visuals, dialogs, font sizes, and themes are unified, and details such as copy toasts and drop-down lists were reworked.
 - High-DPI aware: the default window fits the screen work area, the last window size is remembered, large dialogs no longer overflow the screen, and the window cannot be dragged off the desktop.
 
-### ✨ New features
+#### ✨ New features
 
 - **Auto-restart on crash** (Local server page, per save): worlds that crash after starting are restarted automatically. Another usable token from the pool is used when available; otherwise the original token is retried after 5/10/15/30 minutes until Klei releases it, for up to 2 hours. It stops after 3 crashes within 30 minutes. No modal dialogs are shown; progress appears in a banner and tray notifications, and every result is logged to `data/auto_restart/auto_restart.log`.
 - **Token hold expires automatically**: after a master-world crash or registration conflict, the token's "waiting for release" mark clears itself after the waiting period instead of requiring a manual release in the token pool.
@@ -112,7 +136,7 @@ The build uses an explicit tool allowlist, stages resources under `build/`, and 
 - The Mod configuration page no longer flashes a loading window; Mods enabled in the save but not installed locally now explain where they come from.
 - The close option "Minimize to taskbar" is now "Minimize to tray".
 
-### 🐞 Fixes
+#### 🐞 Fixes
 
 - An occasional "Failed to remove temporary directory" dialog when the single-file build exits.
 - An error when closing the window during startup.
@@ -120,9 +144,6 @@ The build uses an explicit tool allowlist, stages resources under `build/`, and 
 - "Restart now" in cache-folder settings did not restart.
 - Duplicate entries in the administrator list after refreshing.
 - The Gitee update source was often rejected (HTTP 403) and fell back to GitHub; checking and downloading updates is now more reliable in mainland China.
-
-<details>
-<summary><strong>Earlier versions (1.3.5 ~ 1.4.0)</strong></summary>
 
 ### 1.4.0
 

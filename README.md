@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.5.0-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.5.1-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="UI" src="https://img.shields.io/badge/UI-Qt%20(PySide6)-41cd52">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
@@ -14,14 +14,14 @@
   <a href="https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases"><img alt="Release" src="https://img.shields.io/github/v/release/chengzhirenchaoshuai/DSTCamp-chengzhiren"></a>
 </p>
 
-## ✨ 1.5.0 亮点
+## ✨ 1.5.1 亮点
 
-- 🖥️ **全新 Qt 界面**：整体改用 Qt（PySide6）重写，原有功能全部保留，视觉、弹窗与字号统一，适配 125%/175% 等高缩放屏幕。
-- 🔁 **崩溃自动重启**：世界运行中崩溃后自动拉起，自动处理 Klei 新令牌未释放的问题。
-- 🛰️ **大厅加速诊断更准**：按专服日志逐个识别玩家的连接方式（Steam P2P / FRP / 局域网 / IP 直连）。
-- 👥 **玩家管理更方便**：管理员、黑名单可直接从存档里出现过的玩家中选择；存档信息页显示科雷 ID 与昵称，头像更清晰。
+- 🧩 **启动前检查缺失 Mod**：存档启用了本机没有的 Mod 时先拦下，可一键订阅并下载，避免缺 Mod 运行后存档内容永久丢失。
+- 🧹 **清理的 Mod 不再被下回来**：清理残留后自动清除 Steam 的下载记录，进别的服务器不会再重新下载。
+- ⬆️ **专服更新更顺**：启动被待更新拦下时可直接"立即更新"，"通过 Steam 更新"真正触发更新且不再卡死退出。
+- 🌐 **直连代码更准**：开启代理 TUN 时，局域网/公网直连代码不再显示代理的虚拟地址或出口 IP。
 
-完整更新内容见下方 [1.5.0 更新](#150-更新)。
+完整更新内容见下方 [1.5.1 更新](#151-更新)。
 
 ## 功能
 
@@ -44,10 +44,10 @@
 
 推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 或 [Gitee 发行版](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases) 下载：
 
-- `DSTCamp-1.5.0.exe`：工具与资源全部内嵌，单文件运行，无需安装。
-- `DSTCamp-1.5.0.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
+- `DSTCamp-1.5.1.exe`：工具与资源全部内嵌，单文件运行，无需安装。
+- `DSTCamp-1.5.1.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
 
-已安装 1.4.0 的用户可在"关于"或启动时的更新提示中直接自动更新。
+已安装 1.4.0 及以上版本的用户可在"关于"或启动时的更新提示中直接自动更新。
 
 源码运行：
 
@@ -114,14 +114,38 @@ python scripts/build_exe.py
 
 构建脚本在 `build/` 暂存固定工具和图标，只向 `dist/` 输出单文件 EXE 与 `sha256.json`；EXE 会执行冻结入口与资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
 
-## 1.5.0 更新
+## 1.5.1 更新
 
-### 🖥️ 全新界面
+### ✨ 新功能
+
+- **启动前检查缺失 Mod**：存档启用了本机没有的 Mod（多为未订阅，常见于搬来的存档）时，启动专服前先拦下并列出，避免服务器跳过这些 Mod 运行、保存后依赖它们的物品、生物和建筑永久丢失。可选"一键订阅并下载"（用当前 Steam 账号订阅后等待下载完成，Mod 页随后自动刷新）、"仍然启动"或取消。
+- **专服待更新时引导更新**：启动被待更新拦下时，弹窗直接提供"立即更新"；专用服务器路径后显示红色"有可用更新"，悬停可看远程/本地 Build。
+- **LuaJIT 副本过期时自动更新**：启动、全部启动、重启前不再弹确认框，更新成功后自动继续启动；失败原因直接写在进度窗口里。
+- **创建服务器存档窗口**：打开时点击主窗口，窗口会闪烁标题栏和边框提示，与其他弹窗一致；记住上次调整的窗口大小。
+
+### 🐞 修复
+
+- 清理残留 Mod 后，进入其他服务器时这些 Mod 又被 Steam 重新下载回来。现在清理后会检查 Steam 的下载记录，确认后自动退出 Steam、清除记录并重新启动 Steam。
+- 已取消订阅的旧式（V1）Mod 被列为可清理，却总是清理失败；批量清理的失败信息改为按原因合并显示。
+- 更新 Mod 窗口的 V1/V2 标签样式没有生效，并在日志中大量刷出样式解析警告。
+- "通过 Steam 更新"点击后看不到窗口，且更新进行中退出程序会卡死。
+- "通过 Steam 更新"实际不触发更新（专服已安装时 Steam 会忽略请求）。
+- 下拉列表伸出所在窗口时背景缺失（如回档天数下拉框像被挡住）。
+- 下拉列表展开时先闪一下默认背景。
+- 开启代理 TUN 时，局域网直连代码显示 198.18.x 虚拟地址。
+- 公网直连代码查到的是代理出口 IP；检测到 TUN 代理时显示"疑似代理"并说明如何设置直连。
+
+<details>
+<summary><strong>历史版本（1.1.0 ~ 1.5.0）</strong></summary>
+
+### 1.5.0
+
+#### 🖥️ 全新界面
 
 - 整体改用 Qt（PySide6）重写，原有功能全部保留；视觉、弹窗、字号与主题统一，复制提示、下拉列表等细节重新打磨。
 - 适配高缩放屏幕：默认窗口按屏幕工作区缩小，记住上次关闭时的尺寸，大弹窗不再超出屏幕，窗口拖动不会越出桌面。
 
-### ✨ 新功能
+#### ✨ 新功能
 
 - **崩溃自动重启**（本地服务器页，按存档开启）：世界跑起来后崩溃会自动重启；令牌池有其它可用令牌时直接换用，否则按 5/10/15/30 分钟间隔等待 Klei 释放原令牌，最多 2 小时；30 分钟内崩溃 3 次后停止。全程不弹窗，进度显示在横幅与托盘通知中，每次结果写入 `data/auto_restart/auto_restart.log`。
 - **令牌等待期自动结束**：主世界崩溃或注册冲突后，令牌的"等待释放"标记会在等待期后自动解除，不必再到令牌池手动清除占用。
@@ -138,7 +162,7 @@ python scripts/build_exe.py
 - Mod 配置页去掉一闪而过的加载小窗；存档已启用但本机未安装的 Mod 会写明来源与原因。
 - 关闭窗口的选项由"最小化到任务栏"改为"最小化到托盘"。
 
-### 🐞 修复
+#### 🐞 修复
 
 - 单文件版退出时偶发"Failed to remove temporary directory"弹窗。
 - 启动途中点击关闭报错。
@@ -146,9 +170,6 @@ python scripts/build_exe.py
 - 缓存目录设置中的"立即重启"没有真正重启。
 - 管理员列表刷新后出现重复项。
 - 检查更新时 Gitee 源时常被拒绝（HTTP 403）而退回 GitHub，现在国内网络下检查和下载更新更稳定。
-
-<details>
-<summary><strong>历史版本（1.1.0 ~ 1.4.0）</strong></summary>
 
 ### 1.4.0
 
