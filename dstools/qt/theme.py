@@ -377,6 +377,11 @@ def _apply_tooltip_style(app: QApplication) -> None:
     from PySide6.QtGui import QPalette
     from PySide6.QtWidgets import QProxyStyle, QStyle, QToolTip
 
+    # 强制 Light colorScheme：Qt 6 会跟随系统深色主题把 QToolTip 渲染成黑底
+    # （真机反馈过，QSS/setPalette 都压不住），强制 Light 让 QToolTip 走浅色
+    # palette。本应用是浅色主题，这个方向跟界面一致。
+    app.styleHints().setColorScheme(Qt.ColorScheme.Light)
+
     pal = QToolTip.palette()
     pal.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffe0"))
     pal.setColor(QPalette.ColorRole.ToolTipText, QColor("#2e3438"))
