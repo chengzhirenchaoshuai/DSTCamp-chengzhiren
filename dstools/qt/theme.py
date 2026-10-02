@@ -126,12 +126,20 @@ def _apply_fake_transparent_popup_bg(combo, popup) -> None:
         label.setObjectName(_POPUP_BG_LABEL_NAME)
         label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
     # 同一个弹出容器可能上次退回过实色，每次贴图都确认一下是透明。
-    _set_popup_style(popup, "background: transparent;")
+    # 必须写显式选择器：无选择器的声明会被展开列表上弹出的 QToolTip 继承
+    # （提示框以列表为样式父级），透明背景画成黑底，补 QToolTip 规则也压不住。
+    _set_popup_style(popup, _POPUP_TRANSPARENT_QSS)
     label.move(0, 0)
     label.resize(popup.size())
     label.setPixmap(_faded_popup_bg_pixmap(pixmap))
     label.lower()
     label.show()
+
+
+# 弹出容器及其子控件（列表、滚动条、背景贴图）透明，不能写成无选择器形式，见上方说明。
+_POPUP_TRANSPARENT_QSS = (
+    "QComboBoxPrivateContainer, QComboBoxPrivateContainer QWidget { background: transparent; }"
+)
 
 
 def _set_popup_style(popup, style: str) -> None:
