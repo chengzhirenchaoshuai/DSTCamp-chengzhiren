@@ -290,10 +290,6 @@ class Theme(QObject):
             # 已经显式调用过 theme.font(...) 的控件（对话框正文、标题、页签等）不受
             # 影响，因为它们各自都传了自己的 size_key，不依赖这份继承值。
             app.setFont(self.font("FONT_SIZE_SM"))
-            # 强制 Fusion style：windowsvista 在系统深色主题下会把 QToolTip
-            # 交给系统原生渲染成黑底（QSS/setPalette/QProxyStyle 都压不住），
-            # Fusion 全程 Qt 自绘、用 palette，QToolTip 才能显示成浅黄。
-            app.setStyle("Fusion")
             app.setStyleSheet(self.qss())
             _patch_combo_popup_width()
             _apply_tooltip_style(app)
@@ -389,11 +385,6 @@ def _apply_tooltip_style(app: QApplication) -> None:
     from PySide6.QtGui import QPalette
     from PySide6.QtWidgets import QProxyStyle, QStyle, QToolTip
 
-    # 强制 Light colorScheme：Qt 6 会跟随系统深色主题把 QToolTip 渲染成黑底
-    # （真机反馈过，QSS/setPalette 都压不住），强制 Light 让 QToolTip 走浅色
-    # palette。本应用是浅色主题，这个方向跟界面一致。
-    app.styleHints().setColorScheme(Qt.ColorScheme.Light)
-
     pal = QToolTip.palette()
     pal.setColor(QPalette.ColorRole.ToolTipBase, QColor("#ffffe0"))
     pal.setColor(QPalette.ColorRole.ToolTipText, QColor("#2e3438"))
@@ -410,9 +401,7 @@ def _apply_tooltip_style(app: QApplication) -> None:
 
             def drawPrimitive(self, elem, opt, painter, widget=None):
                 if elem == QStyle.PrimitiveElement.PE_PanelTipLabel:
-                    # 固定浅黄背景，不取 opt.palette 的 ToolTipBase——深色系统
-                    # 主题下 QTipLabel 传入的 palette 是黑色，取它又会画成黑底。
-                    painter.fillRect(opt.rect, QColor("#ffffe0"))
+                    painter.fillRect(opt.rect, opt.palette.color(QPalette.ColorRole.ToolTipBase))
                     return
                 super().drawPrimitive(elem, opt, painter, widget)
 
