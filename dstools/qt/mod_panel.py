@@ -182,10 +182,10 @@ class ModListPanel(QAbstractScrollArea):
         name_font.setPixelSize(max(6, round(15 * s)))
         id_font.setPixelSize(max(6, round(12 * s)))
         btn_font.setPixelSize(max(6, round(13 * s)))
-        # "配置"按钮文字单独用更大字号（跟 mod 名字一致），比链接文字
-        # （btn_font）更醒目——之前跟链接文字共用 13，真机反馈偏小看不清。
+        # "配置"按钮文字单独用 14 号，比链接文字（btn_font，13 号）更醒目
+        # ——之前跟链接文字共用 13，真机反馈偏小看不清。
         cfg_font = QFont(theme.font_family)
-        cfg_font.setPixelSize(max(6, round(15 * s)))
+        cfg_font.setPixelSize(max(6, round(14 * s)))
         return name_font, id_font, btn_font, cfg_font
 
     # ── 绘制 ────────────────────────────────────────────────────────────
