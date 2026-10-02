@@ -221,7 +221,6 @@ class ModConfigDialog(QDialog):
         label_full = opt.label or opt.name
         name_label = QLabel(label_full)
         name_label.setFont(theme.font("FONT_SIZE_MD", bold=True))
-        name_label.setToolTip(label_full)
         top.addWidget(name_label, 1)
 
         current_value = self.mod.configuration_options.get(opt.name, opt.default)
