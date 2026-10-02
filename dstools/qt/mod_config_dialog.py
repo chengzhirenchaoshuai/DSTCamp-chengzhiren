@@ -253,8 +253,13 @@ class ModConfigDialog(QDialog):
         combo = QComboBox()
         combo.setMinimumWidth(260)
         combo.setEnabled(not self.read_only)
-        for desc, _data in items:
+        for i, (desc, _data) in enumerate(items):
             combo.addItem(desc)
+            # 每个下拉项自己的说明用 item 的 ToolTipRole 提供——展开下拉框
+            # 后鼠标悬停到某一项上时显示该项注释（strip 掉对齐空格，空则不显示）。
+            hover_text = hovers[i].strip()
+            if hover_text:
+                combo.setItemData(i, hover_text, Qt.ItemDataRole.ToolTipRole)
         # 按当前保存的 data 值定位初始选中项，而不是按显示文本 findText
         # （显示文本可能重复，findText 只会命中第一个，会把 -1 值误选成
         # true 值那一条）。
@@ -265,12 +270,10 @@ class ModConfigDialog(QDialog):
                 break
         combo.setCurrentIndex(initial)
 
-        # 每个选项值自己的说明（hover）用 tooltip 显示——鼠标悬停到下拉框
-        # 时才看得到。仍先 strip 掉 mod 用来对齐的首尾空格。
+        # 未展开时鼠标悬停到下拉框本体，显示当前选中项的注释。
         def update_tooltip(_index=None) -> None:
             idx = combo.currentIndex()
-            text = (hovers[idx] or "").strip() if 0 <= idx < len(hovers) else ""
-            combo.setToolTip(text)
+            combo.setToolTip(hovers[idx].strip() if 0 <= idx < len(hovers) else "")
 
         combo.currentIndexChanged.connect(update_tooltip)
         update_tooltip()
