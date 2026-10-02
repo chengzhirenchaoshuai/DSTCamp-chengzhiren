@@ -819,8 +819,10 @@ class LocalServicePage(Page):
             return
         cluster = self.get_cluster()
         mod_overrides_paths = [s.mod_overrides_path for s in cluster.shards if s.mod_overrides_path] if cluster else []
-        if not dialogs.ask_yes_no(self.window(), t("local.luajit_confirm_install_title"),
-                                   t("local.luajit_confirm_install_msg"), min_width=560):
+        if not dialogs.ask_yes_no_with_auxiliary(
+                self.window(), t("local.luajit_confirm_install_title"),
+                t("local.luajit_confirm_install_msg"),
+                t("local.luajit_runtime_btn"), self._open_luajit_runtime_download, min_width=560):
             return
         self._luajit_install_btn.setEnabled(False)
         self._luajit_uninstall_btn.setEnabled(False)
@@ -842,6 +844,12 @@ class LocalServicePage(Page):
                 t("local.luajit_error_operation_failed", detail=f"{type(exc).__name__}: {exc}")]))
 
         run_async_with_log(work, log_dialog.append, done, error)
+
+    def _open_luajit_runtime_download(self) -> None:
+        """打开 VC++ 2023 下载页前复制提取码，避免用户在蓝奏页与应用间来回找。"""
+        QGuiApplication.clipboard().setText("bzuu")
+        dialogs.show_toast(self.window(), t("local.luajit_runtime_copied"))
+        webbrowser.open(_LUAJIT_VCREDIST_DOWNLOAD_URL)
 
     def _on_luajit_uninstall_clicked(self) -> None:
         bin64_dir = self._luajit_bin64_dir
