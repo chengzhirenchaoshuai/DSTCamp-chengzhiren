@@ -186,14 +186,12 @@ class ModListPanel(QAbstractScrollArea):
                    cfg_x1=cfg_x1, cfg_x2=cfg_x2, link_x1=link_x1, link_x2=link_x2)
 
     def _fonts(self, s: float):
-        name_font, id_font, btn_font = QFont(theme.font_family), QFont(theme.font_family), QFont(theme.font_family)
-        name_font.setPixelSize(max(6, round(15 * s)))
-        id_font.setPixelSize(max(6, round(12 * s)))
-        btn_font.setPixelSize(max(6, round(13 * s)))
+        name_font = theme.panel_font(15 * s, large=True)
+        id_font = theme.panel_font(12 * s)
+        btn_font = theme.panel_font(13 * s)
         # "配置"按钮文字单独用 14 号，比链接文字（btn_font，13 号）更醒目
         # ——之前跟链接文字共用 13，真机反馈偏小看不清。
-        cfg_font = QFont(theme.font_family)
-        cfg_font.setPixelSize(max(6, round(14 * s)))
+        cfg_font = theme.panel_font(14 * s)
         return name_font, id_font, btn_font, cfg_font
 
     # ── 绘制 ────────────────────────────────────────────────────────────
@@ -201,7 +199,8 @@ class ModListPanel(QAbstractScrollArea):
         self._ensure_layout()
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        if theme.font_style != "pixel":
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         if not self._rows and self._center_message:
             # 没有行可画时（加载中），在列表首行位置水平居中画一行加粗提示。
             painter.setFont(theme.font("FONT_SIZE_MD", bold=True))

@@ -229,19 +229,19 @@ class WorldPanel(QAbstractScrollArea):
                     arrow_h=arrow_h, text_x_end=value_cx - value_half_w - 8 * m.s)
 
     def _fonts(self, s: float):
-        def make(px: float, bold: bool = False) -> QFont:
-            font = QFont(theme.font_family)
-            font.setPixelSize(max(6, round(px)))
+        def make(px: float, bold: bool = False, large: bool = False) -> QFont:
+            font = theme.panel_font(px, large=large)
             font.setBold(bold)
             return font
-        return make(16 * s), make(16 * s), make(22 * s)
+        return make(16 * s), make(16 * s), make(22 * s, large=True)
 
     # ── 绘制 ────────────────────────────────────────────────────────────
     def paintEvent(self, _event):
         self._ensure_layout()
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        if theme.font_style != "pixel":
+            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         offset = self.verticalScrollBar().value()
         view_h = self.viewport().height()
         painter.translate(0, -offset)

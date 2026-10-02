@@ -1,6 +1,13 @@
 """Qt 版入口：``python -m dstools.qt.app``。"""
 
+import os
 import sys
+
+# 像素字体（Fusion Pixel 12px）在 DirectWrite 引擎下 12px 小字号会亚像素粘连，
+# 只有 FreeType 引擎能把 12px 像素完美栅格化（与旧版 PIL 一致，灰度抗锯齿观感也
+# 更接近旧版）。必须在 QApplication 构造前设置；用 setdefault 避免覆盖测试/调试时
+# 显式指定的 QT_QPA_PLATFORM（如 offscreen）。
+os.environ.setdefault("QT_QPA_PLATFORM", "windows:fontengine=freetype")
 
 from PySide6.QtCore import QLoggingCategory, QTimer
 from PySide6.QtWidgets import QApplication

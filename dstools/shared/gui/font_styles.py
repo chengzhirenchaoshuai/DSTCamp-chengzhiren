@@ -30,11 +30,12 @@ class FontStyleDef:
 
 FONT_STYLES: list[FontStyleDef] = [
     FontStyleDef(key="default", family="Microsoft YaHei UI Light", filename=None, scale=1.0),
-    FontStyleDef(key="cute", family="KN Maiyuan", filename="KNMaiyuan-Regular.ttf", scale=1.2),
+    # 荆南麦圆体与默认雅黑保持同一磅值（scale=1.0）。
+    FontStyleDef(key="cute", family="KN Maiyuan", filename="KNMaiyuan-Regular.ttf", scale=1.0),
     # Fusion Pixel Font 简体中文版（TakWolf/fusion-pixel-font，MIT）。
     # 已核对项目 i18n/strings.py 用到的全部汉字，字形一个不缺。
     # scale=1.0：实测同一磅值下字形像素尺寸跟雅黑基本一致（用 PIL
-    # getbbox 量过 11~20px 各档），不像荆南麦圆体那样笔画细需要放大。
+    # getbbox 量过 11~20px 各档）。
     FontStyleDef(key="pixel", family="Fusion Pixel 12px Prop zh_hans",
                  filename="fusion-pixel-12px-proportional-zh_hans.ttf", scale=1.0),
 ]

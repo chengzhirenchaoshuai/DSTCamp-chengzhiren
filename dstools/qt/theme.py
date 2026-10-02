@@ -24,6 +24,45 @@ THEME_NAMES = palettes.THEME_NAMES
 # 半透明，深灰箭头在任何主题下对比度都够。
 _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png").as_posix()
 
+# 缝合像素字体（Fusion Pixel 12px）是 upm=1200 的 12px 网格字体，只有渲染在 12 的
+# 整数倍物理像素下才像素完美。QFont 的 pixelSize/pointSize 是逻辑单位，高 DPI 下会被
+# devicePixelRatio 再缩放一次，故用 setPointSizeF 反推逻辑磅值绕过 DPR。DirectWrite 引擎
+# 12px 有亚像素粘连，需配合 app.py 的 FreeType 字体引擎（windows:fontengine=freetype）
+# 才能像素完美。各档位物理像素见 _PIXEL_LEVEL_SIZES（标题是正文 2 倍，仅"标准"档正文
+# 18px 非整数倍、笔画 1/2px 交替但接近默认雅黑视觉）。
+_PIXEL_TITLE_KEYS = ("FONT_SIZE_XL", "FONT_SIZE_LG")
+_PIXEL_LEVEL_SIZES = {
+    "small": (12, 24),
+    "normal": (18, 36),
+    "large": (24, 48),
+    "xlarge": (36, 72),
+}
+_SIZE_KEYS = ("FONT_SIZE_XL", "FONT_SIZE_LG", "FONT_SIZE_MD",
+              "FONT_SIZE_BASE", "FONT_SIZE_SM", "FONT_SIZE_XS")
+
+# 全局字体大小档位：缩放系数作用于普通字体（default/cute）的字号；像素字体不用这
+# 个系数，而是按 _PIXEL_LEVEL_SIZES 查表跳档（必须保持 12 的整数倍物理像素）。
+FONT_SIZE_LEVELS = (
+    ("small", 0.85),
+    ("normal", 1.0),
+    ("large", 1.2),
+    ("xlarge", 1.4),
+)
+_FONT_SIZE_LEVEL_KEYS = tuple(key for key, _ in FONT_SIZE_LEVELS)
+_FONT_SIZE_SCALE_BY_LEVEL = dict(FONT_SIZE_LEVELS)
+
+
+def _device_pixel_ratio() -> float:
+    """主屏 devicePixelRatio（高 DPI 缩放倍数）。像素字体要按物理像素对齐到 12 的
+    整数倍，但 QFont 的 pixelSize/pointSize 是逻辑单位，需用它把物理像素换算回逻辑
+    磅值（物理 px = 磅值 × 96/72 × DPR）。取不到屏幕（极早期）时兜底 1.0。"""
+    app = QApplication.instance()
+    if app is not None:
+        screen = app.primaryScreen()
+        if screen is not None:
+            return screen.devicePixelRatio()
+    return 1.0
+
 
 def _rgba(hex_color: str, alpha: int) -> str:
     color = QColor(hex_color)
@@ -189,6 +228,8 @@ class Theme(QObject):
         self._name = name if name in palettes.THEMES else "gray"
         style = app_settings.get_font_style_choice()
         self._font_style = style if style in FONT_STYLE_NAMES else "default"
+        level = app_settings.get_font_size_level()
+        self._font_size_level = level if level in _FONT_SIZE_LEVEL_KEYS else "normal"
 
     # ── 状态 ────────────────────────────────────────────────────────────
     @property
@@ -207,16 +248,88 @@ class Theme(QObject):
     def font_family(self) -> str:
         return FONT_FAMILY_BY_STYLE[self._font_style]
 
+    @property
+    def font_size_level(self) -> str:
+        return self._font_size_level
+
+    @property
+    def font_size_scale(self) -> float:
+        return _FONT_SIZE_SCALE_BY_LEVEL.get(self._font_size_level, 1.0)
+
     def color(self, key: str) -> QColor:
         return QColor(self.palette[key])
 
     def hex(self, key: str) -> str:
         return self.palette[key]
 
+    def apply_style_hints(self, font: QFont) -> None:
+        """按当前字体样式给 QFont 补上抗锯齿/hinting 策略。
+
+        缝合像素字体（Fusion Pixel）是按整数像素网格设计的位图风字体，Qt
+        默认的灰度/子像素抗锯齿会把本该锐利的像素边缘糊成一圈灰边（观感像
+        "齿轮"）。对它必须关闭抗锯齿、禁用 hinting，字形才能像素级对齐；其它
+        样式（微软雅黑、荆南麦圆体）是普通矢量字体，抗锯齿是其最佳渲染路径，
+        显式恢复默认策略——_refresh_explicit_fonts 复用已有 QFont 改族名，
+        从像素样式切回时若不重置，会残留 NoAntialias 让雅黑也跟着变糊。"""
+        if self._font_style == "pixel":
+            font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+            font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        else:
+            font.setStyleStrategy(QFont.StyleStrategy.PreferDefault)
+            font.setHintingPreference(QFont.HintingPreference.PreferDefaultHinting)
+
     def font(self, size_key: str = "FONT_SIZE_BASE", bold: bool = False) -> QFont:
-        scale = FONT_SIZE_SCALE_BY_STYLE.get(self._font_style, 1.0)
-        font = QFont(self.font_family, max(6, round(self.palette[size_key] * scale)))
-        font.setBold(bold)
+        if self._font_style == "pixel":
+            font = QFont(self.font_family)
+            self._apply_pixel_size(font, size_key)
+            # 像素字体只有 Regular 字重，synthetic 加粗会把字形偏移 1px 并破坏像素
+            # 网格对齐（实测笔画 run 从 [3,6,9,12] 变 [4,7,10,13]），故忽略 bold。
+        else:
+            scale = FONT_SIZE_SCALE_BY_STYLE.get(self._font_style, 1.0) * self.font_size_scale
+            font = QFont(self.font_family, max(6, round(self.palette[size_key] * scale)))
+            font.setBold(bold)
+        self.apply_style_hints(font)
+        return font
+
+    def _apply_pixel_size(self, font: QFont, size_key: str) -> None:
+        """像素字体按档位查表取物理像素（正文/标题）并反推回逻辑磅值。"""
+        body, title = _PIXEL_LEVEL_SIZES.get(self._font_size_level, (12, 24))
+        phys = title if size_key in _PIXEL_TITLE_KEYS else body
+        font.setPointSizeF(phys * 72.0 / (96.0 * _device_pixel_ratio()))
+
+    def _size_key_for_raw_point(self, raw_pt: float) -> str:
+        """把未缩放磅值反推回最接近的 size_key（往返切字体时保留语义层级）。"""
+        return min(_SIZE_KEYS, key=lambda k: abs(self.palette[k] - raw_pt))
+
+    def _size_key_from_font(self, font: QFont, style: str, old_level: str) -> str:
+        """从旧样式字体反推语义层级 size_key：像素样式按物理像素反查（扣掉档位偏移），
+        其余按磅值（扣掉样式缩放与档位系数）。"""
+        if style == "pixel":
+            phys = round(font.pointSizeF() * 96.0 / 72.0 * _device_pixel_ratio())
+            body, title = _PIXEL_LEVEL_SIZES.get(old_level, (12, 24))
+            return "FONT_SIZE_LG" if phys == title else "FONT_SIZE_BASE"
+        style_scale = FONT_SIZE_SCALE_BY_STYLE.get(style, 1.0)
+        level_scale = _FONT_SIZE_SCALE_BY_LEVEL.get(old_level, 1.0)
+        raw_pt = font.pointSizeF() / (style_scale * level_scale)
+        return self._size_key_for_raw_point(raw_pt)
+
+    def _apply_font_size(self, font: QFont, size_key: str) -> None:
+        """按当前样式把 size_key 应用为实际字号（像素样式走物理像素反推）。"""
+        if self._font_style == "pixel":
+            self._apply_pixel_size(font, size_key)
+        else:
+            scale = FONT_SIZE_SCALE_BY_STYLE.get(self._font_style, 1.0) * self.font_size_scale
+            font.setPointSizeF(max(6.0, round(self.palette[size_key] * scale)))
+
+    def panel_font(self, logical_px: float, large: bool = False) -> QFont:
+        """自绘面板按逻辑像素构造字体：像素字体样式下压缩到物理 24px（large=True）/
+        12px（否则），并补齐抗锯齿策略；其余样式直接用逻辑像素。"""
+        font = QFont(self.font_family)
+        if self._font_style == "pixel":
+            self._apply_pixel_size(font, "FONT_SIZE_LG" if large else "FONT_SIZE_BASE")
+        else:
+            font.setPixelSize(max(6, round(logical_px * self.font_size_scale)))
+        self.apply_style_hints(font)
         return font
 
     # ── 切换 ────────────────────────────────────────────────────────────
@@ -238,29 +351,46 @@ class Theme(QObject):
     def set_font_style(self, choice: str) -> None:
         if choice == self._font_style or choice not in FONT_STYLE_NAMES:
             return
+        old_level = self._font_size_level
         self._font_style = choice
         app_settings.set_font_style_choice(choice)
         self.apply_to_app()
-        self._refresh_explicit_fonts()
+        self._refresh_explicit_fonts(old_level)
         self.changed.emit()
-        self._refresh_explicit_fonts()  # 各页面响应 changed 时可能重建/重设了部分控件，再补一遍
+        self._refresh_explicit_fonts(old_level)  # 各页面响应 changed 时可能重建/重设了部分控件，再补一遍
 
-    def _refresh_explicit_fonts(self) -> None:
+    def set_font_size_level(self, level: str) -> None:
+        """切换全局字体大小档位：重新计算字号并刷新所有已显式设过字体的控件。"""
+        if level == self._font_size_level or level not in _FONT_SIZE_LEVEL_KEYS:
+            return
+        old_level = self._font_size_level
+        self._font_size_level = level
+        app_settings.set_font_size_level(level)
+        self.apply_to_app()
+        self._refresh_explicit_fonts(old_level)
+        self.changed.emit()
+        # 第二次补刷时控件已经是新档位字号，须用新档位反推，否则会漂移到相邻更大层级。
+        self._refresh_explicit_fonts(self._font_size_level)
+
+    def _refresh_explicit_fonts(self, old_level: str) -> None:
         """apply_to_app() 只改了应用默认字体；各页面构造时用 setFont(theme.font(...)) 单独
         设过字体的控件不会跟着变（真机反馈过切到"缝合像素字体"后很多页签文字没变）。
 
         注意：重设样式表后 Qt 重新 polish，带字体相关 QSS（如按钮的 font-weight）的控件会被
         还原成它创建时的字体，而不是上一次的字体。所以这里不按"旧样式"匹配，而是凡是用着
-        本项目任一字体样式字体族的控件都换成当前字体族，字号按它当前字体族对应的缩放系数
-        换算；特意用了别的字体（如 Consolas 等宽）的控件保持不动。必须在 apply_to_app() 之后调用。"""
+        本项目任一字体样式字体族的控件都按旧字号反推语义层级（size_key）后用新样式/新档位
+        重设字体族与字号；字体族没变（仅切字号档位）时也照常重设字号。特意用了别的字体
+        （如 Consolas 等宽）的控件保持不动。必须在 apply_to_app() 之后调用。"""
         app = QApplication.instance()
         if app is None:
             return
-        scale_by_family = {FONT_FAMILY_BY_STYLE[name]: FONT_SIZE_SCALE_BY_STYLE.get(name, 1.0)
-                           for name in FONT_STYLE_NAMES}
+        family_to_style = {FONT_FAMILY_BY_STYLE[name]: name for name in FONT_STYLE_NAMES}
         new_family = self.font_family
-        new_scale = FONT_SIZE_SCALE_BY_STYLE.get(self._font_style, 1.0)
-        # 父控件改字体时 Qt 会顺带改写部分子控件（如列表视口）的字体，重复到没有变化为止
+        new_style = self._font_style
+        # 每个控件只反推一次 size_key 并缓存，避免多次迭代里字号被反复重设后反推出
+        # 相邻层级（漂移）；后续迭代按缓存的 size_key 幂等重设。父控件改字体时 Qt 会
+        # 顺带改写部分子控件（如列表视口）的字体，重复到没有变化为止。
+        size_key_cache: dict[int, str] = {}
         for _ in range(3):
             changed = 0
             for widget in app.allWidgets():
@@ -270,14 +400,20 @@ class Theme(QObject):
                 # 又会把字体还原；先强制 polish，再改字体。
                 widget.ensurePolished()
                 font = widget.font()
-                old_scale = scale_by_family.get(font.family())
-                if old_scale is None or font.family() == new_family:
+                old_style = family_to_style.get(font.family())
+                if old_style is None:
                     continue
-                font.setFamily(new_family)
-                if font.pointSizeF() > 0 and old_scale > 0:
-                    font.setPointSizeF(max(6.0, round(font.pointSizeF() / old_scale * new_scale)))
-                widget.setFont(font)
-                changed += 1
+                wid = id(widget)
+                if wid not in size_key_cache:
+                    size_key_cache[wid] = self._size_key_from_font(font, old_style, old_level)
+                size_key = size_key_cache[wid]
+                if old_style != new_style:
+                    font.setFamily(new_family)
+                    self.apply_style_hints(font)
+                self._apply_font_size(font, size_key)
+                if font != widget.font():
+                    widget.setFont(font)
+                    changed += 1
             if not changed:
                 break
 
@@ -296,12 +432,15 @@ class Theme(QObject):
 
     def qss(self) -> str:
         c = self.palette
+        # 像素字体只有 Regular 字重，synthetic 加粗会偏移 1px 破坏像素对齐，故像素
+        # 样式下把强调字重退化为 normal（强调改由字号/颜色承担）。
+        fw_bold = "normal" if self._font_style == "pixel" else "bold"
         return f"""
             QLabel {{ color: {c['TEXT']}; background: transparent; }}
             QLabel[muted="true"] {{ color: {c['TEXT_MUTED']}; }}
-            QLabel[heading="true"] {{ color: {c['HEADING']}; font-weight: bold; }}
+            QLabel[heading="true"] {{ color: {c['HEADING']}; font-weight: {fw_bold}; }}
             QPushButton {{ background: {c['PRIMARY']}; color: white; border: none; border-radius: 0px;
-                padding: 6px 16px; font-weight: bold; }}
+                padding: 6px 16px; font-weight: {fw_bold}; }}
             QPushButton:hover {{ background: {c['PRIMARY_DARK']}; }}
             QPushButton:pressed {{ background: {c['PRIMARY_DARK']}; }}
             QPushButton:disabled {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT_MUTED']}; }}
@@ -347,7 +486,7 @@ class Theme(QObject):
             QTabBar::tab {{ background: transparent; color: {c['TEXT_MUTED']}; border: none;
                 padding: 5px 16px; margin-right: 2px; border-top-left-radius: 6px;
                 border-top-right-radius: 6px; }}
-            QTabBar::tab:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; font-weight: bold; }}
+            QTabBar::tab:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; font-weight: {fw_bold}; }}
             QTabBar::tab:hover:!selected {{ background: {_rgba(c['PRIMARY_LIGHT'], 120)}; color: {c['TEXT']}; }}
             QDialog {{ background: {c['BG_SOFT']}; }}
             QListWidget, QPlainTextEdit {{ background: rgba(255,255,255,200); color: {c['TEXT']};

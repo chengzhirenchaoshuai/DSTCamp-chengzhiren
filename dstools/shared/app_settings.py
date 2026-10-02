@@ -12,6 +12,8 @@ _KEY_THEME_NAME = "theme_name"
 _DEFAULT_THEME_NAME = "gray"
 _KEY_FONT_STYLE_CHOICE = "font_style_choice"
 _DEFAULT_FONT_STYLE_CHOICE = "default"
+_KEY_FONT_SIZE_LEVEL = "font_size_level"
+_DEFAULT_FONT_SIZE_LEVEL = "normal"
 _KEY_PLAYER_NOTES = "player_notes"
 _KEY_MINIMIZE_ON_CLOSE = "minimize_on_close"
 _KEY_REMIND_UPDATE_ENABLED = "remind_update_enabled"
@@ -162,6 +164,18 @@ def set_font_style_choice(choice: str) -> None:
     """记住用户选定的字体样式——下次启动时 gui/theme.py 据此初始化。"""
     data = load_settings()
     data[_KEY_FONT_STYLE_CHOICE] = choice
+    save_settings(data)
+
+
+def get_font_size_level() -> str:
+    """返回全局字体大小档位；合法性由主题模块统一校验。"""
+    return load_settings().get(_KEY_FONT_SIZE_LEVEL, _DEFAULT_FONT_SIZE_LEVEL)
+
+
+def set_font_size_level(level: str) -> None:
+    """记住用户选定的字体大小档位——下次启动时 gui/theme.py 据此初始化。"""
+    data = load_settings()
+    data[_KEY_FONT_SIZE_LEVEL] = level
     save_settings(data)
 
 

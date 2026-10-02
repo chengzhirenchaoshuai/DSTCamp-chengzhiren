@@ -113,6 +113,11 @@ STRINGS = {
         "settings.font_style_pixel": "缝合像素字体",
         "settings.font_preview_text": "字体预览 Aa 123 饥荒联机版本地服务器管理",
         "settings.font_choose_label": "选择字体样式",
+        "settings.font_size_label": "字体大小",
+        "settings.font_size_small": "小",
+        "settings.font_size_normal": "标准",
+        "settings.font_size_large": "大",
+        "settings.font_size_xlarge": "特大",
         "settings.font_preview_title": "预览",
         # 关于
         "about.message": "DSTCamp {version}\n\nDon't Starve Together 本地服务器管理工具\n\n作者：橙之刃\n交流群：463227692",
@@ -1295,6 +1300,11 @@ STRINGS = {
         "settings.font_style_pixel": "Fusion Pixel",
         "settings.font_preview_text": "Font Preview Aa 123 Don't Starve Together Server Manager",
         "settings.font_choose_label": "Choose a font style",
+        "settings.font_size_label": "Font size",
+        "settings.font_size_small": "Small",
+        "settings.font_size_normal": "Normal",
+        "settings.font_size_large": "Large",
+        "settings.font_size_xlarge": "Extra large",
         "settings.font_preview_title": "Preview",
         # 关于
         "about.message": "DSTCamp {version}\n\nDon't Starve Together local server manager\n\nAuthor：橙之刃\nQQ group：463227692",

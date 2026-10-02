@@ -22,8 +22,8 @@ from pathlib import Path
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSplitter, QTabWidget,
-    QTextEdit, QVBoxLayout, QWidget,
+    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QSplitter,
+    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dstools.features.cluster_config.config_manager import (
@@ -288,6 +288,13 @@ class _ConnectRow(QWidget):
         self._status.setStyleSheet(f"color: {color};")
         self._status.setToolTip(reason)
 
+    def update_widths(self, title_width: int, status_width: int) -> None:
+        """切字号后重设标题/状态列宽；值列按 _VALUE_SAMPLE 用当前字号重算。"""
+        self._title.setFixedWidth(title_width)
+        self._status.setFixedWidth(status_width)
+        fm = QFontMetrics(self._value.font())
+        self._value.setFixedWidth(fm.horizontalAdvance(self._VALUE_SAMPLE) + 8)
+
 
 class LocalServicePage(Page):
     def __init__(self, ctx):
@@ -442,9 +449,11 @@ class LocalServicePage(Page):
         buttons = (self._start_all_btn, self._stop_all_btn, self._restart_all_btn, self._logs_btn)
         for button in buttons:
             button.setFont(theme.font("FONT_SIZE_SM"))
-        match_width = self._install_change_btn.sizeHint().width()
+        # 这 3 个按钮宽度跟随字号自适应：横向 sizePolicy 用 Fixed，宽度=sizeHint 且
+        # 不随窗口拖拽撑大（之前 setFixedWidth 固定成"更换路径"宽度，切到更大字号档
+        # 时文字溢出）。三键都是 4 个汉字，sizeHint 接近，基本对齐。
         for button in (self._start_all_btn, self._stop_all_btn, self._restart_all_btn):
-            button.setFixedWidth(match_width)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         for button in buttons:
             btn_row.addWidget(button)
         btn_row.addStretch()
@@ -508,7 +517,22 @@ class LocalServicePage(Page):
             connect_layout.addWidget(row)
         layout.addWidget(self._connect_row)
         self._connect_row.setVisible(False)
+        # 切字号后重算三行列宽，避免大/特大字号下直连代码文字被固定宽度裁剪。
+        theme.changed.connect(self._update_connect_widths)
+        self._update_connect_widths()
         return left
+
+    def _update_connect_widths(self) -> None:
+        """切字号后重新计算三行直连代码的标题/状态列宽，避免大字号下文字被裁剪。"""
+        rows = (self._lan_row, self._public_row, self._nat_row)
+        title_fm = QFontMetrics(self._lan_row._title.font())
+        title_w = max(title_fm.horizontalAdvance(r._title.text()) for r in rows) + 4
+        status_fm = QFontMetrics(self._lan_row._status.font())
+        status_texts = [r._status.text() for r in rows if r._status.text()]
+        status_w = max((status_fm.horizontalAdvance(t) for t in status_texts), default=0) + 12
+        status_w = max(status_w, 60)
+        for row in rows:
+            row.update_widths(title_w, status_w)
 
     # ── Cluster/世界选择 ────────────────────────────────────────────────
     def get_cluster(self):

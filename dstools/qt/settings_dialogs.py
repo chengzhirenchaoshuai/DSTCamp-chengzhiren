@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from dstools import __version__
 from dstools.i18n import t
 from dstools.qt import dialogs
-from dstools.qt.theme import theme
+from dstools.qt.theme import FONT_SIZE_LEVELS, theme
 from dstools.qt.threads import run_async
 from dstools.qt.widgets import ToggleSwitch, section_card
 from dstools.shared.app_settings import (
@@ -184,6 +184,7 @@ class FontSettingsDialog(dialogs.Dialog):
     def __init__(self, window):
         super().__init__(window, t("settings.font_settings_title"), "md")
         self._original_style = theme.font_style
+        self._original_level = theme.font_size_level
         self._cards: dict[str, _FontChoiceCard] = {}
         self.body.addWidget(self.heading_label(t("settings.font_choose_label")))
         grid = QGridLayout()
@@ -197,11 +198,26 @@ class FontSettingsDialog(dialogs.Dialog):
             self._cards[style] = card
         self.body.addLayout(grid)
 
+        # 字体大小档位：缩放系数作用于普通字体，像素字体按 _PIXEL_LEVEL_SIZES 跳档。
+        self.body.addWidget(self.heading_label(t("settings.font_size_label")))
+        level_row = QHBoxLayout()
+        self._level_buttons: dict[str, QPushButton] = {}
+        for level_key, _scale in FONT_SIZE_LEVELS:
+            btn = QPushButton(t(f"settings.font_size_{level_key}"))
+            btn.setCheckable(True)
+            btn.setChecked(level_key == theme.font_size_level)
+            # 选中档位用实心 PRIMARY、未选中用 secondary 透明描边，一眼看出当前大小。
+            btn.setProperty("variant", "" if level_key == theme.font_size_level else "secondary")
+            btn.clicked.connect(lambda _checked, key=level_key: self._on_select_level(key))
+            level_row.addWidget(btn)
+            self._level_buttons[level_key] = btn
+        self.body.addLayout(level_row)
+
         preview_card, preview_layout = section_card(t("settings.font_preview_title"))
         self._preview = QLabel(t("settings.font_preview_text"))
         self._preview.setWordWrap(True)
-        self._preview.setFont(QFont(theme.font_family, _PREVIEW_FONT_SIZE))
         preview_layout.addWidget(self._preview)
+        self._refresh_preview()
         self.body.addSpacing(4)
         self.body.addWidget(preview_card)
 
@@ -211,12 +227,27 @@ class FontSettingsDialog(dialogs.Dialog):
         theme.set_font_style(style)
         for name, card in self._cards.items():
             card.set_selected(name == style)
-        self._preview.setFont(QFont(theme.font_family, _PREVIEW_FONT_SIZE))
+        self._refresh_preview()
+
+    def _on_select_level(self, level_key: str) -> None:
+        theme.set_font_size_level(level_key)
+        for key, btn in self._level_buttons.items():
+            btn.setChecked(key == level_key)
+            btn.setProperty("variant", "" if key == level_key else "secondary")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        self._refresh_preview()
+
+    def _refresh_preview(self) -> None:
+        px = max(6, round(_PREVIEW_FONT_SIZE * theme.font_size_scale))
+        self._preview.setFont(QFont(theme.font_family, px))
 
     def reject(self) -> None:
-        # 取消：恢复打开窗口时的字体
+        # 取消：恢复打开窗口时的字体与字号档位
         if theme.font_style != self._original_style:
             theme.set_font_style(self._original_style)
+        if theme.font_size_level != self._original_level:
+            theme.set_font_size_level(self._original_level)
         super().reject()
 
 
