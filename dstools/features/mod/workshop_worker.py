@@ -16,6 +16,7 @@ from dstools.features.mod.workshop_api import (
     _download_result_to_payload,
     _get_workshop_item_snapshot_in_process,
     _snapshot_to_payload,
+    _subscribe_workshop_items_in_process,
     _update_workshop_items_in_process,
 )
 
@@ -73,6 +74,11 @@ def run_request(request: dict, emit) -> dict:
         return {
             "results": [_download_result_to_payload(item) for item in batch.results]
         }
+    if action == "subscribe":
+        results = _subscribe_workshop_items_in_process(
+            request.get("ids") or (), dll_path=dll_path
+        )
+        return {"results": {str(key): value for key, value in results.items()}}
     raise ValueError(f"未知 Steam Worker 操作：{action}")
 
 

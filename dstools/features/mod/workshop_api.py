@@ -160,7 +160,17 @@ class _SteamUGCQueryCompleted(ctypes.Structure):
     ]
 
 
+class _RemoteStorageSubscribePublishedFileResult(ctypes.Structure):
+    """RemoteStorageSubscribePublishedFileResult_t（回调号 1300 + 13）。"""
+
+    _fields_ = [
+        ("result", ctypes.c_int32),
+        ("published_file_id", ctypes.c_uint64),
+    ]
+
+
 _STEAM_UGC_QUERY_COMPLETED_CALLBACK = 3401
+_REMOTE_STORAGE_SUBSCRIBE_RESULT_CALLBACK = 1313
 _STEAM_RESULT_OK = 1
 _STEAM_RESULT_ACCESS_DENIED = 15
 _UGC_DETAILS_BUFFER_SIZE = 32768
@@ -842,6 +852,59 @@ class SteamWorkshopSession:
                 int(buffer[index]) for index in range(written) if int(buffer[index]) > 0
             )
         )
+
+    def subscribe_item(self, workshop_id: int, *, timeout: float = 30.0) -> int:
+        """以当前 Steam 账号订阅 Workshop 项目，返回 Steam 的 EResult（1 为成功）。"""
+        self._ensure_started()
+        if self.backend is not WorkshopBackend.CLIENT:
+            raise RuntimeError("只有客户端后端可以订阅 Workshop 项目")
+        names = (
+            "SteamAPI_ISteamUGC_SubscribeItem",
+            "SteamAPI_SteamUtils_v010",
+            "SteamAPI_ISteamUtils_IsAPICallCompleted",
+            "SteamAPI_ISteamUtils_GetAPICallResult",
+        )
+        self._require(*names)
+        d = self.dll
+        if not self.utils:
+            d.SteamAPI_SteamUtils_v010.restype = ctypes.c_void_p
+            self.utils = d.SteamAPI_SteamUtils_v010()
+            if not self.utils:
+                raise RuntimeError("SteamAPI_SteamUtils_v010 返回空接口")
+        d.SteamAPI_ISteamUGC_SubscribeItem.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        d.SteamAPI_ISteamUGC_SubscribeItem.restype = ctypes.c_uint64
+        d.SteamAPI_ISteamUtils_IsAPICallCompleted.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_bool),
+        ]
+        d.SteamAPI_ISteamUtils_IsAPICallCompleted.restype = ctypes.c_bool
+        d.SteamAPI_ISteamUtils_GetAPICallResult.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int,
+            ctypes.c_int, ctypes.POINTER(ctypes.c_bool),
+        ]
+        d.SteamAPI_ISteamUtils_GetAPICallResult.restype = ctypes.c_bool
+        api_call = int(d.SteamAPI_ISteamUGC_SubscribeItem(self.ugc, int(workshop_id)))
+        if not api_call:
+            raise RuntimeError("Steam 拒绝了订阅请求")
+        run_callbacks = d.SteamAPI_RunCallbacks
+        run_callbacks.restype = None
+        io_failed = ctypes.c_bool()
+        deadline = time.monotonic() + max(0.1, timeout)
+        while time.monotonic() < deadline:
+            run_callbacks()
+            if d.SteamAPI_ISteamUtils_IsAPICallCompleted(self.utils, api_call, ctypes.byref(io_failed)):
+                break
+            time.sleep(0.05)
+        else:
+            raise TimeoutError("等待 Steam 订阅结果超时")
+        completed = _RemoteStorageSubscribePublishedFileResult()
+        result_failed = ctypes.c_bool()
+        ok = d.SteamAPI_ISteamUtils_GetAPICallResult(
+            self.utils, api_call, ctypes.byref(completed), ctypes.sizeof(completed),
+            _REMOTE_STORAGE_SUBSCRIBE_RESULT_CALLBACK, ctypes.byref(result_failed),
+        )
+        if not ok or io_failed.value or result_failed.value:
+            raise RuntimeError("Steam 订阅请求发生 IO 错误")
+        return int(completed.result)
 
     def item_state(self, workshop_id: int) -> WorkshopItemState:
         self._ensure_started()
@@ -2191,6 +2254,37 @@ def get_workshop_item_snapshot(
         }
     )
     return _snapshot_from_payload(payload)
+
+
+def _subscribe_workshop_items_in_process(
+    workshop_ids, *, dll_path: Path | None = None
+) -> dict[int, str]:
+    """逐个订阅；返回 {ID: 错误信息}，成功项错误信息为空串。"""
+    resolved_dll = find_steam_api_dll(dll_path)
+    if resolved_dll is None:
+        raise FileNotFoundError("找不到 DST 或专用服务器的 bin64\\steam_api64.dll")
+    results: dict[int, str] = {}
+    with SteamWorkshopSession(resolved_dll, WorkshopBackend.CLIENT) as session:
+        for workshop_id in workshop_ids:
+            try:
+                code = session.subscribe_item(int(workshop_id))
+                results[int(workshop_id)] = "" if code == _STEAM_RESULT_OK else f"Steam 返回错误码 {code}"
+            except (RuntimeError, TimeoutError, OSError) as exc:
+                results[int(workshop_id)] = str(exc)
+    return results
+
+
+def subscribe_workshop_items(
+    workshop_ids: list[int] | tuple[int, ...], *, dll_path: Path | None = None
+) -> dict[int, str]:
+    """在独立进程中以当前 Steam 账号订阅项目；返回 {ID: 错误信息}，成功为空串。"""
+    ids = list(dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0))
+    if not ids:
+        return {}
+    payload = _run_workshop_worker(
+        {"action": "subscribe", "ids": ids, "dll_path": str(dll_path) if dll_path else None}
+    )
+    return {int(key): str(value) for key, value in (payload.get("results") or {}).items()}
 
 
 def get_workshop_install_info(

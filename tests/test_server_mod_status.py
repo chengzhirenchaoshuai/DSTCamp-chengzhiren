@@ -272,6 +272,29 @@ def test_stop_blocking_prefers_shutdown_command_over_force() -> None:
     assert process.status == ServerStatus.STOPPED
 
 
+def test_missing_enabled_mods_follow_server_load_paths():
+    """V2 目录、V1 包、专服 V1 运行目录和本地 Mod 都算已就绪，其余列为缺失。"""
+    import tempfile
+    from dstools.features.mod.missing_mods import find_missing_enabled_mods
+
+    with tempfile.TemporaryDirectory() as tmp:
+        content = Path(tmp) / "content" / "322330"
+        mods = Path(tmp) / "server" / "mods"
+        for folder in (content / "1", mods / "workshop-3", mods / "local_ok"):
+            folder.mkdir(parents=True)
+            (folder / "modinfo.lua").write_text("name='x'", encoding="utf-8")
+        (content / "2").mkdir()
+        (content / "2" / "2_legacy.bin").write_bytes(b"zip")
+        (content / "4").mkdir()  # 只有空目录不算已就绪
+        enabled = ["1", "2", "3", "4", "5", "local_ok", "local_missing"]
+        missing = find_missing_enabled_mods(enabled, ugc_content_root=content, server_mods_root=mods)
+        assert missing.workshop_ids == ("4", "5")
+        assert missing.local_names == ("local_missing",)
+        # 不传 -ugc_directory 时无从判断 Workshop Mod，不拦截
+        unknown = find_missing_enabled_mods(["5"], ugc_content_root=None, server_mods_root=mods)
+        assert not unknown
+
+
 def main() -> None:
     tests = (
         test_luajit_companion_is_checked_but_not_counted,
@@ -283,6 +306,7 @@ def main() -> None:
         test_shutdown_text_inside_other_command_does_not_hide_crash,
         test_console_command_history_supports_up_down_and_draft,
         test_stop_blocking_prefers_shutdown_command_over_force,
+        test_missing_enabled_mods_follow_server_load_paths,
     )
     for test in tests:
         test()

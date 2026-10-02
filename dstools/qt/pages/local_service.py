@@ -998,6 +998,8 @@ class LocalServicePage(Page):
                 if choice == "update":
                     self._on_steam_update_clicked()
                 return False
+        if not self._confirm_missing_mods(cluster):
+            return False
         if not restarting and not self._prepare_legacy_mods_for_start(cluster):
             return False
         candidate_claims, issues = collect_cluster_port_claims(cluster, target_names)
@@ -1128,6 +1130,72 @@ class LocalServicePage(Page):
             if str(candidate.path) == str(proc.cluster_path):
                 return candidate
         return None
+
+    def _confirm_missing_mods(self, cluster) -> bool:
+        """存档启用、本机却没有文件的 Mod：专服会跳过它们照常启动，世界在缺 Mod 的
+        状态下保存可能永久丢失相关内容，所以启动前拦下，让用户先订阅或明确选择继续。"""
+        if cluster.platform != Platform.STEAM:
+            return True
+        from dstools.features.mod.missing_mods import find_missing_enabled_mods
+        from dstools.features.mod.parser import find_shared_ugc_directory
+        from dstools.features.mod.sync import get_enabled_mod_ids
+        server_dir = find_dedicated_server_dir()
+        ugc_directory = find_shared_ugc_directory()
+        missing = find_missing_enabled_mods(
+            get_enabled_mod_ids(cluster),
+            ugc_content_root=Path(ugc_directory) / "content" / "322330" if ugc_directory else None,
+            server_mods_root=Path(server_dir) / "mods" if server_dir else None)
+        if not missing:
+            return True
+        names = [f"workshop-{wid}" for wid in missing.workshop_ids] + list(missing.local_names)
+        shown = names[:20]
+        if len(names) > len(shown):
+            shown.append(t("local.missing_mods_more", count=len(names) - len(shown)))
+        choices = [(t("dlg.cancel_btn"), "cancel")]
+        if missing.workshop_ids:
+            choices.append((t("local.missing_mods_subscribe_btn"), "subscribe"))
+        choices.append((t("local.missing_mods_start_anyway_btn"), "start"))
+        message_key = "local.missing_mods_confirm" if missing.workshop_ids else "local.missing_mods_local_only"
+        choice = dialogs.ask_choice(
+            self.window(), t("local.missing_mods_title"),
+            t(message_key, count=len(names), mods="\n".join(shown)), choices,
+            default="subscribe" if missing.workshop_ids else "cancel", danger_values=("start",))
+        if choice == "subscribe":
+            self._subscribe_missing_mods(list(missing.workshop_ids))
+            return False
+        return choice == "start"
+
+    def _subscribe_missing_mods(self, ids: list[str]) -> None:
+        """以当前 Steam 账号订阅缺失的 Mod 并等待下载完成；完成后由用户重新点启动。"""
+        log_dialog = dialogs.LogDialog(self.window(), t("local.missing_mods_title"))
+        log_dialog.append(t("local.missing_mods_subscribing", count=len(ids)))
+        log_dialog.show()
+
+        def work(emit):
+            from dstools.features.mod.workshop_api import subscribe_workshop_items, update_workshop_items
+            subscribed = subscribe_workshop_items([int(wid) for wid in ids])
+            ok_ids = [wid for wid, error in subscribed.items() if not error]
+            for wid, error in subscribed.items():
+                if error:
+                    emit(t("local.missing_mods_subscribe_failed_line", id=wid, error=error))
+            if not ok_ids:
+                return 0
+            emit(t("local.missing_mods_downloading", count=len(ok_ids)))
+            batch = update_workshop_items(ok_ids, on_item_complete=lambda current, total, result: emit(
+                f"[{current}/{total}] workshop-{result.workshop_id}: "
+                + (t("local.missing_mods_item_ok") if result.completed
+                   else (result.error or t("local.missing_mods_item_failed")))))
+            return batch.succeeded
+
+        def done(ready: int) -> None:
+            log_dialog.append(t("local.missing_mods_done", ready=ready, total=len(ids)))
+            log_dialog.finish()
+
+        def error(exc: Exception) -> None:
+            log_dialog.append(t("local.missing_mods_error", detail=f"{type(exc).__name__}: {exc}"))
+            log_dialog.finish()
+
+        run_async_with_log(work, log_dialog.append, done, error)
 
     def _prepare_legacy_mods_for_start(self, cluster) -> bool:
         if cluster.platform != Platform.STEAM:
