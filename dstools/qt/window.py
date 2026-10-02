@@ -46,6 +46,8 @@ START_FILL = 0.8  # 首次启动默认尺寸最多占工作区的比例（宽高
 MIN_VISIBLE = 100  # 窗口挪到桌面边缘时至少留这么多像素在屏幕里
 
 WM_SIZING, WM_MOVING = 0x0214, 0x0216
+# 客户区/非客户区的左、右、中键按下：主窗口被模态窗口阻挡时用来提醒用户
+_MOUSE_DOWN_MESSAGES = {0x0201, 0x0204, 0x0207, 0x00A1, 0x00A4, 0x00A7}
 (WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
  WMSZ_BOTTOM, WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT) = range(1, 9)
 
@@ -758,6 +760,12 @@ class MainWindow(QWidget):
             if msg.message == WM_MOVING:
                 keep_on_desktop(RECT.from_address(msg.lParam))
                 return True, 1
+            if msg.message in _MOUSE_DOWN_MESSAGES:
+                # 有系统标题栏的弹窗由 Windows 自己闪烁；自绘标题栏的（如创建存档窗口）
+                # 没有这个效果，交给它自己闪
+                modal = QApplication.activeModalWidget()
+                if modal is not None and modal is not self and hasattr(modal, "flash_attention"):
+                    modal.flash_attention()
         return False, 0
 
     def _end_resize(self) -> None:

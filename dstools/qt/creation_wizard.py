@@ -243,6 +243,12 @@ class CreationWizardDialog(QDialog):
         # 按窗口尺寸缓存一张缩放好的成品图，重绘时只做贴图，不再每次平滑缩放。
         self._background = background
         self._bg_cache: QPixmap | None = None
+        # 主窗口被本窗口模态阻挡时用户点了主窗口：自绘标题栏没有系统的标题栏闪烁，
+        # 这里自己闪几下边框和标题栏（见 flash_attention）
+        self._attention_ticks = 0
+        self._attention_on = False
+        self._attention_timer = QTimer(self, interval=70)
+        self._attention_timer.timeout.connect(self._attention_step)
         # 标题（含任务栏显示）只写"创建服务器存档"，不带 DSTCamp 前缀。
         self.setWindowTitle(t("save.create_server_save"))
         # 默认房间名跟游戏创建界面一致："{Steam 昵称}的世界"（STRINGS.UI.
@@ -1124,6 +1130,7 @@ class CreationWizardDialog(QDialog):
     # ── 无边框窗口：标题栏、缩放热区、外框 ────────────────────────────────
     def _build_title_bar(self) -> QWidget:
         bar = _WizardTitleBar(self)
+        self._title_bar = bar
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(10, 0, 4, 0)
         layout.setSpacing(2)
@@ -1184,9 +1191,36 @@ class CreationWizardDialog(QDialog):
             self._paint_background(painter)
         else:
             self._bg_cache = None
+        if self._attention_on:
+            highlight = theme.color("ACCENT")
+            highlight.setAlpha(70)
+            painter.fillRect(0, 0, self.width(), self._title_bar.height(), highlight)
+            painter.setPen(QPen(theme.color("ACCENT"), 4))
+            painter.drawRect(self.rect().adjusted(2, 2, -2, -2))
+            return
         # 外框跟主窗口一致
         painter.setPen(QPen(theme.color("CARD_BORDER"), 2))
         painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
+
+    def flash_attention(self) -> None:
+        """仿系统模态窗口被点到时的标题栏闪烁：拉到前台并闪几下边框和标题栏。"""
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        if self._attention_timer.isActive():
+            return
+        self._attention_ticks = 0
+        self._attention_step()
+        self._attention_timer.start()
+
+    def _attention_step(self) -> None:
+        self._attention_ticks += 1
+        # 亮、灭交替 4 次，第 8 拍恢复原样
+        self._attention_on = self._attention_ticks % 2 == 1 and self._attention_ticks < 8
+        if self._attention_ticks >= 8:
+            self._attention_timer.stop()
+        self.update()
 
     def _paint_background(self, painter: QPainter) -> None:
         dpr = self.devicePixelRatioF()
