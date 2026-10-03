@@ -887,6 +887,55 @@ class CreationWizardDialog(QDialog):
         regular, custom = split_installed_mod_counts((mid for mid, _i, _icon, _f in records), self._mod_scan_platform)
         self._mod_scan_status_label.setText(t("mod.scan_found_breakdown", regular=regular, custom=custom))
         self._render_list()
+        self._resolve_mod_versions(generation)
+
+    def _resolve_mod_versions(self, generation: int) -> None:
+        """快速静态解析拿不到版本号的 Mod（version_status 仍为 pending），另起后台
+        任务跑沙箱补上并刷新列表——否则首次进入时版本一直停在「版本检查中」。"""
+        targets = []
+        for mod_id, info in self._mod_infos.items():
+            folder = self._mod_paths.get(mod_id)
+            if info and folder and info.version_status == "pending":
+                targets.append((mod_id, folder, info.workshop_id))
+        if not targets:
+            return
+        platform = self._mod_scan_platform
+        client_mods_dir = self._mod_scan_client_mods_dir
+
+        def work():
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            from dstools.features.mod.local_version import resolve_local_version_target
+
+            resolved = {}
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futures = [pool.submit(resolve_local_version_target, target) for target in targets]
+                for future in as_completed(futures):
+                    try:
+                        wid, normalized = future.result()
+                    except Exception:
+                        continue
+                    resolved[wid] = normalized
+            return resolved
+
+        def done(resolved: dict) -> None:
+            if generation != self._mod_scan_generation or not resolved:
+                return
+            for wid, normalized in resolved.items():
+                info = self._mod_infos.get(wid)
+                if info is None:
+                    continue
+                if normalized.name_status == "confirmed":
+                    info.name = normalized.name
+                info.version = normalized.version
+                info.version_status = normalized.status
+                info.version_source = normalized.source
+                info.version_compatible = normalized.version_compatible
+                info.version_compatible_status = normalized.compatible_status
+            self.ctx.mod_catalog.publish(platform, self._mod_infos, self._mod_paths, self._icon_imgs, client_mods_dir)
+            self._render_list()
+
+        run_async(work, done, lambda _exc: None)
 
     def _build_mod_rows(self):
         show_map = {0: "all", 1: "enabled", 2: "disabled", 3: "custom"}
