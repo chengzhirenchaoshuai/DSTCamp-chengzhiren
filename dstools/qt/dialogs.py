@@ -758,13 +758,17 @@ class SaveUserPickDialog(Dialog):
         self._shown_ids: list[str] = []
         self.result_id: str | None = None
         self.body.addWidget(self.text_label(t("admin.pick_save_prompt"), size_key="FONT_SIZE_MD"))
-        row = QHBoxLayout()
-        self._only_current = ToggleSwitch(False, enabled=any(cur for _pid, _hint, cur in candidates))
-        self._only_current.toggled.connect(lambda _checked: self._refill())
-        row.addWidget(self._only_current)
-        row.addWidget(self.text_label(t("admin.pick_save_only_current"), size_key="FONT_SIZE_SM", wrap=False))
-        row.addStretch()
-        self.body.addLayout(row)
+        # "只看当前存档的用户"开关只在候选里确实有当前存档用户时才显示——创建向导
+        # 的草稿存档没有日志/玩家，永远筛不出东西，直接不显示这一行。
+        self._only_current = None
+        if any(cur for _pid, _hint, cur in candidates):
+            row = QHBoxLayout()
+            self._only_current = ToggleSwitch(False)
+            self._only_current.toggled.connect(lambda _checked: self._refill())
+            row.addWidget(self._only_current)
+            row.addWidget(self.text_label(t("admin.pick_save_only_current"), size_key="FONT_SIZE_SM", wrap=False))
+            row.addStretch()
+            self.body.addLayout(row)
         self._list = QListWidget()
         self._list.setMinimumHeight(340)
         self._list.setFont(theme.font("FONT_SIZE_MD"))
@@ -774,7 +778,7 @@ class SaveUserPickDialog(Dialog):
         self._refill()
 
     def _refill(self) -> None:
-        only_current = self._only_current.isChecked()
+        only_current = self._only_current.isChecked() if self._only_current is not None else False
         self._list.clear()
         self._shown_ids = []
         for pid, hint, in_current in self._candidates:
