@@ -296,7 +296,8 @@ class CreationWizardDialog(QDialog):
         self._mod_world_icons: dict = {}
         self._server_root: Path | None = None
         self._template_root: Path | None = None
-        self._pending_launch: Path | None = None
+        self._created_path: Path | None = None
+        self._launch_requested = False
         self._selected_mod_ids: set[str] = set()
         self._mod_overrides: dict[str, dict] = {}
         self._mod_data: dict[str, ModEntry] = {}
@@ -1139,22 +1140,25 @@ class CreationWizardDialog(QDialog):
                     extra_shards=copy.deepcopy(self._extra_plans)),
                 root)
             self.ctx.refresh_env()
-            self._pending_launch = None
-            if dialogs.ask_choice(
-                    self, t("world.creation_dialog_title"),
-                    t("world.creation_launch_now", name=name),
-                    [(t("dlg.yes_btn"), "launch"), (t("dlg.no_btn"), "cancel")],
-                    default="launch", min_width=420) == "launch":
-                self._pending_launch = out
+            self._created_path = out
+            self._launch_requested = dialogs.ask_choice(
+                self, t("world.creation_dialog_title"),
+                t("world.creation_launch_now", name=name),
+                [(t("dlg.yes_btn"), "launch"), (t("dlg.no_btn"), "cancel")],
+                default="launch", min_width=420) == "launch"
             self.accept()
         except Exception as exc:
             dialogs.show_error(self, t("world.creation_failed_title"), str(exc))
 
     @property
-    def pending_launch_path(self) -> Path | None:
-        """创建成功后用户选择「立即启动」时，返回新建存档目录；否则为 None。
-        主窗口在向导关闭后据此选中存档并触发启动。"""
-        return self._pending_launch
+    def created_path(self) -> Path | None:
+        """创建成功后返回新建存档目录（无论是否选择启动）；主窗口据此选中该存档。"""
+        return self._created_path
+
+    @property
+    def launch_requested(self) -> bool:
+        """用户在「是否立即启动」里是否选了「是」。"""
+        return self._launch_requested
 
     # ── 无边框窗口：标题栏、缩放热区、外框 ────────────────────────────────
     def _build_title_bar(self) -> QWidget:
