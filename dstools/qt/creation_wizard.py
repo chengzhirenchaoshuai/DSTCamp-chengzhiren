@@ -34,6 +34,7 @@ from dstools.features.mod.parser import (
     find_mod_folder, list_installed_mod_ids, parse_modinfo, resolve_wegame_client_mods_dir,
     split_installed_mod_counts,
 )
+from dstools.features.save_browser.cluster_copy import suggest_new_cluster_name
 from dstools.features.world import creation, defaults
 from dstools.features.world.location_profiles import (
     CAVES_SHARD, IA_CORE_MOD_ID, IA_SHIPWRECKED_MOD_ID, MASTER_SHARD, find_mod_key,
@@ -329,7 +330,7 @@ class CreationWizardDialog(QDialog):
         root.setContentsMargins(*dialogs.DIALOG_MARGINS)
         top = QHBoxLayout()
         top.addWidget(QLabel(t("world.creation_name_label")))
-        self._name_edit = QLineEdit("Cluster_New")
+        self._name_edit = QLineEdit(self._default_cluster_name())
         self._name_edit.setFixedWidth(220)
         self._name_edit.textChanged.connect(self._on_name_changed)
         top.addWidget(self._name_edit)
@@ -391,6 +392,13 @@ class CreationWizardDialog(QDialog):
         elif key == "mod":
             self._build_mod_tab()
         self._initialized_pages.add(key)
+
+    def _default_cluster_name(self) -> str:
+        """按服务器根目录已占用的编号给出第一个空闲的 Cluster_N 作为默认存档名。"""
+        root = find_klei_root()
+        if root is None:
+            root = get_documents_dir() / "Klei" / "DoNotStarveTogether"
+        return suggest_new_cluster_name(root, "Cluster_1")
 
     def _on_name_changed(self, text: str) -> None:
         self._dirty = True
