@@ -1536,6 +1536,10 @@ class LocalServicePage(Page):
             except OSError:
                 pass
 
+    def launch_current_cluster(self) -> None:
+        """外部入口（创建向导完成后「立即启动」）：启动当前选中的存档，等价于点「全部启动」。"""
+        self._start_all()
+
     def _start_all(self) -> None:
         c = self.get_cluster()
         if not c or c.source != SaveSource.SERVER:

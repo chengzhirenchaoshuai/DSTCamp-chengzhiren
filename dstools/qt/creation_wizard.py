@@ -296,6 +296,7 @@ class CreationWizardDialog(QDialog):
         self._mod_world_icons: dict = {}
         self._server_root: Path | None = None
         self._template_root: Path | None = None
+        self._pending_launch: Path | None = None
         self._selected_mod_ids: set[str] = set()
         self._mod_overrides: dict[str, dict] = {}
         self._mod_data: dict[str, ModEntry] = {}
@@ -1137,11 +1138,23 @@ class CreationWizardDialog(QDialog):
                     admin_ids=server_settings.get("admin_ids", ()), block_ids=server_settings.get("block_ids", ()),
                     extra_shards=copy.deepcopy(self._extra_plans)),
                 root)
-            dialogs.show_info(self, t("world.creation_dialog_title"), t("world.creation_done", path=str(out)))
             self.ctx.refresh_env()
+            self._pending_launch = None
+            if dialogs.ask_choice(
+                    self, t("world.creation_dialog_title"),
+                    t("world.creation_launch_now", name=name),
+                    [(t("dlg.yes_btn"), "launch"), (t("dlg.no_btn"), "cancel")],
+                    default="launch", min_width=420) == "launch":
+                self._pending_launch = out
             self.accept()
         except Exception as exc:
             dialogs.show_error(self, t("world.creation_failed_title"), str(exc))
+
+    @property
+    def pending_launch_path(self) -> Path | None:
+        """创建成功后用户选择「立即启动」时，返回新建存档目录；否则为 None。
+        主窗口在向导关闭后据此选中存档并触发启动。"""
+        return self._pending_launch
 
     # ── 无边框窗口：标题栏、缩放热区、外框 ────────────────────────────────
     def _build_title_bar(self) -> QWidget:

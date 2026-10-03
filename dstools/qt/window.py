@@ -7,6 +7,7 @@
 import ctypes
 import os
 from ctypes import wintypes
+from pathlib import Path
 
 from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
@@ -692,9 +693,24 @@ class MainWindow(QWidget):
         dialog.move(max(area.left(), min(pos.x(), area.right() - dialog.width() + 1)),
                     max(area.top(), min(pos.y(), area.bottom() - dialog.height() + 1)))
         dialog.exec()
+        launch_path = dialog.pending_launch_path
         # 最大化关闭时记还原前的尺寸，免得下次一打开就铺满
         size = (dialog.normalGeometry() if dialog.isMaximized() else dialog.geometry()).size()
         set_creation_wizard_size(size.width(), size.height())
+        if launch_path is not None:
+            self._launch_created_cluster(launch_path)
+
+    def _launch_created_cluster(self, path: Path) -> None:
+        """创建向导完成并选择「立即启动」后：切到 Steam 平台、选中新建存档、跳到本地
+        服务器页并触发启动——走页面完整的令牌/端口/Mod 预检流程。"""
+        if self.ctx.platform != Platform.STEAM:
+            self.ctx.set_platform(Platform.STEAM)
+        cluster = next((c for c in self.ctx.clusters() if c.path == path), None)
+        if cluster is None:
+            return
+        self.ctx.select_cluster(cluster)
+        self.goto_tab("local")
+        self.pages["local"].launch_current_cluster()
 
     def _update_status(self) -> None:
         self.status.setText(self.ctx.status_text())
