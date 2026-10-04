@@ -614,7 +614,12 @@ class ModPage(Page):
                 # 快速静态解析（full=False）不保证拿到版本号（有些 mod 的 version
                 # 要跑一遍轻量沙箱才能确定），先收集起来，交给 _apply_loaded_mods
                 # 之后另起一个后台任务补上，不用等用户手动点"重新加载"才刷新。
-                if mod_info and mod_folder and not full and mod_info.version_status == "pending":
+                # 不能因为命中 self._full_resolved_cache（version_status 已是
+                # confirmed）就跳过：mod 文件可能在软件运行期间被 Steam 客户端
+                # 或"更新"操作替换过，缓存里的版本已过期。version_cache 按
+                # modinfo.lua 的内容哈希判断是否真变了——没变秒回、变了才重新
+                # 跑沙箱，所以全部收集不会带来无谓开销。
+                if mod_info and mod_folder and not full:
                     version_targets.append((wid, mod_folder, mod_info.workshop_id))
                 if mod_info and mod_folder and wid not in icon_imgs:
                     cached_icon = get_cached_mod_icon_path(mod_info, mod_folder, platform)
