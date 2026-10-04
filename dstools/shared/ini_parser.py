@@ -34,10 +34,27 @@ def _write_ini_value(f, key: str, val_str: str) -> None:
 
 
 def _read_ini(path: Path) -> _CaseSensitiveConfigParser:
-    """读取 INI 文件，保留 key 大小写。"""
+    """读取 INI 文件，保留 key 大小写。
+
+    DST 的 cluster.ini/server.ini 正常是 UTF-8，但用户可能用记事本或第三方
+    工具以 ANSI/GBK 编码保存过（文件里只要有一个中文字符就可能触发）。这里
+    先读成字节，依次尝试 UTF-8 → gb18030（GBK 超集，能正确解出中文），都解
+    不动时用 errors="replace" 兜底，保证绝不因编码问题崩溃。
+    """
+    data = path.read_bytes()
+    text: str | None = None
+    for enc in ("utf-8", "gb18030"):
+        try:
+            text = data.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        text = data.decode("utf-8", errors="replace")
+
     parser = _CaseSensitiveConfigParser()
     parser.optionxform = str  # type: ignore[method-assign]
-    parser.read(path, encoding="utf-8")
+    parser.read_string(text)
     return parser
 
 
