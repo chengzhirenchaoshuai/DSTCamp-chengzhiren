@@ -145,6 +145,13 @@ def main() -> None:
         app_settings.prune_token_holds([NEW_B])
         assert app_settings.get_token_holds() == {}
 
+        # 超过等待上限的旧标记随清理删除，较新的保留。
+        app_settings.set_token_hold(fingerprint, state="crashed", cluster_key="A", cluster_name="A", since=100.0)
+        app_settings.prune_token_holds([NEW_A], expire_before=50.0)
+        assert fingerprint in app_settings.get_token_holds()
+        app_settings.prune_token_holds([NEW_A], expire_before=200.0)
+        assert app_settings.get_token_holds() == {}
+
         crash_cluster = Path(settings_tmp) / "Cluster_Crash"
         crash_cluster.mkdir()
         from dstools.shared.token_manager import write_token
@@ -162,6 +169,16 @@ def main() -> None:
         )
         crash_service._on_server_failure(proc, SimpleNamespace(category="token_conflict"))
         assert app_settings.get_token_holds()[token_fingerprint(NEW_A)]["state"] == "conflict"
+        crash_service._on_server_registered(proc)
+        assert app_settings.get_token_holds() == {}
+
+        # 注册前就失败的主世界在 Klei 端没有房间，不能锁住令牌；注册过再崩溃才记。
+        unregistered = SimpleNamespace(is_master=True, cluster_path=crash_cluster,
+                                       cluster_name="Cluster_Crash", registered=False)
+        crash_service._on_server_failure(unregistered, SimpleNamespace(category="runtime"))
+        assert app_settings.get_token_holds() == {}
+        crash_service._on_server_failure(proc, SimpleNamespace(category="crash"))
+        assert app_settings.get_token_holds()[token_fingerprint(NEW_A)]["state"] == "crashed"
         crash_service._on_server_registered(proc)
         assert app_settings.get_token_holds() == {}
 
@@ -217,7 +234,7 @@ def main() -> None:
             assert service._prepare_token_for_start(cluster)
         assert read_token(token_path) == NEW_B
         assert service._token_reservations[str(cluster_path)] == NEW_B
-        prune_holds.assert_called_once_with([NEW_A, NEW_B])
+        assert prune_holds.call_args.args == ([NEW_A, NEW_B],)
         toast.assert_called_once()
 
         # 没有替代令牌时必须阻止启动，且不能改写存档当前令牌。
@@ -250,7 +267,7 @@ def main() -> None:
         ):
             assert service._prepare_token_for_start(cluster)
         assert read_token(token_path) == NEW_A
-        prune_holds.assert_called_once_with([NEW_B])
+        assert prune_holds.call_args.args == ([NEW_B],)
         toast.assert_not_called()
 
     test_auto_restart_rules_and_hold_retry_window()

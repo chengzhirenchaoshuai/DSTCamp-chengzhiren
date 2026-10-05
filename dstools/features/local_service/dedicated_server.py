@@ -299,6 +299,9 @@ class ServerProcess:
         # stdout 读取线程仍可能晚一轮把最后几行送进界面队列。
         self.intentional_shutdown = False
         self.world_ready = False
+        # 主世界是否已在 Klei 完成房间注册；没注册过就崩溃时 Klei 端没有
+        # 需要释放的房间，不必给令牌打等待标记。
+        self.registered = False
         self.proc: subprocess.Popen | None = None
         self._out_queue: "queue.Queue[str]" = queue.Queue()
         # 只保留最近一段日志供异常退出诊断使用，避免长时间运行的世界

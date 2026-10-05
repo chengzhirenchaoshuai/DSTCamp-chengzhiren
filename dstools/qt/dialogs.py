@@ -6,6 +6,7 @@
 import ctypes
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -806,6 +807,7 @@ class GlobalTokensDialog(Dialog):
         self.result_token: str | None = None
         self._tokens = app_settings.get_global_tokens()
         self._token_uses = tuple(token_uses)
+        self._prune_holds()
         self._holds = app_settings.get_token_holds()
         self.body.addWidget(self.text_label(t("token.global_hint"), size_key="FONT_SIZE_SM"))
         self._table = QTableWidget(0, 3)
@@ -856,14 +858,26 @@ class GlobalTokensDialog(Dialog):
         hold = self._holds.get(fingerprint)
         if not is_valid_token(token):
             status = t("token.status_invalid")
-        elif hold:
+        elif hold and self._blocking(hold):
             status = t("token.status_conflict" if hold["state"] == "conflict" else "token.status_waiting",
-                       name=hold.get("cluster_name") or "-")
+                       name=hold.get("cluster_name") or "-",
+                       time=time.strftime("%H:%M", time.localtime(hold["retry_at"])))
         elif users:
             status = t("token.status_in_use", names="、".join(users))
+        elif hold:
+            # 等待期已过：启动时会照常选用，只提示上次异常，不再显示成占用
+            status = t("token.status_retryable", name=hold.get("cluster_name") or "-")
         else:
             status = t("token.status_available")
         return self._mask(token), t(kind_key), status
+
+    @staticmethod
+    def _blocking(hold: dict) -> bool:
+        return hold["retry_at"] > time.time()
+
+    def _prune_holds(self) -> None:
+        from dstools.features.local_service.auto_restart import TOKEN_WAIT_LIMIT
+        self._app_settings.prune_token_holds(self._tokens, expire_before=time.time() - TOKEN_WAIT_LIMIT)
 
     def _selected(self) -> int | None:
         rows = self._table.selectionModel().selectedRows()
@@ -896,7 +910,8 @@ class GlobalTokensDialog(Dialog):
         if index is not None:
             fingerprint = self._fingerprint(self._tokens[index])
             active = any(self._fingerprint(use.token) == fingerprint for use in self._token_uses)
-            can_clear = fingerprint in self._holds and not active
+            hold = self._holds.get(fingerprint)
+            can_clear = hold is not None and self._blocking(hold) and not active
         self._release.setEnabled(can_clear)
 
     def _over_token_text(self, row: int, col: int, pos: QPoint) -> bool:
@@ -952,12 +967,13 @@ class GlobalTokensDialog(Dialog):
         if any(self._fingerprint(use.token) == fingerprint for use in self._token_uses):
             show_warning(self, t("token.set_global_btn"), t("token.remove_in_use"))
             return
-        if fingerprint in self._holds and not ask_yes_no(
+        hold = self._holds.get(fingerprint)
+        if hold and self._blocking(hold) and not ask_yes_no(
                 self, t("token.set_global_btn"), t("token.remove_held_confirm")):
             return
         del self._tokens[index]
         self._app_settings.set_global_tokens(self._tokens)
-        self._app_settings.prune_token_holds(self._tokens)
+        self._prune_holds()
         self._refresh(select=index if self._tokens else None)
 
     def _on_clear_hold(self) -> None:

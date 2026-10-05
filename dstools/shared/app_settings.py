@@ -810,8 +810,11 @@ def set_auto_restart_enabled(cluster_key: str, enabled: bool) -> None:
     save_settings(data)
 
 
-def prune_token_holds(tokens: list[str]) -> None:
-    """删除已经不在令牌池中的等待状态，避免列表长期积累孤儿记录。"""
+def prune_token_holds(tokens: list[str], expire_before: float | None = None) -> None:
+    """删除已经不在令牌池中的等待状态，避免列表长期积累孤儿记录。
+
+    给了 ``expire_before`` 时，最近一次记录（``since``）早于它的标记也一并删除：
+    存档换用别的令牌后，旧令牌不会再注册成功，标记靠注册成功永远清不掉。"""
     from dstools.shared.token_manager import token_fingerprint
 
     allowed = {token_fingerprint(token) for token in tokens if token}
@@ -819,7 +822,7 @@ def prune_token_holds(tokens: list[str]) -> None:
     holds = {
         fingerprint: item
         for fingerprint, item in get_token_holds().items()
-        if fingerprint in allowed
+        if fingerprint in allowed and (expire_before is None or item["since"] >= expire_before)
     }
     if holds:
         data[_KEY_TOKEN_HOLDS] = holds

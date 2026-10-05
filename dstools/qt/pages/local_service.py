@@ -43,7 +43,7 @@ from dstools.features.local_service.server_runtime import (
 )
 from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE, STATUS_TEXT_KEYS, ordered_shards, max_rollback_days
-from dstools.features.local_service.auto_restart import token_retry_delay
+from dstools.features.local_service.auto_restart import TOKEN_WAIT_LIMIT, token_retry_delay
 from dstools.features.local_service.token_scheduler import TokenUse, select_token_for_cluster
 from dstools.features.sakura import api as sakura_frp
 from dstools.i18n import t
@@ -1116,7 +1116,7 @@ class LocalServicePage(Page):
         token_path = cluster.token_path or (cluster.path / "cluster_token.txt")
         current = read_token(token_path)
         pool = get_global_tokens()
-        prune_token_holds(pool)
+        prune_token_holds(pool, expire_before=time.time() - TOKEN_WAIT_LIMIT)
         selection = select_token_for_cluster(
             current_token=current, pool=pool, target_cluster_key=cluster_key,
             active_uses=self.token_usage_snapshot(), held_fingerprints=blocking_token_holds(time.time()).keys())
@@ -1152,8 +1152,12 @@ class LocalServicePage(Page):
         self._auto_restart.on_failure(proc, report)  # 要在令牌等待标记更新之后，它按标记决定等多久
 
     def _record_token_hold(self, proc, report) -> None:
-        """主世界崩溃或注册冲突时，记下新令牌在 Klei 端尚未释放，按连续冲突次数拉长重试间隔。"""
-        if not getattr(proc, "is_master", True) and report.category != "token_conflict":
+        """主世界崩溃或注册冲突时，记下新令牌在 Klei 端尚未释放，按连续冲突次数拉长重试间隔。
+
+        崩溃只在主世界注册成功过时才记：注册前就失败（Mod 报错、端口、世界生成等）
+        Klei 端没有房间要释放，记了只会白白锁住令牌，让池子很快被"占满"。"""
+        if report.category != "token_conflict" and not (
+                getattr(proc, "is_master", True) and getattr(proc, "registered", False)):
             return
         token = self._process_token(proc)
         if classify_token(token) != ServerTokenKind.NEW:
@@ -1175,6 +1179,7 @@ class LocalServicePage(Page):
     def _on_server_registered(self, proc) -> None:
         if not getattr(proc, "is_master", True):
             return
+        proc.registered = True
         token = self._process_token(proc)
         if classify_token(token) == ServerTokenKind.NEW:
             clear_token_hold(token_fingerprint(token))
