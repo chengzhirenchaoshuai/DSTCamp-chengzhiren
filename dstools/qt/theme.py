@@ -665,13 +665,14 @@ class Theme(QObject):
             QScrollArea, WorldPanel, QListView {{ background: transparent; border: none; }}
             QSplitter::handle {{ background: transparent; }}
             QTabWidget::pane {{ background: {_rgba(c['CARD_BG'], 150)}; border: 1px solid {c['CARD_BORDER']};
-                border-radius: 8px; top: -1px; }}
+                border-radius: 10px; top: 0px; }}
+            QTabWidget::tab-bar {{ left: 4px; }}
             QTabWidget > QWidget, QTabWidget QStackedWidget > QWidget {{ background: transparent; }}
-            QTabBar::tab {{ background: transparent; color: {c['TEXT_MUTED']}; border: none;
-                padding: 5px 16px; margin-right: 2px; border-top-left-radius: 6px;
-                border-top-right-radius: 6px; }}
-            QTabBar::tab:selected {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT']}; font-weight: {fw_bold}; }}
-            QTabBar::tab:hover:!selected {{ background: {_rgba(c['PRIMARY_LIGHT'], 120)}; color: {c['TEXT']}; }}
+            /* 页签做成与 PillTabBar 一致的胶囊：选中主题色底白字，未选中浅色底；与下方面板留出间距。 */
+            QTabBar::tab {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT_MUTED']}; border: none;
+                padding: 4px 18px; margin: 0 6px 6px 0; min-width: 48px; border-radius: 10px; }}
+            QTabBar::tab:selected {{ background: {c['PRIMARY']}; color: #FFFFFF; font-weight: {fw_bold}; }}
+            QTabBar::tab:hover:!selected {{ background: {_rgba(c['PRIMARY'], 90)}; color: {c['TEXT']}; }}
             QDialog {{ background: {c['BG_SOFT']}; }}
             QListWidget, QPlainTextEdit, QTextEdit {{ background: rgba(255,255,255,200); color: {c['TEXT']};
                 border: 1px solid {c['CARD_BORDER']}; border-radius: 8px; padding: 4px; }}
