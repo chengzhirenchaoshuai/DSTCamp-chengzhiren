@@ -170,6 +170,9 @@ class ModPage(Page):
         self._preset_apply_btn = QPushButton(t("mod.preset_apply_btn"))
         self._preset_apply_btn.clicked.connect(self._apply_preset_dialog)
         bottom_row.addWidget(self._preset_apply_btn)
+        self._export_image_btn = QPushButton(t("mod.export_image_btn"))
+        self._export_image_btn.clicked.connect(self._export_mod_list_image)
+        bottom_row.addWidget(self._export_image_btn)
         bottom_row.addStretch()
         self._save_btn = QPushButton(t("mod.save_btn"))
         self._save_btn.setEnabled(False)
@@ -191,7 +194,7 @@ class ModPage(Page):
         bottom_row.addWidget(self._workshop_update_btn)
         # 跟本地服务器页"全部启动/全部停止/..."一排操作按钮统一字号（方角已经是
         # 全局默认样式，这里只需要再调小字号）。
-        for button in (self._preset_save_btn, self._preset_apply_btn, self._save_btn,
+        for button in (self._preset_save_btn, self._preset_apply_btn, self._export_image_btn, self._save_btn,
                       self._apply_current_btn, self._workshop_update_btn):
             button.setFont(theme.font("FONT_SIZE_SM"))
         root.addLayout(bottom_row)
@@ -228,6 +231,7 @@ class ModPage(Page):
         preset_state = is_server
         self._preset_save_btn.setEnabled(preset_state)
         self._preset_apply_btn.setEnabled(preset_state)
+        self._export_image_btn.setEnabled(preset_state)
         if is_server:
             self._local_banner.set_text("")
         else:
@@ -949,6 +953,25 @@ class ModPage(Page):
         ApplyPresetDialog(self).exec()
 
     # ── Workshop 更新 ────────────────────────────────────────────────────
+    def _export_mod_list_image(self) -> None:
+        """导出当前世界（默认地上）已启用的服务端 Mod 为图片，含未保存的勾选改动。"""
+        from dstools.features.mod.export_list import build_export_entries
+        from dstools.qt.mod_export_dialog import ModListImageDialog, default_file_name, render_mod_list_image
+
+        cluster = self.get_cluster()
+        if cluster is None or self._loading:
+            return
+        entries = build_export_entries(self._mod_data, self._mod_infos)
+        if not entries:
+            dialogs.show_info(self, t("mod.export_preview_title"), t("mod.export_empty"))
+            return
+        network = cluster.config.network if cluster.config else {}
+        cluster_label = str(network.get("cluster_name") or cluster.name)
+        subtitle = t("mod.export_subtitle", cluster=cluster_label, shard=self._current_shard_name or "-",
+                     count=len(entries), time=time.strftime("%Y-%m-%d %H:%M"))
+        image = render_mod_list_image(entries, self._icon_imgs, t("mod.export_title"), subtitle)
+        ModListImageDialog(self, image, default_file_name(cluster_label)).exec()
+
     def _workshop_mod_ids(self) -> list[int]:
         ids = []
         for raw_id in self._mod_data:

@@ -12,6 +12,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from dstools.features.mod.catalog import ModCatalogStore
+from dstools.features.mod.export_list import build_export_entries
 from dstools.features.mod.icons import load_mod_icon_image
 from dstools.features.mod.list_model import (
     build_mod_rows,
@@ -599,6 +600,25 @@ def test_residual_cleanup_deletes_and_rejects_steam_managed_items():
                 raise AssertionError("游戏运行时不能清理 322330 目录")
 
 
+def test_export_entries_keep_enabled_server_mods_only():
+    """导出图片只收已启用的服务端 Mod；版本只取沙箱已确认的值，非工坊 Mod 不显示 ID。"""
+    data = {
+        "workshop-1": ModEntry("workshop-1", True),
+        "workshop-2": ModEntry("workshop-2", False),
+        "workshop-3": ModEntry("workshop-3", True),
+        "my_local_mod": ModEntry("my_local_mod", True),
+    }
+    infos = {
+        "workshop-1": ModInfo(name="A", author=" Bob ", version="1.2", version_status="confirmed"),
+        "workshop-3": ModInfo(name="Client", client_only=True),
+        "my_local_mod": ModInfo(name="Local", version="9", version_status="pending"),
+    }
+    entries = build_export_entries(data, infos)
+    assert [e.workshop_id for e in entries] == ["workshop-1", "my_local_mod"]
+    assert (entries[0].author, entries[0].version, entries[0].id_text) == ("Bob", "1.2", "1")
+    assert (entries[1].version, entries[1].id_text) == ("", "")
+
+
 if __name__ == "__main__":
     test_catalog_does_not_store_page_state()
     test_recommended_mods_include_ping_server_with_icon()
@@ -615,4 +635,5 @@ if __name__ == "__main__":
     test_unsubscribed_v2_item_cannot_fall_back_to_legacy()
     test_true_legacy_item_can_recover_download_path_from_source_details()
     test_residual_cleanup_deletes_and_rejects_steam_managed_items()
+    test_export_entries_keep_enabled_server_mods_only()
     print("PASS: shared Mod catalog/list model")
