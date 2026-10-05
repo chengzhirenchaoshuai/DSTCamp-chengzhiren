@@ -1,4 +1,4 @@
-"""开服模式（server_runtime）规则与"唯一来源"守护测试。"""
+"""开服程序选项（server_runtime）规则与"唯一来源"守护测试。"""
 
 from __future__ import annotations
 

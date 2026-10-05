@@ -217,7 +217,7 @@ class ModPage(Page):
             self.stale = True
 
     def _on_server_runtime_changed(self) -> None:
-        """开服模式/程序目录变了：服务器读取的 mods 和 LuaJIT 副本跟着换，按新目录重新扫描。"""
+        """开服程序选项/程序位置变了：服务器读取的 mods 和 LuaJIT 副本跟着换，按新目录重新扫描。"""
         self._update_mod_location_display()
         self.refresh_sync_button_state()
         self._on_workshop_mods_changed()

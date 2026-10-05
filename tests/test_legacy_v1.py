@@ -226,7 +226,7 @@ def main() -> None:
             dedicated.find_dedicated_server_dir = original_server
             server_runtime.current_runtime = original_runtime
 
-        # 游戏客户端开服模式下，V1 更新部署到客户端 mods。
+        # 开服程序为游戏客户端时，V1 更新部署到客户端 mods。
         client_install = root / "client-only"
         with patch.object(server_runtime, "current_runtime", return_value=server_runtime.ServerRuntime(
                 server_runtime.RuntimeKind.CLIENT, client_install)):

@@ -108,7 +108,7 @@ def clear_dedicated_server_path() -> None:
 
 
 def get_client_runtime_path() -> Path | None:
-    """取用户手动确认过的游戏客户端安装目录（客户端开服模式用），没设置过则返回 None。"""
+    """取用户手动确认过的游戏客户端安装目录（开服程序为游戏客户端时用），没设置过则返回 None。"""
     raw = load_settings().get(_KEY_CLIENT_RUNTIME_PATH)
     return Path(raw) if raw else None
 
@@ -121,13 +121,13 @@ def set_client_runtime_path(path: Path) -> None:
 
 
 def get_server_runtime_mode() -> str | None:
-    """开服模式原始值（auto/client/dedicated），没设置过返回 None；取值校验由调用方负责。"""
+    """开服程序选项原始值（auto/client/dedicated），没设置过返回 None；取值校验由调用方负责。"""
     raw = load_settings().get(_KEY_SERVER_RUNTIME_MODE)
     return str(raw) if raw else None
 
 
 def set_server_runtime_mode(value: str) -> None:
-    """保存开服模式。"""
+    """保存开服程序选项。"""
     data = load_settings()
     data[_KEY_SERVER_RUNTIME_MODE] = value
     save_settings(data)

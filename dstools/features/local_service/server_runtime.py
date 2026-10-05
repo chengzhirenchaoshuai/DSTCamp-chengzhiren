@@ -1,6 +1,6 @@
 """开服程序（运行时）的唯一来源。
 
-用哪个程序开服由"开服模式"决定：
+用哪个程序开服由界面上的"开服程序"选项决定（设置键 server_runtime_mode）：
 
 - 自动：装了独立专服工具就用它，否则用游戏客户端自带的开服程序；
 - 游戏客户端 / 独立专服：固定使用指定的一种，找不到就如实报告未检测到，
@@ -74,7 +74,7 @@ class ServerRuntime:
 
 @dataclass(frozen=True)
 class RuntimeResolution:
-    """开服模式与实际选中的程序；指定模式但没找到时 runtime 为 None。"""
+    """开服程序选项与实际选中的程序；指定了某种程序但没找到时 runtime 为 None。"""
 
     mode: RuntimeMode
     runtime: ServerRuntime | None
@@ -135,7 +135,7 @@ def find_runtime_of_kind(kind: RuntimeKind) -> ServerRuntime | None:
 
 
 def resolve_runtime(mode: RuntimeMode | None = None) -> RuntimeResolution:
-    """按开服模式选出实际开服程序。"""
+    """按开服程序选项选出实际开服程序。"""
     mode = get_runtime_mode() if mode is None else RuntimeMode(mode)
     if mode is RuntimeMode.AUTO:
         runtime = (find_runtime_of_kind(RuntimeKind.DEDICATED)
