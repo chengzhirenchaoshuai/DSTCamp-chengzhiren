@@ -27,19 +27,19 @@ THEME_NAMES = palettes.THEME_NAMES
 _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png").as_posix()
 
 # 缝合像素字体（Fusion Pixel 12px）按 12px 网格设计：物理像素正好是 12 的整数倍时关掉
-# 抗锯齿才像素完美；其它字号关抗锯齿笔画会 1px/2px 粗细不均（真机反馈过"割裂"），开灰度
-# 抗锯齿（跟 Tk 版 GDI/PIL 渲染一致，笔画均匀、边缘略柔）。字号与普通字体同一套公式
-# （层级 × 档位系数），换算成物理像素后离 12 整数倍不超过 _PIXEL_SNAP_TOLERANCE 时吸附
-# 过去走清晰渲染——任何屏幕缩放比下都按正常逻辑字号显示，不会只剩 12/24 两档（真机反馈
-# 过小档太小、大档太大）。只用 12px 一个设计尺寸：8/10px 版本字形设计不同，混用时同屏风格
-# 不一（真机反馈过）。QFont 的磅值是逻辑单位，高 DPI 下会再乘 devicePixelRatio，吸附时按
-# DPR 反推逻辑磅值。关抗锯齿的清晰渲染只在 FreeType 引擎下生效（DirectWrite 下会亚像素
-# 粘连，见 app.py），否则仍开抗锯齿。
+# 抗锯齿才像素完美；其它字号关抗锯齿笔画会 1px/2px 粗细不均（真机反馈过"割裂"）。只用
+# 12px 一个设计尺寸：8/10px 版本字形设计不同，混用时同屏风格不一（真机反馈过）。
+# 两种渲染按档位整档切换，避免同屏混着锐利/柔和两种观感（真机反馈过看着割裂）：
+# - _PIXEL_CRISP_LEVELS 里的档位：全部字号吸附到最近的 12 整数倍物理像素并关抗锯齿，
+#   整档锐利，但字号只有 12/24/36… 几级；
+# - 其它档位：字号与普通字体同一套公式（层级 × 档位系数），全部开灰度抗锯齿（跟 Tk 版
+#   GDI/PIL 渲染一致，笔画均匀、边缘略柔），不吸附——吸附到 12 整数倍的字即使开抗锯齿
+#   也会因对齐像素网格显得锐利，与其它字号同屏割裂。
+# QFont 的磅值是逻辑单位，高 DPI 下会再乘 devicePixelRatio，吸附时按 DPR 反推逻辑磅值。
+# 关抗锯齿只在 FreeType 引擎下生效（DirectWrite 下会亚像素粘连，见 app.py），否则仍开
+# 抗锯齿（字号照样吸附）。
 _PIXEL_GRID = 12
-_PIXEL_SNAP_TOLERANCE = 1.5
-# 落在 12 整数倍时是否关抗锯齿走清晰渲染（False 则像素字体全部抗锯齿）。开启时同屏会混着
-# 锐利/柔和两种观感，真机反馈过风格不统一看着奇怪，按用户选择全部抗锯齿。
-_PIXEL_CRISP_ON_GRID = False
+_PIXEL_CRISP_LEVELS = ("small",)
 
 # 字形左侧几乎没有留白的字体样式（像素字体、麦圆体）：控件边界或裁剪区在非整数缩放
 # 下落在小数物理像素时，首列像素会被裁掉，需要文字离边界留 1px（见 qss() 与
@@ -104,15 +104,12 @@ def _on_pixel_grid(font: QFont) -> bool:
     return snapped >= _PIXEL_GRID and abs(phys - snapped) < 0.05
 
 
-def _set_pixel_point_size(font: QFont, point_size: float) -> None:
-    """像素字体设字号：开启清晰渲染时，离 12 整数倍物理像素足够近就吸附过去，否则保持原磅值。
-
-    全部抗锯齿时不吸附：落在 12 整数倍的字即使开抗锯齿也因对齐像素网格而显得锐利，
-    与其它柔和字号同屏有割裂感（真机反馈过小档小字、标准档标题）。"""
-    phys = _point_to_phys(point_size)
-    snapped = round(phys / _PIXEL_GRID) * _PIXEL_GRID
-    if (_PIXEL_CRISP_ON_GRID and snapped >= _PIXEL_GRID
-            and abs(phys - snapped) <= _PIXEL_SNAP_TOLERANCE):
+def _set_pixel_point_size(font: QFont, point_size: float, crisp: bool) -> None:
+    """像素字体设字号：crisp（锐利档位）时吸附到最近的 12 整数倍物理像素（至少 12），
+    否则保持原磅值（见文件顶部说明）。"""
+    if crisp:
+        phys = _point_to_phys(point_size)
+        snapped = max(_PIXEL_GRID, round(phys / _PIXEL_GRID) * _PIXEL_GRID)
         point_size = snapped * 72.0 / (96.0 * _device_pixel_ratio())
     font.setPointSizeF(point_size)
 
@@ -406,16 +403,20 @@ class Theme(QObject):
     def hex(self, key: str) -> str:
         return self.palette[key]
 
+    def _pixel_crisp(self) -> bool:
+        """当前档位下像素字体是否整档锐利渲染（见文件顶部说明）。"""
+        return self._font_size_level in _PIXEL_CRISP_LEVELS
+
     def apply_style_hints(self, font: QFont) -> None:
         """按当前字体样式给 QFont 补上抗锯齿/hinting 策略。
 
-        缝合像素字体在 FreeType 引擎下、字号正好是 12 整数倍物理像素时关闭抗锯齿、禁用
+        缝合像素字体在锐利档位（_PIXEL_CRISP_LEVELS）且 FreeType 引擎下关闭抗锯齿、禁用
         hinting 做像素级对齐；其余情况走默认抗锯齿（见文件顶部说明）。荆南麦圆体在
         DirectWrite 默认 hinting 下笔画被对齐成 1px/2px 粗细不均（真机反馈过标准/大/特大
         档"割裂"），对它禁用 hinting；微软雅黑自带精调的 hinting，保持默认。必须在字号
         设好之后调用。显式恢复默认策略是因为 _refresh_explicit_fonts 复用已有 QFont，
         不重置会残留 NoAntialias。"""
-        if (self._font_style == "pixel" and _PIXEL_CRISP_ON_GRID and freetype_engine_active()
+        if (self._font_style == "pixel" and self._pixel_crisp() and freetype_engine_active()
                 and _on_pixel_grid(font)):
             font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
             font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
@@ -471,7 +472,7 @@ class Theme(QObject):
         scale = FONT_SIZE_SCALE_BY_STYLE.get(self._font_style, 1.0) * self.font_size_scale
         point_size = max(6.0, round(self.palette[size_key] * scale))
         if self._font_style == "pixel":
-            _set_pixel_point_size(font, point_size)
+            _set_pixel_point_size(font, point_size, self._pixel_crisp())
         else:
             font.setPointSizeF(point_size)
         self.apply_style_hints(font)
@@ -482,7 +483,7 @@ class Theme(QObject):
         font = QFont(self.font_family)
         px = max(6.0, logical_px * self.font_size_scale)
         if self._font_style == "pixel":
-            _set_pixel_point_size(font, px * 72.0 / 96.0)
+            _set_pixel_point_size(font, px * 72.0 / 96.0, self._pixel_crisp())
         else:
             font.setPixelSize(round(px))
         self.apply_style_hints(font)
