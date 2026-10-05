@@ -37,8 +37,9 @@ _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png")
 # 粘连，见 app.py），否则仍开抗锯齿。
 _PIXEL_GRID = 12
 _PIXEL_SNAP_TOLERANCE = 1.5
-# 落在 12 整数倍时是否关抗锯齿走清晰渲染（False 则像素字体全部抗锯齿）。
-_PIXEL_CRISP_ON_GRID = True
+# 落在 12 整数倍时是否关抗锯齿走清晰渲染（False 则像素字体全部抗锯齿）。开启时同屏会混着
+# 锐利/柔和两种观感，真机反馈过风格不统一看着奇怪，按用户选择全部抗锯齿。
+_PIXEL_CRISP_ON_GRID = False
 
 # 字形左侧几乎没有留白的字体样式（像素字体、麦圆体）：控件边界或裁剪区在非整数缩放
 # 下落在小数物理像素时，首列像素会被裁掉，需要文字离边界留 1px（见 qss() 与
