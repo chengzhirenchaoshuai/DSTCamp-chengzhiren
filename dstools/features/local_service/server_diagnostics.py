@@ -239,8 +239,10 @@ def diagnose_server_failure(
     if any(marker in lower for marker in _RUNTIME_LUA_ERROR_MARKERS):
         return _lua_report(shard_name, world_ready, lines, related_mods)
 
+    # 世界已就绪过说明是运行中退出（崩溃、被强制结束等），不能再叫"启动失败"
     return DiagnosticReport(
-        "unknown", "服务器启动失败", "服务器进程异常退出，但暂时无法从日志确定单一原因。",
+        "unknown", "服务器异常退出" if world_ready else "服务器启动失败",
+        "服务器进程异常退出，但暂时无法从日志确定单一原因。",
         ("先查看控制台末尾日志。", "检查令牌、端口、存档权限和最近更新的 Mod。"),
         tuple(line.strip() for line in lines[-3:] if line.strip()), related_mods, False,
     )

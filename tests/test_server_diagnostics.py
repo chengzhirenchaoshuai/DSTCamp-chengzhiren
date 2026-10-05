@@ -33,6 +33,13 @@ def main() -> None:
             shard_name="Master", exit_code=1, world_ready=False, log_lines=lines,
         )
         assert report is not None and report.category == expected, (expected, report)
+    assert report.title == "服务器启动失败"
+
+    # 世界运行中被强制结束（2026-10-05 真机强杀）：找不到具体原因时不能叫"启动失败"
+    report = diagnose_server_failure(
+        shard_name="Master", exit_code=1, world_ready=True, log_lines=["Sim paused"],
+    )
+    assert report is not None and report.category == "unknown" and report.title == "服务器异常退出"
 
     report = diagnose_server_failure(
         shard_name="Caves", exit_code=1, world_ready=False,
