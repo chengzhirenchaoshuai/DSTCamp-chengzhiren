@@ -665,12 +665,15 @@ class Theme(QObject):
             QScrollArea, WorldPanel, QListView {{ background: transparent; border: none; }}
             QSplitter::handle {{ background: transparent; }}
             QTabWidget::pane {{ background: {_rgba(c['CARD_BG'], 150)}; border: 1px solid {c['CARD_BORDER']};
-                border-radius: 10px; top: 0px; }}
+                border-radius: 10px; top: 6px; }}
             QTabWidget::tab-bar {{ left: 4px; }}
             QTabWidget > QWidget, QTabWidget QStackedWidget > QWidget {{ background: transparent; }}
-            /* 页签做成与 PillTabBar 一致的胶囊：选中主题色底白字，未选中浅色底；与下方面板留出间距。 */
+            /* 页签做成与 PillTabBar 一致的胶囊：选中主题色底白字，未选中浅色底。页签间距用右侧透明
+               边框（背景只铺到 padding）而不是 margin：Qt 摆放页签上的 × 按钮时不扣 margin，会偏出胶囊。
+               透明边框宽度与 local_console.TabCloseButton._TRAIL 一致。与下方面板的间距由 pane 的 top 让出。 */
             QTabBar::tab {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT_MUTED']}; border: none;
-                padding: 4px 18px; margin: 0 6px 6px 0; min-width: 48px; border-radius: 10px; }}
+                border-right: 6px solid transparent; background-clip: padding;
+                padding: 4px 6px 4px 18px; min-width: 48px; border-radius: 10px; }}
             QTabBar::tab:selected {{ background: {c['PRIMARY']}; color: #FFFFFF; font-weight: {fw_bold}; }}
             QTabBar::tab:hover:!selected {{ background: {_rgba(c['PRIMARY'], 90)}; color: {c['TEXT']}; }}
             QDialog {{ background: {c['BG_SOFT']}; }}

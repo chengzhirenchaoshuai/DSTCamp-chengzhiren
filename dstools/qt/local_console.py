@@ -6,10 +6,10 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QShortcut, QTextCursor
+from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QPainter, QPen, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QAbstractButton, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dstools.features.local_service.dedicated_server import ServerStatus, advance_world_ready_marker
@@ -69,6 +69,67 @@ class _DiagnosticDetailDialog(QDialog):
         self.show()
         self.raise_()
         self.activateWindow()
+
+
+class TabCloseButton(QAbstractButton):
+    """世界页签右侧的小 ×：选中页签（主题色底）上画白色，其余画灰色，悬停时垫一个淡圆底。
+
+    Qt 自带的页签关闭图标是固定深色，压在主题色的选中页签上不协调，所以自绘。
+    Qt 会把按钮贴着页签右边缘摆放（不扣页签右侧那条透明间隔边框，见 theme.py），
+    所以按钮右边多留 _TRAIL 宽的空白落在透明边框里，× 只画在左侧 _SIZE 区域。"""
+
+    _SIZE = 16
+    _TRAIL = 6  # 与 theme.py 中 QTabBar::tab 的透明右边框宽度一致
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(t("local.console_close_btn"))
+        self.setFixedSize(self._SIZE + self._TRAIL, self._SIZE)
+        self._tab_bar = None
+
+    def sizeHint(self) -> QSize:
+        return QSize(self._SIZE + self._TRAIL, self._SIZE)
+
+    def hitButton(self, pos) -> bool:
+        # 只有 × 所在的方块可点，右侧透明间隔不响应。
+        return 0 <= pos.x() < self._SIZE and 0 <= pos.y() < self._SIZE
+
+    def _on_selected_tab(self) -> bool:
+        bar = self.parentWidget()
+        if bar is None or not hasattr(bar, "tabAt"):
+            return False
+        return bar.tabAt(self.geometry().center()) == bar.currentIndex()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        bar = self.parentWidget()
+        # 切换页签时按钮本身不会自动重绘，跟着页签条的选中变化刷新颜色。
+        if bar is not self._tab_bar and hasattr(bar, "currentChanged"):
+            self._tab_bar = bar
+            bar.currentChanged.connect(lambda _index: self.update())
+
+    def enterEvent(self, event) -> None:
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event) -> None:
+        super().leaveEvent(event)
+        self.update()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        selected = self._on_selected_tab()
+        if self.underMouse():
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(255, 255, 255, 70) if selected else QColor(0, 0, 0, 28))
+            painter.drawEllipse(0, 0, self._SIZE, self._SIZE)
+        color = QColor("#FFFFFF") if selected else theme.color("TEXT_MUTED")
+        painter.setPen(QPen(color, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        a, b = 5.0, self._SIZE - 5.0
+        painter.drawLine(QPointF(a, a), QPointF(b, b))
+        painter.drawLine(QPointF(b, a), QPointF(a, b))
 
 
 class ConsolePane(QWidget):
@@ -193,12 +254,9 @@ class ConsolePane(QWidget):
         self.copy_log_btn.clicked.connect(self._copy_world_log)
         quick.addWidget(self.copy_log_btn)
         quick.addStretch()
-        self.close_btn = QPushButton(t("local.console_close_btn"))
-        self.close_btn.clicked.connect(self._on_close)
-        quick.addWidget(self.close_btn)
         outer.addLayout(quick)
         for button in (self.announce_btn, self.list_players_btn, self.rollback_btn, self.reset_world_btn,
-                      self.save_btn, self.copy_log_btn, self.close_btn):
+                      self.save_btn, self.copy_log_btn):
             if button is not None:
                 button.setFont(theme.font("FONT_SIZE_SM"))
 
@@ -319,6 +377,10 @@ class ConsolePane(QWidget):
                 self._browse_history(1)
                 return True
         return super().eventFilter(watched, event)
+
+    def request_close(self) -> None:
+        """页签上的 × 调用：走与原"关闭窗口"按钮相同的关闭流程（运行中会先确认）。"""
+        self._on_close()
 
     def _send(self) -> None:
         cmd = self.cmd_edit.text().strip()

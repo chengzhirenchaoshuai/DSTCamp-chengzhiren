@@ -24,7 +24,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QSplitter,
-    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QTabBar, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dstools.features.cluster_config.config_manager import (
@@ -49,7 +49,7 @@ from dstools.features.sakura import api as sakura_frp
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 from dstools.qt import dialogs
-from dstools.qt.local_console import ConsolePane, status_color
+from dstools.qt.local_console import ConsolePane, TabCloseButton, status_color
 from dstools.qt.pages.base import Page
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async, run_async_with_log
@@ -671,8 +671,16 @@ class LocalServicePage(Page):
         self._console_tabs.clear()
         for (cluster_path, shard_name), pane in self._console_panes.items():
             if cluster_path == current_path:
-                self._console_tabs.addTab(pane, shard_name)
+                self._add_console_tab(pane, shard_name)
         self._update_console_panel_visibility()
+
+    def _add_console_tab(self, pane: ConsolePane, shard_name: str) -> None:
+        """添加世界控制台页签，页签右侧带一个 ×（替代原控制台底部的"关闭窗口"按钮）。"""
+        index = self._console_tabs.addTab(pane, shard_name)
+        close = TabCloseButton()
+        # clicked 会带 checked 参数，包一层避免传给 request_close。
+        close.clicked.connect(lambda _checked=False: pane.request_close())
+        self._console_tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close)
 
     def _update_console_panel_visibility(self) -> None:
         """没有任何控制台标签时收起右侧面板；启动第一个世界/切到有世界在跑的存档才展开。"""
@@ -1593,7 +1601,7 @@ class LocalServicePage(Page):
                                 on_registered=self._on_server_registered)
             self._console_panes[key] = pane
             if str(cluster.path) == (str(self.get_cluster().path) if self.get_cluster() else None):
-                self._console_tabs.addTab(pane, shard.name)
+                self._add_console_tab(pane, shard.name)
                 self._console_tabs.setCurrentWidget(pane)
         self._update_console_panel_visibility()
         self._refresh_shard_rows(self.get_cluster())
