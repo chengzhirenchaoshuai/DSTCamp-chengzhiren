@@ -30,12 +30,15 @@ from pathlib import Path
 from PIL import Image
 
 from dstools.shared.atlas_utils import crop_by_uv, parse_atlas_xml
-from dstools.shared.resource_paths import cache_dir
+from dstools.shared.resource_paths import bundled_resource_dir, cache_dir
 from dstools.shared.steam_discovery import find_all_steam_libraries
 from dstools.shared.tex_convert import tex_to_png
 from dstools.models import Platform
 
 _CACHE_DIR = cache_dir("character_icons")
+# 随安装包附带的官方角色高清头像（从游戏制作栏头像图集裁出），没装游戏的机器也能显示；
+# 新角色上线后包里还没有的，仍按下面的流程从本机游戏文件里提取。
+_BUNDLED_AVATAR_DIR = bundled_resource_dir() / "icons" / "avatars"
 
 # 一次性扫描某个模组文件夹里全部 STRINGS.CHARACTER_NAMES.xxx = "..." 声明，
 # 而不是每次只找一个 prefab——同一个模组常常一次装好几个自定义角色，扫一
@@ -155,7 +158,10 @@ def _get_official_avatar_atlas(atlas_name: str = "avatars"):
 
 
 def get_official_avatar_path(prefab: str) -> Path | None:
-    """官方角色头像 PNG：优先制作栏高清头像，没有再用 Tab 键头像；都取不到返回 None。"""
+    """官方角色头像 PNG：优先随包高清头像，其次本机游戏的制作栏高清头像，再退回 Tab 键头像；都取不到返回 None。"""
+    bundled = _BUNDLED_AVATAR_DIR / f"{prefab}.png"
+    if prefab and bundled.is_file():
+        return bundled
     for atlas_name, cache_prefix in _OFFICIAL_ATLASES:
         atlas = _get_official_avatar_atlas(atlas_name)
         if not atlas:
