@@ -4,8 +4,8 @@
 
 1. 世界跑起来后崩溃 → 稍等 CRASH_RESTART_DELAY 秒再拉起；主世界崩溃（或主世界已不在运行）
    时整组重启，只有洞穴等从世界崩溃时只重启它自己。
-2. 拉起前选令牌：令牌池有别的可用令牌就换用；原令牌还在 Klei 释放等待期内且没有替代时，
-   等到等待期结束再试。
+2. 拉起前选令牌：先等原令牌的 Klei 释放等待期结束再试；距崩溃超过 TOKEN_SWITCH_AFTER
+   仍没恢复，才换用令牌池里其它可用令牌。
 3. 拉起后若注册冲突（E_ROWID_EXIST），停掉整组，按逐级拉长的间隔再等再试，从崩溃起最多等
    TOKEN_WAIT_LIMIT；注册成功即结束本轮，并把用时写进日志。
 
@@ -23,8 +23,8 @@ from PySide6.QtCore import QObject, QTimer
 from dstools.features.cluster_config.config_manager import load_cluster_config
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.auto_restart import (
-    CRASH_RESTART_DELAY, MAX_CRASH_RESTARTS, TOKEN_WAIT_LIMIT, CrashBudget, append_log, is_restartable,
-    token_retry_delay,
+    CRASH_RESTART_DELAY, MAX_CRASH_RESTARTS, TOKEN_SWITCH_AFTER, TOKEN_WAIT_LIMIT, CrashBudget, append_log,
+    is_restartable, token_retry_delay,
 )
 from dstools.features.local_service.dedicated_server import ConfDirCrossDriveError, resolve_conf_dir_arg
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE, ordered_shards
@@ -154,7 +154,8 @@ class AutoRestartController(QObject):
     def _start(self, cluster, state: _ClusterState, targets) -> None:
         if state.phase != "starting":
             return  # 停服期间被用户取消
-        if not self._page._choose_start_token(cluster):
+        allow_switch = time.time() - state.crashed_at >= TOKEN_SWITCH_AFTER
+        if not self._page._choose_start_token(cluster, allow_switch=allow_switch):
             self._wait_for_token(cluster, state)
             return
         page = self._page
@@ -193,11 +194,16 @@ class AutoRestartController(QObject):
         page.ctx.ensure_lobby_accel(cluster, after_accel)
 
     def _wait_for_token(self, cluster, state: _ClusterState) -> None:
-        """当前没有可用令牌：等到原令牌的等待期结束再试；超过总时长就放弃。"""
+        """当前没有可用令牌：等到原令牌的等待期结束再试；超过总时长就放弃。
+
+        原令牌等待期比"允许换令牌"的时刻还晚时，到那个时刻先醒一次去换令牌。"""
         now = time.time()
         token = read_token(cluster.token_path or (cluster.path / "cluster_token.txt"))
         hold = blocking_token_holds(now).get(token_fingerprint(token)) if token else None
         due = hold["retry_at"] if hold else now + token_retry_delay(state.conflicts)
+        switch_at = state.crashed_at + TOKEN_SWITCH_AFTER
+        if now < switch_at < due:
+            due = switch_at
         if due - state.crashed_at > TOKEN_WAIT_LIMIT:
             self._give_up(cluster, state, t("local.auto_restart_reason_token_timeout",
                                              hours=TOKEN_WAIT_LIMIT // 3600))

@@ -44,7 +44,7 @@ from dstools.features.local_service.server_runtime import (
 from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE, STATUS_TEXT_KEYS, ordered_shards, max_rollback_days
 from dstools.features.local_service.auto_restart import TOKEN_WAIT_LIMIT, token_retry_delay
-from dstools.features.local_service.token_scheduler import TokenUse, select_token_for_cluster
+from dstools.features.local_service.token_scheduler import TokenSelection, TokenUse, select_token_for_cluster
 from dstools.features.sakura import api as sakura_frp
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
@@ -1104,32 +1104,80 @@ class LocalServicePage(Page):
             lines.append(t("local.token_held_retry_detail", time=time.strftime("%H:%M", time.localtime(retry_at))))
         return "\n".join(lines) or t("local.token_pool_empty_detail")
 
-    def _choose_start_token(self, cluster) -> bool | str:
-        """为启动选令牌并写入存档，不弹窗。没有可用令牌返回 False；换了令牌返回 "changed"。
+    @staticmethod
+    def _start_token_path(cluster) -> Path:
+        return cluster.token_path or (cluster.path / "cluster_token.txt")
 
-        仍在 Klei 释放等待期内的新令牌不选；过了等待期允许再试（冲突时会重新进入等待）。"""
-        config = load_cluster_config(cluster.path)
-        if config.network.get("offline_cluster", False):
-            self._token_reservations.pop(str(cluster.path), None)
-            return True
-        cluster_key = str(cluster.path)
-        token_path = cluster.token_path or (cluster.path / "cluster_token.txt")
-        current = read_token(token_path)
+    def _start_token_selection(self, cluster, *, retry_current: bool = False) -> TokenSelection | None:
+        """只计算启动要用的令牌，不写文件；离线存档返回 None。
+
+        仍在 Klei 释放等待期内的新令牌不选；``retry_current`` 为 True 时忽略当前
+        令牌自己的等待标记，按用户意愿用原令牌再试（冲突时会重新进入等待）。"""
+        if load_cluster_config(cluster.path).network.get("offline_cluster", False):
+            return None
+        current = read_token(self._start_token_path(cluster))
         pool = get_global_tokens()
         prune_token_holds(pool, expire_before=time.time() - TOKEN_WAIT_LIMIT)
-        selection = select_token_for_cluster(
-            current_token=current, pool=pool, target_cluster_key=cluster_key,
-            active_uses=self.token_usage_snapshot(), held_fingerprints=blocking_token_holds(time.time()).keys())
+        held = set(blocking_token_holds(time.time()))
+        if retry_current and current:
+            held.discard(token_fingerprint(current))
+        return select_token_for_cluster(
+            current_token=current, pool=pool, target_cluster_key=str(cluster.path),
+            active_uses=self.token_usage_snapshot(), held_fingerprints=held)
+
+    def _apply_start_token(self, cluster, selection: TokenSelection | None) -> bool | str:
+        """把选中的令牌写入存档并预占。没有可用令牌返回 False；换了令牌返回 "changed"。"""
+        cluster_key = str(cluster.path)
+        if selection is None:
+            self._token_reservations.pop(cluster_key, None)
+            return True
         if selection.token is None:
             return False
         if selection.changed:
+            token_path = self._start_token_path(cluster)
             write_token(token_path, selection.token)
             cluster.token_path = token_path
         self._token_reservations[cluster_key] = selection.token
         return "changed" if selection.changed else True
 
+    def _choose_start_token(self, cluster, *, allow_switch: bool = True) -> bool | str:
+        """为启动选令牌并写入存档，不弹窗（自动重启用）。
+
+        ``allow_switch`` 为 False 时，存档已有有效令牌就不换成池里的其它令牌：
+        崩溃后先等原令牌释放，免得每崩一次就多占一个令牌。"""
+        selection = self._start_token_selection(cluster)
+        if (selection is not None and selection.changed and not allow_switch
+                and is_valid_token(read_token(self._start_token_path(cluster)))):
+            return False
+        return self._apply_start_token(cluster, selection)
+
+    def _current_token_hold(self, cluster) -> dict | None:
+        """存档当前令牌属于令牌池且仍在 Klei 释放等待期内时，返回它的等待记录。"""
+        current = read_token(self._start_token_path(cluster))
+        if not is_valid_token(current):
+            return None
+        fingerprint = token_fingerprint(current)
+        if not any(token_fingerprint(token) == fingerprint for token in get_global_tokens()):
+            return None
+        return blocking_token_holds(time.time()).get(fingerprint)
+
     def _prepare_token_for_start(self, cluster) -> bool:
-        chosen = self._choose_start_token(cluster)
+        selection = self._start_token_selection(cluster)
+        hold = self._current_token_hold(cluster) if selection is not None else None
+        if hold is not None and (selection.token is None or selection.changed):
+            # 原令牌还没释放：换令牌会多占一个池中令牌，由用户决定，不默默替换
+            options = [(t("local.token_held_switch_btn"), "switch")] if selection.token else []
+            options += [(t("local.token_held_retry_btn"), "retry"), (t("dlg.cancel_btn"), "cancel")]
+            choice = dialogs.ask_choice(
+                self.window(), t("local.token_held_title"),
+                t("local.token_held_ask", cluster=cluster.name,
+                  time=time.strftime("%H:%M", time.localtime(hold["retry_at"]))),
+                options, default="switch" if selection.token else "retry")
+            if choice == "retry":
+                selection = self._start_token_selection(cluster, retry_current=True)
+            elif choice != "switch":
+                return False
+        chosen = self._apply_start_token(cluster, selection)
         if not chosen:
             dialogs.show_warning(self.window(), t("local.token_unavailable_title"),
                                   t("local.token_unavailable_msg", details=self._token_unavailable_details()))

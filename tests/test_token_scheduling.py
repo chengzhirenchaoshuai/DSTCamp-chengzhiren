@@ -270,6 +270,35 @@ def main() -> None:
         assert prune_holds.call_args.args == ([NEW_B],)
         toast.assert_not_called()
 
+        # 原令牌仍在等待期且池里有替代：手动启动先询问，选"换用"才换，选"仍用原令牌"保持原值。
+        held_a = {token_fingerprint(NEW_A): {"state": "crashed", "retry_at": time.time() + 300}}
+        for choice, expected in (("switch", NEW_B), ("retry", NEW_A)):
+            write_token(token_path, NEW_A)
+            service.token_usage_snapshot = Mock(return_value=())
+            with (
+                patch.object(local_module, "load_cluster_config", return_value=SimpleNamespace(network={})),
+                patch.object(local_module, "get_global_tokens", return_value=[NEW_A, NEW_B]),
+                patch.object(local_module, "blocking_token_holds", return_value=held_a),
+                patch.object(local_module, "prune_token_holds"),
+                patch.object(local_module.dialogs, "ask_choice", return_value=choice) as ask,
+                patch.object(local_module.dialogs, "show_toast"),
+            ):
+                assert service._prepare_token_for_start(cluster)
+                ask.assert_called_once()
+            assert read_token(token_path) == expected
+
+            # 自动重启在阈值前不换令牌，也不改写存档令牌。
+            write_token(token_path, NEW_A)
+            with (
+                patch.object(local_module, "load_cluster_config", return_value=SimpleNamespace(network={})),
+                patch.object(local_module, "get_global_tokens", return_value=[NEW_A, NEW_B]),
+                patch.object(local_module, "blocking_token_holds", return_value=held_a),
+                patch.object(local_module, "prune_token_holds"),
+            ):
+                assert not service._choose_start_token(cluster, allow_switch=False)
+                assert service._choose_start_token(cluster) == "changed"
+            assert read_token(token_path) == NEW_B
+
     test_auto_restart_rules_and_hold_retry_window()
     test_auto_restart_controller_flow()
     print("服务器令牌分类与调度测试全部通过")
@@ -313,7 +342,9 @@ def test_auto_restart_controller_flow() -> None:
     """用假页面驱动真实调度器：直接触发定时器回调，覆盖换令牌重启、等令牌、冲突、成功、限流与取消。"""
     from PySide6.QtCore import QCoreApplication
 
-    from dstools.features.local_service.auto_restart import MAX_CRASH_RESTARTS, TOKEN_RETRY_DELAYS
+    from dstools.features.local_service.auto_restart import (
+        MAX_CRASH_RESTARTS, TOKEN_RETRY_DELAYS, TOKEN_SWITCH_AFTER,
+    )
     from dstools.features.local_service.dedicated_server import ServerStatus
     from dstools.qt import auto_restart as controller_module
 
@@ -328,6 +359,7 @@ def test_auto_restart_controller_flow() -> None:
         procs = {}
         events = []
         tokens = {"available": True}
+        allow_switches = []
 
         def make_proc(name, *, ready=True, status=ServerStatus.RUNNING):
             procs[name] = SimpleNamespace(cluster_path=cluster.path, shard_name=name, is_master=name == "Master",
@@ -347,7 +379,8 @@ def test_auto_restart_controller_flow() -> None:
             _cluster_for_running_process=lambda _proc, _current: cluster,
             _master_shard=lambda _c: cluster.shards[0],
             _stop_shards_and_then=stop_then,
-            _choose_start_token=lambda _c: tokens["available"],
+            _choose_start_token=lambda _c, allow_switch=True: (allow_switches.append(allow_switch),
+                                                                tokens["available"])[1],
             _install_dir=root, _detect_install_dir=lambda: None, _launching_keys=set(),
             _release_token_reservation_if_stopped=lambda _path: None,
             _continue_start_shard=lambda _c, shard, _arg: (events.append(("start", shard.name)),
@@ -383,6 +416,7 @@ def test_auto_restart_controller_flow() -> None:
             assert ("stop", ("Master", "Caves")) in events or ("stop", ("Caves",)) in events
             assert [e for e in events if e[0] == "start"] == [("start", "Master"), ("start", "Caves")]
             assert state.phase == "starting" and state.attempts == 1
+            assert allow_switches == [False], "刚崩溃时先等原令牌，不换池中其它令牌"
 
             # 3. 拉起后注册冲突：停掉整组，按冲突次数等待
             events.clear()
@@ -396,8 +430,10 @@ def test_auto_restart_controller_flow() -> None:
             controller._run(key)
             assert state.phase == "waiting_token"
             tokens["available"] = True
+            state.crashed_at = time.time() - TOKEN_SWITCH_AFTER - 1
             controller._run(key)
             assert state.phase == "starting" and state.attempts == 2
+            assert allow_switches[-1] is True, "等原令牌超过阈值后允许换令牌"
 
             # 5. 世界就绪 + 注册成功：本轮结束
             for proc in procs.values():
