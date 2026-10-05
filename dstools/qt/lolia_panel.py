@@ -154,12 +154,6 @@ class LoliaPanel(QWidget):
         stats_grid.setColumnStretch(3, 1)
         stats_layout.addLayout(stats_grid)
         account_layout.addWidget(self._stats_widget)
-
-        guide = QLabel(t("lolia.guide"))
-        guide.setProperty("muted", True)
-        guide.setFont(theme.font("FONT_SIZE_SM"))
-        guide.setWordWrap(True)
-        account_layout.addWidget(guide)
         root.addWidget(account_card)
 
         # ── 分区二：世界映射（开启/关闭 + frpc 状态；未登录时每个世界粘贴来源）
