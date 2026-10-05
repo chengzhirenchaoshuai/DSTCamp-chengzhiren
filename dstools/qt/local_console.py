@@ -81,7 +81,7 @@ TAB_MARGIN_RIGHT = 8
 
 
 class TabCloseButton(QAbstractButton):
-    """压在世界页签右上角的关闭角标：平时只有灰色 ×（透明底），悬停变红色圆底白 ×。"""
+    """压在世界页签右上角的关闭角标：平时淡灰色圆底灰 ×，悬停变红色圆底白 ×。"""
 
     _SIZE = 16
 
@@ -106,11 +106,15 @@ class TabCloseButton(QAbstractButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         hover = self.underMouse()
-        # 平时只画 ×、不垫底；悬停才出现红色圆底，提示这是关闭。
+        # 平时垫一个很淡的灰色圆底；悬停换成红色圆底，提示这是关闭。
+        painter.setPen(Qt.PenStyle.NoPen)
         if hover:
-            painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(theme.color("ERROR"))
-            painter.drawEllipse(QRectF(0.75, 0.75, self._SIZE - 1.5, self._SIZE - 1.5))
+        else:
+            faint = theme.color("TEXT_MUTED")
+            faint.setAlpha(40)
+            painter.setBrush(faint)
+        painter.drawEllipse(QRectF(0.75, 0.75, self._SIZE - 1.5, self._SIZE - 1.5))
         color = QColor("#FFFFFF") if hover else theme.color("TEXT_MUTED")
         painter.setPen(QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         a, b = 5.5, self._SIZE - 5.5
@@ -160,11 +164,13 @@ class ConsoleTabWidget(QTabWidget):
     """世界控制台页签：页签右上角带关闭角标（替代原控制台底部的"关闭窗口"按钮）。"""
 
     _DOT = 8  # 状态圆点直径（逻辑像素）
+    # 图标按整体垂直居中摆放，圆点贴着居中时视觉上偏高；图标往下加高这么多，圆点画在下部，整体下移一半。
+    _DOT_DROP = 4
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setTabBar(_ConsoleTabBar())
-        self.setIconSize(QSize(self._DOT + 2, self._DOT + 2))
+        self.setIconSize(QSize(self._DOT + 2, self._DOT + 2 + self._DOT_DROP))
         self._dot_icons: dict[tuple[str, float], QIcon] = {}
 
     def add_console_tab(self, pane: "ConsolePane", title: str) -> int:
@@ -194,15 +200,15 @@ class ConsoleTabWidget(QTabWidget):
         dpr = self.devicePixelRatioF()
         key = (color, dpr)
         if key not in self._dot_icons:
-            box = self._DOT + 2
-            pixmap = QPixmap(round(box * dpr), round(box * dpr))
+            box_w, box_h = self._DOT + 2, self._DOT + 2 + self._DOT_DROP
+            pixmap = QPixmap(round(box_w * dpr), round(box_h * dpr))
             pixmap.setDevicePixelRatio(dpr)
             pixmap.fill(Qt.GlobalColor.transparent)
             painter = QPainter(pixmap)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(color))
-            painter.drawEllipse(QRectF(1, 1, self._DOT, self._DOT))
+            painter.drawEllipse(QRectF(1, 1 + self._DOT_DROP, self._DOT, self._DOT))
             painter.end()
             self._dot_icons[key] = QIcon(pixmap)
         return self._dot_icons[key]
