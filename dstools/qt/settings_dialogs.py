@@ -209,7 +209,7 @@ class FontSettingsDialog(dialogs.Dialog):
         self.body.addWidget(self._restart_hint)
         self._refresh_restart_hint()
 
-        # 字体大小档位：缩放系数作用于全部字体样式，像素字体再吸附到设计尺寸整数倍物理像素。
+        # 字体大小档位：缩放系数作用于全部字体样式，像素字体接近 12 整数倍物理像素时再吸附。
         self.body.addWidget(self.heading_label(t("settings.font_size_label")))
         level_row = QHBoxLayout()
         self._level_buttons: dict[str, QPushButton] = {}
@@ -255,7 +255,7 @@ class FontSettingsDialog(dialogs.Dialog):
 
     def _refresh_preview(self) -> None:
         if theme.font_style == "pixel":
-            # 像素字体要吸附到设计尺寸整数倍并配套抗锯齿策略，用正文字号预览才与实际一致。
+            # 像素字体要按 12 整数倍吸附并配套抗锯齿策略，用正文字号预览才与实际一致。
             self._preview.setFont(theme.font("FONT_SIZE_BASE"))
             return
         px = max(6, round(_PREVIEW_FONT_SIZE * theme.font_size_scale))

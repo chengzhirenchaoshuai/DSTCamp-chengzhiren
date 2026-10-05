@@ -13,7 +13,7 @@ from PySide6.QtWidgets import QApplication, QLabel
 
 from dstools.shared import app_settings, palettes
 from dstools.shared.gui.font_styles import (
-    FONT_FAMILY_BY_STYLE, FONT_SIZE_SCALE_BY_STYLE, FONT_STYLE_NAMES, FONT_STYLES, PIXEL_DESIGNS,
+    FONT_FAMILY_BY_STYLE, FONT_SIZE_SCALE_BY_STYLE, FONT_STYLE_NAMES, FONT_STYLES,
 )
 from dstools.shared.resource_paths import bundled_resource_dir, tool_binary_dir
 
@@ -26,20 +26,18 @@ THEME_NAMES = palettes.THEME_NAMES
 # 半透明，深灰箭头在任何主题下对比度都够。
 _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png").as_posix()
 
-# 缝合像素字体（Fusion Pixel）有 8/10/12px 三个设计尺寸，物理像素正好是设计尺寸的整数倍
-# 时关掉抗锯齿才像素完美；其它字号关抗锯齿笔画会 1px/2px 粗细不均（真机反馈过"割裂"）。
-# 字号与普通字体同一套公式（层级 × 档位系数），换算成物理像素后吸附到三个设计尺寸整数倍
-# （8/10/12/16/20/24/30…）里最接近的一个，并切换到对应设计尺寸的族——任何屏幕缩放比下
-# 都按接近正常的逻辑字号显示且全部清晰（只有 12px 一个尺寸时 12 与 24 之间没有清晰字号，
-# 真机反馈过小档太小、大档太大）。QFont 的磅值是逻辑单位，高 DPI 下会再乘
-# devicePixelRatio，吸附时按 DPR 反推逻辑磅值。关抗锯齿的清晰渲染只在 FreeType 引擎下
-# 生效（DirectWrite 下会亚像素粘连，见 app.py），否则仍开抗锯齿。
-_PIXEL_DESIGN_BY_FAMILY = {d.family: d for d in PIXEL_DESIGNS}
-# 吸附候选：各设计尺寸的 1~12 倍物理像素，同一像素值优先用更大的设计尺寸（细节更多）。
-_PIXEL_CANDIDATES = sorted(
-    {px: d for d in sorted(PIXEL_DESIGNS, key=lambda d: d.px) for px in (d.px * k for k in range(1, 13))}.items()
-)
-# 落在设计尺寸整数倍时是否关抗锯齿走清晰渲染（False 则像素字体全部抗锯齿）。
+# 缝合像素字体（Fusion Pixel 12px）按 12px 网格设计：物理像素正好是 12 的整数倍时关掉
+# 抗锯齿才像素完美；其它字号关抗锯齿笔画会 1px/2px 粗细不均（真机反馈过"割裂"），开灰度
+# 抗锯齿（跟 Tk 版 GDI/PIL 渲染一致，笔画均匀、边缘略柔）。字号与普通字体同一套公式
+# （层级 × 档位系数），换算成物理像素后离 12 整数倍不超过 _PIXEL_SNAP_TOLERANCE 时吸附
+# 过去走清晰渲染——任何屏幕缩放比下都按正常逻辑字号显示，不会只剩 12/24 两档（真机反馈
+# 过小档太小、大档太大）。只用 12px 一个设计尺寸：8/10px 版本字形设计不同，混用时同屏风格
+# 不一（真机反馈过）。QFont 的磅值是逻辑单位，高 DPI 下会再乘 devicePixelRatio，吸附时按
+# DPR 反推逻辑磅值。关抗锯齿的清晰渲染只在 FreeType 引擎下生效（DirectWrite 下会亚像素
+# 粘连，见 app.py），否则仍开抗锯齿。
+_PIXEL_GRID = 12
+_PIXEL_SNAP_TOLERANCE = 1.5
+# 落在 12 整数倍时是否关抗锯齿走清晰渲染（False 则像素字体全部抗锯齿）。
 _PIXEL_CRISP_ON_GRID = True
 
 # 字形左侧几乎没有留白的字体样式（像素字体、麦圆体）：控件边界或裁剪区在非整数缩放
@@ -91,9 +89,7 @@ def freetype_engine_active() -> bool:
 
 
 def _style_of_family(family: str) -> str | None:
-    """字体族名属于哪个字体样式；像素字体的 8/10/12px 设计尺寸都算 pixel。"""
-    if family in _PIXEL_DESIGN_BY_FAMILY:
-        return "pixel"
+    """字体族名属于哪个字体样式；不是本项目字体族返回 None。"""
     for name in FONT_STYLE_NAMES:
         if FONT_FAMILY_BY_STYLE[name] == family:
             return name
@@ -101,21 +97,19 @@ def _style_of_family(family: str) -> str | None:
 
 
 def _on_pixel_grid(font: QFont) -> bool:
-    """字体物理像素是否正好是其像素字体设计尺寸的整数倍（可关抗锯齿清晰渲染）。"""
-    design = _PIXEL_DESIGN_BY_FAMILY.get(font.family())
-    if design is None:
-        return False
+    """字体物理像素是否正好落在像素字体的 12 整数倍网格上（可关抗锯齿清晰渲染）。"""
     phys = _point_to_phys(font.pointSizeF())
-    snapped = round(phys / design.px) * design.px
-    return snapped >= design.px and abs(phys - snapped) < 0.05
+    snapped = round(phys / _PIXEL_GRID) * _PIXEL_GRID
+    return snapped >= _PIXEL_GRID and abs(phys - snapped) < 0.05
 
 
 def _set_pixel_point_size(font: QFont, point_size: float) -> None:
-    """像素字体设字号：吸附到最接近的设计尺寸整数倍物理像素，并换成该设计尺寸的族。"""
+    """像素字体设字号：离 12 整数倍物理像素足够近就吸附过去，否则保持原磅值。"""
     phys = _point_to_phys(point_size)
-    target, design = min(_PIXEL_CANDIDATES, key=lambda item: (abs(item[0] - phys), -item[1].px))
-    font.setFamily(design.family)
-    font.setPointSizeF(target * 72.0 / (96.0 * _device_pixel_ratio()))
+    snapped = round(phys / _PIXEL_GRID) * _PIXEL_GRID
+    if snapped >= _PIXEL_GRID and abs(phys - snapped) <= _PIXEL_SNAP_TOLERANCE:
+        point_size = snapped * 72.0 / (96.0 * _device_pixel_ratio())
+    font.setPointSizeF(point_size)
 
 
 def _rgba(hex_color: str, alpha: int) -> str:
@@ -410,7 +404,7 @@ class Theme(QObject):
     def apply_style_hints(self, font: QFont) -> None:
         """按当前字体样式给 QFont 补上抗锯齿/hinting 策略。
 
-        缝合像素字体在 FreeType 引擎下、字号正好是设计尺寸整数倍时关闭抗锯齿、禁用
+        缝合像素字体在 FreeType 引擎下、字号正好是 12 整数倍物理像素时关闭抗锯齿、禁用
         hinting 做像素级对齐；其余情况走默认抗锯齿（见文件顶部说明）。荆南麦圆体在
         DirectWrite 默认 hinting 下笔画被对齐成 1px/2px 粗细不均（真机反馈过标准/大/特大
         档"割裂"），对它禁用 hinting；微软雅黑自带精调的 hinting，保持默认。必须在字号
@@ -493,10 +487,9 @@ class Theme(QObject):
     def load_fonts(self) -> None:
         """把打包的字体文件私有注册进当前进程，按族名才能找到（同 Tk 版的
         custom_font_loader）。缺文件时 Qt 会静默回退到系统字体，不报错。"""
-        filenames = [style.filename for style in FONT_STYLES if style.filename]
-        filenames += [d.filename for d in PIXEL_DESIGNS if d.filename not in filenames]
-        for filename in filenames:
-            QFontDatabase.addApplicationFont(str(tool_binary_dir() / "fonts" / filename))
+        for style in FONT_STYLES:
+            if style.filename:
+                QFontDatabase.addApplicationFont(str(tool_binary_dir() / "fonts" / style.filename))
 
     def set_theme(self, name: str) -> None:
         if name == self._name or name not in palettes.THEMES:
