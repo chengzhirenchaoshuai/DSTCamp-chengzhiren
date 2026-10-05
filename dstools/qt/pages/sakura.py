@@ -13,7 +13,7 @@ import webbrowser
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QStackedWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -30,6 +30,7 @@ from dstools.models import SaveSource
 from dstools.qt import dialogs
 from dstools.qt.pages.base import Page
 from dstools.qt.lolia_panel import LoliaPanel
+from dstools.qt.node_picker import NodeChoice, NodePickerDialog
 from dstools.qt.selfhost_panel import SelfHostPanel
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
@@ -42,7 +43,6 @@ from dstools.shared.token_manager import is_valid_token, mask_token
 _FALLBACK_MAX_TUNNELS = 2
 _SUB_TAB_KEYS = ["sakura", "lolia", "selfhost"]  # 子页签顺序，同时是 nat_sub_tab 的取值
 _FRPC_CACHE_NAME = "frpc_config"
-_NODE_GRID_COLS = 3
 
 
 def _format_bytes_adaptive(num_bytes: float) -> str:
@@ -73,38 +73,6 @@ def _frpc_pointer_path(cluster_path, shard_name, app_env):
         except OSError:
             return legacy
     return current
-
-
-class _NodeSelectDialog(QDialog):
-    """节点数量可能有几十上百个，改用弹窗里的多列按钮网格挑选，VIP 等级不够的置灰。"""
-
-    def __init__(self, parent, node_choices: list[tuple[int, dict, bool]], current_id: int | None):
-        super().__init__(parent)
-        self.setWindowTitle(t("sakura.node_picker_title"))
-        self.result_id: int | None = None
-        area = QScrollArea()
-        area.setWidgetResizable(True)
-        area.viewport().setAutoFillBackground(False)
-        grid_widget = QWidget()
-        grid = QGridLayout(grid_widget)
-        grid.setSpacing(6)
-        for idx, (node_id, node, eligible) in enumerate(node_choices):
-            tag = t("sakura.node_tag_free") if node.get("vip", 0) == 0 else t("sakura.node_tag_vip", level=node.get("vip"))
-            button = QPushButton(f"{node.get('name', node_id)}\n{tag}")
-            button.setEnabled(eligible)
-            button.setMinimumHeight(56)
-            button.setProperty("flat", node_id != current_id)
-            button.clicked.connect(lambda _c=False, nid=node_id: self._select(nid))
-            grid.addWidget(button, idx // _NODE_GRID_COLS, idx % _NODE_GRID_COLS)
-        area.setWidget(grid_widget)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(*dialogs.DIALOG_MARGINS)
-        layout.addWidget(area)
-        dialogs.fit_to_screen(self, 760, 560)
-
-    def _select(self, node_id: int) -> None:
-        self.result_id = node_id
-        self.accept()
 
 
 class _FrpcRecoveryDialog(dialogs.Dialog):
@@ -255,8 +223,9 @@ class _SakuraMappingPanel(QWidget):
         account_grid.setHorizontalSpacing(36)
         account_grid.setVerticalSpacing(2)
         self._account_value_labels = []
-        for col, key in enumerate(("sakura.account_group", "sakura.account_speed", "sakura.account_traffic",
-                                    "sakura.account_tunnels", "sakura.account_tunnels_used")):
+        # 列顺序与 Lolia 映射一致：可用流量、限速、隧道（已用/上限）
+        for col, key in enumerate(("sakura.account_group", "sakura.account_traffic", "sakura.account_speed",
+                                    "sakura.account_tunnels_usage")):
             header = QLabel(t(key))
             header.setProperty("muted", True)
             header.setFont(theme.font("FONT_SIZE_SM"))
@@ -265,7 +234,7 @@ class _SakuraMappingPanel(QWidget):
             value.setFont(theme.font("FONT_SIZE_MD", bold=True))
             account_grid.addWidget(value, 1, col)
             self._account_value_labels.append(value)
-        account_grid.setColumnStretch(5, 1)
+        account_grid.setColumnStretch(4, 1)
         account_layout.addLayout(account_grid)
 
         self._recent_traffic_label = QLabel("")
@@ -321,7 +290,7 @@ class _SakuraMappingPanel(QWidget):
         root.addWidget(shards_card)
         root.addStretch()
 
-        self._render_account_info("--", "--", "--", "--", "--")
+        self._render_account_info("--", "--", "--", "--")
         self._load_token_display()
 
     # ── Token ───────────────────────────────────────────────────────────
@@ -342,12 +311,18 @@ class _SakuraMappingPanel(QWidget):
     def _open_node_picker(self) -> None:
         if not self._node_choices:
             return
-        dialog = _NodeSelectDialog(self.window(), self._node_choices, self._selected_node_id)
+        choices = [NodeChoice(node_id, node.get("name", str(node_id)), self._node_tag(node), eligible)
+                   for node_id, node, eligible in self._node_choices]
+        dialog = NodePickerDialog(self.window(), t("sakura.node_picker_title"), choices, self._selected_node_id)
         if not dialog.exec() or dialog.result_id is None:
             return
         self._selected_node_id = dialog.result_id
         app_settings.set_sakura_last_node_id(dialog.result_id)
         self._update_node_display()
+
+    @staticmethod
+    def _node_tag(node: dict) -> str:
+        return t("sakura.node_tag_free") if node.get("vip", 0) == 0 else t("sakura.node_tag_vip", level=node.get("vip"))
 
     def _update_node_display(self) -> None:
         node = self._nodes.get(str(self._selected_node_id), {}) if self._selected_node_id else {}
@@ -368,7 +343,7 @@ class _SakuraMappingPanel(QWidget):
         cluster_key = str(cluster.path) if cluster else None
         self._status_label.setText("")
         if not token:
-            self._render_account_info("--", "--", "--", "--", "--")
+            self._render_account_info("--", "--", "--", "--")
             self._recent_traffic_label.setText("")
             self._render_shard_placeholders(t("sakura.token_not_configured"))
             return
@@ -426,7 +401,7 @@ class _SakuraMappingPanel(QWidget):
     def _apply_error(self, exc, gen, cluster_key, token) -> None:
         if not self._reload_is_current(gen, cluster_key, token):
             return
-        self._render_account_info("--", "--", "--", "--", "--")
+        self._render_account_info("--", "--", "--", "--")
         self._recent_traffic_label.setText("")
         self._status_label.setText(t("sakura.api_error", detail=str(exc)))
 
@@ -443,8 +418,8 @@ class _SakuraMappingPanel(QWidget):
         group = user_info.get("group") or {}
         self._my_group_level = group.get("level", 0)
         _today_used, remaining = (user_info.get("traffic") or [0, 0])[:2]
-        self._render_account_info(group.get("name", "--"), user_info.get("speed") or "--",
-                                   f"{remaining / (1024 ** 3):.2f} GiB", str(self._max_tunnels), str(self._tunnel_count))
+        self._render_account_info(group.get("name", "--"), f"{remaining / (1024 ** 3):.2f} GiB",
+                                   user_info.get("speed") or "--", f"{self._tunnel_count}/{self._max_tunnels}")
 
         self._node_choices = []
         for node_id_str, node in nodes.items():

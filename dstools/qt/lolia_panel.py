@@ -18,8 +18,7 @@ from collections import deque
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFont, QGuiApplication
 from PySide6.QtWidgets import (
-    QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout,
-    QWidget,
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from dstools.features.cluster_config.config_manager import (
@@ -34,6 +33,7 @@ from dstools.i18n import t
 from dstools.models import SaveSource
 from dstools.qt import dialogs
 from dstools.qt.lan_mapping_guard import ensure_lan_free_for_mapping
+from dstools.qt.node_picker import NodeChoice, NodePickerDialog
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
 from dstools.qt.widgets import AutoHideLabel, section_card
@@ -42,7 +42,6 @@ from dstools.shared.resource_paths import data_dir, runtime_tool_path
 from dstools.shared.server_ports import stable_path_key
 
 _FRPC_CONFIG_DIR_NAME = "lolia_frpc_config"
-_NODE_GRID_COLS = 3
 
 
 def _frpc_exe_path():
@@ -78,37 +77,6 @@ class _PasteSourceDialog(dialogs.Dialog):
         self.accept()
 
 
-class _NodeSelectDialog(QDialog):
-    """多列按钮网格挑节点（同樱花映射的节点弹窗），不满足条件的置灰。"""
-
-    def __init__(self, parent, choices: list[tuple[int, str, bool]], current_id: int | None):
-        super().__init__(parent)
-        self.setWindowTitle(t("lolia.node_picker_title"))
-        self.result_id: int | None = None
-        area = QScrollArea()
-        area.setWidgetResizable(True)
-        area.viewport().setAutoFillBackground(False)
-        grid_widget = QWidget()
-        grid = QGridLayout(grid_widget)
-        grid.setSpacing(6)
-        for idx, (node_id, label, eligible) in enumerate(choices):
-            button = QPushButton(label)
-            button.setEnabled(eligible)
-            button.setMinimumHeight(56)
-            button.setProperty("flat", node_id != current_id)
-            button.clicked.connect(lambda _c=False, nid=node_id: self._select(nid))
-            grid.addWidget(button, idx // _NODE_GRID_COLS, idx % _NODE_GRID_COLS)
-        area.setWidget(grid_widget)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(*dialogs.DIALOG_MARGINS)
-        layout.addWidget(area)
-        dialogs.fit_to_screen(self, 760, 560)
-
-    def _select(self, node_id: int) -> None:
-        self.result_id = node_id
-        self.accept()
-
-
 class LoliaPanel(QWidget):
     def __init__(self, ctx):
         super().__init__()
@@ -117,7 +85,7 @@ class LoliaPanel(QWidget):
         self._current_cluster = None
         self._any_mapped = False
         self._nodes: dict[int, dict] = {}
-        self._node_choices: list[tuple[int, str, bool]] = []
+        self._node_choices: list[NodeChoice] = []
         self._selected_node_id: int | None = None
         self._reload_gen = 0
         self._frpc_logs: dict[str, deque] = {}
@@ -323,10 +291,10 @@ class LoliaPanel(QWidget):
             if node.get("need_kyc"):
                 tag += " · " + t("lolia.node_tag_kyc")
             eligible = has_kyc or not node.get("need_kyc")
-            choices.append((node_id, f"{node.get('name', node_id)}\n{tag}", eligible, load or 0))
-        choices.sort(key=lambda c: (not c[2], c[3]))
-        self._node_choices = [(nid, label, ok) for nid, label, ok, _load in choices]
-        eligible_ids = [nid for nid, _l, ok in self._node_choices if ok]
+            choices.append((NodeChoice(node_id, str(node.get("name", node_id)), tag, eligible), load or 0))
+        choices.sort(key=lambda c: (not c[0].eligible, c[1]))  # 可选的在前，同组按负载从低到高
+        self._node_choices = [choice for choice, _load in choices]
+        eligible_ids = [c.node_id for c in self._node_choices if c.eligible]
         last = app_settings.get_lolia_last_node_id()
         if last in eligible_ids:
             self._selected_node_id = last
@@ -338,7 +306,8 @@ class LoliaPanel(QWidget):
     def _open_node_picker(self) -> None:
         if not self._node_choices:
             return
-        dialog = _NodeSelectDialog(self.window(), self._node_choices, self._selected_node_id)
+        dialog = NodePickerDialog(self.window(), t("lolia.node_picker_title"), self._node_choices,
+                                  self._selected_node_id)
         if not dialog.exec() or dialog.result_id is None:
             return
         self._selected_node_id = dialog.result_id
