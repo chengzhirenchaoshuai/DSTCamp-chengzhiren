@@ -3255,9 +3255,11 @@ def test_font_style_switch():
     from dstools.shared import app_settings
 
     fonts_dir = Path(__file__).resolve().parent.parent / "tools" / "fonts"
-    for style in FONT_STYLES:
-        if style.filename:
-            assert (fonts_dir / style.filename).is_file(), f"字体文件缺失: {style.filename}"
+    from dstools.shared.gui.font_styles import PIXEL_DESIGNS
+    filenames = [style.filename for style in FONT_STYLES if style.filename]
+    filenames += [design.filename for design in PIXEL_DESIGNS]
+    for filename in filenames:
+        assert (fonts_dir / filename).is_file(), f"字体文件缺失: {filename}"
     print("  PASS: 各字体样式引用的字体文件都打包在 tools/fonts/ 里")
 
     with _isolated_settings_dir():

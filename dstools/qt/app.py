@@ -3,11 +3,15 @@
 import os
 import sys
 
-# 像素字体（Fusion Pixel 12px）在 DirectWrite 引擎下 12px 小字号会亚像素粘连，
-# 只有 FreeType 引擎能把 12px 像素完美栅格化（与旧版 PIL 一致，灰度抗锯齿观感也
-# 更接近旧版）。必须在 QApplication 构造前设置；用 setdefault 避免覆盖测试/调试时
-# 显式指定的 QT_QPA_PLATFORM（如 offscreen）。
-os.environ.setdefault("QT_QPA_PLATFORM", "windows:fontengine=freetype")
+# 字体引擎按保存的字体样式选：像素字体（Fusion Pixel）在 DirectWrite 引擎下关抗锯齿
+# 会亚像素粘连，只有 FreeType 能把它像素完美栅格化；但 FreeType 会让微软雅黑、麦圆体
+# 失去 ClearType、笔画发细发淡，所以只在像素字体下启用。引擎只能在 QApplication
+# 构造前选定，运行中切换样式要重启才换引擎（见 theme.freetype_engine_active()）。
+# 用 setdefault 避免覆盖测试/调试时显式指定的 QT_QPA_PLATFORM（如 offscreen）。
+from dstools.shared.app_settings import get_font_style_choice  # noqa: E402  纯 Python，不依赖 Qt
+
+if get_font_style_choice() == "pixel":
+    os.environ.setdefault("QT_QPA_PLATFORM", "windows:fontengine=freetype")
 
 from PySide6.QtCore import QLoggingCategory, QTimer
 from PySide6.QtWidgets import QApplication

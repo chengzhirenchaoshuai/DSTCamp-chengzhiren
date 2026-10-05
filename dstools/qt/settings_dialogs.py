@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
 from dstools import __version__
 from dstools.i18n import t
 from dstools.qt import dialogs
-from dstools.qt.theme import FONT_SIZE_LEVELS, theme
+from dstools.qt.theme import FONT_SIZE_LEVELS, freetype_engine_active, theme
 from dstools.qt.threads import run_async
 from dstools.qt.widgets import ToggleSwitch, section_card
 from dstools.shared.app_settings import (
@@ -197,8 +197,13 @@ class FontSettingsDialog(dialogs.Dialog):
             grid.setColumnStretch(column, 1)  # 三张卡片等宽
             self._cards[style] = card
         self.body.addLayout(grid)
+        # 字体引擎只能在启动时选（像素字体用 FreeType，其它用系统 DirectWrite），当前
+        # 样式与引擎不匹配时提示重启，见 app.py。
+        self._restart_hint = self.text_label(t("settings.font_restart_hint"), muted=True, size_key="FONT_SIZE_XS")
+        self.body.addWidget(self._restart_hint)
+        self._refresh_restart_hint()
 
-        # 字体大小档位：缩放系数作用于全部字体样式，像素字体再按 12 整数倍物理像素吸附。
+        # 字体大小档位：缩放系数作用于全部字体样式，像素字体再吸附到设计尺寸整数倍物理像素。
         self.body.addWidget(self.heading_label(t("settings.font_size_label")))
         level_row = QHBoxLayout()
         self._level_buttons: dict[str, QPushButton] = {}
@@ -228,6 +233,10 @@ class FontSettingsDialog(dialogs.Dialog):
         for name, card in self._cards.items():
             card.set_selected(name == style)
         self._refresh_preview()
+        self._refresh_restart_hint()
+
+    def _refresh_restart_hint(self) -> None:
+        self._restart_hint.setVisible((theme.font_style == "pixel") != freetype_engine_active())
 
     def _on_select_level(self, level_key: str) -> None:
         theme.set_font_size_level(level_key)
@@ -240,7 +249,7 @@ class FontSettingsDialog(dialogs.Dialog):
 
     def _refresh_preview(self) -> None:
         if theme.font_style == "pixel":
-            # 像素字体要按 12 整数倍吸附并配套抗锯齿策略，用正文字号预览才与实际一致。
+            # 像素字体要吸附到设计尺寸整数倍并配套抗锯齿策略，用正文字号预览才与实际一致。
             self._preview.setFont(theme.font("FONT_SIZE_BASE"))
             return
         px = max(6, round(_PREVIEW_FONT_SIZE * theme.font_size_scale))

@@ -5,13 +5,15 @@ font_style_choice），两套界面互相可见。颜色一律通过 ``theme.col
 缓存；自绘控件在 paintEvent 里取色，切主题后整窗重绘即可，不需要逐个控件通知。
 """
 
+import os
+
 from PySide6.QtCore import QEvent, QObject, QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QLabel
 
 from dstools.shared import app_settings, palettes
 from dstools.shared.gui.font_styles import (
-    FONT_FAMILY_BY_STYLE, FONT_SIZE_SCALE_BY_STYLE, FONT_STYLE_NAMES, FONT_STYLES,
+    FONT_FAMILY_BY_STYLE, FONT_SIZE_SCALE_BY_STYLE, FONT_STYLE_NAMES, FONT_STYLES, PIXEL_DESIGNS,
 )
 from dstools.shared.resource_paths import bundled_resource_dir, tool_binary_dir
 
@@ -24,19 +26,21 @@ THEME_NAMES = palettes.THEME_NAMES
 # 半透明，深灰箭头在任何主题下对比度都够。
 _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png").as_posix()
 
-# 缝合像素字体（Fusion Pixel 12px）按 12px 网格设计：物理像素正好是 12 的整数倍时关掉
-# 抗锯齿才像素完美；其它字号关掉抗锯齿笔画会 1px/2px 粗细不均（真机反馈过"割裂"），
-# 改开灰度抗锯齿（跟 Tk 版 GDI/PIL 的渲染一致，笔画均匀、边缘略柔）。字号与普通字体
-# 同一套公式（层级 × 档位系数），换算成物理像素后离 12 整数倍不超过
-# _PIXEL_SNAP_TOLERANCE 时吸附过去走清晰渲染——任何屏幕缩放比下都按正常逻辑字号显示，
-# 不会只剩 12/24 两档（真机反馈过小档太小、大档太大）。QFont 的磅值是逻辑单位，高 DPI
-# 下会再乘 devicePixelRatio，吸附时按 DPR 反推逻辑磅值。DirectWrite 引擎 12px 有亚像素
-# 粘连，需配合 app.py 的 FreeType 字体引擎（windows:fontengine=freetype）。
-_PIXEL_GRID = 12
-_PIXEL_SNAP_TOLERANCE = 1.5
-# 字号正好落在 12 整数倍时是否关抗锯齿走清晰渲染。关掉后同屏会混着锐利/柔和两种观感，
-# 目前按用户要求全部开抗锯齿对比效果；改回 True 即恢复整数倍字号的清晰渲染。
-_PIXEL_CRISP_ON_GRID = False
+# 缝合像素字体（Fusion Pixel）有 8/10/12px 三个设计尺寸，物理像素正好是设计尺寸的整数倍
+# 时关掉抗锯齿才像素完美；其它字号关抗锯齿笔画会 1px/2px 粗细不均（真机反馈过"割裂"）。
+# 字号与普通字体同一套公式（层级 × 档位系数），换算成物理像素后吸附到三个设计尺寸整数倍
+# （8/10/12/16/20/24/30…）里最接近的一个，并切换到对应设计尺寸的族——任何屏幕缩放比下
+# 都按接近正常的逻辑字号显示且全部清晰（只有 12px 一个尺寸时 12 与 24 之间没有清晰字号，
+# 真机反馈过小档太小、大档太大）。QFont 的磅值是逻辑单位，高 DPI 下会再乘
+# devicePixelRatio，吸附时按 DPR 反推逻辑磅值。关抗锯齿的清晰渲染只在 FreeType 引擎下
+# 生效（DirectWrite 下会亚像素粘连，见 app.py），否则仍开抗锯齿。
+_PIXEL_DESIGN_BY_FAMILY = {d.family: d for d in PIXEL_DESIGNS}
+# 吸附候选：各设计尺寸的 1~12 倍物理像素，同一像素值优先用更大的设计尺寸（细节更多）。
+_PIXEL_CANDIDATES = sorted(
+    {px: d for d in sorted(PIXEL_DESIGNS, key=lambda d: d.px) for px in (d.px * k for k in range(1, 13))}.items()
+)
+# 落在设计尺寸整数倍时是否关抗锯齿走清晰渲染（False 则像素字体全部抗锯齿）。
+_PIXEL_CRISP_ON_GRID = True
 
 # 字形左侧几乎没有留白的字体样式（像素字体、麦圆体）：控件边界或裁剪区在非整数缩放
 # 下落在小数物理像素时，首列像素会被裁掉，需要文字离边界留 1px（见 qss() 与
@@ -81,20 +85,37 @@ def _point_to_phys(point_size: float) -> float:
     return point_size * 96.0 / 72.0 * _device_pixel_ratio()
 
 
+def freetype_engine_active() -> bool:
+    """当前进程是否用 FreeType 字体引擎（app.py 启动时按字体样式选定，运行中不能换）。"""
+    return "fontengine=freetype" in os.environ.get("QT_QPA_PLATFORM", "")
+
+
+def _style_of_family(family: str) -> str | None:
+    """字体族名属于哪个字体样式；像素字体的 8/10/12px 设计尺寸都算 pixel。"""
+    if family in _PIXEL_DESIGN_BY_FAMILY:
+        return "pixel"
+    for name in FONT_STYLE_NAMES:
+        if FONT_FAMILY_BY_STYLE[name] == family:
+            return name
+    return None
+
+
 def _on_pixel_grid(font: QFont) -> bool:
-    """字体物理像素是否正好落在像素字体的 12 整数倍网格上（可关抗锯齿清晰渲染）。"""
+    """字体物理像素是否正好是其像素字体设计尺寸的整数倍（可关抗锯齿清晰渲染）。"""
+    design = _PIXEL_DESIGN_BY_FAMILY.get(font.family())
+    if design is None:
+        return False
     phys = _point_to_phys(font.pointSizeF())
-    snapped = round(phys / _PIXEL_GRID) * _PIXEL_GRID
-    return snapped >= _PIXEL_GRID and abs(phys - snapped) < 0.05
+    snapped = round(phys / design.px) * design.px
+    return snapped >= design.px and abs(phys - snapped) < 0.05
 
 
 def _set_pixel_point_size(font: QFont, point_size: float) -> None:
-    """像素字体设字号：离 12 整数倍物理像素足够近就吸附过去，否则保持原磅值。"""
+    """像素字体设字号：吸附到最接近的设计尺寸整数倍物理像素，并换成该设计尺寸的族。"""
     phys = _point_to_phys(point_size)
-    snapped = round(phys / _PIXEL_GRID) * _PIXEL_GRID
-    if snapped >= _PIXEL_GRID and abs(phys - snapped) <= _PIXEL_SNAP_TOLERANCE:
-        point_size = snapped * 72.0 / (96.0 * _device_pixel_ratio())
-    font.setPointSizeF(point_size)
+    target, design = min(_PIXEL_CANDIDATES, key=lambda item: (abs(item[0] - phys), -item[1].px))
+    font.setFamily(design.family)
+    font.setPointSizeF(target * 72.0 / (96.0 * _device_pixel_ratio()))
 
 
 def _rgba(hex_color: str, alpha: int) -> str:
@@ -389,11 +410,12 @@ class Theme(QObject):
     def apply_style_hints(self, font: QFont) -> None:
         """按当前字体样式给 QFont 补上抗锯齿/hinting 策略。
 
-        缝合像素字体在 _PIXEL_CRISP_ON_GRID 打开且字号正好落在 12 整数倍物理像素时
-        关闭抗锯齿、禁用 hinting 做像素级对齐；其余情况与其它样式（微软雅黑、荆南麦
-        圆体）一样走默认抗锯齿（见文件顶部说明）。必须在字号设好之后调用。显式恢复
-        默认策略是因为 _refresh_explicit_fonts 复用已有 QFont，不重置会残留 NoAntialias。"""
-        if self._font_style == "pixel" and _PIXEL_CRISP_ON_GRID and _on_pixel_grid(font):
+        缝合像素字体在 FreeType 引擎下、字号正好是设计尺寸整数倍时关闭抗锯齿、禁用
+        hinting 做像素级对齐；其余情况与其它样式（微软雅黑、荆南麦圆体）一样走默认
+        抗锯齿（见文件顶部说明）。必须在字号设好之后调用。显式恢复默认策略是因为
+        _refresh_explicit_fonts 复用已有 QFont，不重置会残留 NoAntialias。"""
+        if (self._font_style == "pixel" and _PIXEL_CRISP_ON_GRID and freetype_engine_active()
+                and _on_pixel_grid(font)):
             font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
             font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
         else:
@@ -415,7 +437,7 @@ class Theme(QObject):
         """没带标签的字体（如复制控件字体后改粗细再 setFont）按当前样式/档位反推层级；
         不是本项目字体族返回 None。控件已记录的层级在当前状态下字号仍一致时沿用，
         避免像素样式下多个层级同字号时被反推成同一层级。"""
-        style = {FONT_FAMILY_BY_STYLE[n]: n for n in FONT_STYLE_NAMES}.get(font.family())
+        style = _style_of_family(font.family())
         if style is None:
             return None
         known = widget.property(_FONT_KEY_PROP)
@@ -466,9 +488,10 @@ class Theme(QObject):
     def load_fonts(self) -> None:
         """把打包的字体文件私有注册进当前进程，按族名才能找到（同 Tk 版的
         custom_font_loader）。缺文件时 Qt 会静默回退到系统字体，不报错。"""
-        for style in FONT_STYLES:
-            if style.filename:
-                QFontDatabase.addApplicationFont(str(tool_binary_dir() / "fonts" / style.filename))
+        filenames = [style.filename for style in FONT_STYLES if style.filename]
+        filenames += [d.filename for d in PIXEL_DESIGNS if d.filename not in filenames]
+        for filename in filenames:
+            QFontDatabase.addApplicationFont(str(tool_binary_dir() / "fonts" / filename))
 
     def set_theme(self, name: str) -> None:
         if name == self._name or name not in palettes.THEMES:
@@ -516,7 +539,6 @@ class Theme(QObject):
         app = QApplication.instance()
         if app is None:
             return
-        family_to_style = {FONT_FAMILY_BY_STYLE[name]: name for name in FONT_STYLE_NAMES}
         new_family = self.font_family
         new_style = self._font_style
         # 父控件改字体时 Qt 会顺带改写部分子控件（如列表视口）的字体，重复到没有变化为止；
@@ -533,7 +555,7 @@ class Theme(QObject):
                 # font-weight（如按钮加粗），拿它比较或重设会把加粗固化/丢掉。
                 saved = widget.property(_QSS_SAVED_FONT_PROP)
                 base = QFont(saved) if isinstance(saved, QFont) else widget.font()
-                old_style = family_to_style.get(base.family())
+                old_style = _style_of_family(base.family())
                 if old_style is None:
                     continue
                 size_key = widget.property(_FONT_KEY_PROP)
