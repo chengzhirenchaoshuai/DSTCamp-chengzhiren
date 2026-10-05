@@ -115,6 +115,11 @@ def main() -> None:
         assert completed_total_style.staging_complete
         assert action_for_snapshot(completed_total_style) == "validate"
 
+        # 游戏客户端（322330）真机清单：没有待更新目标时 TargetBuildID 为 "0"。
+        manifest.write_text(completed_manifest_text.replace(
+            '"TargetBuildID" "24700372"', '"TargetBuildID" "0"'), encoding="utf-8")
+        assert not snapshot_app(libraries=[root]).update_pending
+
         # 下载未完成、暂存未完成、目标 build 不一致均须独立阻止启动。
         for old, new in (
             ('"BytesDownloaded" "63771680"', '"BytesDownloaded" "1"'),

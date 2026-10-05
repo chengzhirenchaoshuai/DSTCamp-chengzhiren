@@ -308,7 +308,8 @@ def snapshot_app(
         bytes_downloaded=_to_int(values.get("bytesdownloaded")),
         bytes_to_download=_to_int(values.get("bytestodownload")),
         last_updated=values.get("lastupdated"),
-        target_build_id=values.get("targetbuildid"),
+        # 游戏客户端清单在没有待更新目标时写 "0"，不能当成一个不同的目标 Build。
+        target_build_id=_valid_build_id(values.get("targetbuildid")),
         bytes_staged=_to_int(values.get("bytesstaged")),
         bytes_to_stage=_to_int(values.get("bytestostage")),
         branch=values.get("betakey"),
