@@ -8,6 +8,7 @@ LuaJIT 性能补丁。内网穿透相关的"是否有映射/frpc 是否在转发
 """
 
 import ctypes
+import html
 import ipaddress
 import re
 import socket
@@ -591,7 +592,7 @@ class LocalServicePage(Page):
         self._start_all_btn.setEnabled(is_server and not is_wegame)
         install_enabled = not is_wegame
         self._install_change_btn.setEnabled(install_enabled)
-        self._mode_btn.setEnabled(install_enabled)
+        self._update_mode_btn_state(c)
         self._steam_update_btn.setEnabled(install_enabled)
         self._update_stop_all_btn_state(c)
         self._update_restart_all_btn_state(c)
@@ -692,6 +693,16 @@ class LocalServicePage(Page):
         name = t(_RUNTIME_KIND_KEYS[resolution.wanted_kind])
         return name if resolution.runtime is not None else t("local.runtime_mode_missing", mode=name)
 
+    def _update_mode_btn_state(self, cluster) -> None:
+        """有世界在运行时"选择模式"只读：运行中的程序、mods 和 LuaJIT 副本都属于当前模式。"""
+        running = bool(self.manager.running())
+        enabled = not running and not (cluster and cluster.platform == Platform.WEGAME)
+        if self._mode_btn.isEnabled() != enabled:
+            self._mode_btn.setEnabled(enabled)
+        tip = t("local.runtime_mode_running") if running else ""
+        if self._mode_btn.toolTip() != tip:
+            self._mode_btn.setToolTip(tip)
+
     def _wanted_runtime_kind(self) -> RuntimeKind | None:
         resolution = self._runtime_resolution
         return resolution.wanted_kind if resolution is not None else None
@@ -716,12 +727,17 @@ class LocalServicePage(Page):
         names = {RuntimeMode.AUTO: t("local.runtime_mode_auto"),
                  RuntimeMode.CLIENT: t("local.runtime_mode_client"),
                  RuntimeMode.DEDICATED: t("local.runtime_mode_dedicated")}
-        state = {True: t("local.runtime_installed"), False: t("local.install_not_found")}
-        text = t("local.runtime_mode_msg", current=names[current],
-                 client=state[installed[RuntimeKind.CLIENT]], dedicated=state[installed[RuntimeKind.DEDICATED]])
+        lines = [html.escape(t("local.runtime_mode_msg", current=names[current])).replace("\n", "<br>"),
+                 "", html.escape(t("local.runtime_install_status"))]
+        for kind in RuntimeKind:
+            ok = installed[kind]
+            state = t("local.runtime_installed") if ok else t("local.runtime_not_installed")
+            color = theme.hex("SUCCESS" if ok else "ERROR")
+            lines.append(t("local.runtime_status_line", name=html.escape(t(_RUNTIME_KIND_KEYS[kind])),
+                           state=f'<span style="color:{color};">{html.escape(state)}</span>'))
         choices = [(t("dlg.cancel_btn"), "cancel")] + [(names[mode], mode.value) for mode in RuntimeMode]
-        choice = dialogs.ask_choice(self.window(), t("local.runtime_mode_title"), text, choices,
-                                    default=current.value, min_width=560)
+        choice = dialogs.ask_choice(self.window(), t("local.runtime_mode_title"), "<br>".join(lines), choices,
+                                    default=current.value, min_width=560, rich=True)
         if not choice or choice == "cancel" or choice == current.value:
             return
         set_runtime_mode(RuntimeMode(choice))
@@ -2199,6 +2215,7 @@ class LocalServicePage(Page):
                 row.update_state()
             cluster = self.get_cluster()
             self._update_start_lock_state(cluster)
+            self._update_mode_btn_state(cluster)
             self._update_stop_all_btn_state(cluster)
             self._update_restart_all_btn_state(cluster)
             self._update_logs_btn_state(cluster)

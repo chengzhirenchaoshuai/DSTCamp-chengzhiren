@@ -236,7 +236,7 @@ def ask_yes_no_with_auxiliary(parent, title: str, text: str, auxiliary_label: st
 
 
 def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], default: str = "",
-               min_width: int = 0, danger_values: tuple[str, ...] = ()) -> str:
+               min_width: int = 0, danger_values: tuple[str, ...] = (), rich: bool = False) -> str:
     """多选项询问：choices 是 [(按钮文字, 返回值)]，default 是默认（回车）按钮。
 
     返回值为 "cancel" 的选项当作取消类按钮放在左侧；关闭窗口/按 Esc 返回 "cancel"
@@ -245,7 +245,7 @@ def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], de
     buttons = [(label, value, "secondary" if value == "cancel" else
                 "danger" if value in danger_values else "primary") for label, value in choices]
     return MessageDialog(parent, "question", title, text, buttons, default=default,
-                         escape="cancel" if has_cancel else "", size=width_tier(min_width)).ask()
+                         escape="cancel" if has_cancel else "", size=width_tier(min_width), rich=rich).ask()
 
 
 class _Toast(QWidget):
