@@ -1,7 +1,7 @@
 # DSTCamp
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.5.1-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-1.6.0-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="UI" src="https://img.shields.io/badge/UI-Qt%20(PySide6)-41cd52">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
@@ -10,14 +10,15 @@
 
 DSTCamp is a Windows desktop manager for local *Don't Starve Together* servers. It brings save management, world configuration, Workshop Mods, dedicated-server operations, backups, tunneling, and lobby acceleration into one Qt (PySide6) interface.
 
-## ✨ 1.5.1 highlights
+## ✨ 1.6.0 highlights
 
-- 🧩 **Missing Mods are caught before launch**: if a save enables Mods that are not on this computer, starting is paused and you can subscribe and download them in one click, so the save is not run and saved without them.
-- 🧹 **Cleaned-up Mods stay gone**: after removing leftovers, Steam's download records are cleared too, so joining another server no longer downloads them again.
-- ⬆️ **Smoother server updates**: when a launch is blocked by a pending update you can update right away, and "Update via Steam" now really updates and no longer hangs on exit.
-- 🌐 **Accurate direct-connect codes**: with a TUN-mode proxy on, LAN and public direct-connect codes no longer show the proxy's virtual address or exit IP.
+- 🌐 **New Lolia mapping**: another tunneling option — sign in, pick a node, and a tunnel is created for each world in one click, then removed automatically when you turn it off.
+- 🎮 **Host without the dedicated server**: run worlds with the server program bundled in the game client; LuaJIT and Mod updates work there too.
+- 🔠 **Global font size levels**: Small / Standard / Large / Extra Large, with crisper pixel and KN Maiyuan fonts.
+- 🖼️ **Export your Mod list as an image**: generate a picture of the enabled Mods to preview, save, or copy.
+- 🎟️ **Smarter token pool**: after a crash the original token is retried automatically, so a crash no longer ties up an extra token.
 
-See [1.5.1 changes](#151-changes) below for the full list.
+See [1.6.0 changes](#160-changes) below for the full list.
 
 ## Features
 
@@ -34,8 +35,8 @@ WeGame does not provide one-click dedicated-server launching. DSTCamp does not b
 
 Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
 
-- `DSTCamp-1.5.1.exe`: single-file build with all required resources embedded; no installation needed.
-- `DSTCamp-1.5.1.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
+- `DSTCamp-1.6.0.exe`: single-file build with all required resources embedded; no installation needed.
+- `DSTCamp-1.6.0.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
 
 Users on 1.4.0 or later can update in place from the About dialog or the update prompt at startup.
 
@@ -88,16 +89,48 @@ python scripts/build_exe.py
 
 The build uses an explicit tool allowlist, stages resources under `build/`, and smoke-tests the frozen executable. Real Windows GUI, Steam, frpc, and game behavior still require manual validation.
 
-## 1.5.1 changes
+## 1.6.0 changes
 
 ### ✨ New features
+
+- **Lolia mapping** (new tunneling sub-tab): after OAuth sign-in it shows account traffic, bandwidth limit (Mbps), and tunnel usage, and warns early when available traffic is 0 so you can check in; pick a node to create a UDP tunnel per world — worlds may sit on different nodes, each with its own frpc — and tunnels are deleted when mapping is turned off; nodes are grouped by region with traffic multiplier and high-load labels; when frpc exits, the server's failure reason is shown; if the built-in sign-in app stops working, a guide lets you use your own client_id.
+- **Card-style node picker**: shared by Sakura and Lolia, with cards that grow to fit their content; the Sakura account area now matches Lolia.
+- **Host with the game client**: without the dedicated-server tool installed, worlds can run on the server program bundled with the game client, with LuaJIT and Mod updates still available. The local-server page gains "Server program" (Auto / Game client / Dedicated server) and "Program location"; the Mod page's Mod location and LuaJIT status follow the current program, and "Mod sync" is disabled with an explanation in game-client mode. While a world is running, switching programs, changing the path, and verifying files are disabled, and disabled buttons explain why on hover.
+- **Global font size levels** (font settings): Small / Standard / Large / Extra Large; direct-connect columns, the Start All button, and the save-type drop-down adapt to the size; the font engine is chosen per font style for crisper pixel and KN Maiyuan text (takes effect after restarting when the style changes).
+- **Export Mod list image** (Mod page, next to the enabled-Mod count): a light themed banner with info tags, version badges, author and ID, and numbered corner badges; preview, save, or copy it.
+- **Mod config dialog**: search options by title or comment; option descriptions now appear per item on hover in the opened list; opening the config no longer shows a loading popup, just a busy cursor.
+- **Global token pool**: auto-restart after a crash reuses the original token and keeps the server running to retry on registration conflicts, with release progress in the banner; new "switch token on timeout" toggle and wait time before switching (20–110 minutes, default 30); crashes before a successful registration no longer hold a token, and expired wait marks are cleared automatically; a manual start asks first when the original token has not been released; the token pool dialog uses sectioned cards.
+- **Create server save**: the new save is selected automatically and you are asked whether to start the world now; the default folder name is the first free Cluster_N; the "Create server save" button moved to the left of "Refresh".
+- **World console**: rounded tabs with a running-status dot before the name and a close badge in the corner replacing the bottom "Close window" button; the log search box keeps search history.
+- 19 official character portraits now ship with the app and are preferred in the save browser; unused world-setting icons were removed, shrinking the package by about 2 MB.
+- Tooltips use a light-yellow background and appear after 0.1 s on hover (0.7 s for the Mod list lock switch); larger "Configure" text in the Mod list; "Ready" in direct-connect codes is green and a world's "Stopping" is red; when picking users from a save, the "Only users of the current save" switch is hidden if there are no candidates.
+
+### 🐞 Fixes
+
+- With a dark system theme, log areas in dialogs such as the LuaJIT update and tooltips on drop-down list items had a black background.
+- The LuaJIT install confirmation lacked the "Download VC++ 2023" link; the LuaJIT buttons were re-enabled while installing.
+- Parsing crashed when a save's cluster.ini was GBK-encoded.
+- The Mod page kept showing old versions after refreshing; the Mod tab of the create-save wizard stayed on "Checking version".
+- Drop-down options in the Mod config dialog showed stray alignment spaces, and options with identical text could go missing.
+- Switching to the tunneling tab lagged about 1 s while Lolia or self-hosted mapping was on.
+- Read-only fields in the world settings (server.ini) of the server config squeezed the column, pushing labels and values to the right as the window widened.
+- When a running world exited abnormally with no identifiable cause, the diagnosis was titled "Server failed to start"; it now reads "Server exited unexpectedly".
+- The public direct-connect status text was cut off.
+- The first character of labels and drop-downs was clipped with the pixel and KN Maiyuan fonts; KN Maiyuan strokes had uneven weight; menus did not follow the font size after a restart.
+
+<details>
+<summary><strong>Earlier versions (1.3.5 ~ 1.5.1)</strong></summary>
+
+### 1.5.1
+
+#### ✨ New features
 
 - **Check for missing Mods before launch**: when a save enables Mods that are not on this computer (usually not subscribed, common with saves copied from elsewhere), starting the dedicated server is paused and the Mods are listed. Otherwise the server would skip them, and once the save is saved, items, creatures and structures that depend on them could be lost for good. Choose "Subscribe & Download" (subscribes with the current Steam account and waits for the downloads; the Mod page refreshes afterwards), "Start Anyway", or cancel.
 - **Guided update when the server is out of date**: when a launch is blocked by a pending update, the dialog offers "Update now"; a red "Update available" appears after the dedicated-server path, with remote/local build numbers on hover.
 - **Outdated LuaJIT copies update automatically**: starting, starting all, and restarting no longer ask for confirmation; launching continues once the update succeeds, and failures are explained in the progress window.
 - **Create server save window**: clicking the main window while it is open now flashes its title bar and border, like other dialogs; the window remembers the size you last set.
 
-### 🐞 Fixes
+#### 🐞 Fixes
 
 - Mods removed with leftover cleanup were downloaded again by Steam when joining another server. Cleanup now checks Steam's download records and, after confirmation, closes Steam, clears the records, and restarts Steam.
 - Unsubscribed legacy (V1) Mods were listed as cleanable but always failed to clean; batch-cleanup failures are now grouped by reason.
@@ -108,9 +141,6 @@ The build uses an explicit tool allowlist, stages resources under `build/`, and 
 - Drop-down lists briefly flashed a default background when opening.
 - With a TUN-mode proxy on, the LAN direct-connect code showed a 198.18.x virtual address.
 - The public direct-connect code reported the proxy's exit IP; a TUN proxy is now flagged as "Proxy?" with directions for a direct connection.
-
-<details>
-<summary><strong>Earlier versions (1.3.5 ~ 1.5.0)</strong></summary>
 
 ### 1.5.0
 
