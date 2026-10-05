@@ -121,7 +121,7 @@ def _draw_banner(painter: QPainter, rect: QRectF, title: str, chips: list[str]) 
         x += chip_w + 8
 
 
-def _draw_card(painter: QPainter, rect: QRectF, entry: ExportModEntry, icon, fonts: dict) -> None:
+def _draw_card(painter: QPainter, rect: QRectF, entry: ExportModEntry, icon, fonts: dict, number: int) -> None:
     """单张 Mod 卡片：阴影浮起，第一行名称 + 版本标签，第二行作者（左）与工坊 ID（右）。"""
     _draw_soft_shadow(painter, rect, _CARD_RADIUS)
     painter.setPen(Qt.PenStyle.NoPen)
@@ -138,6 +138,19 @@ def _draw_card(painter: QPainter, rect: QRectF, entry: ExportModEntry, icon, fon
         painter.setClipPath(clip)
         painter.drawPixmap(icon_rect, pixmap, QRectF(pixmap.rect()))
         painter.restore()
+
+    # 序号角标压在图标左上角：主题色底、白字、白色描边，方便聊天里说"第几个"。
+    badge_font = fonts["badge"]
+    badge_text = str(number)
+    badge_h = 20
+    badge_w = max(badge_h, QFontMetrics(badge_font).horizontalAdvance(badge_text) + 10)
+    badge = QRectF(icon_rect.left() - 6, icon_rect.top() - 6, badge_w, badge_h)
+    painter.setPen(QPen(theme.color("CARD_BG"), 2))
+    painter.setBrush(theme.color("PRIMARY_DARK"))
+    painter.drawRoundedRect(badge, badge_h / 2, badge_h / 2)
+    painter.setFont(badge_font)
+    painter.setPen(QColor(255, 255, 255))
+    painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, badge_text)
 
     name_font, tag_font, meta_font = fonts["name"], fonts["tag"], fonts["meta"]
     name_fm, tag_fm, meta_fm = QFontMetrics(name_font), QFontMetrics(tag_font), QFontMetrics(meta_font)
@@ -188,7 +201,7 @@ def render_mod_list_image(entries: list[ExportModEntry], icon_images: dict, titl
     chips = [part for part in subtitle.rsplit(" · ", 3) if part.strip()]
     cols = _column_count(len(entries))
     rows = max(1, (len(entries) + cols - 1) // cols)
-    fonts = {"name": _font(15, bold=True), "tag": _font(11), "meta": _font(12)}
+    fonts = {"name": _font(15, bold=True), "tag": _font(11), "meta": _font(12), "badge": _font(11, bold=True)}
     footer_font = _font(11)
     footer_h = QFontMetrics(footer_font).height() + 14
     grid_w = cols * _CARD_W + (cols - 1) * _GAP
@@ -219,7 +232,8 @@ def render_mod_list_image(entries: list[ExportModEntry], icon_images: dict, titl
         col, row = divmod(index, rows)
         x = _PAD + _FRAME_PAD + col * (_CARD_W + _GAP)
         y = top + row * (_CARD_H + _GAP)
-        _draw_card(painter, QRectF(x, y, _CARD_W, _CARD_H), entry, icon_images.get(entry.workshop_id), fonts)
+        _draw_card(painter, QRectF(x, y, _CARD_W, _CARD_H), entry, icon_images.get(entry.workshop_id), fonts,
+                   index + 1)
 
     painter.setFont(footer_font)
     painter.setPen(theme.color("TEXT_MUTED"))
