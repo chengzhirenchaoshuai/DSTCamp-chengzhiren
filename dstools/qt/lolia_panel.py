@@ -1,17 +1,19 @@
 """内网穿透页的"Lolia映射"子页签（简化版）。
 
-用户在 Lolia 控制台自己建好 UDP 隧道，这里只填"节点 Token + 每个世界的隧道 ID"。
-开启映射时用官方免鉴权接口拉取原版 frpc 可用的配置（features/lolia/config.py），
-改写本地端口后交给自建节点那份原版 frpc.exe 以 `-c` 启动——进程管理直接复用
-features/frp_selfhost/client.py 的 FrpcManager（一个存档一个进程、孤儿进程按配置
-路径认领）。不调用需要登录的接口，所以不建隧道也不删隧道。
+用户在 Lolia 控制台自己建好 UDP 隧道，给每个世界粘贴一份「原版 frpc 配置」或
+「LoliaFRP-CLI 快捷启动」命令（features/lolia/config.py 的 parse_source 识别）。
+开启映射时合并成一份本地配置、改写本地端口，交给自建节点那份原版 frpc.exe 以 `-c`
+启动——进程管理直接复用 features/frp_selfhost/client.py 的 FrpcManager（一个存档
+一个进程、孤儿进程按配置路径认领）。不调用需要登录的接口，所以不建隧道也不删隧道。
 """
 
 import webbrowser
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QFont, QGuiApplication
+from PySide6.QtWidgets import (
+    QGridLayout, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+)
 
 from dstools.features.cluster_config.config_manager import (
     get_cluster_option, load_cluster_config, load_shard_config, save_shard_config, set_shard_option,
@@ -29,7 +31,6 @@ from dstools.qt.widgets import AutoHideLabel, section_card
 from dstools.shared import app_settings
 from dstools.shared.resource_paths import data_dir, runtime_tool_path
 from dstools.shared.server_ports import stable_path_key
-from dstools.shared.token_manager import is_valid_token, mask_token
 
 _FRPC_CONFIG_DIR_NAME = "lolia_frpc_config"
 
@@ -39,6 +40,34 @@ def _frpc_exe_path():
     return runtime_tool_path("frp_selfhost/frpc.exe")
 
 
+class _PasteSourceDialog(dialogs.Dialog):
+    """多行粘贴框：原版 frpc 配置或快捷启动命令，确认时校验，不合格不关闭。"""
+
+    def __init__(self, parent, shard_name: str):
+        super().__init__(parent, t("lolia.paste_title", shard=shard_name), "lg")
+        self.result_source: dict | None = None
+        self.body.addWidget(self.text_label(t("lolia.paste_prompt"), size_key="FONT_SIZE_MD"))
+        self._edit = QPlainTextEdit()
+        self._edit.setFont(QFont("Consolas", 11))
+        self._edit.setMinimumHeight(260)
+        self.body.addWidget(self._edit)
+        self._error = self.error_label()
+        self.body.addWidget(self._error)
+        self.add_buttons()
+        self._edit.setFocus()
+
+    def accept_if_valid(self) -> None:
+        text = self._edit.toPlainText().strip()
+        if not text:
+            return
+        try:
+            self.result_source = lolia_config.parse_source(text)
+        except lolia_config.LoliaError as exc:
+            self._error.setText(t("lolia.paste_invalid", detail=str(exc)))
+            return
+        self.accept()
+
+
 class LoliaPanel(QWidget):
     def __init__(self, ctx):
         super().__init__()
@@ -46,37 +75,27 @@ class LoliaPanel(QWidget):
         self.frpc = FrpcManager()
         self._current_cluster = None
         self._any_mapped = False
-        self._id_inputs: dict[str, QLineEdit] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 10, 0, 0)
         root.setSpacing(12)
 
-        # ── 分区一：节点 Token 与使用说明
-        token_card, token_layout = section_card(t("lolia.section_account"))
+        # ── 分区一：使用说明
+        guide_card, guide_layout = section_card(t("lolia.section_guide"))
         guide = QLabel(t("lolia.guide"))
         guide.setProperty("muted", True)
         guide.setFont(theme.font("FONT_SIZE_SM"))
         guide.setWordWrap(True)
-        token_layout.addWidget(guide)
+        guide_layout.addWidget(guide)
         row = QHBoxLayout()
-        row.setSpacing(8)
-        row.addWidget(QLabel(t("lolia.token_label")))
-        self._token_label = QLabel()
-        self._token_label.setFont(theme.font("FONT_SIZE_SM"))
-        self._token_label.setStyleSheet(f"font-family: Consolas; color: {theme.hex('TEXT')};")
-        row.addWidget(self._token_label)
-        change_btn = QPushButton(t("token.change"))
-        change_btn.clicked.connect(self._change_token)
-        row.addWidget(change_btn)
         dashboard_btn = QPushButton(t("lolia.open_dashboard_btn"))
         dashboard_btn.clicked.connect(lambda: webbrowser.open(lolia_config.DASHBOARD_URL))
         row.addWidget(dashboard_btn)
         row.addStretch()
-        token_layout.addLayout(row)
-        root.addWidget(token_card)
+        guide_layout.addLayout(row)
+        root.addWidget(guide_card)
 
-        # ── 分区二：世界映射（隧道 ID 输入 + 开启/关闭 + frpc 状态）
+        # ── 分区二：世界映射（每个世界粘贴来源 + 开启/关闭 + frpc 状态）
         shards_card, shards_layout = section_card(t("sakura.section_shards"))
         self._status_label = AutoHideLabel()
         self._status_label.setStyleSheet(f"color: {theme.hex('ERROR')};")
@@ -117,29 +136,12 @@ class LoliaPanel(QWidget):
         root.addWidget(shards_card)
         root.addStretch()
 
-        self._load_token_display()
-
-    # ── Token ───────────────────────────────────────────────────────────
-    def _load_token_display(self) -> None:
-        token = app_settings.get_lolia_token() or ""
-        self._token_label.setText(mask_token(token) if token else t("token.empty"))
-
-    def _change_token(self) -> None:
-        dialog = dialogs.TextInputDialog(
-            self.window(), t("token.change"), t("lolia.token_prompt"),
-            validator=lambda v: None if is_valid_token(v) else t("sakura.token_invalid_hint"))
-        if not dialog.exec() or not dialog.result_text:
-            return
-        app_settings.set_lolia_token(dialog.result_text.strip())
-        self._load_token_display()
-
     # ── 世界列表 ────────────────────────────────────────────────────────
     def on_cluster_changed(self, cluster) -> None:
         self._current_cluster = cluster
         self._render_shard_rows()
 
     def _clear_shards_grid(self) -> None:
-        self._id_inputs.clear()
         while self._shards_grid.count():
             item = self._shards_grid.takeAt(0)
             widget = item.widget()
@@ -183,17 +185,16 @@ class LoliaPanel(QWidget):
                     copy_btn.setToolTip(t("sakura.copy_connect_master_only_hint"))
                 self._shards_grid.addWidget(copy_btn, row, 3)
             else:
-                edit = QLineEdit()
-                edit.setPlaceholderText(t("lolia.tunnel_id_placeholder"))
-                edit.setFixedWidth(120)
-                saved = app_settings.get_lolia_tunnel_id(cluster.path, shard.name)
-                if saved is not None:
-                    edit.setText(str(saved))
-                self._shards_grid.addWidget(edit, row, 1)
-                self._id_inputs[shard.name] = edit
                 unmapped = QLabel(t("sakura.shard_unmapped"))
                 unmapped.setProperty("muted", True)
-                self._shards_grid.addWidget(unmapped, row, 2)
+                self._shards_grid.addWidget(unmapped, row, 1)
+                source = app_settings.get_lolia_source(cluster.path, shard.name)
+                source_label = QLabel(self._source_text(source))
+                source_label.setProperty("muted", source is None)
+                self._shards_grid.addWidget(source_label, row, 2)
+                paste_btn = QPushButton(t("lolia.repaste_btn") if source else t("lolia.paste_btn"))
+                paste_btn.clicked.connect(lambda _c=False, s=shard: self._paste_source(s))
+                self._shards_grid.addWidget(paste_btn, row, 3)
 
         self._any_mapped = any_mapped
         self._action_btn.setVisible(True)
@@ -201,6 +202,24 @@ class LoliaPanel(QWidget):
         self._frpc_row.setVisible(any_mapped)
         if any_mapped:
             self._refresh_frpc_row()
+
+    @staticmethod
+    def _source_text(source: dict | None) -> str:
+        if source is None:
+            return t("lolia.source_none")
+        if source["kind"] == "cli":
+            return t("lolia.source_cli", id=source["id"])
+        return t("lolia.source_config")
+
+    def _paste_source(self, shard) -> None:
+        cluster = self._current_cluster
+        if not cluster:
+            return
+        dialog = _PasteSourceDialog(self.window(), shard.name)
+        if not dialog.exec() or dialog.result_source is None:
+            return
+        app_settings.set_lolia_source(cluster.path, shard.name, dialog.result_source)
+        self._render_shard_rows()
 
     def _copy_connect_string(self, mapping: dict) -> None:
         cluster = self._current_cluster
@@ -312,34 +331,16 @@ class LoliaPanel(QWidget):
         else:
             self._enable_mapping()
 
-    def _collect_tunnel_ids(self, cluster) -> dict[str, int] | None:
-        ids, missing = {}, []
-        for shard in cluster.shards:
-            edit = self._id_inputs.get(shard.name)
-            raw = edit.text().strip() if edit else ""
-            if raw.isdigit() and int(raw) > 0:
-                ids[shard.name] = int(raw)
-            else:
-                missing.append(shard.name)
-        if missing:
-            dialogs.show_warning(self.window(), t("lolia.enable_btn"),
-                                  t("lolia.tunnel_id_missing", shards="、".join(missing)))
-            return None
-        return ids
-
     def _enable_mapping(self) -> None:
         cluster = self._current_cluster
         if not cluster:
             return
-        token = app_settings.get_lolia_token()
-        if not token:
-            dialogs.show_warning(self.window(), t("lolia.enable_btn"), t("lolia.token_missing"))
+        sources = {s.name: app_settings.get_lolia_source(cluster.path, s.name) for s in cluster.shards}
+        missing = [name for name, source in sources.items() if source is None]
+        if missing:
+            dialogs.show_warning(self.window(), t("lolia.enable_btn"),
+                                  t("lolia.source_missing", shards="、".join(missing)))
             return
-        ids = self._collect_tunnel_ids(cluster)
-        if ids is None:
-            return
-        for shard_name, tunnel_id in ids.items():
-            app_settings.set_lolia_tunnel_id(cluster.path, shard_name, tunnel_id)
         running = self._running_shard_names(cluster)
         if running:
             dialogs.show_warning(self.window(), t("sakura.require_stopped_title"),
@@ -360,7 +361,7 @@ class LoliaPanel(QWidget):
 
         def work():
             post_to_ui(lambda _a: progress.append(t("lolia.setup_fetching")))
-            toml_text, ports, host = lolia_config.prepare_mapping(token, ids)
+            toml_text, ports, host = lolia_config.prepare_mapping(sources)
             config_path.parent.mkdir(parents=True, exist_ok=True)
             config_path.write_text(toml_text, encoding="utf-8")
             for shard in shards:

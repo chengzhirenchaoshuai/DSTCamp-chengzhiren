@@ -1,6 +1,8 @@
-"""Lolia 映射的纯逻辑：拉取隧道配置、改写成本地可用的原版 frpc 配置。
+"""Lolia 映射的纯逻辑：识别用户粘贴的隧道信息、改写成本地可用的原版 frpc 配置。
 
-数据来源是官方开放 API 的免鉴权接口（https://api-docs.lolia.link/403472745e0.md）：
+主要来源是用户从控制台复制的「原版 frpc 配置」（见 parse_source）；粘贴的是
+「LoliaFRP-CLI 快捷启动」命令时，才用官方开放 API 的免鉴权接口
+（https://api-docs.lolia.link/403472745e0.md）拉配置：
 `GET /api/v1/tunnel/frpc/config?token=<节点Token>&id=<隧道ID,...>`，返回
 `{"code":200,"data":{"config":"<Base64 TOML>",...}}`。这份 `config` 官方注明是
 "原版 frpc 可用的标准配置"，所以直接交给自建节点那份原版 frpc.exe 跑，不需要
@@ -121,15 +123,55 @@ def build_local_config(merged: dict, names_by_shard: dict[str, str]) -> tuple[di
     return merged, ports
 
 
-def prepare_mapping(token: str, ids_by_shard: dict[str, int]) -> tuple[str, dict[str, int], str]:
-    """完整流程（会联网，放后台线程）：先按单个 ID 拉一次，认领每个世界对应的代理
-    name；再按全部 ID 拉服务端合并的配置（通用段以服务端合并结果为准，不自己拼）。
+def parse_source(text: str) -> dict:
+    """识别用户给一个世界粘贴的内容，两种都认：
+
+    - 控制台「使用 LoliaFRP-CLI 快捷启动」命令（`frpc -t <隧道ID>:<节点Token>`），
+      返回 {"kind": "cli", "id", "token"}，开启映射时联网拉配置；
+    - 控制台「原版 frpc 配置」TOML，返回 {"kind": "config", "text"}，不需要联网。
+      真机反馈过这种配置里只有隧道名称、没有数字 ID，而且其中的 metadatas.token
+      不能拿去调免鉴权接口（接口回"TOKEN 与 ID 不对应"），所以直接用配置本身。
+
+    格式不对或不是单条 UDP 隧道时抛 LoliaError。"""
+    text = text.strip()
+    pairs = re.findall(r"(?:^|\s)-t\s+(\d+):(\S+)", text) or re.findall(r"^(\d+):(\S+)$", text)
+    if pairs:
+        if len(pairs) != 1:
+            raise LoliaError("one tunnel per world")
+        return {"kind": "cli", "id": int(pairs[0][0]), "token": pairs[0][1]}
+    config = parse_toml(text)
+    proxies = config.get("proxies") or []
+    if len(proxies) != 1:
+        raise LoliaError(f"expected exactly one proxy, got {len(proxies)}")
+    if proxies[0].get("type") != "udp":
+        raise LoliaError(f"tunnel type is {proxies[0].get('type')}, UDP required")
+    return {"kind": "config", "text": text}
+
+
+def _source_config(source: dict) -> dict:
+    if source.get("kind") == "cli":
+        return parse_toml(fetch_config_text(source["token"], [int(source["id"])]))
+    return parse_toml(source["text"])
+
+
+def prepare_mapping(sources_by_shard: dict[str, dict]) -> tuple[str, dict[str, int], str]:
+    """把每个世界的来源合并成一份本地配置（快捷启动命令来源会联网，放后台线程）。
+
+    一个存档共用一个 frpc 进程，所以除代理外的通用段（节点地址、认证等）必须一致，
+    不一致说明隧道不在同一节点/账号下，直接报错。
     返回 (本地 TOML 文本, {世界名: 远程端口}, 节点地址)。"""
-    names_by_shard = {
-        shard: single_proxy_name(parse_toml(fetch_config_text(token, [tunnel_id])))
-        for shard, tunnel_id in ids_by_shard.items()
-    }
-    merged = parse_toml(fetch_config_text(token, list(ids_by_shard.values())))
+    common = None
+    proxies, names_by_shard = [], {}
+    for shard, source in sources_by_shard.items():
+        config = _source_config(source)
+        names_by_shard[shard] = single_proxy_name(config)
+        proxies.extend(config.pop("proxies"))
+        config.pop("visitors", None)
+        if common is None:
+            common = config
+        elif config != common:
+            raise LoliaError("tunnels are not on the same node/account")
+    merged = dict(common or {}, proxies=proxies)
     local, ports = build_local_config(merged, names_by_shard)
     return dump_toml(local), ports, local["serverAddr"]
 
