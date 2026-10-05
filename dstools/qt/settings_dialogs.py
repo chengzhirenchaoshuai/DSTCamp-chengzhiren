@@ -239,6 +239,10 @@ class FontSettingsDialog(dialogs.Dialog):
         self._refresh_preview()
 
     def _refresh_preview(self) -> None:
+        if theme.font_style == "pixel":
+            # 像素字体只能用档位表里 12 整数倍的物理像素，按正文字号预览才与实际一致。
+            self._preview.setFont(theme.font("FONT_SIZE_BASE"))
+            return
         px = max(6, round(_PREVIEW_FONT_SIZE * theme.font_size_scale))
         self._preview.setFont(QFont(theme.font_family, px))
 

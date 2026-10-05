@@ -3266,7 +3266,7 @@ def test_font_style_switch():
         theme.set_font_style("cute")
         cute_font = theme.font("FONT_SIZE_BASE")
         assert cute_font.family() == FONT_FAMILY_BY_STYLE["cute"] == "KN Maiyuan"
-        assert cute_font.pointSize() > default_font.pointSize(), "可爱风笔画粗，字号需整体放大"
+        assert cute_font.pointSize() == default_font.pointSize(), "麦圆体与默认雅黑保持同一磅值"
         assert theme.font("FONT_SIZE_BASE", bold=True).bold()
         print("  PASS: 切换样式后字体族与字号缩放生效，显式 bold 保留")
 

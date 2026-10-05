@@ -28,15 +28,24 @@ _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png")
 # 整数倍物理像素下才像素完美。QFont 的 pixelSize/pointSize 是逻辑单位，高 DPI 下会被
 # devicePixelRatio 再缩放一次，故用 setPointSizeF 反推逻辑磅值绕过 DPR。DirectWrite 引擎
 # 12px 有亚像素粘连，需配合 app.py 的 FreeType 字体引擎（windows:fontengine=freetype）
-# 才能像素完美。各档位物理像素见 _PIXEL_LEVEL_SIZES（标题是正文 2 倍，仅"标准"档正文
-# 18px 非整数倍、笔画 1/2px 交替但接近默认雅黑视觉）。
+# 才能像素完美。各档位（正文, 标题）物理像素见 _PIXEL_LEVEL_SIZES：只取 12 的整数倍，
+# 12 与 24 之间没有清晰字号，故小/标准同为 12/24，大/特大正文 24、标题按 36/48 递进
+# （真机反馈过标准档 18px 笔画割裂、大/特大的 48/72px 标题过大）。
 _PIXEL_TITLE_KEYS = ("FONT_SIZE_XL", "FONT_SIZE_LG")
 _PIXEL_LEVEL_SIZES = {
     "small": (12, 24),
-    "normal": (18, 36),
-    "large": (24, 48),
-    "xlarge": (36, 72),
+    "normal": (12, 24),
+    "large": (24, 36),
+    "xlarge": (24, 48),
 }
+
+# 控件上记录字号语义层级（size_key）与是否加粗的动态属性名，见 _patch_widget_set_font()。
+_FONT_KEY_PROP = "dstFontKey"
+_FONT_BOLD_PROP = "dstFontBold"
+# Qt 样式表在控件首次 polish 时把当时的字体存进这个动态属性，之后每次重设样式表（全局
+# 或控件自己的）都会把字体还原成它；setFont() 不会更新它（Qt 内部属性名）。
+_QSS_SAVED_FONT_PROP = "_q_styleSheetWidgetFont"
+_ORIGINAL_SET_FONT = None
 _SIZE_KEYS = ("FONT_SIZE_XL", "FONT_SIZE_LG", "FONT_SIZE_MD",
               "FONT_SIZE_BASE", "FONT_SIZE_SM", "FONT_SIZE_XS")
 
@@ -103,6 +112,34 @@ def _patch_combo_popup_width() -> None:
         _ORIGINAL_COMBO_SHOW_POPUP(self)
 
     QComboBox.showPopup = _show_popup
+
+
+def _patch_widget_set_font() -> None:
+    """全局猴补丁 QWidget.setFont——设字体时顺带做两件事：
+
+    1. 把字号语义层级（theme.font() 打的标签，没有标签按当前状态反推）记到控件的
+       动态属性上，切字号档位/字体样式时按它重算，不再从当前字号反推（反推会被 Qt
+       样式表还原的旧字体带偏，真机反馈过切几次字号时大时小）。
+    2. 同步 Qt 样式表保存的字体（_q_styleSheetWidgetFont）：否则之后任何一次重设
+       样式表（切颜色主题、状态标签改颜色）都会把字体还原成控件第一次显示时的字号。
+       Qt 自己只在控件有独立样式表时才同步这份字体，全局样式表下不同步。"""
+    global _ORIGINAL_SET_FONT
+    if _ORIGINAL_SET_FONT is not None:
+        return
+    from PySide6.QtWidgets import QWidget
+
+    _ORIGINAL_SET_FONT = QWidget.setFont
+
+    def _set_font(self, font) -> None:
+        _ORIGINAL_SET_FONT(self, font)
+        tag = getattr(font, "_dst_tag", None) or theme._infer_font_tag(font, self)
+        # 换成别的字体（如等宽字体）时清掉记录，切换时不再动它。
+        self.setProperty(_FONT_KEY_PROP, tag[0] if tag else None)
+        self.setProperty(_FONT_BOLD_PROP, tag[1] if tag else None)
+        if self.property(_QSS_SAVED_FONT_PROP) is not None:
+            self.setProperty(_QSS_SAVED_FONT_PROP, self.font())
+
+    QWidget.setFont = _set_font
 
 
 class _PopupShowFilter(QObject):
@@ -289,7 +326,27 @@ class Theme(QObject):
             font = QFont(self.font_family, max(6, round(self.palette[size_key] * scale)))
             font.setBold(bold)
         self.apply_style_hints(font)
+        # 记下语义层级与请求的加粗（像素样式虽忽略 bold，切回其它样式时要恢复），
+        # setFont() 时由 _patch_widget_set_font() 记到控件上。
+        font._dst_tag = (size_key, bold)
         return font
+
+    def _infer_font_tag(self, font: QFont, widget) -> tuple[str, bool] | None:
+        """没带标签的字体（如复制控件字体后改粗细再 setFont）按当前样式/档位反推层级；
+        不是本项目字体族返回 None。控件已记录的层级在当前状态下字号仍一致时沿用，
+        避免像素样式下多个层级同字号时被反推成同一层级。"""
+        style = {FONT_FAMILY_BY_STYLE[n]: n for n in FONT_STYLE_NAMES}.get(font.family())
+        if style is None:
+            return None
+        known = widget.property(_FONT_KEY_PROP)
+        if known in _SIZE_KEYS and style == self._font_style:
+            probe = QFont(font)
+            self._apply_font_size(probe, known)
+            if abs(probe.pointSizeF() - font.pointSizeF()) < 0.01:
+                # 像素样式的字体总是不加粗，加粗意图只能沿用已记录的。
+                bold = bool(widget.property(_FONT_BOLD_PROP)) if style == "pixel" else font.bold()
+                return known, bold
+        return self._size_key_from_font(font, style, self._font_size_level), font.bold()
 
     def _apply_pixel_size(self, font: QFont, size_key: str) -> None:
         """像素字体按档位查表取物理像素（正文/标题）并反推回逻辑磅值。"""
@@ -346,6 +403,8 @@ class Theme(QObject):
         self._name = name
         app_settings.set_theme_name(name)
         self.apply_to_app()
+        # 重设样式表会把控件字体还原成 Qt 存的旧字体，切颜色主题也要按层级重设一遍。
+        self._refresh_explicit_fonts(self._font_size_level)
         self.changed.emit()
 
     def set_font_style(self, choice: str) -> None:
@@ -376,21 +435,19 @@ class Theme(QObject):
         """apply_to_app() 只改了应用默认字体；各页面构造时用 setFont(theme.font(...)) 单独
         设过字体的控件不会跟着变（真机反馈过切到"缝合像素字体"后很多页签文字没变）。
 
-        注意：重设样式表后 Qt 重新 polish，带字体相关 QSS（如按钮的 font-weight）的控件会被
-        还原成它创建时的字体，而不是上一次的字体。所以这里不按"旧样式"匹配，而是凡是用着
-        本项目任一字体样式字体族的控件都按旧字号反推语义层级（size_key）后用新样式/新档位
-        重设字体族与字号；字体族没变（仅切字号档位）时也照常重设字号。特意用了别的字体
-        （如 Consolas 等宽）的控件保持不动。必须在 apply_to_app() 之后调用。"""
+        注意：重设样式表后 Qt 会把控件字体还原成它首次 polish 时的字体，不能从当前字号
+        反推层级（真机反馈过切几次字号时大时小）。层级以 setFont() 时记在控件上的
+        dstFontKey/dstFontBold 为准；没记录的（Qt 内部或绕过 theme.font() 设的）才按
+        old_level 反推一次。特意用了别的字体（如 Consolas 等宽）的控件保持不动。
+        必须在 apply_to_app() 之后调用。"""
         app = QApplication.instance()
         if app is None:
             return
         family_to_style = {FONT_FAMILY_BY_STYLE[name]: name for name in FONT_STYLE_NAMES}
         new_family = self.font_family
         new_style = self._font_style
-        # 每个控件只反推一次 size_key 并缓存，避免多次迭代里字号被反复重设后反推出
-        # 相邻层级（漂移）；后续迭代按缓存的 size_key 幂等重设。父控件改字体时 Qt 会
-        # 顺带改写部分子控件（如列表视口）的字体，重复到没有变化为止。
-        size_key_cache: dict[int, str] = {}
+        # 父控件改字体时 Qt 会顺带改写部分子控件（如列表视口）的字体，重复到没有变化为止；
+        # 第一遍已把层级记到控件上，后续迭代按记录幂等重设。
         for _ in range(3):
             changed = 0
             for widget in app.allWidgets():
@@ -403,17 +460,24 @@ class Theme(QObject):
                 old_style = family_to_style.get(font.family())
                 if old_style is None:
                     continue
-                wid = id(widget)
-                if wid not in size_key_cache:
-                    size_key_cache[wid] = self._size_key_from_font(font, old_style, old_level)
-                size_key = size_key_cache[wid]
+                size_key = widget.property(_FONT_KEY_PROP)
+                if size_key in _SIZE_KEYS:
+                    bold = bool(widget.property(_FONT_BOLD_PROP))
+                else:
+                    size_key = self._size_key_from_font(font, old_style, old_level)
+                    bold = font.bold()
                 if old_style != new_style:
                     font.setFamily(new_family)
                     self.apply_style_hints(font)
                 self._apply_font_size(font, size_key)
+                # 像素字体只有 Regular 字重，忽略加粗（同 font()）。
+                font.setBold(bold and new_style != "pixel")
+                font._dst_tag = (size_key, bold)
                 if font != widget.font():
                     widget.setFont(font)
                     changed += 1
+                elif widget.property(_FONT_KEY_PROP) != size_key:
+                    widget.setFont(font)  # 字号已一致，只补记层级
             if not changed:
                 break
 
@@ -428,6 +492,7 @@ class Theme(QObject):
             app.setFont(self.font("FONT_SIZE_SM"))
             app.setStyleSheet(self.qss())
             _patch_combo_popup_width()
+            _patch_widget_set_font()
             _apply_tooltip_style(app)
 
     def qss(self) -> str:
