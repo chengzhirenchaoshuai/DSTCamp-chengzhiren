@@ -6,8 +6,10 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QPainter, QPen, QShortcut, QTextCursor
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap, QShortcut, QTextCursor,
+)
 from PySide6.QtWidgets import (
     QAbstractButton, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTabBar,
     QTabWidget, QTextEdit, QVBoxLayout, QWidget,
@@ -79,7 +81,7 @@ TAB_MARGIN_RIGHT = 8
 
 
 class TabCloseButton(QAbstractButton):
-    """压在世界页签右上角的圆形关闭角标：平时白底描边灰 ×，悬停变红底白 ×。"""
+    """压在世界页签右上角的关闭角标：平时只有灰色 ×（透明底），悬停变红色圆底白 ×。"""
 
     _SIZE = 16
 
@@ -104,10 +106,11 @@ class TabCloseButton(QAbstractButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         hover = self.underMouse()
-        circle = QRectF(0.75, 0.75, self._SIZE - 1.5, self._SIZE - 1.5)
-        painter.setPen(Qt.PenStyle.NoPen if hover else QPen(theme.color("CARD_BORDER"), 1))
-        painter.setBrush(theme.color("ERROR") if hover else theme.color("CARD_BG"))
-        painter.drawEllipse(circle)
+        # 平时只画 ×、不垫底；悬停才出现红色圆底，提示这是关闭。
+        if hover:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(theme.color("ERROR"))
+            painter.drawEllipse(QRectF(0.75, 0.75, self._SIZE - 1.5, self._SIZE - 1.5))
         color = QColor("#FFFFFF") if hover else theme.color("TEXT_MUTED")
         painter.setPen(QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         a, b = 5.5, self._SIZE - 5.5
@@ -156,9 +159,13 @@ class _ConsoleTabBar(QTabBar):
 class ConsoleTabWidget(QTabWidget):
     """世界控制台页签：页签右上角带关闭角标（替代原控制台底部的"关闭窗口"按钮）。"""
 
+    _DOT = 8  # 状态圆点直径（逻辑像素）
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setTabBar(_ConsoleTabBar())
+        self.setIconSize(QSize(self._DOT + 2, self._DOT + 2))
+        self._dot_icons: dict[tuple[str, float], QIcon] = {}
 
     def add_console_tab(self, pane: "ConsolePane", title: str) -> int:
         index = self.addTab(pane, title)
@@ -168,12 +175,46 @@ class ConsoleTabWidget(QTabWidget):
         button.clicked.connect(lambda _checked=False: pane.request_close())
         bar.setTabData(index, button)
         bar.place_close_buttons()
+        # 切换存档时同一个 pane 会被反复移除/重新加入，信号只连一次。
+        if not getattr(pane, "_status_dot_connected", False):
+            pane._status_dot_connected = True
+            pane.status_changed.connect(lambda status, p=pane: self._set_status_dot(p, status))
+        self._set_status_dot(pane, pane.proc.status)
         return index
+
+    def _set_status_dot(self, pane: "ConsolePane", status) -> None:
+        """页签名左侧的状态圆点，配色与控制台状态文字一致（运行中绿、正在停止红……）。"""
+        index = self.indexOf(pane)
+        if index < 0:
+            return
+        self.setTabIcon(index, self._dot_icon(status_color(status)))
+
+    def _dot_icon(self, color: str) -> QIcon:
+        # 按屏幕缩放比画到物理像素再设 devicePixelRatio，避免被二次放大发虚。
+        dpr = self.devicePixelRatioF()
+        key = (color, dpr)
+        if key not in self._dot_icons:
+            box = self._DOT + 2
+            pixmap = QPixmap(round(box * dpr), round(box * dpr))
+            pixmap.setDevicePixelRatio(dpr)
+            pixmap.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(color))
+            painter.drawEllipse(QRectF(1, 1, self._DOT, self._DOT))
+            painter.end()
+            self._dot_icons[key] = QIcon(pixmap)
+        return self._dot_icons[key]
 
 
 class ConsolePane(QWidget):
+    # 世界运行状态变化时发出（只在变化时发，定时 pump 不会重复触发），供页签状态圆点刷新。
+    status_changed = Signal(object)
+
     def __init__(self, proc, on_close, on_rollback, on_failure=None, on_registered=None, parent=None):
         super().__init__(parent)
+        self._last_status = None
         self.proc = proc
         self._on_close = on_close
         self._on_rollback = on_rollback
@@ -588,6 +629,9 @@ class ConsolePane(QWidget):
 
         self.status_label.setText(t(STATUS_TEXT_KEYS[status]))
         self.status_label.setStyleSheet(f"color: {status_color(status)};")
+        if status != self._last_status:
+            self._last_status = status
+            self.status_changed.emit(status)
         can_send = status == ServerStatus.RUNNING
         world_ready = can_send and self.proc.world_ready
         self.cmd_edit.setEnabled(can_send)
