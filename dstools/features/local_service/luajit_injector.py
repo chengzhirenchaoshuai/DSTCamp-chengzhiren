@@ -74,13 +74,6 @@ def get_luajit_dir(install_dir: Path) -> Path:
     return install_dir / LUAJIT_DIR_NAME
 
 
-def supports_install_dir(install_dir: Path) -> bool:
-    """用游戏客户端开服时不启用 LuaJIT：隔离副本和路径标记都会写进客户端
-    游戏目录，客户端本体是否也会读取这份标记尚未核实，先整体关闭。"""
-    from dstools.features.local_service.dedicated_server import is_client_install_dir
-    return not is_client_install_dir(install_dir)
-
-
 def current_game_build_id(install_dir: Path) -> str | None:
     """薄封装 steam_discovery.read_game_version_file()——install_dir 是专
     用服务器安装根目录，游戏自己把版本号写在这个目录下的 version.txt
@@ -476,7 +469,7 @@ def resolve_launch_bin64_dir(install_dir: Path) -> Path | None:
     已启用且副本有效，返回副本目录。纯只读判断，不做任何联网/重新生成
     的副作用——调用方（gui/local_service_tab.py._do_start_shard()）应该
     已经用 needs_regeneration() 提前处理过"要不要先重新生成"这件事。"""
-    if not get_luajit_enabled() or not supports_install_dir(install_dir):
+    if not get_luajit_enabled():
         return None
     luajit_dir = get_luajit_dir(install_dir)
     if not _runtime_ready(install_dir):
@@ -491,7 +484,7 @@ def needs_regeneration(install_dir: Path) -> bool:
     哈希。这样旧版整包复制布局会自动完整重建；作者只替换 DLL 而未更新
     modinfo.lua 的版本号时，也不会漏掉更新。纯本地读取，不联网。
     """
-    if not get_luajit_enabled() or not supports_install_dir(install_dir):
+    if not get_luajit_enabled():
         return False
     luajit_dir = get_luajit_dir(install_dir)
     marker = read_marker(luajit_dir)

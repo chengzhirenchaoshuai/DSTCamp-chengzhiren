@@ -800,13 +800,6 @@ class LocalServicePage(Page):
             self._luajit_install_btn.setText(t("local.luajit_install_btn"))
             self._luajit_uninstall_btn.setEnabled(False)
             return
-        if self._install_dir is not None and not luajit_injector.supports_install_dir(self._install_dir):
-            self._luajit_bin64_dir = None
-            self._luajit_status_label.setText(t("local.luajit_client_runtime_hint"))
-            self._luajit_install_btn.setEnabled(False)
-            self._luajit_install_btn.setText(t("local.luajit_install_btn"))
-            self._luajit_uninstall_btn.setEnabled(False)
-            return
         bin64_dir = find_bin64_dir(self._install_dir) if self._install_dir else None
         self._luajit_bin64_dir = bin64_dir
         if bin64_dir is None:
