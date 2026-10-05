@@ -179,18 +179,21 @@ def discover_legacy_runtime_targets() -> list[Path]:
     """返回 DSTCamp 应维护的 V1 运行目录，链接目标只保留一次。
 
     官方客户端会把 ``*_legacy.bin`` 缓存到 ``cached_mods``，再自行解压到
-    客户端 ``mods/workshop-<id>``；DSTCamp 不应重复接管该目录。这里只
-    返回独立专服的 ``mods``。若它本身是指向客户端 ``mods`` 的 junction，
-    后续的真实路径去重仍会自然复用客户端已经展开的内容。
+    客户端 ``mods/workshop-<id>``；只为客户端玩游戏时 DSTCamp 不必接管该
+    目录。这里返回独立专服的 ``mods``，以及实际开服程序的 ``mods``——
+    没装独立专服、用游戏客户端开服时就是客户端 ``mods``，服务器只从这里
+    读取 V1 内容。专服 ``mods`` 本身是指向客户端 ``mods`` 的 junction 时，
+    后续的真实路径去重只保留一个。
     """
     from dstools.features.local_service.dedicated_server import (
         find_dedicated_server_dir,
+        find_server_runtime_dir,
     )
 
     candidates: list[Path] = []
-    server = find_dedicated_server_dir()
-    if server is not None:
-        candidates.append(Path(server) / "mods")
+    for install_dir in (find_dedicated_server_dir(), find_server_runtime_dir()):
+        if install_dir is not None:
+            candidates.append(Path(install_dir) / "mods")
 
     result: list[Path] = []
     resolved: set[str] = set()

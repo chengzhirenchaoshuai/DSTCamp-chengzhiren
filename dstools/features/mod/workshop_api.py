@@ -773,14 +773,28 @@ class SteamWorkshopSession:
         return False
 
     def _init_steam_api(self, initializer: Callable[[], Any]) -> bool:
-        """在 DLL 旁边读取 steam_appid.txt 后恢复 DSTCamp 的工作目录。"""
+        """在 DLL 旁边读取 steam_appid.txt 后恢复 DSTCamp 的工作目录。
+
+        独立专服 bin64 自带 steam_appid.txt，游戏客户端 bin64 没有；只装
+        客户端时改用 Steam 认可的 ``SteamAppId`` 环境变量提供 App ID（真机
+        核对：客户端 DLL 不带它时 SteamAPI_Init 失败，带上后读取订阅正常）。
+        初始化结束即恢复，避免影响之后启动的子进程。"""
         previous = os.getcwd()
+        need_app_id = not (self.dll_path.parent / "steam_appid.txt").is_file()
         with _STEAM_INIT_CWD_LOCK:
+            previous_app_id = os.environ.get("SteamAppId")
             try:
                 os.chdir(str(self.dll_path.parent))
+                if need_app_id:
+                    os.environ["SteamAppId"] = str(self.app_id)
                 return bool(initializer())
             finally:
                 os.chdir(previous)
+                if need_app_id:
+                    if previous_app_id is None:
+                        os.environ.pop("SteamAppId", None)
+                    else:
+                        os.environ["SteamAppId"] = previous_app_id
 
     def _configure_ugc_calls(self) -> None:
         self.dll.SteamAPI_ISteamUGC_GetItemState.argtypes = [

@@ -208,9 +208,11 @@ def main() -> None:
         server_install = root / "server-only"
         original_client_mods = mod_parser.find_game_mods_dir
         original_server = dedicated.find_dedicated_server_dir
+        original_runtime = dedicated.find_server_runtime_dir
         try:
             mod_parser.find_game_mods_dir = lambda: None
             dedicated.find_dedicated_server_dir = lambda: server_install
+            dedicated.find_server_runtime_dir = lambda: server_install
             assert legacy_v1.discover_legacy_runtime_targets() == [
                 server_install / "mods"
             ]
@@ -220,6 +222,13 @@ def main() -> None:
         finally:
             mod_parser.find_game_mods_dir = original_client_mods
             dedicated.find_dedicated_server_dir = original_server
+            dedicated.find_server_runtime_dir = original_runtime
+
+        # 没装独立专服、用游戏客户端开服时，V1 更新部署到客户端 mods。
+        client_install = root / "client-only"
+        with patch.object(dedicated, "find_dedicated_server_dir", return_value=None), \
+                patch.object(dedicated, "find_server_runtime_dir", return_value=client_install):
+            assert legacy_v1.discover_legacy_runtime_targets() == [client_install / "mods"]
 
         # 开服前只处理当前存档已启用、且确实存在 Legacy 包的项目；V2 ID
         # 不会被误判。内容不同的旧目录应自动替换，第二次检查不再重复部署。
