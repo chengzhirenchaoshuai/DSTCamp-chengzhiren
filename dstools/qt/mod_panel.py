@@ -186,7 +186,7 @@ class ModListPanel(QAbstractScrollArea):
                    cfg_x1=cfg_x1, cfg_x2=cfg_x2, link_x1=link_x1, link_x2=link_x2)
 
     def _fonts(self, s: float):
-        name_font = theme.panel_font(15 * s, large=True)
+        name_font = theme.panel_font(15 * s)
         id_font = theme.panel_font(12 * s)
         btn_font = theme.panel_font(13 * s)
         # "配置"按钮文字单独用 14 号，比链接文字（btn_font，13 号）更醒目
@@ -199,8 +199,8 @@ class ModListPanel(QAbstractScrollArea):
         self._ensure_layout()
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if theme.font_style != "pixel":
-            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        # 像素字体清晰字号由字体自身的 NoAntialias 策略关抗锯齿，其余字号仍需文字抗锯齿。
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         if not self._rows and self._center_message:
             # 没有行可画时（加载中），在列表首行位置水平居中画一行加粗提示。
             painter.setFont(theme.font("FONT_SIZE_MD", bold=True))

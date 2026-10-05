@@ -24,20 +24,16 @@ THEME_NAMES = palettes.THEME_NAMES
 # 半透明，深灰箭头在任何主题下对比度都够。
 _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png").as_posix()
 
-# 缝合像素字体（Fusion Pixel 12px）是 upm=1200 的 12px 网格字体，只有渲染在 12 的
-# 整数倍物理像素下才像素完美。QFont 的 pixelSize/pointSize 是逻辑单位，高 DPI 下会被
-# devicePixelRatio 再缩放一次，故用 setPointSizeF 反推逻辑磅值绕过 DPR。DirectWrite 引擎
-# 12px 有亚像素粘连，需配合 app.py 的 FreeType 字体引擎（windows:fontengine=freetype）
-# 才能像素完美。各档位（正文, 标题）物理像素见 _PIXEL_LEVEL_SIZES：只取 12 的整数倍，
-# 12 与 24 之间没有清晰字号，故小/标准同为 12/24，大/特大正文 24、标题按 36/48 递进
-# （真机反馈过标准档 18px 笔画割裂、大/特大的 48/72px 标题过大）。
-_PIXEL_TITLE_KEYS = ("FONT_SIZE_XL", "FONT_SIZE_LG")
-_PIXEL_LEVEL_SIZES = {
-    "small": (12, 24),
-    "normal": (12, 24),
-    "large": (24, 36),
-    "xlarge": (24, 48),
-}
+# 缝合像素字体（Fusion Pixel 12px）按 12px 网格设计：物理像素正好是 12 的整数倍时关掉
+# 抗锯齿才像素完美；其它字号关掉抗锯齿笔画会 1px/2px 粗细不均（真机反馈过"割裂"），
+# 改开灰度抗锯齿（跟 Tk 版 GDI/PIL 的渲染一致，笔画均匀、边缘略柔）。字号与普通字体
+# 同一套公式（层级 × 档位系数），换算成物理像素后离 12 整数倍不超过
+# _PIXEL_SNAP_TOLERANCE 时吸附过去走清晰渲染——任何屏幕缩放比下都按正常逻辑字号显示，
+# 不会只剩 12/24 两档（真机反馈过小档太小、大档太大）。QFont 的磅值是逻辑单位，高 DPI
+# 下会再乘 devicePixelRatio，吸附时按 DPR 反推逻辑磅值。DirectWrite 引擎 12px 有亚像素
+# 粘连，需配合 app.py 的 FreeType 字体引擎（windows:fontengine=freetype）。
+_PIXEL_GRID = 12
+_PIXEL_SNAP_TOLERANCE = 1.5
 
 # 控件上记录字号语义层级（size_key）与是否加粗的动态属性名，见 _patch_widget_set_font()。
 _FONT_KEY_PROP = "dstFontKey"
@@ -49,8 +45,7 @@ _ORIGINAL_SET_FONT = None
 _SIZE_KEYS = ("FONT_SIZE_XL", "FONT_SIZE_LG", "FONT_SIZE_MD",
               "FONT_SIZE_BASE", "FONT_SIZE_SM", "FONT_SIZE_XS")
 
-# 全局字体大小档位：缩放系数作用于普通字体（default/cute）的字号；像素字体不用这
-# 个系数，而是按 _PIXEL_LEVEL_SIZES 查表跳档（必须保持 12 的整数倍物理像素）。
+# 全局字体大小档位：缩放系数作用于全部字体样式的字号（像素字体之后再按 12 整数倍吸附）。
 FONT_SIZE_LEVELS = (
     ("small", 0.85),
     ("normal", 1.0),
@@ -71,6 +66,27 @@ def _device_pixel_ratio() -> float:
         if screen is not None:
             return screen.devicePixelRatio()
     return 1.0
+
+
+def _point_to_phys(point_size: float) -> float:
+    """逻辑磅值换算成物理像素（Windows 逻辑 DPI 96 × devicePixelRatio）。"""
+    return point_size * 96.0 / 72.0 * _device_pixel_ratio()
+
+
+def _on_pixel_grid(font: QFont) -> bool:
+    """字体物理像素是否正好落在像素字体的 12 整数倍网格上（可关抗锯齿清晰渲染）。"""
+    phys = _point_to_phys(font.pointSizeF())
+    snapped = round(phys / _PIXEL_GRID) * _PIXEL_GRID
+    return snapped >= _PIXEL_GRID and abs(phys - snapped) < 0.05
+
+
+def _set_pixel_point_size(font: QFont, point_size: float) -> None:
+    """像素字体设字号：离 12 整数倍物理像素足够近就吸附过去，否则保持原磅值。"""
+    phys = _point_to_phys(point_size)
+    snapped = round(phys / _PIXEL_GRID) * _PIXEL_GRID
+    if snapped >= _PIXEL_GRID and abs(phys - snapped) <= _PIXEL_SNAP_TOLERANCE:
+        point_size = snapped * 72.0 / (96.0 * _device_pixel_ratio())
+    font.setPointSizeF(point_size)
 
 
 def _rgba(hex_color: str, alpha: int) -> str:
@@ -302,13 +318,11 @@ class Theme(QObject):
     def apply_style_hints(self, font: QFont) -> None:
         """按当前字体样式给 QFont 补上抗锯齿/hinting 策略。
 
-        缝合像素字体（Fusion Pixel）是按整数像素网格设计的位图风字体，Qt
-        默认的灰度/子像素抗锯齿会把本该锐利的像素边缘糊成一圈灰边（观感像
-        "齿轮"）。对它必须关闭抗锯齿、禁用 hinting，字形才能像素级对齐；其它
-        样式（微软雅黑、荆南麦圆体）是普通矢量字体，抗锯齿是其最佳渲染路径，
-        显式恢复默认策略——_refresh_explicit_fonts 复用已有 QFont 改族名，
-        从像素样式切回时若不重置，会残留 NoAntialias 让雅黑也跟着变糊。"""
-        if self._font_style == "pixel":
+        缝合像素字体只在字号正好落在 12 整数倍物理像素时关闭抗锯齿、禁用 hinting
+        做像素级对齐；其它字号与其它样式（微软雅黑、荆南麦圆体）一样走默认抗锯齿
+        （见文件顶部说明）。必须在字号设好之后调用。显式恢复默认策略是因为
+        _refresh_explicit_fonts 复用已有 QFont，不重置会残留 NoAntialias。"""
+        if self._font_style == "pixel" and _on_pixel_grid(font):
             font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
             font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
         else:
@@ -316,16 +330,11 @@ class Theme(QObject):
             font.setHintingPreference(QFont.HintingPreference.PreferDefaultHinting)
 
     def font(self, size_key: str = "FONT_SIZE_BASE", bold: bool = False) -> QFont:
-        if self._font_style == "pixel":
-            font = QFont(self.font_family)
-            self._apply_pixel_size(font, size_key)
-            # 像素字体只有 Regular 字重，synthetic 加粗会把字形偏移 1px 并破坏像素
-            # 网格对齐（实测笔画 run 从 [3,6,9,12] 变 [4,7,10,13]），故忽略 bold。
-        else:
-            scale = FONT_SIZE_SCALE_BY_STYLE.get(self._font_style, 1.0) * self.font_size_scale
-            font = QFont(self.font_family, max(6, round(self.palette[size_key] * scale)))
-            font.setBold(bold)
-        self.apply_style_hints(font)
+        font = QFont(self.font_family)
+        self._apply_font_size(font, size_key)
+        # 像素字体只有 Regular 字重，synthetic 加粗会把字形偏移 1px 并破坏像素
+        # 网格对齐（实测笔画 run 从 [3,6,9,12] 变 [4,7,10,13]），故忽略 bold。
+        font.setBold(bold and self._font_style != "pixel")
         # 记下语义层级与请求的加粗（像素样式虽忽略 bold，切回其它样式时要恢复），
         # setFont() 时由 _patch_widget_set_font() 记到控件上。
         font._dst_tag = (size_key, bold)
@@ -348,44 +357,37 @@ class Theme(QObject):
                 return known, bold
         return self._size_key_from_font(font, style, self._font_size_level), font.bold()
 
-    def _apply_pixel_size(self, font: QFont, size_key: str) -> None:
-        """像素字体按档位查表取物理像素（正文/标题）并反推回逻辑磅值。"""
-        body, title = _PIXEL_LEVEL_SIZES.get(self._font_size_level, (12, 24))
-        phys = title if size_key in _PIXEL_TITLE_KEYS else body
-        font.setPointSizeF(phys * 72.0 / (96.0 * _device_pixel_ratio()))
-
     def _size_key_for_raw_point(self, raw_pt: float) -> str:
         """把未缩放磅值反推回最接近的 size_key（往返切字体时保留语义层级）。"""
         return min(_SIZE_KEYS, key=lambda k: abs(self.palette[k] - raw_pt))
 
     def _size_key_from_font(self, font: QFont, style: str, old_level: str) -> str:
-        """从旧样式字体反推语义层级 size_key：像素样式按物理像素反查（扣掉档位偏移），
-        其余按磅值（扣掉样式缩放与档位系数）。"""
-        if style == "pixel":
-            phys = round(font.pointSizeF() * 96.0 / 72.0 * _device_pixel_ratio())
-            body, title = _PIXEL_LEVEL_SIZES.get(old_level, (12, 24))
-            return "FONT_SIZE_LG" if phys == title else "FONT_SIZE_BASE"
+        """从旧样式字体反推语义层级 size_key：按磅值扣掉样式缩放与档位系数取最近层级
+        （像素字体吸附过的字号只是近似，仅作没有层级记录时的兜底）。"""
         style_scale = FONT_SIZE_SCALE_BY_STYLE.get(style, 1.0)
         level_scale = _FONT_SIZE_SCALE_BY_LEVEL.get(old_level, 1.0)
         raw_pt = font.pointSizeF() / (style_scale * level_scale)
         return self._size_key_for_raw_point(raw_pt)
 
     def _apply_font_size(self, font: QFont, size_key: str) -> None:
-        """按当前样式把 size_key 应用为实际字号（像素样式走物理像素反推）。"""
+        """按当前样式把 size_key 应用为实际字号，并按字号补上抗锯齿策略。"""
+        scale = FONT_SIZE_SCALE_BY_STYLE.get(self._font_style, 1.0) * self.font_size_scale
+        point_size = max(6.0, round(self.palette[size_key] * scale))
         if self._font_style == "pixel":
-            self._apply_pixel_size(font, size_key)
+            _set_pixel_point_size(font, point_size)
         else:
-            scale = FONT_SIZE_SCALE_BY_STYLE.get(self._font_style, 1.0) * self.font_size_scale
-            font.setPointSizeF(max(6.0, round(self.palette[size_key] * scale)))
+            font.setPointSizeF(point_size)
+        self.apply_style_hints(font)
 
-    def panel_font(self, logical_px: float, large: bool = False) -> QFont:
-        """自绘面板按逻辑像素构造字体：像素字体样式下压缩到物理 24px（large=True）/
-        12px（否则），并补齐抗锯齿策略；其余样式直接用逻辑像素。"""
+    def panel_font(self, logical_px: float) -> QFont:
+        """自绘面板按逻辑像素构造字体（乘字号档位系数）；像素字体样式下按 12 整数倍
+        物理像素吸附，并补齐抗锯齿策略。"""
         font = QFont(self.font_family)
+        px = max(6.0, logical_px * self.font_size_scale)
         if self._font_style == "pixel":
-            self._apply_pixel_size(font, "FONT_SIZE_LG" if large else "FONT_SIZE_BASE")
+            _set_pixel_point_size(font, px * 72.0 / 96.0)
         else:
-            font.setPixelSize(max(6, round(logical_px * self.font_size_scale)))
+            font.setPixelSize(round(px))
         self.apply_style_hints(font)
         return font
 
@@ -468,7 +470,6 @@ class Theme(QObject):
                     bold = font.bold()
                 if old_style != new_style:
                     font.setFamily(new_family)
-                    self.apply_style_hints(font)
                 self._apply_font_size(font, size_key)
                 # 像素字体只有 Regular 字重，忽略加粗（同 font()）。
                 font.setBold(bold and new_style != "pixel")

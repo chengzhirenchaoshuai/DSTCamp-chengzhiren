@@ -229,19 +229,19 @@ class WorldPanel(QAbstractScrollArea):
                     arrow_h=arrow_h, text_x_end=value_cx - value_half_w - 8 * m.s)
 
     def _fonts(self, s: float):
-        def make(px: float, bold: bool = False, large: bool = False) -> QFont:
-            font = theme.panel_font(px, large=large)
+        def make(px: float, bold: bool = False) -> QFont:
+            font = theme.panel_font(px)
             font.setBold(bold)
             return font
-        return make(16 * s), make(16 * s), make(22 * s, large=True)
+        return make(16 * s), make(16 * s), make(22 * s)
 
     # ── 绘制 ────────────────────────────────────────────────────────────
     def paintEvent(self, _event):
         self._ensure_layout()
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        if theme.font_style != "pixel":
-            painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
+        # 像素字体清晰字号由字体自身的 NoAntialias 策略关抗锯齿，其余字号仍需文字抗锯齿。
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         offset = self.verticalScrollBar().value()
         view_h = self.viewport().height()
         painter.translate(0, -offset)
