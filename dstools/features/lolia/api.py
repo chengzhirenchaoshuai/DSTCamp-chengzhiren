@@ -31,7 +31,7 @@ from dstools.shared import app_settings
 from dstools.shared.resource_paths import security_dir
 from dstools.shared.ssl_context import default_ssl_context
 
-DEFAULT_CLIENT_ID = "6i019jbrc1qatj01"  # 内置的 public 客户端，client_id 本身是公开信息
+DEFAULT_CLIENT_ID = "b2k7j0aejvrcld3l"  # 内置的 public 客户端，client_id 本身是公开信息
 CREATE_APP_URL = "https://dash.lolia.link/dash/oauth/apps/create"
 API_BASE = "https://api.lolia.link/api/v1"
 AUTHORIZE_URL = "https://dash.lolia.link/oauth/authorize"
