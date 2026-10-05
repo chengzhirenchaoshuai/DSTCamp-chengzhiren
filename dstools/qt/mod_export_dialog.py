@@ -22,6 +22,8 @@ _CARD_H = 78
 _GAP = 12
 _ICON = 56
 _CARD_RADIUS = 12
+_FRAME_PAD = 16  # 外框与卡片之间的内边距
+_FRAME_RADIUS = 20
 
 
 def _column_count(count: int) -> int:
@@ -60,8 +62,10 @@ def render_mod_list_image(entries: list[ExportModEntry], icon_images: dict, titl
     sub_h = QFontMetrics(sub_font).height()
     header_h = title_h + 6 + sub_h + 18
     footer_h = QFontMetrics(footer_font).height() + 12
-    width = _PAD * 2 + cols * _CARD_W + (cols - 1) * _GAP
-    height = _PAD * 2 + header_h + rows * _CARD_H + (rows - 1) * _GAP + footer_h
+    grid_w = cols * _CARD_W + (cols - 1) * _GAP
+    grid_h = rows * _CARD_H + (rows - 1) * _GAP
+    width = _PAD * 2 + _FRAME_PAD * 2 + grid_w
+    height = _PAD * 2 + header_h + _FRAME_PAD * 2 + grid_h + footer_h
 
     image = QImage(width * _RENDER_SCALE, height * _RENDER_SCALE, QImage.Format.Format_ARGB32_Premultiplied)
     image.setDevicePixelRatio(_RENDER_SCALE)
@@ -85,13 +89,19 @@ def render_mod_list_image(entries: list[ExportModEntry], icon_images: dict, titl
     painter.drawText(sub_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                      QFontMetrics(sub_font).elidedText(subtitle, Qt.TextElideMode.ElideRight, int(sub_rect.width())))
 
-    top = _PAD + header_h
+    # 全部卡片外面套一圈圆角外框，浅底色把卡片区和标题区分开。
+    frame = QRectF(_PAD + 1, _PAD + header_h + 1, grid_w + _FRAME_PAD * 2 - 2, grid_h + _FRAME_PAD * 2 - 2)
+    painter.setPen(QPen(theme.color("CARD_BORDER"), 2))
+    painter.setBrush(theme.color("CARD_BG_ALT"))
+    painter.drawRoundedRect(frame, _FRAME_RADIUS, _FRAME_RADIUS)
+
+    top = _PAD + header_h + _FRAME_PAD
     border_pen = QPen(theme.color("CARD_BORDER"), 1)
     name_fm, meta_fm = QFontMetrics(name_font), QFontMetrics(meta_font)
     for index, entry in enumerate(entries):
         # 按列优先排：先填满第一列再换列，读起来和应用里的列表顺序一致。
         col, row = divmod(index, rows)
-        x = _PAD + col * (_CARD_W + _GAP)
+        x = _PAD + _FRAME_PAD + col * (_CARD_W + _GAP)
         y = top + row * (_CARD_H + _GAP)
         card = QRectF(x + 0.5, y + 0.5, _CARD_W - 1, _CARD_H - 1)
         painter.setPen(border_pen)
