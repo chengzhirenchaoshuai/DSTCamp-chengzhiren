@@ -54,8 +54,11 @@ class FormGrid(QWidget):
         # 横向没给的话 Qt 会把它摆在这一格（因为列 1 撑满宽度）里说不准的位置——
         # 真机反馈过端口号输入框会跟着窗口宽度左右挪动。可以自然撑满宽度的控件
         # （文本框/下拉框）不加这个，让它们继续填满、不留空白。
+        # 只读字段（QLabel，设了 setMaximumWidth(360)）也必须加：不给横向对齐时，Qt 会把
+        # 这个最大宽度当成整列 1 的上限，多余宽度全摊给标签列，标签和控件被一起推到右侧，
+        # 窗口越宽越靠右（真机：内网穿透映射接管端口、"游戏端口"变只读时出现）。
         editor_align = Qt.AlignmentFlag.AlignVCenter
-        if spec.kind in ("int", "bool") or fixed_width is not None:
+        if spec.kind in ("int", "bool", "readonly") or fixed_width is not None:
             editor_align |= Qt.AlignmentFlag.AlignLeft
         if fixed_width is not None:
             editor.widget.setFixedWidth(fixed_width)
