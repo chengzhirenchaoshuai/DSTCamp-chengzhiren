@@ -1,11 +1,13 @@
 """内网穿透节点选择弹窗（樱花映射、Lolia映射共用）。
 
 节点可能有几十上百个，用可滚动的卡片网格挑选：每张卡片名称加粗、说明文字一行，
-当前选中的用强调色边框，悬停高亮，不满足条件（VIP 等级不够、需实名等）的整体淡化
-且不可点。颜色全部取自主题调色板。
+可选的第三行彩色标记（如流量倍率、高负载），悬停显示节点备注；当前选中的用强调色
+边框，悬停高亮，不满足条件（VIP 等级不够、需实名等）的整体淡化且不可点。调用方按
+分组排好序并填 `group` 时，每组前加小标题。颜色全部取自主题调色板。
 """
 
-from dataclasses import dataclass
+import html
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGridLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
@@ -23,10 +25,13 @@ class NodeChoice:
     name: str
     detail: str
     eligible: bool = True
+    group: str = ""          # 分组标题（含数量），为空不分组
+    badges: list[tuple[str, str]] = field(default_factory=list)  # [(文字, 调色板颜色键)]
+    tooltip: str = ""        # 悬停提示（节点备注）
 
 
 class _NodeCard(QPushButton):
-    """卡片式按钮：内部两行标签（标签不接收鼠标事件，点击落到按钮上）。"""
+    """卡片式按钮：内部两到三行标签（标签不接收鼠标事件，点击落到按钮上）。"""
 
     def __init__(self, choice: NodeChoice, selected: bool):
         super().__init__()
@@ -44,10 +49,19 @@ class _NodeCard(QPushButton):
         detail = QLabel(choice.detail)
         detail.setObjectName("nodeCardDetail")
         detail.setFont(theme.font("FONT_SIZE_SM"))
-        for label in (name, detail):
+        labels = [name, detail]
+        if choice.badges:
+            badges = QLabel(" · ".join(
+                f'<span style="color:{theme.hex(key)};">{html.escape(text)}</span>' for text, key in choice.badges))
+            badges.setTextFormat(Qt.TextFormat.RichText)
+            badges.setFont(theme.font("FONT_SIZE_SM", bold=True))
+            labels.append(badges)
+        for label in labels:
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             label.setEnabled(choice.eligible)
             layout.addWidget(label)
+        if choice.tooltip:
+            self.setToolTip(choice.tooltip)
 
 
 class NodePickerDialog(dialogs.Dialog):
@@ -62,10 +76,25 @@ class NodePickerDialog(dialogs.Dialog):
         grid = QGridLayout(grid_widget)
         grid.setContentsMargins(2, 2, 8, 2)  # 右侧给滚动条留位置
         grid.setSpacing(10)
-        for idx, choice in enumerate(choices):
+        row, col, group = 0, 0, None
+        for choice in choices:
+            if choice.group and choice.group != group:
+                group = choice.group
+                if col:
+                    row, col = row + 1, 0
+                header = QLabel(choice.group)
+                header.setProperty("heading", True)
+                header.setFont(theme.font("FONT_SIZE_MD", bold=True))
+                if row:
+                    header.setContentsMargins(0, 8, 0, 0)  # 与上一组拉开距离
+                grid.addWidget(header, row, 0, 1, _GRID_COLS)
+                row += 1
             card = _NodeCard(choice, choice.node_id == current_id)
             card.clicked.connect(lambda _c=False, nid=choice.node_id: self._select(nid))
-            grid.addWidget(card, idx // _GRID_COLS, idx % _GRID_COLS)
+            grid.addWidget(card, row, col)
+            col += 1
+            if col == _GRID_COLS:
+                row, col = row + 1, 0
         for col in range(_GRID_COLS):
             grid.setColumnStretch(col, 1)
         grid.setRowStretch(grid.rowCount(), 1)

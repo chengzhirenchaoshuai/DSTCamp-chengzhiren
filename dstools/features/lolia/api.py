@@ -16,6 +16,7 @@ import base64
 import hashlib
 import http.server
 import json
+import re
 import secrets
 import threading
 import time
@@ -307,6 +308,24 @@ def bandwidth_mbps(user: dict) -> int:
 
 def node_supports_udp(node: dict) -> bool:
     return "udp" in (node.get("supported_protocols") or []) and node.get("status") != "offline"
+
+
+REGION_GROUPS = ("cn", "hk_tw", "jp_kr", "other")  # 节点弹窗里的分组顺序：延迟从低到高的大致顺序
+_REGION_BY_CODE = {"CN": "cn", "HK": "hk_tw", "MO": "hk_tw", "TW": "hk_tw", "JP": "jp_kr", "KR": "jp_kr"}
+
+
+def node_region(node: dict) -> str:
+    """按节点 region_code（国家/地区代码）归到 REGION_GROUPS 之一。"""
+    return _REGION_BY_CODE.get(str(node.get("region_code") or "").upper(), "other")
+
+
+def node_sort_key(node: dict, eligible: bool) -> tuple:
+    """地区分组 → 组内可选的在前 → 名称自然排序（"中国香港-2" 排在 "中国香港-10" 前）。
+    不按负载排：负载是实时值，每次刷新顺序都会跳。"""
+    name = str(node.get("name") or "")
+    natural = tuple((0, int(part), "") if part.isdigit() else (1, 0, part)
+                    for part in re.split(r"(\d+)", name) if part)
+    return REGION_GROUPS.index(node_region(node)), not eligible, natural
 
 
 def make_remark(cluster_folder_name: str, shard_name: str, source: str, platform: str,

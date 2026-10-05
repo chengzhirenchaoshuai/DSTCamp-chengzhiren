@@ -102,12 +102,25 @@ def test_oauth_pkce_callback_and_remark() -> None:
     assert lolia_api.find_tunnel(tunnels, remark)["name"] == "y"
 
 
+def test_node_grouping_and_stable_order() -> None:
+    from dstools.features.lolia import api as lolia_api
+
+    nodes = [{"name": "美国-1", "region_code": "US"}, {"name": "中国香港-10", "region_code": "HK"},
+             {"name": "中国香港-2", "region_code": "HK"}, {"name": "阿里云广州-1", "region_code": "CN"},
+             {"name": "日本-1", "region_code": "JP"}]
+    ordered = sorted(nodes, key=lambda n: lolia_api.node_sort_key(n, True))
+    # 大陆 → 港澳台 → 日韩 → 其他海外；组内名称自然排序（2 在 10 前）
+    assert [n["name"] for n in ordered] == ["阿里云广州-1", "中国香港-2", "中国香港-10", "日本-1", "美国-1"]
+    assert lolia_api.node_sort_key(nodes[3], True) < lolia_api.node_sort_key(nodes[3], False)
+
+
 def main() -> None:
     tests = (
         test_rewrites_local_ports_and_round_trips,
         test_rejects_non_udp_and_duplicate_tunnels,
         test_paste_sources_and_prepare_shard,
         test_oauth_pkce_callback_and_remark,
+        test_node_grouping_and_stable_order,
     )
     for test in tests:
         test()

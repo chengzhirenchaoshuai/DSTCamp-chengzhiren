@@ -297,17 +297,7 @@ class LoliaPanel(QWidget):
 
         has_kyc = bool(user.get("has_kyc"))
         self._nodes = {int(n["id"]): n for n in nodes if lolia_api.node_supports_udp(n)}
-        choices = []
-        for node_id, node in self._nodes.items():
-            load = node.get("load")
-            tag = t("lolia.node_tag", bandwidth=node.get("bandwidth", "--"),
-                    load=f"{load:.0f}%" if isinstance(load, (int, float)) else "--")
-            if node.get("need_kyc"):
-                tag += " · " + t("lolia.node_tag_kyc")
-            eligible = has_kyc or not node.get("need_kyc")
-            choices.append((NodeChoice(node_id, str(node.get("name", node_id)), tag, eligible), load or 0))
-        choices.sort(key=lambda c: (not c[0].eligible, c[1]))  # 可选的在前，同组按负载从低到高
-        self._node_choices = [choice for choice, _load in choices]
+        self._node_choices = self._build_node_choices(has_kyc)
         eligible_ids = [c.node_id for c in self._node_choices if c.eligible]
         last = app_settings.get_lolia_last_node_id()
         if last in eligible_ids:
@@ -316,6 +306,38 @@ class LoliaPanel(QWidget):
             self._selected_node_id = eligible_ids[0] if eligible_ids else None
         self._update_node_display()
         self._render_shard_rows()
+
+    def _build_node_choices(self, has_kyc: bool) -> list[NodeChoice]:
+        """按地区分组、组内按名称固定排序（features/lolia/api.py 的 node_sort_key），
+        卡片上补充流量倍率、高负载标记，悬停显示节点备注。"""
+        rows = []
+        for node_id, node in self._nodes.items():
+            eligible = has_kyc or not node.get("need_kyc")
+            rows.append((lolia_api.node_sort_key(node, eligible), node_id, node, eligible))
+        rows.sort(key=lambda r: r[0])
+        counts = {}
+        for _key, _nid, node, _ok in rows:
+            region = lolia_api.node_region(node)
+            counts[region] = counts.get(region, 0) + 1
+        choices = []
+        for _key, node_id, node, eligible in rows:
+            load = node.get("load")
+            detail = t("lolia.node_tag", bandwidth=node.get("bandwidth", "--"),
+                       load=f"{load:.0f}%" if isinstance(load, (int, float)) else "--")
+            if not eligible:
+                detail += " · " + t("lolia.node_tag_kyc")  # 已实名时大陆节点全都需要实名，不再逐个标注
+            badges = []
+            ratio = node.get("traffic_ratio")
+            if isinstance(ratio, (int, float)) and ratio != 1:
+                # 倍率 >1 更费流量（流量要靠签到获取），<1 更省
+                badges.append((t("lolia.node_ratio", ratio=f"{ratio:g}"), "ERROR" if ratio > 1 else "SUCCESS"))
+            if isinstance(load, (int, float)) and load >= 80:
+                badges.append((t("lolia.node_high_load"), "ERROR"))
+            region = lolia_api.node_region(node)
+            group = t("lolia.node_group", name=t(f"lolia.region_{region}"), count=counts[region])
+            choices.append(NodeChoice(node_id, str(node.get("name", node_id)), detail, eligible,
+                                      group=group, badges=badges, tooltip=str(node.get("remark") or "")))
+        return choices
 
     def _open_node_picker(self) -> None:
         if not self._node_choices:
