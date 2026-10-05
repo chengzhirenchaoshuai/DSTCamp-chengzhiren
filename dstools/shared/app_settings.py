@@ -54,6 +54,7 @@ _KEY_LOBBY_ACCEL_WG_SERVER_PUBLIC_KEY = "lobby_accel_wireguard_server_public_key
 _KEY_GLOBAL_TOKENS = "global_tokens"
 _KEY_TOKEN_HOLDS = "token_holds"
 _KEY_AUTO_RESTART_CLUSTERS = "auto_restart_clusters"
+_KEY_TOKEN_SWITCH_ON_TIMEOUT = "token_switch_on_timeout"
 _KEY_MOD_PRESETS = "mod_presets"
 _KEY_DEDICATED_SERVER_EXTRA_ARGS = "dedicated_server_extra_args"
 
@@ -807,6 +808,17 @@ def set_auto_restart_enabled(cluster_key: str, enabled: bool) -> None:
         data[_KEY_AUTO_RESTART_CLUSTERS] = keys
     else:
         data.pop(_KEY_AUTO_RESTART_CLUSTERS, None)
+    save_settings(data)
+
+
+def get_token_switch_on_timeout() -> bool:
+    """自动重启等原令牌超时（TOKEN_SWITCH_AFTER）仍在注册冲突时，是否换用令牌池里的其它令牌（默认开启）。"""
+    return load_settings().get(_KEY_TOKEN_SWITCH_ON_TIMEOUT, True) is not False
+
+
+def set_token_switch_on_timeout(enabled: bool) -> None:
+    data = load_settings()
+    data[_KEY_TOKEN_SWITCH_ON_TIMEOUT] = bool(enabled)
     save_settings(data)
 
 

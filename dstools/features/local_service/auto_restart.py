@@ -1,13 +1,14 @@
 """专服崩溃自动重启的判定规则（纯逻辑，不操作界面、不读写设置）。
 
 难点在 Klei 的新令牌：服务器异常断开后，Klei 端的房间注册不会立刻释放，
-马上用同一个新令牌重启会注册冲突（日志 E_ROWID_EXIST）。Klei 没有公开释放
-时长，实测一次重启从拉起到注册就要 2 分钟以上，所以：
+马上用同一个新令牌重启会注册冲突（日志 E_ROWID_EXIST）。2026-10-05 实测：
+强杀后约 25 分钟才释放；冲突期间专服自己每 5 秒左右重试广播，释放后会自行
+注册成功（打印 "Server registered via geo DNS"），洞穴随即连上。所以：
 
-- 先等原令牌：按 TOKEN_RETRY_DELAYS 逐级拉长间隔重试，每崩一次就换令牌
-  会很快把令牌池占满；
-- 距崩溃超过 TOKEN_SWITCH_AFTER 仍没恢复，才换用池里其它可用令牌；
-- 超过 TOKEN_WAIT_LIMIT 放弃；每次结果写日志，方便以后按真实释放时长调整。
+- 崩溃后直接用原令牌拉起，注册冲突时不停服，让专服自己重试到 Klei 释放；
+- 开启"超时换令牌"时，距崩溃超过 TOKEN_SWITCH_AFTER 仍在冲突，才停服换用
+  池里其它可用令牌（每崩一次就换令牌会很快把令牌池占满）；
+- 超过 TOKEN_WAIT_LIMIT 不再管理；每次结果写日志，方便按真实释放时长调整。
 """
 
 from __future__ import annotations
@@ -22,9 +23,10 @@ NON_RECOVERABLE_CATEGORIES = frozenset({"runtime", "permission", "port", "world_
 CRASH_RESTART_DELAY = 15.0        # 崩溃后稍等再拉起，让旧进程、frpc 与日志收尾
 CRASH_WINDOW = 30 * 60            # 统计崩溃次数的时间窗
 MAX_CRASH_RESTARTS = 3            # 时间窗内最多自动重启几次，防止 Mod 报错导致无限循环
-TOKEN_RETRY_DELAYS = (5 * 60, 10 * 60, 15 * 60, 30 * 60)  # 原令牌第 n 次重试前的等待
+TOKEN_HOLD_DURATION = 30 * 60     # 崩溃/冲突后令牌按"未释放"处理的时长（实测强杀后约 25 分钟释放）
 TOKEN_WAIT_LIMIT = 2 * 60 * 60    # 从崩溃起最多等待 Klei 释放令牌的总时长
-TOKEN_SWITCH_AFTER = 15 * 60      # 从崩溃起等原令牌多久仍没恢复，才允许换用池中其它令牌
+TOKEN_SWITCH_AFTER = 30 * 60      # 开启超时换令牌时，距崩溃多久仍在冲突才换用池中其它令牌
+TOKEN_BUSY_RECHECK = 5 * 60       # 令牌正被别的存档使用、暂时拉不起时，多久再查一次
 
 
 def is_restartable(category: str, world_ready: bool, auto_attempt: bool) -> bool:
@@ -36,12 +38,6 @@ def is_restartable(category: str, world_ready: bool, auto_attempt: bool) -> bool
     if category == "token_conflict" or category in NON_RECOVERABLE_CATEGORIES:
         return False
     return world_ready or auto_attempt
-
-
-def token_retry_delay(failures: int) -> float:
-    """原令牌已连续冲突 failures 次（0 表示刚崩溃）时，下一次重试前要等多久。"""
-    index = min(max(failures, 0), len(TOKEN_RETRY_DELAYS) - 1)
-    return float(TOKEN_RETRY_DELAYS[index])
 
 
 @dataclass

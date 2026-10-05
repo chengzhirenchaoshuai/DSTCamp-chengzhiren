@@ -159,6 +159,7 @@ def main() -> None:
         from dstools.qt.pages.local_service import LocalServicePage
         crash_service = LocalServicePage.__new__(LocalServicePage)
         crash_service._auto_restart = Mock()
+        crash_service.manager = SimpleNamespace(running=lambda: [])
         crash_service._token_reservations = {str(crash_cluster): NEW_A}
         app_settings.set_global_tokens([NEW_A])
         # 验证 Master 诊断回调会持久化，并在后续明确注册成功后清除。
@@ -320,8 +321,8 @@ def test_auto_restart_rules_and_hold_retry_window() -> None:
     assert not budget.allow(110.0), "时间窗内超过次数上限必须停止自动重启"
     assert budget.allow(100.0 + auto_restart.CRASH_WINDOW + 1), "旧崩溃滑出时间窗后恢复"
 
-    assert auto_restart.token_retry_delay(0) == auto_restart.TOKEN_RETRY_DELAYS[0]
-    assert auto_restart.token_retry_delay(99) == auto_restart.TOKEN_RETRY_DELAYS[-1]
+    assert auto_restart.TOKEN_HOLD_DURATION >= 25 * 60, "实测强杀后约 25 分钟才释放"
+    assert auto_restart.TOKEN_SWITCH_AFTER >= auto_restart.TOKEN_HOLD_DURATION
 
     with tempfile.TemporaryDirectory() as settings_tmp, patch.dict(os.environ, {"APPDATA": settings_tmp}):
         fingerprint = token_fingerprint(NEW_A)
@@ -337,13 +338,17 @@ def test_auto_restart_rules_and_hold_retry_window() -> None:
         app_settings.set_auto_restart_enabled("C:/saves/A", False)
         assert not app_settings.get_auto_restart_enabled("C:/saves/A")
 
+        assert app_settings.get_token_switch_on_timeout(), "超时换令牌默认开启"
+        app_settings.set_token_switch_on_timeout(False)
+        assert not app_settings.get_token_switch_on_timeout()
+
 
 def test_auto_restart_controller_flow() -> None:
-    """用假页面驱动真实调度器：直接触发定时器回调，覆盖换令牌重启、等令牌、冲突、成功、限流与取消。"""
+    """用假页面驱动真实调度器：直接触发定时器回调，覆盖冲突保持运行、超时换令牌、等令牌、成功、限流与取消。"""
     from PySide6.QtCore import QCoreApplication
 
     from dstools.features.local_service.auto_restart import (
-        MAX_CRASH_RESTARTS, TOKEN_RETRY_DELAYS, TOKEN_SWITCH_AFTER,
+        MAX_CRASH_RESTARTS, TOKEN_BUSY_RECHECK, TOKEN_SWITCH_AFTER, TOKEN_WAIT_LIMIT,
     )
     from dstools.features.local_service.dedicated_server import ServerStatus
     from dstools.qt import auto_restart as controller_module
@@ -359,7 +364,9 @@ def test_auto_restart_controller_flow() -> None:
         procs = {}
         events = []
         tokens = {"available": True}
-        allow_switches = []
+        choose_calls = []
+        switch_calls = []
+        opts = {"switch": True, "alternative": NEW_B}
 
         def make_proc(name, *, ready=True, status=ServerStatus.RUNNING):
             procs[name] = SimpleNamespace(cluster_path=cluster.path, shard_name=name, is_master=name == "Master",
@@ -379,8 +386,10 @@ def test_auto_restart_controller_flow() -> None:
             _cluster_for_running_process=lambda _proc, _current: cluster,
             _master_shard=lambda _c: cluster.shards[0],
             _stop_shards_and_then=stop_then,
-            _choose_start_token=lambda _c, allow_switch=True: (allow_switches.append(allow_switch),
-                                                                tokens["available"])[1],
+            _choose_start_token=lambda _c, allow_switch=True, retry_current=False: (
+                choose_calls.append((allow_switch, retry_current)), tokens["available"])[1],
+            _alternative_start_token=lambda _c: opts["alternative"],
+            _switch_to_alternative_token=lambda _c: (switch_calls.append(1), True)[1],
             _install_dir=root, _detect_install_dir=lambda: None, _launching_keys=set(),
             _release_token_reservation_if_stopped=lambda _path: None,
             _continue_start_shard=lambda _c, shard, _arg: (events.append(("start", shard.name)),
@@ -393,7 +402,7 @@ def test_auto_restart_controller_flow() -> None:
         key = str(cluster.path)
         with patch.object(controller_module, "data_dir", return_value=root / "logs"), \
                 patch.object(controller_module, "get_auto_restart_enabled", return_value=True), \
-                patch.object(controller_module, "blocking_token_holds", return_value={}), \
+                patch.object(controller_module, "get_token_switch_on_timeout", side_effect=lambda: opts["switch"]), \
                 patch.object(controller_module, "load_cluster_config",
                              return_value=SimpleNamespace(network={})), \
                 patch.object(controller_module.luajit_injector, "needs_regeneration", return_value=False), \
@@ -416,40 +425,54 @@ def test_auto_restart_controller_flow() -> None:
             assert ("stop", ("Master", "Caves")) in events or ("stop", ("Caves",)) in events
             assert [e for e in events if e[0] == "start"] == [("start", "Master"), ("start", "Caves")]
             assert state.phase == "starting" and state.attempts == 1
-            assert allow_switches == [False], "刚崩溃时先等原令牌，不换池中其它令牌"
+            assert choose_calls == [(False, True)], "崩溃后用原令牌拉起，不换池中其它令牌"
 
-            # 3. 拉起后注册冲突：停掉整组，按冲突次数等待
+            # 3. 拉起后注册冲突：不停服，等到换令牌时刻再检查
             events.clear()
             controller.on_failure(procs["Master"], conflict)
-            assert state.phase == "waiting_token" and state.conflicts == 1
-            assert abs(state.due - (time.time() + TOKEN_RETRY_DELAYS[1])) < 5
-            assert not procs, "冲突的那一轮要整组停掉，不能留着反复重试注册"
+            assert state.phase == "waiting_release" and state.conflicts == 1
+            assert state.due == state.crashed_at + TOKEN_SWITCH_AFTER
+            assert set(procs) == {"Master", "Caves"} and not events, "冲突时专服会自己重试，不能停服"
+            assert controller.banner_text(cluster)
 
-            # 4. 等待期结束再试，这次没有可用令牌：继续等待而不是放弃
+            # 4. 到了换令牌时刻仍在冲突：停服换池中其它令牌重启
+            controller._run(key)
+            assert switch_calls == [1] and state.switched and state.phase == "starting" and state.attempts == 2
+            assert events[0][0] == "stop" and [e for e in events if e[0] == "start"] == [
+                ("start", "Master"), ("start", "Caves")]
+
+            # 5. 换了令牌还冲突：不再换第二次，等到总上限后停止管理，但不关服
+            events.clear()
+            controller.on_failure(procs["Master"], conflict)
+            assert state.phase == "waiting_release" and state.due == state.crashed_at + TOKEN_WAIT_LIMIT
+            controller._run(key)
+            assert state.phase == "gave_up" and set(procs) == {"Master", "Caves"} and not events
+
+            # 6. 关闭超时换令牌 + 令牌正被别的存档占用：先隔一会儿再查，拉起后冲突就一直等到注册成功
+            opts["switch"] = False
+            controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
             tokens["available"] = False
             controller._run(key)
-            assert state.phase == "waiting_token"
+            assert state.phase == "waiting_token" and abs(state.due - (time.time() + TOKEN_BUSY_RECHECK)) < 5
             tokens["available"] = True
-            state.crashed_at = time.time() - TOKEN_SWITCH_AFTER - 1
             controller._run(key)
-            assert state.phase == "starting" and state.attempts == 2
-            assert allow_switches[-1] is True, "等原令牌超过阈值后允许换令牌"
-
-            # 5. 世界就绪 + 注册成功：本轮结束
+            assert state.phase == "starting"
+            controller.on_failure(procs["Master"], conflict)
+            assert state.phase == "waiting_release" and state.due == state.crashed_at + TOKEN_WAIT_LIMIT
             for proc in procs.values():
                 proc.world_ready, proc.status = True, ServerStatus.RUNNING
-            controller.poll()
-            assert state.phase == "starting", "主世界要等注册成功才算恢复"
             controller.on_registered(procs["Master"])
-            assert state.phase == "idle"
+            assert state.phase == "idle", "冲突期间专服自行注册成功即结束本轮"
+            assert switch_calls == [1]
 
-            # 6. 手动操作取消排队中的重启
+            # 7. 手动操作取消排队中的重启
             controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
             assert state.phase == "scheduled"
             controller.cancel(cluster)
             assert state.phase == "idle"
 
-            # 7. 30 分钟内崩溃超过上限：放弃并给出原因
+            # 8. 30 分钟内崩溃超过上限：放弃并给出原因
+            state.budget.reset()
             for _ in range(MAX_CRASH_RESTARTS):
                 controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
                 controller.cancel(cluster)

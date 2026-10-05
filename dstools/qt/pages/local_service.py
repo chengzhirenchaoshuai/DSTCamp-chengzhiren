@@ -43,7 +43,7 @@ from dstools.features.local_service.server_runtime import (
 )
 from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE, STATUS_TEXT_KEYS, ordered_shards, max_rollback_days
-from dstools.features.local_service.auto_restart import TOKEN_WAIT_LIMIT, token_retry_delay
+from dstools.features.local_service.auto_restart import TOKEN_HOLD_DURATION, TOKEN_WAIT_LIMIT
 from dstools.features.local_service.token_scheduler import TokenSelection, TokenUse, select_token_for_cluster
 from dstools.features.sakura import api as sakura_frp
 from dstools.i18n import t
@@ -1140,16 +1140,35 @@ class LocalServicePage(Page):
         self._token_reservations[cluster_key] = selection.token
         return "changed" if selection.changed else True
 
-    def _choose_start_token(self, cluster, *, allow_switch: bool = True) -> bool | str:
+    def _choose_start_token(self, cluster, *, allow_switch: bool = True, retry_current: bool = False) -> bool | str:
         """为启动选令牌并写入存档，不弹窗（自动重启用）。
 
         ``allow_switch`` 为 False 时，存档已有有效令牌就不换成池里的其它令牌：
-        崩溃后先等原令牌释放，免得每崩一次就多占一个令牌。"""
-        selection = self._start_token_selection(cluster)
+        崩溃后用原令牌拉起、冲突时让专服自己重试，免得每崩一次就多占一个令牌。"""
+        selection = self._start_token_selection(cluster, retry_current=retry_current)
         if (selection is not None and selection.changed and not allow_switch
                 and is_valid_token(read_token(self._start_token_path(cluster)))):
             return False
         return self._apply_start_token(cluster, selection)
+
+    def _alternative_start_token(self, cluster) -> str | None:
+        """令牌池里能替换当前令牌的另一个令牌（不写文件）；没有返回 None。
+
+        存档自己可能仍在运行（注册冲突中），所以不把它自己的占用算进去。"""
+        cluster_key = str(cluster.path)
+        current = read_token(self._start_token_path(cluster))
+        held = set(blocking_token_holds(time.time()))
+        if current:
+            held.add(token_fingerprint(current))
+        uses = [use for use in self.token_usage_snapshot() if use.cluster_key != cluster_key]
+        return select_token_for_cluster(
+            current_token="", pool=get_global_tokens(), target_cluster_key=cluster_key,
+            active_uses=uses, held_fingerprints=held).token
+
+    def _switch_to_alternative_token(self, cluster) -> bool:
+        """把存档令牌换成令牌池里的另一个可用令牌并预占（自动重启超时换令牌用）。"""
+        token = self._alternative_start_token(cluster)
+        return bool(token) and bool(self._apply_start_token(cluster, TokenSelection(token, True)))
 
     def _current_token_hold(self, cluster) -> dict | None:
         """存档当前令牌属于令牌池且仍在 Klei 释放等待期内时，返回它的等待记录。"""
@@ -1165,14 +1184,16 @@ class LocalServicePage(Page):
         selection = self._start_token_selection(cluster)
         hold = self._current_token_hold(cluster) if selection is not None else None
         if hold is not None and (selection.token is None or selection.changed):
-            # 原令牌还没释放：换令牌会多占一个池中令牌，由用户决定，不默默替换
-            options = [(t("local.token_held_switch_btn"), "switch")] if selection.token else []
-            options += [(t("local.token_held_retry_btn"), "retry"), (t("dlg.cancel_btn"), "cancel")]
+            # 原令牌还没释放：默认仍用原令牌（专服会自己重试到 Klei 释放），换令牌会多占一个池中令牌
+            options = [(t("local.token_held_retry_btn"), "retry")]
+            if selection.token:
+                options.append((t("local.token_held_switch_btn"), "switch"))
+            options.append((t("dlg.cancel_btn"), "cancel"))
             choice = dialogs.ask_choice(
                 self.window(), t("local.token_held_title"),
                 t("local.token_held_ask", cluster=cluster.name,
                   time=time.strftime("%H:%M", time.localtime(hold["retry_at"]))),
-                options, default="switch" if selection.token else "retry")
+                options, default="retry")
             if choice == "retry":
                 selection = self._start_token_selection(cluster, retry_current=True)
             elif choice != "switch":
@@ -1200,7 +1221,7 @@ class LocalServicePage(Page):
         self._auto_restart.on_failure(proc, report)  # 要在令牌等待标记更新之后，它按标记决定等多久
 
     def _record_token_hold(self, proc, report) -> None:
-        """主世界崩溃或注册冲突时，记下新令牌在 Klei 端尚未释放，按连续冲突次数拉长重试间隔。
+        """主世界崩溃或注册冲突时，记下新令牌在 Klei 端尚未释放（TOKEN_HOLD_DURATION 内不自动分给别的存档）。
 
         崩溃只在主世界注册成功过时才记：注册前就失败（Mod 报错、端口、世界生成等）
         Klei 端没有房间要释放，记了只会白白锁住令牌，让池子很快被"占满"。"""
@@ -1221,8 +1242,9 @@ class LocalServicePage(Page):
             state, failures = "crashed", 0
         set_token_hold(fingerprint, state=state, cluster_key=str(proc.cluster_path),
                         cluster_name=getattr(proc, "cluster_name", Path(proc.cluster_path).name), since=now,
-                        retry_at=now + token_retry_delay(failures), failures=failures)
-        self._token_reservations.pop(str(proc.cluster_path), None)
+                        retry_at=now + TOKEN_HOLD_DURATION, failures=failures)
+        # 注册冲突时专服仍在运行并自行重试，令牌仍归它用，只有进程都退出了才释放预占
+        self._release_token_reservation_if_stopped(proc.cluster_path)
 
     def _on_server_registered(self, proc) -> None:
         if not getattr(proc, "is_master", True):

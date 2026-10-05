@@ -4,10 +4,11 @@
 
 1. 世界跑起来后崩溃 → 稍等 CRASH_RESTART_DELAY 秒再拉起；主世界崩溃（或主世界已不在运行）
    时整组重启，只有洞穴等从世界崩溃时只重启它自己。
-2. 拉起前选令牌：先等原令牌的 Klei 释放等待期结束再试；距崩溃超过 TOKEN_SWITCH_AFTER
-   仍没恢复，才换用令牌池里其它可用令牌。
-3. 拉起后若注册冲突（E_ROWID_EXIST），停掉整组，按逐级拉长的间隔再等再试，从崩溃起最多等
-   TOKEN_WAIT_LIMIT；注册成功即结束本轮，并把用时写进日志。
+2. 拉起时用原令牌（忽略它自己的等待标记），不因崩溃就多占一个池中令牌。
+3. 拉起后若注册冲突（E_ROWID_EXIST），不停服：专服会自己每隔几秒重试，Klei 释放后自行注册
+   成功（实测强杀后约 25 分钟）。开启"超时换令牌"时，距崩溃超过 TOKEN_SWITCH_AFTER 仍在冲突
+   且池里有替代令牌，才停服换令牌重启；从崩溃起超过 TOKEN_WAIT_LIMIT 不再管理（服务器保持
+   运行继续重试）。注册成功即结束本轮，并把用时写进日志。
 
 全程不弹模态对话框（用户可能不在电脑前），失败原因显示在页面横幅并发托盘通知。
 """
@@ -23,13 +24,13 @@ from PySide6.QtCore import QObject, QTimer
 from dstools.features.cluster_config.config_manager import load_cluster_config
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.auto_restart import (
-    CRASH_RESTART_DELAY, MAX_CRASH_RESTARTS, TOKEN_SWITCH_AFTER, TOKEN_WAIT_LIMIT, CrashBudget, append_log,
-    is_restartable, token_retry_delay,
+    CRASH_RESTART_DELAY, MAX_CRASH_RESTARTS, TOKEN_BUSY_RECHECK, TOKEN_SWITCH_AFTER, TOKEN_WAIT_LIMIT,
+    CrashBudget, append_log, is_restartable,
 )
 from dstools.features.local_service.dedicated_server import ConfDirCrossDriveError, resolve_conf_dir_arg
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE, ordered_shards
 from dstools.i18n import t
-from dstools.shared.app_settings import blocking_token_holds, get_auto_restart_enabled
+from dstools.shared.app_settings import get_auto_restart_enabled, get_token_switch_on_timeout
 from dstools.shared.resource_paths import data_dir
 from dstools.shared.token_manager import read_token, token_fingerprint
 
@@ -37,7 +38,7 @@ from dstools.shared.token_manager import read_token, token_fingerprint
 @dataclass
 class _ClusterState:
     budget: CrashBudget = field(default_factory=CrashBudget)
-    phase: str = "idle"          # idle / scheduled / waiting_token / starting / gave_up
+    phase: str = "idle"          # idle / scheduled / waiting_token / starting / waiting_release / gave_up
     due: float = 0.0             # 下一次动作的时刻（time.time()）
     full: bool = False           # True：整组重启；False：只重启 shards
     shards: set[str] = field(default_factory=set)
@@ -45,6 +46,8 @@ class _ClusterState:
     attempts: int = 0            # 本轮崩溃后已拉起几次
     conflicts: int = 0           # 本轮注册冲突次数
     registered: bool = False
+    switched: bool = False       # 本轮已经（尝试）换过令牌，不再换第二次
+    switch_pending: bool = False  # 下一次拉起前换用池中其它令牌
     reason: str = ""             # gave_up 的原因
     timer: QTimer | None = None
 
@@ -64,13 +67,15 @@ class AutoRestartController(QObject):
             return
         state = self._state(cluster)
         now = time.time()
-        in_attempt = state.phase == "starting" and (state.full or proc.shard_name in state.shards)
+        in_attempt = (state.phase in ("starting", "waiting_release")
+                      and (state.full or proc.shard_name in state.shards))
         if report.category == "token_conflict":
             if in_attempt:
                 state.conflicts += 1
+                due = self._release_deadline(state)
                 self._log(cluster, f"{proc.shard_name} 注册冲突（E_ROWID_EXIST），距崩溃 {self._elapsed(state)}，"
-                                   f"第 {state.conflicts} 次")
-                self._stop_cluster_then(cluster, lambda: self._wait_for_token(cluster, state))
+                                   f"保持运行等专服自行重试，{datetime.fromtimestamp(due):%H:%M:%S} 再检查")
+                self._schedule(cluster, state, "waiting_release", due)
             return
         if not is_restartable(report.category, proc.world_ready, in_attempt):
             if in_attempt:
@@ -88,7 +93,7 @@ class AutoRestartController(QObject):
         state.full = bool(getattr(proc, "is_master", True))
         state.shards = {proc.shard_name}
         state.attempts = state.conflicts = 0
-        state.registered = False
+        state.registered = state.switched = state.switch_pending = False
         self._schedule(cluster, state, "scheduled", now + CRASH_RESTART_DELAY)
         self._log(cluster, f"{proc.shard_name} 崩溃（{report.title}），{int(CRASH_RESTART_DELAY)} 秒后自动重启，"
                            f"30 分钟内第 {len(state.budget.times)} 次")
@@ -96,8 +101,11 @@ class AutoRestartController(QObject):
 
     def on_registered(self, proc) -> None:
         state = self._states.get(str(proc.cluster_path))
-        if state is None or state.phase != "starting":
+        if state is None or state.phase not in ("starting", "waiting_release"):
             return
+        if state.phase == "waiting_release":
+            self._stop_timer(state)
+            state.phase = "starting"
         state.registered = True
         cluster = self._page._cluster_for_running_process(proc, None)
         if cluster is not None:
@@ -114,7 +122,7 @@ class AutoRestartController(QObject):
         state = self._states.get(str(cluster.path))
         if state is None or state.phase == "idle":
             return
-        if state.phase in ("scheduled", "waiting_token", "starting"):
+        if state.phase in ("scheduled", "waiting_token", "starting", "waiting_release"):
             self._log(cluster, "用户手动操作，取消本轮自动重启")
         self._stop_timer(state)
         state.phase = "idle"
@@ -130,6 +138,12 @@ class AutoRestartController(QObject):
                      minutes=int((time.time() - state.crashed_at) // 60))
         if state.phase == "starting":
             return t("local.auto_restart_starting", attempt=state.attempts)
+        if state.phase == "waiting_release":
+            minutes = int((time.time() - state.crashed_at) // 60)
+            if state.due < state.crashed_at + TOKEN_WAIT_LIMIT:
+                return t("local.auto_restart_waiting_release_switch", minutes=minutes,
+                         time=datetime.fromtimestamp(state.due).strftime("%H:%M"))
+            return t("local.auto_restart_waiting_release", minutes=minutes)
         if state.phase == "gave_up":
             return t("local.auto_restart_gave_up", reason=state.reason)
         return ""
@@ -138,10 +152,13 @@ class AutoRestartController(QObject):
     def _run(self, key: str) -> None:
         state = self._states.get(key)
         cluster = next((c for c in self._page.ctx.env.clusters if str(c.path) == key), None)
-        if state is None or state.phase not in ("scheduled", "waiting_token"):
+        if state is None or state.phase not in ("scheduled", "waiting_token", "waiting_release"):
             return
         if cluster is None or not get_auto_restart_enabled(key):
             state.phase = "idle"
+            return
+        if state.phase == "waiting_release":
+            self._on_release_deadline(cluster, state)
             return
         state.phase = "starting"
         master = self._page._master_shard(cluster)
@@ -154,11 +171,12 @@ class AutoRestartController(QObject):
     def _start(self, cluster, state: _ClusterState, targets) -> None:
         if state.phase != "starting":
             return  # 停服期间被用户取消
-        allow_switch = time.time() - state.crashed_at >= TOKEN_SWITCH_AFTER
-        if not self._page._choose_start_token(cluster, allow_switch=allow_switch):
+        page = self._page
+        switched = state.switch_pending and page._switch_to_alternative_token(cluster)
+        state.switch_pending = False
+        if not switched and not page._choose_start_token(cluster, allow_switch=False, retry_current=True):
             self._wait_for_token(cluster, state)
             return
-        page = self._page
         if page._install_dir is None:
             page._detect_install_dir()
         if page._install_dir is None:
@@ -193,23 +211,42 @@ class AutoRestartController(QObject):
 
         page.ctx.ensure_lobby_accel(cluster, after_accel)
 
-    def _wait_for_token(self, cluster, state: _ClusterState) -> None:
-        """当前没有可用令牌：等到原令牌的等待期结束再试；超过总时长就放弃。
-
-        原令牌等待期比"允许换令牌"的时刻还晚时，到那个时刻先醒一次去换令牌。"""
-        now = time.time()
-        token = read_token(cluster.token_path or (cluster.path / "cluster_token.txt"))
-        hold = blocking_token_holds(now).get(token_fingerprint(token)) if token else None
-        due = hold["retry_at"] if hold else now + token_retry_delay(state.conflicts)
+    def _release_deadline(self, state: _ClusterState) -> float:
+        """注册冲突后下一次检查的时刻：还能换令牌时是换令牌的时刻，否则是总等待上限。"""
         switch_at = state.crashed_at + TOKEN_SWITCH_AFTER
-        if now < switch_at < due:
-            due = switch_at
+        if not state.switched and get_token_switch_on_timeout() and time.time() < switch_at:
+            return switch_at
+        return state.crashed_at + TOKEN_WAIT_LIMIT
+
+    def _on_release_deadline(self, cluster, state: _ClusterState) -> None:
+        """冲突等到检查时刻仍未注册成功：能换令牌就停服换令牌重启，否则停止管理但不关服。"""
+        now = time.time()
+        if (not state.switched and get_token_switch_on_timeout()
+                and now < state.crashed_at + TOKEN_WAIT_LIMIT):
+            state.switched = True
+            token = self._page._alternative_start_token(cluster)
+            if token:
+                self._log(cluster, f"距崩溃 {self._elapsed(state)} 仍注册冲突，"
+                                   f"换用令牌 {token_fingerprint(token)[:8]} 重启")
+                state.phase, state.full, state.switch_pending = "starting", True, True
+                targets = list(ordered_shards(cluster))
+                self._stop_cluster_then(cluster, lambda: self._start(cluster, state, targets))
+                return
+            self._log(cluster, f"距崩溃 {self._elapsed(state)} 仍注册冲突，令牌池没有可换的令牌，继续等原令牌")
+            self._schedule(cluster, state, "waiting_release", state.crashed_at + TOKEN_WAIT_LIMIT)
+            return
+        self._give_up(cluster, state, t("local.auto_restart_reason_release_timeout",
+                                        hours=TOKEN_WAIT_LIMIT // 3600))
+
+    def _wait_for_token(self, cluster, state: _ClusterState) -> None:
+        """令牌暂时拉不起（正被别的存档使用，或令牌池没有可用令牌）：隔一会儿再查；超过总时长就放弃。"""
+        due = time.time() + TOKEN_BUSY_RECHECK
         if due - state.crashed_at > TOKEN_WAIT_LIMIT:
             self._give_up(cluster, state, t("local.auto_restart_reason_token_timeout",
                                              hours=TOKEN_WAIT_LIMIT // 3600))
             return
         self._schedule(cluster, state, "waiting_token", due)
-        self._log(cluster, f"等待 Klei 释放令牌，{datetime.fromtimestamp(due):%H:%M:%S} 重试")
+        self._log(cluster, f"暂无可拉起的令牌（可能正被其它存档使用），{datetime.fromtimestamp(due):%H:%M:%S} 再试")
 
     def _finish_if_ready(self, key: str, state: _ClusterState) -> None:
         cluster = next((c for c in self._page.ctx.env.clusters if str(c.path) == key), None)

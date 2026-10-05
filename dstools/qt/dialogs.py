@@ -846,6 +846,17 @@ class GlobalTokensDialog(Dialog):
         row.addWidget(self._use)
         self.body.addSpacing(8)
         self.body.addLayout(row)
+
+        # 自动重启等原令牌超时后是否换令牌：全局设置，改动即时保存
+        switch_row = QHBoxLayout()
+        switch_row.addWidget(self.text_label(t("token.switch_on_timeout_label"), wrap=False))
+        switch_row.addStretch()
+        self._switch_on_timeout = ToggleSwitch(app_settings.get_token_switch_on_timeout())
+        self._switch_on_timeout.toggled.connect(app_settings.set_token_switch_on_timeout)
+        switch_row.addWidget(self._switch_on_timeout)
+        self.body.addSpacing(8)
+        self.body.addLayout(switch_row)
+        self.body.addWidget(self.text_label(t("token.switch_on_timeout_hint"), muted=True, size_key="FONT_SIZE_SM"))
         self._refresh()
 
     def _row_texts(self, token: str) -> tuple[str, str, str]:
