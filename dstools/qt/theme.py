@@ -105,10 +105,14 @@ def _on_pixel_grid(font: QFont) -> bool:
 
 
 def _set_pixel_point_size(font: QFont, point_size: float) -> None:
-    """像素字体设字号：离 12 整数倍物理像素足够近就吸附过去，否则保持原磅值。"""
+    """像素字体设字号：开启清晰渲染时，离 12 整数倍物理像素足够近就吸附过去，否则保持原磅值。
+
+    全部抗锯齿时不吸附：落在 12 整数倍的字即使开抗锯齿也因对齐像素网格而显得锐利，
+    与其它柔和字号同屏有割裂感（真机反馈过小档小字、标准档标题）。"""
     phys = _point_to_phys(point_size)
     snapped = round(phys / _PIXEL_GRID) * _PIXEL_GRID
-    if snapped >= _PIXEL_GRID and abs(phys - snapped) <= _PIXEL_SNAP_TOLERANCE:
+    if (_PIXEL_CRISP_ON_GRID and snapped >= _PIXEL_GRID
+            and abs(phys - snapped) <= _PIXEL_SNAP_TOLERANCE):
         point_size = snapped * 72.0 / (96.0 * _device_pixel_ratio())
     font.setPointSizeF(point_size)
 
