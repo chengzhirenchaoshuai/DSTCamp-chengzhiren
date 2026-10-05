@@ -715,7 +715,16 @@ class LocalServicePage(Page):
             switch_reason = ""
         for button in (self._mode_btn, self._install_change_btn):
             _set_button_state(button, not switch_reason, switch_reason)
-        _set_button_state(self._steam_update_btn, not is_wegame, wegame_reason)
+        # 运行中开服程序文件被占用，Steam 校验/更新可能失败；但更新进行中按钮是"查看更新日志"，保持可点。
+        if self._steam_update_running:
+            update_reason = ""
+        elif is_wegame:
+            update_reason = wegame_reason
+        elif self.manager.running():
+            update_reason = t("local.steam_update_running_hint")
+        else:
+            update_reason = ""
+        _set_button_state(self._steam_update_btn, not update_reason, update_reason)
 
     def _wanted_runtime_kind(self) -> RuntimeKind | None:
         resolution = self._runtime_resolution
@@ -753,22 +762,28 @@ class LocalServicePage(Page):
             _show_not_found_warning(self.window(), self._wanted_runtime_kind())
 
     def _runtime_mode_dialog_html(self, current, names, installed) -> str:
-        """三段：当前模式（强调色）/ 三种模式两列对齐说明（当前行高亮）/ 安装状态两列对齐（彩色圆点）。"""
+        """三段：当前模式（强调色）/ 三种模式表格（表头浅底、单元格边框、当前行高亮）/ 安装状态两列对齐（彩色圆点）。"""
         esc = html.escape
         accent, muted, heading = theme.hex("ACCENT"), theme.hex("TEXT_MUTED"), theme.hex("HEADING")
         current_text = self._runtime_mode_text(self._runtime_resolution) if self._runtime_resolution else names[current]
         parts = [f'<div>{esc(t("local.runtime_mode_current_label"))}'
                  f'<span style="color:{accent}; font-weight:bold;">{esc(current_text)}</span></div>']
-        rows = []
+        border, header_bg, current_bg = theme.hex("CARD_BORDER"), theme.hex("CARD_BG_ALT"), theme.hex("PRIMARY_LIGHT")
+        rows = [f'<tr bgcolor="{header_bg}">'
+                f'<td nowrap style="font-weight:bold; color:{heading};">{esc(t("local.runtime_mode_col_mode"))}</td>'
+                f'<td style="font-weight:bold; color:{heading};">{esc(t("local.runtime_mode_col_desc"))}</td></tr>']
         for mode, desc_key in ((RuntimeMode.AUTO, "local.runtime_mode_desc_auto"),
                                (RuntimeMode.CLIENT, "local.runtime_mode_desc_client"),
                                (RuntimeMode.DEDICATED, "local.runtime_mode_desc_dedicated")):
-            name_style = f"color:{accent};" if mode is current else f"color:{heading};"
+            is_current = mode is current
+            row_bg = f' bgcolor="{current_bg}"' if is_current else ""
+            name_color = accent if is_current else heading
             tag = (f' <span style="color:{muted}; font-weight:normal;">{esc(t("local.runtime_mode_current_tag"))}</span>'
-                   if mode is current else "")
-            rows.append(f'<tr><td nowrap style="padding:4px 16px 4px 0; font-weight:bold; {name_style}">'
-                        f'{esc(names[mode])}{tag}</td><td style="padding:4px 0;">{esc(t(desc_key))}</td></tr>')
-        parts.append(f'<table cellspacing="0" cellpadding="0" style="margin-top:10px;">{"".join(rows)}</table>')
+                   if is_current else "")
+            rows.append(f'<tr{row_bg}><td nowrap style="font-weight:bold; color:{name_color};">{esc(names[mode])}{tag}</td>'
+                        f'<td>{esc(t(desc_key))}</td></tr>')
+        parts.append(f'<table width="100%" border="1" cellspacing="0" cellpadding="7" style="margin-top:10px; '
+                     f'border-collapse:collapse; border-style:solid; border-color:{border};">{"".join(rows)}</table>')
         parts.append(f'<div style="margin-top:8px; color:{muted};">{esc(t("local.runtime_mode_note"))}</div>')
         status_rows = []
         for kind in RuntimeKind:
