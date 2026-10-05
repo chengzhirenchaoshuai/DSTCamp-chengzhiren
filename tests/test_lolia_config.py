@@ -72,6 +72,11 @@ def test_paste_sources_and_prepare_shard() -> None:
     assert port == 25006 and host == "n.example"
     proxy = tomllib.loads(text)["proxies"][0]
     assert proxy["localPort"] == 25006 and proxy["localIP"] == "127.0.0.1"
+    # 真机 frpc 输出（带 ANSI 颜色码）：Lolia 拒绝登录时要能提取出原因
+    log = ["\x1b[1;33m2026-10-05 13:52:10.117 [W] [client/service.go:322] connect to server error: 可用流量已耗尽",
+           "\x1b[0mlogin to the server failed: 可用流量已耗尽. With loginFailExit enabled, no additional retries will be attempted"]
+    assert lolia_config.frpc_failure_reason(log) == "可用流量已耗尽"
+    assert lolia_config.frpc_failure_reason(log[:1]) == "connect to server error: 可用流量已耗尽"
 
 
 def test_oauth_pkce_callback_and_remark() -> None:

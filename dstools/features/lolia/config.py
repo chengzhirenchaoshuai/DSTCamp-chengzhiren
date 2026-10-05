@@ -169,6 +169,23 @@ def local_config_from(config: dict) -> tuple[str, int, str]:
     return dump_toml(local), ports["_"], local["serverAddr"]
 
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def frpc_failure_reason(lines: list[str]) -> str:
+    """从 frpc 输出里提取最后一条失败原因（如 Lolia 服务端拒绝登录时的
+    "可用流量已耗尽"），找不到返回空字符串。frpc 输出带 ANSI 颜色码，先去掉。"""
+    for raw in reversed(lines):
+        line = _ANSI.sub("", raw).strip()
+        m = re.search(r"login to the server failed: (.*?)(?:\. With loginFailExit.*)?$", line)
+        if m:
+            return m.group(1)
+        m = re.search(r"\[[EW]\] \[[^\]]*\] (.*)$", line)
+        if m:
+            return m.group(1)
+    return ""
+
+
 def dump_toml(data: dict) -> str:
     """最小 TOML 序列化：顶层标量、`[表]`、`[[表数组]]`，更深层的表写成内联表。
     只覆盖 frpc 配置会用到的类型（字符串/整数/浮点/布尔/数组/表）。"""

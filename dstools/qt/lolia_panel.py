@@ -13,6 +13,7 @@ frpc.exe 以 `-c` 启动——进程管理复用 features/frp_selfhost/client.py
 
 import threading
 import webbrowser
+from collections import deque
 
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFont, QGuiApplication
@@ -119,6 +120,8 @@ class LoliaPanel(QWidget):
         self._node_choices: list[tuple[int, str, bool]] = []
         self._selected_node_id: int | None = None
         self._reload_gen = 0
+        self._frpc_logs: dict[str, deque] = {}
+        self._reason_pending: dict[int, tuple] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 10, 0, 0)
@@ -493,10 +496,24 @@ class LoliaPanel(QWidget):
     def _tick_frpc_row(self) -> None:
         exited = False
         for proc in self.frpc.processes():
+            # 持续收走输出、只留最后几行：退出时据此给出 frpc 自己报的原因
+            # （真机：Lolia 拒绝登录时只看退出码 1 看不出是"可用流量已耗尽"）
+            tail = self._frpc_logs.setdefault(str(proc.cluster_path), deque(maxlen=30))
+            tail.extend(proc.read_available_lines())
             if proc.proc is not None and proc.status == FrpcStatus.RUNNING \
                     and (code := proc.poll_exit_code()) is not None:
                 proc.status = FrpcStatus.CRASHED
                 proc.error = t("sakura.frpc_exited", code=code)
+                self._reason_pending[id(proc)] = (proc, proc.error)
+                exited = True
+        # 进程退出时读输出的线程可能还没交出最后几行，之后几次刷新里继续找原因
+        for key, (proc, base_error) in list(self._reason_pending.items()):
+            tail = self._frpc_logs.get(str(proc.cluster_path)) or ()
+            reason = lolia_config.frpc_failure_reason(list(tail))
+            if reason or proc.status != FrpcStatus.CRASHED:
+                del self._reason_pending[key]
+            if reason and proc.status == FrpcStatus.CRASHED:
+                proc.error = f"{base_error}：{reason}"
                 exited = True
         cluster = self._current_cluster
         if not cluster or not self._frpc_row.isVisible():
@@ -530,6 +547,8 @@ class LoliaPanel(QWidget):
         self._frpc_status_label.setText(text)
         self._frpc_status_label.setStyleSheet(f"color: {color};")
         self._frpc_status_label.setToolTip(error or "")
+        if error:
+            self._status_label.setText(error)  # 失败原因直接显示出来，不只藏在悬停提示里
         self._frpc_toggle_btn.setText(t("sakura.frpc_stop_btn") if running else t("sakura.frpc_start_btn"))
 
     def _on_frpc_toggle(self) -> None:
