@@ -3,9 +3,9 @@
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap
-from PySide6.QtWidgets import QFileDialog, QLabel, QPushButton, QScrollArea
+from PySide6.QtWidgets import QFileDialog, QFrame, QLabel, QPushButton, QScrollArea
 
 from dstools.features.mod.export_list import ExportModEntry
 from dstools.i18n import t
@@ -148,6 +148,8 @@ class ModListImageDialog(dialogs.Dialog):
         self._preview = QLabel()
         self._preview.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self._area = QScrollArea()
+        self._area.setFrameShape(QFrame.Shape.NoFrame)
+        self._area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._area.setWidgetResizable(True)
         self._area.setWidget(self._preview)
         self.body.addWidget(self._area, 1)
@@ -169,14 +171,20 @@ class ModListImageDialog(dialogs.Dialog):
         super().resizeEvent(event)
         self._update_preview()
 
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # 构造时 resize 发生在布局生效之前，那时滚动区域还很窄；显示后布局到位再按实际宽度算一次。
+        QTimer.singleShot(0, self._update_preview)
+
     def _update_preview(self) -> None:
-        # 按屏幕缩放比缩到物理像素再设 devicePixelRatio，避免先缩到逻辑尺寸再被二次放大。
-        avail = self._area.viewport().width() - 2
+        # 宽度始终扣掉竖向滚动条：滚动条出现/消失不会改变预览宽度，避免来回重排。
+        avail = self._area.width() - self._area.verticalScrollBar().sizeHint().width() - 2
         if avail <= 0:
             return
         dpr = self.devicePixelRatioF()
-        logical_w = self._image.width() / self._image.devicePixelRatio()
-        target_w = min(avail, logical_w)
+        # 铺满可用宽度，最多放大到图片原始物理像素，不做超分辨率放大以免发虚。
+        target_w = min(avail, self._image.width() / dpr)
+        # 按屏幕缩放比缩到物理像素再设 devicePixelRatio，避免先缩到逻辑尺寸再被二次放大。
         scaled = self._image.scaledToWidth(max(1, round(target_w * dpr)), Qt.TransformationMode.SmoothTransformation)
         pixmap = QPixmap.fromImage(scaled)
         pixmap.setDevicePixelRatio(dpr)
