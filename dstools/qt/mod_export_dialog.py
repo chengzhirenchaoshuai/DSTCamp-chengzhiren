@@ -4,7 +4,9 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QFont, QFontMetrics, QGuiApplication, QImage, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor, QFont, QFontMetrics, QGuiApplication, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap,
+)
 from PySide6.QtWidgets import QFileDialog, QFrame, QLabel, QPushButton, QScrollArea
 
 from dstools.features.mod.export_list import ExportModEntry
@@ -17,13 +19,16 @@ from dstools.qt.theme import theme
 # 以下尺寸均为逻辑像素，最终按 _RENDER_SCALE 倍输出，分享到聊天软件里放大也清楚。
 _RENDER_SCALE = 2
 _PAD = 28
+_BANNER_H = 104
+_BANNER_RADIUS = 20
 _CARD_W = 360
-_CARD_H = 78
-_GAP = 12
-_ICON = 56
-_CARD_RADIUS = 12
-_FRAME_PAD = 16  # 外框与卡片之间的内边距
-_FRAME_RADIUS = 20
+_CARD_H = 74
+_GAP = 14
+_ICON = 54
+_CARD_RADIUS = 14
+_FRAME_PAD = 18  # 外框与卡片之间的内边距
+_FRAME_RADIUS = 22
+_SECTION_GAP = 18  # 横幅与卡片外框之间的间距
 
 
 def _column_count(count: int) -> int:
@@ -41,6 +46,12 @@ def _font(px: float, bold: bool = False) -> QFont:
     return font
 
 
+def _alpha(key: str, alpha: int) -> QColor:
+    color = theme.color(key)
+    color.setAlpha(alpha)
+    return color
+
+
 def _icon_pixmap(image) -> QPixmap | None:
     if image is not None:
         pixmap = pil_to_pixmap(image)
@@ -51,21 +62,140 @@ def _icon_pixmap(image) -> QPixmap | None:
     return None if pixmap.isNull() else pixmap
 
 
+def _draw_soft_shadow(painter: QPainter, rect: QRectF, radius: float, offset_y: float = 2.0) -> None:
+    """用几圈逐层变淡的圆角矩形模拟模糊阴影（QPainter 没有原生模糊）。"""
+    painter.setPen(Qt.PenStyle.NoPen)
+    for spread, alpha in ((6, 10), (4, 18), (2, 28), (1, 36)):
+        painter.setBrush(_alpha("SHADOW", alpha))
+        painter.drawRoundedRect(rect.adjusted(-spread, -spread + offset_y, spread, spread + offset_y),
+                                radius + spread, radius + spread)
+
+
+def _draw_pill(painter: QPainter, rect: QRectF, fill: QColor, text_color: QColor, font: QFont, text: str) -> None:
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(fill)
+    painter.drawRoundedRect(rect, rect.height() / 2, rect.height() / 2)
+    painter.setFont(font)
+    painter.setPen(text_color)
+    painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+
+
+def _draw_banner(painter: QPainter, rect: QRectF, title: str, chips: list[str]) -> None:
+    """顶部主题色渐变横幅：白色标题 + 一排半透明信息标签，右侧几个淡圆圈做点缀。"""
+    path = QPainterPath()
+    path.addRoundedRect(rect, _BANNER_RADIUS, _BANNER_RADIUS)
+    gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
+    gradient.setColorAt(0.0, theme.color("PRIMARY_DARK"))
+    gradient.setColorAt(1.0, theme.color("PRIMARY"))
+    painter.save()
+    painter.setClipPath(path)
+    painter.fillPath(path, gradient)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(255, 255, 255, 26))
+    painter.drawEllipse(QRectF(rect.right() - 150, rect.top() - 70, 220, 220))
+    painter.setBrush(QColor(255, 255, 255, 18))
+    painter.drawEllipse(QRectF(rect.right() - 260, rect.bottom() - 46, 120, 120))
+    painter.restore()
+
+    title_font, chip_font = _font(24, bold=True), _font(12)
+    title_fm, chip_fm = QFontMetrics(title_font), QFontMetrics(chip_font)
+    chip_h = chip_fm.height() + 8
+    left = rect.left() + 24
+    right = rect.right() - 24
+    block_h = title_fm.height() + 12 + chip_h
+    top = rect.top() + (rect.height() - block_h) / 2
+    painter.setFont(title_font)
+    painter.setPen(QColor(255, 255, 255))
+    painter.drawText(QRectF(left, top, right - left, title_fm.height()),
+                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
+    x = left
+    chip_y = top + title_fm.height() + 12
+    for text in chips:
+        max_w = right - x
+        if max_w < chip_h * 2:
+            break
+        text = chip_fm.elidedText(text, Qt.TextElideMode.ElideRight, int(max_w - 24))
+        chip_w = chip_fm.horizontalAdvance(text) + 24
+        _draw_pill(painter, QRectF(x, chip_y, chip_w, chip_h), QColor(255, 255, 255, 56),
+                   QColor(255, 255, 255), chip_font, text)
+        x += chip_w + 8
+
+
+def _draw_card(painter: QPainter, rect: QRectF, entry: ExportModEntry, icon, fonts: dict) -> None:
+    """单张 Mod 卡片：阴影浮起，第一行名称 + 版本标签，第二行作者（左）与工坊 ID（右）。"""
+    _draw_soft_shadow(painter, rect, _CARD_RADIUS)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(theme.color("CARD_BG"))
+    painter.drawRoundedRect(rect, _CARD_RADIUS, _CARD_RADIUS)
+
+    icon_rect = QRectF(rect.left() + 11, rect.top() + (rect.height() - _ICON) / 2, _ICON, _ICON)
+    pixmap = _icon_pixmap(icon)
+    if pixmap is not None:
+        _draw_soft_shadow(painter, icon_rect, 10, offset_y=1.5)
+        clip = QPainterPath()
+        clip.addRoundedRect(icon_rect, 10, 10)
+        painter.save()
+        painter.setClipPath(clip)
+        painter.drawPixmap(icon_rect, pixmap, QRectF(pixmap.rect()))
+        painter.restore()
+
+    name_font, tag_font, meta_font = fonts["name"], fonts["tag"], fonts["meta"]
+    name_fm, tag_fm, meta_fm = QFontMetrics(name_font), QFontMetrics(tag_font), QFontMetrics(meta_font)
+    text_left = icon_rect.right() + 13
+    text_right = rect.right() - 14
+    text_w = text_right - text_left
+    line_gap = 7
+    block_h = name_fm.height() + line_gap + meta_fm.height()
+    name_y = rect.top() + (rect.height() - block_h) / 2
+    meta_y = name_y + name_fm.height() + line_gap
+
+    # 版本号做成主题浅色小标签跟在名称后；名称过长时先省略名称，保证标签完整。
+    version = entry.version.lstrip("vV")
+    tag_text = t("mod.export_version", version=version) if version else ""
+    tag_w = tag_fm.horizontalAdvance(tag_text) + 14 if tag_text else 0
+    name_max = int(text_w - (tag_w + 8 if tag_w else 0))
+    name = name_fm.elidedText(entry.name, Qt.TextElideMode.ElideRight, max(20, name_max))
+    painter.setFont(name_font)
+    painter.setPen(theme.color("HEADING"))
+    painter.drawText(QRectF(text_left, name_y, name_max, name_fm.height()),
+                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, name)
+    if tag_text:
+        tag_h = tag_fm.height() + 4
+        tag_x = text_left + min(name_fm.horizontalAdvance(name), name_max) + 8
+        tag_rect = QRectF(tag_x, name_y + (name_fm.height() - tag_h) / 2, tag_w, tag_h)
+        _draw_pill(painter, tag_rect, theme.color("PRIMARY_LIGHT"), theme.color("PRIMARY_DARK"), tag_font, tag_text)
+
+    # 工坊 ID 靠右，作者占剩余宽度，两者不重叠。
+    id_text = f"ID {entry.id_text}" if entry.id_text else t("mod.export_non_workshop")
+    id_w = meta_fm.horizontalAdvance(id_text)
+    painter.setFont(meta_font)
+    painter.setPen(_alpha("TEXT_MUTED", 170))
+    painter.drawText(QRectF(text_right - id_w, meta_y, id_w, meta_fm.height()),
+                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, id_text)
+    if entry.author:
+        author_w = int(text_w - id_w - 12)
+        painter.setPen(theme.color("TEXT_MUTED"))
+        painter.drawText(QRectF(text_left, meta_y, author_w, meta_fm.height()),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         meta_fm.elidedText(entry.author, Qt.TextElideMode.ElideRight, author_w))
+
+
 def render_mod_list_image(entries: list[ExportModEntry], icon_images: dict, title: str, subtitle: str) -> QImage:
-    """把条目画成一张图片（界面线程调用：用到 QPixmap 和主题字体）。"""
+    """把条目画成一张图片（界面线程调用：用到 QPixmap 和主题字体）。
+
+    subtitle 是"存档 · 世界 · 数量 · 时间"格式的文案，这里从右边拆成横幅里的几个标签；
+    从右拆是因为只有存档名可能自带" · "。"""
+    chips = [part for part in subtitle.rsplit(" · ", 3) if part.strip()]
     cols = _column_count(len(entries))
     rows = max(1, (len(entries) + cols - 1) // cols)
-    title_font, sub_font = _font(22, bold=True), _font(13)
-    name_font, meta_font = _font(15, bold=True), _font(12)
+    fonts = {"name": _font(15, bold=True), "tag": _font(11), "meta": _font(12)}
     footer_font = _font(11)
-    title_h = QFontMetrics(title_font).height()
-    sub_h = QFontMetrics(sub_font).height()
-    header_h = title_h + 6 + sub_h + 18
-    footer_h = QFontMetrics(footer_font).height() + 12
+    footer_h = QFontMetrics(footer_font).height() + 14
     grid_w = cols * _CARD_W + (cols - 1) * _GAP
     grid_h = rows * _CARD_H + (rows - 1) * _GAP
-    width = _PAD * 2 + _FRAME_PAD * 2 + grid_w
-    height = _PAD * 2 + header_h + _FRAME_PAD * 2 + grid_h + footer_h
+    content_w = grid_w + _FRAME_PAD * 2
+    width = _PAD * 2 + content_w
+    height = _PAD * 2 + _BANNER_H + _SECTION_GAP + _FRAME_PAD * 2 + grid_h + footer_h
 
     image = QImage(width * _RENDER_SCALE, height * _RENDER_SCALE, QImage.Format.Format_ARGB32_Premultiplied)
     image.setDevicePixelRatio(_RENDER_SCALE)
@@ -74,75 +204,26 @@ def render_mod_list_image(entries: list[ExportModEntry], icon_images: dict, titl
     painter.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform
                            | QPainter.RenderHint.TextAntialiasing)
 
-    # 标题区：左侧一条主题色竖条 + 标题 + 副标题。
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(theme.color("PRIMARY"))
-    painter.drawRoundedRect(QRectF(_PAD, _PAD + 2, 5, title_h + 6 + sub_h - 4), 2.5, 2.5)
-    text_x = _PAD + 16
-    painter.setFont(title_font)
-    painter.setPen(theme.color("HEADING"))
-    painter.drawText(QRectF(text_x, _PAD, width - text_x - _PAD, title_h),
-                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
-    painter.setFont(sub_font)
-    painter.setPen(theme.color("TEXT_MUTED"))
-    sub_rect = QRectF(text_x, _PAD + title_h + 6, width - text_x - _PAD, sub_h)
-    painter.drawText(sub_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                     QFontMetrics(sub_font).elidedText(subtitle, Qt.TextElideMode.ElideRight, int(sub_rect.width())))
+    _draw_banner(painter, QRectF(_PAD, _PAD, content_w, _BANNER_H), title, chips)
 
-    # 全部卡片外面套一圈圆角外框，浅底色把卡片区和标题区分开。
-    frame = QRectF(_PAD + 1, _PAD + header_h + 1, grid_w + _FRAME_PAD * 2 - 2, grid_h + _FRAME_PAD * 2 - 2)
-    painter.setPen(QPen(theme.color("CARD_BORDER"), 2))
+    # 全部卡片外面套一圈圆角外框，浅底色把卡片区和横幅分开。
+    frame_top = _PAD + _BANNER_H + _SECTION_GAP
+    frame = QRectF(_PAD + 1, frame_top + 1, content_w - 2, grid_h + _FRAME_PAD * 2 - 2)
+    painter.setPen(QPen(theme.color("CARD_BORDER"), 1.5))
     painter.setBrush(theme.color("CARD_BG_ALT"))
     painter.drawRoundedRect(frame, _FRAME_RADIUS, _FRAME_RADIUS)
 
-    top = _PAD + header_h + _FRAME_PAD
-    border_pen = QPen(theme.color("CARD_BORDER"), 1)
-    name_fm, meta_fm = QFontMetrics(name_font), QFontMetrics(meta_font)
+    top = frame_top + _FRAME_PAD
     for index, entry in enumerate(entries):
         # 按列优先排：先填满第一列再换列，读起来和应用里的列表顺序一致。
         col, row = divmod(index, rows)
         x = _PAD + _FRAME_PAD + col * (_CARD_W + _GAP)
         y = top + row * (_CARD_H + _GAP)
-        card = QRectF(x + 0.5, y + 0.5, _CARD_W - 1, _CARD_H - 1)
-        painter.setPen(border_pen)
-        painter.setBrush(theme.color("CARD_BG"))
-        painter.drawRoundedRect(card, _CARD_RADIUS, _CARD_RADIUS)
-
-        icon_rect = QRectF(x + 11, y + (_CARD_H - _ICON) / 2, _ICON, _ICON)
-        pixmap = _icon_pixmap(icon_images.get(entry.workshop_id))
-        if pixmap is not None:
-            clip = QPainterPath()
-            clip.addRoundedRect(icon_rect, 8, 8)
-            painter.save()
-            painter.setClipPath(clip)
-            painter.drawPixmap(icon_rect, pixmap, QRectF(pixmap.rect()))
-            painter.restore()
-
-        text_left = icon_rect.right() + 12
-        text_w = int(x + _CARD_W - 12 - text_left)
-        meta = " · ".join(part for part in (
-            # 有的作者版本号自带 "v" 前缀，不再重复加。
-            t("mod.export_version", version=entry.version.lstrip("vV")) if entry.version else "",
-            entry.author) if part)
-        id_line = t("mod.export_id", id=entry.id_text) if entry.id_text else t("mod.export_non_workshop")
-        lines = [(name_font, name_fm, "HEADING", entry.name)]
-        if meta:
-            lines.append((meta_font, meta_fm, "TEXT_MUTED", meta))
-        lines.append((meta_font, meta_fm, "TEXT_MUTED", id_line))
-        spacing = 3
-        block_h = sum(fm.height() for _f, fm, _c, _s in lines) + spacing * (len(lines) - 1)
-        line_y = y + (_CARD_H - block_h) / 2
-        for font, fm, color_key, text in lines:
-            painter.setFont(font)
-            painter.setPen(theme.color(color_key))
-            painter.drawText(QRectF(text_left, line_y, text_w, fm.height()),
-                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                             fm.elidedText(text, Qt.TextElideMode.ElideRight, text_w))
-            line_y += fm.height() + spacing
+        _draw_card(painter, QRectF(x, y, _CARD_W, _CARD_H), entry, icon_images.get(entry.workshop_id), fonts)
 
     painter.setFont(footer_font)
     painter.setPen(theme.color("TEXT_MUTED"))
-    painter.drawText(QRectF(_PAD, height - _PAD - footer_h + 12, width - _PAD * 2, footer_h - 12),
+    painter.drawText(QRectF(_PAD, height - _PAD - footer_h + 14, width - _PAD * 2, footer_h - 14),
                      Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, t("mod.export_footer"))
     painter.end()
     return image
