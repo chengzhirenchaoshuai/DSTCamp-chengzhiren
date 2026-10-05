@@ -153,14 +153,20 @@ class _FontChoiceCard(QWidget):
         painter.drawRoundedRect(rect, 10, 10)
 
         family = FONT_FAMILY_BY_STYLE[self._style]
+        # 麦圆体在 DirectWrite 默认 hinting 下笔画粗细不均，与 theme.apply_style_hints() 一致禁用。
+        hinting = (QFont.HintingPreference.PreferNoHinting if self._style == "cute"
+                   else QFont.HintingPreference.PreferDefaultHinting)
         name_font = QFont(family, theme.palette["FONT_SIZE_MD"])
+        name_font.setHintingPreference(hinting)
         name_font.setBold(True)
         painter.setFont(name_font)
         painter.setPen(theme.color("TEXT"))
         painter.drawText(rect.adjusted(12, 10, -28, -rect.height() / 2),
                          int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter),
                          t(f"settings.font_style_{self._style}"))
-        painter.setFont(QFont(family, theme.palette["FONT_SIZE_BASE"]))
+        sample_font = QFont(family, theme.palette["FONT_SIZE_BASE"])
+        sample_font.setHintingPreference(hinting)
+        painter.setFont(sample_font)
         painter.setPen(theme.color("TEXT_MUTED"))
         painter.drawText(rect.adjusted(12, rect.height() / 2, -12, -8),
                          int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), self._SAMPLE)
@@ -253,7 +259,9 @@ class FontSettingsDialog(dialogs.Dialog):
             self._preview.setFont(theme.font("FONT_SIZE_BASE"))
             return
         px = max(6, round(_PREVIEW_FONT_SIZE * theme.font_size_scale))
-        self._preview.setFont(QFont(theme.font_family, px))
+        font = QFont(theme.font_family, px)
+        theme.apply_style_hints(font)
+        self._preview.setFont(font)
 
     def reject(self) -> None:
         # 取消：恢复打开窗口时的字体与字号档位

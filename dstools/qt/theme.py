@@ -411,12 +411,17 @@ class Theme(QObject):
         """按当前字体样式给 QFont 补上抗锯齿/hinting 策略。
 
         缝合像素字体在 FreeType 引擎下、字号正好是设计尺寸整数倍时关闭抗锯齿、禁用
-        hinting 做像素级对齐；其余情况与其它样式（微软雅黑、荆南麦圆体）一样走默认
-        抗锯齿（见文件顶部说明）。必须在字号设好之后调用。显式恢复默认策略是因为
-        _refresh_explicit_fonts 复用已有 QFont，不重置会残留 NoAntialias。"""
+        hinting 做像素级对齐；其余情况走默认抗锯齿（见文件顶部说明）。荆南麦圆体在
+        DirectWrite 默认 hinting 下笔画被对齐成 1px/2px 粗细不均（真机反馈过标准/大/特大
+        档"割裂"），对它禁用 hinting；微软雅黑自带精调的 hinting，保持默认。必须在字号
+        设好之后调用。显式恢复默认策略是因为 _refresh_explicit_fonts 复用已有 QFont，
+        不重置会残留 NoAntialias。"""
         if (self._font_style == "pixel" and _PIXEL_CRISP_ON_GRID and freetype_engine_active()
                 and _on_pixel_grid(font)):
             font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
+            font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
+        elif self._font_style == "cute":
+            font.setStyleStrategy(QFont.StyleStrategy.PreferDefault)
             font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
         else:
             font.setStyleStrategy(QFont.StyleStrategy.PreferDefault)
