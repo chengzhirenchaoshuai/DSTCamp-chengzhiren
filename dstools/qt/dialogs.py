@@ -27,7 +27,7 @@ from dstools.features.local_service.backup_manager import get_backup_summary
 from dstools.i18n import t
 from dstools.qt.theme import theme
 from dstools.qt.threads import run_async
-from dstools.qt.widgets import ToggleSwitch
+from dstools.qt.widgets import ToggleSwitch, section_card
 from dstools.shared.app_settings import (
     get_backup_auto_enabled, get_backup_interval_minutes, get_backup_retention,
     set_backup_auto_enabled, set_backup_interval_minutes, set_backup_retention,
@@ -809,8 +809,14 @@ class GlobalTokensDialog(Dialog):
         self._token_uses = tuple(token_uses)
         self._prune_holds()
         self._holds = app_settings.get_token_holds()
-        self.body.addWidget(self.text_label(t("token.global_hint"), size_key="FONT_SIZE_SM"))
+        self.body.setSpacing(12)
+
+        # ── 卡片一：令牌池（说明 → 表格 → 增删操作）──
+        pool_card, pool = section_card(t("token.pool_section"))
+        pool.setSpacing(8)
+        pool.addWidget(self.text_label(t("token.global_hint"), muted=True, size_key="FONT_SIZE_SM"))
         self._table = QTableWidget(0, 3)
+        self._style_table()
         self._table.setHorizontalHeaderLabels(
             [t("token.column_token"), t("token.column_kind"), t("token.column_status")])
         header = self._table.horizontalHeader()
@@ -821,7 +827,7 @@ class GlobalTokensDialog(Dialog):
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self._table.setMinimumHeight(260)
+        self._table.setMinimumHeight(220)
         self._table.setMouseTracking(True)
         self._table.itemSelectionChanged.connect(self._update_buttons)
         self._table.cellEntered.connect(self._on_cell_entered)
@@ -829,49 +835,84 @@ class GlobalTokensDialog(Dialog):
         self._hover_timer = QTimer(self, singleShot=True, interval=350)
         self._hover_timer.timeout.connect(self._show_full_token)
         self._hover_row: int | None = None
-        self.body.addWidget(self._table, 1)
+        pool.addWidget(self._table, 1)
 
         row = QHBoxLayout()
+        row.setSpacing(8)
         self._add = QPushButton(t("admin.add"))
         self._remove = style_button(QPushButton(t("admin.remove")), "danger")
-        self._release = QPushButton(t("token.clear_hold"))
-        self._use = QPushButton(t("token.global_use"))
+        self._release = style_button(QPushButton(t("token.clear_hold")), "secondary")
         self._add.clicked.connect(self._on_add)
         self._remove.clicked.connect(self._on_remove)
         self._release.clicked.connect(self._on_clear_hold)
-        self._use.clicked.connect(self._on_use)
         for button in (self._add, self._remove, self._release):
             row.addWidget(button)
         row.addStretch()
-        row.addWidget(self._use)
-        self.body.addSpacing(8)
-        self.body.addLayout(row)
+        pool.addSpacing(2)
+        pool.addLayout(row)
+        self.body.addWidget(pool_card, 1)
 
-        # 自动重启等原令牌超时后是否换令牌：全局设置，改动即时保存
+        # ── 卡片二：崩溃自动重启时的换令牌策略（全局设置，改动即时保存）──
+        restart_card, restart = section_card(t("token.auto_restart_section"))
+        restart.setSpacing(8)
         switch_row = QHBoxLayout()
-        switch_row.addWidget(self.text_label(t("token.switch_on_timeout_label"), wrap=False))
+        switch_row.addWidget(self.text_label(t("token.switch_on_timeout_label"), size_key="FONT_SIZE_BASE", wrap=False))
         switch_row.addStretch()
         self._switch_on_timeout = ToggleSwitch(app_settings.get_token_switch_on_timeout())
         self._switch_on_timeout.toggled.connect(self._on_switch_toggled)
         switch_row.addWidget(self._switch_on_timeout)
-        self.body.addSpacing(8)
-        self.body.addLayout(switch_row)
+        restart.addLayout(switch_row)
         minutes_row = QHBoxLayout()
-        minutes_row.addWidget(self.text_label(t("token.switch_after_minutes_label"), wrap=False))
+        minutes_row.addWidget(self.text_label(t("token.switch_after_minutes_label"), size_key="FONT_SIZE_BASE", wrap=False))
         minutes_row.addStretch()
         self._switch_minutes = QLineEdit(str(app_settings.get_token_switch_after_minutes()))
         self._switch_minutes.setFixedWidth(90)
+        self._switch_minutes.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._switch_minutes.setValidator(QIntValidator(*app_settings.TOKEN_SWITCH_MINUTES_RANGE))
         self._switch_minutes.editingFinished.connect(self._on_switch_minutes_edited)
         self._switch_minutes.setEnabled(self._switch_on_timeout.isChecked())
         minutes_row.addWidget(self._switch_minutes)
-        self.body.addLayout(minutes_row)
+        restart.addLayout(minutes_row)
         low, high = app_settings.TOKEN_SWITCH_MINUTES_RANGE
-        self.body.addWidget(self.text_label(t("token.switch_on_timeout_hint", low=low, high=high),
-                                            muted=True, size_key="FONT_SIZE_SM"))
+        restart.addWidget(self.text_label(t("token.switch_on_timeout_hint", low=low, high=high),
+                                          muted=True, size_key="FONT_SIZE_SM"))
+        self.body.addWidget(restart_card)
+
+        # ── 底部：关闭靠左，主操作"用于当前存档"靠右 ──
+        close = style_button(QPushButton(t("dlg.close_btn")), "secondary")
+        close.setAutoDefault(False)
+        close.clicked.connect(self.reject)
+        self._use = QPushButton(t("token.global_use"))
+        self._use.clicked.connect(self._on_use)
+        self.add_footer([close], [self._use])
         self._refresh()
 
-    def _row_texts(self, token: str) -> tuple[str, str, str]:
+    def _style_table(self) -> None:
+        """表格默认是系统灰表头加网格线，跟主题卡片不搭：去网格、浅色表头、行高放大、主题色选中。"""
+        table = self._table
+        table.setShowGrid(False)
+        table.setFont(theme.font("FONT_SIZE_BASE"))
+        table.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # 去掉选中单元格的虚线焦点框
+        table.verticalHeader().setDefaultSectionSize(34)
+        header = table.horizontalHeader()
+        header.setFont(theme.font("FONT_SIZE_SM", bold=True))
+        header.setHighlightSections(False)
+        header.setMinimumHeight(30)
+        table.setStyleSheet(f"""
+            QTableWidget {{
+                background: rgba(255, 255, 255, 200); border: 1px solid {theme.hex('CARD_BORDER')};
+                border-radius: 8px;
+            }}
+            QTableWidget::item {{ padding: 0 8px; border-bottom: 1px solid {theme.hex('CARD_BG_ALT')}; }}
+            QTableWidget::item:selected {{ background: {theme.hex('PRIMARY_LIGHT')}; color: {theme.hex('TEXT')}; }}
+            QHeaderView::section {{
+                background: {theme.hex('CARD_BG_ALT')}; color: {theme.hex('HEADING')};
+                border: none; border-bottom: 1px solid {theme.hex('CARD_BORDER')}; padding: 4px 8px;
+            }}
+        """)
+
+    def _row_texts(self, token: str) -> tuple[str, str, str, str]:
+        """返回 (脱敏令牌, 类型, 状态文字, 状态颜色键)。"""
         from dstools.shared.token_manager import ServerTokenKind, classify_token, is_valid_token
         kind_key = {ServerTokenKind.OLD: "token.kind_old", ServerTokenKind.NEW: "token.kind_new",
                     ServerTokenKind.UNKNOWN: "token.kind_unknown"}[classify_token(token)]
@@ -880,19 +921,21 @@ class GlobalTokensDialog(Dialog):
                         if self._fingerprint(use.token) == fingerprint})
         hold = self._holds.get(fingerprint)
         if not is_valid_token(token):
-            status = t("token.status_invalid")
+            status, color = t("token.status_invalid"), "ERROR"
         elif hold and self._blocking(hold):
-            status = t("token.status_conflict" if hold["state"] == "conflict" else "token.status_waiting",
+            conflict = hold["state"] == "conflict"
+            status = t("token.status_conflict" if conflict else "token.status_waiting",
                        name=hold.get("cluster_name") or "-",
                        time=time.strftime("%H:%M", time.localtime(hold["retry_at"])))
+            color = "ERROR" if conflict else "BANNER_TEXT"
         elif users:
-            status = t("token.status_in_use", names="、".join(users))
+            status, color = t("token.status_in_use", names="、".join(users)), "ACCENT"
         elif hold:
             # 等待期已过：启动时会照常选用，只提示上次异常，不再显示成占用
-            status = t("token.status_retryable", name=hold.get("cluster_name") or "-")
+            status, color = t("token.status_retryable", name=hold.get("cluster_name") or "-"), "TEXT_MUTED"
         else:
-            status = t("token.status_available")
-        return self._mask(token), t(kind_key), status
+            status, color = t("token.status_available"), "SUCCESS"
+        return self._mask(token), t(kind_key), status, color
 
     def _on_switch_toggled(self, enabled: bool) -> None:
         self._app_settings.set_token_switch_on_timeout(enabled)
@@ -922,15 +965,27 @@ class GlobalTokensDialog(Dialog):
             select = self._selected()
         self._holds = self._app_settings.get_token_holds()
         self._table.blockSignals(True)
+        self._table.clearSpans()
         self._table.setRowCount(0)
         if not self._tokens:
+            # 空池提示横跨三列居中、灰色，且不可选中，免得像一条真实令牌
             self._table.setRowCount(1)
-            self._table.setItem(0, 0, QTableWidgetItem(t("token.global_empty")))
+            self._table.setSpan(0, 0, 1, 3)
+            empty = QTableWidgetItem(t("token.global_empty"))
+            empty.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty.setForeground(theme.color("TEXT_MUTED"))
+            empty.setFlags(Qt.ItemFlag.NoItemFlags)
+            self._table.setItem(0, 0, empty)
         for index, token in enumerate(self._tokens):
             self._table.insertRow(index)
-            for col, text in enumerate(self._row_texts(token)):
+            masked, kind, status, color = self._row_texts(token)
+            for col, text in enumerate((masked, kind, status)):
                 item = QTableWidgetItem(text)
                 item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                if col == 1:
+                    item.setForeground(theme.color("TEXT_MUTED"))
+                elif col == 2:
+                    item.setForeground(theme.color(color))
                 self._table.setItem(index, col, item)
         self._table.blockSignals(False)
         if self._tokens and select is not None:
