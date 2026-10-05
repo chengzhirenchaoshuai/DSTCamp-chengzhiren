@@ -56,37 +56,29 @@ def test_rejects_non_udp_and_duplicate_tunnels() -> None:
         raise AssertionError("expected LoliaError for tcp tunnel")
 
 
-def _single(name: str, port: int, token: str = "T1") -> str:
+def _single(name: str, port: int) -> str:
     # 结构照真机从控制台复制的「原版 frpc 配置」：user + metadatas.token 认证、单条代理
     return (f"serverAddr = 'n.example'\nserverPort = 10721\nuser = '11754'\n"
-            f"[metadatas]\ntoken = '{token}'\n"
+            f"[metadatas]\ntoken = 'T1'\n"
             f"[[proxies]]\nname = '{name}'\ntype = 'udp'\nlocalIP = '127.0.0.1'\n"
             f"localPort = 1\nremotePort = {port}\n")
 
 
-def test_paste_sources_and_merge() -> None:
+def test_paste_sources_and_prepare_shard() -> None:
     assert lolia_config.parse_source("./frpc -t 27699:abc") == {"kind": "cli", "id": 27699, "token": "abc"}
-    sources = {"Master": lolia_config.parse_source(_single("a", 25006)),
-               "Caves": lolia_config.parse_source(_single("b", 25007))}
-    assert sources["Master"]["kind"] == "config"
-    text, ports, host = lolia_config.prepare_mapping(sources)
-    assert ports == {"Master": 25006, "Caves": 25007} and host == "n.example"
-    assert len(tomllib.loads(text)["proxies"]) == 2
-    # 不同节点/账号的配置不能合进同一个 frpc 进程
-    sources["Caves"] = lolia_config.parse_source(_single("b", 25007, token="T2"))
-    try:
-        lolia_config.prepare_mapping(sources)
-    except lolia_config.LoliaError:
-        pass
-    else:
-        raise AssertionError("expected LoliaError for mismatched node")
+    source = lolia_config.parse_source(_single("a", 25006))
+    assert source["kind"] == "config"
+    text, port, host = lolia_config.prepare_shard(source)
+    assert port == 25006 and host == "n.example"
+    proxy = tomllib.loads(text)["proxies"][0]
+    assert proxy["localPort"] == 25006 and proxy["localIP"] == "127.0.0.1"
 
 
 def main() -> None:
     tests = (
         test_rewrites_local_ports_and_round_trips,
         test_rejects_non_udp_and_duplicate_tunnels,
-        test_paste_sources_and_merge,
+        test_paste_sources_and_prepare_shard,
     )
     for test in tests:
         test()

@@ -2,9 +2,9 @@
 
 用户在 Lolia 控制台自己建好 UDP 隧道，给每个世界粘贴一份「原版 frpc 配置」或
 「LoliaFRP-CLI 快捷启动」命令（features/lolia/config.py 的 parse_source 识别）。
-开启映射时合并成一份本地配置、改写本地端口，交给自建节点那份原版 frpc.exe 以 `-c`
-启动——进程管理直接复用 features/frp_selfhost/client.py 的 FrpcManager（一个存档
-一个进程、孤儿进程按配置路径认领）。不调用需要登录的接口，所以不建隧道也不删隧道。
+开启映射时每个世界生成一份本地配置、改写本地端口，交给自建节点那份原版 frpc.exe
+以 `-c` 启动——进程管理直接复用 features/frp_selfhost/client.py 的 FrpcManager
+（这里每个世界一个进程，孤儿进程按配置路径认领）。不调用需要登录的接口，所以不建隧道也不删隧道。
 """
 
 import webbrowser
@@ -229,40 +229,51 @@ class LoliaPanel(QWidget):
         QGuiApplication.clipboard().setText(text)
         dialogs.show_toast(self.window(), t("sakura.connect_copied"))
 
-    # ── frpc 本地进程 ───────────────────────────────────────────────────
-    def _frpc_config_path(self, cluster_path):
+    # ── frpc 本地进程（每个世界一份配置、一个进程：不同世界的隧道可能在不同节点）──
+    @staticmethod
+    def _proc_key(cluster, shard):
+        # FrpcManager 按路径字符串区分进程，这里用"存档路径/世界名"当键
+        return cluster.path / shard.name
+
+    def _frpc_config_path(self, cluster, shard):
         root = data_dir(_FRPC_CONFIG_DIR_NAME)
-        return root / f"{cluster_path.name}__{stable_path_key(cluster_path)}.toml"
+        return root / f"{cluster.path.name}__{stable_path_key(cluster.path)}__{shard.name}.toml"
 
     def has_active_mapping(self, cluster, shard) -> bool:
         return app_settings.get_lolia_mapping(cluster.path, shard.name) is not None
 
-    def _cluster_mapped(self, cluster) -> bool:
-        return any(self.has_active_mapping(cluster, s) for s in cluster.shards)
+    def _mapped_shards(self, cluster) -> list:
+        return [s for s in cluster.shards if self.has_active_mapping(cluster, s)]
 
     def maybe_start_frpc(self, cluster, shard) -> None:
         if not self.has_active_mapping(cluster, shard):
             return
-        config_path = self._frpc_config_path(cluster.path)
+        config_path = self._frpc_config_path(cluster, shard)
         if not config_path.exists():
-            return  # 配置只能联网重新拉取，缺失时由状态行提示用户重新开启映射
+            return  # 缺失时由状态行提示用户重新开启映射
         exe = _frpc_exe_path()
-        existing = self.frpc.reconcile(cluster.path, exe, config_path)
+        key = self._proc_key(cluster, shard)
+        existing = self.frpc.reconcile(key, exe, config_path)
         if existing is not None and existing.status not in (FrpcStatus.CRASHED, FrpcStatus.STOPPED):
             return  # 已在运行/启停中；崩溃或已停止的才重新拉起
-        self.frpc.start(cluster.path, exe, config_path)
+        self.frpc.start(key, exe, config_path)
 
     def stop_frpc_for_shard(self, cluster, shard, on_done=None) -> None:
-        # 一个存档共用一个 frpc 进程，单个世界停服时不停它（同自建节点）
+        # 单个世界停服时不停 frpc（同自建节点），下次开服直接可用
         if on_done:
             on_done()
 
-    def frpc_running(self, cluster) -> bool:
-        if not self._cluster_mapped(cluster):
-            return False  # 没映射就不做进程表扫描，避免每次刷新都跑 tasklist/PowerShell
-        self.frpc.reconcile(cluster.path, _frpc_exe_path(), self._frpc_config_path(cluster.path))
-        proc = self.frpc.get(cluster.path)
+    def _shard_running(self, cluster, shard, *, scan: bool) -> bool:
+        key = self._proc_key(cluster, shard)
+        if scan:
+            self.frpc.reconcile(key, _frpc_exe_path(), self._frpc_config_path(cluster, shard))
+        proc = self.frpc.get(key)
         return proc is not None and proc.status == FrpcStatus.RUNNING
+
+    def frpc_running(self, cluster) -> bool:
+        """所有已映射世界的 frpc 都在跑才算就绪；没映射时不扫描进程表。"""
+        mapped = self._mapped_shards(cluster)
+        return bool(mapped) and all(self._shard_running(cluster, s, scan=True) for s in mapped)
 
     def _tick_frpc_row(self) -> None:
         exited = False
@@ -275,17 +286,19 @@ class LoliaPanel(QWidget):
         cluster = self._current_cluster
         if not cluster or not self._frpc_row.isVisible():
             return
-        tracked = self.frpc.get(cluster.path)
-        running = tracked is not None and tracked.status == FrpcStatus.RUNNING
+        mapped = self._mapped_shards(cluster)
+        # 每秒一次，只看已跟踪的进程，不扫描进程表
+        running = bool(mapped) and all(self._shard_running(cluster, s, scan=False) for s in mapped)
         if exited or running != self._frpc_shown_running:
             self._refresh_frpc_row()
 
     def _frpc_failed_error(self, cluster) -> str | None:
-        if not self._frpc_config_path(cluster.path).exists():
-            return t("lolia.config_missing")
-        proc = self.frpc.get(cluster.path)
-        if proc is not None and proc.status == FrpcStatus.CRASHED and proc.error:
-            return proc.error
+        for shard in self._mapped_shards(cluster):
+            if not self._frpc_config_path(cluster, shard).exists():
+                return f"{shard.name}: {t('lolia.config_missing')}"
+            proc = self.frpc.get(self._proc_key(cluster, shard))
+            if proc is not None and proc.status == FrpcStatus.CRASHED and proc.error:
+                return f"{shard.name}: {proc.error}"
         return None
 
     def _refresh_frpc_row(self) -> None:
@@ -314,7 +327,10 @@ class LoliaPanel(QWidget):
             self._refresh_frpc_row()
             return
         if running:
-            self.frpc.stop(cluster.path, on_done=lambda _p: post_to_ui(lambda _a: self._refresh_frpc_row()))
+            for shard in cluster.shards:
+                key = self._proc_key(cluster, shard)
+                if self.frpc.get(key) is not None:
+                    self.frpc.stop(key, on_done=lambda _p: post_to_ui(lambda _a: self._refresh_frpc_row()))
         else:
             for shard in cluster.shards:
                 self.maybe_start_frpc(cluster, shard)
@@ -357,15 +373,16 @@ class LoliaPanel(QWidget):
         progress = dialogs.LogDialog(self.window(), t("lolia.setup_progress_title"))
         progress.show()
         shards = list(cluster.shards)
-        config_path = self._frpc_config_path(cluster.path)
 
         def work():
             post_to_ui(lambda _a: progress.append(t("lolia.setup_fetching")))
-            toml_text, ports, host = lolia_config.prepare_mapping(sources)
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_text(toml_text, encoding="utf-8")
+            # 先把所有世界的配置都准备好再落盘，任何一个失败都不改动存档
+            prepared = {s.name: lolia_config.prepare_shard(sources[s.name]) for s in shards}
             for shard in shards:
-                remote_port = ports[shard.name]
+                toml_text, remote_port, host = prepared[shard.name]
+                config_path = self._frpc_config_path(cluster, shard)
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                config_path.write_text(toml_text, encoding="utf-8")
                 shard_config = load_shard_config(shard.path)
                 set_shard_option(shard_config, "NETWORK", "server_port", remote_port)
                 save_shard_config(shard_config, shard.path)
@@ -385,16 +402,27 @@ class LoliaPanel(QWidget):
         run_async(work, done, error)
 
     def _restart_frpc(self, cluster, on_done) -> None:
-        def start_and_finish():
-            config_path = self._frpc_config_path(cluster.path)
-            if config_path.exists():
-                self.frpc.start(cluster.path, _frpc_exe_path(), config_path)
+        """配置已更新：先停掉旧进程（在后台线程停），全部停完后按新配置启动。"""
+        tracked = [s for s in cluster.shards if self.frpc.get(self._proc_key(cluster, s)) is not None]
+        pending = {"count": len(tracked)}
+
+        def start_all():
+            for shard in cluster.shards:
+                self.maybe_start_frpc(cluster, shard)
             on_done()
 
-        if self.frpc.get(cluster.path):
-            self.frpc.stop(cluster.path, on_done=lambda _p: post_to_ui(lambda _a: start_and_finish()))
-        else:
-            start_and_finish()
+        def one_stopped(_proc):
+            def on_ui(_a):
+                pending["count"] -= 1
+                if pending["count"] == 0:
+                    start_all()
+            post_to_ui(on_ui)
+
+        if not tracked:
+            start_all()
+            return
+        for shard in tracked:
+            self.frpc.stop(self._proc_key(cluster, shard), on_done=one_stopped)
 
     def _on_enable_done(self, progress) -> None:
         progress.finish()
@@ -414,16 +442,13 @@ class LoliaPanel(QWidget):
             return
         for shard in cluster.shards:
             app_settings.set_lolia_mapping(cluster.path, shard.name, None)
-        config_path = self._frpc_config_path(cluster.path)
-
-        def after_stop(_proc=None):
-            # 进程退出后再删配置：配置里有认证 Token，且孤儿认领靠配置路径
-            config_path.unlink(missing_ok=True)
-
-        # 映射开启期间状态行刷新时已认领过进程，这里不再同步扫描进程表
-        if self.frpc.get(cluster.path) is not None:
-            self.frpc.stop(cluster.path, on_done=after_stop)
-        else:
-            after_stop()
+            config_path = self._frpc_config_path(cluster, shard)
+            # 进程退出后再删配置：配置里有认证 Token，且孤儿认领靠配置路径。
+            # 映射开启期间状态行刷新时已认领过进程，这里不再同步扫描进程表。
+            key = self._proc_key(cluster, shard)
+            if self.frpc.get(key) is not None:
+                self.frpc.stop(key, on_done=lambda _p, c=config_path: c.unlink(missing_ok=True))
+            else:
+                config_path.unlink(missing_ok=True)
         self._render_shard_rows()
         self.ctx.cluster_config_saved.emit(cluster)

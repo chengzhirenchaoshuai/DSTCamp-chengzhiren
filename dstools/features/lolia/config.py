@@ -154,26 +154,15 @@ def _source_config(source: dict) -> dict:
     return parse_toml(source["text"])
 
 
-def prepare_mapping(sources_by_shard: dict[str, dict]) -> tuple[str, dict[str, int], str]:
-    """把每个世界的来源合并成一份本地配置（快捷启动命令来源会联网，放后台线程）。
+def prepare_shard(source: dict) -> tuple[str, int, str]:
+    """把一个世界的来源变成本地配置（快捷启动命令来源会联网，放后台线程）。
 
-    一个存档共用一个 frpc 进程，所以除代理外的通用段（节点地址、认证等）必须一致，
-    不一致说明隧道不在同一节点/账号下，直接报错。
-    返回 (本地 TOML 文本, {世界名: 远程端口}, 节点地址)。"""
-    common = None
-    proxies, names_by_shard = [], {}
-    for shard, source in sources_by_shard.items():
-        config = _source_config(source)
-        names_by_shard[shard] = single_proxy_name(config)
-        proxies.extend(config.pop("proxies"))
-        config.pop("visitors", None)
-        if common is None:
-            common = config
-        elif config != common:
-            raise LoliaError("tunnels are not on the same node/account")
-    merged = dict(common or {}, proxies=proxies)
-    local, ports = build_local_config(merged, names_by_shard)
-    return dump_toml(local), ports, local["serverAddr"]
+    每个世界一份配置、一个 frpc 进程：真机上主世界和洞穴的隧道建在了不同节点
+    （节点地址和节点 Token 都不同），合并成一份配置跑不了。
+    返回 (本地 TOML 文本, 远程端口, 节点地址)。"""
+    config = _source_config(source)
+    local, ports = build_local_config(config, {"_": single_proxy_name(config)})
+    return dump_toml(local), ports["_"], local["serverAddr"]
 
 
 def dump_toml(data: dict) -> str:

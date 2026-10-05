@@ -584,7 +584,7 @@ STRINGS = {
         # Lolia 映射（简化版：用户在 Lolia 控制台自建隧道，DSTCamp 只拉配置并启动原版 frpc）
         "lolia.section_guide": "使用说明",
         "lolia.open_dashboard_btn": "打开 Lolia 控制台",
-        "lolia.guide": "在 Lolia 控制台为每个世界各建一条 UDP 隧道（放在同一个节点），打开隧道的「连接配置」，复制「原版 frpc 配置」（推荐）或「使用 LoliaFRP-CLI 快捷启动」命令，粘贴到下面对应的世界。本地 IP 和端口随意，DSTCamp 会自动改成远程端口。",
+        "lolia.guide": "在 Lolia 控制台为每个世界各建一条 UDP 隧道，打开隧道的「连接配置」，复制「原版 frpc 配置」（推荐）或「使用 LoliaFRP-CLI 快捷启动」命令，粘贴到下面对应的世界。本地 IP 和端口随意，DSTCamp 会自动改成远程端口。",
         "lolia.paste_btn": "粘贴配置",
         "lolia.repaste_btn": "重新粘贴",
         "lolia.paste_title": "粘贴 Lolia 隧道配置 - {shard}",
@@ -1792,7 +1792,7 @@ STRINGS = {
         "selfhost.tab_selfhost": "Self-Hosted Node",
         "lolia.section_guide": "How to use",
         "lolia.open_dashboard_btn": "Open Lolia Dashboard",
-        "lolia.guide": "On the Lolia dashboard, create one UDP tunnel per world (all on the same node), open its connection settings and copy either the \"original frpc config\" (recommended) or the \"LoliaFRP-CLI quick start\" command, then paste it into the matching world below. Local IP/port can be anything -- DSTCamp rewrites them to the remote port.",
+        "lolia.guide": "On the Lolia dashboard, create one UDP tunnel per world, open its connection settings and copy either the \"original frpc config\" (recommended) or the \"LoliaFRP-CLI quick start\" command, then paste it into the matching world below. Local IP/port can be anything -- DSTCamp rewrites them to the remote port.",
         "lolia.paste_btn": "Paste Config",
         "lolia.repaste_btn": "Paste Again",
         "lolia.paste_title": "Paste Lolia Tunnel Config - {shard}",
