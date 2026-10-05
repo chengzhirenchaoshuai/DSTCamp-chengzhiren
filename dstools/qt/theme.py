@@ -458,27 +458,34 @@ class Theme(QObject):
                 # 从没显示过的控件（隐藏的对话框里）还没 polish，等它第一次显示时才 polish
                 # 又会把字体还原；先强制 polish，再改字体。
                 widget.ensurePolished()
-                font = widget.font()
-                old_style = family_to_style.get(font.family())
+                # 以 Qt 样式表保存的"基础字体"为准：widget.font() 里已合并了 QSS 的
+                # font-weight（如按钮加粗），拿它比较或重设会把加粗固化/丢掉。
+                saved = widget.property(_QSS_SAVED_FONT_PROP)
+                base = QFont(saved) if isinstance(saved, QFont) else widget.font()
+                old_style = family_to_style.get(base.family())
                 if old_style is None:
                     continue
                 size_key = widget.property(_FONT_KEY_PROP)
                 if size_key in _SIZE_KEYS:
                     bold = bool(widget.property(_FONT_BOLD_PROP))
                 else:
-                    size_key = self._size_key_from_font(font, old_style, old_level)
-                    bold = font.bold()
+                    size_key = self._size_key_from_font(base, old_style, old_level)
+                    bold = base.bold()
+                font = QFont(base)
                 if old_style != new_style:
                     font.setFamily(new_family)
                 self._apply_font_size(font, size_key)
                 # 像素字体只有 Regular 字重，忽略加粗（同 font()）。
                 font.setBold(bold and new_style != "pixel")
                 font._dst_tag = (size_key, bold)
-                if font != widget.font():
+                if font != base or widget.property(_FONT_KEY_PROP) != size_key:
                     widget.setFont(font)
+                    if isinstance(saved, QFont):
+                        # 直接 setFont 不会重新合并 QSS 的字体属性（加粗会丢、sizeHint 按
+                        # 不加粗算），重新 polish 让 Qt 按刚同步的基础字体再合并一次。
+                        widget.style().unpolish(widget)
+                        widget.style().polish(widget)
                     changed += 1
-                elif widget.property(_FONT_KEY_PROP) != size_key:
-                    widget.setFont(font)  # 字号已一致，只补记层级
             if not changed:
                 break
 
