@@ -91,6 +91,10 @@ class LoliaPanel(QWidget):
         self._reload_gen = 0
         self._frpc_logs: dict[str, deque] = {}
         self._reason_pending: dict[int, tuple] = {}
+        # 孤儿 frpc 认领要扫进程表（tasklist + 每个 frpc 一次 PowerShell，实测两个世界约 1.3 秒），
+        # 放到后台做；每个世界每次运行只扫一次，之后靠自己启动/认领的跟踪记录
+        self._scanned: set[str] = set()
+        self._scanning = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 10, 0, 0)
@@ -447,6 +451,7 @@ class LoliaPanel(QWidget):
         self._frpc_row.setVisible(any_mapped)
         if any_mapped:
             self._refresh_frpc_row()
+            self._reconcile_async(cluster)
 
     @staticmethod
     def _source_text(source: dict | None) -> str:
@@ -498,7 +503,7 @@ class LoliaPanel(QWidget):
             return  # 缺失时由状态行提示用户重新开启映射
         exe = _frpc_exe_path()
         key = self._proc_key(cluster, shard)
-        existing = self.frpc.reconcile(key, exe, config_path)
+        existing = self._reconcile_once(key, config_path)
         if existing is not None and existing.status not in (FrpcStatus.CRASHED, FrpcStatus.STOPPED):
             return  # 已在运行/启停中；崩溃或已停止的才重新拉起
         self.frpc.start(key, exe, config_path)
@@ -508,12 +513,41 @@ class LoliaPanel(QWidget):
         if on_done:
             on_done()
 
+    def _reconcile_once(self, key, config_path):
+        if str(key) in self._scanned:
+            return self.frpc.get(key)
+        proc = self.frpc.reconcile(key, _frpc_exe_path(), config_path)
+        self._scanned.add(str(key))
+        return proc
+
     def _shard_running(self, cluster, shard, *, scan: bool) -> bool:
         key = self._proc_key(cluster, shard)
         if scan:
-            self.frpc.reconcile(key, _frpc_exe_path(), self._frpc_config_path(cluster, shard))
+            self._reconcile_once(key, self._frpc_config_path(cluster, shard))
         proc = self.frpc.get(key)
         return proc is not None and proc.status == FrpcStatus.RUNNING
+
+    def _reconcile_async(self, cluster) -> None:
+        """后台认领上次遗留的 frpc 进程，完成后刷新状态行；扫描期间状态显示检测中。"""
+        pending = [(self._proc_key(cluster, s), self._frpc_config_path(cluster, s))
+                   for s in self._mapped_shards(cluster)
+                   if str(self._proc_key(cluster, s)) not in self._scanned]
+        if not pending or self._scanning:
+            return
+        self._scanning = True
+        self._refresh_frpc_row()
+
+        def work():
+            for key, config_path in pending:
+                self.frpc.reconcile(key, _frpc_exe_path(), config_path)
+
+        def finish(_result=None) -> None:
+            self._scanning = False
+            self._scanned.update(str(key) for key, _cfg in pending)
+            if self._current_cluster is cluster:
+                self._refresh_frpc_row()
+
+        run_async(work, finish, finish)
 
     def frpc_running(self, cluster) -> bool:
         """所有已映射世界的 frpc 都在跑才算就绪；没映射时不扫描进程表。"""
@@ -564,9 +598,13 @@ class LoliaPanel(QWidget):
 
     def _refresh_frpc_row(self) -> None:
         cluster = self._current_cluster
-        running = bool(cluster) and self.frpc_running(cluster)
-        error = self._frpc_failed_error(cluster) if cluster and not running else None
-        if error:
+        mapped = self._mapped_shards(cluster) if cluster else []
+        running = bool(mapped) and all(self._shard_running(cluster, s, scan=False) for s in mapped)
+        error = self._frpc_failed_error(cluster) if cluster and not running and not self._scanning else None
+        self._frpc_toggle_btn.setEnabled(not self._scanning)
+        if self._scanning:
+            text, color = t("lolia.frpc_status_checking"), theme.hex("TEXT_MUTED")
+        elif error:
             text, color = t("selfhost.frpc_status_failed"), theme.hex("ERROR")
         elif running:
             text, color = t("selfhost.frpc_status_running"), theme.hex("SUCCESS")
@@ -582,9 +620,10 @@ class LoliaPanel(QWidget):
 
     def _on_frpc_toggle(self) -> None:
         cluster = self._current_cluster
-        if not cluster:
+        if not cluster or self._scanning:
             return
-        running = self.frpc_running(cluster)
+        mapped = self._mapped_shards(cluster)
+        running = bool(mapped) and all(self._shard_running(cluster, s, scan=False) for s in mapped)
         if running != self._frpc_shown_running:
             # 显示的状态已过期，先刷新，不能反过来执行相反的操作
             self._refresh_frpc_row()
