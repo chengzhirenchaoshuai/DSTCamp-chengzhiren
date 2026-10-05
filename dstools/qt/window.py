@@ -13,7 +13,7 @@ from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
-    QProgressBar, QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
+    QProgressBar, QSizePolicy, QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from dstools import __version__
@@ -344,7 +344,11 @@ class ClusterBar(QWidget):
             label.setProperty("heading", True)
         self._platform = QComboBox()
         self._platform.addItems(["Steam", "WeGame"])
-        self._platform.setFixedWidth(110)
+        # 宽度至少 110，并随字号自适应内容：写死 110 时大/特大字号下放不下
+        # "WeGame" 和箭头，文字被挤掉一截（真机反馈过）。Fixed 策略让它不随窗口拉伸。
+        self._platform.setMinimumWidth(110)
+        self._platform.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._platform.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._cluster = _RefreshingCombo()
         self._cluster.about_to_open.connect(self.reload)
         self._cluster.setFixedWidth(360)  # 固定宽度，不随窗口拉伸变化
