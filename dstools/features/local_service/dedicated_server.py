@@ -30,8 +30,11 @@ if IS_WINDOWS:
     import winreg
 
 DEDICATED_SERVER_APP_ID = "343050"  # 真机 appmanifest 文件名验证过（曾经错写成 343080，无路径逻辑受影响，只是展示文案错了）
+CLIENT_APP_ID = "322330"
 _INSTALL_DIR_NAME = "Don't Starve Together Dedicated Server"
+_CLIENT_DIR_NAME = "Don't Starve Together"
 _EXE_NAMES = {64: "dontstarve_dedicated_server_nullrenderer_x64.exe", 32: "dontstarve_dedicated_server_nullrenderer.exe"}
+_CLIENT_EXE_NAMES = {64: "dontstarve_steam_x64.exe", 32: "dontstarve_steam.exe"}
 _BIN_DIRS = {64: "bin64", 32: "bin"}
 
 
@@ -71,7 +74,37 @@ def is_valid_install_dir(path: Path) -> bool:
     误判成有效的专用服务器安装目录。"""
     if "dedicated server" not in path.name.lower():
         return False
+    return _has_server_exe(path)
+
+
+def _has_server_exe(path: Path) -> bool:
     return any((path / _BIN_DIRS[b] / _EXE_NAMES[b]).exists() for b in (64, 32))
+
+
+def is_client_install_dir(path: Path) -> bool:
+    """游戏客户端安装目录：bin64/bin 里同时有客户端 exe 和自带的专服 exe。
+
+    真机核对过（版本 756039）：客户端自带的专服 exe 与独立专服工具的
+    SHA256 完全相同，scripts.zip 全部条目 CRC 一致；用它带令牌、5 个创意
+    工坊 Mod、地面+洞穴实际开服，Steam 初始化、Mod 加载、洞穴连接和
+    c_shutdown 关服都正常。"""
+    if "dedicated server" in path.name.lower():
+        return False
+    return any(
+        (path / _BIN_DIRS[b] / _EXE_NAMES[b]).exists()
+        and (path / _BIN_DIRS[b] / _CLIENT_EXE_NAMES[b]).exists()
+        for b in (64, 32)
+    )
+
+
+def is_runnable_install_dir(path: Path) -> bool:
+    """能用来开服的目录：独立专服工具或游戏客户端。"""
+    return is_valid_install_dir(path) or is_client_install_dir(path)
+
+
+def runtime_app_id(install_dir: Path) -> str:
+    """开服程序所属的 Steam App，用于检查和请求更新。"""
+    return CLIENT_APP_ID if is_client_install_dir(install_dir) else DEDICATED_SERVER_APP_ID
 
 
 def pick_bitness(install_dir: Path) -> int:
@@ -107,6 +140,25 @@ def find_dedicated_server_dir() -> Path | None:
     for lib in find_all_steam_libraries():
         install_dir = lib / "steamapps" / "common" / _INSTALL_DIR_NAME
         if is_valid_install_dir(install_dir):
+            return install_dir
+    return None
+
+
+def find_server_runtime_dir() -> Path | None:
+    """实际开服用的安装目录：用户手动选过的 > 独立专服工具 > 游戏客户端。
+
+    find_dedicated_server_dir() 仍只返回独立专服，Mod 联接同步、V1 包
+    接管等只对独立专服 mods 有意义的功能继续用它，避免对客户端自己的
+    mods 做"同步到自身"之类的操作。"""
+    remembered = app_settings.get_dedicated_server_path()
+    if remembered and is_runnable_install_dir(remembered):
+        return remembered
+    dedicated = find_dedicated_server_dir()
+    if dedicated is not None:
+        return dedicated
+    for lib in find_all_steam_libraries():
+        install_dir = lib / "steamapps" / "common" / _CLIENT_DIR_NAME
+        if is_client_install_dir(install_dir):
             return install_dir
     return None
 

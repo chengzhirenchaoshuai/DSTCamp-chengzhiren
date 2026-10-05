@@ -273,6 +273,9 @@ def snapshot_app(
     """返回当前 manifest 快照；不存在时明确返回 ``manifest_path=None``。"""
     manifests = find_app_manifests(app_id, libraries)
     if not manifests:
+        # 下面按目录兜底只认识独立专服；其它 App 没有 manifest 就是未安装。
+        if app_id != DEDICATED_SERVER_APP_ID:
+            return SteamAppSnapshot(app_id, None, None, None, None, None, None, None)
         for library in libraries if libraries is not None else find_all_steam_libraries():
             candidate = (
                 Path(library)

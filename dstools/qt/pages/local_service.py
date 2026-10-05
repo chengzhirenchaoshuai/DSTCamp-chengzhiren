@@ -33,8 +33,8 @@ from dstools.features.local_service import luajit_injector, steam_client_updater
 from dstools.features.local_service.backup_manager import create_backup
 from dstools.features.local_service.dedicated_server import (
     ConfDirCrossDriveError, ServerStatus, detect_external_running_clusters,
-    detect_external_shard_processes, find_bin64_dir, find_dedicated_server_dir,
-    is_valid_install_dir, resolve_conf_dir_arg,
+    detect_external_shard_processes, find_bin64_dir, find_server_runtime_dir,
+    is_client_install_dir, is_runnable_install_dir, resolve_conf_dir_arg, runtime_app_id,
 )
 from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE, STATUS_TEXT_KEYS, ordered_shards, max_rollback_days
@@ -311,6 +311,8 @@ class LocalServicePage(Page):
         self._steam_update_dialog: dialogs.LogDialog | None = None
         self._steam_remote_build_id: str | None = None
         self._steam_remote_build_checked_at = 0.0
+        # 远程版本属于哪个 App：开服程序在独立专服和游戏客户端之间切换后旧结果作废。
+        self._steam_remote_build_app: str | None = None
         self._steam_remote_build_fetching = False
         self._steam_update_running = False
         # 程序退出时通知 Steam 更新监控立即结束，否则线程池会等它最长 15 分钟，进程退不掉。
@@ -641,36 +643,56 @@ class LocalServicePage(Page):
         self._on_wegame_detect()
 
     def _detect_install_dir(self) -> None:
-        self._install_dir = find_dedicated_server_dir()
-        self._install_path_label.setText(str(self._install_dir) if self._install_dir else t("local.install_not_found"))
-        self._refresh_steam_update_button()
+        self._set_install_dir(find_server_runtime_dir())
         self._refresh_steam_remote_build_async()
+
+    def _set_install_dir(self, path: Path | None) -> None:
+        self._install_dir = path
+        if path is None:
+            text = t("local.install_not_found")
+        elif is_client_install_dir(path):
+            text = t("local.install_client_runtime", path=str(path))
+        else:
+            text = str(path)
+        self._install_path_label.setText(text)
+        self._refresh_steam_update_button()
 
     def _change_install_dir(self) -> None:
         picked = QFileDialog.getExistingDirectory(self.window())
         if not picked:
             return
         path = Path(picked)
-        if not is_valid_install_dir(path):
+        if not is_runnable_install_dir(path):
             dialogs.show_warning(self.window(), t("local.install_title"), t("local.install_invalid_dir"))
             return
         set_dedicated_server_path(path)
-        self._install_dir = path
-        self._install_path_label.setText(str(path))
-        self._refresh_steam_update_button()
+        self._set_install_dir(path)
+        self._update_luajit_row(self.get_cluster())
+        self._refresh_steam_remote_build_async()
+
+    def _runtime_app_id(self) -> str:
+        """当前开服程序对应的 Steam App；未检测到时按独立专服处理（引导安装它）。"""
+        return runtime_app_id(self._install_dir) if self._install_dir else steam_client_updater.DEDICATED_SERVER_APP_ID
+
+    def _remote_build_for_runtime(self) -> str | None:
+        """只返回属于当前开服程序 App 的远程版本。"""
+        if self._steam_remote_build_app != self._runtime_app_id():
+            return None
+        return self._steam_remote_build_id
 
     def _refresh_steam_update_button(self) -> None:
-        snapshot = steam_client_updater.snapshot_app()
-        mode = steam_client_updater.action_for_snapshot(snapshot, remote_build_id=self._steam_remote_build_id)
+        snapshot = steam_client_updater.snapshot_app(self._runtime_app_id())
+        remote_build_id = self._remote_build_for_runtime()
+        mode = steam_client_updater.action_for_snapshot(snapshot, remote_build_id=remote_build_id)
         labels = {"install": "local.steam_install_btn", "update": "local.steam_update_btn", "validate": "local.steam_validate_btn"}
         self._steam_update_mode = mode
         # 更新进行中按钮保持"查看更新日志"，不被定时刷新改回去。
         self._steam_update_btn.setText(t("local.steam_view_log_btn" if self._steam_update_running else labels[mode]))
         self._steam_update_hint.setVisible(mode == "update")
         if mode == "update":
-            if steam_client_updater.remote_requires_update(snapshot, self._steam_remote_build_id):
+            if steam_client_updater.remote_requires_update(snapshot, remote_build_id):
                 reason = t("local.steam_update_available_build",
-                           remote=self._steam_remote_build_id, local=snapshot.build_id or "-")
+                           remote=remote_build_id, local=snapshot.build_id or "-")
             else:
                 reason = t("local.steam_update_available_pending")
             self._steam_update_hint.setToolTip(reason)
@@ -678,18 +700,22 @@ class LocalServicePage(Page):
     def _refresh_steam_remote_build_async(self, force: bool = False) -> None:
         if self._steam_remote_build_fetching:
             return
-        if (not force and self._steam_remote_build_checked_at
+        app_id = self._runtime_app_id()
+        if (not force and self._steam_remote_build_app == app_id and self._steam_remote_build_checked_at
                 and time.monotonic() - self._steam_remote_build_checked_at < _STEAM_REMOTE_BUILD_TTL):
             return
         self._steam_remote_build_fetching = True
 
         def _done(build_id) -> None:
             self._steam_remote_build_id = build_id
+            self._steam_remote_build_app = app_id
             self._steam_remote_build_checked_at = time.monotonic()
             self._steam_remote_build_fetching = False
             self._refresh_steam_update_button()
+            if app_id != self._runtime_app_id():
+                self._refresh_steam_remote_build_async()  # 查询期间切换了开服程序
 
-        run_async(steam_client_updater.fetch_public_build_id, _done, lambda _exc: _done(None))
+        run_async(lambda: steam_client_updater.fetch_public_build_id(app_id), _done, lambda _exc: _done(None))
 
     def _on_steam_update_clicked(self) -> None:
         title = t("local.steam_update_title")
@@ -705,8 +731,9 @@ class LocalServicePage(Page):
         if not steam_client_updater.is_steam_running():
             dialogs.show_warning(self.window(), title, t("local.steam_update_not_running"))
             return
-        before = steam_client_updater.snapshot_app()
-        remote_build_id = self._steam_remote_build_id
+        app_id = self._runtime_app_id()
+        before = steam_client_updater.snapshot_app(app_id)
+        remote_build_id = self._remote_build_for_runtime()
         mode = steam_client_updater.action_for_snapshot(before, remote_build_id=remote_build_id)
         dialog = dialogs.LogDialog(self.window(), title, closable=True)
         self._steam_update_dialog = dialog
@@ -718,7 +745,7 @@ class LocalServicePage(Page):
         # 而且会把从未运行过的专服的自动更新推迟数天；validate 会立即以最高优先级先更新
         # 到最新 Build 再校验（真机 content_log 已核实）。
         validate = mode != "install"
-        uri = steam_client_updater.build_update_uri(validate=validate)
+        uri = steam_client_updater.build_update_uri(app_id, validate=validate)
         dialog.append(t("local.steam_update_requested", uri=uri))
         dialog.show()
         self._steam_update_running = True
@@ -728,14 +755,14 @@ class LocalServicePage(Page):
         last_state = [None]
 
         def work():
-            steam_client_updater.request_update(validate=validate)
+            steam_client_updater.request_update(app_id, validate=validate)
 
             def on_snapshot(_snapshot, state):
                 if state != last_state[0]:
                     last_state[0] = state
                     post_to_ui(lambda _s: dialog.append(t("local.steam_update_state", state=_s)), state)
-            steam_client_updater.monitor_update(before, on_snapshot=on_snapshot, remote_build_id=remote_build_id,
-                                                cancel_event=cancel_event)
+            steam_client_updater.monitor_update(before, app_id=app_id, on_snapshot=on_snapshot,
+                                                remote_build_id=remote_build_id, cancel_event=cancel_event)
 
         def done(_result) -> None:
             dialog.append(t("local.steam_update_done"))
@@ -769,6 +796,13 @@ class LocalServicePage(Page):
         if not is_steam_server:
             self._luajit_bin64_dir = None
             self._luajit_status_label.setText(t("local.luajit_steam_only_hint"))
+            self._luajit_install_btn.setEnabled(False)
+            self._luajit_install_btn.setText(t("local.luajit_install_btn"))
+            self._luajit_uninstall_btn.setEnabled(False)
+            return
+        if self._install_dir is not None and not luajit_injector.supports_install_dir(self._install_dir):
+            self._luajit_bin64_dir = None
+            self._luajit_status_label.setText(t("local.luajit_client_runtime_hint"))
             self._luajit_install_btn.setEnabled(False)
             self._luajit_install_btn.setText(t("local.luajit_install_btn"))
             self._luajit_uninstall_btn.setEnabled(False)
@@ -1025,8 +1059,9 @@ class LocalServicePage(Page):
                                t("local.launch_already_pending", shards="、".join(duplicate)))
             return False
         if cluster.platform == Platform.STEAM:
-            server_snapshot = steam_client_updater.snapshot_app()
-            if steam_client_updater.action_for_snapshot(server_snapshot, remote_build_id=self._steam_remote_build_id) == "update":
+            server_snapshot = steam_client_updater.snapshot_app(self._runtime_app_id())
+            if steam_client_updater.action_for_snapshot(
+                    server_snapshot, remote_build_id=self._remote_build_for_runtime()) == "update":
                 # 被拦下时直接给出更新入口，不让用户自己去找"通过 Steam 更新"按钮。
                 choice = dialogs.ask_choice(
                     self.window(), t("local.steam_update_title"), t("local.server_update_required"),
@@ -1168,6 +1203,11 @@ class LocalServicePage(Page):
                 return candidate
         return None
 
+    def _runtime_mods_root(self) -> Path | None:
+        """开服程序实际读取的 mods 目录：独立专服或游戏客户端安装目录下的 mods。"""
+        install_dir = self._install_dir or find_server_runtime_dir()
+        return install_dir / "mods" if install_dir else None
+
     def _confirm_missing_mods(self, cluster) -> bool:
         """存档启用、本机却没有文件的 Mod：专服会跳过它们照常启动，世界在缺 Mod 的
         状态下保存可能永久丢失相关内容，所以启动前拦下，让用户先订阅或明确选择继续。"""
@@ -1176,12 +1216,11 @@ class LocalServicePage(Page):
         from dstools.features.mod.missing_mods import find_missing_enabled_mods
         from dstools.features.mod.parser import find_shared_ugc_directory
         from dstools.features.mod.sync import get_enabled_mod_ids
-        server_dir = find_dedicated_server_dir()
         ugc_directory = find_shared_ugc_directory()
         missing = find_missing_enabled_mods(
             get_enabled_mod_ids(cluster),
             ugc_content_root=Path(ugc_directory) / "content" / "322330" if ugc_directory else None,
-            server_mods_root=Path(server_dir) / "mods" if server_dir else None)
+            server_mods_root=self._runtime_mods_root())
         if not missing:
             return True
         names = [f"workshop-{wid}" for wid in missing.workshop_ids] + list(missing.local_names)
@@ -1240,15 +1279,15 @@ class LocalServicePage(Page):
     def _prepare_legacy_mods_for_start(self, cluster) -> bool:
         if cluster.platform != Platform.STEAM:
             return True
-        server_dir = find_dedicated_server_dir()
-        if server_dir is None:
+        mods_root = self._runtime_mods_root()
+        if mods_root is None:
             return True
         from dstools.features.mod.legacy_v1 import prepare_enabled_legacy_mods
         from dstools.features.mod.sync import get_enabled_mod_ids
         enabled_ids = get_enabled_mod_ids(cluster)
-        if not self._resolve_v1_shadows(enabled_ids, Path(server_dir) / "mods"):
+        if not self._resolve_v1_shadows(enabled_ids, mods_root):
             return False
-        prepared = prepare_enabled_legacy_mods(enabled_ids, Path(server_dir) / "mods")
+        prepared = prepare_enabled_legacy_mods(enabled_ids, mods_root)
         if prepared.completed:
             return True
         dialogs.show_error(self.window(), t("local.install_title"), t("local.legacy_prepare_failed", detail="\n".join(prepared.errors)))
