@@ -308,10 +308,9 @@ class LoliaPanel(QWidget):
         self._node_caption.setVisible(True)
         self._node_row.setVisible(True)
         self._stats_widget.setVisible(True)
-        left = max(0, int(user.get("traffic_limit") or 0) - int(user.get("traffic_used") or 0))
-        speed = int(user.get("bandwidth_limit") or 0)
-        self._stat_labels[0].setText(f"{left / (1024 ** 3):.2f} GiB")
-        self._stat_labels[1].setText(f"{speed} MB/s" if speed else t("lolia.speed_unlimited"))
+        self._stat_labels[0].setText(f"{lolia_api.available_traffic(user) / (1024 ** 3):.2f} GiB")
+        speed = lolia_api.bandwidth_mbps(user)
+        self._stat_labels[1].setText(f"{speed} Mbps" if speed else t("lolia.speed_unlimited"))
         self._stat_labels[2].setText(f"{len(tunnels)}/{user.get('max_tunnel_count', '--')}")
 
         has_kyc = bool(user.get("has_kyc"))
@@ -510,6 +509,8 @@ class LoliaPanel(QWidget):
         for key, (proc, base_error) in list(self._reason_pending.items()):
             tail = self._frpc_logs.get(str(proc.cluster_path)) or ()
             reason = lolia_config.frpc_failure_reason(list(tail))
+            if reason and "流量" in reason:
+                reason += t("lolia.traffic_hint")
             if reason or proc.status != FrpcStatus.CRASHED:
                 del self._reason_pending[key]
             if reason and proc.status == FrpcStatus.CRASHED:
@@ -655,6 +656,9 @@ class LoliaPanel(QWidget):
         user = lolia_api.get_user_info()
         if not user.get("has_qq"):
             raise lolia_config.LoliaError(t("lolia.qq_required"))
+        if lolia_api.available_traffic(user) <= 0:
+            # 没流量时 frpc 一连就被拒（"可用流量已耗尽"），不白建隧道
+            raise lolia_config.LoliaError(t("lolia.no_traffic"))
         tunnels = lolia_api.list_tunnels()
         identity = stable_path_key(cluster.path)
         remarks = {s.name: lolia_api.make_remark(cluster.path.name, s.name, cluster.source.value,

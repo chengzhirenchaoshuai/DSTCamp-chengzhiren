@@ -293,6 +293,18 @@ def get_frpc_config_text(tunnel_name: str) -> str:
         raise LoliaError(f"invalid config payload: {e}") from e
 
 
+def available_traffic(user: dict) -> int:
+    """可用流量（字节）。官方文档：traffic_remaining 直接取 traffic_limit、扣费从额度里扣，
+    即 traffic_limit 本身就是余额，不能再减 traffic_used。额度靠控制台每日签到获取。"""
+    return max(0, int(user.get("traffic_limit") or 0))
+
+
+def bandwidth_mbps(user: dict) -> int:
+    """账号限速换算成 Mbps（控制台显示单位）。接口 bandwidth_limit 单位是 MB/s，0 表示不限；
+    真机 10 MB/s，对应官方 FAQ "单隧道限速 80Mbps"。"""
+    return int(user.get("bandwidth_limit") or 0) * 8
+
+
 def node_supports_udp(node: dict) -> bool:
     return "udp" in (node.get("supported_protocols") or []) and node.get("status") != "offline"
 
