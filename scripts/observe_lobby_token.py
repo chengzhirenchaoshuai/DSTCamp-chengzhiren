@@ -41,7 +41,7 @@ from dstools.shared.token_manager import ServerTokenKind, classify_token, read_t
 CDN = "https://lobby-v2-cdn.klei.com"
 DEFAULT_REGIONS = ("ap-east-1", "ap-southeast-1", "us-east-1", "eu-central-1")
 DEFAULT_PLATFORMS = ("Steam", "Rail")
-HEARTBEAT = 10 * 60  # 状态没变化时，每隔多久也写一行，证明脚本还在跑
+HEARTBEAT = 2 * 60  # 状态没变化时，每隔多久也写一行，证明脚本还在跑
 
 
 def _get(url: str, etag: str = "") -> tuple[bytes | None, dict]:
@@ -128,6 +128,18 @@ def _rowid_kind(row_id: str) -> str:
     return "KU" if row_id.startswith(("KU_", "OU_")) else "哈希"
 
 
+def _instance(row: dict) -> tuple:
+    """区分"同一行还挂着"和"换了新进程重新注册"：session/guid 随专服实例变化（待实测确认）。"""
+    return (str(row.get("__rowId", "")), row.get("session"), row.get("guid"),
+            row.get("__addr"), row.get("port"), row.get("connected"))
+
+
+def _describe(key: str, row: dict, lists: LobbyLists) -> str:
+    return (f"{key} 房间名={row.get('name', '')!r} rowId类型={_rowid_kind(str(row.get('__rowId', '')))} "
+            f"session={row.get('session')} guid={row.get('guid')} 地址={row.get('__addr')}:{row.get('port')} "
+            f"玩家={row.get('connected')}/{row.get('maxconnections')} 列表时间={lists.modified.get(key, '-')}")
+
+
 def observe(lists: LobbyLists, token: str) -> tuple[tuple, str]:
     """返回 (用于判断变化的状态, 日志描述)。"""
     parts = token.strip().split("^")
@@ -139,20 +151,15 @@ def observe(lists: LobbyLists, token: str) -> tuple[tuple, str]:
                 hits.append((key, row))
             elif row.get("host") == host:
                 others.append((key, row))
-    other_kinds = sorted(_rowid_kind(str(row.get("__rowId", ""))) for _key, row in others)
-    state = (bool(hits), tuple(other_kinds))
+    state = (tuple(sorted(_instance(row) for _key, row in hits)),
+             tuple(sorted(_instance(row) for _key, row in others)))
     if hits:
-        key, row = hits[0]
-        text = (f"假设rowId 在列表中：{key} 房间名={row.get('name', '')!r} "
-                f"玩家={row.get('connected')}/{row.get('maxconnections')} 列表时间={lists.modified.get(key, '-')}")
-        if len(hits) > 1:
-            text += f"（共 {len(hits)} 条）"
+        text = "假设rowId 在列表中：" + "；".join(_describe(key, row, lists) for key, row in hits)
     else:
         text = "假设rowId 不在列表中"
     if others:
-        names = "、".join(f"{key}:{row.get('name', '')!r}({_rowid_kind(str(row.get('__rowId', '')))})"
-                         for key, row in others[:5])
-        text += f"；同账号其它房间 {len(others)} 个：{names}"
+        text += f"；同账号其它房间 {len(others)} 个：" + "；".join(
+            _describe(key, row, lists) for key, row in others[:5])
     return state, text
 
 
@@ -173,6 +180,7 @@ def main() -> None:
     platforms = tuple(p for p in args.platforms.split(",") if p)
     lists = LobbyLists(regions, platforms)
     log_path = data_dir("auto_restart") / "lobby_observe.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)  # data_dir() 不负责建目录
 
     def log(message: str) -> None:
         line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {message}"
@@ -187,8 +195,10 @@ def main() -> None:
     last_state: dict[str, tuple] = {}
     last_logged: dict[str, float] = {}
     last_errors: dict[str, str] = {}
+    rounds = 0
     while True:
         started = time.time()
+        rounds += 1
         changed = lists.refresh()
         for key, error in lists.errors.items():
             if last_errors.get(key) != error:
@@ -206,6 +216,8 @@ def main() -> None:
                 last_logged[fingerprint] = started
         if args.once:
             return
+        # 只在控制台原地刷新，证明脚本还活着；Windows 控制台被鼠标选中文字时会暂停输出，按回车恢复
+        print(f"{datetime.now():%H:%M:%S} 第 {rounds} 轮完成，用时 {time.time() - started:.1f} 秒", end="\r", flush=True)
         time.sleep(max(1.0, args.interval - (time.time() - started)))
 
 
