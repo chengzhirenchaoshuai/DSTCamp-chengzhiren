@@ -240,7 +240,7 @@ class WorldPanel(QAbstractScrollArea):
         self._ensure_layout()
         painter = QPainter(self.viewport())
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        # 像素字体清晰字号由字体自身的 NoAntialias 策略关抗锯齿，其余字号仍需文字抗锯齿。
+        # 像素字体清晰渲染时由字体自身的 NoAntialias 策略关抗锯齿，此处统一开文字抗锯齿。
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         offset = self.verticalScrollBar().value()
         view_h = self.viewport().height()

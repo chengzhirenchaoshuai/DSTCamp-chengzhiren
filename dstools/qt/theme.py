@@ -34,6 +34,14 @@ _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png")
 # 粘连，需配合 app.py 的 FreeType 字体引擎（windows:fontengine=freetype）。
 _PIXEL_GRID = 12
 _PIXEL_SNAP_TOLERANCE = 1.5
+# 字号正好落在 12 整数倍时是否关抗锯齿走清晰渲染。关掉后同屏会混着锐利/柔和两种观感，
+# 目前按用户要求全部开抗锯齿对比效果；改回 True 即恢复整数倍字号的清晰渲染。
+_PIXEL_CRISP_ON_GRID = False
+
+# 字形左侧几乎没有留白的字体样式（像素字体、麦圆体）：控件边界或裁剪区在非整数缩放
+# 下落在小数物理像素时，首列像素会被裁掉，需要文字离边界留 1px（见 qss() 与
+# _patch_combo_paint()）。微软雅黑字形左侧自带约 1px 留白，不受影响。
+_TIGHT_BEARING_STYLES = ("pixel", "cute")
 
 # 控件上记录字号语义层级（size_key）与是否加粗的动态属性名，见 _patch_widget_set_font()。
 _FONT_KEY_PROP = "dstFontKey"
@@ -96,6 +104,8 @@ def _rgba(hex_color: str, alpha: int) -> str:
 
 _ORIGINAL_COMBO_SHOW_POPUP = None
 _ORIGINAL_COMBO_PAINT = None
+_ORIGINAL_LABEL_SET_PIXMAP = None
+_LABEL_PIXMAP_PROP = "dstPixmap"
 _POPUP_SHOW_FILTER = None
 _POPUP_BG_LABEL_NAME = "dstcamp_combo_popup_bg_snapshot"
 _POPUP_FILTER_PROPERTY = "dstcamp_popup_show_filter"
@@ -159,14 +169,37 @@ def _patch_widget_set_font() -> None:
     QWidget.setFont = _set_font
 
 
+def _patch_label_pixmap() -> None:
+    """全局猴补丁 QLabel.setPixmap——给显示图片的 QLabel 打上 dstPixmap 标记。
+
+    qss() 在像素字体/麦圆体下给 QLabel 加 1px 左内边距防止首列被裁（见
+    _TIGHT_BEARING_STYLES），图片标签（图标、头像、下拉框背景截图）不能跟着偏移或被
+    挤掉 1px，样式表按这个标记把内边距设回 0。"""
+    global _ORIGINAL_LABEL_SET_PIXMAP
+    if _ORIGINAL_LABEL_SET_PIXMAP is not None:
+        return
+    _ORIGINAL_LABEL_SET_PIXMAP = QLabel.setPixmap
+
+    def _set_pixmap(self, pixmap) -> None:
+        if not self.property(_LABEL_PIXMAP_PROP):
+            self.setProperty(_LABEL_PIXMAP_PROP, True)
+            if self.testAttribute(Qt.WidgetAttribute.WA_WState_Polished):
+                # 已 polish 过的标签单纯 unpolish/polish 不会收回已加的内边距；重设一次
+                # 自身样式表才会重新计算（Qt 会跳过与原值相同的设置，故补一个空格）。
+                self.setStyleSheet(self.styleSheet() + " ")
+        _ORIGINAL_LABEL_SET_PIXMAP(self, pixmap)
+
+    QLabel.setPixmap = _set_pixmap
+
+
 def _patch_combo_paint() -> None:
-    """全局猴补丁 QComboBox.paintEvent——像素字体下当前项文字往右让 1px。
+    """全局猴补丁 QComboBox.paintEvent——像素字体/麦圆体下当前项文字往右让 1px。
 
     样式表画下拉框文字时，裁剪边界就是文字起点；屏幕缩放非整数（如 125%）时这条
-    边界落在小数物理像素上，而像素字体的字形左侧没有留白，首列像素会被裁掉（真机
-    反馈过存档类型里 "Steam" 的 S 只剩 2/3）。像素样式下改为：底框/箭头仍交给样式画，
-    当前项文字由这里在同一裁剪区内右移 1px 再画；其它字体样式、可编辑下拉框、带
-    图标或显示占位文字时走原逻辑。"""
+    边界落在小数物理像素上，而这两种字体的字形左侧几乎没有留白，首列像素会被裁掉
+    （真机反馈过存档类型里 "Steam" 的 S 只剩 2/3）。这两种样式下改为：底框/箭头仍交给
+    样式画，当前项文字由这里在同一裁剪区内右移 1px 再画；微软雅黑、可编辑下拉框、
+    带图标或显示占位文字时走原逻辑。"""
     global _ORIGINAL_COMBO_PAINT
     if _ORIGINAL_COMBO_PAINT is not None:
         return
@@ -176,7 +209,7 @@ def _patch_combo_paint() -> None:
     _ORIGINAL_COMBO_PAINT = QComboBox.paintEvent
 
     def _paint_event(self, event) -> None:
-        if (theme.font_style != "pixel" or self.isEditable() or self.currentIndex() < 0
+        if (theme.font_style not in _TIGHT_BEARING_STYLES or self.isEditable() or self.currentIndex() < 0
                 or not self.itemIcon(self.currentIndex()).isNull()):
             _ORIGINAL_COMBO_PAINT(self, event)
             return
@@ -356,11 +389,11 @@ class Theme(QObject):
     def apply_style_hints(self, font: QFont) -> None:
         """按当前字体样式给 QFont 补上抗锯齿/hinting 策略。
 
-        缝合像素字体只在字号正好落在 12 整数倍物理像素时关闭抗锯齿、禁用 hinting
-        做像素级对齐；其它字号与其它样式（微软雅黑、荆南麦圆体）一样走默认抗锯齿
-        （见文件顶部说明）。必须在字号设好之后调用。显式恢复默认策略是因为
-        _refresh_explicit_fonts 复用已有 QFont，不重置会残留 NoAntialias。"""
-        if self._font_style == "pixel" and _on_pixel_grid(font):
+        缝合像素字体在 _PIXEL_CRISP_ON_GRID 打开且字号正好落在 12 整数倍物理像素时
+        关闭抗锯齿、禁用 hinting 做像素级对齐；其余情况与其它样式（微软雅黑、荆南麦
+        圆体）一样走默认抗锯齿（见文件顶部说明）。必须在字号设好之后调用。显式恢复
+        默认策略是因为 _refresh_explicit_fonts 复用已有 QFont，不重置会残留 NoAntialias。"""
+        if self._font_style == "pixel" and _PIXEL_CRISP_ON_GRID and _on_pixel_grid(font):
             font.setStyleStrategy(QFont.StyleStrategy.NoAntialias)
             font.setHintingPreference(QFont.HintingPreference.PreferNoHinting)
         else:
@@ -541,6 +574,7 @@ class Theme(QObject):
             app.setStyleSheet(self.qss())
             _patch_combo_popup_width()
             _patch_combo_paint()
+            _patch_label_pixmap()
             _patch_widget_set_font()
             _apply_tooltip_style(app)
             # 样式表/样式之后再设一次：首次 setStyleSheet()/setStyle() 会把 QMenu 等控件类
@@ -553,8 +587,11 @@ class Theme(QObject):
         # 像素字体只有 Regular 字重，synthetic 加粗会偏移 1px 破坏像素对齐，故像素
         # 样式下把强调字重退化为 normal（强调改由字号/颜色承担）。
         fw_bold = "normal" if self._font_style == "pixel" else "bold"
+        # 字形左侧无留白的字体给文字标签留 1px，防止首列被控件边界裁掉；图片标签除外。
+        label_pad = "1px" if self._font_style in _TIGHT_BEARING_STYLES else "0px"
         return f"""
-            QLabel {{ color: {c['TEXT']}; background: transparent; }}
+            QLabel {{ color: {c['TEXT']}; background: transparent; padding-left: {label_pad}; }}
+            QLabel[{_LABEL_PIXMAP_PROP}="true"] {{ padding-left: 0px; }}
             QLabel[muted="true"] {{ color: {c['TEXT_MUTED']}; }}
             QLabel[heading="true"] {{ color: {c['HEADING']}; font-weight: {fw_bold}; }}
             QPushButton {{ background: {c['PRIMARY']}; color: white; border: none; border-radius: 0px;
