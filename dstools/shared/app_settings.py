@@ -42,6 +42,7 @@ _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
 _KEY_LOLIA_SOURCES = "lolia_sources"
 _KEY_LOLIA_LAST_NODE = "lolia_last_node_id"
+_KEY_LOLIA_CLIENT_ID = "lolia_oauth_client_id"
 _KEY_LOLIA_MAPPINGS = "lolia_mappings"
 _KEY_LOBBY_ACCEL_ENABLED = "lobby_accel_enabled"
 _KEY_LOBBY_ACCEL_MIHOMO_PATH = "lobby_accel_mihomo_path"
@@ -560,6 +561,20 @@ def set_lolia_mapping(cluster_path: Path, shard_name: str, remote_port: int | No
     else:
         mappings.pop(key, None)
     data[_KEY_LOLIA_MAPPINGS] = mappings
+    save_settings(data)
+
+
+def get_lolia_client_id() -> str | None:
+    """用户自己创建的 Lolia OAuth 应用 client_id；没填过返回 None（用内置的）。"""
+    return load_settings().get(_KEY_LOLIA_CLIENT_ID) or None
+
+
+def set_lolia_client_id(client_id: str | None) -> None:
+    data = load_settings()
+    if client_id:
+        data[_KEY_LOLIA_CLIENT_ID] = client_id
+    else:
+        data.pop(_KEY_LOLIA_CLIENT_ID, None)
     save_settings(data)
 
 

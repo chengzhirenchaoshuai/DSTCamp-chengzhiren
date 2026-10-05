@@ -27,10 +27,12 @@ import urllib.request
 from dstools import __version__
 from dstools.features.lolia.config import LoliaError
 from dstools.features.sakura.api import sanitize_tunnel_name
+from dstools.shared import app_settings
 from dstools.shared.resource_paths import security_dir
 from dstools.shared.ssl_context import default_ssl_context
 
-CLIENT_ID = "6i019jbrc1qatj01"  # public 客户端，client_id 本身是公开信息
+DEFAULT_CLIENT_ID = "6i019jbrc1qatj01"  # 内置的 public 客户端，client_id 本身是公开信息
+CREATE_APP_URL = "https://dash.lolia.link/dash/oauth/apps/create"
 API_BASE = "https://api.lolia.link/api/v1"
 AUTHORIZE_URL = "https://dash.lolia.link/oauth/authorize"
 TOKEN_URL = f"{API_BASE}/oauth2/token"
@@ -44,6 +46,28 @@ _token_lock = threading.Lock()
 
 class LoliaAuthError(LoliaError):
     """未登录或登录已失效（refresh_token 过期/被撤销），需要用户重新登录。"""
+
+    error_code = ""  # 令牌接口返回的 OAuth error 码（如 invalid_client / invalid_grant）
+
+
+class LoliaClientError(LoliaAuthError):
+    """OAuth 应用（client_id）无效：被创建者删除或被平台停用，需要换一个 client_id。"""
+
+
+def client_id() -> str:
+    """用户在引导里填过自己的应用就用它，否则用内置的。"""
+    return app_settings.get_lolia_client_id() or DEFAULT_CLIENT_ID
+
+
+def check_client_id(cid: str) -> bool:
+    """无副作用地检查 client_id 是否有效：用假的 refresh_token 请求令牌接口，
+    有效的应用返回 invalid_grant（令牌无效），无效的返回 invalid_client（真机验证）。
+    网络错误照常抛 LoliaError。"""
+    try:
+        _post_form(TOKEN_URL, {"grant_type": "refresh_token", "client_id": cid, "refresh_token": "dstcamp_probe"})
+    except LoliaAuthError as exc:
+        return exc.error_code != "invalid_client"
+    return True
 
 
 # ── 令牌存储 ────────────────────────────────────────────────────────────
@@ -74,6 +98,11 @@ def _save_tokens(payload: dict) -> dict:
     return tokens
 
 
+def clear_tokens() -> None:
+    """只删本地令牌（换了 OAuth 应用后旧令牌无法再刷新时用）。"""
+    _token_file().unlink(missing_ok=True)
+
+
 def is_logged_in() -> bool:
     return load_tokens() is not None
 
@@ -85,7 +114,7 @@ def logout() -> None:
     if tokens:
         try:
             _post_form(f"{API_BASE}/oauth2/revoke", {
-                "token": tokens["refresh_token"], "token_type_hint": "refresh_token", "client_id": CLIENT_ID,
+                "token": tokens["refresh_token"], "token_type_hint": "refresh_token", "client_id": client_id(),
             })
         except LoliaError:
             pass
@@ -101,7 +130,7 @@ def make_pkce() -> tuple[str, str]:
 
 def build_authorize_url(redirect_uri: str, state: str, challenge: str) -> str:
     return AUTHORIZE_URL + "?" + urllib.parse.urlencode({
-        "response_type": "code", "client_id": CLIENT_ID, "redirect_uri": redirect_uri,
+        "response_type": "code", "client_id": client_id(), "redirect_uri": redirect_uri,
         "scope": SCOPES, "state": state, "code_challenge": challenge, "code_challenge_method": "S256",
     })
 
@@ -150,6 +179,8 @@ class _CallbackHandler(http.server.BaseHTTPRequestHandler):
 def login(open_browser, cancel_event: threading.Event, timeout: float = 300.0) -> dict:
     """完整登录流程（阻塞，放后台线程）：监听回环端口 → 打开浏览器授权 → 收回调 →
     换令牌并保存。`open_browser(url)` 由调用方提供；`cancel_event` 置位即中止。"""
+    if not check_client_id(client_id()):
+        raise LoliaClientError("invalid_client")
     server = http.server.HTTPServer(("127.0.0.1", 0), _CallbackHandler)
     server.timeout = 0.5
     server.expected_state = secrets.token_urlsafe(24)
@@ -171,7 +202,7 @@ def login(open_browser, cancel_event: threading.Event, timeout: float = 300.0) -
     if server.result_error is not None:
         raise server.result_error
     payload = _post_form(TOKEN_URL, {
-        "grant_type": "authorization_code", "client_id": CLIENT_ID, "code": server.result_code,
+        "grant_type": "authorization_code", "client_id": client_id(), "code": server.result_code,
         "redirect_uri": redirect_uri, "code_verifier": verifier,
     })
     with _token_lock:
@@ -188,12 +219,16 @@ def _post_form(url: str, fields: dict) -> dict:
             body = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        code = ""
         try:
             err = json.loads(body)
-            detail = err.get("error_description") or err.get("error") or body
+            code = str(err.get("error") or "")
+            detail = err.get("error_description") or code or body
         except (ValueError, AttributeError):
             detail = body or f"HTTP {e.code}"
-        raise LoliaAuthError(detail) from e
+        exc = (LoliaClientError if code == "invalid_client" else LoliaAuthError)(detail)
+        exc.error_code = code
+        raise exc from e
     except urllib.error.URLError as e:
         raise LoliaError(str(e.reason)) from e
     return json.loads(body) if body.strip() else {}
@@ -209,7 +244,7 @@ def _access_token() -> str:
             return tokens["access_token"]
         try:
             payload = _post_form(TOKEN_URL, {
-                "grant_type": "refresh_token", "client_id": CLIENT_ID, "refresh_token": tokens["refresh_token"],
+                "grant_type": "refresh_token", "client_id": client_id(), "refresh_token": tokens["refresh_token"],
             })
         except LoliaAuthError:
             _token_file().unlink(missing_ok=True)

@@ -33,6 +33,7 @@ from dstools.i18n import t
 from dstools.models import SaveSource
 from dstools.qt import dialogs
 from dstools.qt.lan_mapping_guard import ensure_lan_free_for_mapping
+from dstools.qt.lolia_oauth_dialog import LoliaOAuthAppDialog
 from dstools.qt.node_picker import NodeChoice, NodePickerDialog
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
@@ -111,6 +112,10 @@ class LoliaPanel(QWidget):
         dashboard_btn = QPushButton(t("lolia.open_dashboard_btn"))
         dashboard_btn.clicked.connect(lambda: webbrowser.open(lolia_config.DASHBOARD_URL))
         row1.addWidget(dashboard_btn)
+        # 内置 OAuth 应用失效时的兜底入口，只在未登录时显示
+        self._oauth_btn = dialogs.style_button(QPushButton(t("lolia.oauth_app_btn")), "secondary")
+        self._oauth_btn.clicked.connect(lambda: self._open_oauth_app_dialog(invalid=False))
+        row1.addWidget(self._oauth_btn)
         row1.addStretch()
         form.addLayout(row1, 0, 1)
         self._node_caption = QLabel(t("lolia.node_label"))
@@ -212,11 +217,13 @@ class LoliaPanel(QWidget):
     def _show_loading(self) -> None:
         self._account_label.setText(t("lolia.loading"))
         self._login_btn.setText(t("lolia.logout_btn"))
+        self._oauth_btn.setVisible(False)
         self._set_account_busy(True)
 
     def _show_logged_out(self) -> None:
         self._account_label.setText(t("lolia.not_logged_in"))
         self._login_btn.setText(t("lolia.login_btn"))
+        self._oauth_btn.setVisible(True)
         self._set_account_busy(False)
         self._node_caption.setVisible(False)
         self._node_row.setVisible(False)
@@ -231,11 +238,15 @@ class LoliaPanel(QWidget):
             return
         cancel_event = threading.Event()
         progress = dialogs.LogDialog(self.window(), t("lolia.login_title"), on_cancel=cancel_event.set)
-        progress.append(t("lolia.login_waiting"))
         progress.show()
 
+        def open_browser(url: str) -> None:
+            # 登录流程先校验 client_id，确认有效后才会走到这里打开浏览器
+            post_to_ui(lambda _a: progress.append(t("lolia.login_waiting")))
+            webbrowser.open(url)
+
         def work():
-            lolia_api.login(webbrowser.open, cancel_event)
+            lolia_api.login(open_browser, cancel_event)
             return lolia_api.get_user_info()
 
         def done(user) -> None:
@@ -244,10 +255,22 @@ class LoliaPanel(QWidget):
             self._reload_async()
 
         def error(exc: Exception) -> None:
+            if isinstance(exc, lolia_api.LoliaClientError):
+                # 内置/自定义 OAuth 应用失效：直接转到创建引导
+                progress.finish()
+                progress.accept()
+                self._open_oauth_app_dialog(invalid=True)
+                return
             progress.append(t("lolia.login_failed", detail=str(exc)), "result_error")
             progress.finish()
 
         run_async(work, done, error)
+
+    def _open_oauth_app_dialog(self, invalid: bool) -> None:
+        dialog = LoliaOAuthAppDialog(self.window(), invalid=invalid)
+        dialog.exec()
+        if dialog.changed:
+            self._after_logout()  # 换了应用，旧令牌已清除，需要重新登录
 
     def _after_logout(self) -> None:
         self._show_logged_out()
