@@ -81,19 +81,23 @@ def _draw_pill(painter: QPainter, rect: QRectF, fill: QColor, text_color: QColor
 
 
 def _draw_banner(painter: QPainter, rect: QRectF, title: str, chips: list[str]) -> None:
-    """顶部主题色渐变横幅：白色标题 + 一排半透明信息标签，右侧几个淡圆圈做点缀。"""
+    """顶部主题浅色渐变横幅：深色标题 + 一排白底信息标签，右侧几个淡圆圈做点缀。"""
     path = QPainterPath()
     path.addRoundedRect(rect, _BANNER_RADIUS, _BANNER_RADIUS)
+    # 从主题浅色过渡到"浅色混一点主色"，整体保持浅底，标题用深色字保证对比度。
+    light, primary = theme.color("PRIMARY_LIGHT"), theme.color("PRIMARY")
+    deeper = QColor(*(round(a * 0.7 + b * 0.3) for a, b in (
+        (light.red(), primary.red()), (light.green(), primary.green()), (light.blue(), primary.blue()))))
     gradient = QLinearGradient(rect.topLeft(), rect.bottomRight())
-    gradient.setColorAt(0.0, theme.color("PRIMARY_DARK"))
-    gradient.setColorAt(1.0, theme.color("PRIMARY"))
+    gradient.setColorAt(0.0, light)
+    gradient.setColorAt(1.0, deeper)
     painter.save()
     painter.setClipPath(path)
     painter.fillPath(path, gradient)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(255, 255, 255, 26))
+    painter.setBrush(QColor(255, 255, 255, 70))
     painter.drawEllipse(QRectF(rect.right() - 150, rect.top() - 70, 220, 220))
-    painter.setBrush(QColor(255, 255, 255, 18))
+    painter.setBrush(QColor(255, 255, 255, 50))
     painter.drawEllipse(QRectF(rect.right() - 260, rect.bottom() - 46, 120, 120))
     painter.restore()
 
@@ -105,7 +109,7 @@ def _draw_banner(painter: QPainter, rect: QRectF, title: str, chips: list[str]) 
     block_h = title_fm.height() + 12 + chip_h
     top = rect.top() + (rect.height() - block_h) / 2
     painter.setFont(title_font)
-    painter.setPen(QColor(255, 255, 255))
+    painter.setPen(theme.color("HEADING"))
     painter.drawText(QRectF(left, top, right - left, title_fm.height()),
                      Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, title)
     x = left
@@ -116,8 +120,8 @@ def _draw_banner(painter: QPainter, rect: QRectF, title: str, chips: list[str]) 
             break
         text = chip_fm.elidedText(text, Qt.TextElideMode.ElideRight, int(max_w - 24))
         chip_w = chip_fm.horizontalAdvance(text) + 24
-        _draw_pill(painter, QRectF(x, chip_y, chip_w, chip_h), QColor(255, 255, 255, 56),
-                   QColor(255, 255, 255), chip_font, text)
+        _draw_pill(painter, QRectF(x, chip_y, chip_w, chip_h), QColor(255, 255, 255, 190),
+                   theme.color("PRIMARY_DARK"), chip_font, text)
         x += chip_w + 8
 
 
@@ -139,18 +143,14 @@ def _draw_card(painter: QPainter, rect: QRectF, entry: ExportModEntry, icon, fon
         painter.drawPixmap(icon_rect, pixmap, QRectF(pixmap.rect()))
         painter.restore()
 
-    # 序号角标压在图标左上角：主题色底、白字、白色描边，方便聊天里说"第几个"。
+    # 序号压在图标左上角，只画数字：先描一圈卡片底色的边，压在图标上也看得清，方便聊天里说"第几个"。
     badge_font = fonts["badge"]
-    badge_text = str(number)
-    badge_h = 20
-    badge_w = max(badge_h, QFontMetrics(badge_font).horizontalAdvance(badge_text) + 10)
-    badge = QRectF(icon_rect.left() - 6, icon_rect.top() - 6, badge_w, badge_h)
-    painter.setPen(QPen(theme.color("CARD_BG"), 2))
-    painter.setBrush(theme.color("PRIMARY_DARK"))
-    painter.drawRoundedRect(badge, badge_h / 2, badge_h / 2)
-    painter.setFont(badge_font)
-    painter.setPen(QColor(255, 255, 255))
-    painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, badge_text)
+    number_path = QPainterPath()
+    number_path.addText(icon_rect.left() - 4, icon_rect.top() - 4 + QFontMetrics(badge_font).ascent() * 0.75,
+                        badge_font, str(number))
+    painter.strokePath(number_path, QPen(theme.color("CARD_BG"), 4, Qt.PenStyle.SolidLine,
+                                         Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+    painter.fillPath(number_path, theme.color("PRIMARY_DARK"))
 
     name_font, tag_font, meta_font = fonts["name"], fonts["tag"], fonts["meta"]
     name_fm, tag_fm, meta_fm = QFontMetrics(name_font), QFontMetrics(tag_font), QFontMetrics(meta_font)
@@ -201,10 +201,12 @@ def render_mod_list_image(entries: list[ExportModEntry], icon_images: dict, titl
     chips = [part for part in subtitle.rsplit(" · ", 3) if part.strip()]
     cols = _column_count(len(entries))
     rows = max(1, (len(entries) + cols - 1) // cols)
-    fonts = {"name": _font(15, bold=True), "tag": _font(11), "meta": _font(12), "badge": _font(11, bold=True)}
+    fonts = {"name": _font(15, bold=True), "tag": _font(11), "meta": _font(12), "badge": _font(14, bold=True)}
     footer_font = _font(11)
     footer_h = QFontMetrics(footer_font).height() + 14
-    grid_w = cols * _CARD_W + (cols - 1) * _GAP
+    # 只有一列时卡片加宽到两列的宽度：图片太窄时预览/分享里文字会显得特别大。
+    card_w = _CARD_W * 2 + _GAP if cols == 1 else _CARD_W
+    grid_w = cols * card_w + (cols - 1) * _GAP
     grid_h = rows * _CARD_H + (rows - 1) * _GAP
     content_w = grid_w + _FRAME_PAD * 2
     width = _PAD * 2 + content_w
@@ -228,11 +230,11 @@ def render_mod_list_image(entries: list[ExportModEntry], icon_images: dict, titl
 
     top = frame_top + _FRAME_PAD
     for index, entry in enumerate(entries):
-        # 按列优先排：先填满第一列再换列，读起来和应用里的列表顺序一致。
-        col, row = divmod(index, rows)
-        x = _PAD + _FRAME_PAD + col * (_CARD_W + _GAP)
+        # 按行优先排：从左到右、从上到下，与序号顺序一致。
+        row, col = divmod(index, cols)
+        x = _PAD + _FRAME_PAD + col * (card_w + _GAP)
         y = top + row * (_CARD_H + _GAP)
-        _draw_card(painter, QRectF(x, y, _CARD_W, _CARD_H), entry, icon_images.get(entry.workshop_id), fonts,
+        _draw_card(painter, QRectF(x, y, card_w, _CARD_H), entry, icon_images.get(entry.workshop_id), fonts,
                    index + 1)
 
     painter.setFont(footer_font)
@@ -287,8 +289,8 @@ class ModListImageDialog(dialogs.Dialog):
         if avail <= 0:
             return
         dpr = self.devicePixelRatioF()
-        # 铺满可用宽度，最多放大到图片原始物理像素，不做超分辨率放大以免发虚。
-        target_w = min(avail, self._image.width() / dpr)
+        # 铺满可用宽度，但不超过图片自身的逻辑宽度：放大后 Mod 少时文字会大得突兀。
+        target_w = min(avail, self._image.width() / self._image.devicePixelRatio())
         # 按屏幕缩放比缩到物理像素再设 devicePixelRatio，避免先缩到逻辑尺寸再被二次放大。
         scaled = self._image.scaledToWidth(max(1, round(target_w * dpr)), Qt.TransformationMode.SmoothTransformation)
         pixmap = QPixmap.fromImage(scaled)
