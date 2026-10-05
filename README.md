@@ -290,3 +290,5 @@ python scripts/build_exe.py
 ## 许可
 
 [MIT](LICENSE)
+
+内置字体按各自许可证分发：缝合像素字体（Fusion Pixel Font）与荆南麦圆体均为 SIL Open Font License 1.1，许可证文件见 `tools/fonts/`。

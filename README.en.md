@@ -208,3 +208,5 @@ The build uses an explicit tool allowlist, stages resources under `build/`, and 
 ## License
 
 [MIT](LICENSE)
+
+Bundled fonts are distributed under their own licenses: Fusion Pixel Font and KN Maiyuan are both licensed under the SIL Open Font License 1.1; see `tools/fonts/` for the license files.

@@ -18,10 +18,17 @@ import sys
 from pathlib import Path
 
 TOOL_FILES = (
-    "fonts/AUTHORS.txt",
-    "fonts/FusionPixelFont_LICENSE-MIT.txt",
+    "fonts/FusionPixelFont_LICENSES/ark-pixel/OFL.txt",
+    "fonts/FusionPixelFont_LICENSES/boutique-bitmap-7x7/OFL.txt",
+    "fonts/FusionPixelFont_LICENSES/boutique-bitmap-9x9/OFL.txt",
+    "fonts/FusionPixelFont_LICENSES/cubic-11/OFL.txt",
+    "fonts/FusionPixelFont_LICENSES/galmuri/LICENSE.txt",
+    "fonts/FusionPixelFont_LICENSES/misaki/misaki.txt",
+    "fonts/FusionPixelFont_LICENSES/miseki-bitmap/LICENSE.txt",
+    "fonts/FusionPixelFont_OFL.txt",
     "fonts/KNMaiyuan-Regular.ttf",
-    "fonts/OFL.txt",
+    "fonts/KNMaiyuan_AUTHORS.txt",
+    "fonts/KNMaiyuan_OFL.txt",
     "fonts/fusion-pixel-12px-proportional-zh_hans.ttf",
     "frp_selfhost/LICENSE",
     "frp_selfhost/frpc.exe.gz",
