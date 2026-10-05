@@ -95,6 +95,7 @@ def _rgba(hex_color: str, alpha: int) -> str:
 
 
 _ORIGINAL_COMBO_SHOW_POPUP = None
+_ORIGINAL_COMBO_PAINT = None
 _POPUP_SHOW_FILTER = None
 _POPUP_BG_LABEL_NAME = "dstcamp_combo_popup_bg_snapshot"
 _POPUP_FILTER_PROPERTY = "dstcamp_popup_show_filter"
@@ -156,6 +157,43 @@ def _patch_widget_set_font() -> None:
             self.setProperty(_QSS_SAVED_FONT_PROP, self.font())
 
     QWidget.setFont = _set_font
+
+
+def _patch_combo_paint() -> None:
+    """全局猴补丁 QComboBox.paintEvent——像素字体下当前项文字往右让 1px。
+
+    样式表画下拉框文字时，裁剪边界就是文字起点；屏幕缩放非整数（如 125%）时这条
+    边界落在小数物理像素上，而像素字体的字形左侧没有留白，首列像素会被裁掉（真机
+    反馈过存档类型里 "Steam" 的 S 只剩 2/3）。像素样式下改为：底框/箭头仍交给样式画，
+    当前项文字由这里在同一裁剪区内右移 1px 再画；其它字体样式、可编辑下拉框、带
+    图标或显示占位文字时走原逻辑。"""
+    global _ORIGINAL_COMBO_PAINT
+    if _ORIGINAL_COMBO_PAINT is not None:
+        return
+    from PySide6.QtGui import QPalette
+    from PySide6.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QStylePainter
+
+    _ORIGINAL_COMBO_PAINT = QComboBox.paintEvent
+
+    def _paint_event(self, event) -> None:
+        if (theme.font_style != "pixel" or self.isEditable() or self.currentIndex() < 0
+                or not self.itemIcon(self.currentIndex()).isNull()):
+            _ORIGINAL_COMBO_PAINT(self, event)
+            return
+        painter = QStylePainter(self)
+        painter.setPen(self.palette().color(QPalette.ColorRole.Text))
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, opt)
+        style = self.style()
+        edit = style.subControlRect(QStyle.ComplexControl.CC_ComboBox, opt,
+                                    QStyle.SubControl.SC_ComboBoxEditField, self)
+        painter.setClipRect(edit)
+        style.drawItemText(painter, edit.adjusted(1, 0, 0, 0),
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                           opt.palette, self.isEnabled(), opt.currentText, QPalette.ColorRole.Text)
+
+    QComboBox.paintEvent = _paint_event
 
 
 class _PopupShowFilter(QObject):
@@ -497,11 +535,18 @@ class Theme(QObject):
             # 明显比服务器配置页 FormGrid 显式用 FONT_SIZE_SM 画的字段大一号、不统一；
             # 已经显式调用过 theme.font(...) 的控件（对话框正文、标题、页签等）不受
             # 影响，因为它们各自都传了自己的 size_key，不依赖这份继承值。
-            app.setFont(self.font("FONT_SIZE_SM"))
+            # 样式表之前设一次：重设样式表 repolish 时各控件按新字体重新解析。
+            app_font = self.font("FONT_SIZE_SM")
+            app.setFont(app_font)
             app.setStyleSheet(self.qss())
             _patch_combo_popup_width()
+            _patch_combo_paint()
             _patch_widget_set_font()
             _apply_tooltip_style(app)
+            # 样式表/样式之后再设一次：首次 setStyleSheet()/setStyle() 会把 QMenu 等控件类
+            # 的专属字体重新初始化成系统默认（9pt），不补这一次菜单会停在系统字号，
+            # 重启后菜单文字比设定的小（真机反馈过，要再切一次字号才恢复）。
+            app.setFont(app_font)
 
     def qss(self) -> str:
         c = self.palette
