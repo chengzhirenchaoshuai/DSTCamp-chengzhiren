@@ -39,7 +39,10 @@ _DOWN_ARROW_PATH = (bundled_resource_dir() / "icons" / "ui" / "combo_arrow.png")
 # 关抗锯齿只在 FreeType 引擎下生效（DirectWrite 下会亚像素粘连，见 app.py），否则仍开
 # 抗锯齿（字号照样吸附）。
 _PIXEL_GRID = 12
-_PIXEL_CRISP_LEVELS = ("small",)
+# 当前为空（全部档位抗锯齿）：锐利档位要吸附到 12 整数倍物理像素，用户的缩放比不同，
+# 吸附结果差异很大（如 150% 缩放下"小"档正文比"标准"档还大、标题与正文同号），不适合
+# 作为发布给所有用户的默认行为。
+_PIXEL_CRISP_LEVELS: tuple[str, ...] = ()
 
 # 字形左侧几乎没有留白的字体样式（像素字体、麦圆体）：控件边界或裁剪区在非整数缩放
 # 下落在小数物理像素时，首列像素会被裁掉，需要文字离边界留 1px（见 qss() 与
