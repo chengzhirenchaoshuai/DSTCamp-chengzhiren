@@ -281,6 +281,10 @@ class SelfHostPanel(QWidget):
         self._authenticated_host = ""
         self._node_dialog: _NodeSettingsDialog | None = None
         self._lobby_dialog: _LobbySettingsDialog | None = None
+        # 孤儿 frpc 认领要扫进程表（tasklist + PowerShell，实测约 0.9 秒），放到后台做；
+        # 每个存档每次运行只扫一次，之后靠自己启动/认领的跟踪记录
+        self._scanned: set[str] = set()
+        self._scanning = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 10, 0, 0)
@@ -795,6 +799,7 @@ class SelfHostPanel(QWidget):
         if any_mapped:
             self._frpc_row.setVisible(True)
             self._refresh_frpc_row()
+            self._reconcile_async(cluster)
         else:
             self._frpc_row.setVisible(False)
 
@@ -884,7 +889,7 @@ class SelfHostPanel(QWidget):
         exe = _frpc_exe_path()
         if not config_path.exists():
             return
-        existing = self.frpc.reconcile(cluster.path, exe, config_path)
+        existing = self._reconcile_once(cluster)
         if existing is not None and existing.status not in (FrpcStatus.CRASHED, FrpcStatus.STOPPED):
             return  # 已在运行/启停中；崩溃或已停止的才重新拉起
         self.frpc.start(cluster.path, exe, config_path)
@@ -910,10 +915,40 @@ class SelfHostPanel(QWidget):
         if exited or running != self._frpc_shown_running:
             self._refresh_frpc_row()
 
+    def _reconcile_once(self, cluster):
+        if str(cluster.path) in self._scanned:
+            return self.frpc.get(cluster.path)
+        proc = self.frpc.reconcile(cluster.path, _frpc_exe_path(), self._frpc_config_path(cluster.path))
+        self._scanned.add(str(cluster.path))
+        return proc
+
     def frpc_running(self, cluster) -> bool:
-        self.frpc.reconcile(cluster.path, _frpc_exe_path(), self._frpc_config_path(cluster.path))
+        self._reconcile_once(cluster)
+        return self._tracked_running(cluster)
+
+    def _tracked_running(self, cluster) -> bool:
+        """只看已跟踪的进程，不扫描进程表。"""
         proc = self.frpc.get(cluster.path)
         return proc is not None and proc.status == FrpcStatus.RUNNING
+
+    def _reconcile_async(self, cluster) -> None:
+        """后台认领上次遗留的 frpc 进程，完成后刷新状态行；扫描期间状态显示检测中。"""
+        if str(cluster.path) in self._scanned or self._scanning:
+            return
+        self._scanning = True
+        self._refresh_frpc_row()
+        config_path = self._frpc_config_path(cluster.path)
+
+        def work():
+            self.frpc.reconcile(cluster.path, _frpc_exe_path(), config_path)
+
+        def finish(_result=None) -> None:
+            self._scanning = False
+            self._scanned.add(str(cluster.path))
+            if self._current_cluster is cluster:
+                self._refresh_frpc_row()
+
+        run_async(work, finish, finish)
 
     def _frpc_failed_error(self, cluster) -> str | None:
         proc = self.frpc.get(cluster.path)
@@ -927,9 +962,12 @@ class SelfHostPanel(QWidget):
 
     def _refresh_frpc_row(self) -> None:
         cluster = self._current_cluster
-        running = bool(cluster) and self.frpc_running(cluster)
-        error = self._frpc_failed_error(cluster) if cluster else None
-        if error:
+        running = bool(cluster) and self._tracked_running(cluster)
+        error = self._frpc_failed_error(cluster) if cluster and not self._scanning else None
+        self._frpc_toggle_btn.setEnabled(not self._scanning)
+        if self._scanning:
+            text, color = t("selfhost.frpc_status_checking"), theme.hex("TEXT_MUTED")
+        elif error:
             text, color = t("selfhost.frpc_status_failed"), theme.hex("ERROR")
         elif running:
             text, color = t("selfhost.frpc_status_running"), theme.hex("SUCCESS")
@@ -943,9 +981,9 @@ class SelfHostPanel(QWidget):
 
     def _on_frpc_toggle(self) -> None:
         cluster = self._current_cluster
-        if not cluster:
+        if not cluster or self._scanning:
             return
-        running = self.frpc_running(cluster)
+        running = self._tracked_running(cluster)
         if running != self._frpc_shown_running:
             # 显示的状态已过期（如 frpc 已随停服结束），先刷新，不能反过来执行相反的操作
             self._refresh_frpc_row()
