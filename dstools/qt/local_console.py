@@ -6,10 +6,11 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPointF, QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QPainter, QPen, QShortcut, QTextCursor
 from PySide6.QtWidgets import (
-    QAbstractButton, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QAbstractButton, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTabBar,
+    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dstools.features.local_service.dedicated_server import ServerStatus, advance_world_ready_marker
@@ -71,43 +72,25 @@ class _DiagnosticDetailDialog(QDialog):
         self.activateWindow()
 
 
-class TabCloseButton(QAbstractButton):
-    """世界页签右侧的小 ×：选中页签（主题色底）上画白色，其余画灰色，悬停时垫一个淡圆底。
+# 世界页签外边距（逻辑像素），与 theme.py 中 QTabBar::tab 的 margin 一致：
+# 上、右各留一圈给压在页签右上角的关闭角标。
+TAB_MARGIN_TOP = 6
+TAB_MARGIN_RIGHT = 8
 
-    Qt 自带的页签关闭图标是固定深色，压在主题色的选中页签上不协调，所以自绘。
-    Qt 会把按钮贴着页签右边缘摆放（不扣页签右侧那条透明间隔边框，见 theme.py），
-    所以按钮右边多留 _TRAIL 宽的空白落在透明边框里，× 只画在左侧 _SIZE 区域。"""
+
+class TabCloseButton(QAbstractButton):
+    """压在世界页签右上角的圆形关闭角标：平时白底描边灰 ×，悬停变红底白 ×。"""
 
     _SIZE = 16
-    _TRAIL = 6  # 与 theme.py 中 QTabBar::tab 的透明右边框宽度一致
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(t("local.console_close_btn"))
-        self.setFixedSize(self._SIZE + self._TRAIL, self._SIZE)
-        self._tab_bar = None
+        self.setFixedSize(self._SIZE, self._SIZE)
 
     def sizeHint(self) -> QSize:
-        return QSize(self._SIZE + self._TRAIL, self._SIZE)
-
-    def hitButton(self, pos) -> bool:
-        # 只有 × 所在的方块可点，右侧透明间隔不响应。
-        return 0 <= pos.x() < self._SIZE and 0 <= pos.y() < self._SIZE
-
-    def _on_selected_tab(self) -> bool:
-        bar = self.parentWidget()
-        if bar is None or not hasattr(bar, "tabAt"):
-            return False
-        return bar.tabAt(self.geometry().center()) == bar.currentIndex()
-
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
-        bar = self.parentWidget()
-        # 切换页签时按钮本身不会自动重绘，跟着页签条的选中变化刷新颜色。
-        if bar is not self._tab_bar and hasattr(bar, "currentChanged"):
-            self._tab_bar = bar
-            bar.currentChanged.connect(lambda _index: self.update())
+        return QSize(self._SIZE, self._SIZE)
 
     def enterEvent(self, event) -> None:
         super().enterEvent(event)
@@ -120,16 +103,72 @@ class TabCloseButton(QAbstractButton):
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        selected = self._on_selected_tab()
-        if self.underMouse():
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(255, 255, 255, 70) if selected else QColor(0, 0, 0, 28))
-            painter.drawEllipse(0, 0, self._SIZE, self._SIZE)
-        color = QColor("#FFFFFF") if selected else theme.color("TEXT_MUTED")
-        painter.setPen(QPen(color, 1.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
-        a, b = 5.0, self._SIZE - 5.0
+        hover = self.underMouse()
+        circle = QRectF(0.75, 0.75, self._SIZE - 1.5, self._SIZE - 1.5)
+        painter.setPen(Qt.PenStyle.NoPen if hover else QPen(theme.color("CARD_BORDER"), 1))
+        painter.setBrush(theme.color("ERROR") if hover else theme.color("CARD_BG"))
+        painter.drawEllipse(circle)
+        color = QColor("#FFFFFF") if hover else theme.color("TEXT_MUTED")
+        painter.setPen(QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        a, b = 5.5, self._SIZE - 5.5
         painter.drawLine(QPointF(a, a), QPointF(b, b))
         painter.drawLine(QPointF(b, a), QPointF(a, b))
+
+
+class _ConsoleTabBar(QTabBar):
+    """世界页签条：每个页签的关闭角标由这里手动摆到页签右上角。
+
+    Qt 自带的页签按钮（setTabButton）只能放在文字左右并垂直居中，摆不到角上，
+    所以角标只作为普通子控件挂在页签条上，按 tabData 记在对应页签里，布局变化时重新定位。"""
+
+    def place_close_buttons(self) -> None:
+        alive = set()
+        for index in range(self.count()):
+            button = self.tabData(index)
+            if not isinstance(button, TabCloseButton):
+                continue
+            alive.add(button)
+            # tabRect 含 QSS 外边距，扣掉后才是胶囊本体；角标中心压在胶囊右上角往里 3px 处。
+            pill = self.tabRect(index).adjusted(0, TAB_MARGIN_TOP, -TAB_MARGIN_RIGHT, 0)
+            half = button.width() / 2
+            button.move(round(pill.right() + 1 - 3 - half), round(pill.top() + 3 - half))
+            button.raise_()
+            button.show()
+        # 页签被移除/清空后，tabData 里不再引用的角标一并释放。
+        for button in self.findChildren(TabCloseButton):
+            if button not in alive:
+                button.hide()
+                button.deleteLater()
+
+    def tabLayoutChange(self) -> None:
+        super().tabLayoutChange()
+        self.place_close_buttons()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.place_close_buttons()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.place_close_buttons()
+
+
+class ConsoleTabWidget(QTabWidget):
+    """世界控制台页签：页签右上角带关闭角标（替代原控制台底部的"关闭窗口"按钮）。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTabBar(_ConsoleTabBar())
+
+    def add_console_tab(self, pane: "ConsolePane", title: str) -> int:
+        index = self.addTab(pane, title)
+        bar = self.tabBar()
+        button = TabCloseButton(bar)
+        # clicked 会带 checked 参数，包一层避免传给 request_close。
+        button.clicked.connect(lambda _checked=False: pane.request_close())
+        bar.setTabData(index, button)
+        bar.place_close_buttons()
+        return index
 
 
 class ConsolePane(QWidget):

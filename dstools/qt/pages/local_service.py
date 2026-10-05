@@ -24,7 +24,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QSplitter,
-    QTabBar, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dstools.features.cluster_config.config_manager import (
@@ -49,7 +49,7 @@ from dstools.features.sakura import api as sakura_frp
 from dstools.i18n import t
 from dstools.models import Platform, SaveSource
 from dstools.qt import dialogs
-from dstools.qt.local_console import ConsolePane, TabCloseButton, status_color
+from dstools.qt.local_console import ConsolePane, ConsoleTabWidget, status_color
 from dstools.qt.pages.base import Page
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async, run_async_with_log
@@ -395,7 +395,7 @@ class LocalServicePage(Page):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(splitter, 1)
         splitter.addWidget(self._build_left_panel())
-        self._console_tabs = QTabWidget()
+        self._console_tabs = ConsoleTabWidget()
         splitter.addWidget(self._console_tabs)
         splitter.setSizes([320, 900])
         # 默认隐藏：一进页面就占大半个页面宽度的空控制台很突兀，真机反馈过。
@@ -675,12 +675,8 @@ class LocalServicePage(Page):
         self._update_console_panel_visibility()
 
     def _add_console_tab(self, pane: ConsolePane, shard_name: str) -> None:
-        """添加世界控制台页签，页签右侧带一个 ×（替代原控制台底部的"关闭窗口"按钮）。"""
-        index = self._console_tabs.addTab(pane, shard_name)
-        close = TabCloseButton()
-        # clicked 会带 checked 参数，包一层避免传给 request_close。
-        close.clicked.connect(lambda _checked=False: pane.request_close())
-        self._console_tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, close)
+        """添加世界控制台页签，页签右上角带关闭角标（替代原控制台底部的"关闭窗口"按钮）。"""
+        self._console_tabs.add_console_tab(pane, shard_name)
 
     def _update_console_panel_visibility(self) -> None:
         """没有任何控制台标签时收起右侧面板；启动第一个世界/切到有世界在跑的存档才展开。"""
