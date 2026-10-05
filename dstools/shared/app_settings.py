@@ -55,6 +55,7 @@ _KEY_GLOBAL_TOKENS = "global_tokens"
 _KEY_TOKEN_HOLDS = "token_holds"
 _KEY_AUTO_RESTART_CLUSTERS = "auto_restart_clusters"
 _KEY_TOKEN_SWITCH_ON_TIMEOUT = "token_switch_on_timeout"
+_KEY_TOKEN_SWITCH_AFTER_MINUTES = "token_switch_after_minutes"
 _KEY_MOD_PRESETS = "mod_presets"
 _KEY_DEDICATED_SERVER_EXTRA_ARGS = "dedicated_server_extra_args"
 
@@ -811,8 +812,14 @@ def set_auto_restart_enabled(cluster_key: str, enabled: bool) -> None:
     save_settings(data)
 
 
+# 超时换令牌的等待分钟数：两次实测 Klei 释放约 25 分钟、超过 30 分钟，默认留足余量；
+# 上限要小于自动重启总等待 2 小时，否则永远轮不到换令牌
+TOKEN_SWITCH_MINUTES_DEFAULT = 45
+TOKEN_SWITCH_MINUTES_RANGE = (20, 110)
+
+
 def get_token_switch_on_timeout() -> bool:
-    """自动重启等原令牌超时（TOKEN_SWITCH_AFTER）仍在注册冲突时，是否换用令牌池里的其它令牌（默认开启）。"""
+    """自动重启等原令牌超时（get_token_switch_after_minutes()）仍在注册冲突时，是否换用令牌池里的其它令牌（默认开启）。"""
     return load_settings().get(_KEY_TOKEN_SWITCH_ON_TIMEOUT, True) is not False
 
 
@@ -820,6 +827,28 @@ def set_token_switch_on_timeout(enabled: bool) -> None:
     data = load_settings()
     data[_KEY_TOKEN_SWITCH_ON_TIMEOUT] = bool(enabled)
     save_settings(data)
+
+
+def _clamp_switch_minutes(value) -> int:
+    low, high = TOKEN_SWITCH_MINUTES_RANGE
+    try:
+        return min(max(int(value), low), high)
+    except (TypeError, ValueError):
+        return TOKEN_SWITCH_MINUTES_DEFAULT
+
+
+def get_token_switch_after_minutes() -> int:
+    """崩溃后原令牌持续注册冲突多少分钟才换令牌，超出范围的旧值按边界处理。"""
+    return _clamp_switch_minutes(load_settings().get(_KEY_TOKEN_SWITCH_AFTER_MINUTES, TOKEN_SWITCH_MINUTES_DEFAULT))
+
+
+def set_token_switch_after_minutes(minutes: int) -> int:
+    """保存换令牌等待分钟数，返回实际保存（夹到合法范围后）的值。"""
+    value = _clamp_switch_minutes(minutes)
+    data = load_settings()
+    data[_KEY_TOKEN_SWITCH_AFTER_MINUTES] = value
+    save_settings(data)
+    return value
 
 
 def prune_token_holds(tokens: list[str], expire_before: float | None = None) -> None:

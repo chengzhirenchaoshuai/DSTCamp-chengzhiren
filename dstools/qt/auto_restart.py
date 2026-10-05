@@ -6,7 +6,7 @@
    时整组重启，只有洞穴等从世界崩溃时只重启它自己。
 2. 拉起时用原令牌（忽略它自己的等待标记），不因崩溃就多占一个池中令牌。
 3. 拉起后若注册冲突（E_ROWID_EXIST），不停服：专服会自己每隔几秒重试，Klei 释放后自行注册
-   成功（实测强杀后约 25 分钟）。开启"超时换令牌"时，距崩溃超过 TOKEN_SWITCH_AFTER 仍在冲突
+   成功（实测强杀后 25～30 多分钟）。开启"超时换令牌"时，距崩溃超过设定分钟数仍在冲突
    且池里有替代令牌，才停服换令牌重启；从崩溃起超过 TOKEN_WAIT_LIMIT 不再管理（服务器保持
    运行继续重试）。注册成功即结束本轮，并把用时写进日志。
 
@@ -24,13 +24,15 @@ from PySide6.QtCore import QObject, QTimer
 from dstools.features.cluster_config.config_manager import load_cluster_config
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.auto_restart import (
-    CRASH_RESTART_DELAY, MAX_CRASH_RESTARTS, TOKEN_BUSY_RECHECK, TOKEN_SWITCH_AFTER, TOKEN_WAIT_LIMIT,
-    CrashBudget, append_log, is_restartable,
+    CRASH_RESTART_DELAY, MAX_CRASH_RESTARTS, TOKEN_BUSY_RECHECK, TOKEN_WAIT_LIMIT, CrashBudget, append_log,
+    is_restartable,
 )
 from dstools.features.local_service.dedicated_server import ConfDirCrossDriveError, resolve_conf_dir_arg
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE, ordered_shards
 from dstools.i18n import t
-from dstools.shared.app_settings import get_auto_restart_enabled, get_token_switch_on_timeout
+from dstools.shared.app_settings import (
+    get_auto_restart_enabled, get_token_switch_after_minutes, get_token_switch_on_timeout,
+)
 from dstools.shared.resource_paths import data_dir
 from dstools.shared.token_manager import read_token, token_fingerprint
 
@@ -213,7 +215,7 @@ class AutoRestartController(QObject):
 
     def _release_deadline(self, state: _ClusterState) -> float:
         """注册冲突后下一次检查的时刻：还能换令牌时是换令牌的时刻，否则是总等待上限。"""
-        switch_at = state.crashed_at + TOKEN_SWITCH_AFTER
+        switch_at = state.crashed_at + get_token_switch_after_minutes() * 60
         if not state.switched and get_token_switch_on_timeout() and time.time() < switch_at:
             return switch_at
         return state.crashed_at + TOKEN_WAIT_LIMIT

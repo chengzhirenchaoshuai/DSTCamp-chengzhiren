@@ -322,7 +322,9 @@ def test_auto_restart_rules_and_hold_retry_window() -> None:
     assert budget.allow(100.0 + auto_restart.CRASH_WINDOW + 1), "旧崩溃滑出时间窗后恢复"
 
     assert auto_restart.TOKEN_HOLD_DURATION >= 25 * 60, "实测强杀后约 25 分钟才释放"
-    assert auto_restart.TOKEN_SWITCH_AFTER >= auto_restart.TOKEN_HOLD_DURATION
+    assert app_settings.TOKEN_SWITCH_MINUTES_DEFAULT * 60 > auto_restart.TOKEN_HOLD_DURATION, \
+        "第二次实测超过 30 分钟才释放，默认换令牌时长要留余量"
+    assert app_settings.TOKEN_SWITCH_MINUTES_RANGE[1] * 60 < auto_restart.TOKEN_WAIT_LIMIT
 
     with tempfile.TemporaryDirectory() as settings_tmp, patch.dict(os.environ, {"APPDATA": settings_tmp}):
         fingerprint = token_fingerprint(NEW_A)
@@ -342,13 +344,19 @@ def test_auto_restart_rules_and_hold_retry_window() -> None:
         app_settings.set_token_switch_on_timeout(False)
         assert not app_settings.get_token_switch_on_timeout()
 
+        assert app_settings.get_token_switch_after_minutes() == app_settings.TOKEN_SWITCH_MINUTES_DEFAULT
+        low, high = app_settings.TOKEN_SWITCH_MINUTES_RANGE
+        assert app_settings.set_token_switch_after_minutes(60) == 60 == app_settings.get_token_switch_after_minutes()
+        assert app_settings.set_token_switch_after_minutes(1) == low, "低于下限按下限保存"
+        assert app_settings.set_token_switch_after_minutes(999) == high == app_settings.get_token_switch_after_minutes()
+
 
 def test_auto_restart_controller_flow() -> None:
     """用假页面驱动真实调度器：直接触发定时器回调，覆盖冲突保持运行、超时换令牌、等令牌、成功、限流与取消。"""
     from PySide6.QtCore import QCoreApplication
 
     from dstools.features.local_service.auto_restart import (
-        MAX_CRASH_RESTARTS, TOKEN_BUSY_RECHECK, TOKEN_SWITCH_AFTER, TOKEN_WAIT_LIMIT,
+        MAX_CRASH_RESTARTS, TOKEN_BUSY_RECHECK, TOKEN_WAIT_LIMIT,
     )
     from dstools.features.local_service.dedicated_server import ServerStatus
     from dstools.qt import auto_restart as controller_module
@@ -366,7 +374,7 @@ def test_auto_restart_controller_flow() -> None:
         tokens = {"available": True}
         choose_calls = []
         switch_calls = []
-        opts = {"switch": True, "alternative": NEW_B}
+        opts = {"switch": True, "alternative": NEW_B, "minutes": 45}
 
         def make_proc(name, *, ready=True, status=ServerStatus.RUNNING):
             procs[name] = SimpleNamespace(cluster_path=cluster.path, shard_name=name, is_master=name == "Master",
@@ -403,6 +411,8 @@ def test_auto_restart_controller_flow() -> None:
         with patch.object(controller_module, "data_dir", return_value=root / "logs"), \
                 patch.object(controller_module, "get_auto_restart_enabled", return_value=True), \
                 patch.object(controller_module, "get_token_switch_on_timeout", side_effect=lambda: opts["switch"]), \
+                patch.object(controller_module, "get_token_switch_after_minutes",
+                             side_effect=lambda: opts["minutes"]), \
                 patch.object(controller_module, "load_cluster_config",
                              return_value=SimpleNamespace(network={})), \
                 patch.object(controller_module.luajit_injector, "needs_regeneration", return_value=False), \
@@ -431,7 +441,7 @@ def test_auto_restart_controller_flow() -> None:
             events.clear()
             controller.on_failure(procs["Master"], conflict)
             assert state.phase == "waiting_release" and state.conflicts == 1
-            assert state.due == state.crashed_at + TOKEN_SWITCH_AFTER
+            assert state.due == state.crashed_at + opts["minutes"] * 60, "换令牌时刻按用户设定的分钟数"
             assert set(procs) == {"Master", "Caves"} and not events, "冲突时专服会自己重试，不能停服"
             assert controller.banner_text(cluster)
 

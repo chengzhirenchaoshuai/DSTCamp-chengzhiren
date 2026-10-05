@@ -185,7 +185,7 @@ def diagnose_server_failure(
         return DiagnosticReport(
             "token_conflict", "令牌注册冲突",
             f"{shard_name} 无法向 Klei 注册房间；这会导致该世界持续重试，地上与洞穴也可能无法完成建联。",
-            ("如果房间刚刚崩溃或被强制结束，无需停服：服务器会自动重试，Klei 释放旧注册后自动上线（实测约 25 分钟）。",
+            ("如果房间刚刚崩溃或被强制结束，无需停服：服务器会自动重试，Klei 释放旧注册后自动上线（通常需要半小时左右）。",
              "如果同一新令牌正被其他存档或其他机器使用，请停止对方，或停服后从全局令牌池换用可用令牌。"),
             _evidence(lines, ("e_rowid_exist", "master server broadcast error")),
             (), True,

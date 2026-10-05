@@ -852,11 +852,23 @@ class GlobalTokensDialog(Dialog):
         switch_row.addWidget(self.text_label(t("token.switch_on_timeout_label"), wrap=False))
         switch_row.addStretch()
         self._switch_on_timeout = ToggleSwitch(app_settings.get_token_switch_on_timeout())
-        self._switch_on_timeout.toggled.connect(app_settings.set_token_switch_on_timeout)
+        self._switch_on_timeout.toggled.connect(self._on_switch_toggled)
         switch_row.addWidget(self._switch_on_timeout)
         self.body.addSpacing(8)
         self.body.addLayout(switch_row)
-        self.body.addWidget(self.text_label(t("token.switch_on_timeout_hint"), muted=True, size_key="FONT_SIZE_SM"))
+        minutes_row = QHBoxLayout()
+        minutes_row.addWidget(self.text_label(t("token.switch_after_minutes_label"), wrap=False))
+        minutes_row.addStretch()
+        self._switch_minutes = QLineEdit(str(app_settings.get_token_switch_after_minutes()))
+        self._switch_minutes.setFixedWidth(90)
+        self._switch_minutes.setValidator(QIntValidator(*app_settings.TOKEN_SWITCH_MINUTES_RANGE))
+        self._switch_minutes.editingFinished.connect(self._on_switch_minutes_edited)
+        self._switch_minutes.setEnabled(self._switch_on_timeout.isChecked())
+        minutes_row.addWidget(self._switch_minutes)
+        self.body.addLayout(minutes_row)
+        low, high = app_settings.TOKEN_SWITCH_MINUTES_RANGE
+        self.body.addWidget(self.text_label(t("token.switch_on_timeout_hint", low=low, high=high),
+                                            muted=True, size_key="FONT_SIZE_SM"))
         self._refresh()
 
     def _row_texts(self, token: str) -> tuple[str, str, str]:
@@ -881,6 +893,17 @@ class GlobalTokensDialog(Dialog):
         else:
             status = t("token.status_available")
         return self._mask(token), t(kind_key), status
+
+    def _on_switch_toggled(self, enabled: bool) -> None:
+        self._app_settings.set_token_switch_on_timeout(enabled)
+        self._switch_minutes.setEnabled(enabled)
+
+    def _on_switch_minutes_edited(self) -> None:
+        # 校验器允许中途输入越界的数字，保存时夹到合法范围并回显实际值
+        text = self._switch_minutes.text().strip()
+        value = self._app_settings.set_token_switch_after_minutes(
+            int(text) if text.isdigit() else self._app_settings.TOKEN_SWITCH_MINUTES_DEFAULT)
+        self._switch_minutes.setText(str(value))
 
     @staticmethod
     def _blocking(hold: dict) -> bool:
