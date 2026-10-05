@@ -122,9 +122,9 @@ class LoliaPanel(QWidget):
         self._node_btn = QPushButton(t("lolia.node_none"))
         self._node_btn.clicked.connect(self._open_node_picker)
         row2.addWidget(self._node_btn)
-        refresh_btn = QPushButton(t("sakura.node_refresh_btn"))
-        refresh_btn.clicked.connect(self._reload_async)
-        row2.addWidget(refresh_btn)
+        self._refresh_btn = QPushButton(t("sakura.node_refresh_btn"))
+        self._refresh_btn.clicked.connect(self._reload_async)
+        row2.addWidget(self._refresh_btn)
         row2.addStretch()
         form.addWidget(self._node_row, 1, 1)
         form.setColumnStretch(1, 1)
@@ -197,12 +197,27 @@ class LoliaPanel(QWidget):
         root.addWidget(shards_card)
         root.addStretch()
 
-        self._show_logged_out()
+        # 有已保存的登录令牌时先显示"获取中"，等后台拉到账号信息再切换，
+        # 免得启动后先闪"未登录"、用户误以为要重新登录
+        if lolia_api.is_logged_in():
+            self._show_loading()
+        else:
+            self._show_logged_out()
 
     # ── 账号 ────────────────────────────────────────────────────────────
+    def _set_account_busy(self, busy: bool) -> None:
+        self._login_btn.setEnabled(not busy)
+        self._refresh_btn.setEnabled(not busy)
+
+    def _show_loading(self) -> None:
+        self._account_label.setText(t("lolia.loading"))
+        self._login_btn.setText(t("lolia.logout_btn"))
+        self._set_account_busy(True)
+
     def _show_logged_out(self) -> None:
         self._account_label.setText(t("lolia.not_logged_in"))
         self._login_btn.setText(t("lolia.login_btn"))
+        self._set_account_busy(False)
         self._node_caption.setVisible(False)
         self._node_row.setVisible(False)
         self._stats_widget.setVisible(False)
@@ -245,6 +260,7 @@ class LoliaPanel(QWidget):
             return
         self._reload_gen += 1
         gen = self._reload_gen
+        self._show_loading()
 
         def work():
             return lolia_api.get_user_info(), lolia_api.list_nodes(), lolia_api.list_tunnels()
@@ -260,6 +276,9 @@ class LoliaPanel(QWidget):
                 self._after_logout()
                 self._status_label.setText(t("lolia.relogin_needed"))
             else:
+                # 网络等临时错误：仍是登录状态，可点"刷新"重试或退出登录
+                self._account_label.setText(t("lolia.load_failed"))
+                self._set_account_busy(False)
                 self._status_label.setText(t("lolia.api_error", detail=str(exc)))
 
         run_async(work, done, error)
@@ -267,6 +286,7 @@ class LoliaPanel(QWidget):
     def _apply_loaded(self, user: dict, nodes: list[dict], tunnels: list[dict]) -> None:
         self._account_label.setText(user.get("username") or "--")
         self._login_btn.setText(t("lolia.logout_btn"))
+        self._set_account_busy(False)
         self._node_caption.setVisible(True)
         self._node_row.setVisible(True)
         self._stats_widget.setVisible(True)

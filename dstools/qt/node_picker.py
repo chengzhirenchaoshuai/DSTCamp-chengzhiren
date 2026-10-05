@@ -70,6 +70,9 @@ class NodePickerDialog(dialogs.Dialog):
             grid.setColumnStretch(col, 1)
         grid.setRowStretch(grid.rowCount(), 1)
         area.setWidget(grid_widget)
+        # QScrollArea.setWidget() 会把内容控件设为自动填充背景，用的是系统默认灰
+        # （#efefef），盖住了弹窗的主题底色；关掉填充让主题背景透出来
+        grid_widget.setAutoFillBackground(False)
         self.body.addWidget(area, 1)
         cancel = dialogs.style_button(QPushButton(t("dlg.cancel_btn")), "secondary")
         cancel.clicked.connect(self.reject)
