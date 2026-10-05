@@ -35,7 +35,7 @@ def status_color(status) -> str:
     return {
         ServerStatus.STARTING: theme.hex("ACCENT"),
         ServerStatus.RUNNING: _SERVER_COLOR,
-        ServerStatus.STOPPING: theme.hex("ACCENT"),
+        ServerStatus.STOPPING: theme.hex("ERROR"),
         ServerStatus.STOPPED: theme.hex("TEXT_MUTED"),
         ServerStatus.CRASHED: theme.hex("ERROR"),
     }[status]

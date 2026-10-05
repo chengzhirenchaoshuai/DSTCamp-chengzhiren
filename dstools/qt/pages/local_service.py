@@ -2001,7 +2001,7 @@ class LocalServicePage(Page):
             return
         self._lan_status_key = key
         if ready:
-            self._lan_row.set_status(f"● {t('local.connect_ready')}", theme.hex("ACCENT"))
+            self._lan_row.set_status(f"● {t('local.connect_ready')}", theme.hex("SUCCESS"))
         else:
             self._lan_row.set_status(f"● {t('local.connect_not_ready')}", theme.hex("TEXT_MUTED"), t("local.lan_not_ready_reason"))
 
@@ -2028,7 +2028,7 @@ class LocalServicePage(Page):
                 reason += "\n\n" + t("local.lan_not_ready_reason")
             self._public_row.set_status(f"● {t('local.connect_proxy_suspected')}", theme.hex("ERROR"), reason)
         elif key == "ready":
-            self._public_row.set_status(f"● {t('local.connect_ready')}", theme.hex("ACCENT"))
+            self._public_row.set_status(f"● {t('local.connect_ready')}", theme.hex("SUCCESS"))
         elif key == "lan_only":
             self._public_row.set_status(f"● {t('local.connect_not_ready')}", theme.hex("TEXT_MUTED"), t("local.external_lan_only_reason"))
         elif key == "nostart":
@@ -2058,7 +2058,7 @@ class LocalServicePage(Page):
             self._nat_row.set_status(f"● {t('local.connect_not_ready')}", theme.hex("TEXT_MUTED"), t("local.nat_frpc_not_ready_reason"))
         else:
             self._nat_status_key = "ready"
-            self._nat_row.set_status(f"● {t('local.connect_ready')}", theme.hex("ACCENT"))
+            self._nat_row.set_status(f"● {t('local.connect_ready')}", theme.hex("SUCCESS"))
 
     def _refresh_nat_status(self) -> None:
         if self._nat_code is None:
@@ -2082,7 +2082,7 @@ class LocalServicePage(Page):
         elif key == "nofrpc":
             self._nat_row.set_status(f"● {t('local.connect_not_ready')}", theme.hex("TEXT_MUTED"), t("local.nat_frpc_not_ready_reason"))
         else:
-            self._nat_row.set_status(f"● {t('local.connect_ready')}", theme.hex("ACCENT"))
+            self._nat_row.set_status(f"● {t('local.connect_ready')}", theme.hex("SUCCESS"))
 
     def _check_connect_fetch_timeouts(self) -> None:
         now = time.monotonic()
