@@ -9,14 +9,15 @@
 import html
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import QGridLayout, QLabel, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from dstools.i18n import t
 from dstools.qt import dialogs
 from dstools.qt.theme import theme
 
 _GRID_COLS = 3
+_CARD_MIN_HEIGHT = 64
 
 
 @dataclass
@@ -39,7 +40,8 @@ class _NodeCard(QPushButton):
         self.setProperty("selected", selected)
         self.setEnabled(choice.eligible)
         self.setCursor(Qt.CursorShape.PointingHandCursor if choice.eligible else Qt.CursorShape.ArrowCursor)
-        self.setMinimumHeight(64)
+        # 按钮默认纵向固定高度；放开后同一行的卡片统一拉到该行最高的那张，不参差
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(2)
@@ -62,6 +64,16 @@ class _NodeCard(QPushButton):
             layout.addWidget(label)
         if choice.tooltip:
             self.setToolTip(choice.tooltip)
+
+    # 不能用 setMinimumHeight() 固定下限：手动设过最小高度后布局不再撑高卡片，
+    # 多出第三行标记时最后一行会被截断（真机反馈）。改为按内部布局实际需要的
+    # 高度给尺寸提示，字体/字号档位/缩放变化时都能自动撑开。
+    def sizeHint(self) -> QSize:
+        hint = self.layout().sizeHint()
+        return QSize(hint.width(), max(_CARD_MIN_HEIGHT, hint.height()))
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
 
 
 class NodePickerDialog(dialogs.Dialog):
