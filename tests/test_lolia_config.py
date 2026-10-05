@@ -74,11 +74,35 @@ def test_paste_sources_and_prepare_shard() -> None:
     assert proxy["localPort"] == 25006 and proxy["localIP"] == "127.0.0.1"
 
 
+def test_oauth_pkce_callback_and_remark() -> None:
+    import base64
+    import hashlib
+    from dstools.features.lolia import api as lolia_api
+
+    verifier, challenge = lolia_api.make_pkce()
+    assert 43 <= len(verifier) <= 128
+    assert challenge == base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    assert lolia_api.parse_callback("/callback?code=abc&state=s1", "s1") == "abc"
+    for bad in ("/callback?code=abc&state=other", "/callback?error=access_denied&state=s1"):
+        try:
+            lolia_api.parse_callback(bad, "s1")
+        except lolia_api.LoliaAuthError:
+            pass
+        else:
+            raise AssertionError(f"expected LoliaAuthError for {bad}")
+    remark = lolia_api.make_remark("Cluster_1", "Master", "server", "steam", "k1")
+    assert remark == lolia_api.make_remark("Cluster_1", "Master", "server", "steam", "k1")
+    assert remark != lolia_api.make_remark("Cluster_1", "Caves", "server", "steam", "k1")
+    tunnels = [{"name": "x", "remark": "其它隧道"}, {"name": "y", "remark": remark}]
+    assert lolia_api.find_tunnel(tunnels, remark)["name"] == "y"
+
+
 def main() -> None:
     tests = (
         test_rewrites_local_ports_and_round_trips,
         test_rejects_non_udp_and_duplicate_tunnels,
         test_paste_sources_and_prepare_shard,
+        test_oauth_pkce_callback_and_remark,
     )
     for test in tests:
         test()

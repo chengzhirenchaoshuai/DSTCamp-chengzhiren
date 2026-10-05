@@ -160,7 +160,11 @@ def prepare_shard(source: dict) -> tuple[str, int, str]:
     每个世界一份配置、一个 frpc 进程：真机上主世界和洞穴的隧道建在了不同节点
     （节点地址和节点 Token 都不同），合并成一份配置跑不了。
     返回 (本地 TOML 文本, 远程端口, 节点地址)。"""
-    config = _source_config(source)
+    return local_config_from(_source_config(source))
+
+
+def local_config_from(config: dict) -> tuple[str, int, str]:
+    """单隧道配置 → (本地 TOML 文本, 远程端口, 节点地址)。OAuth 方式拉回的配置也走这里。"""
     local, ports = build_local_config(config, {"_": single_proxy_name(config)})
     return dump_toml(local), ports["_"], local["serverAddr"]
 

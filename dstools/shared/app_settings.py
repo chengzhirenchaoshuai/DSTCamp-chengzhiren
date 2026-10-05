@@ -41,6 +41,7 @@ _KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
 _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
 _KEY_LOLIA_SOURCES = "lolia_sources"
+_KEY_LOLIA_LAST_NODE = "lolia_last_node_id"
 _KEY_LOLIA_MAPPINGS = "lolia_mappings"
 _KEY_LOBBY_ACCEL_ENABLED = "lobby_accel_enabled"
 _KEY_LOBBY_ACCEL_MIHOMO_PATH = "lobby_accel_mihomo_path"
@@ -537,25 +538,46 @@ def set_lolia_source(cluster_path: Path, shard_name: str, source: dict | None) -
 
 
 def get_lolia_mapping(cluster_path: Path, shard_name: str) -> dict | None:
-    """已生效的 Lolia 映射 {"remote_port": int, "host": str}；没开启返回 None。"""
+    """已生效的 Lolia 映射 {"remote_port": int, "host": str, "tunnel": str | None}；没开启返回 None。
+    `tunnel` 是 DSTCamp 通过 OAuth 自动创建的隧道名，关闭映射时据此删除；粘贴配置方式为 None。"""
     raw = (load_settings().get(_KEY_LOLIA_MAPPINGS) or {}).get(_selfhost_mapping_key(cluster_path, shard_name))
     if not isinstance(raw, dict):
         return None
     try:
-        return {"remote_port": int(raw["remote_port"]), "host": str(raw.get("host", ""))}
+        return {"remote_port": int(raw["remote_port"]), "host": str(raw.get("host", "")),
+                "tunnel": raw.get("tunnel") or None}
     except (KeyError, TypeError, ValueError):
         return None
 
 
-def set_lolia_mapping(cluster_path: Path, shard_name: str, remote_port: int | None, host: str = "") -> None:
+def set_lolia_mapping(cluster_path: Path, shard_name: str, remote_port: int | None, host: str = "",
+                      tunnel: str | None = None) -> None:
     data = load_settings()
     mappings = data.get(_KEY_LOLIA_MAPPINGS) or {}
     key = _selfhost_mapping_key(cluster_path, shard_name)
     if remote_port is not None:
-        mappings[key] = {"remote_port": int(remote_port), "host": host}
+        mappings[key] = {"remote_port": int(remote_port), "host": host, "tunnel": tunnel}
     else:
         mappings.pop(key, None)
     data[_KEY_LOLIA_MAPPINGS] = mappings
+    save_settings(data)
+
+
+def get_lolia_last_node_id() -> int | None:
+    """记住上次选中的 Lolia 节点 ID，纯 UI 偏好（下次预选）。"""
+    raw = load_settings().get(_KEY_LOLIA_LAST_NODE)
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def set_lolia_last_node_id(node_id: int | None) -> None:
+    data = load_settings()
+    if node_id is not None:
+        data[_KEY_LOLIA_LAST_NODE] = int(node_id)
+    else:
+        data.pop(_KEY_LOLIA_LAST_NODE, None)
     save_settings(data)
 
 def get_selfhost_ssh_connection() -> dict | None:
