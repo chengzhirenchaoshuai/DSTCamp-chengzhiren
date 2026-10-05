@@ -406,9 +406,8 @@ def find_game_mods_dir() -> Path | None:
     """查找 DST 游戏 mods 目录（手动安装的 mod）。
 
     用户手动确认过的覆盖路径（app_settings.get_steam_mods_path()，"Mod管
-    理"页签"更换路径"按钮设置）优先——跟 dedicated_server.
-    find_dedicated_server_dir() 先查 get_dedicated_server_path() 是同一个
-    "手动兜底"套路。没设置过/设置的路径不存在了才走自动识别。
+    理"页签"更换路径"按钮设置）优先——跟开服程序目录先查用户手动选择的
+    路径是同一个"手动兜底"套路。没设置过/设置的路径不存在了才走自动识别。
     """
     from dstools.shared import app_settings
 

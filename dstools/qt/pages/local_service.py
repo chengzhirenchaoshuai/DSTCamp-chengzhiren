@@ -33,8 +33,12 @@ from dstools.features.local_service import luajit_injector, steam_client_updater
 from dstools.features.local_service.backup_manager import create_backup
 from dstools.features.local_service.dedicated_server import (
     ConfDirCrossDriveError, ServerStatus, detect_external_running_clusters,
-    detect_external_shard_processes, find_bin64_dir, find_server_runtime_dir,
-    is_client_install_dir, is_runnable_install_dir, resolve_conf_dir_arg, runtime_app_id,
+    detect_external_shard_processes, find_bin64_dir, is_client_install_dir, is_valid_install_dir,
+    resolve_conf_dir_arg,
+)
+from dstools.features.local_service.server_runtime import (
+    RuntimeKind, RuntimeMode, accepts_install_dir, find_runtime_of_kind, remember_install_dir,
+    resolve_runtime, set_runtime_mode,
 )
 from dstools.features.local_service.log_bundle import create_log_bundle
 from dstools.features.local_service.shard_helpers import RUNNING_LIKE, STATUS_TEXT_KEYS, ordered_shards, max_rollback_days
@@ -54,7 +58,7 @@ from dstools.shared.app_settings import (
     blocking_token_holds, get_auto_restart_enabled, get_backup_auto_enabled, get_backup_interval_minutes,
     get_dedicated_server_extra_args, get_global_tokens, get_lolia_mapping, get_sakura_token, get_selfhost_frp_mapping,
     get_selfhost_frp_server, get_token_holds, clear_token_hold, prune_token_holds, set_auto_restart_enabled,
-    set_dedicated_server_extra_args, set_dedicated_server_path, set_token_hold,
+    set_dedicated_server_extra_args, set_token_hold,
 )
 from dstools.shared.clipboard import copy_file_to_clipboard
 from dstools.shared.server_ports import (
@@ -161,8 +165,14 @@ def _tun_proxy_detected() -> bool:
     return False
 
 
-def _show_not_found_warning(parent) -> None:
-    dialogs.show_warning(parent, t("local.install_title"), t("local.install_body"), min_width=720)
+_RUNTIME_KIND_KEYS = {RuntimeKind.CLIENT: "local.runtime_mode_client", RuntimeKind.DEDICATED: "local.runtime_mode_dedicated"}
+
+
+def _show_not_found_warning(parent, wanted_kind: RuntimeKind | None = None) -> None:
+    """wanted_kind 为 None 表示自动模式（两种都没找到）。"""
+    body = {None: "local.install_body", RuntimeKind.CLIENT: "local.install_client_body",
+            RuntimeKind.DEDICATED: "local.install_dedicated_body"}[wanted_kind]
+    dialogs.show_warning(parent, t("local.install_title"), t(body), min_width=720)
 
 
 class _ShardRow(QWidget):
@@ -307,6 +317,9 @@ class LocalServicePage(Page):
         self._restarting_keys: set[tuple[str, str]] = set()
         self._token_reservations: dict[str, str] = {}
         self._auto_restart = AutoRestartController(self)
+        # 开服程序只从 server_runtime.resolve_runtime() 取；_install_dir 保留给自动重启等旧调用方。
+        self._runtime_resolution = None
+        self._runtime = None
         self._install_dir: Path | None = None
         self._steam_update_dialog: dialogs.LogDialog | None = None
         self._steam_remote_build_id: str | None = None
@@ -351,6 +364,8 @@ class LocalServicePage(Page):
         root.setContentsMargins(15, 13, 15, 13)
         root.setSpacing(6)
 
+        self._mode_row, self._mode_label, self._mode_btn = self._build_mode_row()
+        root.addWidget(self._mode_row)
         (self._install_row, self._install_path_label, self._steam_update_hint,
          self._install_change_btn, self._steam_update_btn) = self._build_install_row()
         root.addWidget(self._install_row)
@@ -380,6 +395,21 @@ class LocalServicePage(Page):
         self._poll_timer.start()
 
     # ── 装配 ────────────────────────────────────────────────────────────
+    def _build_mode_row(self):
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        mode_label = QLabel()
+        mode_label.setProperty("muted", True)
+        layout.addWidget(QLabel(t("local.runtime_mode_label")))
+        layout.addWidget(mode_label)
+        layout.addStretch(1)
+        mode_btn = QPushButton(t("local.runtime_mode_btn"))
+        mode_btn.setFont(theme.font("FONT_SIZE_SM"))
+        mode_btn.clicked.connect(self._choose_runtime_mode)
+        layout.addWidget(mode_btn)
+        return row, mode_label, mode_btn
+
     def _build_install_row(self):
         row = QWidget()
         layout = QHBoxLayout(row)
@@ -561,6 +591,7 @@ class LocalServicePage(Page):
         self._start_all_btn.setEnabled(is_server and not is_wegame)
         install_enabled = not is_wegame
         self._install_change_btn.setEnabled(install_enabled)
+        self._mode_btn.setEnabled(install_enabled)
         self._steam_update_btn.setEnabled(install_enabled)
         self._update_stop_all_btn_state(c)
         self._update_restart_all_btn_state(c)
@@ -643,36 +674,93 @@ class LocalServicePage(Page):
         self._on_wegame_detect()
 
     def _detect_install_dir(self) -> None:
-        self._set_install_dir(find_server_runtime_dir())
+        resolution = resolve_runtime()
+        self._runtime_resolution = resolution
+        self._runtime = resolution.runtime
+        self._install_dir = self._runtime.install_dir if self._runtime else None
+        self._mode_label.setText(self._runtime_mode_text(resolution))
+        self._install_path_label.setText(str(self._install_dir) if self._install_dir else t("local.install_not_found"))
+        self._refresh_steam_update_button()
         self._refresh_steam_remote_build_async()
 
-    def _set_install_dir(self, path: Path | None) -> None:
-        self._install_dir = path
-        if path is None:
-            text = t("local.install_not_found")
-        elif is_client_install_dir(path):
-            text = t("local.install_client_runtime", path=str(path))
-        else:
-            text = str(path)
-        self._install_path_label.setText(text)
-        self._refresh_steam_update_button()
+    @staticmethod
+    def _runtime_mode_text(resolution) -> str:
+        if resolution.mode is RuntimeMode.AUTO:
+            if resolution.runtime is None:
+                return t("local.runtime_mode_auto_none")
+            return t("local.runtime_mode_auto_current", kind=t(_RUNTIME_KIND_KEYS[resolution.runtime.kind]))
+        name = t(_RUNTIME_KIND_KEYS[resolution.wanted_kind])
+        return name if resolution.runtime is not None else t("local.runtime_mode_missing", mode=name)
+
+    def _wanted_runtime_kind(self) -> RuntimeKind | None:
+        resolution = self._runtime_resolution
+        return resolution.wanted_kind if resolution is not None else None
+
+    def _runtime_switch_blocked(self) -> bool:
+        """正在运行的程序文件、mods 和 LuaJIT 副本都属于当前开服程序，运行中不允许切换。"""
+        if self.manager.running():
+            dialogs.show_warning(self.window(), t("local.runtime_mode_title"), t("local.runtime_mode_running"))
+            return True
+        return False
+
+    def _on_runtime_changed(self) -> None:
+        self._detect_install_dir()
+        self._update_luajit_row(self.get_cluster())
+        self.ctx.server_runtime_changed.emit()
+
+    def _choose_runtime_mode(self) -> None:
+        if self._runtime_switch_blocked():
+            return
+        installed = {kind: find_runtime_of_kind(kind) is not None for kind in RuntimeKind}
+        current = self._runtime_resolution.mode if self._runtime_resolution else RuntimeMode.AUTO
+        names = {RuntimeMode.AUTO: t("local.runtime_mode_auto"),
+                 RuntimeMode.CLIENT: t("local.runtime_mode_client"),
+                 RuntimeMode.DEDICATED: t("local.runtime_mode_dedicated")}
+        state = {True: t("local.runtime_installed"), False: t("local.install_not_found")}
+        text = t("local.runtime_mode_msg", current=names[current],
+                 client=state[installed[RuntimeKind.CLIENT]], dedicated=state[installed[RuntimeKind.DEDICATED]])
+        choices = [(t("dlg.cancel_btn"), "cancel")] + [(names[mode], mode.value) for mode in RuntimeMode]
+        choice = dialogs.ask_choice(self.window(), t("local.runtime_mode_title"), text, choices,
+                                    default=current.value, min_width=560)
+        if not choice or choice == "cancel" or choice == current.value:
+            return
+        set_runtime_mode(RuntimeMode(choice))
+        self._on_runtime_changed()
+        if self._runtime is None:
+            _show_not_found_warning(self.window(), self._wanted_runtime_kind())
 
     def _change_install_dir(self) -> None:
+        if self._runtime_switch_blocked():
+            return
         picked = QFileDialog.getExistingDirectory(self.window())
         if not picked:
             return
         path = Path(picked)
-        if not is_runnable_install_dir(path):
-            dialogs.show_warning(self.window(), t("local.install_title"), t("local.install_invalid_dir"))
+        wanted = self._wanted_runtime_kind()
+        if wanted is None:
+            # 自动模式下手动选目录，等于明确指定了用哪种程序开服。
+            kind = (RuntimeKind.CLIENT if is_client_install_dir(path)
+                    else RuntimeKind.DEDICATED if is_valid_install_dir(path) else None)
+            invalid_key = "local.install_invalid_dir"
+        else:
+            kind = wanted if accepts_install_dir(wanted, path) else None
+            invalid_key = ("local.install_invalid_client_dir" if wanted is RuntimeKind.CLIENT
+                           else "local.install_invalid_dedicated_dir")
+        if kind is None:
+            dialogs.show_warning(self.window(), t("local.install_title"), t(invalid_key))
             return
-        set_dedicated_server_path(path)
-        self._set_install_dir(path)
-        self._update_luajit_row(self.get_cluster())
-        self._refresh_steam_remote_build_async()
+        remember_install_dir(kind, path)
+        if wanted is None:
+            set_runtime_mode(RuntimeMode(kind.value))
+        self._on_runtime_changed()
 
     def _runtime_app_id(self) -> str:
-        """当前开服程序对应的 Steam App；未检测到时按独立专服处理（引导安装它）。"""
-        return runtime_app_id(self._install_dir) if self._install_dir else steam_client_updater.DEDICATED_SERVER_APP_ID
+        """当前开服程序对应的 Steam App；未检测到时按模式要求的那种引导安装（自动模式引导装独立专服）。"""
+        if self._runtime is not None:
+            return self._runtime.app_id
+        if self._wanted_runtime_kind() is RuntimeKind.CLIENT:
+            return steam_client_updater.CLIENT_APP_ID
+        return steam_client_updater.DEDICATED_SERVER_APP_ID
 
     def _remote_build_for_runtime(self) -> str | None:
         """只返回属于当前开服程序 App 的远程版本。"""
@@ -1198,8 +1286,8 @@ class LocalServicePage(Page):
 
     def _runtime_mods_root(self) -> Path | None:
         """开服程序实际读取的 mods 目录：独立专服或游戏客户端安装目录下的 mods。"""
-        install_dir = self._install_dir or find_server_runtime_dir()
-        return install_dir / "mods" if install_dir else None
+        # 只用页面已探测到的结果：预检不应触发设置迁移等写操作。
+        return self._runtime.mods_dir if self._runtime else None
 
     def _confirm_missing_mods(self, cluster) -> bool:
         """存档启用、本机却没有文件的 Mod：专服会跳过它们照常启动，世界在缺 Mod 的
@@ -1343,7 +1431,7 @@ class LocalServicePage(Page):
         if self._install_dir is None:
             self._detect_install_dir()
             if self._install_dir is None:
-                _show_not_found_warning(self.window())
+                _show_not_found_warning(self.window(), self._wanted_runtime_kind())
                 self._release_token_reservation_if_stopped(cluster.path)
                 return
         try:
@@ -1506,7 +1594,7 @@ class LocalServicePage(Page):
         if self._install_dir is None:
             self._detect_install_dir()
             if self._install_dir is None:
-                _show_not_found_warning(self.window())
+                _show_not_found_warning(self.window(), self._wanted_runtime_kind())
                 return
         try:
             conf_dir_arg = resolve_conf_dir_arg(self.ctx.env.klei_root)
@@ -1609,7 +1697,7 @@ class LocalServicePage(Page):
         if self._install_dir is None:
             self._detect_install_dir()
             if self._install_dir is None:
-                _show_not_found_warning(self.window())
+                _show_not_found_warning(self.window(), self._wanted_runtime_kind())
                 self._release_token_reservation_if_stopped(c.path)
                 return
         try:

@@ -204,15 +204,17 @@ def main() -> None:
 
         # 没安装客户端游戏时，专服 mods 必须成为唯一运行目标。
         import dstools.features.local_service.dedicated_server as dedicated
+        import dstools.features.local_service.server_runtime as server_runtime
 
         server_install = root / "server-only"
         original_client_mods = mod_parser.find_game_mods_dir
         original_server = dedicated.find_dedicated_server_dir
-        original_runtime = dedicated.find_server_runtime_dir
+        original_runtime = server_runtime.current_runtime
         try:
             mod_parser.find_game_mods_dir = lambda: None
             dedicated.find_dedicated_server_dir = lambda: server_install
-            dedicated.find_server_runtime_dir = lambda: server_install
+            server_runtime.current_runtime = lambda: server_runtime.ServerRuntime(
+                server_runtime.RuntimeKind.DEDICATED, server_install)
             assert legacy_v1.discover_legacy_runtime_targets() == [
                 server_install / "mods"
             ]
@@ -222,12 +224,12 @@ def main() -> None:
         finally:
             mod_parser.find_game_mods_dir = original_client_mods
             dedicated.find_dedicated_server_dir = original_server
-            dedicated.find_server_runtime_dir = original_runtime
+            server_runtime.current_runtime = original_runtime
 
-        # 没装独立专服、用游戏客户端开服时，V1 更新部署到客户端 mods。
+        # 游戏客户端开服模式下，V1 更新部署到客户端 mods。
         client_install = root / "client-only"
-        with patch.object(dedicated, "find_dedicated_server_dir", return_value=None), \
-                patch.object(dedicated, "find_server_runtime_dir", return_value=client_install):
+        with patch.object(server_runtime, "current_runtime", return_value=server_runtime.ServerRuntime(
+                server_runtime.RuntimeKind.CLIENT, client_install)):
             assert legacy_v1.discover_legacy_runtime_targets() == [client_install / "mods"]
 
         # 开服前只处理当前存档已启用、且确实存在 Legacy 包的项目；V2 ID

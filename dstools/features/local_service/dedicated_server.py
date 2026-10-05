@@ -32,7 +32,6 @@ if IS_WINDOWS:
 DEDICATED_SERVER_APP_ID = "343050"  # 真机 appmanifest 文件名验证过（曾经错写成 343080，无路径逻辑受影响，只是展示文案错了）
 CLIENT_APP_ID = "322330"
 _INSTALL_DIR_NAME = "Don't Starve Together Dedicated Server"
-_CLIENT_DIR_NAME = "Don't Starve Together"
 _EXE_NAMES = {64: "dontstarve_dedicated_server_nullrenderer_x64.exe", 32: "dontstarve_dedicated_server_nullrenderer.exe"}
 _CLIENT_EXE_NAMES = {64: "dontstarve_steam_x64.exe", 32: "dontstarve_steam.exe"}
 _BIN_DIRS = {64: "bin64", 32: "bin"}
@@ -97,16 +96,6 @@ def is_client_install_dir(path: Path) -> bool:
     )
 
 
-def is_runnable_install_dir(path: Path) -> bool:
-    """能用来开服的目录：独立专服工具或游戏客户端。"""
-    return is_valid_install_dir(path) or is_client_install_dir(path)
-
-
-def runtime_app_id(install_dir: Path) -> str:
-    """开服程序所属的 Steam App，用于检查和请求更新。"""
-    return CLIENT_APP_ID if is_client_install_dir(install_dir) else DEDICATED_SERVER_APP_ID
-
-
 def pick_bitness(install_dir: Path) -> int:
     """优先选 64 位，install_dir 必须已经通过 is_valid_install_dir() 校验。"""
     for b in (64, 32):
@@ -140,25 +129,6 @@ def find_dedicated_server_dir() -> Path | None:
     for lib in find_all_steam_libraries():
         install_dir = lib / "steamapps" / "common" / _INSTALL_DIR_NAME
         if is_valid_install_dir(install_dir):
-            return install_dir
-    return None
-
-
-def find_server_runtime_dir() -> Path | None:
-    """实际开服用的安装目录：用户手动选过的 > 独立专服工具 > 游戏客户端。
-
-    find_dedicated_server_dir() 仍只返回独立专服，Mod 联接同步、V1 包
-    接管等只对独立专服 mods 有意义的功能继续用它，避免对客户端自己的
-    mods 做"同步到自身"之类的操作。"""
-    remembered = app_settings.get_dedicated_server_path()
-    if remembered and is_runnable_install_dir(remembered):
-        return remembered
-    dedicated = find_dedicated_server_dir()
-    if dedicated is not None:
-        return dedicated
-    for lib in find_all_steam_libraries():
-        install_dir = lib / "steamapps" / "common" / _CLIENT_DIR_NAME
-        if is_client_install_dir(install_dir):
             return install_dir
     return None
 

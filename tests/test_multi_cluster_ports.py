@@ -89,6 +89,8 @@ def _local_page(clusters=(), *, manager=None, mapping=None, jumps=None):
     service._steam_remote_build_id = None
     service._steam_remote_build_app = None
     service._install_dir = None
+    service._runtime = None
+    service._runtime_resolution = None
     service._prepare_legacy_mods_for_start = lambda _cluster: True
     service._auto_restart = SimpleNamespace(cancel=lambda _cluster: None)
     return service

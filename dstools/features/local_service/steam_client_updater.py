@@ -25,6 +25,7 @@ from dstools.shared.steam_discovery import find_all_steam_libraries
 from dstools.shared.ssl_context import default_ssl_context
 
 DEDICATED_SERVER_APP_ID = "343050"
+CLIENT_APP_ID = "322330"
 _MANIFEST_RE = re.compile(r'^\s*"(?P<key>[^"\\]+)"\s+"(?P<value>[^"\\]*)"\s*$')
 _STATE_UPDATE_REQUIRED = 2
 _STATE_FULLY_INSTALLED = 4

@@ -555,8 +555,9 @@ def _load_dll(path: Path):
 def find_steam_api_dll(explicit: Path | None = None) -> Path | None:
     """查找可复用的 DST ``steam_api64.dll``。
 
-    优先用户显式传入的路径，再查专用服务器，最后查完整游戏；两者的
-    Steam API DLL 在实机上内容一致，专服安装因此足以支持普通 SteamUGC。
+    优先用户显式传入的路径，再用当前开服程序（server_runtime）自带的那份，
+    最后查各 Steam 库里的游戏和专服；两者的 Steam API DLL 在实机上内容
+    一致，任意一份都足以支持普通 SteamUGC。
     """
     if explicit:
         candidate = explicit.expanduser()
@@ -565,18 +566,11 @@ def find_steam_api_dll(explicit: Path | None = None) -> Path | None:
     candidates: list[Path] = []
     # 延迟导入，避免 Mod 页签构造时加载本地服务器模块。
     try:
-        from dstools.features.local_service.dedicated_server import (
-            find_dedicated_server_dir,
-        )
+        from dstools.features.local_service.server_runtime import current_runtime
 
-        install_dir = find_dedicated_server_dir()
-        if install_dir:
-            candidates.extend(
-                (
-                    install_dir / "bin64" / "steam_api64.dll",
-                    install_dir / "bin" / "steam_api64.dll",
-                )
-            )
+        runtime = current_runtime()
+        if runtime is not None and runtime.steam_api_dll is not None:
+            candidates.append(runtime.steam_api_dll)
     except Exception:
         pass
     try:

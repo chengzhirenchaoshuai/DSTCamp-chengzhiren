@@ -6,6 +6,8 @@ from pathlib import Path
 
 _SETTINGS_FILE = "settings.json"
 _KEY_DEDICATED_SERVER_PATH = "dedicated_server_path"
+_KEY_CLIENT_RUNTIME_PATH = "client_runtime_path"
+_KEY_SERVER_RUNTIME_MODE = "server_runtime_mode"
 _KEY_WEGAME_ROOT_PATH = "wegame_root_path"
 _KEY_STEAM_MODS_PATH = "steam_mods_path"
 _KEY_THEME_NAME = "theme_name"
@@ -95,6 +97,39 @@ def set_dedicated_server_path(path: Path) -> None:
     """记住用户手动确认过的专用服务器安装目录。"""
     data = load_settings()
     data[_KEY_DEDICATED_SERVER_PATH] = str(path)
+    save_settings(data)
+
+
+def clear_dedicated_server_path() -> None:
+    """忘掉手动确认过的专用服务器安装目录（迁移到客户端路径时用）。"""
+    data = load_settings()
+    if data.pop(_KEY_DEDICATED_SERVER_PATH, None) is not None:
+        save_settings(data)
+
+
+def get_client_runtime_path() -> Path | None:
+    """取用户手动确认过的游戏客户端安装目录（客户端开服模式用），没设置过则返回 None。"""
+    raw = load_settings().get(_KEY_CLIENT_RUNTIME_PATH)
+    return Path(raw) if raw else None
+
+
+def set_client_runtime_path(path: Path) -> None:
+    """记住用户手动确认过的游戏客户端安装目录。"""
+    data = load_settings()
+    data[_KEY_CLIENT_RUNTIME_PATH] = str(path)
+    save_settings(data)
+
+
+def get_server_runtime_mode() -> str | None:
+    """开服模式原始值（auto/client/dedicated），没设置过返回 None；取值校验由调用方负责。"""
+    raw = load_settings().get(_KEY_SERVER_RUNTIME_MODE)
+    return str(raw) if raw else None
+
+
+def set_server_runtime_mode(value: str) -> None:
+    """保存开服模式。"""
+    data = load_settings()
+    data[_KEY_SERVER_RUNTIME_MODE] = value
     save_settings(data)
 
 

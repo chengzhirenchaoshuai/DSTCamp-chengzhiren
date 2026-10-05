@@ -202,6 +202,7 @@ class ModPage(Page):
 
         ctx.pending_enabled_mod_ids = self.get_pending_enabled_mod_ids
         ctx.workshop_mods_changed.connect(self._on_workshop_mods_changed)
+        ctx.server_runtime_changed.connect(self._on_server_runtime_changed)
 
     def _on_workshop_mods_changed(self) -> None:
         """别处（如启动前一键订阅）下载了 Mod：作废更新状态缓存，并在切回本页时重新扫描。
@@ -214,6 +215,12 @@ class ModPage(Page):
             self.load()
         else:
             self.stale = True
+
+    def _on_server_runtime_changed(self) -> None:
+        """开服模式/程序目录变了：服务器读取的 mods 和 LuaJIT 副本跟着换，按新目录重新扫描。"""
+        self._update_mod_location_display()
+        self.refresh_sync_button_state()
+        self._on_workshop_mods_changed()
 
     # ── Cluster/世界选择 ────────────────────────────────────────────────
     def get_cluster(self):
@@ -339,21 +346,24 @@ class ModPage(Page):
         except (OSError, ValueError, KeyError):
             return False
 
+    @staticmethod
+    def _runtime():
+        """当前开服程序（server_runtime 唯一来源），跟本地服务器页实际启动用的是同一个。"""
+        from dstools.features.local_service.server_runtime import current_runtime
+        return current_runtime()
+
     def _server_mods_root(self) -> Path | None:
-        install_dir = self._local_install_dir()
-        if install_dir is None:
-            try:
-                from dstools.features.local_service.dedicated_server import find_dedicated_server_dir
-                install_dir = find_dedicated_server_dir()
-            except Exception:
-                install_dir = None
-        return Path(install_dir) / "mods" if install_dir else None
+        runtime = self._runtime()
+        return runtime.mods_dir if runtime else None
 
     def _local_install_dir(self):
-        """通过 ctx.manager 追不到"本地服务器页选中的安装目录"这个纯 UI 状态；
-        直接现查一次已安装的专服路径——跟本地服务器页初始探测同一个来源函数。"""
-        from dstools.features.local_service.dedicated_server import find_dedicated_server_dir
-        return find_dedicated_server_dir()
+        runtime = self._runtime()
+        return runtime.install_dir if runtime else None
+
+    def _sync_install_dir(self):
+        """Mod 同步（专服 mods 联接到客户端 mods）只对独立专服有意义；游戏客户端开服直接读客户端 mods。"""
+        runtime = self._runtime()
+        return runtime.install_dir if runtime and not runtime.is_client else None
 
     def _is_server_mod_path(self, path: Path) -> bool:
         root = self._server_mods_root()
@@ -376,7 +386,7 @@ class ModPage(Page):
             if server_dir is None or client_dir is None:
                 return None, None
             return server_dir, client_dir / "mods"
-        install_dir = self._local_install_dir()
+        install_dir = self._sync_install_dir()
         if install_dir is None:
             return None, None
         return install_dir, find_game_mods_dir()
@@ -391,7 +401,10 @@ class ModPage(Page):
             target_is_junction or (install_dir and client_mods_dir and plan_mod_sync(install_dir, client_mods_dir).already_linked))
         can_create = bool(client_mods_dir and client_mods_dir.is_dir())
         enabled = is_server and not running and can_create
-        self._sync_btn.setEnabled(enabled)
+        runtime = self._runtime() if c and c.platform != Platform.WEGAME else None
+        client_runtime = bool(runtime and runtime.is_client)
+        self._sync_btn.setEnabled(enabled and not client_runtime)
+        self._sync_btn.setToolTip(t("mod.sync_client_runtime_hint") if client_runtime else "")
         self._sync_btn.setText(t("local.remove_junction_btn") if self._sync_already_linked else t("local.sync_mods_btn"))
 
     def _sync_mods_to_server(self) -> None:
@@ -415,9 +428,9 @@ class ModPage(Page):
                 dialogs.show_warning(self.window(), t("local.sync_mods_btn"), t("local.wegame_root_picker_prompt"))
                 return
         else:
-            install_dir = self._local_install_dir()
+            install_dir = self._sync_install_dir()
             if install_dir is None:
-                dialogs.show_warning(self.window(), t("local.sync_mods_btn"), t("local.install_not_found"))
+                dialogs.show_warning(self.window(), t("local.sync_mods_btn"), t("mod.sync_client_runtime_hint"))
                 return
             client_mods_dir = find_game_mods_dir()
 
