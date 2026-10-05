@@ -112,10 +112,15 @@ class TabCloseButton(QAbstractButton):
             painter.setBrush(theme.color("ERROR"))
         else:
             faint = theme.color("TEXT_MUTED")
-            faint.setAlpha(40)
+            faint.setAlpha(22)
             painter.setBrush(faint)
         painter.drawEllipse(QRectF(0.75, 0.75, self._SIZE - 1.5, self._SIZE - 1.5))
-        color = QColor("#FFFFFF") if hover else theme.color("TEXT_MUTED")
+        if hover:
+            color = QColor("#FFFFFF")
+        else:
+            # 平时 × 也半透明，不抢页签文字的视线。
+            color = theme.color("TEXT_MUTED")
+            color.setAlpha(140)
         painter.setPen(QPen(color, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
         a, b = 5.5, self._SIZE - 5.5
         painter.drawLine(QPointF(a, a), QPointF(b, b))
