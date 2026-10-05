@@ -905,10 +905,15 @@ class GlobalTokensDialog(Dialog):
             }}
             QTableWidget::item {{ padding: 0 8px; border-bottom: 1px solid {theme.hex('CARD_BG_ALT')}; }}
             QTableWidget::item:selected {{ background: {theme.hex('PRIMARY_LIGHT')}; color: {theme.hex('TEXT')}; }}
+            QHeaderView {{ background: transparent; border: none; }}
             QHeaderView::section {{
                 background: {theme.hex('CARD_BG_ALT')}; color: {theme.hex('HEADING')};
                 border: none; border-bottom: 1px solid {theme.hex('CARD_BORDER')}; padding: 4px 8px;
             }}
+            /* 表头方形底色会盖住外框的上两个圆角：首尾两节补上圆角（外框 8px 减去 1px 描边） */
+            QHeaderView::section:first {{ border-top-left-radius: 7px; }}
+            QHeaderView::section:last {{ border-top-right-radius: 7px; }}
+            QHeaderView::section:only-one {{ border-top-left-radius: 7px; border-top-right-radius: 7px; }}
         """)
 
     def _row_texts(self, token: str) -> tuple[str, str, str, str]:
