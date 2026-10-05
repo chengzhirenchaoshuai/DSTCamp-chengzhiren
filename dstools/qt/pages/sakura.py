@@ -29,6 +29,7 @@ from dstools.i18n import t
 from dstools.models import SaveSource
 from dstools.qt import dialogs
 from dstools.qt.pages.base import Page
+from dstools.qt.lolia_panel import LoliaPanel
 from dstools.qt.selfhost_panel import SelfHostPanel
 from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
@@ -39,6 +40,7 @@ from dstools.shared.server_ports import stable_path_key
 from dstools.shared.token_manager import is_valid_token, mask_token
 
 _FALLBACK_MAX_TUNNELS = 2
+_SUB_TAB_KEYS = ["sakura", "lolia", "selfhost"]  # 子页签顺序，同时是 nat_sub_tab 的取值
 _FRPC_CACHE_NAME = "frpc_config"
 _NODE_GRID_COLS = 3
 
@@ -758,7 +760,7 @@ class _SakuraMappingPanel(QWidget):
             dialogs.show_warning(self.window(), t("sakura.require_stopped_title"),
                                   t("sakura.require_stopped_msg", shards="、".join(running)))
             return
-        conflicting = [s.name for s in cluster.shards if self.ctx.mapping_owner(cluster, s) == "selfhost"]
+        conflicting = [s.name for s in cluster.shards if self.ctx.mapping_owner(cluster, s) not in (None, "sakura")]
         if conflicting:
             dialogs.show_warning(self.window(), t("sakura.enable_btn"),
                                   t("sakura.other_mapping_conflict_msg", shards="、".join(conflicting)))
@@ -852,6 +854,7 @@ class SakuraPage(Page):
     def __init__(self, ctx):
         super().__init__(ctx)
         self._mapping = _SakuraMappingPanel(ctx)
+        self._lolia = LoliaPanel(ctx)
         self._selfhost = SelfHostPanel(ctx)
 
         root = QVBoxLayout(self)
@@ -862,18 +865,20 @@ class SakuraPage(Page):
         layout = QVBoxLayout(card)
         # 内容跟边框之间留出跟其它页签一致的间距，之前左右几乎贴边。
         layout.setContentsMargins(15, 13, 15, 13)
-        self._tabs = PillTabBar([t("selfhost.tab_sakura"), t("selfhost.tab_selfhost")],
+        self._tabs = PillTabBar(self._tab_labels(),
                                  height=36, pill_height=28, font_size_key="FONT_SIZE_SM")
         layout.addWidget(self._tabs)
         self._stack = QStackedWidget()
         self._stack.addWidget(self._mapping)
+        self._stack.addWidget(self._lolia)
         self._stack.addWidget(self._selfhost)
         layout.addWidget(self._stack, 1)
         self._tabs.current_changed.connect(self._on_sub_tab_changed)
         initial = app_settings.get_nat_sub_tab()
-        if initial == "selfhost":
-            self._tabs.set_current_index(1)
-            self._stack.setCurrentIndex(1)
+        if initial in _SUB_TAB_KEYS and initial != _SUB_TAB_KEYS[0]:
+            index = _SUB_TAB_KEYS.index(initial)
+            self._tabs.set_current_index(index)
+            self._stack.setCurrentIndex(index)
 
         ctx.mapping_owner = self._mapping_owner
         ctx.ensure_lobby_accel = self._selfhost.ensure_lobby_accel
@@ -883,14 +888,20 @@ class SakuraPage(Page):
         ctx.maybe_start_frpc = self._maybe_start_frpc
         ctx.frpc_ready = self._frpc_ready
 
+    @staticmethod
+    def _tab_labels() -> list[str]:
+        return [t("selfhost.tab_sakura"), t("selfhost.tab_lolia"), t("selfhost.tab_selfhost")]
+
     def _on_sub_tab_changed(self, index: int) -> None:
         self._stack.setCurrentIndex(index)
-        app_settings.set_nat_sub_tab("selfhost" if index == 1 else "sakura")
+        app_settings.set_nat_sub_tab(_SUB_TAB_KEYS[index])
 
     # ── 跨页钩子 ────────────────────────────────────────────────────────
     def _mapping_owner(self, cluster, shard) -> str | None:
         if self._mapping.has_pointer(cluster, shard):
             return "sakura"
+        if self._lolia.has_active_mapping(cluster, shard):
+            return "lolia"
         if self._selfhost.has_active_mapping(cluster, shard):
             return "selfhost"
         return None
@@ -898,21 +909,26 @@ class SakuraPage(Page):
     def _stop_frpc_for_shard(self, cluster, shard, on_done=None) -> None:
         if self._mapping.frpc.get(cluster.path, shard.name):
             self._mapping.stop_frpc_for_shard(cluster, shard, on_done=on_done)
+        elif self._lolia.has_active_mapping(cluster, shard):
+            self._lolia.stop_frpc_for_shard(cluster, shard, on_done=on_done)
         else:
             self._selfhost.stop_frpc_for_shard(cluster, shard, on_done=on_done)
 
     def _maybe_start_frpc(self, cluster, shard) -> None:
         self._mapping.maybe_start_frpc(cluster, shard)
+        self._lolia.maybe_start_frpc(cluster, shard)
         self._selfhost.maybe_start_frpc(cluster, shard)
 
     def _frpc_ready(self, cluster) -> bool:
-        return self._mapping.frpc_all_running(cluster) or self._selfhost.frpc_running(cluster)
+        return (self._mapping.frpc_all_running(cluster) or self._lolia.frpc_running(cluster)
+                or self._selfhost.frpc_running(cluster))
 
     # ── Page 协议 ───────────────────────────────────────────────────────
     def on_cluster_changed(self, cluster) -> None:
         self._mapping.on_cluster_changed(cluster)
+        self._lolia.on_cluster_changed(cluster)
         self._selfhost.on_cluster_changed(cluster)
 
     def retranslate(self) -> None:
-        self._tabs.set_labels([t("selfhost.tab_sakura"), t("selfhost.tab_selfhost")])
+        self._tabs.set_labels(self._tab_labels())
         self.on_cluster_changed(self.ctx.selected_cluster())

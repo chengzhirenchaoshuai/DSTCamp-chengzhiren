@@ -52,7 +52,7 @@ from dstools.qt.auto_restart import AutoRestartController
 from dstools.qt.widgets import Banner, Card, ToggleSwitch
 from dstools.shared.app_settings import (
     blocking_token_holds, get_auto_restart_enabled, get_backup_auto_enabled, get_backup_interval_minutes,
-    get_dedicated_server_extra_args, get_global_tokens, get_sakura_token, get_selfhost_frp_mapping,
+    get_dedicated_server_extra_args, get_global_tokens, get_lolia_mapping, get_sakura_token, get_selfhost_frp_mapping,
     get_selfhost_frp_server, get_token_holds, clear_token_hold, prune_token_holds, set_auto_restart_enabled,
     set_dedicated_server_extra_args, set_dedicated_server_path, set_token_hold,
 )
@@ -1730,6 +1730,9 @@ class LocalServicePage(Page):
                     return node.get("host", ""), tunnel.get("remote", "")
             except Exception:
                 pass
+        lolia = get_lolia_mapping(cluster.path, master.name)
+        if lolia:
+            return lolia["host"], lolia["remote_port"]
         server = get_selfhost_frp_server()
         if server:
             remote = get_selfhost_frp_mapping(cluster.path, master.name)

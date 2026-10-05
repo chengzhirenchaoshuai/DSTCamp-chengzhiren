@@ -40,6 +40,9 @@ _KEY_LAST_CLUSTER_PATH = "last_cluster_path"
 _KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
 _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
+_KEY_LOLIA_TOKEN = "lolia_node_token"
+_KEY_LOLIA_TUNNEL_IDS = "lolia_tunnel_ids"
+_KEY_LOLIA_MAPPINGS = "lolia_mappings"
 _KEY_LOBBY_ACCEL_ENABLED = "lobby_accel_enabled"
 _KEY_LOBBY_ACCEL_MIHOMO_PATH = "lobby_accel_mihomo_path"
 _KEY_LOBBY_ACCEL_MIHOMO_SHA256 = "lobby_accel_mihomo_sha256"
@@ -513,6 +516,64 @@ def get_all_selfhost_frp_ports() -> list[int]:
             continue
     return ports
 
+
+
+def get_lolia_token() -> str | None:
+    """Lolia 节点 Token（用户在 Lolia 控制台复制来的、某个节点上的隧道 Token），没设置过返回 None。"""
+    return load_settings().get(_KEY_LOLIA_TOKEN) or None
+
+
+def set_lolia_token(token: str | None) -> None:
+    data = load_settings()
+    if token:
+        data[_KEY_LOLIA_TOKEN] = token
+    else:
+        data.pop(_KEY_LOLIA_TOKEN, None)
+    save_settings(data)
+
+
+def get_lolia_tunnel_id(cluster_path: Path, shard_name: str) -> int | None:
+    """用户给这个世界填过的 Lolia 隧道 ID。关闭映射后仍保留，方便下次直接开启。"""
+    raw = (load_settings().get(_KEY_LOLIA_TUNNEL_IDS) or {}).get(_selfhost_mapping_key(cluster_path, shard_name))
+    try:
+        return int(raw) if raw is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def set_lolia_tunnel_id(cluster_path: Path, shard_name: str, tunnel_id: int | None) -> None:
+    data = load_settings()
+    ids = data.get(_KEY_LOLIA_TUNNEL_IDS) or {}
+    key = _selfhost_mapping_key(cluster_path, shard_name)
+    if tunnel_id is not None:
+        ids[key] = int(tunnel_id)
+    else:
+        ids.pop(key, None)
+    data[_KEY_LOLIA_TUNNEL_IDS] = ids
+    save_settings(data)
+
+
+def get_lolia_mapping(cluster_path: Path, shard_name: str) -> dict | None:
+    """已生效的 Lolia 映射 {"remote_port": int, "host": str}；没开启返回 None。"""
+    raw = (load_settings().get(_KEY_LOLIA_MAPPINGS) or {}).get(_selfhost_mapping_key(cluster_path, shard_name))
+    if not isinstance(raw, dict):
+        return None
+    try:
+        return {"remote_port": int(raw["remote_port"]), "host": str(raw.get("host", ""))}
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def set_lolia_mapping(cluster_path: Path, shard_name: str, remote_port: int | None, host: str = "") -> None:
+    data = load_settings()
+    mappings = data.get(_KEY_LOLIA_MAPPINGS) or {}
+    key = _selfhost_mapping_key(cluster_path, shard_name)
+    if remote_port is not None:
+        mappings[key] = {"remote_port": int(remote_port), "host": host}
+    else:
+        mappings.pop(key, None)
+    data[_KEY_LOLIA_MAPPINGS] = mappings
+    save_settings(data)
 
 def get_selfhost_ssh_connection() -> dict | None:
     """SSH 远程部署对话框记住的上次连接信息（host/port/username）——

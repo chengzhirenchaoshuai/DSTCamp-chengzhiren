@@ -150,7 +150,7 @@ def build_cluster_columns(cluster: Cluster) -> list[list[ClusterGroup]]:
 
 # ── server.ini（每个世界一份）──────────────────────────────────────────
 
-MappingOwner = Callable[[Cluster, Shard], "str | None"]   # 返回 None / "sakura" / "selfhost"
+MappingOwner = Callable[[Cluster, Shard], "str | None"]   # 返回 None / "sakura" / "lolia" / "selfhost"
 
 
 class ShardForm:
@@ -224,8 +224,7 @@ class ShardForm:
                     owner = mapping_owner(self.cluster, self.shard)
                     if owner:
                         readonly = True
-                        tooltip = (t("cluster.server_port_selfhost_locked") if owner == "selfhost"
-                                   else t("cluster.server_port_sakura_locked"))
+                        tooltip = t(f"cluster.server_port_{owner}_locked")
                 fields.append(make_field(f"SHARD_{sec}", key, value, readonly=readonly, tooltip=tooltip))
             result.append((sec, fields))
         return result

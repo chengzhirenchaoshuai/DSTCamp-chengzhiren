@@ -1026,7 +1026,7 @@ class SelfHostPanel(QWidget):
             dialogs.show_warning(self.window(), t("sakura.require_stopped_title"),
                                   t("sakura.require_stopped_msg", shards="、".join(running)))
             return
-        conflicting = [s.name for s in cluster.shards if self.ctx.mapping_owner(cluster, s) == "sakura"]
+        conflicting = [s.name for s in cluster.shards if self.ctx.mapping_owner(cluster, s) not in (None, "selfhost")]
         if conflicting:
             dialogs.show_warning(self.window(), t("selfhost.enable_btn"),
                                   t("sakura.other_mapping_conflict_msg", shards="、".join(conflicting)))
