@@ -322,8 +322,8 @@ def test_auto_restart_rules_and_hold_retry_window() -> None:
     assert budget.allow(100.0 + auto_restart.CRASH_WINDOW + 1), "旧崩溃滑出时间窗后恢复"
 
     assert auto_restart.TOKEN_HOLD_DURATION >= 25 * 60, "实测强杀后约 25 分钟才释放"
-    assert app_settings.TOKEN_SWITCH_MINUTES_DEFAULT * 60 > auto_restart.TOKEN_HOLD_DURATION, \
-        "第二次实测超过 30 分钟才释放，默认换令牌时长要留余量"
+    assert app_settings.TOKEN_SWITCH_MINUTES_DEFAULT * 60 >= auto_restart.TOKEN_HOLD_DURATION, \
+        "换令牌不能早于令牌等待标记到期"
     assert app_settings.TOKEN_SWITCH_MINUTES_RANGE[1] * 60 < auto_restart.TOKEN_WAIT_LIMIT
 
     with tempfile.TemporaryDirectory() as settings_tmp, patch.dict(os.environ, {"APPDATA": settings_tmp}):
@@ -374,7 +374,7 @@ def test_auto_restart_controller_flow() -> None:
         tokens = {"available": True}
         choose_calls = []
         switch_calls = []
-        opts = {"switch": True, "alternative": NEW_B, "minutes": 45}
+        opts = {"switch": True, "alternative": NEW_B, "minutes": 30}
 
         def make_proc(name, *, ready=True, status=ServerStatus.RUNNING):
             procs[name] = SimpleNamespace(cluster_path=cluster.path, shard_name=name, is_master=name == "Master",

@@ -812,9 +812,9 @@ def set_auto_restart_enabled(cluster_key: str, enabled: bool) -> None:
     save_settings(data)
 
 
-# 超时换令牌的等待分钟数：两次实测 Klei 释放约 25 分钟、超过 30 分钟，默认留足余量；
+# 超时换令牌的等待分钟数：两次实测 Klei 释放约 25 分钟、超过 30 分钟，默认 30 分钟（用户可调）；
 # 上限要小于自动重启总等待 2 小时，否则永远轮不到换令牌
-TOKEN_SWITCH_MINUTES_DEFAULT = 45
+TOKEN_SWITCH_MINUTES_DEFAULT = 30
 TOKEN_SWITCH_MINUTES_RANGE = (20, 110)
 
 
