@@ -166,6 +166,16 @@ def _tun_proxy_detected() -> bool:
     return False
 
 
+def _set_button_state(button, enabled: bool, reason: str = "") -> None:
+    """按钮置灰时必须把原因放进悬停提示，让用户知道为什么点不了；启用时清空提示。
+    只在状态真的变化时写入，避免定时轮询反复触发重绘。"""
+    if button.isEnabled() != enabled:
+        button.setEnabled(enabled)
+    tip = "" if enabled else reason
+    if button.toolTip() != tip:
+        button.setToolTip(tip)
+
+
 _RUNTIME_KIND_KEYS = {RuntimeKind.CLIENT: "local.runtime_mode_client", RuntimeKind.DEDICATED: "local.runtime_mode_dedicated"}
 
 
@@ -322,6 +332,8 @@ class LocalServicePage(Page):
         self._runtime_resolution = None
         self._runtime = None
         self._install_dir: Path | None = None
+        # LuaJIT 安装/更新进行中：轮询刷新不能把按钮重新启用。
+        self._luajit_busy = False
         self._steam_update_dialog: dialogs.LogDialog | None = None
         self._steam_remote_build_id: str | None = None
         self._steam_remote_build_checked_at = 0.0
@@ -590,10 +602,7 @@ class LocalServicePage(Page):
         is_server = bool(c and c.source == SaveSource.SERVER)
         is_wegame = bool(c and c.platform == Platform.WEGAME)
         self._start_all_btn.setEnabled(is_server and not is_wegame)
-        install_enabled = not is_wegame
-        self._install_change_btn.setEnabled(install_enabled)
-        self._update_mode_btn_state(c)
-        self._steam_update_btn.setEnabled(install_enabled)
+        self._update_runtime_btns_state(c)
         self._update_stop_all_btn_state(c)
         self._update_restart_all_btn_state(c)
         self._update_logs_btn_state(c)
@@ -693,15 +702,20 @@ class LocalServicePage(Page):
         name = t(_RUNTIME_KIND_KEYS[resolution.wanted_kind])
         return name if resolution.runtime is not None else t("local.runtime_mode_missing", mode=name)
 
-    def _update_mode_btn_state(self, cluster) -> None:
-        """有世界在运行时"选择模式"只读：运行中的程序、mods 和 LuaJIT 副本都属于当前模式。"""
-        running = bool(self.manager.running())
-        enabled = not running and not (cluster and cluster.platform == Platform.WEGAME)
-        if self._mode_btn.isEnabled() != enabled:
-            self._mode_btn.setEnabled(enabled)
-        tip = t("local.runtime_mode_running") if running else ""
-        if self._mode_btn.toolTip() != tip:
-            self._mode_btn.setToolTip(tip)
+    def _update_runtime_btns_state(self, cluster) -> None:
+        """开服程序一行的按钮：WeGame 存档不使用这些设置；有世界在运行时模式和目录只读
+        （运行中的程序、mods 和 LuaJIT 副本都属于当前开服程序）。"""
+        is_wegame = bool(cluster and cluster.platform == Platform.WEGAME)
+        wegame_reason = t("local.runtime_wegame_hint")
+        if is_wegame:
+            switch_reason = wegame_reason
+        elif self.manager.running():
+            switch_reason = t("local.runtime_mode_running")
+        else:
+            switch_reason = ""
+        for button in (self._mode_btn, self._install_change_btn):
+            _set_button_state(button, not switch_reason, switch_reason)
+        _set_button_state(self._steam_update_btn, not is_wegame, wegame_reason)
 
     def _wanted_runtime_kind(self) -> RuntimeKind | None:
         resolution = self._runtime_resolution
@@ -727,23 +741,46 @@ class LocalServicePage(Page):
         names = {RuntimeMode.AUTO: t("local.runtime_mode_auto"),
                  RuntimeMode.CLIENT: t("local.runtime_mode_client"),
                  RuntimeMode.DEDICATED: t("local.runtime_mode_dedicated")}
-        lines = [html.escape(t("local.runtime_mode_msg", current=names[current])).replace("\n", "<br>"),
-                 "", html.escape(t("local.runtime_install_status"))]
-        for kind in RuntimeKind:
-            ok = installed[kind]
-            state = t("local.runtime_installed") if ok else t("local.runtime_not_installed")
-            color = theme.hex("SUCCESS" if ok else "ERROR")
-            lines.append(t("local.runtime_status_line", name=html.escape(t(_RUNTIME_KIND_KEYS[kind])),
-                           state=f'<span style="color:{color};">{html.escape(state)}</span>'))
+        text = self._runtime_mode_dialog_html(current, names, installed)
         choices = [(t("dlg.cancel_btn"), "cancel")] + [(names[mode], mode.value) for mode in RuntimeMode]
-        choice = dialogs.ask_choice(self.window(), t("local.runtime_mode_title"), "<br>".join(lines), choices,
-                                    default=current.value, min_width=560, rich=True)
+        choice = dialogs.ask_choice(self.window(), t("local.runtime_mode_title"), text, choices,
+                                    default=current.value, min_width=760, rich=True)
         if not choice or choice == "cancel" or choice == current.value:
             return
         set_runtime_mode(RuntimeMode(choice))
         self._on_runtime_changed()
         if self._runtime is None:
             _show_not_found_warning(self.window(), self._wanted_runtime_kind())
+
+    def _runtime_mode_dialog_html(self, current, names, installed) -> str:
+        """三段：当前模式（强调色）/ 三种模式两列对齐说明（当前行高亮）/ 安装状态两列对齐（彩色圆点）。"""
+        esc = html.escape
+        accent, muted, heading = theme.hex("ACCENT"), theme.hex("TEXT_MUTED"), theme.hex("HEADING")
+        current_text = self._runtime_mode_text(self._runtime_resolution) if self._runtime_resolution else names[current]
+        parts = [f'<div>{esc(t("local.runtime_mode_current_label"))}'
+                 f'<span style="color:{accent}; font-weight:bold;">{esc(current_text)}</span></div>']
+        rows = []
+        for mode, desc_key in ((RuntimeMode.AUTO, "local.runtime_mode_desc_auto"),
+                               (RuntimeMode.CLIENT, "local.runtime_mode_desc_client"),
+                               (RuntimeMode.DEDICATED, "local.runtime_mode_desc_dedicated")):
+            name_style = f"color:{accent};" if mode is current else f"color:{heading};"
+            tag = (f' <span style="color:{muted}; font-weight:normal;">{esc(t("local.runtime_mode_current_tag"))}</span>'
+                   if mode is current else "")
+            rows.append(f'<tr><td nowrap style="padding:4px 16px 4px 0; font-weight:bold; {name_style}">'
+                        f'{esc(names[mode])}{tag}</td><td style="padding:4px 0;">{esc(t(desc_key))}</td></tr>')
+        parts.append(f'<table cellspacing="0" cellpadding="0" style="margin-top:10px;">{"".join(rows)}</table>')
+        parts.append(f'<div style="margin-top:8px; color:{muted};">{esc(t("local.runtime_mode_note"))}</div>')
+        status_rows = []
+        for kind in RuntimeKind:
+            ok = installed[kind]
+            color = theme.hex("SUCCESS" if ok else "ERROR")
+            state = t("local.runtime_installed") if ok else t("local.runtime_not_installed")
+            status_rows.append(f'<tr><td nowrap style="padding:3px 16px 3px 0;">{esc(t(_RUNTIME_KIND_KEYS[kind]))}</td>'
+                               f'<td style="padding:3px 0; color:{color}; font-weight:bold;">● {esc(state)}</td></tr>')
+        parts.append(f'<div style="margin-top:14px; color:{heading}; font-weight:bold;">'
+                     f'{esc(t("local.runtime_install_status"))}</div>')
+        parts.append(f'<table cellspacing="0" cellpadding="0" style="margin-top:4px;">{"".join(status_rows)}</table>')
+        return "".join(parts)
 
     def _change_install_dir(self) -> None:
         if self._runtime_switch_blocked():
@@ -885,7 +922,7 @@ class LocalServicePage(Page):
 
     def _finish_steam_update(self, dialog) -> None:
         self._steam_update_running = False
-        self._steam_update_btn.setEnabled(True)
+        self._update_runtime_btns_state(self.get_cluster())
         self._refresh_steam_update_button()
         self._detect_install_dir()
         dialog.finish()
@@ -895,43 +932,49 @@ class LocalServicePage(Page):
         install_dir = bin64_dir.parent
         return any(p.install_dir == install_dir for p in self.manager.running())
 
+    def _set_luajit_btns(self, install_reason: str, uninstall_reason: str) -> None:
+        """原因为空表示可点；非空即置灰并把原因放进悬停提示。"""
+        _set_button_state(self._luajit_install_btn, not install_reason, install_reason)
+        _set_button_state(self._luajit_uninstall_btn, not uninstall_reason, uninstall_reason)
+
     def _update_luajit_row(self, cluster) -> None:
+        if self._luajit_busy:
+            busy = t("local.luajit_busy_hint")
+            self._set_luajit_btns(busy, busy)
+            return
         is_steam_server = bool(cluster and cluster.source == SaveSource.SERVER and cluster.platform == Platform.STEAM)
         if not is_steam_server:
             self._luajit_bin64_dir = None
             self._luajit_status_label.setText(t("local.luajit_steam_only_hint"))
-            self._luajit_install_btn.setEnabled(False)
             self._luajit_install_btn.setText(t("local.luajit_install_btn"))
-            self._luajit_uninstall_btn.setEnabled(False)
+            reason = t("local.luajit_steam_only_hint")
+            self._set_luajit_btns(reason, reason)
             return
         bin64_dir = find_bin64_dir(self._install_dir) if self._install_dir else None
         self._luajit_bin64_dir = bin64_dir
         if bin64_dir is None:
             self._luajit_status_label.setText(t("local.luajit_bin64_not_found"))
-            self._luajit_install_btn.setEnabled(False)
-            self._luajit_uninstall_btn.setEnabled(False)
+            reason = t("local.luajit_bin64_not_found")
+            self._set_luajit_btns(reason, reason)
             return
         if self._any_running_for_bin64(bin64_dir):
             self._luajit_status_label.setText(t("local.luajit_blocked_running"))
-            self._luajit_install_btn.setEnabled(False)
-            self._luajit_uninstall_btn.setEnabled(False)
+            reason = t("local.luajit_blocked_running")
+            self._set_luajit_btns(reason, reason)
             return
         state = luajit_injector.detect_state(bin64_dir)
         if state is luajit_injector.InjectorState.ACTIVE:
             self._luajit_status_label.setText(t("local.luajit_state_active"))
-            self._luajit_install_btn.setEnabled(True)
             self._luajit_install_btn.setText(t("local.luajit_reinstall_btn"))
-            self._luajit_uninstall_btn.setEnabled(True)
+            self._set_luajit_btns("", "")
         elif state is luajit_injector.InjectorState.DISABLED_LEFTOVER:
             self._luajit_status_label.setText(t("local.luajit_state_leftover"))
-            self._luajit_install_btn.setEnabled(True)
             self._luajit_install_btn.setText(t("local.luajit_reinstall_btn"))
-            self._luajit_uninstall_btn.setEnabled(False)
+            self._set_luajit_btns("", t("local.luajit_uninstall_leftover_hint"))
         else:
             self._luajit_status_label.setText(t("local.luajit_state_not_installed"))
-            self._luajit_install_btn.setEnabled(True)
             self._luajit_install_btn.setText(t("local.luajit_install_btn"))
-            self._luajit_uninstall_btn.setEnabled(False)
+            self._set_luajit_btns("", t("local.luajit_uninstall_not_installed_hint"))
 
     def _on_luajit_install_clicked(self) -> None:
         bin64_dir = self._luajit_bin64_dir
@@ -955,8 +998,8 @@ class LocalServicePage(Page):
                 t("local.luajit_confirm_install_msg"),
                 t("local.luajit_runtime_btn"), self._open_luajit_runtime_download, min_width=560):
             return
-        self._luajit_install_btn.setEnabled(False)
-        self._luajit_uninstall_btn.setEnabled(False)
+        self._luajit_busy = True
+        self._update_luajit_row(cluster)
         log_dialog = dialogs.LogDialog(self.window(), t("local.luajit_confirm_install_title"))
         log_dialog.append(t("local.luajit_log_preparing"))
         log_dialog.show()
@@ -965,6 +1008,7 @@ class LocalServicePage(Page):
             return luajit_injector.apply_install(plan.bin64_dir, mod_overrides_paths, on_log=emit)
 
         def done(result) -> None:
+            self._luajit_busy = False
             log_dialog.finish()
             if not result.ok:
                 dialogs.show_error(self.window(), t("local.luajit_confirm_install_title"), "\n".join(result.errors))
@@ -2215,7 +2259,7 @@ class LocalServicePage(Page):
                 row.update_state()
             cluster = self.get_cluster()
             self._update_start_lock_state(cluster)
-            self._update_mode_btn_state(cluster)
+            self._update_runtime_btns_state(cluster)
             self._update_stop_all_btn_state(cluster)
             self._update_restart_all_btn_state(cluster)
             self._update_logs_btn_state(cluster)
