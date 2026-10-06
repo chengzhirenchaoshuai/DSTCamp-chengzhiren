@@ -55,7 +55,8 @@ from dstools.qt.widgets import Banner, Card, ToggleSwitch
 from dstools.shared.app_settings import (
     blocking_token_holds, get_auto_restart_enabled, get_backup_auto_enabled, get_backup_interval_minutes,
     get_dedicated_server_extra_args, get_global_tokens, get_lolia_mapping, get_sakura_token, get_selfhost_frp_mapping,
-    get_selfhost_frp_server, get_token_holds, clear_token_hold, prune_token_holds, set_auto_restart_enabled,
+    get_selfhost_frp_server, get_token_holds, get_token_switch_on_timeout, clear_token_hold, prune_token_holds,
+    set_auto_restart_enabled,
     set_dedicated_server_extra_args, set_token_hold,
 )
 from dstools.shared.clipboard import copy_file_to_clipboard
@@ -1185,16 +1186,15 @@ class LocalServicePage(Page):
         selection = self._start_token_selection(cluster)
         hold = self._current_token_hold(cluster) if selection is not None else None
         if hold is not None and (selection.token is None or selection.changed):
-            # 原令牌还没释放：默认仍用原令牌（专服会自己重试到 Klei 释放），换令牌会多占一个池中令牌
-            options = [(t("local.token_held_retry_btn"), "retry")]
-            if selection.token:
-                options.append((t("local.token_held_switch_btn"), "switch"))
-            options.append((t("dlg.cancel_btn"), "cancel"))
+            # 原令牌还没释放：有空闲令牌时默认换用、马上上线（关闭了"崩溃后换用空闲令牌"则默认仍用原令牌）
+            options = [(t("local.token_held_switch_btn"), "switch")] if selection.token else []
+            options += [(t("local.token_held_retry_btn"), "retry"), (t("dlg.cancel_btn"), "cancel")]
+            prefer_switch = bool(selection.token) and get_token_switch_on_timeout()
             choice = dialogs.ask_choice(
                 self.window(), t("local.token_held_title"),
                 t("local.token_held_ask", cluster=cluster.name,
                   time=time.strftime("%H:%M", time.localtime(hold["retry_at"]))),
-                options, default="retry")
+                options, default="switch" if prefer_switch else "retry")
             if choice == "retry":
                 selection = self._start_token_selection(cluster, retry_current=True)
             elif choice != "switch":

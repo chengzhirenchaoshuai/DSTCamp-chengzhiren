@@ -319,8 +319,6 @@ def test_auto_restart_rules_and_hold_retry_window() -> None:
     assert budget.allow(100.0 + auto_restart.CRASH_WINDOW + 1), "旧崩溃滑出时间窗后恢复"
 
     assert auto_restart.TOKEN_HOLD_DURATION >= 25 * 60, "实测强杀后约 25 分钟才释放"
-    assert app_settings.TOKEN_SWITCH_MINUTES_DEFAULT * 60 >= auto_restart.TOKEN_HOLD_DURATION, \
-        "换令牌不能早于令牌等待标记到期"
     assert app_settings.TOKEN_SWITCH_MINUTES_RANGE[1] * 60 < auto_restart.TOKEN_WAIT_LIMIT
 
     with tempfile.TemporaryDirectory() as settings_tmp, patch.dict(os.environ, {"APPDATA": settings_tmp}):
@@ -344,7 +342,7 @@ def test_auto_restart_rules_and_hold_retry_window() -> None:
         assert app_settings.get_token_switch_after_minutes() == app_settings.TOKEN_SWITCH_MINUTES_DEFAULT
         low, high = app_settings.TOKEN_SWITCH_MINUTES_RANGE
         assert app_settings.set_token_switch_after_minutes(60) == 60 == app_settings.get_token_switch_after_minutes()
-        assert app_settings.set_token_switch_after_minutes(1) == low, "低于下限按下限保存"
+        assert app_settings.set_token_switch_after_minutes(-5) == low, "低于下限按下限保存"
         assert app_settings.set_token_switch_after_minutes(999) == high == app_settings.get_token_switch_after_minutes()
 
 
@@ -371,7 +369,7 @@ def test_auto_restart_controller_flow() -> None:
         tokens = {"available": True}
         choose_calls = []
         switch_calls = []
-        opts = {"switch": True, "alternative": NEW_B, "minutes": 30}
+        opts = {"switch": True, "alternative": NEW_B, "minutes": 30, "hold": None}
 
         def make_proc(name, *, ready=True, status=ServerStatus.RUNNING):
             procs[name] = SimpleNamespace(cluster_path=cluster.path, shard_name=name, is_master=name == "Master",
@@ -394,7 +392,8 @@ def test_auto_restart_controller_flow() -> None:
             _choose_start_token=lambda _c, allow_switch=True, retry_current=False: (
                 choose_calls.append((allow_switch, retry_current)), tokens["available"])[1],
             _alternative_start_token=lambda _c: opts["alternative"],
-            _switch_to_alternative_token=lambda _c: (switch_calls.append(1), True)[1],
+            _switch_to_alternative_token=lambda _c: (switch_calls.append(1), bool(opts["alternative"]))[1],
+            _current_token_hold=lambda _c: opts["hold"],
             _install_dir=root, _detect_install_dir=lambda: None, _launching_keys=set(),
             _release_token_reservation_if_stopped=lambda _path: None,
             _continue_start_shard=lambda _c, shard, _arg: (events.append(("start", shard.name)),
@@ -472,7 +471,20 @@ def test_auto_restart_controller_flow() -> None:
             assert state.phase == "idle", "冲突期间专服自行注册成功即结束本轮"
             assert switch_calls == [1]
 
-            # 7. 手动操作取消排队中的重启
+            # 7. 默认等待 0 分钟：原令牌仍在等待期且池中有空闲令牌，拉起前直接换用；没有空闲令牌才用原令牌
+            state.budget.reset()
+            opts.update(switch=True, minutes=0, hold={"state": "crashed", "retry_at": time.time() + 600})
+            calls_before = len(choose_calls)
+            controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
+            controller._run(key)
+            assert switch_calls == [1, 1] and len(choose_calls) == calls_before and state.switched
+            assert state.phase == "starting", "换了空闲令牌直接拉起，不先用原令牌试冲突"
+            opts["alternative"] = None
+            controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
+            controller._run(key)
+            assert choose_calls[-1] == (False, True) and state.phase == "starting", "没有空闲令牌时用原令牌拉起"
+
+            # 7b. 手动操作取消排队中的重启
             controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
             assert state.phase == "scheduled"
             controller.cancel(cluster)

@@ -806,10 +806,11 @@ def set_auto_restart_enabled(cluster_key: str, enabled: bool) -> None:
     save_settings(data)
 
 
-# 超时换令牌的等待分钟数：两次实测 Klei 释放约 25 分钟、超过 30 分钟，默认 30 分钟（用户可调）；
+# 崩溃后换用空闲令牌前的等待分钟数：默认 0 = 有空闲令牌就立即换、马上上线（换下的令牌约半小时后
+# 释放、等待标记到期即恢复可用）；想省令牌可调大，让原令牌先等 Klei 释放。
 # 上限要小于自动重启总等待 2 小时，否则永远轮不到换令牌
-TOKEN_SWITCH_MINUTES_DEFAULT = 30
-TOKEN_SWITCH_MINUTES_RANGE = (20, 110)
+TOKEN_SWITCH_MINUTES_DEFAULT = 0
+TOKEN_SWITCH_MINUTES_RANGE = (0, 110)
 
 
 def get_token_switch_on_timeout() -> bool:

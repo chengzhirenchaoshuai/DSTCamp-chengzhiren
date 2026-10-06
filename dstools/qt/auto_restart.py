@@ -1,8 +1,9 @@
 """本地服务器页的崩溃自动重启调度（判定规则见 features/local_service/auto_restart.py）：
 
 1. 世界运行后崩溃，等 CRASH_RESTART_DELAY 秒再拉起；主世界崩溃时整组重启，从世界崩溃只重启自己；
-2. 用原令牌拉起（忽略其等待标记），不因崩溃多占令牌；
-3. 注册冲突时不停服，等专服自行重试成功；开启"超时换令牌"且超过设定分钟数、池中有替代令牌时才换令牌重启；
+2. 拉起前：原令牌仍在等待期、开启换令牌且已过设定分钟数（默认 0）、池中有空闲令牌时直接换用；
+   否则用原令牌拉起（忽略其等待标记）；
+3. 注册冲突时不停服，等专服自行重试成功；设定了等待分钟数时，到点仍冲突且池中有替代令牌才停服换令牌重启；
    超过 TOKEN_WAIT_LIMIT 不再管理。注册成功即结束本轮并记录用时。
 全程不弹模态框（用户可能不在电脑前），失败原因显示在横幅并发托盘通知。
 """
@@ -168,8 +169,11 @@ class AutoRestartController(QObject):
         if state.phase != "starting":
             return  # 停服期间被用户取消
         page = self._page
-        switched = state.switch_pending and page._switch_to_alternative_token(cluster)
+        switch_now = state.switch_pending or self._switch_due_before_start(cluster, state)
+        switched = switch_now and page._switch_to_alternative_token(cluster)
         state.switch_pending = False
+        if switched:
+            state.switched = True
         if not switched and not page._choose_start_token(cluster, allow_switch=False, retry_current=True):
             self._wait_for_token(cluster, state)
             return
@@ -206,6 +210,14 @@ class AutoRestartController(QObject):
             page._select_master_console_tab(cluster)
 
         page.ctx.ensure_lobby_accel(cluster, after_accel)
+
+    def _switch_due_before_start(self, cluster, state: _ClusterState) -> bool:
+        """拉起前是否该换令牌：开启换令牌、本轮没换过、已过设定分钟数，且原令牌仍在 Klei 释放等待期内。
+
+        原令牌没有等待标记（例如注册前就崩溃，Klei 端没有房间要释放）时照常用原令牌。"""
+        return (get_token_switch_on_timeout() and not state.switched
+                and time.time() - state.crashed_at >= get_token_switch_after_minutes() * 60
+                and self._page._current_token_hold(cluster) is not None)
 
     def _release_deadline(self, state: _ClusterState) -> float:
         """注册冲突后下一次检查的时刻：还能换令牌时是换令牌的时刻，否则是总等待上限。"""
