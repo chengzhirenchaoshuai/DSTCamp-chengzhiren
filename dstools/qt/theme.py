@@ -495,7 +495,11 @@ class Theme(QObject):
     # ── 切换 ────────────────────────────────────────────────────────────
     def load_fonts(self) -> None:
         """把打包的字体文件私有注册进当前进程，按族名才能找到（同 Tk 版的
-        custom_font_loader）。缺文件时 Qt 会静默回退到系统字体，不报错。"""
+        custom_font_loader）。缺文件时 Qt 会静默回退到系统字体，不报错。
+        启动前的旧版本确认弹窗会先调用一次，这里只注册一遍。"""
+        if getattr(self, "_fonts_loaded", False):
+            return
+        self._fonts_loaded = True
         for style in FONT_STYLES:
             if style.filename:
                 QFontDatabase.addApplicationFont(str(tool_binary_dir() / "fonts" / style.filename))

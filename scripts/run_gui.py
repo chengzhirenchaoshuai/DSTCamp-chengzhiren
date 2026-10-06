@@ -107,7 +107,13 @@ if __name__ == "__main__":
     # 自己启动短生命周期子进程，不应被 GUI 的 Mutex 拦截。
     from dstools.shared.single_instance import acquire_gui_instance
 
-    gui_instance = acquire_gui_instance()
+    def _confirm_close_old_instance(server_count: int) -> bool:
+        # 只有旧版本还在跑专服时才需要 Qt 弹窗，按需导入，不拖慢普通的重复启动
+        from dstools.qt.app import confirm_close_old_instance
+
+        return confirm_close_old_instance(server_count)
+
+    gui_instance = acquire_gui_instance(_confirm_close_old_instance)
     if gui_instance is None:
         raise SystemExit(0)
 

@@ -27,6 +27,30 @@ def create_window(app: QApplication) -> MainWindow:
     return MainWindow(AppContext())
 
 
+def _application() -> QApplication:
+    """取得（必要时创建）QApplication；启动前的确认弹窗和主窗口共用同一个。"""
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+        app.setQuitOnLastWindowClosed(False)  # 托盘常驻；也避免确认弹窗关闭时误触发退出
+    return app
+
+
+def confirm_close_old_instance(server_count: int) -> bool:
+    """旧版本还在运行且名下有专服时，问用户是否关闭旧版本继续启动新版本。"""
+    from dstools.i18n import t
+    from dstools.qt import dialogs
+
+    _application()
+    theme.load_fonts()
+    theme.apply_to_app()
+    choice = dialogs.ask_choice(
+        None, t("app.old_instance_title"), t("app.old_instance_msg", count=server_count),
+        [(t("dlg.cancel_btn"), "cancel"), (t("app.old_instance_close"), "close")],
+        default="cancel", danger_values=("close",), min_width=520)
+    return choice == "close"
+
+
 def main() -> int:
     # 清理上次自动更新留下的临时文件、旧版 EXE 备份等（尽力而为，失败不影响启动）
     from dstools.shared.auto_update import cleanup_stale_update_artifacts, cleanup_vestigial_external_tools
@@ -36,8 +60,7 @@ def main() -> int:
     # Qt 枚举系统字体时，Fixedsys/Terminal 等老式位图字体 DirectWrite 不支持，会刷一串
     # "CreateFontFaceFromHDC() failed" 警告（从终端启动时可见）。不影响任何显示，屏蔽这一类。
     QLoggingCategory.setFilterRules("qt.qpa.fonts.warning=false")
-    app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)  # 托盘常驻：关闭窗口不等于退出
+    app = _application()
     window = create_window(app)
     window.show()
     window.start_update_check()

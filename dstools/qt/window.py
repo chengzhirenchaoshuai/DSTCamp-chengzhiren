@@ -38,7 +38,7 @@ from dstools.shared.app_settings import (
     get_window_size, set_creation_wizard_size, set_minimize_on_close, set_window_position, set_window_size,
 )
 from dstools.shared.resource_paths import bundled_resource_dir
-from dstools.shared.single_instance import activate_message_id
+from dstools.shared.single_instance import activate_message_id, version_code
 
 TAB_KEYS = ["local", "world", "mods", "server", "saves", "sakura"]
 BASE_W, BASE_H = 1600, 900  # 默认尺寸（逻辑像素，Qt 自动按显示器缩放，不需要 DPI 补丁）
@@ -790,9 +790,12 @@ class MainWindow(QWidget):
         if event_type == b"windows_generic_MSG":
             msg = wintypes.MSG.from_address(int(message))
             if WM_DSTCAMP_ACTIVATE and msg.message == WM_DSTCAMP_ACTIVATE:
-                # 窗口可能已 hide() 到托盘，必须走 Qt 自己的显示流程，状态才一致
-                self.restore_from_tray()
-                return True, 0
+                # wParam 是发起方版本编码：发起方更新时不弹窗口，由它结束本进程后接管；
+                # 否则恢复窗口。窗口可能已 hide() 到托盘，必须走 Qt 自己的显示流程，状态才一致
+                own_code = version_code(__version__)
+                if msg.wParam <= own_code:
+                    self.restore_from_tray()
+                return True, own_code
             if msg.message == WM_SIZING:
                 rect = RECT.from_address(msg.lParam)
                 enforce_aspect(msg.wParam, rect)

@@ -20,6 +20,9 @@ STRINGS = {
         "update.failed": "自动更新失败，当前程序和原文件均未更改。\n\n错误：{error}",
         "update.close_servers": "更新需要退出 DSTCamp。检测到仍有专用服务器运行，是否先安全关闭服务器再安装更新？",
         "update.dont_remind_again": "不再提醒",
+        "app.old_instance_title": "旧版本仍在运行",
+        "app.old_instance_msg": "检测到旧版本 DSTCamp 仍在运行，其中有 {count} 个专服世界正在运行。\n\n关闭旧版本后专服会继续运行，但新版本中无法查看它的控制台，崩溃后也不会自动重启。建议先在旧版本中关闭专服并从托盘退出，再打开新版本。",
+        "app.old_instance_close": "关闭旧版本并继续",
         # 菜单
         "menu.file": "文件",
         "menu.lang_zh": "中文",
@@ -1358,6 +1361,9 @@ STRINGS = {
         "update.failed": "Auto update failed. The running program and original file were not changed.\n\nError: {error}",
         "update.close_servers": "DSTCamp must exit to update. Dedicated servers are still running. Shut them down safely before installing?",
         "update.dont_remind_again": "Don't remind me again",
+        "app.old_instance_title": "Older Version Still Running",
+        "app.old_instance_msg": "An older DSTCamp is still running with {count} dedicated server shard(s).\n\nIf you close it, the servers keep running, but this version cannot show their console or auto-restart them after a crash. It is recommended to stop the servers in the older version and exit it from the tray first.",
+        "app.old_instance_close": "Close Older Version",
         # 菜单
         "menu.file": "File",
         "menu.lang_zh": "中文",
