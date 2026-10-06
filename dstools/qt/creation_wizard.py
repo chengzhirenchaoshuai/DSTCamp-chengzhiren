@@ -45,6 +45,7 @@ from dstools.features.world.value_sets import get_value_set
 from dstools.features.world.view_model import build_world_view_model
 from dstools.i18n import t
 from dstools.models import Cluster, ModEntry, Platform, SaveSource, Shard
+from dstools.shared import app_settings
 from dstools.shared.cluster_names import validate_cluster_folder_name
 from dstools.shared.discovery import find_klei_root
 from dstools.shared.server_ports import (
@@ -715,6 +716,17 @@ class CreationWizardDialog(QDialog):
         rescan_btn = QPushButton(t("world.creation_rescan"))
         rescan_btn.clicked.connect(lambda: self._scan_installed_mods(force=True))
         filter_row.addWidget(rescan_btn)
+        # 列表列数切换（1/2/3 列），跟主页面 Mod 管理共用同一个设置。放在扫描状态文字前面，
+        # 避免状态文字长短变化时带着它左右移动。
+        self._mod_column_choices = app_settings.MOD_LIST_COLUMN_CHOICES
+        self._mod_columns_tabs = PillTabBar(
+            [t("mod.columns_option", count=n) for n in self._mod_column_choices],
+            height=32, pill_height=24, font_size_key="FONT_SIZE_SM", gap=2, pad=12, uniform_width=True)
+        self._mod_columns_tabs.setToolTip(t("mod.columns_hint"))
+        mod_columns = app_settings.get_mod_list_columns()
+        self._mod_columns_tabs.set_current_index(self._mod_column_choices.index(mod_columns))
+        self._mod_columns_tabs.current_changed.connect(self._on_mod_columns_changed)
+        filter_row.addWidget(self._mod_columns_tabs)
         filter_row.addStretch()
         self._mod_scan_status_label = QLabel("")
         self._mod_scan_status_label.setProperty("muted", True)
@@ -728,6 +740,7 @@ class CreationWizardDialog(QDialog):
         self._mod_list_panel.folder_requested.connect(self._open_mod_folder)
         self._mod_list_panel.copy_id_requested.connect(self._on_copy_id)
         self._mod_list_panel.copy_name_requested.connect(self._on_copy_name)
+        self._mod_list_panel.set_column_count(mod_columns)
         layout.addWidget(self._mod_list_panel, 1)
 
         preset_row = QHBoxLayout()
@@ -741,6 +754,11 @@ class CreationWizardDialog(QDialog):
         layout.addLayout(preset_row)
 
         self._scan_installed_mods()
+
+    def _on_mod_columns_changed(self, index: int) -> None:
+        columns = self._mod_column_choices[index]
+        app_settings.set_mod_list_columns(columns)
+        self._mod_list_panel.set_column_count(columns)
 
     def _resolve_mod_folder_args(self, _cluster):
         platform = self.ctx.platform
