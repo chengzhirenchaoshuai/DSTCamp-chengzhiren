@@ -36,19 +36,15 @@ def _application() -> QApplication:
     return app
 
 
-def confirm_close_old_instance(server_count: int) -> bool:
-    """旧版本还在运行且名下有专服时，问用户是否关闭旧版本继续启动新版本。"""
+def notify_old_instance_busy(server_count: int) -> None:
+    """更早的旧版本（Tk 版）还在跑专服、无法替用户安全关闭时，提示先手动退出它。"""
     from dstools.i18n import t
     from dstools.qt import dialogs
 
     _application()
     theme.load_fonts()
     theme.apply_to_app()
-    choice = dialogs.ask_choice(
-        None, t("app.old_instance_title"), t("app.old_instance_msg", count=server_count),
-        [(t("dlg.cancel_btn"), "cancel"), (t("app.old_instance_close"), "close")],
-        default="cancel", danger_values=("close",), min_width=520)
-    return choice == "close"
+    dialogs.show_info(None, t("app.old_instance_title"), t("app.old_instance_msg", count=server_count))
 
 
 def main() -> int:

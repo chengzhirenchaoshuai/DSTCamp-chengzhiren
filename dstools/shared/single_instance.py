@@ -1,7 +1,8 @@
 """Windows 下的单实例启动与已有窗口激活。
 
 重复启动时先问已有实例的版本：已有实例不比自己旧就让它弹出窗口、当前进程退出；
-已有实例更旧（用户没退出旧版本就直接打开了新版本），就结束旧实例、继续启动新版本。
+已有实例更旧（用户没退出旧版本就直接打开了新版本），就关闭旧实例、继续启动新版本；
+旧实例名下有专服时借它自己的退出流程询问并存档关服，不硬杀专服。
 """
 
 import ctypes
@@ -27,6 +28,11 @@ _REPLY_TIMEOUT_MS = 3000
 _PROCESS_TERMINATE = 0x0001
 _SYNCHRONIZE = 0x00100000
 _TH32CS_SNAPPROCESS = 0x00000002
+_WM_CLOSE = 0x0010
+# 旧版本没有专服时收到关闭消息会立刻退出，等这么久还没退出就当它卡住了
+_NO_DIALOG_EXIT_TIMEOUT_S = 10
+# 旧版本确认关服后，留给它存档关闭全部专服并退出的时间
+_SERVER_SHUTDOWN_TIMEOUT_S = 300
 
 
 def _is_dstcamp_window_title(title: str) -> bool:
@@ -241,6 +247,95 @@ def _running_server_count(pid: int) -> int:
     )
 
 
+def _window_class(hwnd) -> str:
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    buffer = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, buffer, len(buffer))
+    return buffer.value
+
+
+def _process_alive(pid: int) -> bool:
+    from ctypes import wintypes
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    handle = kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
+    if not handle:
+        return False
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) != 0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _has_other_visible_window(pid: int, main_hwnd) -> bool:
+    """指定进程除主窗口外是否还有可见的顶层窗口（即旧版本弹出的确认框）。"""
+    from ctypes import wintypes
+
+    user32 = ctypes.windll.user32
+    enum_callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    user32.EnumWindows.argtypes = [enum_callback, wintypes.LPARAM]
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    found = []
+
+    @enum_callback
+    def collect(hwnd, _lparam):
+        if hwnd != main_hwnd and user32.IsWindowVisible(hwnd) and _window_pid(hwnd) == pid:
+            found.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(collect, 0)
+    return bool(found)
+
+
+def _close_qt_instance(hwnd, pid: int) -> bool:
+    """借旧版本（Qt 版）自己的退出流程关闭它，返回旧进程是否已退出。
+
+    旧版本的关闭按钮只在"关闭时最小化到托盘"关闭时才真正退出：没有专服直接
+    退出；有专服时弹它自己的确认框，用户确认后先 c_shutdown() 存档关服再退出。
+    所以临时关掉这个设置、发 WM_CLOSE，等旧版本读完设置（弹出确认框或已退出）
+    立刻改回原值。用户在确认框里点取消时旧版本保持运行，这里等到超时返回 False。
+    """
+    from ctypes import wintypes
+
+    from dstools.shared import app_settings
+
+    user32 = ctypes.windll.user32
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.PostMessageW.restype = wintypes.BOOL
+    minimize_on_close = app_settings.get_minimize_on_close()
+    try:
+        if minimize_on_close:
+            app_settings.set_minimize_on_close(False)
+        if not user32.PostMessageW(hwnd, _WM_CLOSE, 0, 0):
+            return False
+        for _ in range(50):
+            if not _process_alive(pid) or _has_other_visible_window(pid, hwnd):
+                break
+            time.sleep(0.1)
+    finally:
+        if minimize_on_close:
+            app_settings.set_minimize_on_close(True)
+    # 确认框开着时一直等；关掉后再给存档关服留足时间，大存档关服可能要几分钟
+    deadline = time.monotonic() + _NO_DIALOG_EXIT_TIMEOUT_S
+    while _process_alive(pid):
+        if _has_other_visible_window(pid, hwnd):
+            deadline = time.monotonic() + _SERVER_SHUTDOWN_TIMEOUT_S
+        elif time.monotonic() > deadline:
+            return False
+        time.sleep(0.2)
+    return True
+
+
 def _terminate_process(pid: int) -> bool:
     """结束旧实例进程并等它退出；它启动的专服是独立进程，不受影响。"""
     from ctypes import wintypes
@@ -265,13 +360,14 @@ def _terminate_process(pid: int) -> bool:
 
 
 def acquire_gui_instance(
-    confirm_close_old: Callable[[int], bool] | None = None,
+    on_old_instance_busy: Callable[[int], None] | None = None,
 ) -> SingleInstance | None:
     """获取 DSTCamp GUI 实例；返回 None 表示当前进程应直接退出。
 
-    已有实例不比自己旧：让它弹出窗口，返回 None。已有实例更旧：名下有专服在跑时
-    先调用 ``confirm_close_old(专服数)`` 让用户确认，确认（或没有专服）后结束旧实例、
-    接管 Mutex 继续启动。已有实例卡死无响应时不动它，返回 None。
+    已有实例不比自己旧：让它弹出窗口，返回 None。已有实例更旧：Qt 版借它自己的
+    退出流程关闭（有专服时由它询问并存档关服）；更早的 Tk 版没有这套流程，没有专服
+    就直接结束进程，有专服则调用 ``on_old_instance_busy(专服数)`` 提示用户先手动退出。
+    旧实例退出后接管 Mutex 继续启动。已有实例卡死无响应时不动它，返回 None。
     """
     from dstools import __version__
 
@@ -290,11 +386,19 @@ def acquire_gui_instance(
     reply = _ask_existing_instance(hwnd, pid, my_code)
     if reply is None or reply >= my_code or not pid:
         return None
-    servers = _running_server_count(pid)
-    if servers and (confirm_close_old is None or not confirm_close_old(servers)):
-        return None
-    if not _terminate_process(pid):
-        return None
+    if _window_class(hwnd).startswith("Qt"):
+        closed = _close_qt_instance(hwnd, pid)
+        # 没退出又没有专服，多半是卡住了，结束掉；还有专服说明用户取消了，保持原样
+        if not closed and (_running_server_count(pid) or not _terminate_process(pid)):
+            return None
+    else:
+        servers = _running_server_count(pid)
+        if servers:
+            if on_old_instance_busy is not None:
+                on_old_instance_busy(servers)
+            return None
+        if not _terminate_process(pid):
+            return None
     for _ in range(50):
         if instance.try_acquire():
             return instance
