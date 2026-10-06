@@ -1,4 +1,4 @@
-"""dstools 端到端验证测试。"""
+"""核心纯逻辑回归测试：Lua/INI 解析、存档与角色读取、Mod 解析与 Workshop 状态、备份、内网穿透、LuaJIT 等。"""
 
 import contextlib
 import hashlib
@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from _harness import run  # noqa: E402
 
 
 from dstools.shared.lua_parser import (
@@ -40,22 +41,17 @@ from dstools.features.save_browser.reader import (
 )
 from dstools.features.save_browser.save_bundle import create_save_bundle
 from dstools.features.cluster_config.config_manager import (
-    set_cluster_option,
     backfill_cluster_defaults,
     load_shard_config,
     save_shard_config,
     set_shard_option,
     get_shard_option,
 )
-from dstools.features.save_browser.character_names import get_character_display_name
 from dstools.features.save_browser.character_icons import (
     find_mod_character_name,
     resolve_character,
 )
 from dstools.shared.app_settings import (
-    load_settings,
-    get_player_note,
-    set_player_note,
     get_minimize_on_close,
     set_minimize_on_close,
     get_cache_use_exe_dir,
@@ -85,20 +81,10 @@ from dstools.features.mod.parser import (
     split_installed_mod_counts,
     visible_config_options,
 )
-from dstools.features.cluster_config.admin_manager import (
-    read_adminlist,
-    add_admin,
-    remove_admin,
-)
 from dstools.shared.token_manager import (
     read_token,
-    write_token,
-    mask_token,
-    is_valid_token,
 )
 from dstools.features.sakura.api import find_dstcamp_tunnel, sanitize_tunnel_name
-from dstools.features.sakura.frpc import FrpcManager
-from dstools.shared.app_settings import get_sakura_token, set_sakura_token
 from dstools.shared.app_settings import get_luajit_enabled, set_luajit_enabled
 from dstools.shared.cluster_names import validate_cluster_folder_name
 from dstools.features.save_browser.cluster_copy import (
@@ -128,20 +114,9 @@ from dstools.shared.tex_convert import _has_vc2013_x86_runtime
 
 @contextlib.contextmanager
 def _isolated_settings_dir():
-    """给读写 DSTCamp 自身设置/缓存的测试用——猴子补丁
-    get_settings_dir() 指向一个临时目录，测试期间
-    load_settings()/save_settings()/cache_dir() 全部间接落到这个临时目
-    录，不会碰真实的 %APPDATA%/DSTCamp/。比"读出真实设置、测完再手动写
-    回去"更安全：就算测试中途抛异常/被打断，真实用户数据也从来没被碰
-    过，不需要指望 finally 里的恢复逻辑生效。
+    """把设置目录临时指向临时目录，测试不碰真实 %APPDATA%/DSTCamp/。
 
-    要打两个补丁，不是一个：resource_paths.py 是用
-    `from dstools.shared.app_settings import get_settings_dir` 把函数抄
-    了一份到自己的模块命名空间里，只改 app_settings 模块自己的属性，
-    resource_paths.cache_dir() 用的还是抄过去的那份旧引用——两个模块
-    各自的 `get_settings_dir` 名字都要替换掉才能让 load_settings()/
-    save_settings()（走 app_settings 自己那份）和 cache_dir()（走
-    resource_paths 抄的那份）同时生效。"""
+    resource_paths 以 ``from ... import get_settings_dir`` 持有独立引用，两个模块都要替换。"""
     import dstools.shared.app_settings as app_settings
     import dstools.shared.resource_paths as resource_paths
 
@@ -160,28 +135,12 @@ def _isolated_settings_dir():
             resource_paths.get_settings_dir = original_in_resource_paths
 
 
-def test_lua_parser_basic():
-    """测试基础 Lua 表解析。"""
-    print("=" * 60)
-    print("Test 1: Lua Parser - Basic")
-    result = parse_lua_table('return {a=1, b="hello", c=true, d=false}')
-    assert result == {"a": 1, "b": "hello", "c": True, "d": False}, f"Got: {result}"
-    print("  PASS: Basic types parsed correctly")
 
 
-def test_lua_parser_nested():
-    """测试嵌套表解析。"""
-    print("Test 2: Lua Parser - Nested Tables")
-    result = parse_lua_table("return {a={b={c=42}}, d={1, 2, 3}}")
-    assert "a" in result
-    assert result["a"]["b"]["c"] == 42
-    assert "1" in result["d"]
-    print("  PASS: Nested tables parsed correctly")
 
 
 def test_lua_parser_roundtrip():
     """测试 Lua 表往返：解析 -> 序列化 -> 再解析。"""
-    print("Test 3: Lua Parser - Round-trip")
     original = (
         "return {\n"
         '    ["workshop-123"]={\n'
@@ -205,13 +164,10 @@ def test_lua_parser_roundtrip():
     assert parsed == re_parsed, (
         f"Round-trip failed!\nOriginal parsed: {parsed}\nRe-parsed: {re_parsed}"
     )
-    print("  PASS: Round-trip preserves all data")
 
 
 def test_ini_parser():
     """用临时夹具验证 cluster.ini/server.ini，不读取用户真实存档。"""
-    print("\n" + "=" * 60)
-    print("Test 4: INI Parser")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
@@ -248,13 +204,10 @@ def test_ini_parser():
         server = parse_server_ini(server_ini)
         assert server.network["server_port"] == 10999
         assert server.shard["is_master"] is True
-    print("  PASS: INI fixtures parse and cluster.ini round-trips")
 
 
 def test_discovery():
     """用临时目录验证服务器/本地同名存档发现，不依赖本机环境。"""
-    print("\n" + "=" * 60)
-    print("Test 5: Discovery")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir) / "DoNotStarveTogether"
@@ -280,13 +233,10 @@ def test_discovery():
             [shard.name for shard in cluster.shards] == ["Master"]
             for cluster in env.clusters
         )
-    print("  PASS: server/local clusters stay separate; incomplete clusters are ignored")
 
 
 def test_save_reader():
     """用临时存档槽验证会话发现和摘要，不读取用户真实存档。"""
-    print("\n" + "=" * 60)
-    print("Test 6: Save Reader")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         session_dir = Path(tmpdir) / "Master" / "save" / "session" / "ABC123"
@@ -306,19 +256,10 @@ def test_save_reader():
         assert len(session.slots) == 1
         assert session.metadata is not None and session.metadata.day == 12
         assert get_save_summary(session) == "第12天, 春季第3天, 黄昏, [1个存档槽]"
-    print("  PASS: save session fixture and metadata summary parsed")
 
 
 def test_mod_manager():
-    """测试 Mod 管理操作——用临时目录+合成数据即可验证，不像前后其它测
-    试那样依赖真实 DST 安装。
-
-    只测项目实际用到的 5 个函数（enable_mod/list_mods/sync_mods/
-    save_mod_overrides/load_mod_overrides）——disable_mod/set_mod_
-    config/get_mod_config/remove_mod/get_mod/diff_mods 原本是给已删除
-    的 CLI 用的，manager.py 本身也已经删掉了这几个函数。"""
-    print("\n" + "=" * 60)
-    print("Test 8: Mod Manager")
+    """Mod 覆盖配置：启用、保存重读与同步。"""
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir) / "modoverrides.lua"
@@ -327,12 +268,10 @@ def test_mod_manager():
         enable_mod(overrides, "workshop-test-1")
         assert "workshop-test-1" in overrides.mods
         assert overrides.mods["workshop-test-1"].enabled
-        print("  PASS: Enable mod (adds if not present)")
 
         save_mod_overrides(overrides)
         reloaded = load_mod_overrides(tmp_path)
         assert len(list_mods(reloaded)) == 1
-        print("  PASS: Save and reload preserves data")
 
         a = ModOverrides(path=Path(tmpdir) / "a.lua")
         b = ModOverrides(path=Path(tmpdir) / "b.lua")
@@ -344,57 +283,18 @@ def test_mod_manager():
         sync_mods(a, b)
         assert "workshop-only-a" in b.mods
         assert "workshop-only-b" not in b.mods
-        print("  PASS: Mod sync works")
 
 
-def test_config_manager():
-    """测试配置管理器操作。"""
-    print("\n" + "=" * 60)
-    print("Test 9: Config Manager")
-
-    config = ClusterConfig()
-    assert config.gameplay == {}
-    assert config.network == {}
-
-    set_cluster_option(config, "GAMEPLAY", "game_mode", "endless")
-    set_cluster_option(config, "GAMEPLAY", "max_players", 10)
-    set_cluster_option(config, "NETWORK", "cluster_name", "Test Server")
-
-    assert config.gameplay["game_mode"] == "endless"
-    assert config.gameplay["max_players"] == 10
-    assert config.network["cluster_name"] == "Test Server"
-    print("  PASS: Set cluster options with type coercion")
-
-    # 测试写入-读取往返
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmp_path = Path(tmpdir) / "cluster.ini"
-        write_cluster_ini(config, tmp_path)
-
-        assert tmp_path.exists()
-        content = tmp_path.read_text()
-        assert "[GAMEPLAY]" in content
-        assert "game_mode = endless" in content
-        assert "max_players = 10" in content
-        print("  PASS: Write cluster.ini with correct format")
-
-        re_parsed = parse_cluster_ini(tmp_path)
-        assert re_parsed.gameplay["game_mode"] == "endless"
-        assert re_parsed.gameplay["max_players"] == 10
-        print("  PASS: Read back cluster.ini preserves values")
 
 
 def test_list_session_players():
     """测试单个会话目录下按玩家角色发现/解析存档。"""
-    print("\n" + "=" * 60)
-    print("Test 11: Per-Player Character Save Reader")
 
     with tempfile.TemporaryDirectory() as tmpdir:
         session_dir = Path(tmpdir) / "session" / "ABCDEF0123456789"
         session_dir.mkdir(parents=True)
 
-        # 一个正常玩家：真实存档实测过的字节结构——3 字节任意二进制前缀 +
-        # `return {...}` + 1 字节 0x01 结尾（大多数真实文件是这样；也有极
-        # 少数文件结尾会跟着更多遗留垃圾，这里只测最常见的这种）。
+        # 正常玩家：真实存档的字节结构（3 字节二进制前缀 + return {...} + 0x01 结尾）
         good_dir = session_dir / "A7GOODPLAYER"
         good_dir.mkdir()
         table_text = (
@@ -429,18 +329,12 @@ def test_list_session_players():
         assert good.hunger == 100
         assert good.age == 42
         assert good.x == 100.5 and good.z == -50.25
-        print("  PASS: Well-formed player save parsed correctly (binary-framed file)")
 
         bad = by_id["A7BADPLAYER0"]
         assert bad.parse_error, "Corrupt player should have parse_error set"
         assert bad.player_id == "A7BADPLAYER0"
-        print(
-            "  PASS: Corrupt player entry isolated (parse_error set, other player unaffected)"
-        )
 
-        # 真机在本地存档上复现过的情况：跨世界传送/进程被打断时，DST 会把
-        # 编号最新的槽位写成 0 字节占位文件，真正数据还在上一个槽位里——
-        # 必须回退去读那一个，不能因为最新槽位是空文件就整条判定解析失败。
+        # 最新槽位是 0 字节占位文件时回退读上一个槽位（跨世界传送/保存中断时真机复现）
         empty_latest_dir = session_dir / "A7EMPTYLATEST"
         empty_latest_dir.mkdir()
         (empty_latest_dir / "0000000010").write_bytes(
@@ -463,35 +357,12 @@ def test_list_session_players():
         )
         assert empty_latest.slot_number == 10
         assert empty_latest.health == 88
-        print(
-            "  PASS: Falls back to the newest non-empty slot when the latest one is a 0-byte placeholder"
-        )
 
 
-def test_character_names():
-    """测试角色 prefab 名到显示名称的查找。"""
-    print("\n" + "=" * 60)
-    print("Test 12: Character Name Lookup")
-
-    assert get_character_display_name("wilson") == "威尔逊.P.希格斯伯里"
-    assert get_character_display_name("willow", "en") == "Willow"
-    assert get_character_display_name("wolfgang") == "沃尔夫冈"
-    print("  PASS: Known vanilla characters resolve to verified display names")
-
-    # 模组自定义角色查不到，原样返回，不猜测拼凑
-    assert (
-        get_character_display_name("some_modded_character") == "some_modded_character"
-    )
-    print("  PASS: Unknown/modded prefab falls back to raw name unchanged")
 
 
 def test_character_icons():
-    """测试 character_icons.py 里模组角色名扫描 + resolve_character 回退
-    链。头像转换本身依赖真实 Steam 安装/ktech.exe，这里只覆盖不需要真机
-    环境的部分：正则扫描模组 .lua 文件找角色名声明，以及 resolve_character
-    在"官方表命中"和"哪里都找不到"两种情况下的行为。"""
-    print("\n" + "=" * 60)
-    print("Test 13: Character Icon / Mod Name Resolution")
+    """Mod 角色名扫描与 resolve_character 回退链（头像转换依赖真实 Steam/ktech，不在此测试）。"""
 
     with tempfile.TemporaryDirectory() as tmp:
         mod_folder = Path(tmp) / "fake_mod"
@@ -504,19 +375,12 @@ def test_character_icons():
         )
 
         assert find_mod_character_name(mod_folder, "testchar") == "测试角色"
-        print(
-            "  PASS: Mod-declared STRINGS.CHARACTER_NAMES.<prefab> found via regex scan"
-        )
 
         assert find_mod_character_name(mod_folder, "no_such_prefab") is None
-        print("  PASS: Prefab not declared by this mod returns None (no guessing)")
 
     # 官方角色表命中：不需要 mod_overrides_path，直接走官方分支。
     name, _icon = resolve_character("wilson", None)
     assert name == "威尔逊.P.希格斯伯里"
-    print(
-        "  PASS: resolve_character resolves known vanilla prefab without touching mods"
-    )
 
     # 哪里都找不到（未知 prefab + 不存在的 modoverrides 路径）：原样回退，
     # 不抛异常、不给头像。
@@ -524,7 +388,6 @@ def test_character_icons():
         "totally_unknown_prefab", Path(tmp) / "does_not_exist.lua"
     )
     assert name == "totally_unknown_prefab" and icon is None
-    print("  PASS: Unresolvable prefab falls back to raw name with no icon")
 
     # 模组脚本加密、读不出中文名，但带了头像：不能把头像跟着名字一起丢掉。
     # （真机复现：Cluster_New 里 thsj_peiling / mcw 两个角色。）
@@ -546,7 +409,6 @@ def test_character_icons():
             patch.object(character_icons, "get_mod_avatar_path", return_value=fake_icon):
         name, icon = resolve_character("encrypted_char", overrides_file)
     assert name == "encrypted_char" and icon == fake_icon, (name, icon)
-    print("  PASS: Icon kept when the mod's character name cannot be read")
 
     # 模组后来被停用、角色数据还在的存档：停用的模组也要能给出头像。
     _Entry.enabled = False
@@ -558,14 +420,11 @@ def test_character_icons():
             patch.object(character_icons, "get_mod_avatar_path", return_value=fake_icon):
         name, icon = resolve_character("disabled_mod_char", overrides_file)
     assert name == "disabled_mod_char" and icon == fake_icon, (name, icon)
-    print("  PASS: Icon still found from a disabled mod listed in modoverrides")
 
 
 def test_modinfo_reader():
     """用手写的合成 mod 数据测试 modinfo.lua 解析逻辑（parser.py）——这段
     逻辑此前完全没有功能测试覆盖，只在程序启动导入模块时被间接跑到。"""
-    print("\n" + "=" * 60)
-    print("Test 14: Modinfo Parsing")
 
     with tempfile.TemporaryDirectory() as tmp:
         mod_folder = Path(tmp) / "123456"
@@ -603,33 +462,22 @@ def test_modinfo_reader():
             and info.version == "1.0.0"
         )
         assert info.workshop_id == "workshop-123456"
-        print(
-            "  PASS: Top-level fields (name/author/version/workshop_id) parsed correctly"
-        )
 
         assert len(info.config_options) == 1
         opt = info.config_options[0]
         assert opt.name == "difficulty" and opt.label == "Difficulty"
         assert [c["data"] for c in opt.choices] == ["easy", "hard"]
-        print("  PASS: configuration_options choices parsed correctly")
 
         # 不存在 modinfo.lua 的文件夹：明确返回 None，不抛异常。
         assert parse_modinfo(Path(tmp) / "does_not_exist") is None
-        print("  PASS: Missing modinfo.lua returns None")
 
-        # client_only_mod=true 但同时 server_only_mod=true（DontStarveLuaJIT2
-        # 的真实写法，作者确认过：饥荒引擎本身不读 server_only_mod，是给开
-        # 服工具用的约定，表示"仍然当服务器 mod 处理，配置可编辑"）——不
-        # 应该被判定成 client_only，见 ModInfo.client_only 的说明。
+        # client_only_mod 同时 server_only_mod（DontStarveLuaJIT2 的写法）仍按服务器 Mod 处理
         local_folder = Path(tmp) / "654321"
         local_folder.mkdir()
         (local_folder / "modinfo.lua").write_text(
             'name = "Local Only Mod"\nclient_only_mod = true\n', encoding="utf-8"
         )
         assert parse_modinfo(local_folder).client_only is True
-        print(
-            "  PASS: plain client_only_mod=true (no server_only_mod) stays client_only"
-        )
 
         server_folder = Path(tmp) / "654322"
         server_folder.mkdir()
@@ -638,17 +486,8 @@ def test_modinfo_reader():
             encoding="utf-8",
         )
         assert parse_modinfo(server_folder).client_only is False
-        print(
-            "  PASS: server_only_mod=true overrides client_only_mod, treated as a server mod"
-        )
 
-        # 单个配置项自己标 client = true（真实案例：某模组把"服务端设置"/
-        # "客户端设置"分成两组，后者的每个选项都带这个字段）——不是引擎
-        # 认的字段（真机对照过 modconfigurationscreen.lua 源码，压根没有
-        # 引用），是给"开服工具"这类第三方管理软件的约定：这类设置只影
-        # 响玩家自己客户端本地表现（快捷键、UI 位置），对着服务端存档的
-        # modoverrides.lua 改了没有任何实际效果，本地服务器工具应该隐藏
-        # 掉，见 ModConfigDialog 里 visible_config_options() 的调用。
+        # 选项自带 client = true 的纯客户端设置应被隐藏（见 visible_config_options）
         client_folder = Path(tmp) / "654323"
         client_folder.mkdir()
         (client_folder / "modinfo.lua").write_text(
@@ -667,23 +506,14 @@ def test_modinfo_reader():
         by_name = {o.name: o for o in info.config_options}
         assert by_name["server_opt"].client is False
         assert by_name["client_opt"].client is True
-        print("  PASS: 单个配置项的 client = true 字段解析正确")
 
         visible = visible_config_options(info.config_options)
         visible_names = [o.name for o in visible]
         assert visible_names == ["", "server_opt"], (
             f"应该只剩服务端标题+选项，客户端标题和选项整组一起隐藏: {visible_names}"
         )
-        print(
-            "  PASS: visible_config_options() 过滤纯客户端选项，且连带隐藏底下选项全被过滤的分组标题"
-        )
 
-        # 共享库 mod "Configs Extended"（创意工坊 3317960157）的约定字段
-        # ——真机读过它的源码确认最终仍然写回同一份 modoverrides.lua，只
-        # 是值的形状不是固定选项，ModConfigDialog 改用专门的编辑控件
-        # （见 is_set_config/is_array_config/is_text_config 字段上的说
-        # 明）。这里只测字段解析，控件层面的读写用真实 mod 文件
-        # （3686724289）人工验证过。
+        # Configs Extended（3317960157）约定字段的解析，控件读写已用真实 Mod（3686724289）人工验证
         configs_extended_folder = Path(tmp) / "654324"
         configs_extended_folder.mkdir()
         (configs_extended_folder / "modinfo.lua").write_text(
@@ -709,17 +539,8 @@ def test_modinfo_reader():
         assert by_name["priority_list"].is_array_config is True
         assert by_name["welcome_msg"].is_text_config is True
         assert by_name["starting_items"].is_dictionary_config is True
-        print(
-            "  PASS: Configs Extended 风格的 is_set_config/is_array_config/is_text_config/is_dictionary_config 解析正确"
-        )
 
-        # is_dictionary_config 的真实存储形状是普通 Lua 表、键值都是字符
-        # 串（跟 is_set_config 值固定为 true 不同）——之前 ModConfigOption
-        # 完全没有这个字段，ModConfigDialog 会把它当成普通下拉框选项处
-        # 理（choices 为空、找不到默认值），导致这种配置项在开服工具里
-        # 根本无法编辑。这里验证 serialize_lua_table/parse_lua_file 这条
-        # 通用 Lua 表读写路径本来就能正确处理 dict[str,str] 值（不需要为
-        # 字典类型专门改序列化逻辑，真正缺的只是 GUI 编辑器和字段识别）。
+        # is_dictionary_config 的值是字符串键值表，通用 Lua 读写路径需能原样往返
         overrides_path = Path(tmp) / "modoverrides.lua"
         mod_overrides = ModOverrides(path=overrides_path)
         mod_overrides.mods["workshop-654324"] = ModEntry(
@@ -734,18 +555,8 @@ def test_modinfo_reader():
         assert reloaded.mods["workshop-654324"].configuration_options[
             "starting_items"
         ] == {"草": "6个", "树枝": "6个", "燧石": "2个"}
-        print(
-            "  PASS: is_dictionary_config 的字符串键值对配置项能正确写入/读回 modoverrides.lua"
-        )
 
-        # 真机复现过的坑（数据丢失）：is_array_config 的值不管是来自
-        # modinfo.lua 的 default 还是游戏已经存进 modoverrides.lua 的存
-        # 量数据，这个项目的 Lua 解析器都会解析成 "1"/"2"/"3"... 这种字
-        # 符串数字 key 的 dict（Lua 数组和普通表是同一种数据结构，解析
-        # 器忠实保留了这一点），不是原生 Python list——ModConfigDialog.
-        # _raw_value_to_lines() 之前只认原生 list，任何真实存过的数组都
-        # 会被当成"形状不对"兜底成空列表，编辑器显示成空的，点应用还会
-        # 把这份假的空列表覆盖写回文件，真正清空原有数据。
+        # 坑：数组配置被解析成 "1"/"2"... 键的 dict 而不是 list，编辑器必须识别，否则会把原有数据清空
         from dstools.qt.mod_config_dialog import ModConfigDialog
 
         parsed_array_shape = {
@@ -763,15 +574,10 @@ def test_modinfo_reader():
             "torch",
             "backpack",
         ]
-        print(
-            '  PASS: is_array_config 识别 Lua 解析器实际产出的"数组形状 dict"，不再把存量数据当成空列表'
-        )
 
 
 def test_workshop_content_directory_filter():
     """Steam UGC 内容目录只接受标准 PublishedFileId_t 文件夹名。"""
-    print("\n" + "=" * 60)
-    print("Test 14b: Workshop Content Directory Filter")
 
     assert is_workshop_content_id("3485293431")
     assert is_workshop_content_id("18446744073709551615")
@@ -785,20 +591,17 @@ def test_workshop_content_directory_filter():
         "18446744073709551616",
     ):
         assert not is_workshop_content_id(invalid), invalid
-    print("  PASS: 仅接受非零 uint64 的规范 ASCII 十进制目录名，不限制十位")
 
     assert not is_custom_steam_mod_id("workshop-3485293431")
     assert not is_custom_steam_mod_id("workshop-18446744073709551615")
     for custom in ("CommonModSets", "my_local_mod", "workshop-demo", "workshop-00123"):
         assert is_custom_steam_mod_id(custom), custom
-    print("  PASS: 自定义筛选只排除标准 workshop-<PublishedFileId_t> 标识")
 
     from dstools.models import Platform
 
     sample_ids = ["workshop-1", "workshop-2", "CommonModSets"]
     assert split_installed_mod_counts(sample_ids, Platform.STEAM) == (2, 1)
     assert split_installed_mod_counts(sample_ids, Platform.WEGAME) == (3, 0)
-    print("  PASS: Steam 拆分普通/自定义计数，WeGame 不误判无前缀 ID")
 
     import dstools.features.mod.parser as mod_parser
 
@@ -838,9 +641,6 @@ def test_workshop_content_directory_filter():
         finally:
             mod_parser.find_workshop_dir = original_workshop
             mod_parser.find_game_mods_dir = original_game_mods
-    print(
-        "  PASS: content/322330 过滤备份目录，纯数字 V1 ID 能定位到 workshop-ID 运行目录"
-    )
 
     # 没安装客户端时，专服自己的 mods 绝不能回退成客户端源目录，否则
     # “创建软连接”会得到源=目标的古怪提示，甚至存在误操作风险。
@@ -869,93 +669,17 @@ def test_workshop_content_directory_filter():
             mod_parser.find_all_steam_libraries = original_libraries
             app_settings.get_steam_mods_path = original_override
             app_settings.get_dedicated_server_path = original_server_path
-    print("  PASS: 未安装客户端时不把专服 mods 误识别为软连接源目录")
 
 
-def test_admin_manager():
-    """测试 adminlist.txt 读写往返（admin_manager.py）。"""
-    from dstools.features.cluster_config.form_logic import is_valid_dst_user_id as _is_valid_dst_user_id
-
-    print("\n" + "=" * 60)
-    print("Test 15: Admin List Manager")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "adminlist.txt"
-
-        assert read_adminlist(path) == []
-        print("  PASS: Missing adminlist.txt reads as empty list")
-
-        assert _is_valid_dst_user_id("KU_aaaaaaaa")
-        assert _is_valid_dst_user_id("KU_D_MGSTis")
-        assert _is_valid_dst_user_id("OU_76561198000000000")
-        assert not _is_valid_dst_user_id("ou_76561198000000000")
-        assert not _is_valid_dst_user_id("XX_aaaaaaaa")
-        assert _is_valid_dst_user_id("OU_bad-id")
-        print("  PASS: KU_ and OU_ prefixes accepted; other prefixes rejected")
-
-        assert add_admin(path, "KU_aaaaaaaa") is True
-        assert add_admin(path, "OU_76561198000000000") is True
-        assert add_admin(path, "KU_bbbbbbbb") is True
-        assert add_admin(path, "KU_aaaaaaaa") is False, (
-            "Adding an existing admin should be a no-op"
-        )
-        assert read_adminlist(path) == [
-            "KU_aaaaaaaa", "OU_76561198000000000", "KU_bbbbbbbb",
-        ]
-        print("  PASS: add_admin appends new IDs and rejects duplicates")
-
-        assert remove_admin(path, "KU_aaaaaaaa") is True
-        assert remove_admin(path, "KU_aaaaaaaa") is False, (
-            "Removing an absent admin should be a no-op"
-        )
-        assert read_adminlist(path) == ["OU_76561198000000000", "KU_bbbbbbbb"]
-        print("  PASS: remove_admin removes an entry and is idempotent")
 
 
-def test_token_manager():
-    """测试 cluster_token.txt 读写往返及脱敏显示（token_manager.py）。"""
-    print("\n" + "=" * 60)
-    print("Test 16: Token Manager")
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "cluster_token.txt"
-
-        assert read_token(path) == ""
-        print("  PASS: Missing cluster_token.txt reads as empty string")
-
-        token = "pds-g^KU_1234567890abcdefghijklmnop...c0w="
-        write_token(path, token)
-        assert read_token(path) == token
-        print("  PASS: write_token/read_token round-trips exactly")
-
-        assert is_valid_token(token) is True
-        assert is_valid_token("") is False and is_valid_token("short") is False
-        print(
-            "  PASS: is_valid_token distinguishes real tokens from empty/short strings"
-        )
-
-        masked = mask_token(token)
-        assert (
-            masked.startswith(token[:8])
-            and masked.endswith(token[-8:])
-            and "..." in masked
-        )
-        assert mask_token("short") == "*" * len("short")
-        print(
-            "  PASS: mask_token shows only the ends of a real token, fully masks short ones"
-        )
 
 
 def test_cluster_copy():
     """测试"复制为服务器存档"逻辑（cluster_copy.py）：名称校验、默认名建
     议、以及实际的文件夹复制。"""
-    print("\n" + "=" * 60)
-    print("Test 18: Cluster Copy (local save -> server save)")
 
-    # 应用户要求收紧成白名单（英文字母/数字/下划线，参照 Linux 主机名
-    # 那种严格程度）——中文/空格/连字符/文件系统特殊符号统统拒绝，
-    # "."/".."这两个曾经单独判的保留名现在也落在同一条 invalid_chars 里
-    # （纯句点不可能匹配这个白名单，不需要再单独判一次）。
+    # 白名单：只允许英文字母、数字、下划线
     assert validate_cluster_folder_name("MyServer") is None
     assert validate_cluster_folder_name("Cluster_5") is None
     assert validate_cluster_folder_name("") == "empty"
@@ -965,10 +689,6 @@ def test_cluster_copy():
     assert validate_cluster_folder_name("我的存档") == "invalid_chars"
     assert validate_cluster_folder_name("my server") == "invalid_chars"
     assert validate_cluster_folder_name("my-server") == "invalid_chars"
-    print(
-        "  PASS: validate_cluster_folder_name only accepts English letters/digits/underscore, "
-        "rejects Chinese/spaces/hyphens/other punctuation (no Cluster_<N> format required)"
-    )
 
     with tempfile.TemporaryDirectory() as tmp:
         klei_root = Path(tmp) / "klei_root"
@@ -977,10 +697,6 @@ def test_cluster_copy():
 
         assert suggest_new_cluster_name(klei_root, "Cluster_1") == "Cluster_2"
         assert suggest_new_cluster_name(klei_root, "MyLocalSave") == "MyLocalSave"
-        print(
-            "  PASS: suggest_new_cluster_name falls back to Cluster_N only when the "
-            "preferred (source) name is already taken"
-        )
 
         # 造一个假的本地 cluster 文件夹（cluster.ini + 一个假世界子目录），
         # 复制到 klei_root 下一个新名字。
@@ -1006,26 +722,14 @@ def test_cluster_copy():
             "源文件夹必须保持不变"
         )
         assert len(logs) > 0
-        print(
-            "  PASS: copy_local_cluster_to_server copies the whole folder (files + shard "
-            "subfolders) and leaves the source untouched"
-        )
 
         try:
             copy_local_cluster_to_server(local_cluster, klei_root, "Cluster_2")
             assert False, "Copying onto an already-existing destination must raise"
         except FileExistsError:
-            print(
-                "  PASS: copying onto an existing destination raises instead of overwriting"
-            )
+            pass
 
-        # 真机反馈过的真实 bug：源本地存档偶尔会带一个已经存在、但内容
-        # 是空的 cluster_token.txt（比如以前手动建过又清空过）——旧逻辑
-        # 只判断"目标文件存不存在"，复制过去后 exists() 为真，就误判成
-        # "已经有 token 了"跳过自动填充，全局令牌池明明有值，新存档却
-        # 还是空 token，启动时报"没有设置令牌"。改成按 is_valid_token()
-        # 判断"内容像不像一个真令牌"，这里验证空文件也能被正确识别为
-        # "无效"，从全局令牌池里正常补上。
+        # 源存档带空的 cluster_token.txt 时也要从全局令牌池补上（按 is_valid_token 判断，不看文件是否存在）
         original_pool = get_global_tokens()
         try:
             fake_token = "x" * 30
@@ -1035,43 +739,14 @@ def test_cluster_copy():
             assert read_token(dest3 / "cluster_token.txt") == fake_token, (
                 "源存档带的是空 cluster_token.txt，应该被判定为无效并从全局令牌池自动补上"
             )
-            print(
-                "  PASS: copy_local_cluster_to_server treats an existing-but-empty "
-                "cluster_token.txt as invalid and still auto-fills from the global token pool"
-            )
         finally:
             set_global_tokens(original_pool)
 
 
-def test_player_notes():
-    """测试按玩家存储备注（app_settings.py）。"""
-    print("\n" + "=" * 60)
-    print("Test 19: Player Notes")
-
-    with _isolated_settings_dir():
-        assert get_player_note("TEST_NONEXISTENT_ID") == "", (
-            "Unset note should be empty string"
-        )
-        print("  PASS: Unset player note defaults to empty string")
-
-        set_player_note("TEST_PLAYER_A", "老王的存档")
-        assert get_player_note("TEST_PLAYER_A") == "老王的存档"
-        print("  PASS: Set/get player note round-trips")
-
-        set_player_note("TEST_PLAYER_A", "")
-        assert get_player_note("TEST_PLAYER_A") == "", (
-            "Clearing a note should remove it, not leave an empty entry"
-        )
-        assert "TEST_PLAYER_A" not in load_settings().get("player_notes", {})
-        print(
-            "  PASS: Clearing a note removes the entry instead of leaving a blank one"
-        )
 
 
 def test_app_settings_toggles():
     """验证持久化开关，以及缓存、数据和安全目录的边界。"""
-    print("\n" + "=" * 60)
-    print("Test 20: App Settings Toggles")
 
     with _isolated_settings_dir():
         for get_fn, set_fn, default in (
@@ -1083,9 +758,6 @@ def test_app_settings_toggles():
             assert get_fn() is not default
             set_fn(default)
             assert get_fn() is default
-        print(
-            "  PASS: minimize_on_close/backup_auto_enabled 默认值+读写往返都正常"
-        )
 
         from dstools.shared.app_settings import get_settings_dir
         from unittest.mock import patch
@@ -1119,7 +791,6 @@ def test_app_settings_toggles():
         set_cache_dir_override(None)
         assert get_cache_dir_override() is None
         assert cache_root_dir() == root / "cache"
-        print("  PASS: 自定义缓存目录可持久化，且拒绝中文路径、相对路径")
 
         legacy_background = cache_dir("background")
         legacy_background.mkdir(parents=True)
@@ -1139,13 +810,8 @@ def test_app_settings_toggles():
             stable_tool = runtime_tool_path("frpc/frpc.exe")
         assert stable_tool.parent.parent.parent == root / "data" / "runtime_tools"
         assert stable_tool.read_bytes() == b"frpc"
-        print("  PASS: 缓存、持久数据、安全材料和长驻工具使用独立目录")
 
-        # 单文件版打包的是 .gz（PyInstaller 每次启动都无条件把 tools/
-        # 解压到全新临时目录，裸 exe——尤其是 frp 系列——是"没用到功能也
-        # 每次启动被杀软隔离"的诱因，见 resource_paths.runtime_tool_path()
-        # 顶部注释）；这里真实用 gzip 压缩再解压，不 mock，验证内容一致
-        # 且落到同一套稳定哈希缓存目录，第二次调用命中缓存不重复解压。
+        # 单文件版的 .gz 工具：真实压缩再解压，内容一致且落到哈希缓存目录，第二次命中缓存
         import gzip
 
         gz_bundled = root / "bundle" / "tools" / "frpc-gz" / "frpc.exe.gz"
@@ -1163,15 +829,8 @@ def test_app_settings_toggles():
         assert gz_stable_tool.read_bytes() == b"frpc-compressed-payload"
         assert gz_stable_tool_again == gz_stable_tool
         assert gz_stable_tool_again.stat().st_mtime_ns == mtime_first
-        print("  PASS: 长驻工具优先解压 .gz 压缩包，命中哈希缓存不重复落地")
 
-        # 回归锁定（用户实测复现：樱花 frpc 客户端提示"未找到客户端文
-        # 件"）：源码模式（sys.frozen=False）下仓库 tools/ 目录里如果只
-        # 有 .gz、没有裸 exe（frpc.exe/sakura-frpc.exe 已经全部替换成压
-        # 缩包），之前"源码版/ZIP 版直接返回裸文件路径，不走 .gz 回退"
-        # 那条分支会直接把不存在的裸路径原样返回，被上层判定成"客户端
-        # 文件缺失"。这里模拟源码模式下只有 .gz、没有裸文件的真实场
-        # 景，断言依然能正确解压落地到稳定缓存目录。
+        # 源码模式下仓库只有 .gz 没有裸文件时也要解压落地（曾因此误报"客户端文件缺失"）
         source_mode_tools = root / "source_mode_tools"
         gz_only = source_mode_tools / "frpc-src" / "frpc.exe.gz"
         gz_only.parent.mkdir(parents=True)
@@ -1186,13 +845,10 @@ def test_app_settings_toggles():
             source_mode_tool = runtime_tool_path("frpc-src/frpc.exe")
         assert source_mode_tool.read_bytes() == b"source-mode-frpc-payload"
         assert source_mode_tool.parent.parent.parent == root / "data" / "runtime_tools"
-        print("  PASS: 源码模式下工具目录只有 .gz、没有裸文件时也能正确解压落地")
 
 
 def test_cache_path_user_guidance():
     """缓存路径含非 ASCII 字符时启动即提醒；重启走等待旧实例退出的辅助进程。"""
-    print("\n" + "=" * 60)
-    print("Test 20b: Cache Path User Guidance")
     import subprocess
     from types import SimpleNamespace
     from unittest.mock import Mock, patch
@@ -1218,7 +874,6 @@ def test_cache_path_user_guidance():
     ):
         qt_window.MainWindow.check_cache_dir_on_startup(dummy)
     ask_choice.assert_not_called()
-    print("  PASS: 非 ASCII 缓存路径启动时提醒并可直接打开设置，ASCII 路径不打扰")
 
     import scripts.run_gui as run_gui
 
@@ -1242,13 +897,10 @@ def test_cache_path_user_guidance():
     assert "--restart-helper" in command and str(os.getpid()) in command
     assert start_helper.call_args.kwargs["env"]["PYINSTALLER_RESET_ENVIRONMENT"] == "1"
     dummy.quit_app.assert_called_once_with()
-    print("  PASS: 重启拉起辅助进程（等待旧实例退出），再退出当前实例")
 
 
 def test_mod_sync_junction():
     """验证 Mod 目录联接的直接替换、解除复制和源目标保护。"""
-    print("\n" + "=" * 60)
-    print("Test 21: Mod Sync Junction")
 
     from unittest.mock import patch
 
@@ -1269,11 +921,9 @@ def test_mod_sync_junction():
         assert (target / "modinfo.lua").read_text() == "name = 'test'", (
             "透过联接应该能读到 src 里的真实内容"
         )
-        print("  PASS: first call creates a junction pointing at the client mod folder")
 
         _ensure_junction(target, src)
         assert os.path.isjunction(target), "重复调用应该保持联接，不报错"
-        print("  PASS: calling again on an already-correct junction is a no-op")
 
         # 已有真实文件夹按新规则直接删除，不再保留长期备份。
         real_target = Path(tmp) / "server_mods" / "workshop-456"
@@ -1295,9 +945,6 @@ def test_mod_sync_junction():
         )
         assert replaced is True
         assert not list(real_target.parent.glob("mods.dstcamp-backup-*"))
-        print(
-            "  PASS: an existing real folder is deleted without backup and replaced by a junction"
-        )
 
         # 用户确认的是永久删除；因此 mklink 后续失败时不会偷偷恢复或创建
         # 长期备份，但客户端源目录始终不得受影响。
@@ -1323,9 +970,6 @@ def test_mod_sync_junction():
                 raise AssertionError("mklink 失败时应该抛出异常")
         assert not os.path.lexists(rollback_target)
         assert rollback_src.is_dir()
-        print(
-            "  PASS: failed junction creation does not restore a deleted server folder"
-        )
 
         # 源目录和目标目录相同的场景必须在真正改动前拒绝。
         same_root = Path(tmp) / "same_install"
@@ -1333,7 +977,6 @@ def test_mod_sync_junction():
         same_target.mkdir(parents=True)
         plan = plan_mod_sync(same_root, same_target)
         assert plan.invalid_reason and not plan.needs_confirm_delete
-        print("  PASS: same source and target are rejected before replacement")
 
         # 解除整目录联接时要完整复制客户端 mods，而不是恢复历史备份或只
         # 迁移某一类 V1 目录。
@@ -1361,7 +1004,6 @@ def test_mod_sync_junction():
         ) == "client copy"
         assert (server_mods / "workshop-987654321" / "modinfo.lua").is_file()
         assert set(detached.copied_entries) == {"client-root.txt", "workshop-987654321"}
-        print("  PASS: removing the junction copies the complete client mods folder")
 
         # 复制阶段失败时不能先删联接；这是解除操作最重要的失败安全边界。
         failed_install = Path(tmp) / "failed_dedicated"
@@ -1378,13 +1020,10 @@ def test_mod_sync_junction():
         ):
             failed = detach_mod_sync_junction(failed_install, client_mods)
         assert failed.errors and os.path.isjunction(failed_target)
-        print("  PASS: a failed copy leaves the existing junction untouched")
 
 
 def test_theme_set_theme():
     """每套主题必须提供与默认主题完全相同的颜色/字号键，切到任一主题都不能 KeyError。"""
-    print("\n" + "=" * 60)
-    print("Test 22: Theme Palettes Complete")
 
     from dstools.shared import palettes
 
@@ -1393,13 +1032,10 @@ def test_theme_set_theme():
     for name in palettes.THEME_NAMES:
         keys = set(palettes.THEMES[name])
         assert keys == base, f"{name}: 缺 {base - keys}，多 {keys - base}"
-    print(f"  PASS: {len(palettes.THEME_NAMES)} 套主题的键与默认主题一致")
 
 
 def test_world_reader_and_view_model():
     """世界 Lua 的读取状态、原子保存和 UI 无关视图模型必须可独立验证。"""
-    print("\n" + "=" * 60)
-    print("Test 23: World Reader and View Model")
 
     from dstools.features.world.reader import (
         LeveldataStatus,
@@ -1444,15 +1080,10 @@ def test_world_reader_and_view_model():
     rows = [row for items in view.rules_by_category.values() for row in items]
     day = next(row for row in rows if row.key == "day")
     assert isinstance(day, WorldDisplayOverride) and day.persisted is False
-    print(
-        "  PASS: world I/O preserves metadata, reports errors, and uses explicit display defaults"
-    )
 
 
 def test_world_catalog_layers_are_isolated():
     """原版目录与猪镇 Mod 覆盖层必须分离。"""
-    print("\n" + "=" * 60)
-    print("Test 25: World Catalog Layer Isolation")
 
     from dstools.features.world.catalog_resolver import resolve_vanilla_settings
     from dstools.features.world.categories import FOREST_RULES_DICT, get_setting_info
@@ -1468,15 +1099,10 @@ def test_world_catalog_layers_are_isolated():
     assert get_setting_info("butterfly", "porkland")[0] == "creatures"
     assert get_setting_info("season_start", "porkland")[0] == "other"
     assert get_setting_info("regrowth", "porkland")[0] == "other"
-    print(
-        "  PASS: vanilla catalog remains unchanged and Porkland uses an isolated whitelist overlay"
-    )
 
 
 def test_world_creation_plan_and_atomic_writer():
     """创建层生成双世界目录，拒绝覆盖并可回读。"""
-    print("\n" + "=" * 60)
-    print("Test 28: World Creation Plan and Writer")
     from dstools.features.world.creation import (
         WorldCreationPlan,
         WorldShardPlan,
@@ -1507,15 +1133,10 @@ def test_world_creation_plan_and_atomic_writer():
             pass
         else:
             raise AssertionError("existing cluster must not be overwritten")
-    print("  PASS: atomic creation and read-back validation")
 
 
 def test_world_categories_bilingual():
-    """测试 categories.py 的 get_setting_info()/get_categories() 会根据当
-    前 i18n 语言返回中/英文名——对应修复过的 bug"世界设置切英文不生
-    效"。"""
-    print("\n" + "=" * 60)
-    print("Test 23: World Categories Bilingual")
+    """世界设置分类与名称随界面语言切换中英文。"""
 
     from dstools.features.world.categories import get_setting_info, get_categories
     from dstools.i18n import get_lang, set_lang
@@ -1527,36 +1148,22 @@ def test_world_categories_bilingual():
         assert (cat, is_rule, name) == ("global", True, "昼夜选项")
         categories = dict(get_categories("forest", "rules"))
         assert categories["global"] == "全局"
-        print("  PASS: zh returns Chinese names")
 
         set_lang("en")
         cat, is_rule, name = get_setting_info("day", "forest")
         assert (cat, is_rule, name) == ("global", True, "Day/Night Cycle")
         categories = dict(get_categories("forest", "rules"))
         assert categories["global"] == "General"
-        print("  PASS: en returns English names")
 
         # 未知 key 兜底：分类 "other"，名字原样回退成 key 本身。
         cat, is_rule, name = get_setting_info("totally_unknown_key_xyz", "forest")
         assert (cat, is_rule, name) == ("other", False, "totally_unknown_key_xyz")
-        print('  PASS: unknown key falls back to ("other", False, key)')
     finally:
         set_lang(original_lang)
 
 
 def test_world_ocean_frequency_labels():
-    """真机反馈过的真实 bug："世界设置→世界生成(仅查看)→敌对生物以及
-    刷新点"里"海草"(ocean_waterplant)这一项的取值直接显示成了原始字
-    符串 "ocean_default"，没翻译成中文。查过游戏自己的
-    scripts/map/customize.lua 源码确认：ocean_waterplant/ocean_seastack
-    这两个字段用的是"ocean_"+普通频率词的取值集合（never/rare/
-    uncommon/default/often/mostly/always/insane 各自加上 "ocean_" 前
-    缀），显示文案跟不带前缀的版本完全一样（源码里是
-    `{text = data.text, data = "ocean_"..data.data}`，文案字段原样复
-    用）。之前 _VALUE_LABELS 只补了 "ocean_uncommon" 一
-    个，漏了其它 7 档，包括这次实际触发问题的 "ocean_default"。"""
-    print("\n" + "=" * 60)
-    print("Test 38: World Ocean Frequency Value Labels")
+    """ocean_ 前缀的世界生成取值每一档都要有中文文案（"海草"曾显示原始字符串 ocean_default）。"""
 
     from dstools.features.world.value_labels import get_value_label
 
@@ -1574,26 +1181,12 @@ def test_world_ocean_frequency_labels():
         got = get_value_label("ocean_waterplant", raw_value)
         assert got == zh_label, f"{raw_value} 应该翻译成 {zh_label!r}，实际是 {got!r}"
         assert got != raw_value, f"{raw_value} 不应该原样透出未翻译的原始字符串"
-    print(
-        "  PASS: get_value_label() 正确翻译全部 8 档 ocean_ 前缀频率取值，不再原样透出原始字符串"
-    )
 
 
 def test_mod_resolve_cache():
-    """测试 cache.py 里给 resolve_full_modinfo() 结果做的磁盘持久化缓存
-    ——加这层缓存是因为 Lua 沙箱全量解析之前只在内存里缓存一份，每次重
-    启应用都要为没变过的 mod 重新跑一遍（真机反馈过"启动要卡 3 秒"，
-    profile 出来这是大头之一）。这里只测纯数据逻辑（mtime 失效判断 +
-    JSON 往返，含 ModConfigOption 这个 dataclass 的序列化/反序列化），
-    不需要真的跑一遍 Lua 沙箱。"""
-    print("\n" + "=" * 60)
-    print("Test 25: Mod Resolve Cache")
+    """resolve_full_modinfo() 结果的磁盘缓存：mtime 失效、格式版本校验与 ModConfigOption 的 JSON 往返。"""
 
-    # _isolated_settings_dir() 必须在 import mod.cache 之前进
-    # 入——那个模块的 _CACHE_DIR 是 import 时算好的模块级常量
-    # （cache_dir("mod_full_resolve")），只有在补丁生效期间第一次
-    # import 才能让它落在隔离的临时目录里，不写真实的
-    # %APPDATA%/DSTCamp/cache/。
+    # 必须在导入 mod.cache 之前进入隔离目录：其 _CACHE_DIR 在导入时就已确定
     with _isolated_settings_dir():
         from dstools.features.mod.cache import load_cached_result, save_result
         from dstools.features.mod.parser import ModConfigOption
@@ -1604,7 +1197,6 @@ def test_mod_resolve_cache():
             modinfo_path.write_text("name = 'x'", encoding="utf-8")
 
             assert load_cached_result(workshop_id, modinfo_path) is None
-            print("  PASS: no cache yet returns None")
 
             result = {
                 "name": "测试Mod",
@@ -1617,25 +1209,14 @@ def test_mod_resolve_cache():
             assert cached is not None and cached["name"] == "测试Mod"
             assert isinstance(cached["config_options"][0], ModConfigOption)
             assert cached["config_options"][0].name == "opt1"
-            print(
-                "  PASS: save/load round-trips config_options as real ModConfigOption objects"
-            )
 
             # modinfo.lua 比缓存新——缓存失效，返回 None，跟 icons.py
             # 图标缓存同一套 mtime 判断逻辑。
             future = time.time() + 100
             os.utime(modinfo_path, (future, future))
             assert load_cached_result(workshop_id, modinfo_path) is None
-            print("  PASS: cache invalidated once modinfo.lua's mtime moves past it")
 
-            # 真机复现过的坑：缓存文件没有 _cache_format_version 字段
-            # （模拟 ModConfigOption 加 client/is_set_config 这几个新字
-            # 段之前生成的旧缓存）——mtime 没过期不代表内容对当前代码仍
-            # 然正确，缺这层版本号判断的话旧缓存会被当成"仍然新鲜"直接
-            # 复用，新加的字段永远读不到（表现为"明明修了 bug，但界面还
-            # 是老样子"）。这里手工写一份没有版本号的旧格式缓存，mtime
-            # 故意设置得比 modinfo.lua 更新，确保测的是版本号判断本身，
-            # 不是又测了一遍上面的 mtime 判断。
+            # 缺 _cache_format_version 的旧缓存即使 mtime 未过期也必须失效（mtime 故意设得更新，只测版本判断）
             from dstools.features.mod.cache import _cache_path
 
             stale_path = _cache_path(workshop_id)
@@ -1655,15 +1236,10 @@ def test_mod_resolve_cache():
             assert load_cached_result(workshop_id, modinfo_path) is None, (
                 "没有 _cache_format_version 的旧格式缓存应该被当成失效"
             )
-            print(
-                "  PASS: 没有 _cache_format_version 的旧格式缓存被判定失效，强制重新走一遍 sandbox"
-            )
 
 
 def test_mod_version_resolution():
     """版本号必须来自完整成功执行后的最终值，失败时不采用中间值。"""
-    print("\n" + "=" * 60)
-    print("Test 25b: Trusted Mod Version Resolution")
 
     from dstools.features.mod.local_version import (
         VERSION_CONFIRMED,
@@ -1697,18 +1273,15 @@ def test_mod_version_resolution():
     assert normalized.version_compatible == "1.2"
     assert normalized.compatible_status == VERSION_CONFIRMED
     assert normalized.source == "sandbox"
-    print("  PASS: 同一次完整执行取得最终名称、版本和兼容版本")
 
     conditional = resolve_mod_versions(
         'version = folder_name == "workshop-123" and "workshop" or "local"',
         folder_name="workshop-123",
     )
     assert conditional["version"] == {"declared": True, "value": "workshop"}
-    print("  PASS: folder_name 按真实 Workshop 标识注入")
 
     assert resolve_mod_versions('version = "temporary"\nmissing_engine_api()') is None
     assert normalize_version_result(None, "sandbox").status == VERSION_UNRESOLVED
-    print("  PASS: 完整脚本失败时不采用报错前的临时版本")
 
     undeclared = resolve_mod_versions('name = "No Version"')
     undeclared_result = normalize_version_result(undeclared, "sandbox")
@@ -1722,7 +1295,6 @@ def test_mod_version_resolution():
         "sandbox",
     )
     assert invalid.status == VERSION_UNRESOLVED
-    print("  PASS: 未声明与非法类型被明确区分")
 
     fallback = normalize_version_result(
         {
@@ -1741,7 +1313,6 @@ def test_mod_version_resolution():
         "sandbox",
     )
     assert commented.version == "0.0.6"
-    print("  PASS: 比较值按游戏逻辑去空白并转小写，兼容版本未声明时回退版本")
 
     with tempfile.TemporaryDirectory() as tmp:
         old_cache_dir = version_cache._CACHE_DIR
@@ -1785,13 +1356,10 @@ def test_mod_version_resolution():
             assert local.status == VERSION_CONFIRMED
         finally:
             version_cache._CACHE_DIR = old_cache_dir
-    print("  PASS: 缓存同时校验 SHA-256 与来源路径，不会跨副本串值")
 
 
 def test_workshop_source_details_parser():
     """源端详情使用宽缓冲区读取，稳定字段偏移必须和 Steam SDK 一致。"""
-    print("\n" + "=" * 60)
-    print("Test 25c: Workshop Source Details Buffer")
 
     import struct
     from dstools.features.mod.workshop_api import (
@@ -1821,13 +1389,10 @@ def test_workshop_source_details_parser():
     assert workshop_version_from_details(details) == "1.4.3"
     assert details.content_handle == 123456
     assert details.filename == "content.zip" and details.file_size == 654321
-    print("  PASS: 源端详情稳定字段从宽缓冲区正确解析")
 
 
 def test_workshop_status_evidence_priority():
     """实际目录、版本和 Manifest 证据必须覆盖 Steam 的陈旧 Installed 位。"""
-    print("\n" + "=" * 60)
-    print("Test 25d: Workshop Status Evidence Priority")
 
     from dstools.features.mod.local_version import LocalModVersion, VERSION_CONFIRMED
     from dstools.features.mod.workshop_api import (
@@ -1852,7 +1417,6 @@ def test_workshop_status_evidence_priority():
         status = evaluate_workshop_status(stale)
         assert status.state == WorkshopModState.MISSING
         assert "Steam 仍标记为已安装" in status.reasons[0]
-        print("  PASS: flags=5 但实际目录不存在时判定文件缺失")
 
         installed = root / "installed"
         installed.mkdir()
@@ -1868,7 +1432,6 @@ def test_workshop_status_evidence_priority():
             source_details=WorkshopItemDetails(1, 1, time_updated=1),
         )
         assert evaluate_workshop_status(current).state == WorkshopModState.CURRENT
-        print("  PASS: 目录与 modinfo 存在、版本可信且 Steam 无更新时判定最新")
 
         suspected = WorkshopModEvidence(
             **{**current.__dict__, "source_details": None}
@@ -1935,7 +1498,6 @@ def test_workshop_status_evidence_priority():
             evaluate_workshop_status(active_update).state
             == WorkshopModState.UPDATE_AVAILABLE
         )
-        print("  PASS: Steam 更新位、游戏缓存版本和服务器实际版本均可触发更新")
 
         corrupt = WorkshopModEvidence(
             **{
@@ -1947,7 +1509,6 @@ def test_workshop_status_evidence_priority():
         corrupt_status = evaluate_workshop_status(corrupt)
         assert corrupt_status.state == WorkshopModState.CURRENT
         assert "缺少 scripts/main.lua" in corrupt_status.reasons
-        print("  PASS: Manifest 弱证据不会覆盖 Steam 的更新状态结论")
 
         legacy_file = root / "521637598935453868_legacy.bin"
         legacy_file.write_bytes(b"legacy workshop payload")
@@ -2036,7 +1597,6 @@ def test_workshop_status_evidence_priority():
         assert modified_status.state == WorkshopModState.UPDATE_AVAILABLE
         assert modified_status.remote_version == "1.0"
         assert "Legacy 下载包不同" in modified_status.reasons[0]
-        print("  PASS: LegacyItem 必须同时具备有效下载包和已解压运行目录")
 
         local_only = WorkshopModEvidence(
             workshop_id=2,
@@ -2047,7 +1607,6 @@ def test_workshop_status_evidence_priority():
         local_status = evaluate_workshop_status(local_only)
         assert local_status.state == WorkshopModState.LOCAL_FILES
         assert local_status.local_path == installed
-        print("  PASS: 发现真实目录但无 Steam 记录时标记仅有本地文件")
 
         empty_folder = root / "empty-workshop-folder"
         empty_folder.mkdir()
@@ -2060,7 +1619,6 @@ def test_workshop_status_evidence_priority():
             evaluate_workshop_status(empty_leftover).state
             == WorkshopModState.NOT_INSTALLED
         )
-        print("  PASS: 无 Steam 记录的空目录判定为未安装而不是文件缺失")
 
         unavailable = WorkshopModEvidence(
             workshop_id=2428854303,
@@ -2070,13 +1628,10 @@ def test_workshop_status_evidence_priority():
         unavailable_status = evaluate_workshop_status(unavailable)
         assert unavailable_status.state == WorkshopModState.SOURCE_UNAVAILABLE
         assert "EResult=15" in unavailable_status.reasons[0]
-        print("  PASS: Steam 拒绝访问且无本地文件时判定源端不可用")
 
 
 def test_workshop_snapshot_uses_one_steam_session():
     """组合刷新必须只初始化一次 SteamAPI，标题失败不能丢本地证据。"""
-    print("\n" + "=" * 60)
-    print("Test 25d2: Workshop Snapshot Single Session")
 
     import dstools.features.mod.workshop_api as workshop_api
 
@@ -2127,7 +1682,6 @@ def test_workshop_snapshot_uses_one_steam_session():
     assert len(opened) == 1
     assert set(states) == {11, 22} and set(installs) == {11, 22}
     assert set(details) == {22} and details[22].title == "Mod 22"
-    print("  PASS: 状态、安装记录和缺失标题共用一次 Steam 会话")
 
     opened.clear()
     with tempfile.TemporaryDirectory() as tmp:
@@ -2145,7 +1699,6 @@ def test_workshop_snapshot_uses_one_steam_session():
     assert len(opened) == 1
     assert set(states) == {11, 22, 33} and set(installs) == {11, 22, 33}
     assert set(details) == {33} and details[33].title == "Mod 33"
-    print("  PASS: ACF 与目录均缺失的订阅项目仍由 Steam 账号枚举补回")
 
     class FailingTitleSession(FakeSession):
         def query_item_details(self, workshop_ids, timeout=20.0):
@@ -2166,13 +1719,10 @@ def test_workshop_snapshot_uses_one_steam_session():
             workshop_api.SteamWorkshopSession = original
     assert len(opened) == 1
     assert set(states) == {11} and set(installs) == {11} and details == {}
-    print("  PASS: 标题查询失败仍保留状态和安装记录")
 
 
 def test_dst_mod_manifest_verification():
     """MNFS 路径哈希必须识别缺失文件，同时允许 Mod 运行时产生额外文件。"""
-    print("\n" + "=" * 60)
-    print("Test 25e: DST Mod Manifest Verification")
 
     import struct
     from dstools.features.mod.workshop_manifest import (
@@ -2186,7 +1736,6 @@ def test_dst_mod_manifest_verification():
     assert sdbm_path_hash("modinfo.lua") == 0xCD796EDA
     assert sdbm_path_hash("scripts/components/smart_minisign.lua") == 0x11E699C6
     assert sdbm_path_hash("修改者指南.txt") == 0x847C5105
-    print("  PASS: ASCII 与中文路径哈希均和真实 Workshop Manifest 条目一致")
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -2216,20 +1765,16 @@ def test_dst_mod_manifest_verification():
         (scripts / "main.lua").unlink()
         missing = verify_mod_manifest(mod)
         assert missing.valid is False and len(missing.missing_hashes) == 1
-        print("  PASS: 额外文件和内容修改不误报，删除声明文件会判定缺失")
 
         try:
             parse_mod_manifest_bytes(b"BAD!")
             raise AssertionError("损坏的 Manifest 不应解析成功")
         except ManifestFormatError:
             pass
-        print("  PASS: 损坏格式被拒绝")
 
 
 def test_workshop_download_precheck_uses_physical_files():
     """Steam Installed 缓存不能掩盖被删除或损坏的真实 Mod 目录。"""
-    print("\n" + "=" * 60)
-    print("Test 25f: Workshop Download Physical Precheck")
 
     import struct
     from dstools.features.mod.workshop_api import (
@@ -2329,16 +1874,10 @@ def test_workshop_download_precheck_uses_physical_files():
         assert redownload.accepted and redownload.details["forced_redownload"] is True
         assert not redownload_path.exists()
         assert redownload_session.dll.download_calls
-        print("  PASS: 文件完整才跳过下载，Installed+目录缺失会强制进入修复")
 
 
 def test_backup_manager_restore_clears_stale_slots():
-    """restore_backup() 必须先清空会被覆盖的每一项再解压，不能只是在旧
-    文件上覆盖解压——不这样做的话，备份之后又产生的新存档槽文件会跟备
-    份里的旧槽位混在一起，游戏很可能还是照常挑编号最新的那个，恢复了个
-    寂寞。这是 backup_manager.py 里最复杂、最容易静默出错的一段逻辑。"""
-    print("\n" + "=" * 60)
-    print("Test 26: Backup Restore Clears Stale Slots")
+    """restore_backup() 必须先清空会被覆盖的项再解压，否则比备份更新的存档槽会残留并被游戏加载。"""
 
     with tempfile.TemporaryDirectory() as tmp:
         cluster = Path(tmp) / "Cluster_1"
@@ -2350,7 +1889,6 @@ def test_backup_manager_restore_clears_stale_slots():
         (cluster / "cluster.ini").write_text("[GAMEPLAY]\nmax_players=6\n")
 
         backup_zip = create_backup(cluster)
-        print(f"  PASS: created backup {backup_zip.name}")
 
         # 模拟备份之后又产生了更新的存档槽位。
         (sess / "0000000002").write_text("newer_slot_after_backup")
@@ -2361,18 +1899,14 @@ def test_backup_manager_restore_clears_stale_slots():
         assert remaining == ["0000000001"], (
             f"应该只剩备份里的旧槽位，实际是 {remaining}"
         )
-        print("  PASS: restore_backup() removes slots created after the backup")
 
         assert (
             cluster / "Master" / "server.ini"
         ).read_text() == "[NETWORK]\nserver_port=1\n"
-        print("  PASS: restored config files match the backed-up content")
 
 
 def test_save_bundle_contains_complete_cluster():
     """分享包应保留存档根目录，并包含备份功能会主动跳过的日志等文件。"""
-    print("\n" + "=" * 60)
-    print("Test 26b: Complete Save Bundle")
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -2396,18 +1930,10 @@ def test_save_bundle_contains_complete_cluster():
             assert "Cluster_Share/Master/save/session/ABC/0000000001" in names
             assert "Cluster_Share/Caves/save/empty/" in names
             assert archive.read("Cluster_Share/Master/server_log.txt") == b"complete log"
-        print("  PASS: 完整存档、日志、敏感配置和空目录均保留在存档根目录下")
 
 
 def test_backup_manager_prune_retention_boundary():
-    """备份保留份数（app_settings.get_backup_retention()）超过时自动删
-    掉最旧的。用手工构造、时间戳互不相同的旧备份文件模拟"已经攒了很多
-    份"，比连续调用 create_backup() 更贴近真实使用场景（真实场景里两次
-    备份之间至少隔几分钟，不会在同一秒内触发好几次自动去重后缀，直接
-    连续调用反而会绕进那段自动去重逻辑本身，测的东西就跑偏了），再用一
-    次真实的 create_backup() 验证会触发裁剪、且顺序正确。"""
-    print("\n" + "=" * 60)
-    print("Test 27: Backup Retention Boundary")
+    """备份超过保留份数时删除最旧的（手工构造时间戳不同的旧备份，再用一次真实 create_backup() 触发裁剪）。"""
 
     with _isolated_settings_dir():
         # 保留份数的合法范围是 5~99（见 app_settings.set_backup_retention
@@ -2420,25 +1946,19 @@ def test_backup_manager_prune_retention_boundary():
 
             dest = backup_dir(cluster)  # 跟存档同级的统一备份目录，不是存档目录自己内部
             dest.mkdir(parents=True)
-            for i in range(1, 8):  # 7 份时间戳递增的旧备份（都早于"现在"）
+            for i in range(1, 8):
                 (dest / f"Cluster_2_2026010{i}_000000.zip").write_bytes(b"")
 
             newest = create_backup(cluster)  # 第 8 份，真实时间戳，必然是最新的
             backups = list_backups(cluster)
             assert len(backups) == 5, f"应该只保留 5 份，实际 {len(backups)} 份"
-            print("  PASS: only the most recent 5 backups are kept")
 
             assert backups[0] == newest, "最新的一份必须排在最前面"
             assert backups == sorted(backups, key=lambda p: p.name, reverse=True)
-            print("  PASS: list_backups() orders newest-first")
 
 
 def test_backfill_cluster_defaults_only_fills_missing():
-    """backfill_cluster_defaults() 只能补缺的字段，不能覆盖已经存在的
-    值——这是最容易被后续重构不小心破坏（"补默认值"误写成"覆盖已有
-    值"）、且后果是用户已保存配置被悄悄吞掉的一类 bug。"""
-    print("\n" + "=" * 60)
-    print("Test 28: Cluster Defaults Backfill Only Fills Missing")
+    """backfill_cluster_defaults() 只补缺失字段，不能覆盖已有值。"""
 
     config = ClusterConfig(
         gameplay={"vote_enabled": False}, network={}, misc={}, shard={}, steam={}
@@ -2448,11 +1968,9 @@ def test_backfill_cluster_defaults_only_fills_missing():
     assert config.gameplay["vote_enabled"] is False, (
         "已经显式设置的值不应该被默认值覆盖"
     )
-    print("  PASS: explicitly-set values are not overwritten")
 
     assert config.network["tick_rate"] == 15, "缺失的字段应该被补上官方默认值"
     assert config.misc["max_snapshots"] == 6
-    print("  PASS: missing fields are backfilled with official defaults")
 
     # 用户拿真实存档手工核对过一轮之后新补的默认值（见 reference/带注释
     # 版本的cluster.ini）——顺带确认 STEAM 这个新分区也会被正确回填。
@@ -2465,33 +1983,17 @@ def test_backfill_cluster_defaults_only_fills_missing():
     assert config.misc["console_enabled"] is True
     assert config.steam["steam_group_only"] is False
     assert config.steam["steam_group_admins"] is False
-    print(
-        "  PASS: newly-verified defaults (incl. the new STEAM section) are backfilled too"
-    )
 
-    # bind_ip/master_ip/master_port/cluster_key 是游戏在 shard_enabled=
-    # true 时自己生成写入的——应用户明确要求（"清空 cluster.ini 也要全
-    # 部配置项齐全，点保存直接覆盖文件"），这里改成主动补上确认过的官
-    # 方默认值，相当于顺手修复"手动删掉这几个字段导致开服报错"这个坑。
+    # shard_enabled=true 时游戏生成的四项被删除后要补上官方默认值
     assert config.shard["bind_ip"] == "127.0.0.1"
     assert config.shard["master_ip"] == "127.0.0.1"
     assert config.shard["master_port"] == 10888
     assert config.shard["cluster_key"] == "defaultPass"
-    print(
-        "  PASS: game-generated SHARD fields (bind_ip/master_ip/master_port/cluster_key) are now backfilled too"
-    )
 
-    # game_mode/max_players/cluster_cloud_id 没有一个"确认过"的官方默认
-    # 值——但用户明确要求"删除任意设置都不能导致配置页面缺少这一项"，
-    # 所以这三个字段现在也会出现（不会从 config 里彻底消失），只是补的
-    # 是空字符串，不是编造一个看起来正常的假值。
+    # 没有确认默认值的字段补空字符串，保证配置页不缺行
     assert config.gameplay["game_mode"] == ""
     assert config.gameplay["max_players"] == ""
     assert config.network["cluster_cloud_id"] == ""
-    print(
-        "  PASS: fields with no confirmed official default (game_mode/max_players/cluster_cloud_id) "
-        "still show up (blank), instead of disappearing or being faked"
-    )
 
     # 空字符串等同于"没有"，也要被当成缺失补上默认值——用户明确要求"值
     # 为空也用默认值"，不是只处理 key 整个不存在的情况。
@@ -2502,19 +2004,10 @@ def test_backfill_cluster_defaults_only_fills_missing():
     assert config2.network["cluster_name"] == "[Host]'s World", (
         "空字符串也应该被当成缺失，补上默认值"
     )
-    print("  PASS: an explicit empty string is treated the same as a missing key")
 
 
 def test_cluster_ini_steam_section_roundtrip():
-    """真机反馈过的数据丢失 bug：parse_cluster_ini()/write_cluster_ini()
-    原来只认 GAMEPLAY/NETWORK/MISC/SHARD 四个分区，完全不知道 [STEAM]
-    这个分区的存在——如果用户的 cluster.ini 里已经配置了 Steam 群组相关
-    设置，只要在这个工具里点一次"保存"，整个 [STEAM] 分区会被静默吞掉，
-    因为 write_cluster_ini() 会用只认识的四个分区重新生成整个文件。这里
-    测的是"解析出来的 ClusterConfig 里要有 steam 字段" + "写回文件后
-    [STEAM] 分区必须还在，值也要一致"。"""
-    print("\n" + "=" * 60)
-    print("Test 35: cluster.ini [STEAM] Section Round-Trip")
+    """cluster.ini 的 [STEAM] 分区必须解析并原样写回（曾在保存时被整段吞掉）。"""
 
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / "cluster.ini"
@@ -2527,7 +2020,6 @@ def test_cluster_ini_steam_section_roundtrip():
         assert config.steam.get("steam_group_only") is True
         assert config.steam.get("steam_group_id") == 123456
         assert config.steam.get("steam_group_admins") is False
-        print("  PASS: parse_cluster_ini() reads the [STEAM] section")
 
         write_cluster_ini(config, path)
         reloaded = parse_cluster_ini(path)
@@ -2536,30 +2028,17 @@ def test_cluster_ini_steam_section_roundtrip():
         assert reloaded.gameplay.get("max_players") == 8, (
             "保存 [STEAM] 的同时不能弄丢其它分区"
         )
-        print(
-            "  PASS: write_cluster_ini() keeps the [STEAM] section instead of silently dropping it"
-        )
 
 
 def test_sakura_frp_tunnel_matching():
-    """find_dstcamp_tunnel()/sanitize_tunnel_name() 是纯函数。樱花的真实
-    隧道名规则是 3-20 个字符、只能用字母数字和下划线（实测报错确认过，
-    连字符都不允许），所以命名约定不是直接拼"dstcamp-存档名-世界名"这种
-    可读字符串（会超长/带非法字符），是短哈希——这里测的是"格式始终合
-    法" + "同样的输入每次都算出同一个名字"（find_dstcamp_tunnel() 靠这个
-    确定性现查匹配，不在本地存隧道 ID 缓存表），以及 source/platform 也
-    必须参与哈希（真机复现过的 bug：本地存档"复制为服务器存档"后目录名
-    相同，如果只按目录名+世界名算隧道名，两边会互相冒充对方的映射状
-    态；同理 Steam/WeGame 两边如果有同名存档也会撞）。"""
-    print("\n" + "=" * 60)
-    print("Test 29: SakuraFrp Tunnel Name Matching")
+    """樱花隧道名：格式始终合法（3-20 位字母数字下划线）、同输入确定性一致，且 source/platform 参与哈希
+    （否则复制出的同名存档或 Steam/WeGame 同名存档会互相冒充映射状态）。"""
 
     name = sanitize_tunnel_name("Cluster_1", "Master", "server", "steam")
     assert 3 <= len(name) <= 20, f"隧道名长度必须在 3-20 之间: {name}"
     assert all(c.isalnum() or c == "_" for c in name), (
         f"隧道名只能是字母数字和下划线: {name}"
     )
-    print("  PASS: sanitize_tunnel_name() 输出符合樱花的命名规则")
 
     assert sanitize_tunnel_name("Cluster_1", "Master", "server", "steam") == name, (
         "同样的输入应该每次都算出同一个名字"
@@ -2567,16 +2046,12 @@ def test_sakura_frp_tunnel_matching():
     assert sanitize_tunnel_name("Cluster_1", "Caves", "server", "steam") != name, (
         "不同世界应该算出不同的名字"
     )
-    print("  PASS: 同一世界确定性可复现，不同世界不会撞名")
 
     assert sanitize_tunnel_name("Cluster_1", "Master", "local", "steam") != name, (
         "同名存档不同来源（本地 vs 服务器）不应该撞名"
     )
     assert sanitize_tunnel_name("Cluster_1", "Master", "server", "wegame") != name, (
         "同名存档不同平台（Steam vs WeGame）不应该撞名"
-    )
-    print(
-        "  PASS: source/platform 不同时不会撞名（本地/服务器存档同名、Steam/WeGame 同名两种场景）"
     )
 
     caves_name = sanitize_tunnel_name("Cluster_1", "Caves", "server", "steam")
@@ -2587,7 +2062,6 @@ def test_sakura_frp_tunnel_matching():
     ]
     found = find_dstcamp_tunnel(tunnels, "Cluster_1", "Master", "server", "steam")
     assert found is not None and found["id"] == 1, "应该按名字匹配到对应世界的隧道"
-    print("  PASS: find_dstcamp_tunnel() matches the right shard")
 
     assert (
         find_dstcamp_tunnel(tunnels, "Cluster_1", "Cave2", "server", "steam") is None
@@ -2595,16 +2069,11 @@ def test_sakura_frp_tunnel_matching():
     assert (
         find_dstcamp_tunnel(tunnels, "Cluster_1", "Master", "local", "steam") is None
     ), "同名本地存档不应该匹配到服务器存档的隧道"
-    print(
-        "  PASS: no false match for a shard with no tunnel, nor for a same-named save of a different source"
-    )
 
 
 def test_sakura_server_port_rewrite():
     """ "开启樱花映射"最关键的一步：把樱花分配的远程端口回写进这个世界自
     己的 server.ini。这里只测这一步的读-改-写本身，不牵扯真实网络调用。"""
-    print("\n" + "=" * 60)
-    print("Test 30: Sakura Server Port Rewrite")
 
     with tempfile.TemporaryDirectory() as tmp:
         shard_dir = Path(tmp) / "Master"
@@ -2613,7 +2082,6 @@ def test_sakura_server_port_rewrite():
 
         config = load_shard_config(shard_dir)
         assert get_shard_option(config, "NETWORK", "server_port") == 10999
-        print("  PASS: original server_port read back correctly")
 
         set_shard_option(config, "NETWORK", "server_port", 23456)
         save_shard_config(config, shard_dir)
@@ -2622,44 +2090,10 @@ def test_sakura_server_port_rewrite():
         assert get_shard_option(reloaded, "NETWORK", "server_port") == 23456, (
             "回写的端口应该能重新读回来"
         )
-        print("  PASS: rewritten server_port persists after save+reload")
 
 
-def test_sakura_token_settings_roundtrip():
-    """get_sakura_token()/set_sakura_token() 的读写往返，隔离在临时设置
-    目录里跑，绝不碰真实 %APPDATA%/DSTCamp/settings.json。"""
-    print("\n" + "=" * 60)
-    print("Test 31: Sakura Token Settings Roundtrip")
-
-    with _isolated_settings_dir():
-        assert get_sakura_token() is None, "没设置过应该是 None"
-        set_sakura_token("fake-token-for-test-only")
-        assert get_sakura_token() == "fake-token-for-test-only"
-        print("  PASS: token round-trips through settings.json")
-
-        set_sakura_token(None)
-        assert get_sakura_token() is None, "清空之后应该重新变回 None，而不是空字符串"
-        print(
-            "  PASS: clearing the token removes the key instead of storing an empty string"
-        )
 
 
-def test_frpc_manager_key_convention():
-    """FrpcManager 的 (cluster_path, shard_name) key 约定跟
-    dedicated_server.ServerManager 一致——纯函数，不真的起子进程。"""
-    print("\n" + "=" * 60)
-    print("Test 32: FrpcManager Key Convention")
-
-    mgr = FrpcManager()
-    key_a = mgr._key(Path("C:/saves/Cluster_1"), "Master")
-    key_b = mgr._key(Path("C:/saves/Cluster_1"), "Master")
-    key_c = mgr._key(Path("C:/saves/Cluster_1"), "Caves")
-    assert key_a == key_b, "同一个 (cluster_path, shard_name) 应该算出相同的 key"
-    assert key_a != key_c, "不同世界应该算出不同的 key"
-    assert mgr.get(Path("C:/saves/Cluster_1"), "Master") is None, (
-        "没启动过的世界应该查不到进程"
-    )
-    print("  PASS: FrpcManager._key() matches ServerManager's convention")
 
 
 @contextlib.contextmanager
@@ -2669,24 +2103,10 @@ def _fake_workshop_dir(
     with_injector_files: bool = False,
     mod_version: str | None = None,
 ):
-    """猴子补丁 luajit_injector.find_workshop_dir()（这里也是 "from ...
-    import" 抄过去的独立引用，同 _isolated_settings_dir() 的道理，只补
-    find_workshop_dir 原本定义所在的 parser 模块自己那份不生效），指向
-    root/steamapps/workshop/content/322330/，按 subscribed_ids 建好
-    <id>/modinfo.lua。root 由调用方提供（不是这个函数自己另开一个临时目
-    录），这样能跟专用服务器安装目录建在同一个 fake Steam 库根目录下，
-    模拟真实"专用服务器和创意工坊内容同属一个 Steam 库"的目录关系（
-    needs_regeneration() 的组合测试需要这个前提）。
+    """伪造 Workshop 目录（content/322330/<id>/modinfo.lua），替换 luajit_injector 持有的 find_workshop_dir 引用。
 
-    with_injector_files=True 时按新版布局现造一份假注入包：Winmm.dll 在
-    bin64/windows/，Injector.dll、deps/ 留在 Mod 根目录，够安装与更新
-    的测试用（不再涉及 zip/下载——作者确认过注入文件直接取自订阅内容，
-    见 luajit_injector.py 顶部说明）。mod_version 给 WORKSHOP_ID 这个物
-    品的 modinfo.lua 写一行 `version = "<mod_version>"`（真机验证过真实
-    格式是这样，比如 "1.10.1"），够 current_injector_version()/
-    needs_regeneration() 的测试用——不再需要伪造 appworkshop_322330.acf，
-    因为 current_injector_version() 现在直接读 modinfo.lua 自己的
-    version 字段。"""
+    root 由调用方提供，便于与伪造的专服安装目录放在同一个 Steam 库下。with_injector_files 时按新版布局
+    放入 Winmm.dll（bin64/windows/）与 Injector.dll、deps/；mod_version 写入 modinfo.lua 的 version。"""
     import dstools.features.local_service.luajit_injector as lj
 
     workshop_dir = root / "steamapps" / "workshop" / "content" / "322330"
@@ -2717,9 +2137,7 @@ def _fake_workshop_dir(
 
 
 def _make_fake_install_dir(root: Path, build_id: str | None = None) -> Path:
-    """现造一份 <root>/steamapps/common/<产品名>/ 目录结构（安装目录），
-    可选带上 version.txt（游戏自己写的内部版本号），模拟"这是某个 Steam
-    库里的专用服务器安装目录"这个前提，不需要真的装 Steam。"""
+    """伪造 <root>/steamapps/common/<产品名>/ 安装目录，可选写入 version.txt。"""
     install_dir = (
         root / "steamapps" / "common" / "Don't Starve Together Dedicated Server"
     )
@@ -2736,8 +2154,6 @@ def test_luajit_game_bin64_install():
     import dstools.features.local_service.luajit_injector as lj
     from dstools.shared.app_settings import get_luajit_enabled
 
-    print("\n" + "=" * 60)
-    print("Test: LuaJIT 游戏专服安装方式")
     with _isolated_settings_dir(), tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         install_dir = root / "steamapps" / "common" / "Don't Starve Together"
@@ -2763,7 +2179,6 @@ def test_luajit_game_bin64_install():
             assert detect_state(bin64) is InjectorState.ACTIVE
             assert resolve_launch_bin64_dir(install_dir) is None, "直接从真实 bin64 启动"
             assert not needs_regeneration(install_dir)
-            print("  PASS: 安装只放 Winmm.dll 到游戏 bin64，从真实 bin64 启动")
 
             source = workshop / WORKSHOP_ID / "bin64" / "windows" / "Winmm.dll"
             source.write_bytes(b"new winmm")
@@ -2776,21 +2191,15 @@ def test_luajit_game_bin64_install():
                 assert not needs_regeneration(install_dir), "被占用时沿用当前版本，不阻止开服"
                 assert regenerate(bin64).ok
             assert (bin64 / "Winmm.dll").read_bytes() == b"new winmm"
-            print("  PASS: 注入壳随配套 Mod 更新；被游戏占用时跳过更新但不阻止开服")
 
             assert apply_uninstall(bin64) is True
             assert not (bin64 / "Winmm.dll").exists() and not marker.exists()
             assert detect_state(bin64) is InjectorState.NOT_INSTALLED
-            print("  PASS: 卸载删除游戏 bin64 的 Winmm.dll 与路径标记")
 
 
 def test_luajit_injector():
-    """luajit_injector.py 只测离线可测的纯逻辑（游戏版本读取/隔离副
-    本三态检测/resolve_launch_bin64_dir/标记文件往返/需要重新生成的判
-    断/重新生成/创意工坊订阅检测/plan_install 的只读判断/卸载的幂等
-    性），真实网络调用和真实注入效果按项目惯例不测，属于人工验证项。"""
-    print("\n" + "=" * 60)
-    print("Test 33: LuaJIT Injector")
+    """luajit_injector 的离线逻辑：版本读取、副本状态检测、启动目录解析、标记往返、重建判断、订阅检测、
+    安装计划与卸载幂等（真实注入效果属人工验证项）。"""
 
     with tempfile.TemporaryDirectory() as tmp:
         install_dir = _make_fake_install_dir(Path(tmp), build_id="111")
@@ -2798,7 +2207,6 @@ def test_luajit_injector():
         assert read_game_version_file(install_dir.parent) is None, (
             "没有 version.txt 应该返回 None"
         )
-    print("  PASS: steam_discovery.read_game_version_file() 正确读取 version.txt")
 
     with _isolated_settings_dir():
         with tempfile.TemporaryDirectory() as tmp:
@@ -2821,7 +2229,6 @@ def test_luajit_injector():
             assert detect_state(bin64) is InjectorState.ACTIVE
             set_luajit_enabled(False)
             assert detect_state(bin64) is InjectorState.DISABLED_LEFTOVER
-        print("  PASS: detect_state() 新语义（副本是否存在 + 是否启用）判定正确")
 
         with tempfile.TemporaryDirectory() as tmp:
             install_dir = _make_fake_install_dir(Path(tmp))
@@ -2840,7 +2247,6 @@ def test_luajit_injector():
             assert resolve_launch_bin64_dir(install_dir) == luajit_dir, (
                 "已启用且副本有效应该返回副本目录，给 ServerProcess 用来覆盖启动目录"
             )
-        print("  PASS: resolve_launch_bin64_dir() 按启用状态 + 副本有效性判定正确")
 
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
@@ -2859,9 +2265,6 @@ def test_luajit_injector():
             }, (
                 f"version.json 落盘格式不对: {raw}"
             )
-        print(
-            "  PASS: read_marker()/write_marker() 往返正确，version.json 字段名/格式符合预期"
-        )
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2923,9 +2326,6 @@ def test_luajit_injector():
                 assert needs_regeneration(install_dir) is True, (
                     "配套 Mod 版本不一致（作者发布了新版本），也需要重新生成"
                 )
-        print(
-            "  PASS: needs_regeneration() 按 DST_version/luajit_version 是否过期判定正确"
-        )
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2982,14 +2382,8 @@ def test_luajit_injector():
                 assert new_marker.trigger_sha256 == hashlib.sha256(
                     b"fake winmm"
                 ).hexdigest()
-                print(
-                    "  PASS: regenerate() 用当前配套 Mod 内容重新生成副本，标记同步更新"
-                )
 
-                # 只有配套 Mod 版本变了、游戏本体没变时，选择性更新不应该
-                # 碰 bin64 部分——放一个不在真实 bin64 里的哨兵文件，只有
-                # "整个重新 copytree"才会让它消失，用它反向验证没有做没
-                # 必要的整份重建。
+                # 只有配套 Mod 版本变化时不应重建 bin64：放一个哨兵文件，整份重建才会让它消失
                 (luajit_dir / "existing_bin64_marker.txt").write_text(
                     "untouched", encoding="utf-8"
                 )
@@ -3005,9 +2399,6 @@ def test_luajit_injector():
                     assert marker2.DST_version == "222", "DST_version 应该保持不变"
                     assert marker2.luajit_version == "1.10.2", (
                         "luajit_version 应该更新成新的配套 Mod 版本"
-                    )
-                    print(
-                        "  PASS: regenerate() 只有配套 Mod 版本变了时选择性更新，不重新复制 bin64"
                     )
 
                 # 作者有时只更新二进制而不改 modinfo.lua 版本号；用壳文件
@@ -3027,21 +2418,13 @@ def test_luajit_injector():
                 )
                 assert (luajit_dir / "Winmm.dll").read_bytes() == b"updated winmm"
                 assert needs_regeneration(install_dir) is False
-                print(
-                    "  PASS: regenerate() 可检测未改 Mod 版本号的 Winmm.dll 更新"
-                )
 
-            # 没有订阅内容时应该优雅失败，不联网、不崩溃——必须用全新的
-            # workshop 根目录，不能复用上面那个 root：_fake_workshop_dir()
-            # 只按 subscribed_ids 新建文件夹，不会清空之前调用已经在磁盘
-            # 上留下的 3444078585/bin64/windows/ 内容，传空列表并不会让
-            # 已经写盘的注入文件消失。
+            # 没有订阅内容时应优雅失败；必须用全新的 Workshop 根目录（之前写入的注入文件不会被清掉）
             with tempfile.TemporaryDirectory() as tmp_empty:
                 with _fake_workshop_dir(Path(tmp_empty), []):
                     shutil.rmtree(luajit_dir)
                     result_no_source = regenerate(bin64)
                     assert result_no_source.ok is False, "找不到订阅内容应该失败"
-                    print("  PASS: regenerate() 找不到订阅内容时优雅失败")
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -3051,40 +2434,30 @@ def test_luajit_injector():
             root = Path(tmp)
             with _fake_workshop_dir(root, [WORKSHOP_ID]):
                 assert is_workshop_subscribed() is True
-        print("  PASS: is_workshop_subscribed() 按创意工坊本地内容目录判定正确")
 
         plan_missing = plan_install(None, server_running=False)
         assert plan_missing.blocked_reason == "bin64_not_found"
-        print("  PASS: plan_install(bin64_dir=None) 判定 bin64_not_found")
 
         with tempfile.TemporaryDirectory() as tmp2:
             real_bin64 = Path(tmp2) / "bin64"
             real_bin64.mkdir()
             plan_running = plan_install(real_bin64, server_running=True)
             assert plan_running.blocked_reason == "server_running"
-            print("  PASS: plan_install() 服务器运行中时判定 server_running")
 
             with _fake_workshop_dir(Path(tmp2), []):
                 plan_not_subscribed = plan_install(real_bin64, server_running=False)
                 assert plan_not_subscribed.blocked_reason == "workshop_not_subscribed"
-            print(
-                "  PASS: plan_install() 未订阅创意工坊配套 Mod 时判定 workshop_not_subscribed"
-            )
 
             with _fake_workshop_dir(Path(tmp2), [WORKSHOP_ID]):
                 plan_ok = plan_install(real_bin64, server_running=False)
                 assert plan_ok.blocked_reason is None
                 assert plan_ok.current_state is InjectorState.NOT_INSTALLED
-            print("  PASS: plan_install() 已订阅、未运行时判定正常可安装")
 
             set_luajit_enabled(True)
             assert apply_uninstall(real_bin64) is True
             assert get_luajit_enabled() is False, "关闭应该只是把开关关掉"
             assert apply_uninstall(real_bin64) is False, (
                 "已经关闭时重复调用应该幂等，不报错"
-            )
-            print(
-                "  PASS: apply_uninstall() 只关闭 app_settings 开关（不删除任何文件），且重复调用是幂等的"
             )
 
     with tempfile.TemporaryDirectory() as tmp3:
@@ -3095,20 +2468,10 @@ def test_luajit_injector():
             install_dir / "bin64" / "dontstarve_dedicated_server_nullrenderer_x64.exe"
         ).write_bytes(b"x")
         assert find_bin64_dir(install_dir) == install_dir / "bin64"
-        print("  PASS: dedicated_server.find_bin64_dir() 找到/找不到都符合预期")
 
 
 def test_steam_library_folder_casing():
-    """真机复现过的真实 bug：注册表 SteamPath 大小写可能跟磁盘上真实目录
-    名（也是 libraryfolders.vdf 里 Steam 自己记录的大小写）不一致，而这
-    个大小写差异不是纯装饰性的——专用服务器进程内部按路径字符串做创意工
-    坊内容查找，大小写不对会导致完全识别不到 mod（尽管 Windows 文件系统
-    本身访问这个目录不区分大小写）。parse_library_folders() 必须优先信
-    vdf 里的大小写，不能让 Path.__eq__ 在 Windows 上的大小写不敏感比较
-    把"两份大小写不同但其实是同一个目录"误判成合法的两个库，进而把 vdf
-    里正确大小写的版本当成重复项丢弃。"""
-    print("\n" + "=" * 60)
-    print("Test 34: Steam Library Folder Casing")
+    """Steam 库路径大小写以 libraryfolders.vdf 为准（注册表大小写可能不对，专服按字符串匹配会找不到 Mod）。"""
 
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -3132,17 +2495,10 @@ def test_steam_library_folder_casing():
         assert str(libraries[0]) == str(real_dir), (
             f"应该优先用 libraryfolders.vdf 里 Steam 自己记录的正确大小写，结果是 {libraries[0]}"
         )
-        print(
-            "  PASS: parse_library_folders() 优先采用 vdf 里的正确大小写，不被注册表的错误大小写覆盖"
-        )
 
 
 def test_font_style_switch():
-    """字体样式是独立于颜色主题的设置（Qt 版 theme）：切样式会换字体族并按比例
-    放大字号，显式 bold 始终生效，切颜色主题不改样式，选择可持久化；打包的
-    字体文件必须都在（缺文件时 Qt 静默回退系统字体，不会报错提醒）。"""
-    print("\n" + "=" * 60)
-    print("Test 35: Font Style Switch")
+    """字体样式独立于颜色主题：切换后字体族/字号生效、bold 保留、可持久化，且打包的字体文件都存在。"""
 
     from dstools.qt.theme import FONT_FAMILY_BY_STYLE, FONT_STYLES, Theme
     from dstools.shared import app_settings
@@ -3151,7 +2507,6 @@ def test_font_style_switch():
     for style in FONT_STYLES:
         if style.filename:
             assert (fonts_dir / style.filename).is_file(), f"字体文件缺失: {style.filename}"
-    print("  PASS: 各字体样式引用的字体文件都打包在 tools/fonts/ 里")
 
     with _isolated_settings_dir():
         theme = Theme()
@@ -3161,29 +2516,16 @@ def test_font_style_switch():
         assert cute_font.family() == FONT_FAMILY_BY_STYLE["cute"] == "KN Maiyuan"
         assert cute_font.pointSize() == default_font.pointSize(), "麦圆体与默认雅黑保持同一磅值"
         assert theme.font("FONT_SIZE_BASE", bold=True).bold()
-        print("  PASS: 切换样式后字体族与字号缩放生效，显式 bold 保留")
 
         theme.set_theme("mint")
         assert theme.font_style == "cute", "切颜色主题不应改动字体样式"
         assert Theme().font_style == "cute", "新启动应读回已保存的字体样式"
         assert app_settings.get_font_style_choice() == "cute"
-        print("  PASS: 字体样式独立于颜色主题，并且持久化往返正确")
 
 
 def test_frp_selfhost_port_conflict_detection():
-    """真机反馈过的真实 bug：自建 frps 已经部署过一次（服务在跑，绑定
-    在端口 A），用户把绑定端口改成端口 B、B 又恰好被服务器上别的服务
-    （比如 sshd）占用时，之前"只要 dstcamp-frps 服务在跑就跳过端口冲
-    突检查"的判断会把这个真冲突放过去，装完/重启失败才暴露问题。
-
-    测试 probe.py 的 _parse_probe_output() 正确解析新增的 FRPSPORT 字
-    段（dstcamp-frps 当前实际绑定的端口，不是笼统的"服务在不在跑"），
-    并验证 tab.py._start_deploy() 里改用的判断条件
-    `port in used_ports and port != frps_bind_port`：目标端口是 frps
-    自己当前绑定的那个端口时不算冲突（复用现有安装的正常场景），改成
-    别的、被第三方服务占用的端口时才应该判定为冲突。"""
-    print("\n" + "=" * 60)
-    print("Test 36: Frp Selfhost Port Conflict Detection")
+    """自建 frps 端口冲突：解析探测输出中的 FRPSPORT；目标端口是 frps 自己当前绑定的端口时不算冲突，
+    被第三方服务占用时才算冲突（曾因"服务在跑就跳过检查"放过真冲突）。"""
 
     from dstools.features.frp_selfhost.probe import _parse_probe_output
 
@@ -3195,43 +2537,19 @@ def test_frp_selfhost_port_conflict_detection():
     assert status.used_ports == frozenset({22, 2323, 7000, 6010})
     assert status.frps_bind_port == 7000
     assert status.service_active is True
-    print(
-        "  PASS: _parse_probe_output() 正确解析 FRPSPORT 字段(frps 当前实际绑定的端口)"
-    )
 
-    def is_conflict(target_port: int) -> bool:
-        return (
-            status.reachable
-            and target_port in status.used_ports
-            and target_port != status.frps_bind_port
-        )
+    assert status.port_conflicts(2323) is True
+    assert status.port_conflicts(7000) is False, "frps 自己绑定的端口不算冲突"
+    assert status.port_conflicts(9999) is False
 
-    assert is_conflict(2323) is True, (
-        "2323 被 sshd 占用、不是 frps 自己绑定的端口，必须判定为冲突"
-    )
-    assert is_conflict(7000) is False, (
-        "7000 就是 frps 自己当前绑定的端口，复用现有安装场景不能误判为冲突"
-    )
-    assert is_conflict(9999) is False, "9999 完全没被占用，不该判定为冲突"
-    print(
-        "  PASS: 冲突判断改用 frps_bind_port 比对后，服务在跑但改用新端口的真冲突不再被放过"
-    )
-
-    # 服务从没装过时 FRPSPORT 字段为空，frps_bind_port 应该是 None，
-    # 不能被误判等于任何整数端口。
-    output_never_deployed = "UID:1000\nSUDO:ok\nSERVICE:inactive\nCPU:2\nMEM:1024,512\nPORTS:22\nFRPSPORT:\n"
-    status2 = _parse_probe_output(output_never_deployed)
+    # 从未部署过时 FRPSPORT 为空，被其他服务占用的端口仍是冲突
+    status2 = _parse_probe_output("UID:1000\nSUDO:ok\nSERVICE:inactive\nCPU:2\nMEM:1024,512\nPORTS:22\nFRPSPORT:\n")
     assert status2.frps_bind_port is None
-    assert (
-        status2.reachable and 22 in status2.used_ports and 22 != status2.frps_bind_port
-    ) is True, "从没部署过 frps 时，端口被其它服务占用也应该判定为冲突"
-    print("  PASS: 从没部署过 frps 时 frps_bind_port 为 None，不会跟任何端口误判相等")
+    assert status2.port_conflicts(22) is True
 
 
 def test_ktech_runtime_detector():
     """缺少任一 VC++ 2013 x86 DLL 时必须在启动 ktech.exe 前识别出来。"""
-    print("\n" + "=" * 60)
-    print("Test 37: Ktech VC++ 2013 Runtime Detector")
     with tempfile.TemporaryDirectory() as tmp:
         runtime_dir = Path(tmp)
         for dll_name in ("MSVCR120.dll", "MSVCP120.dll", "VCOMP120.dll"):
@@ -3241,13 +2559,10 @@ def test_ktech_runtime_detector():
         # 真实反馈缺的是 VCOMP120.dll；此前会先让 Windows 弹加载器错误框。
         (runtime_dir / "VCOMP120.dll").unlink()
         assert _has_vc2013_x86_runtime(runtime_dir) is False
-    print("  PASS: VCOMP120.dll 缺失会被无弹窗地识别为缺 VC++ 2013 x86 运行库")
 
 
 def test_ktech_ascii_runtime_conversion():
     """中文安装/输入路径下，ktech 仍须从纯 ASCII 缓存副本中运行。"""
-    print("\n" + "=" * 60)
-    print("Test 37b: Ktech ASCII Runtime Conversion")
     from types import SimpleNamespace
     from unittest.mock import patch
 
@@ -3300,18 +2615,11 @@ def test_ktech_ascii_runtime_conversion():
         assert len(runtime_dirs[0].name) == 64
         assert (runtime_dirs[0] / "CORE_RL_test.dll").is_file()
         assert (runtime_dirs[0] / ".bundle.sha256").is_file()
-    print("  PASS: 整套 ktools 按内容哈希复制到英文缓存，转换只使用固定英文文件名")
 
 
 def test_connect_fetch_timeout_watchdog():
-    """公网/穿透直连代码查询卡在"获取中…"的看门狗——真机反馈过会一直
-    卡住不动：urllib 的 timeout= 只管连接建立后的收发，不管 DNS 解析，
-    后台线程可能真的几十秒都不返回。这里直接测 _check_connect_fetch_
-    timeouts() 本身的判断逻辑（不搭真实 GUI，用 object.__new__ 绕开
-    __init__）：
-    没到阈值不动作、过了阈值只触发一次、公网和穿透两条互不影响。"""
-    print("\n" + "=" * 60)
-    print("Test: Connect Fetch Timeout Watchdog")
+    """直连代码查询的看门狗：未到阈值不动作，超时只触发一次，公网与穿透两条互不影响
+    （urllib 的 timeout 不管 DNS 解析，后台线程可能长时间不返回）。"""
 
     from types import SimpleNamespace
 
@@ -3336,7 +2644,6 @@ def test_connect_fetch_timeout_watchdog():
     tab._nat_timed_out = False
     tab._check_connect_fetch_timeouts()
     assert calls["public_text"] == [] and calls["nat_text"] == []
-    print("  PASS: 未超过阈值时不触发")
 
     tab._public_pending_since = now - 1000  # 远超阈值
     tab._check_connect_fetch_timeouts()
@@ -3344,99 +2651,16 @@ def test_connect_fetch_timeout_watchdog():
     assert calls["public_text"][0][0] == t("local.connect_failed")
     assert tab._public_timed_out is True
     assert calls["nat_text"] == []
-    print("  PASS: 超过阈值触发一次，且只影响公网这一行")
 
     tab._check_connect_fetch_timeouts()
     assert len(calls["public_text"]) == 1, "已经标记过超时不该重复触发"
-    print("  PASS: 已标记超时后不重复触发")
 
     tab._nat_pending_since = now - 1000
     tab._check_connect_fetch_timeouts()
     assert len(calls["nat_text"]) == 1
     assert calls["nat_text"][0][0] == t("local.connect_failed")
     assert len(calls["public_text"]) == 1, "穿透超时不该影响已经触发过的公网这一行"
-    print("  PASS: 穿透超时独立触发，不影响公网状态")
-
-
-def main():
-    """运行全部测试。"""
-    print("\n" + "█" * 60)
-    print("  DSTOOLS - End-to-End Verification Tests")
-    print("█" * 60)
-
-    all_passed = True
-    tests = [
-        test_lua_parser_basic,
-        test_lua_parser_nested,
-        test_lua_parser_roundtrip,
-        test_ini_parser,
-        test_discovery,
-        test_save_reader,
-        test_mod_manager,
-        test_config_manager,
-        test_list_session_players,
-        test_character_names,
-        test_character_icons,
-        test_modinfo_reader,
-        test_workshop_content_directory_filter,
-        test_admin_manager,
-        test_token_manager,
-        test_cluster_copy,
-        test_player_notes,
-        test_app_settings_toggles,
-        test_cache_path_user_guidance,
-        test_mod_sync_junction,
-        test_theme_set_theme,
-        test_world_reader_and_view_model,
-        test_world_catalog_layers_are_isolated,
-        test_world_creation_plan_and_atomic_writer,
-        test_world_categories_bilingual,
-        test_mod_resolve_cache,
-        test_mod_version_resolution,
-        test_workshop_source_details_parser,
-        test_workshop_status_evidence_priority,
-        test_workshop_snapshot_uses_one_steam_session,
-        test_dst_mod_manifest_verification,
-        test_workshop_download_precheck_uses_physical_files,
-        test_save_bundle_contains_complete_cluster,
-        test_backup_manager_restore_clears_stale_slots,
-        test_backup_manager_prune_retention_boundary,
-        test_backfill_cluster_defaults_only_fills_missing,
-        test_cluster_ini_steam_section_roundtrip,
-        test_sakura_frp_tunnel_matching,
-        test_sakura_server_port_rewrite,
-        test_sakura_token_settings_roundtrip,
-        test_frpc_manager_key_convention,
-        test_luajit_injector,
-        test_luajit_game_bin64_install,
-        test_steam_library_folder_casing,
-        test_font_style_switch,
-        test_frp_selfhost_port_conflict_detection,
-        test_ktech_runtime_detector,
-        test_ktech_ascii_runtime_conversion,
-        test_world_ocean_frequency_labels,
-        test_connect_fetch_timeout_watchdog,
-    ]
-
-    for test in tests:
-        try:
-            test()
-        except Exception as e:
-            print(f"\n  FAIL: {e}")
-            import traceback
-
-            traceback.print_exc()
-            all_passed = False
-
-    print("\n" + "█" * 60)
-    if all_passed:
-        print("  ALL TESTS PASSED!")
-    else:
-        print("  SOME TESTS FAILED!")
-    print("█" * 60)
-
-    return 0 if all_passed else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    run(globals())

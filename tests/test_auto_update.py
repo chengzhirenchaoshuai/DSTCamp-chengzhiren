@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from dstools.shared import auto_update, update_check
 from dstools.shared.update_check import UpdateRelease
+from _harness import run  # noqa: E402
 
 
 class _Response(io.BytesIO):
@@ -217,17 +218,5 @@ def test_cleanup_keeps_external_tools_when_not_yet_embedded() -> None:
         assert needed.exists()
 
 
-def main() -> None:
-    test_release_manifest_enables_auto_update()
-    test_download_requires_matching_hash_and_size()
-    test_launch_helper_stages_on_exe_volume()
-    test_standard_exe_name_is_fixed_but_custom_name_is_preserved()
-    test_cleanup_removes_known_stale_artifacts()
-    test_cleanup_is_noop_when_not_frozen()
-    test_cleanup_removes_vestigial_external_tools_once_embedded()
-    test_cleanup_keeps_external_tools_when_not_yet_embedded()
-    print("自动更新测试通过")
-
-
 if __name__ == "__main__":
-    main()
+    run(globals())

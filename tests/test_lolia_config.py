@@ -3,6 +3,7 @@
 import tomllib
 
 from dstools.features.lolia import config as lolia_config
+from _harness import run  # noqa: E402
 
 _SERVER_TOML = '''serverAddr = "node.example"
 serverPort = 7000
@@ -114,18 +115,5 @@ def test_node_grouping_and_stable_order() -> None:
     assert lolia_api.node_sort_key(nodes[3], True) < lolia_api.node_sort_key(nodes[3], False)
 
 
-def main() -> None:
-    tests = (
-        test_rewrites_local_ports_and_round_trips,
-        test_rejects_non_udp_and_duplicate_tunnels,
-        test_paste_sources_and_prepare_shard,
-        test_oauth_pkce_callback_and_remark,
-        test_node_grouping_and_stable_order,
-    )
-    for test in tests:
-        test()
-        print(f"PASS: {test.__name__}")
-
-
 if __name__ == "__main__":
-    main()
+    run(globals())

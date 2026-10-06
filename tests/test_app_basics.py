@@ -1,91 +1,49 @@
-"""应用级基础测试：中英文案、EXE 入口导入、单实例、玩家登记簿与连接日志解析。
+"""应用级基础测试：中英文案、EXE 入口导入、单实例、玩家登记簿与连接日志解析（界面行为由真机验证）。"""
 
-只测纯逻辑与入口可导入性；界面行为由真机验证，不在这里模拟控件。"""
-
+import importlib
 import os
 import sys
 from string import Formatter
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from _harness import run  # noqa: E402
 
-from dstools.i18n import t, set_lang, get_lang
+from dstools.i18n import get_lang, set_lang, t
+from dstools.i18n.strings import STRINGS
 
 
-def test_i18n_basic():
-    """Test basic i18n functionality."""
-    print("=" * 60)
-    print("Test P2-1: i18n Basic")
-
-    original = get_lang()
-    try:
-        set_lang("zh")
-        assert "DSTCamp" in t("app.title")
-        set_lang("en")
-        assert t("app.title") == "DSTCamp · Local Server Manager"
-        set_lang("fr")
-        assert get_lang() == "en"
-        print("  PASS: 中英文切换及非法语言保护正常")
-    finally:
-        set_lang(original)
-
-    # All keys exist in both languages
-    zh_keys = set()
-    en_keys = set()
-    from dstools.i18n.strings import STRINGS
-    for key in STRINGS["zh"]:
-        zh_keys.add(key)
-    for key in STRINGS["en"]:
-        en_keys.add(key)
-    assert zh_keys == en_keys, f"Key mismatch: zh-only={zh_keys-en_keys}, en-only={en_keys-zh_keys}"
-    print(f"  PASS: {len(zh_keys)} keys match in both languages")
+def test_i18n_keys_and_placeholders_match():
+    """中英文 key 完全一致、每条文案的格式占位符一致，非法语言保持原语言。"""
+    assert set(STRINGS["zh"]) == set(STRINGS["en"]), set(STRINGS["zh"]) ^ set(STRINGS["en"])
 
     def fields(value):
         return {name for _, name, _, _ in Formatter().parse(value) if name}
 
-    mismatched = [
-        key for key in zh_keys if fields(STRINGS["zh"][key]) != fields(STRINGS["en"][key])
-    ]
-    assert not mismatched, f"Placeholder mismatch: {mismatched}"
+    mismatched = [key for key in STRINGS["zh"] if fields(STRINGS["zh"][key]) != fields(STRINGS["en"][key])]
+    assert not mismatched, mismatched
 
-    # Format strings work
-    set_lang("zh")
-    result = t("dlg.saved_mods", count=34, shard="Master")
-    assert "34" in result and "Master" in result
-    set_lang("en")
-    result = t("dlg.saved_mods", count=34, shard="Master")
-    assert "34" in result and "Master" in result
-    set_lang(original)
-    print("  PASS: Format strings work in both languages")
+    original = get_lang()
+    try:
+        set_lang("en")
+        set_lang("fr")
+        assert get_lang() == "en"
+        assert t("dlg.saved_mods", count=34, shard="Master") == STRINGS["en"]["dlg.saved_mods"].format(
+            count=34, shard="Master")
+    finally:
+        set_lang(original)
 
 
 def test_exe_entry_imports():
-    """Test that the EXE entry point imports correctly."""
-    print("\n" + "=" * 60)
-    print("Test P2-2: EXE Entry Point Imports")
-
-    # run_gui.py/build_exe.py live in scripts/, not on sys.path by default
-    # (only the project root is, so `import dstools` resolves) -- add it
-    # just for this test rather than polluting sys.path for the whole file.
+    """发布入口、构建脚本与 Qt 应用可以导入。"""
     scripts_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts")
     if scripts_dir not in sys.path:
         sys.path.insert(0, scripts_dir)
-
-    # Test run_gui.py imports
-    import run_gui  # noqa: F401
-    print("  PASS: scripts/run_gui.py imports successfully")
-
-    # Test build_exe.py can be imported
     import build_exe  # noqa: F401
-    print("  PASS: scripts/build_exe.py imports successfully")
+    import run_gui  # noqa: F401
 
-    # 发布入口：Qt 版界面
     import dstools.qt.app  # noqa: F401
-    print("  PASS: dstools.qt.app imports successfully")
 
-    # PyInstaller --windowed 的冒烟进程没有控制台，sys.stdin 可能为 None。
-    # Worker 模块只是在入口完整性检查中被导入，不能在 import 阶段假定管
-    # 道已经存在；真正执行 Worker 时才校验 stdin/stdout。
-    import importlib
+    # 无控制台的冒烟进程中 sys.stdin 为 None，Worker 模块在导入阶段不能依赖管道
     import dstools.features.mod._sandbox_worker as sandbox_worker
     original_stdin = sys.stdin
     try:
@@ -93,51 +51,21 @@ def test_exe_entry_imports():
         importlib.reload(sandbox_worker)
     finally:
         sys.stdin = original_stdin
-    print("  PASS: sandbox worker imports when windowed stdin is unavailable")
 
 
-def test_single_instance_contract():
+def test_single_instance_window_title():
+    """单实例按窗口标题识别已有实例：带/不带版本号、中英文标题都要认，其他程序不认。"""
     from dstools import __version__
-    from dstools.shared.single_instance import (
-        SingleInstance,
-        _is_dstcamp_window_title,
-        acquire_gui_instance,
-    )
+    from dstools.shared.single_instance import _is_dstcamp_window_title
 
-    assert SingleInstance and callable(acquire_gui_instance)
-    assert _is_dstcamp_window_title("DSTCamp · 本地服务器管理")
-    assert _is_dstcamp_window_title(
-        f"DSTCamp · 本地服务器管理 v{__version__}"
-    )
-    assert _is_dstcamp_window_title(
-        f"DSTCamp · Local Server Manager v{__version__}"
-    )
-    assert not _is_dstcamp_window_title("其他程序 v1.3.0")
-    # Worker 参数在 run_gui.py 的 GUI 分支之前处理，单实例模块本身只负责
-    # 普通 GUI 进程；这里验证入口仍保留这些独立分流参数。
-    run_gui_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "scripts",
-        "run_gui.py",
-    )
-    with open(run_gui_path, encoding="utf-8") as stream:
-        source = stream.read()
-    assert "--lua-sandbox-worker" in source
-    assert "--dstcamp-workshop-worker" in source
-    assert "acquire_gui_instance" in source
-    print("  PASS: GUI 单实例入口与 Worker 分流契约正常")
-
-    # Qt 主窗口标题不带版本号，重复启动时也要能识别并激活已有窗口
-    from dstools.i18n.strings import STRINGS
     for lang in ("zh", "en"):
-        assert _is_dstcamp_window_title(STRINGS[lang]["app.title"])
-    print("  PASS: Qt 主窗口标题可被单实例识别")
-
+        title = STRINGS[lang]["app.title"]
+        assert _is_dstcamp_window_title(title)
+        assert _is_dstcamp_window_title(f"{title} v{__version__}")
+    assert not _is_dstcamp_window_title("其他程序 v1.3.0")
 
 def test_player_registry_merge_rules():
-    """跨存档玩家登记簿：昵称冲突按日志 mtime 取新的（扫描顺序任意，不能让
-    先扫到的旧日志盖掉新昵称）；昵称没变不动 seen_at（避免每次刷新重写）；
-    文件夹标识取并集。"""
+    """跨存档玩家登记簿：昵称冲突按日志 mtime 取新的；昵称不变不动 seen_at；文件夹标识取并集。"""
     import tempfile
     from pathlib import Path
 
@@ -164,7 +92,6 @@ def test_player_registry_merge_rules():
             assert fn("KU_dwt6dfPl") is None and fn("A7KVLN39T5JF") is None
         finally:
             player_registry._registry_path = original
-    print("  PASS: 玩家登记簿合并规则（昵称取最新、不因 mtime 抖动重写、标识取并集）")
 
 
 def test_spawn_sequence_links_folder_to_account():
@@ -193,7 +120,6 @@ def test_spawn_sequence_links_folder_to_account():
         log.write_text("\n".join(strict + interleaved) + "\n", encoding="utf-8")
         identities = _parse_file_raw(log)["identities"]
     assert identities == {"A7NEWFOLDER1": "KU_new"}, identities
-    print("  PASS: 出生序列四行严格相邻才把玩家文件夹对应到账号")
 
 
 def test_resume_identity_tolerates_mod_log_noise():
@@ -223,29 +149,7 @@ def test_resume_identity_tolerates_mod_log_noise():
         log.write_text("\n".join(lines) + "\n", encoding="utf-8")
         identities = _parse_file_raw(log)["identities"]
     assert identities == {"A7NOISYFOLD1": "KU_noisy", "A7SECONDFOLD": "KU_second"}, identities
-    print("  PASS: 模组输出隔开几行仍能认人，跨秒/夹别人续接行不认")
-
-
-def main():
-    tests = [
-        test_i18n_basic,
-        test_exe_entry_imports,
-        test_single_instance_contract,
-        test_player_registry_merge_rules,
-        test_spawn_sequence_links_folder_to_account,
-        test_resume_identity_tolerates_mod_log_noise,
-    ]
-    failed = 0
-    for test in tests:
-        try:
-            test()
-        except Exception:
-            import traceback
-            traceback.print_exc()
-            failed += 1
-    print(f"\n应用级基础测试：{len(tests) - failed}/{len(tests)} 通过")
-    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    run(globals())

@@ -9,6 +9,7 @@ import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _harness import run  # noqa: E402
 
 import dstools.features.mod.legacy_v1 as legacy_v1
 import dstools.features.mod.parser as mod_parser
@@ -43,7 +44,7 @@ def _write_package(
             package.writestr(unsafe_name, "unsafe")
 
 
-def main() -> None:
+def test_legacy_package_validation_and_deploy() -> None:
     with tempfile.TemporaryDirectory(prefix="dstcamp_v1_test_") as temp:
         root = Path(temp)
         archive = root / "123_legacy.bin"
@@ -339,8 +340,6 @@ def main() -> None:
             else:
                 raise AssertionError("仍受 Steam 管理的 V1 目录不能清理")
 
-    print("PASS: V1 Legacy Mod 校验、部署、取消订阅残留删除和异常保护")
-
 
 if __name__ == "__main__":
-    main()
+    run(globals())

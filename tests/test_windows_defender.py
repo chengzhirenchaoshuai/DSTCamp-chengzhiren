@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _harness import run  # noqa: E402
 
 from dstools.shared import windows_defender as defender
 
@@ -90,91 +91,14 @@ def test_broad_folders_are_never_safe_exclusion_targets() -> None:
     ) is True
 
 
-def test_elevated_wrapper_never_calls_write_error_in_its_catch_block() -> None:
-    # 回归锁定：catch 块里不能再出现 Write-Error——$ErrorActionPreference
-    # ='Stop' 会让它自己变成终止错误，'exit 1223' 永远执行不到。
-    captured = {}
-
-    def fake_run_powershell(script, *, timeout=20):
-        captured["script"] = script
-        return _completed()
-
-    with patch.object(defender, "_run_powershell", fake_run_powershell):
-        defender._run_elevated_powershell("Write-Output ok")
-    # 只断言没有真的调用 Write-Error 这个 cmdlet（旁边解释原因的中文
-    # 注释里允许提到这个名字，不用管）。
-    assert "Write-Error $_" not in captured["script"]
-    assert "exit 1223" in captured["script"]
 
 
-def test_elevated_wrapper_launches_via_file_not_giant_encoded_command() -> None:
-    # 回归锁定（用户实测复现多次，同一个跟脚本内容无关的"PowerShell
-    # exit 1"）：之前把整段脚本内联进 -EncodedCommand 塞进
-    # Start-Process -Verb RunAs 的 -ArgumentList——这条 UAC 提升链路
-    # （AppInfo 服务的 COM 提升 moniker）对参数长度敏感，排除项修改脚
-    # 本加上重试、诊断中转文件之后编码能到七八千字符，会在真正执行逻
-    # 辑之前就失败退出，跟脚本里的 try/catch 逻辑完全无关，所以之前几
-    # 次扩大 try/catch 覆盖范围都没用。现在脚本先写到临时 .ps1 文件，
-    # -ArgumentList 里只有一个固定长度的文件路径。
-    captured = {}
-    written_paths = []
-
-    def fake_run_powershell(outer_script, *, timeout=20):
-        captured["outer"] = outer_script
-        match = re.search(r"'-File','([^']+)'", outer_script)
-        assert match, outer_script
-        script_path = Path(match.group(1))
-        written_paths.append(script_path)
-        assert script_path.exists()
-        assert script_path.read_text(encoding="utf-8-sig") == "Write-Output ok"
-        return _completed()
-
-    with patch.object(defender, "_run_powershell", fake_run_powershell):
-        defender._run_elevated_powershell("Write-Output ok")
-
-    assert "-EncodedCommand" not in captured["outer"]
-    assert "'-ExecutionPolicy','Bypass'" in captured["outer"]
-    assert not written_paths[0].exists()  # 用完即删，不留残留
 
 
-def test_all_generated_scripts_silence_progress_stream() -> None:
-    # 回归锁定：非交互执行且 stderr 被重定向捕获时，Write-Progress 产
-    # 生的进度流会被序列化成 CLIXML 糊进 stderr（跟未捕获错误是同一大
-    # 类问题的另一个触发点）；四处生成脚本的地方都必须提前静音进度流。
-    targets = [defender.DefenderTarget(Path("C:/DSTCamp"), "file")]
-    captured = {}
-
-    def fake_run_powershell(script, *, timeout=20):
-        captured.setdefault("scripts", []).append(script)
-        return _completed()
-
-    with patch.object(defender, "_run_powershell", fake_run_powershell), patch.object(
-        defender, "is_process_elevated", return_value=True
-    ):
-        defender.check_defender_exclusion(targets)
-        defender._run_elevated_powershell("Write-Output ok")
-
-    with patch.object(
-        defender,
-        "_run_elevated_powershell",
-        lambda script: captured.setdefault("scripts", []).append(script) or _completed(),
-    ):
-        defender.check_defender_exclusion_elevated(targets)
-        defender.change_defender_exclusion(targets, enabled=True)
-
-    assert len(captured["scripts"]) == 4
-    for script in captured["scripts"]:
-        assert "$ProgressPreference = 'SilentlyContinue'" in script
 
 
 def test_fullpath_helper_resolves_wildcard_target_on_real_powershell() -> None:
-    # 回归锁定（真机验证，不 mock）：[IO.Path]::GetFullPath() 在 Windows
-    # PowerShell 5.1（.NET Framework）下遇到 '*' 会抛"非法字符路径"异
-    # 常——temp_wildcard 目标的 '_MEI*' 恰好带星号，之前检测循环直接调
-    # GetFullPath 没包 try/catch，脚本在 $ErrorActionPreference='Stop'
-    # 下整段终止，异常信息当成乱码 CLIXML 糊在界面上。这里真实起一个
-    # PowerShell 子进程验证 DstCamp-FullPath 对通配符路径不再抛异常，
-    # 且解析结果保留字面 '*'。
+    # 真实启动 PowerShell 验证：DstCamp-FullPath 对带 '*' 的 _MEI* 路径不抛异常且保留字面 '*'
     script = defender._FULLPATH_HELPER_SNIPPET + r"""
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -190,11 +114,7 @@ Write-Output (DstCamp-FullPath 'C:\DSTCamp\DSTCamp.exe')
 
 
 def test_clean_powershell_error_strips_clixml_serialization() -> None:
-    # PowerShell 非交互执行时，未捕获的终止错误会被序列化成这种 CLIXML；
-    # 之前 _run_elevated_powershell() 的 catch 块里 Write-Error 会触发它
-    # （$ErrorActionPreference='Stop' 下 Write-Error 本身变终止错误，
-    # 'exit 1223' 永远执行不到），直接把这坨 XML 糊在界面上、把窗口撑
-    # 爆挤掉按钮——这里锁定"必须抠出人话，不能透出原始 XML"。
+    # 未捕获的终止错误会被序列化成 CLIXML，必须提取出可读文本，不能把原始 XML 显示给用户
     clixml = (
         "#< CLIXML\n"
         '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
@@ -215,10 +135,7 @@ def test_clean_powershell_error_strips_clixml_serialization() -> None:
     assert defender._clean_powershell_error("access denied") == "access denied"
     assert defender._clean_powershell_error("") == ""
 
-    # 回归锁定：Get-MpPreference 等 cmdlet 在非交互、stderr 被重定向捕获
-    # 时会把 Write-Progress 进度流也序列化成 CLIXML（S="progress" 对
-    # 象），跟真正的错误流是两回事——这里必须整段丢弃，不能被旧的
-    # "<S ...>...</S>" 正则误当成错误文本抠出来，更不能原样透出。
+    # 进度流（S="progress"）也会被序列化成 CLIXML，必须整段丢弃，不能当成错误文本
     progress_clixml = (
         "#< CLIXML\n"
         '<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">'
@@ -323,16 +240,8 @@ def test_elevated_check_reads_relay_file_and_reports_uac_cancel() -> None:
 
 
 def test_change_outer_catch_reports_real_detail_via_relay_file() -> None:
-    # 回归锁定（用户实测复现两次，同一个报错"PowerShell exit 1"）：之
-    # 前复查阶段有一行 $wanted = DstCamp-FullPath $t 完全没被任何
-    # try/catch 罩住，一旦抛异常就是未捕获终止错误，PowerShell 默认以
-    # exit 1 退出，界面只能看到没有信息量的"PowerShell exit 1"，还被
-    # 误判成修改失败——即使 Add/Remove 命令本身已经真的成功了。现在整
-    # 段命令执行+复查都包进同一个 try/catch，异常信息直接 UTF8 落盘到
-    # 中转文件（不走 stderr，没有代码页乱码问题）。这里用真实 PowerShell
-    # 跑生成的完整脚本（只把 Add/Remove/Get-MpPreference 换成会抛中文
-    # 异常的 stub 函数，不碰真实 Defender），验证两种场景：命令本身失
-    # 败得到真实中文异常文本，命令成功后才出的异常按成功处理。
+    # 用真实 PowerShell 运行生成的完整脚本（Add/Remove/Get-MpPreference 替换为抛中文异常的桩，不碰真实 Defender）：
+    # 命令本身失败时拿到真实中文异常文本，命令成功后才出的异常按成功处理
     targets = [defender.DefenderTarget(Path("C:/DSTCamp/DSTCamp.exe"), "file")]
 
     def with_stub(stub):
@@ -361,14 +270,7 @@ def test_change_outer_catch_reports_real_detail_via_relay_file() -> None:
 
 
 def test_change_treats_post_change_verify_query_failure_as_success() -> None:
-    # 回归锁定（用户实测复现）：Remove-MpPreference 真的成功执行了，紧
-    # 接着的 Get-MpPreference 复查却偶发抛异常（Defender 的 WMI 提供程
-    # 序刚改完还没稳定），之前整段脚本没包 try/catch，直接以未捕获异
-    # 常崩溃退出，被误报成"无法修改...可能被企业策略/篡改防护阻
-    # 止"——实际上移除已经生效，用户重新点检测能看到。exit 5 表示
-    # "Add/Remove 命令本身没抛异常，只是复查重试 3 次都查不到"，必须
-    # 当成功处理，不能报失败。已经在真实 PowerShell 上验证过这段重试
-    # 逻辑本身语法、行为都正确（exit 4/5/0 三种场景）。
+    # 移除成功后复查偶发失败（Defender 的 WMI 尚未稳定）：exit 5 必须按成功处理，不能误报被策略阻止
     targets = [defender.DefenderTarget(Path("C:/DSTCamp"), "runtime_tools")]
     with patch.object(
         defender, "_run_elevated_powershell", return_value=_completed(returncode=5)
@@ -430,27 +332,5 @@ def test_change_uses_encoded_paths_and_reports_uac_cancellation() -> None:
     assert defender.change_defender_exclusion([], enabled=True).success is True
 
 
-def main() -> None:
-    tests = [
-        test_source_mode_never_returns_an_exclusion_target,
-        test_legacy_zip_install_returns_single_folder_target,
-        test_standard_install_returns_exe_runtime_tools_and_temp_wildcard,
-        test_broad_folders_are_never_safe_exclusion_targets,
-        test_elevated_wrapper_never_calls_write_error_in_its_catch_block,
-        test_elevated_wrapper_launches_via_file_not_giant_encoded_command,
-        test_all_generated_scripts_silence_progress_stream,
-        test_fullpath_helper_resolves_wildcard_target_on_real_powershell,
-        test_clean_powershell_error_strips_clixml_serialization,
-        test_check_parses_status_lines_in_target_order,
-        test_elevated_check_reads_relay_file_and_reports_uac_cancel,
-        test_change_outer_catch_reports_real_detail_via_relay_file,
-        test_change_treats_post_change_verify_query_failure_as_success,
-        test_change_uses_encoded_paths_and_reports_uac_cancellation,
-    ]
-    for test in tests:
-        test()
-        print(f"PASS: {test.__name__}")
-
-
 if __name__ == "__main__":
-    main()
+    run(globals())

@@ -49,8 +49,12 @@ class ServerStatus:
     mem_total_mb: int | None = None
     mem_used_mb: int | None = None
     used_ports: frozenset = field(default_factory=frozenset)
-    frps_bind_port: int | None = None  # dstcamp-frps 当前实际绑定的端口，供冲突判断用
+    frps_bind_port: int | None = None  # dstcamp-frps 当前实际绑定的端口
     checked_at: float = 0.0
+
+    def port_conflicts(self, port: int) -> bool:
+        """端口被服务器上其他服务占用（占用者是 frps 自己时不算冲突）。"""
+        return self.reachable and port in self.used_ports and port != self.frps_bind_port
 
 
 def _parse_probe_output(output: str) -> ServerStatus:

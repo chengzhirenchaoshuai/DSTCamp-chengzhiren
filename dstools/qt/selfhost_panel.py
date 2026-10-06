@@ -614,7 +614,7 @@ class SelfHostPanel(QWidget):
         def work():
             on_log(t("selfhost.checking_port_conflict"))
             status = probe.probe_server_status(conn["host"], conn["port"], conn["username"])
-            if status.reachable and port in status.used_ports and port != status.frps_bind_port:
+            if status.port_conflicts(port):
                 raise remote_deploy.RemoteDeployError(t("selfhost.bind_port_conflict_msg", port=port))
             remote_deploy.deploy_via_ssh(conn["host"], conn["port"], conn["username"], port, token, on_log,
                                           self._confirm_host_key, key_path=str(remote_deploy.SSH_KEY_PATH),

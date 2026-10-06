@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _harness import run  # noqa: E402
 
 from dstools.features.frp_selfhost.lobby_diagnostics import (
     ConnectionKind,
@@ -213,10 +214,9 @@ def test_server_and_tcpdump_lines_are_classified() -> None:
 
 
 def test_player_connection_kind_from_server_log() -> None:
-    """按真机 server_log 的进服序列识别每个玩家的连接方式（IP 已换成文档保留网段）。
+    """按真实 server_log 的进服序列识别每个玩家的连接方式（IP 已换成文档保留网段）。
 
-    P2P 行里的地址是饥荒生成的伪地址（端口恒为 1），玩家重连时没有 Create session，
-    只出现 Received from，也必须认成 P2P。"""
+    P2P 行里是端口恒为 1 的伪地址；重连时没有 Create session 只有 Received from，也要认成 P2P。"""
     tracker = ConnectionTracker()
     log = [
         # Steam P2P：首次进服
@@ -269,24 +269,5 @@ def test_player_connection_kind_from_server_log() -> None:
     assert report.route == DiagnosticRoute.DIRECT and report.confidence == "high"
 
 
-def main() -> int:
-    tests = [
-        test_mihomo_diagnostic_api_is_loopback_and_protected,
-        test_mihomo_connection_api_parses_process_chain_and_bytes,
-        test_mihomo_connection_api_accepts_null_when_idle,
-        test_frp_route_requires_log_and_remote_port_evidence,
-        test_wireguard_game_route_requires_api_and_inner_capture,
-        test_stun_only_is_not_reported_as_game_acceleration,
-        test_wireguard_counter_delta_alone_is_not_reported_as_signal,
-        test_server_and_tcpdump_lines_are_classified,
-        test_player_connection_kind_from_server_log,
-    ]
-    for test in tests:
-        test()
-        print(f"  PASS: {test.__name__}")
-    print(f"\n全部通过：{len(tests)}/{len(tests)}")
-    return 0
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    run(globals())

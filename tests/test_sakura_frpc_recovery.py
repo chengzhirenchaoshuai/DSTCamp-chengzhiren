@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from dstools.features.sakura import frpc_recovery
 from dstools.qt.pages import sakura as sakura_page
+from _harness import run  # noqa: E402
 
 
 def test_inspect_distinguishes_ready_and_missing() -> None:
@@ -60,16 +61,5 @@ def test_enable_mapping_aborts_before_remote_changes_when_client_is_missing() ->
     progress.assert_not_called()
 
 
-def main() -> None:
-    tests = (
-        test_inspect_distinguishes_ready_and_missing,
-        test_security_block_has_a_structured_status,
-        test_enable_mapping_aborts_before_remote_changes_when_client_is_missing,
-    )
-    for test in tests:
-        test()
-        print(f"PASS: {test.__name__}")
-
-
 if __name__ == "__main__":
-    main()
+    run(globals())

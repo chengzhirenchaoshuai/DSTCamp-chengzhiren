@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _harness import run  # noqa: E402
 
 from dstools.features.local_service.token_scheduler import (
     TokenUse,
@@ -28,7 +29,7 @@ NEW_B = "pds-g^KU_" + "h" * 24 + "^" + "i" * 28 + "^" + "j" * 16
 UNKNOWN = "custom-token-" + "x" * 30
 
 
-def main() -> None:
+def test_token_classification_and_selection() -> None:
     assert classify_token(OLD_A) == ServerTokenKind.OLD
     assert classify_token(NEW_A) == ServerTokenKind.NEW
     assert classify_token(UNKNOWN) == ServerTokenKind.UNKNOWN
@@ -183,8 +184,7 @@ def main() -> None:
         crash_service._on_server_registered(proc)
         assert app_settings.get_token_holds() == {}
 
-        # E_ROWID_EXIST 也可能只出现在洞穴；它仍然表示整个存档使用的
-        # 令牌发生注册冲突，不能因为不是 Master 就漏记。
+        # E_ROWID_EXIST 只出现在洞穴时同样表示整个存档的令牌冲突
         cave_proc = SimpleNamespace(
             is_master=False,
             cluster_path=crash_cluster,
@@ -300,9 +300,6 @@ def main() -> None:
                 assert service._choose_start_token(cluster) == "changed"
             assert read_token(token_path) == NEW_B
 
-    test_auto_restart_rules_and_hold_retry_window()
-    test_auto_restart_controller_flow()
-    print("服务器令牌分类与调度测试全部通过")
 
 
 def test_auto_restart_rules_and_hold_retry_window() -> None:
@@ -492,4 +489,4 @@ def test_auto_restart_controller_flow() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    run(globals())

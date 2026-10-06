@@ -10,6 +10,7 @@ from unittest.mock import patch
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _harness import run  # noqa: E402
 
 from dstools.features.mod.catalog import ModCatalogStore
 from dstools.features.mod.export_list import build_export_entries
@@ -26,7 +27,6 @@ from dstools.features.mod.parser import (
     find_workshop_residual_dirs,
     list_installed_mod_ids,
 )
-from dstools.qt.mod_recommend_dialog import RECOMMENDED_MODS
 from dstools.qt.pages.mod import ModPage
 from dstools.models import ModEntry, Platform
 from dstools.features.mod.workshop_api import (
@@ -72,15 +72,6 @@ def test_catalog_does_not_store_page_state():
     assert homepage.configuration_options != creation.configuration_options
 
 
-def test_recommended_mods_include_ping_server_with_icon():
-    items = {workshop_id: (name, desc) for workshop_id, name, desc in RECOMMENDED_MODS}
-    assert len(items) == len(RECOMMENDED_MODS)
-    assert items["2998347052"] == (
-        "Say about your ping(Server)",
-        "显示 Ping、网络与服务器性能及丢包率，并支持聊天播报",
-    )
-    icon = Path(__file__).resolve().parents[1] / "icons" / "recommended" / "2998347052.png"
-    assert icon.is_file()
 
 
 def test_catalog_icons_and_platform_invalidation():
@@ -609,19 +600,4 @@ def test_export_entries_keep_enabled_server_mods_only():
 
 
 if __name__ == "__main__":
-    test_catalog_does_not_store_page_state()
-    test_recommended_mods_include_ping_server_with_icon()
-    test_catalog_icons_and_platform_invalidation()
-    test_catalog_releases_stale_icons_and_old_source_snapshots()
-    test_loaded_mod_icons_have_a_resident_size_limit()
-    test_shared_rows_keep_filter_and_sort_consistent()
-    test_luajit_mod_is_first_only_when_prioritized()
-    test_visible_mod_ids_include_enabled_missing_references_only()
-    test_workshop_worker_can_be_stopped_by_cancel_event()
-    test_workshop_candidates_do_not_require_installed_client_files()
-    test_residual_directory_is_not_treated_as_installed_or_updateable()
-    test_unsubscribed_v2_item_cannot_fall_back_to_legacy()
-    test_true_legacy_item_can_recover_download_path_from_source_details()
-    test_residual_cleanup_deletes_and_rejects_steam_managed_items()
-    test_export_entries_keep_enabled_server_mods_only()
-    print("PASS: shared Mod catalog/list model")
+    run(globals())

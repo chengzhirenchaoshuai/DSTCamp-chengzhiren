@@ -1,7 +1,4 @@
-"""服务器 Mod 完整性提示的数量与显示时机回归测试。
-
-直接运行：``python tests/test_server_mod_status.py``。
-"""
+"""服务器 Mod 完整性提示的数量与显示时机回归测试。"""
 
 from pathlib import Path
 import queue
@@ -17,6 +14,7 @@ from dstools.features.local_service.dedicated_server import (  # noqa: E402
     ServerStatus,
     advance_world_ready_marker,
 )
+from _harness import run  # noqa: E402
 
 
 def _run_process(lines: list[str], *, is_master: bool = True) -> ServerProcess:
@@ -89,7 +87,7 @@ def test_presentation_waits_until_ready_line_is_consumed() -> None:
     ready_seen = False
     displayed_lines = [
         "ModIndex: Load sequence finished successfully.",
-        "Reset() returning",  # 正式启动分界线之前的预加载假阳性。
+        "Reset() returning",  # 正式启动分界线之前的预加载假阳性
         "About to start a shard with these settings:",
     ]
     for line in displayed_lines:
@@ -295,24 +293,5 @@ def test_missing_enabled_mods_follow_server_load_paths():
         assert not unknown
 
 
-def main() -> None:
-    tests = (
-        test_luajit_companion_is_checked_but_not_counted,
-        test_missing_mods_are_reported_only_after_world_ready,
-        test_presentation_waits_until_ready_line_is_consumed,
-        test_mod_syntax_error_is_failed_but_world_can_be_ready,
-        test_console_log_reads_are_bounded_during_error_storm,
-        test_console_shutdown_command_is_an_expected_exit,
-        test_shutdown_text_inside_other_command_does_not_hide_crash,
-        test_console_command_history_supports_up_down_and_draft,
-        test_stop_blocking_prefers_shutdown_command_over_force,
-        test_missing_enabled_mods_follow_server_load_paths,
-    )
-    for test in tests:
-        test()
-        print(f"[PASS] {test.__name__}")
-    print(f"全部通过：{len(tests)}/{len(tests)}")
-
-
 if __name__ == "__main__":
-    main()
+    run(globals())

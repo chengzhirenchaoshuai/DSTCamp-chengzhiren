@@ -1,9 +1,4 @@
-"""已核对 Mod 的世界创建与设置隔离回归测试。
-
-直接运行：``python tests/test_world_mod_compat.py``。
-测试不依赖本机存档、Steam 或网络，真实 Mod 源码的人工核对结论已固化在
-location_profiles.py、catalog_resolver.py 和 mod_settings.py 的登记表中。
-"""
+"""已核对 Mod 的世界创建与设置隔离回归测试（不依赖本机存档、Steam 或网络）。"""
 
 from pathlib import Path
 import sys
@@ -64,6 +59,7 @@ from dstools.shared.lua_parser import (  # noqa: E402
     parse_lua_value,
     serialize_lua_table,
 )
+from _harness import run  # noqa: E402
 
 
 ISLAND_LOCATIONS = (
@@ -368,10 +364,7 @@ def test_lua_multiline_roundtrip() -> None:
 
 
 def test_lua_file_strips_klei_persistent_string_header() -> None:
-    # 真机复现过的用户反馈：游戏引擎某些流程用 TheSim:SetPersistentString()
-    # 写 leveldataoverride.lua 时会带上 "KLEI<版本号> " 头，游戏自己读走
-    # 配套的 GetPersistentString() 会把头吃掉，我们直接读原始字节不处理
-    # 就会把 "KLEI" 当非法 token 报"格式错误"。
+    # TheSim:SetPersistentString() 写入的 "KLEI<版本号> " 文件头必须被去掉
     with TemporaryDirectory() as directory:
         path = Path(directory) / "leveldataoverride.lua"
         path.write_text('KLEI     1 return { id="DST_CAVE" }', encoding="utf-8")
@@ -379,13 +372,7 @@ def test_lua_file_strips_klei_persistent_string_header() -> None:
 
 
 def test_lua_value_rejects_function_call_instead_of_guessing() -> None:
-    # 真机复现过的用户反馈："全局事件计时器" mod 把 default 写成
-    # en_zh("en", "zh") 这样按 locale 取值的函数调用。本解析器不认识
-    # 函数调用语法，之前会只吃掉打头的标识符 "en_zh" 就当解析完成，
-    # 悄悄丢弃后面的实参，得到一个语法上"成功"但内容错误的字符串
-    # "en_zh"。现在改成值解析完后如果还有没吃完的 token 就明确报错，
-    # 调用方（mod/parser.py::_coerce_lua_value）捕获后回退保留原始文
-    # 本，不会再伪装成解析成功。
+    # 作者把 default 写成 en_zh("en", "zh") 这类函数调用时必须报错（调用方回退保留原始文本），不能得到字面量 "en_zh"
     try:
         parse_lua_value('en_zh("en", "zh")')
         assert False, "应该因为有没吃完的 token 而报错"
@@ -394,12 +381,7 @@ def test_lua_value_rejects_function_call_instead_of_guessing() -> None:
 
 
 def test_lua_value_rejects_bare_identifier_without_trailing_tokens() -> None:
-    # 跟 test_lua_value_rejects_function_call_instead_of_guessing 是同一
-    # 类问题的另一半：那个测试覆盖的是"函数调用有残留 token"（比如
-    # en_zh("en","zh") 后面还跟着实参），这里覆盖"裸标识符、后面什么都
-    # 不剩"的情况（比如 default = SomeConstant）——这种没有残留 token 可
-    # 抓，得靠单独判断"不是 true/false/nil 的裸标识符"才能拦住，否则会
-    # 把变量名本身悄悄当成字面量字符串返回。
+    # 不是 true/false/nil 的裸标识符（如 default = SomeConstant）没有残留 token，也必须报错
     try:
         parse_lua_value("SomeConstant")
         assert False, "裸标识符（非 true/false/nil）应该报错，不能当字面量"
@@ -725,36 +707,5 @@ def test_multi_shard_mod_templates_require_enabled_mods() -> None:
         assert parse_lua_file(output / "Volcano" / "leveldataoverride.lua")["location"] == VOLCANO_LOCATION
 
 
-def main() -> None:
-    tests = (
-        test_location_profiles,
-        test_setting_location_isolation,
-        test_bwb_dstu_combination_settings,
-        test_island_vanilla_catalogs,
-        test_bwb_hides_and_reorders_patched_vanilla_settings,
-        test_island_creation_defaults_are_complete,
-        test_island_writer_repairs_partial_legacy_plan,
-        test_island_cross_shard_reuses_verified_vanilla_template,
-        test_lua_multiline_roundtrip,
-        test_lua_file_strips_klei_persistent_string_header,
-        test_lua_value_rejects_function_call_instead_of_guessing,
-        test_lua_value_rejects_bare_identifier_without_trailing_tokens,
-        test_en_zh_mod_metadata,
-        test_creation_dependency_confirmation,
-        test_main_mod_dependency_confirmation,
-        test_pending_mod_world_preview,
-        test_creation_preset_apply_refreshes_mod_list,
-        test_creation_matrix,
-        test_creation_rejects_invalid_combinations,
-        test_porkland_creation,
-        test_multi_shard_creation,
-        test_multi_shard_mod_templates_require_enabled_mods,
-    )
-    for test in tests:
-        test()
-        print(f"[PASS] {test.__name__}")
-    print(f"\n全部通过：{len(tests)}/{len(tests)}")
-
-
 if __name__ == "__main__":
-    main()
+    run(globals())

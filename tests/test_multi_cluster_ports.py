@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _harness import run  # noqa: E402
 
 from dstools.models import Cluster, Shard
 from dstools.shared.server_ports import (
@@ -1035,42 +1036,5 @@ def test_public_ipv4_prefers_cip_cc_plain_text() -> None:
     assert calls == [("https://cip.cc/", "curl/8.0", 4)]
 
 
-def main() -> None:
-    tests = [
-        test_effective_defaults_and_internal_ports,
-        test_multi_shard_default_steam_ports_no_conflict,
-        test_cross_cluster_and_cross_field_conflicts,
-        test_shard_override_and_invalid_values,
-        test_lan_only_effective_ports_and_ranges,
-        test_helpers,
-        test_atomic_port_rewrite,
-        test_atomic_lan_port_rewrite_is_focused,
-        test_atomic_lan_port_rewrite_rolls_back,
-        test_local_service_batch_preflight,
-        test_local_service_lan_preflight_repair,
-        test_local_service_lan_blocked_by_mapping_or_running,
-        test_config_editor_effective_conflicts,
-        test_config_editor_port_ranges,
-        test_config_editor_lan_port_repair_and_lock,
-        test_mapping_enable_guard_for_lan_saves,
-        test_world_creation_port_conflict_choices,
-        test_server_manager_rejects_duplicate_start,
-        test_restart_all_preserves_stopped_shards_and_rejects_transitions,
-        test_restart_stop_barrier_waits_for_every_shard,
-        test_restart_prepares_legacy_after_stop,
-        test_connect_code_display_masks_secrets,
-        test_connect_code_waits_for_master_world_ready,
-        test_external_connect_status_rejects_lan_only,
-        test_local_refresh_redetects_server_tool,
-        test_nat_without_configuration_skips_loading_and_network_thread,
-        test_saved_sakura_token_without_local_mapping_skips_lookup,
-        test_nat_without_matching_sakura_tunnel_skips_nodes_request,
-        test_public_ipv4_prefers_cip_cc_plain_text,
-    ]
-    for test in tests:
-        test()
-        print(f"PASS: {test.__name__}")
-
-
 if __name__ == "__main__":
-    main()
+    run(globals())

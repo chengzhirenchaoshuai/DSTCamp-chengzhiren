@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _harness import run  # noqa: E402
 
 from dstools.features.local_service.steam_client_updater import (  # noqa: E402
     SteamUpdateState,
@@ -46,7 +47,7 @@ def _write_manifest(root: Path, *, buildid: str = "100", remaining: str = "0") -
     return path
 
 
-def main() -> None:
+def test_steam_client_updater() -> None:
     assert build_update_uri() == "steam://install/343050"
     assert build_update_uri(validate=True) == "steam://validate/343050"
 
@@ -202,8 +203,7 @@ def main() -> None:
     assert fetch_public_build_id(
         opener=lambda *_args, **_kwargs: (_ for _ in ()).throw(TimeoutError())
     ) is None
-    print("Steam 客户端更新模块测试通过")
 
 
 if __name__ == "__main__":
-    main()
+    run(globals())

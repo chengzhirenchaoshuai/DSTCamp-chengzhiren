@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from _harness import run  # noqa: E402
 
 from dstools.features.frp_selfhost import wireguard as wireguard_module
 from dstools.features.frp_selfhost.lobby_accel import (
@@ -176,21 +177,5 @@ def test_coordinator_passes_wireguard_config_and_rolls_back() -> None:
     assert events[-1] == ("stop",)
 
 
-def main() -> int:
-    tests = [
-        test_mihomo_config_routes_server_tcp_and_udp,
-        test_wireguard_keypair_is_valid_and_stable,
-        test_wireguard_install_script_is_scoped_and_idempotent,
-        test_mihomo_selection_persists_hash_and_wireguard_metadata,
-        test_all_shards_must_be_mapped,
-        test_coordinator_passes_wireguard_config_and_rolls_back,
-    ]
-    for test in tests:
-        test()
-        print(f"  PASS: {test.__name__}")
-    print(f"\n全部通过：{len(tests)}/{len(tests)}")
-    return 0
-
-
 if __name__ == "__main__":
-    raise SystemExit(main())
+    run(globals())

@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from scripts import build_exe
+from _harness import run  # noqa: E402
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -60,16 +61,5 @@ def test_sha256_manifest_matches_artifacts() -> None:
         assert entry["sha256"] == hashlib.sha256(exe.read_bytes()).hexdigest()
 
 
-def main() -> None:
-    tests = (
-        test_fixed_resource_layout_matches_build_manifest,
-        test_staging_copies_only_declared_runtime_resources,
-        test_sha256_manifest_matches_artifacts,
-    )
-    for test in tests:
-        test()
-    print(f"固定资源与打包契约测试通过：{len(tests)}/{len(tests)}")
-
-
 if __name__ == "__main__":
-    main()
+    run(globals())

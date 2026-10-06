@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+from _harness import run  # noqa: E402
 
 # 设置文件放进临时目录，绝不读写真实 %APPDATA%/DSTCamp。
 _SETTINGS_TMP = tempfile.TemporaryDirectory()
@@ -66,25 +67,19 @@ def test_mode_resolution_and_migration() -> None:
             assert app_settings.get_server_runtime_mode() == RuntimeMode.DEDICATED.value
 
 
-# 业务代码只能经 server_runtime 取开服程序目录。白名单：
-# - dedicated_server / server_runtime：探测函数自身；
-# - legacy_v1.discover_legacy_runtime_roots：清理残留时要扫遍所有可能展开过 V1 的目录；
-# - parser.is_dedicated_server_mods_dir：只做"是不是专服 mods"的路径比较。
+# 业务代码只能经 server_runtime 取开服程序目录。白名单：探测函数自身（dedicated_server/server_runtime）、
+# 清理 V1 残留需扫遍所有目录的 legacy_v1、只做路径比较的 parser.is_dedicated_server_mods_dir
 _ALLOWED = {
     "find_dedicated_server_dir(": {"dedicated_server.py", "server_runtime.py", "legacy_v1.py"},
     "get_dedicated_server_path(": {"dedicated_server.py", "server_runtime.py", "parser.py", "app_settings.py"},
     "get_client_runtime_path(": {"server_runtime.py", "app_settings.py"},
 }
-# 旧 Tk 版不再维护，不受约束。
-_LEGACY_TK = ("dstools/gui/", "dstools/features/mod/tab.py", "dstools/features/local_service/tab.py")
 
 
 def test_runtime_single_source() -> None:
     offenders = []
     for path in (PROJECT_ROOT / "dstools").rglob("*.py"):
         rel = path.relative_to(PROJECT_ROOT).as_posix()
-        if rel.startswith(_LEGACY_TK):
-            continue
         text = path.read_text(encoding="utf-8")
         for call, allowed in _ALLOWED.items():
             if path.name in allowed:
@@ -94,11 +89,5 @@ def test_runtime_single_source() -> None:
     assert not offenders, "绕过 server_runtime 直接探测开服目录：\n" + "\n".join(offenders)
 
 
-def main() -> None:
-    for test in (test_mode_resolution_and_migration, test_runtime_single_source):
-        test()
-        print(f"PASS: {test.__name__}")
-
-
 if __name__ == "__main__":
-    main()
+    run(globals())

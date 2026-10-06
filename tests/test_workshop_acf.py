@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _harness import run  # noqa: E402
 
 from dstools.features.mod.workshop_acf import (  # noqa: E402
     WorkshopAcfError,
@@ -56,7 +57,7 @@ SAMPLE = """"AppWorkshop"
 """
 
 
-def main() -> None:
+def test_workshop_acf_cleanup() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         content = Path(tmp) / "steamapps" / "workshop" / "content" / "322330"
         content.mkdir(parents=True)
@@ -110,8 +111,7 @@ def main() -> None:
         else:
             raise AssertionError("游戏运行中应拒绝清理")
         assert "bad" not in calls
-    print("Workshop 安装清单清理测试通过")
 
 
 if __name__ == "__main__":
-    main()
+    run(globals())

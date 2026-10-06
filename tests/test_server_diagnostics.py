@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _harness import run  # noqa: E402
 
 from dstools.features.local_service.server_diagnostics import (
     analyze_mod_loading,
@@ -15,7 +16,7 @@ from dstools.features.local_service.server_diagnostics import (
 )
 
 
-def main() -> None:
+def test_server_failure_diagnostics() -> None:
     cases = [
         ("token_conflict", [
             "[Http] Curl failed[1] with HTTP_500. Response: E_ROWID_EXIST",
@@ -139,8 +140,7 @@ def main() -> None:
         assert report is not None and report.category == "mod_conflict"
         assert report.related_mods == expected_mods
 
-    # 日志加载器会在 require 失败时列出所有尝试过的 Mod 路径；未启用的
-    # Insight 不应因为出现在搜索路径里就被显示为疑似冲突 Mod。
+    # 加载器失败时会列出所有尝试过的 Mod 路径，未启用的 Insight 不能被当成疑似冲突 Mod
     report = diagnose_server_failure(
         shard_name="Master", exit_code=1, world_ready=False,
         enabled_mods=["workshop-1207269058"],
@@ -206,8 +206,7 @@ def main() -> None:
         shard_name="Master", exit_code=1, world_ready=False,
         log_lines=["Access is denied"], intentional_stop=True,
     ) is None
-    print("服务器日志诊断测试全部通过")
 
 
 if __name__ == "__main__":
-    main()
+    run(globals())
