@@ -940,7 +940,8 @@ def test_nat_without_configuration_skips_loading_and_network_thread() -> None:
         cluster = _write_cluster(Path(tmp), "Cluster_A", caves=False)
         service = _local_page([cluster])
         service.get_cluster = lambda: cluster
-        service._connect_generation = 0
+        service._master_ready = lambda: False
+        service._public_gen = service._nat_gen = 0
         service._lan_connect_code = lambda _cluster: None
         service._refresh_lan_status = lambda: None
         silent = SimpleNamespace(set_value=lambda *_args: None, set_status=lambda *_args: None)
@@ -955,7 +956,7 @@ def test_nat_without_configuration_skips_loading_and_network_thread() -> None:
         started = []
 
         with patch.object(local_page, "get_selfhost_frp_server", return_value=None), \
-                patch.object(local_page, "run_async", side_effect=lambda work, done: started.append(work)):
+                patch.object(local_page, "run_async", side_effect=lambda work, done, error=None: started.append(work)):
             service._refresh_connect_labels()
 
         assert nat_text[-1] == (t("local.nat_not_mapped_short"),)
@@ -989,7 +990,7 @@ def test_nat_without_matching_sakura_tunnel_skips_nodes_request() -> None:
                 patch.object(local_page.sakura_frp, "list_tunnels", return_value=[]), \
                 patch.object(local_page.sakura_frp, "list_nodes") as list_nodes, \
                 patch.object(local_page, "get_selfhost_frp_server", return_value=None):
-            assert service._nat_connect_info(cluster) == (None, None)
+            assert service._nat_connect_info(cluster, "sakura") == (None, None)
 
         list_nodes.assert_not_called()
 

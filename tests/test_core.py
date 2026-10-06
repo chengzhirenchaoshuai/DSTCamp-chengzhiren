@@ -2642,14 +2642,16 @@ def test_connect_fetch_timeout_watchdog():
     tab._public_timed_out = False
     tab._nat_pending_since = None
     tab._nat_timed_out = False
+    tab._public_retry_attempt = tab._nat_retry_attempt = 0
     tab._check_connect_fetch_timeouts()
     assert calls["public_text"] == [] and calls["nat_text"] == []
 
     tab._public_pending_since = now - 1000  # 远超阈值
     tab._check_connect_fetch_timeouts()
     assert len(calls["public_text"]) == 1
-    assert calls["public_text"][0][0] == t("local.connect_failed")
-    assert tab._public_timed_out is True
+    # 超时按失败处理，并安排第一次自动重试
+    assert calls["public_text"][0][0] == t("local.connect_retry_in", seconds=5)
+    assert tab._public_timed_out is True and tab._public_retry_due is not None
     assert calls["nat_text"] == []
 
     tab._check_connect_fetch_timeouts()
@@ -2658,7 +2660,7 @@ def test_connect_fetch_timeout_watchdog():
     tab._nat_pending_since = now - 1000
     tab._check_connect_fetch_timeouts()
     assert len(calls["nat_text"]) == 1
-    assert calls["nat_text"][0][0] == t("local.connect_failed")
+    assert calls["nat_text"][0][0] == t("local.connect_retry_in", seconds=5)
     assert len(calls["public_text"]) == 1, "穿透超时不该影响已经触发过的公网这一行"
 
 

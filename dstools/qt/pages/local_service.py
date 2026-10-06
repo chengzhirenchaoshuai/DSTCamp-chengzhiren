@@ -73,6 +73,8 @@ _POLL_MS = 150
 _STEAM_REMOTE_BUILD_TTL = 300.0
 _PUBLIC_CONNECT_TIMEOUT_S = 18.0
 _NAT_CONNECT_TIMEOUT_S = 28.0
+# 公网/穿透直连代码获取失败或超时后的自动重试间隔（秒），用完即停，可点击该行手动重试
+_CONNECT_RETRY_DELAYS_S = (5, 15, 30, 60)
 _LUAJIT_VCREDIST_DOWNLOAD_URL = "https://wwwu.lanzoub.com/b0nyns22d"
 _PUBLIC_IP_SOURCES = (
     ("https://cip.cc/", "curl/8.0"),
@@ -338,7 +340,14 @@ class LocalServicePage(Page):
         # 程序退出时通知 Steam 更新监控立即结束，否则线程池会等它最长 15 分钟，进程退不掉。
         self._steam_monitor_cancel = threading.Event()
         QGuiApplication.instance().aboutToQuit.connect(self._steam_monitor_cancel.set)
-        self._connect_generation = 0
+        # 公网/穿透两行各自独立获取与重试：state 为 loading/ok/failed/unavailable/nomap，
+        # gen 用来丢弃过期结果，retry_due 是下次自动重试的时刻（monotonic）
+        self._public_state = self._nat_state = None
+        self._public_gen = self._nat_gen = 0
+        self._public_retry_attempt = self._nat_retry_attempt = 0
+        self._public_retry_due: float | None = None
+        self._nat_retry_due: float | None = None
+        self._last_master_ready = False
         self._last_auto_backup_ts: dict[str, float] = {}
         self._lan_status_key = self._public_status_key = self._nat_status_key = None
         self._lan_code = self._public_code = self._nat_code = None
@@ -1964,45 +1973,49 @@ class LocalServicePage(Page):
     def _copy_public_connect(self) -> None:
         if self._public_code:
             self._copy_to_clipboard(self._public_code)
+        elif self._public_state == "failed":
+            self._public_retry_attempt = 0
+            self._start_public_fetch(self.get_cluster())
 
     def _copy_nat_connect(self) -> None:
         if self._nat_code:
             self._copy_to_clipboard(self._nat_code)
-        else:
+        elif self._nat_state == "failed":
+            self._nat_retry_attempt = 0
+            self._start_nat_fetch(self.get_cluster())
+        elif self._nat_state != "loading":
             dialogs.show_info(self.window(), "", t("local.nat_not_mapped"))
 
     def _copy_to_clipboard(self, text: str) -> None:
         QGuiApplication.clipboard().setText(text)
         dialogs.show_toast(self.window(), t("local.connect_copied"))
 
-    def _nat_connect_info(self, cluster) -> tuple[str | None, str | None]:
-        if not cluster:
-            return None, None
-        master = self._master_shard(cluster)
+    def _nat_connect_info(self, cluster, owner: str | None) -> tuple[str | None, str | None]:
+        """按实际映射方式取穿透地址（工作线程调用，owner 由界面线程预先算好）。
+        Lolia/自建的地址就在本地设置里，不联网；只有樱花映射才调樱花 API——以前只要
+        填过樱花 Token 就先查樱花，网络差时连带拖慢甚至拖垮 Lolia/自建的显示。
+        樱花 API 出错时异常向上抛，界面显示"获取失败"并自动重试，而不是误显示"未映射"。"""
+        master = self._master_shard(cluster) if cluster else None
         if not master:
             return None, None
-        token = get_sakura_token()
-        if token:
-            try:
-                tunnels = sakura_frp.list_tunnels(token)
-                tunnel = sakura_frp.find_dstcamp_tunnel(
-                    tunnels, cluster.path.name, master.name, cluster.source.value, cluster.platform.value,
-                    cluster_identity=stable_path_key(cluster.path))
-                if tunnel:
-                    nodes = sakura_frp.list_nodes(token)
-                    node = nodes.get(str(tunnel.get("node")), {})
-                    return node.get("host", ""), tunnel.get("remote", "")
-            except Exception:
-                pass
-        lolia = get_lolia_mapping(cluster.path, master.name)
-        if lolia:
-            return lolia["host"], lolia["remote_port"]
+        if owner == "lolia":
+            lolia = get_lolia_mapping(cluster.path, master.name)
+            return (lolia["host"], lolia["remote_port"]) if lolia else (None, None)
+        if owner == "sakura":
+            token = get_sakura_token()
+            if not token:
+                return None, None
+            tunnels = sakura_frp.list_tunnels(token)
+            tunnel = sakura_frp.find_dstcamp_tunnel(
+                tunnels, cluster.path.name, master.name, cluster.source.value, cluster.platform.value,
+                cluster_identity=stable_path_key(cluster.path))
+            if not tunnel:
+                return None, None
+            node = sakura_frp.list_nodes(token).get(str(tunnel.get("node")), {})
+            return node.get("host", ""), tunnel.get("remote", "")
         server = get_selfhost_frp_server()
-        if server:
-            remote = get_selfhost_frp_mapping(cluster.path, master.name)
-            if remote:
-                return server.get("host", ""), remote
-        return None, None
+        remote = get_selfhost_frp_mapping(cluster.path, master.name) if server else None
+        return (server.get("host", ""), remote) if remote else (None, None)
 
     def _nat_lookup_needed(self, cluster) -> bool:
         if not cluster:
@@ -2017,47 +2030,123 @@ class LocalServicePage(Page):
 
     def _refresh_connect_labels(self) -> None:
         cluster = self.get_cluster()
-        cluster_key = str(cluster.path) if cluster else None
-        self._connect_generation += 1
-        generation = self._connect_generation
         self._lan_status_key = self._public_status_key = self._nat_status_key = None
         lan_codes = self._lan_connect_code(cluster)
         self._lan_code = lan_codes[0] if lan_codes else None
         self._lan_row.set_value(lan_codes[1], lan_codes[0]) if lan_codes else self._lan_row.set_value(t("local.connect_unavailable"))
         self._refresh_lan_status()
+        self._public_retry_attempt = self._nat_retry_attempt = 0
+        self._last_master_ready = self._master_ready()
+        self._start_public_fetch(cluster)
+        self._start_nat_fetch(cluster)
+
+    def _start_public_fetch(self, cluster) -> None:
+        self._public_gen += 1
+        gen = self._public_gen
+        cluster_key = str(cluster.path) if cluster else None
+        self._public_state = "loading"
+        self._public_retry_due = None
         self._public_code = None
         self._public_proxy_suspected = False
+        self._public_status_key = None
         self._public_row.set_value(t("local.connect_loading"))
         self._public_row.set_status("", theme.hex("TEXT_MUTED"))
         self._public_pending_since = time.monotonic()
         self._public_timed_out = False
+
+        def done(result):
+            if gen == self._public_gen:
+                codes, ip_available, proxy_suspected = result
+                self._apply_public_result(codes, cluster_key, ip_available, proxy_suspected)
+
+        def error(_exc):
+            if gen == self._public_gen:
+                self._connect_failed("public")
+
+        run_async(lambda: self._fetch_public_result(cluster), done, error)
+
+    def _start_nat_fetch(self, cluster) -> None:
+        self._nat_gen += 1
+        gen = self._nat_gen
+        self._nat_retry_due = None
         self._nat_code = None
-
-        def public_done(result):
-            if generation != self._connect_generation:
-                return
-            codes, ip_available, proxy_suspected = result
-            self._apply_public_result(codes, cluster_key, ip_available, proxy_suspected)
-
-        run_async(lambda: self._fetch_public_result(cluster), public_done)
-
-        if self._nat_lookup_needed(cluster):
-            self._nat_row.set_value(t("local.connect_loading"))
-            self._nat_row.set_status("", theme.hex("TEXT_MUTED"))
-            self._nat_pending_since = time.monotonic()
-            self._nat_timed_out = False
-
-            def nat_done(codes):
-                if generation != self._connect_generation:
-                    return
-                self._apply_nat_result(codes, cluster_key)
-
-            run_async(lambda: self._fetch_nat_result(cluster), nat_done)
-        else:
+        if not self._nat_lookup_needed(cluster):
+            self._nat_state = "nomap"
             self._nat_row.set_value(t("local.nat_not_mapped_short"))
             self._nat_status_key = "nomap"
             self._nat_row.set_status(f"● {t('local.connect_not_ready')}", theme.hex("TEXT_MUTED"), t("local.nat_not_mapped"))
             self._nat_pending_since = None
+            return
+        cluster_key = str(cluster.path) if cluster else None
+        master = self._master_shard(cluster)
+        owner = self.ctx.mapping_owner(cluster, master) if master else None
+        self._nat_state = "loading"
+        self._nat_status_key = None
+        self._nat_row.set_value(t("local.connect_loading"))
+        self._nat_row.set_status("", theme.hex("TEXT_MUTED"))
+        self._nat_pending_since = time.monotonic()
+        self._nat_timed_out = False
+
+        def done(codes):
+            if gen == self._nat_gen:
+                self._apply_nat_result(codes, cluster_key)
+
+        def error(_exc):
+            if gen == self._nat_gen:
+                self._connect_failed("nat")
+
+        run_async(lambda: self._fetch_nat_result(cluster, owner), done, error)
+
+    def _connect_row_of(self, kind: str):
+        return self._public_row if kind == "public" else self._nat_row
+
+    def _connect_failed(self, kind: str) -> None:
+        """获取失败或超时：按 _CONNECT_RETRY_DELAYS_S 安排下次自动重试，次数用完后等用户点击。"""
+        setattr(self, f"_{kind}_pending_since", None)
+        setattr(self, f"_{kind}_state", "failed")
+        attempt = getattr(self, f"_{kind}_retry_attempt")
+        due = None
+        if attempt < len(_CONNECT_RETRY_DELAYS_S):
+            due = time.monotonic() + _CONNECT_RETRY_DELAYS_S[attempt]
+            setattr(self, f"_{kind}_retry_attempt", attempt + 1)
+        setattr(self, f"_{kind}_retry_due", due)
+        # 状态键占住，免得每秒的状态刷新把失败说明覆盖成别的提示
+        setattr(self, f"_{kind}_status_key", "failed")
+        self._connect_row_of(kind).set_status(
+            f"● {t('local.connect_not_ready')}", theme.hex("TEXT_MUTED"), t("local.connect_failed_reason"))
+        self._render_connect_failed(kind)
+
+    def _render_connect_failed(self, kind: str) -> None:
+        due = getattr(self, f"_{kind}_retry_due")
+        if due is not None:
+            seconds = max(1, int(due - time.monotonic() + 0.999))
+            text = t("local.connect_retry_in", seconds=seconds)
+        else:
+            text = t("local.connect_failed_click")
+        self._connect_row_of(kind).set_value(text)
+
+    def _tick_connect_retries(self) -> None:
+        """每秒轮询调用：到点自动重试、刷新倒计时；主世界刚就绪时补获取仍失败/加载中的行。"""
+        cluster = self.get_cluster()
+        now = time.monotonic()
+        for kind, start in (("public", self._start_public_fetch), ("nat", self._start_nat_fetch)):
+            due = getattr(self, f"_{kind}_retry_due")
+            if due is None:
+                continue
+            if now >= due:
+                start(cluster)
+            else:
+                self._render_connect_failed(kind)
+        ready = self._master_ready()
+        if ready and not self._last_master_ready:
+            # 开服完成：网络状态可能已经变了，失败或卡在加载中的行重新获取一次
+            if self._public_state in ("failed", "loading"):
+                self._public_retry_attempt = 0
+                self._start_public_fetch(cluster)
+            if self._nat_state in ("failed", "loading"):
+                self._nat_retry_attempt = 0
+                self._start_nat_fetch(cluster)
+        self._last_master_ready = ready
 
     def _fetch_public_result(self, cluster):
         public_ip = _fetch_public_ipv4()
@@ -2076,18 +2165,21 @@ class LocalServicePage(Page):
         cluster = self.get_cluster()
         if cluster_key != (str(cluster.path) if cluster else None) or not self._connect_row.isVisible():
             return
+        if not ip_available:
+            self._connect_failed("public")
+            return
+        self._public_retry_due = None
+        self._public_state = "ok" if codes else "unavailable"
         self._public_code = codes[0] if codes else None
         self._public_proxy_suspected = proxy_suspected
         if codes:
             self._public_row.set_value(codes[1], codes[0])
-        elif not ip_available:
-            self._public_row.set_value(t("local.connect_failed"))
         else:
             self._public_row.set_value(t("local.connect_unavailable"))
         self._refresh_public_status(ip_available)
 
-    def _fetch_nat_result(self, cluster):
-        host, port = self._nat_connect_info(cluster)
+    def _fetch_nat_result(self, cluster, owner: str | None):
+        host, port = self._nat_connect_info(cluster, owner)
         if cluster and host and port:
             return self._build_connect_strings(host, port, cluster, mask_ipv4=True)
         return None
@@ -2170,6 +2262,8 @@ class LocalServicePage(Page):
         if cluster_key != (str(cluster.path) if cluster else None) or not self._connect_row.isVisible():
             return
         mapped = codes is not None
+        self._nat_retry_due = None
+        self._nat_state = "ok" if mapped else "nomap"
         self._nat_code = codes[0] if codes else None
         self._nat_row.set_value(codes[1], codes[0]) if codes else self._nat_row.set_value(t("local.nat_not_mapped_short"))
         if not mapped:
@@ -2217,13 +2311,11 @@ class LocalServicePage(Page):
         if (self._public_pending_since is not None and not self._public_timed_out
                 and now - self._public_pending_since >= _PUBLIC_CONNECT_TIMEOUT_S):
             self._public_timed_out = True
-            self._public_row.set_value(t("local.connect_failed"))
-            self._public_row.set_status(f"● {t('local.connect_not_ready')}", theme.hex("TEXT_MUTED"), t("local.connect_failed_reason"))
+            self._connect_failed("public")
         if (self._nat_pending_since is not None and not self._nat_timed_out
                 and now - self._nat_pending_since >= _NAT_CONNECT_TIMEOUT_S):
             self._nat_timed_out = True
-            self._nat_row.set_value(t("local.connect_failed"))
-            self._nat_row.set_status(f"● {t('local.connect_not_ready')}", theme.hex("TEXT_MUTED"), t("local.connect_failed_reason"))
+            self._connect_failed("nat")
 
     # ── 按钮状态 ────────────────────────────────────────────────────────
     def _other_cluster_running(self, cluster) -> bool:
@@ -2356,6 +2448,7 @@ class LocalServicePage(Page):
                 self._refresh_public_status()
                 self._refresh_nat_status()
                 self._check_connect_fetch_timeouts()
+                self._tick_connect_retries()
             self._maybe_periodic_backup()
         except Exception:
             import traceback
