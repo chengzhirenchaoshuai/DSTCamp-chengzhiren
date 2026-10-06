@@ -1,18 +1,28 @@
-# DSTCamp
+<h1 align="center">🏕️ DSTCamp</h1>
 
 <p align="center">
   <strong>Windows 上的《饥荒：联机版》一站式本地服务器管理工具</strong><br>
-  从创建世界、配置 Mod 到启动专服、备份存档与内网穿透，都在一个图形界面中完成。
+  创建世界、配置 Mod、启动专服、备份存档、内网穿透与大厅加速，都在一个图形界面里完成。
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.6.0-orange">
+  <a href="https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases"><img alt="Release" src="https://img.shields.io/github/v/release/chengzhirenchaoshuai/DSTCamp-chengzhiren?color=orange"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="UI" src="https://img.shields.io/badge/UI-Qt%20(PySide6)-41cd52">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
-  <a href="https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases"><img alt="Release" src="https://img.shields.io/github/v/release/chengzhirenchaoshuai/DSTCamp-chengzhiren"></a>
 </p>
+
+<p align="center">
+  <a href="#-下载与运行">下载</a> ·
+  <a href="#-功能一览">功能</a> ·
+  <a href="#-数据目录">数据目录</a> ·
+  <a href="#-开发">开发</a> ·
+  <a href="#160-更新">更新日志</a> ·
+  <a href="README.en.md">English</a>
+</p>
+
+---
 
 ## ✨ 1.6.0 亮点
 
@@ -22,98 +32,81 @@
 - 🖼️ **导出 Mod 列表图片**：一键生成已启用 Mod 的清单图，可预览、保存或复制。
 - 🎟️ **令牌池更省心**：崩溃后沿用原令牌自动重试，不再每崩溃一次就多占一个令牌。
 
-完整更新内容见下方 [1.6.0 更新](#160-更新)。
+## 🧭 功能一览
 
-## 功能
+> 不必手工来回编辑 Lua/INI，也能清楚看到 Mod、端口、存档与服务器状态。
 
-> 面向希望在 Windows 上轻松搭建和维护 DST 专用服务器的玩家：无需手工来回编辑 Lua/INI，也能清楚看到 Mod、端口、存档与服务器状态。
+| | 模块 | 能力 |
+|:-:|---|---|
+| 🖥️ | **本地服务器** | 启动/停止/重启、控制台、公告、玩家列表、回档、端口预检、崩溃自动重启、运行库与日志诊断、LuaJIT 加速 |
+| 🧩 | **Mod 管理** | Steam/WeGame Mod 扫描、启停与配置、配置集、Workshop 更新与状态检查、V1 Legacy 部署、旧副本清理、缺失 Mod 拦截 |
+| 🌍 | **世界设置** | 森林/洞穴独立配置、图标与取值说明、岛屿冒险/猪镇/深埋之下等 Mod 世界 |
+| ⚙️ | **服务器配置** | `cluster.ini`、`server.ini`、全局令牌池、管理员与黑名单（可从存档玩家中选择） |
+| 💾 | **存档信息** | 玩家状态与科雷 ID、手动/自动备份与恢复、复制为服务器存档、打包分享、创建/删除存档 |
+| 🌐 | **内网穿透与加速** | 樱花 SakuraFrp、Lolia、自建 frps（SSH 一键部署）、Mihomo TUN + WireGuard 大厅加速与线路诊断 |
 
-| 模块 | 能力 |
+此外还有中英文切换、五套主题、三种字体与四档字号、自定义背景、系统托盘、窗口尺寸与位置记忆、自动更新。
+
+> [!NOTE]
+> WeGame 不支持一键启动专用服务器，DSTCamp 不绕过平台限制。
+
+## 📦 下载与运行
+
+从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 或 [Gitee 发行版](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases) 下载：
+
+| 文件 | 说明 |
 |---|---|
-| 本地服务器 | 启动、停止、控制台、公告、玩家列表、回档、端口预检、**崩溃自动重启**、运行库与日志诊断 |
-| Mod 管理 | Steam/WeGame Mod 扫描、启停、配置集、目录联接、版本与 Workshop 状态检查、V1 Legacy 部署、旧副本自动清理 |
-| 世界设置 | 森林/洞穴独立配置、图标与取值说明、岛屿冒险/猪镇等 Mod 世界设置 |
-| 服务器配置 | `cluster.ini`、`server.ini`、全局令牌池、管理员和黑名单（可从存档玩家中选择） |
-| 存档信息 | 玩家状态与科雷 ID、手动/自动备份、恢复、复制为服务器存档、创建/删除存档 |
-| 内网穿透与加速 | SakuraFrp、自建 frps、Mihomo TUN/WireGuard 大厅加速，包含冲突保护、SSH 部署和按玩家识别连接方式的线路诊断 |
+| `DSTCamp-<版本>.exe` | 工具与资源全部内嵌，单文件运行，无需安装 |
+| `DSTCamp-<版本>.sha256.json` | 文件大小与 SHA-256 清单，供自动更新和人工核对 |
 
-其它能力包括中英文切换、五套主题、三种字体、自定义背景、系统托盘、窗口尺寸与位置记忆和自动更新。
+已安装 1.4.0 及以上版本可在"关于"或启动时的更新提示中直接自动更新。
 
-> WeGame 不支持一键启动专用服务器。DSTCamp 不绕过平台限制。
-
-## 下载与运行
-
-推荐从 [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) 或 [Gitee 发行版](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases) 下载：
-
-- `DSTCamp-1.6.0.exe`：工具与资源全部内嵌，单文件运行，无需安装。
-- `DSTCamp-1.6.0.sha256.json`：自动更新和人工复核使用的文件大小、SHA-256 清单。
-
-已安装 1.4.0 及以上版本的用户可在"关于"或启动时的更新提示中直接自动更新。
-
-源码运行：
+从源码运行（开发用；普通 wheel 不含 `icons/` 与 `tools/`，正式使用请选 Release）：
 
 ```powershell
 pip install -e .
 python -m dstools.qt.app
 ```
 
-当前源码安装方式面向开发环境；普通 wheel 不包含仓库外部的 `icons/` 和 `tools/`，正式使用请优先选择 Release 产物。
+## 🗂️ 数据目录
 
-## 文件与数据边界
-
-仓库中的固定发布资源：
+随程序打包、每次启动都会用到的固定资源（只读）：
 
 ```text
-icons/       窗口、UI、世界设置和推荐 Mod 图标
-tools/       ktech、frpc/frps、VC++ 运行库和内置字体
-reference/   开发核对资料，不参与运行或打包
-build/       可删除的 PyInstaller 中间产物与资源暂存
-dist/        可重新构建的 EXE 和 SHA-256 清单
+icons/   窗口与界面图标、世界设置图标、官方角色头像、推荐 Mod 图标
+tools/   ktech（贴图转换）、frpc/frps、VC++ 2013 运行库、内置字体
 ```
 
-用户目录默认位于 `%APPDATA%/DSTCamp/`：
+运行时数据位于 `%APPDATA%/DSTCamp/`：
 
 ```text
-settings.json   界面、缓存路径和功能偏好
-cache/          可重建：Mod/角色/世界图标、解析结果、版本与翻译缓存
-data/           需保留：自定义背景、端口备份、frpc 配置、更新包与长驻工具
-security/       敏感材料：SSH 私钥与 known_hosts
+settings.json   全部用户设置
+cache/          按需生成、可随时清空：Mod 解析/版本/翻译/图标、角色与世界 Mod 图标、日志解析、ktech 运行副本
+data/           需要保留：自定义背景、玩家登记簿、端口备份、自动重启日志、更新包、长驻工具副本、frpc 配置
+security/       凭据：SSH 密钥与主机信任、WireGuard/Mihomo 配置、Lolia 登录令牌
 ```
 
-`cache/` 可在设置中指定位置，内容随时可重建；`data/` 与 `security/` 始终保留在用户目录，清理缓存不会删除它们。源码和发布包只读取 `icons/`、`tools/` 中的固定资源，不会把运行时可写目录当作内置资源。
+`cache/` 可在"设置 → 缓存目录"中改位置（须为纯英文路径），清理缓存不会影响 `data/` 与 `security/`。
 
-## 开发与测试
-
-项目按功能垂直分包：
+## 🛠️ 开发
 
 ```text
-dstools/qt/app.py           Qt 界面装配与主入口
-dstools/qt/                 主窗口、各页签、通用弹窗、主题与后台任务
-dstools/features/           Mod、世界、存档、专服和内网穿透的业务逻辑
-dstools/shared/             跨功能基础设施与主题调色板
-dstools/i18n/strings.py     中英文文案唯一来源
-scripts/                    启动、诊断与打包脚本
-tests/                      脚本式自动化测试
+dstools/qt/            Qt 界面：app.py 入口、window.py 主窗口、pages/ 各页签、dialogs.py 通用弹窗、theme.py 主题
+dstools/features/      业务逻辑（按功能分包，不依赖界面）：mod、world、local_service、save_browser、
+                       cluster_config、sakura、lolia、frp_selfhost
+dstools/shared/        跨功能基础设施：路径、设置、Lua/INI 解析、端口、调色板与字体样式
+dstools/i18n/          中英文文案（strings.py 唯一来源）
+scripts/               run_gui.py 发布入口、build_exe.py 打包、sync_gitee_releases.ps1 发行版同步
+tests/                 脚本式回归测试（不依赖 pytest）
 ```
-
-旧 Tk 界面（`dstools/gui/` 与 `features/*/tab.py`）仍保留在源码中，不再维护，也不再作为发布入口。
-
-运行全部测试脚本：
 
 ```powershell
-python tests/run_all.py
-```
-
-测试入口会自动发现 `tests/test_*.py`，在相互隔离的子进程中从仓库根目录执行；新增测试无需手工登记。
-
-构建发布产物：
-
-```powershell
+python tests/run_all.py             # 运行全部测试：自动发现 tests/test_*.py，各自在隔离子进程中执行
 pip install -e ".[build]"
-python scripts/build_exe.py
+python scripts/build_exe.py         # 打包：在 build/ 暂存白名单资源，向 dist/ 输出 EXE 与 sha256.json 并冒烟测试
 ```
 
-构建脚本在 `build/` 暂存固定工具和图标，只向 `dist/` 输出单文件 EXE 与 `sha256.json`；EXE 会执行冻结入口与资源冒烟测试。发布前仍应在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
+每个测试文件内的 `test_*` 函数由 `tests/_harness.py` 按定义顺序自动执行，新增测试无需登记。发布前仍需在 Windows 真机打开 GUI，验证托盘、字体、图标转换、Steam Worker 与 frpc。
 
 ## 1.6.0 更新
 

@@ -1,14 +1,28 @@
-# DSTCamp
+<h1 align="center">🏕️ DSTCamp</h1>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-1.6.0-orange">
+  <strong>An all-in-one Windows manager for local <em>Don't Starve Together</em> servers</strong><br>
+  Create worlds, configure Mods, run dedicated servers, back up saves, tunnel, and accelerate the lobby — all from one GUI.
+</p>
+
+<p align="center">
+  <a href="https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases"><img alt="Release" src="https://img.shields.io/github/v/release/chengzhirenchaoshuai/DSTCamp-chengzhiren?color=orange"></a>
   <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
   <img alt="UI" src="https://img.shields.io/badge/UI-Qt%20(PySide6)-41cd52">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-informational">
   <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
 </p>
 
-DSTCamp is a Windows desktop manager for local *Don't Starve Together* servers. It brings save management, world configuration, Workshop Mods, dedicated-server operations, backups, tunneling, and lobby acceleration into one Qt (PySide6) interface.
+<p align="center">
+  <a href="#-download-and-run">Download</a> ·
+  <a href="#-features">Features</a> ·
+  <a href="#-storage-layout">Storage</a> ·
+  <a href="#-development">Development</a> ·
+  <a href="#160-changes">Changelog</a> ·
+  <a href="README.md">中文</a>
+</p>
+
+---
 
 ## ✨ 1.6.0 highlights
 
@@ -18,76 +32,79 @@ DSTCamp is a Windows desktop manager for local *Don't Starve Together* servers. 
 - 🖼️ **Export your Mod list as an image**: generate a picture of the enabled Mods to preview, save, or copy.
 - 🎟️ **Smarter token pool**: after a crash the original token is retried automatically, so a crash no longer ties up an extra token.
 
-See [1.6.0 changes](#160-changes) below for the full list.
+## 🧭 Features
 
-## Features
+| | Module | Capabilities |
+|:-:|---|---|
+| 🖥️ | **Local server** | Start/stop/restart, console, announcements, player list, rollback, port preflight, crash auto-restart, runtime and log diagnostics, LuaJIT acceleration |
+| 🧩 | **Mods** | Steam/WeGame Mod scanning, toggling and configuration, presets, Workshop updates and status, V1 Legacy deployment, stale-copy cleanup, missing-Mod checks |
+| 🌍 | **World settings** | Independent Forest/Caves settings, icons and value labels, Island Adventures / Porkland / Beneath the World Below worlds |
+| ⚙️ | **Server config** | `cluster.ini`, `server.ini`, shared token pool, administrators and blocklist (pick from players in your saves) |
+| 💾 | **Saves** | Player status and Klei IDs, manual/automatic backup and restore, copy to a server save, package for sharing, create/delete saves |
+| 🌐 | **Tunneling & acceleration** | SakuraFrp, Lolia, self-hosted frps (one-click SSH deploy), Mihomo TUN + WireGuard lobby acceleration with route diagnostics |
 
-- Start, stop, inspect, update, diagnose, and auto-restart local dedicated-server shards.
-- Manage Steam and WeGame saves, Mods, presets, administrators, blocklists, and a shared cluster-token pool.
-- Configure Forest, Caves, and supported Mod worlds independently.
-- Back up, restore, copy, and package complete saves for sharing.
-- Use SakuraFrp or a self-hosted frps server, with optional Mihomo TUN/WireGuard lobby acceleration and route diagnostics.
-- Receive verified application updates from Gitee with GitHub fallback, SHA-256 validation, smoke testing, and rollback.
+Also included: Chinese/English UI, five themes, three fonts with four size levels, custom backgrounds, system tray, remembered window size and position, and verified auto-update.
 
-WeGame does not provide one-click dedicated-server launching. DSTCamp does not bypass platform restrictions.
+> [!NOTE]
+> WeGame does not provide one-click dedicated-server launching. DSTCamp does not bypass platform restrictions.
 
-## Download and run
+## 📦 Download and run
 
-Download the latest build from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
+Download from [GitHub Releases](https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren/releases) or [Gitee Releases](https://gitee.com/orange-blade/DSTCamp-chengzhiren/releases):
 
-- `DSTCamp-1.6.0.exe`: single-file build with all required resources embedded; no installation needed.
-- `DSTCamp-1.6.0.sha256.json`: file sizes and SHA-256 hashes used by the updater and for manual verification.
+| File | Description |
+|---|---|
+| `DSTCamp-<version>.exe` | Single-file build with all tools and resources embedded; no installation needed |
+| `DSTCamp-<version>.sha256.json` | File sizes and SHA-256 hashes for the updater and manual verification |
 
 Users on 1.4.0 or later can update in place from the About dialog or the update prompt at startup.
 
-To run from source:
+To run from source (for development; a plain wheel does not include `icons/` and `tools/`):
 
 ```powershell
 pip install -e .
 python -m dstools.qt.app
 ```
 
-The legacy Tk interface (`dstools/gui/` and `features/*/tab.py`) remains in the source tree but is no longer maintained or shipped.
+## 🗂️ Storage layout
 
-## Storage layout
-
-Repository resources are read-only:
+Bundled, read-only resources used on every start:
 
 ```text
-icons/       Application, UI, world-setting, and recommended-Mod images
-tools/       Bundled fonts, ktech, frpc/frps, and the VC++ runtime installer
-reference/   Development reference material; never loaded or packaged at runtime
-build/       Rebuildable PyInstaller staging and intermediate files
-dist/        Rebuildable EXE and SHA-256 manifest
+icons/   Window and UI icons, world-setting icons, official character avatars, recommended-Mod icons
+tools/   ktech (texture conversion), frpc/frps, VC++ 2013 runtime, bundled fonts
 ```
 
-Writable data defaults to `%APPDATA%/DSTCamp/`:
+Runtime data lives in `%APPDATA%/DSTCamp/`:
 
 ```text
-settings.json   UI settings, feature preferences, and cache location
-cache/          Rebuildable icons, parsed metadata, versions, and translations
-data/           Persistent backgrounds, backups, frpc files, updates, and resident tools
-security/       SSH private keys and known_hosts
+settings.json   All user settings
+cache/          Generated on demand, safe to clear: Mod metadata/versions/translations/icons, character and world-Mod icons, parsed logs, ktech runtime copy
+data/           Kept: custom background, player registry, port backups, auto-restart log, update packages, resident tool copies, frpc configs
+security/       Credentials: SSH keys and host trust, WireGuard/Mihomo configs, Lolia sign-in tokens
 ```
 
-Only `cache/` is disposable. Clearing it does not remove `data/` or `security/`.
+`cache/` can be moved under Settings → Cache folder (ASCII-only path). Clearing it never touches `data/` or `security/`.
 
-## Development
+## 🛠️ Development
 
-Run every script-style test in an isolated subprocess:
-
-```powershell
-python tests/run_all.py
+```text
+dstools/qt/            Qt UI: app.py entry, window.py main window, pages/ tabs, dialogs.py, theme.py
+dstools/features/      UI-independent business logic per feature: mod, world, local_service, save_browser,
+                       cluster_config, sakura, lolia, frp_selfhost
+dstools/shared/        Cross-feature infrastructure: paths, settings, Lua/INI parsing, ports, palettes and font styles
+dstools/i18n/          Chinese/English strings (strings.py is the single source)
+scripts/               run_gui.py release entry, build_exe.py packaging, sync_gitee_releases.ps1
+tests/                 Script-style regression tests (no pytest)
 ```
 
-Build the single-file EXE and SHA-256 manifest:
-
 ```powershell
+python tests/run_all.py             # discover tests/test_*.py and run each in an isolated subprocess
 pip install -e ".[build]"
-python scripts/build_exe.py
+python scripts/build_exe.py         # stage allowlisted resources in build/, write the EXE and sha256.json to dist/, smoke-test it
 ```
 
-The build uses an explicit tool allowlist, stages resources under `build/`, and smoke-tests the frozen executable. Real Windows GUI, Steam, frpc, and game behavior still require manual validation.
+`tests/_harness.py` runs every `test_*` function in definition order, so new tests need no registration. Real Windows GUI, Steam, frpc, and game behavior still require manual validation before release.
 
 ## 1.6.0 changes
 
