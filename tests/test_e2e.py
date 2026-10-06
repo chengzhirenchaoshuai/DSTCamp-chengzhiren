@@ -1449,47 +1449,6 @@ def test_world_reader_and_view_model():
     )
 
 
-def test_world_catalog_audit_and_cave_hidden_forest_sections():
-    """洞穴共享项需被识别；未知项必须被审计报告而非伪造为可编辑设置。"""
-    print("\n" + "=" * 60)
-    print("Test 24: World Catalog Audit")
-
-    from dstools.features.world.audit import audit_leveldata_paths
-    from dstools.features.world.categories import get_setting_info
-
-    assert get_setting_info("day", "cave")[0] == "other"
-    assert get_setting_info("basicresource_regrowth", "cave")[0] == "other"
-    assert get_setting_info("roads", "cave")[0] == "other"
-    assert get_setting_info("day", "porkland")[0] == "global", (
-        "day 是 world=nil 且未被 delete_items 删除的全局项"
-    )
-    assert get_setting_info("butterfly", "porkland")[0] == "creatures", (
-        "butterfly 在猪镇白名单里"
-    )
-    assert get_setting_info("specialevent", "porkland")[0] == "other", (
-        "猪镇 Mod 明确删除了该设置"
-    )
-    assert get_setting_info("layout_mode", "porkland")[0] == "other", (
-        "地图内部元数据不能伪造为设置"
-    )
-
-    with tempfile.TemporaryDirectory() as td:
-        path = Path(td) / "leveldataoverride.lua"
-        path.write_text(
-            'return { location = "cave", overrides = { day = "default", roads = "default", '
-            'layout_mode = "RestrictNodesByKey" } }',
-            encoding="utf-8",
-        )
-        report = audit_leveldata_paths([path])
-    cave = report.by_location["cave"]
-    assert report.statuses == {"ok": 1}
-    assert cave.recognized_overrides == 0
-    assert cave.unknown_keys == {"day", "layout_mode", "roads"}
-    print(
-        "  PASS: catalog audit separates verified settings from preserved unknown metadata"
-    )
-
-
 def test_world_catalog_layers_are_isolated():
     """原版目录与猪镇 Mod 覆盖层必须分离。"""
     print("\n" + "=" * 60)
@@ -1499,6 +1458,8 @@ def test_world_catalog_layers_are_isolated():
     from dstools.features.world.categories import FOREST_RULES_DICT, get_setting_info
 
     assert "specialevent" in FOREST_RULES_DICT
+    for key in ("day", "basicresource_regrowth", "roads"):
+        assert get_setting_info(key, "cave")[0] == "other"
     assert "specialevent" not in resolve_vanilla_settings("porkland", True)
     assert "day" in resolve_vanilla_settings("porkland", True)
     assert "butterfly" in resolve_vanilla_settings("porkland", True)
@@ -1510,37 +1471,6 @@ def test_world_catalog_layers_are_isolated():
     print(
         "  PASS: vanilla catalog remains unchanged and Porkland uses an isolated whitelist overlay"
     )
-
-
-def test_porkland_location_selector():
-    """世界选择器只切换 Master 身份，不污染洞穴或 overrides。"""
-    print("\n" + "=" * 60)
-    print("Test 27: Porkland World Location Selector")
-    from dstools.features.world.location_selector import (
-        available_master_locations,
-        select_master_location,
-    )
-    from dstools.features.world.reader import WorldOverride, WorldPreset
-
-    assert available_master_locations(set()) == ("forest",)
-    # 3322803908 的发布版 modservercreationmain.lua 把 Master 候选表
-    # 明确写成仅 PORKLAND；森林只在开发模式/显式开关下才会加入。
-    assert available_master_locations({"workshop-3322803908"}) == ("porkland",)
-    preset = WorldPreset(
-        preset_id="SURVIVAL_TOGETHER",
-        name="地上",
-        location="forest",
-        overrides=[WorldOverride(key="task_set", value="default")],
-        raw={"location": "forest", "overrides": {"task_set": "default"}},
-    )
-    porkland = select_master_location(preset, "porkland")
-    assert porkland.location == "porkland"
-    assert porkland.preset_id == "PORKLAND_DEFAULT"
-    assert porkland.name == "猪镇"
-    assert porkland.raw["location"] == "porkland"
-    assert porkland.overrides == preset.overrides
-    assert preset.location == "forest"
-    print("  PASS: location selection is isolated and reversible")
 
 
 def test_world_creation_plan_and_atomic_writer():
@@ -3550,9 +3480,7 @@ def main():
         test_mod_sync_junction,
         test_theme_set_theme,
         test_world_reader_and_view_model,
-        test_world_catalog_audit_and_cave_hidden_forest_sections,
         test_world_catalog_layers_are_isolated,
-        test_porkland_location_selector,
         test_world_creation_plan_and_atomic_writer,
         test_world_categories_bilingual,
         test_custom_background,

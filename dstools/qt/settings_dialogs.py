@@ -30,7 +30,7 @@ from dstools.shared.app_settings import (
 from dstools.shared.custom_background import (
     clear_custom_bg_image, get_custom_bg_path, set_custom_bg_image,
 )
-from dstools.shared.gui.font_styles import FONT_FAMILY_BY_STYLE, FONT_STYLE_NAMES
+from dstools.shared.font_styles import FONT_FAMILY_BY_STYLE, FONT_STYLE_NAMES
 from dstools.shared.resource_paths import cache_root_dir, default_cache_root_dir, validate_cache_root
 from dstools.shared.update_check import check_latest_release, is_newer_version
 from dstools.shared.windows_defender import (

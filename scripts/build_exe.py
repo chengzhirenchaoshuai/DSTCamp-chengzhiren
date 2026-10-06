@@ -136,6 +136,7 @@ def _run_smoke_test(executable: Path) -> None:
 # 界面只用 QtCore/QtGui/QtWidgets。下面这些 Python 模块不打包：
 _EXCLUDED_MODULES = (
     "numpy",
+    "tkinter",
     # Pillow 的 AVIF 编解码（4MB+），项目只处理 PNG/JPG/TEX 转出的图片
     "PIL._avif", "PIL.AvifImagePlugin",
     *(f"PySide6.{name}" for name in (

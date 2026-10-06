@@ -7,7 +7,17 @@ import functools
 from dstools.features.mod.parser import is_custom_steam_mod_id
 from dstools.i18n import t
 from dstools.models import Platform
-from dstools.shared.gui import fonts
+
+# Mod 作者常拿自定义图标字体的私用区字形当装饰（如 U+F000D），任何系统字体都画不出，排序前去掉
+_PUA_RANGES = ((0xE000, 0xF8FF), (0xF0000, 0xFFFFD), (0x100000, 0x10FFFD))
+
+
+def strip_unrenderable(text: str) -> str:
+    """去掉私用区码位并收敛多余空格。"""
+    collapsed = "".join(
+        " " if any(lo <= ord(ch) <= hi for lo, hi in _PUA_RANGES) else ch for ch in text
+    )
+    return " ".join(collapsed.split())
 
 _strcmplogicalw = None
 
@@ -86,7 +96,7 @@ def sort_mod_data(
     def name_of(mod_id):
         info = mod_infos.get(mod_id)
         raw = (info.name if info else "") or mod_id
-        return fonts.strip_unrenderable(raw) or raw
+        return strip_unrenderable(raw) or raw
 
     ordered = sorted(
         mod_data,

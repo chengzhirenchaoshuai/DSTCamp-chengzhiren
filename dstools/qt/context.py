@@ -17,7 +17,6 @@ from dstools.shared.app_settings import (
     set_last_cluster_path, set_last_platform,
 )
 from dstools.shared.discovery import discover_environment
-from dstools.shared.gui.cluster_select import cluster_label
 
 
 class AppContext(QObject):
@@ -106,7 +105,8 @@ class AppContext(QObject):
     # ── 显示文字 ────────────────────────────────────────────────────────
     def cluster_text(self, cluster: Cluster) -> str:
         """存档下拉文字；有世界正在运行时加"运行中"标注。"""
-        text = cluster_label(cluster)
+        tag = t("save.server_clusters") if cluster.source == SaveSource.SERVER else t("save.local_clusters")
+        text = f"{cluster.name} [{tag}]"
         if any(proc.cluster_path == cluster.path for proc in self.manager.running()):
             text += t("selector.running_suffix")
         return text

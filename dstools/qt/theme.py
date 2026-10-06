@@ -1,4 +1,4 @@
-"""Qt 版主题：调色板取自 shared/palettes.py，字体样式取自 shared/gui/font_styles.py。
+"""Qt 版主题：调色板取自 shared/palettes.py，字体样式取自 shared/font_styles.py。
 
 主题名和字体样式与 Tk 版共用同一份设置（settings.json 的 theme_name/
 font_style_choice），两套界面互相可见。颜色一律通过 ``theme.color(key)`` 现查，禁止跨模块
@@ -12,7 +12,7 @@ from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication, QLabel
 
 from dstools.shared import app_settings, palettes
-from dstools.shared.gui.font_styles import (
+from dstools.shared.font_styles import (
     FONT_FAMILY_BY_STYLE, FONT_SIZE_SCALE_BY_STYLE, FONT_STYLE_NAMES, FONT_STYLES,
 )
 from dstools.shared.resource_paths import bundled_resource_dir, tool_binary_dir

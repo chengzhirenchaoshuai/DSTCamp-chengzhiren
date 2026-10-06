@@ -1,1 +1,0 @@
-"""GUI interface for dstools."""
