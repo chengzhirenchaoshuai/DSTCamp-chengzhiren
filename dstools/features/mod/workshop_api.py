@@ -24,6 +24,7 @@ import atexit
 import ctypes
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -359,6 +360,25 @@ def _terminate_active_workers() -> None:
 
 atexit.register(_terminate_active_workers)
 
+# Worker 临时目录前缀；TemporaryDirectory 会在后面追加 8 位随机字符
+_WORKER_TMP_PREFIX = "dstcamp_workshop_"
+_WORKER_TMP_NAME_RE = re.compile(rf"^{_WORKER_TMP_PREFIX}[a-z0-9_]{{8}}$")
+
+
+def cleanup_stale_worker_dirs() -> None:
+    """启动时清理以前残留的 Worker 临时目录（尽力而为）。
+
+    查询中途退出程序时，Worker 还占着目录里的 events.jsonl，退出阶段删不掉，
+    会留在系统临时目录里；单实例启动时不会有别的 Worker 在用这些目录。
+    """
+    try:
+        entries = list(Path(tempfile.gettempdir()).iterdir())
+    except OSError:
+        return
+    for entry in entries:
+        if _WORKER_TMP_NAME_RE.fullmatch(entry.name) and entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+
 
 def _download_result_to_payload(result: WorkshopDownloadResult) -> dict[str, Any]:
     return {
@@ -460,7 +480,8 @@ def _run_workshop_worker(
     cancel_event: threading.Event | None = None,
 ) -> dict[str, Any]:
     """在短生命周期子进程中运行普通 SteamAPI，避免占用游戏 AppID。"""
-    with tempfile.TemporaryDirectory(prefix="dstcamp_workshop_") as tmp:
+    # 查询中途退出程序时 events.jsonl 仍被占用，删不掉就留给下次启动清理，不打印报错
+    with tempfile.TemporaryDirectory(prefix=_WORKER_TMP_PREFIX, ignore_cleanup_errors=True) as tmp:
         root = Path(tmp)
         request_path = root / "request.json"
         event_path = root / "events.jsonl"

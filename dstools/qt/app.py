@@ -51,8 +51,11 @@ def main() -> int:
     # 清理上次自动更新留下的临时文件、旧版 EXE 备份等（尽力而为，失败不影响启动）
     from dstools.shared.auto_update import cleanup_stale_update_artifacts, cleanup_vestigial_external_tools
 
+    from dstools.features.mod.workshop_api import cleanup_stale_worker_dirs
+
     cleanup_stale_update_artifacts()
     cleanup_vestigial_external_tools()
+    cleanup_stale_worker_dirs()
     # Qt 枚举系统字体时，Fixedsys/Terminal 等老式位图字体 DirectWrite 不支持，会刷一串
     # "CreateFontFaceFromHDC() failed" 警告（从终端启动时可见）。不影响任何显示，屏蔽这一类。
     QLoggingCategory.setFilterRules("qt.qpa.fonts.warning=false")
