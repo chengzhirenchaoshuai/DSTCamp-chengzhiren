@@ -1,19 +1,13 @@
-"""Lolia 映射的纯逻辑：识别用户粘贴的隧道信息、改写成本地可用的原版 frpc 配置。
+"""Lolia 映射的纯逻辑：识别用户粘贴的隧道信息，改写成本地原版 frpc 可用的配置。
 
-主要来源是用户从控制台复制的「原版 frpc 配置」（见 parse_source）；粘贴的是
-「LoliaFRP-CLI 快捷启动」命令时，才用官方开放 API 的免鉴权接口
-（https://api-docs.lolia.link/403472745e0.md）拉配置：
-`GET /api/v1/tunnel/frpc/config?token=<节点Token>&id=<隧道ID,...>`，返回
-`{"code":200,"data":{"config":"<Base64 TOML>",...}}`。这份 `config` 官方注明是
-"原版 frpc 可用的标准配置"，所以直接交给自建节点那份原版 frpc.exe 跑，不需要
-Lolia 自己的客户端（它的 `-t id:token` 参数原版 frpc 不认）。
+主要来源是控制台复制的「原版 frpc 配置」；粘贴「LoliaFRP-CLI 快捷启动」命令时才调用官方免鉴权接口
+``GET /api/v1/tunnel/frpc/config?token=<节点Token>&id=<隧道ID>``（文档 https://api-docs.lolia.link/403472745e0.md）
+取 Base64 TOML，交给原版 frpc.exe 运行（Lolia 客户端的 ``-t id:token`` 原版不认）。
 
-两处本地改写：
-1. 每条代理的 localIP/localPort 改成 127.0.0.1 + 远程端口——跟樱花/自建映射同一个
-   约定：世界的 server_port 改成远程端口，饥荒对外声明的端口才跟公网端口一致。
-   localPort 只在客户端生效，改它不影响 Lolia 服务端。
-2. 补 `transport.tls.serverName = " "`——官方 FAQ："上线显示 EOF 与 session
-   shutdown……Lolia-CLI 快速启动配置已内置此选项，使用原版 frpc 请手动添加"。
+本地改写两处：
+1. 每条代理的 localIP/localPort 改为 127.0.0.1 + 远程端口（与樱花/自建一致，世界 server_port 改为远程端口，
+   对外声明的端口才与公网一致；localPort 只在客户端生效）；
+2. 补 ``transport.tls.serverName = " "``（官方 FAQ：原版 frpc 不加会出现 EOF/session shutdown）。
 """
 
 import base64
@@ -95,10 +89,8 @@ def single_proxy_name(config: dict) -> str:
 
 
 def build_local_config(merged: dict, names_by_shard: dict[str, str]) -> tuple[dict, dict[str, int]]:
-    """把服务端合并后的配置改写成本地可用的配置。
-
-    `names_by_shard`：{世界名: 该世界隧道对应的代理 name}。返回 (改写后的配置,
-    {世界名: 远程端口})。非 UDP 隧道、缺远程端口、两个世界填了同一条隧道都直接报错。"""
+    """把服务端配置改写成本地配置。``names_by_shard`` 为 {世界名: 代理 name}，返回 (配置, {世界名: 远程端口})。
+    非 UDP、缺远程端口、两个世界用同一条隧道时报错。"""
     proxies = merged.get("proxies") or []
     by_name = {p.get("name"): p for p in proxies}
     if len(set(names_by_shard.values())) != len(names_by_shard):
@@ -124,14 +116,11 @@ def build_local_config(merged: dict, names_by_shard: dict[str, str]) -> tuple[di
 
 
 def parse_source(text: str) -> dict:
-    """识别用户给一个世界粘贴的内容，两种都认：
+    """识别用户给一个世界粘贴的内容：
 
-    - 控制台「使用 LoliaFRP-CLI 快捷启动」命令（`frpc -t <隧道ID>:<节点Token>`），
-      返回 {"kind": "cli", "id", "token"}，开启映射时联网拉配置；
-    - 控制台「原版 frpc 配置」TOML，返回 {"kind": "config", "text"}，不需要联网。
-      真机反馈过这种配置里只有隧道名称、没有数字 ID，而且其中的 metadatas.token
-      不能拿去调免鉴权接口（接口回"TOKEN 与 ID 不对应"），所以直接用配置本身。
-
+    - 「LoliaFRP-CLI 快捷启动」命令（``frpc -t <隧道ID>:<节点Token>``）→ {"kind": "cli", "id", "token"}，开启时联网拉配置；
+    - 「原版 frpc 配置」TOML → {"kind": "config", "text"}，直接使用（坑：其中只有隧道名没有数字 ID，
+      且 metadatas.token 不能用于免鉴权接口）。
     格式不对或不是单条 UDP 隧道时抛 LoliaError。"""
     text = text.strip()
     pairs = re.findall(r"(?:^|\s)-t\s+(\d+):(\S+)", text) or re.findall(r"^(\d+):(\S+)$", text)
@@ -155,11 +144,10 @@ def _source_config(source: dict) -> dict:
 
 
 def prepare_shard(source: dict) -> tuple[str, int, str]:
-    """把一个世界的来源变成本地配置（快捷启动命令来源会联网，放后台线程）。
+    """把一个世界的来源转成本地配置（快捷启动命令会联网，须在后台线程）。
 
-    每个世界一份配置、一个 frpc 进程：真机上主世界和洞穴的隧道建在了不同节点
-    （节点地址和节点 Token 都不同），合并成一份配置跑不了。
-    返回 (本地 TOML 文本, 远程端口, 节点地址)。"""
+    每个世界一份配置一个 frpc 进程：主世界与洞穴的隧道可能在不同节点，无法合并。
+    返回 (本地 TOML, 远程端口, 节点地址)。"""
     return local_config_from(_source_config(source))
 
 

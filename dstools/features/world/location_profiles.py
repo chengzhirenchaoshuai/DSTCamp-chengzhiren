@@ -1,9 +1,7 @@
-"""已验证 Mod 世界类型及其创建界面行为。
+"""已核对的 Mod 世界类型及其创建界面行为。
 
-官方创建界面默认只有 ``Master/forest`` 与 ``Caves/cave`` 两个槽位。
-Mod 可以注册新的 location，也可以在 ``modservercreationmain.lua`` 中自行
-改写两个槽位的候选集合和默认值。本模块只登记已经从真实 Mod 源码核对过的
-行为，不执行任意 Mod Lua，也不根据文件名猜测兼容规则。
+官方创建界面只有 ``Master/forest`` 与 ``Caves/cave`` 两个槽位，Mod 可注册新 location 或在
+``modservercreationmain.lua`` 中改写候选与默认值。只登记已从真实 Mod 源码核对过的行为，不执行 Mod Lua。
 """
 
 import copy
@@ -91,10 +89,8 @@ LOCATION_DEFINITIONS: dict[str, WorldLocationDefinition] = {
 }
 
 
-# 逐项取自 Island Adventures 1467214795 的真实源码：
-# scripts/map/sw_locations.lua、scripts/map/levels/shipwrecked.lua 和
-# scripts/map/levels/volcano.lua。官方创建界面会把 AddLocation 默认值合并
-# 到 AddWorldGenLevel 后再写 leveldataoverride.lua；不能只写一个空 overrides。
+# 取自 Island Adventures 1467214795 源码（sw_locations.lua、levels/shipwrecked.lua、levels/volcano.lua）。
+# 官方创建界面会把 AddLocation 默认值合并进 AddWorldGenLevel 再写 leveldataoverride.lua，不能只写空 overrides
 _ISLAND_CREATION_LEVEL_DATA: dict[str, dict[str, object]] = {
     SHIPWRECKED_LOCATION: {
         "version": 4,
@@ -191,12 +187,7 @@ def normalize_mod_ids(mod_ids) -> frozenset[str]:
 
 
 def find_mod_key(mod_ids, mod_id: str) -> str | None:
-    """从映射或 ID 集合中找到指定 Mod 的实际键名。
-
-    Mod 列表和 ``modoverrides.lua`` 使用 ``workshop-<id>``，部分世界兼容
-    规则使用纯数字 ID；依赖联动必须保留调用方真实键名，不能归一化后再
-    把一个不存在的纯数字键写回列表。
-    """
+    """在映射或 ID 集合中找到指定 Mod 的实际键名（``workshop-<id>`` 或纯数字），依赖联动须保留调用方的真实键名。"""
     target = str(mod_id).removeprefix("workshop-")
     return next(
         (str(value) for value in mod_ids

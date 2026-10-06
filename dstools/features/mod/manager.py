@@ -7,14 +7,7 @@ from dstools.models import ModEntry, ModOverrides
 
 
 def load_mod_overrides(path: Path) -> ModOverrides:
-    """从 modoverrides.lua 文件加载 mod 覆盖配置。
-
-    Args:
-        path: modoverrides.lua 文件路径。
-
-    Returns:
-        ModOverrides 对象。
-    """
+    """从 modoverrides.lua 加载 Mod 覆盖配置。"""
     mod_overrides = ModOverrides(path=path)
 
     if not path.exists():
@@ -41,11 +34,7 @@ def load_mod_overrides(path: Path) -> ModOverrides:
 
 
 def save_mod_overrides(mod_overrides: ModOverrides) -> None:
-    """把 mod 覆盖配置写回文件。
-
-    Args:
-        mod_overrides: 要保存的 ModOverrides。
-    """
+    """把 Mod 覆盖配置写回文件。"""
     data = {}
     for workshop_id, entry in mod_overrides.mods.items():
         data[workshop_id] = {
@@ -59,12 +48,7 @@ def save_mod_overrides(mod_overrides: ModOverrides) -> None:
 
 
 def enable_mod(mod_overrides: ModOverrides, workshop_id: str) -> None:
-    """启用一个 mod，如果尚未存在则添加它。
-
-    Args:
-        mod_overrides: 要修改的 ModOverrides。
-        workshop_id: Workshop mod ID（例如 "workshop-378160973"）。
-    """
+    """启用一个 Mod（如 "workshop-378160973"），不存在则添加。"""
     if workshop_id in mod_overrides.mods:
         mod_overrides.mods[workshop_id].enabled = True
     else:
@@ -76,26 +60,12 @@ def enable_mod(mod_overrides: ModOverrides, workshop_id: str) -> None:
 
 
 def list_mods(mod_overrides: ModOverrides) -> list[ModEntry]:
-    """列出覆盖配置中的所有 mod。
-
-    Args:
-        mod_overrides: 要列出内容的 ModOverrides。
-
-    Returns:
-        ModEntry 对象列表。
-    """
+    """列出覆盖配置中的所有 Mod。"""
     return list(mod_overrides.mods.values())
 
 
 def sync_mods(source: ModOverrides, target: ModOverrides) -> None:
-    """把 mod 配置从 source 同步到 target。
-
-    这会用 source 的 mods 整体替换 target 的 mods，保留 target 自己的文件路径。
-
-    Args:
-        source: 作为复制来源的 ModOverrides。
-        target: 要更新的 ModOverrides（原地修改）。
-    """
+    """用 source 的 mods 整体替换 target 的 mods（原地修改，保留 target 自己的文件路径）。"""
     target.mods.clear()
     for workshop_id, entry in source.mods.items():
         target.mods[workshop_id] = ModEntry(

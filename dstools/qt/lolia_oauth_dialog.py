@@ -1,10 +1,7 @@
 """Lolia OAuth 应用设置引导（内置应用失效时的兜底）。
 
-DSTCamp 内置一个 public OAuth 应用，所有用户共用、各自用自己的 Lolia 账号授权，正常
-不需要自己创建。内置应用被删除/停用时（令牌接口返回 invalid_client），引导用户按
-建议配置在 Lolia 控制台创建自己的应用并填入 client_id。建议值依据官方 OAuth 文档：
-桌面程序保管不了密钥 → public + PKCE；回调只允许 https 或回环地址，回环地址按
-RFC 8252 忽略端口，host 必须与代码一致（127.0.0.1）。
+内置 public 应用所有用户共用；被删除/停用（令牌接口返回 invalid_client）时，引导用户在 Lolia 控制台创建自己的
+应用并填入 client_id。建议配置依据官方 OAuth 文档：public + PKCE，回调用回环地址 127.0.0.1（按 RFC 8252 忽略端口）。
 """
 
 import webbrowser

@@ -1,8 +1,4 @@
-"""应用级状态：环境扫描结果、当前平台筛选、当前选中的存档。
-
-对应 Tk 版 DSToolsApp 里的 env / _platform_var / _global_selected_cluster，但只放状态和信号，
-不含任何控件——页面只依赖这个对象，不依赖主窗口。
-"""
+"""应用级状态与信号：环境扫描结果、当前平台筛选、当前选中的存档（不含控件，页面只依赖它而不依赖主窗口）。"""
 
 from pathlib import Path
 
@@ -51,9 +47,7 @@ class AppContext(QObject):
         self.frpc_ready = lambda cluster: False
         # 跨页共享的已安装 Mod 元数据快照（图标/路径/解析结果，不含每存档的启用状态）。
         self.mod_catalog = ModCatalogStore()
-        # Mod 管理页迁移后接管：这个存档尚未保存的 Mod 启用集合预览，供世界设置页
-        # 即时反映"来自 Mod"的设置项，不用等用户先点保存；默认 None 表示按磁盘实际
-        # 已保存内容取（Mod 页未迁移，或没有未保存的修改）。
+        # Mod 页尚未保存的启用集合预览，供世界设置页即时显示"来自 Mod"的设置；None 表示按磁盘已保存内容
         self.pending_enabled_mod_ids = lambda cluster: None
         self._platform = Platform.WEGAME if get_last_platform() == "WeGame" else Platform.STEAM
         self._selected: Cluster | None = None

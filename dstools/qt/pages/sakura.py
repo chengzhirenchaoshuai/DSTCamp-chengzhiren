@@ -1,10 +1,6 @@
-"""内网穿透页（对应 Tk 版 features/sakura/tab.py + features/frp_selfhost/tab.py）。
+"""内网穿透页：樱花映射（SakuraFrp 开放 API，本文件）、Lolia（qt/lolia_panel.py）、自建节点（qt/selfhost_panel.py，含大厅加速）。
 
-两个子页签共用同一套"把本地专用服务器映射到公网"的心智模型，服务端来源不同：
-樱花映射走 SakuraFrp 云端开放 API（本文件）；自建节点走用户自己的 VPS，见
-qt/selfhost_panel.py（SSH 部署、大厅加速）。跨页钩子（AppContext.mapping_owner/
-ensure_lobby_accel/...）在这里统一接管——local_service 页迁移时给的默认值到此
-真正生效。
+跨页钩子（AppContext.mapping_owner / ensure_lobby_accel 等）在这里接管。
 """
 
 import time
@@ -253,10 +249,7 @@ class _SakuraMappingPanel(QWidget):
         self._shards_grid = QGridLayout()
         self._shards_grid.setHorizontalSpacing(18)
         self._shards_grid.setVerticalSpacing(8)
-        # 4 个数据列都不给拉伸因子——QGridLayout 在所有列拉伸因子都是 0 时会把多
-        # 出来的宽度平均分给每一列（真机反馈过"分片名"和"未映射"离得很远）；这里
-        # 显式在数据列后面占一个空列并把拉伸因子全部给它，数据列就只按内容需要的
-        # 宽度紧凑排列，跟 forms.py::FormGrid 的思路一致。
+        # 数据列不给拉伸因子，末尾占一个空列独得全部拉伸，避免多余宽度被平均分给各列（同 FormGrid）
         self._shards_grid.setColumnStretch(4, 1)
         shards_layout.addLayout(self._shards_grid)
 
@@ -447,11 +440,7 @@ class _SakuraMappingPanel(QWidget):
             item = self._shards_grid.takeAt(0)
             widget = item.widget()
             if widget is not None:
-                # deleteLater() 只是排队销毁，不会立刻从屏幕上摘掉——世界行在真实网络
-                # 响应到达时可能被连续重建好几次，旧控件在真正销毁前会一直停留在原来
-                # 的像素位置，跟新建的控件重叠（真机截图复现过的花屏）。hide()+
-                # setParent(None) 立即、同步地把它摘掉，不用等事件循环下一轮，跟
-                # save_info.py/server_config.py 清空表单的写法一致。
+        # deleteLater() 只是排队销毁，旧控件会和新建行重叠；hide() + setParent(None) 立即同步摘除
                 widget.hide()
                 widget.setParent(None)
                 widget.deleteLater()
@@ -833,12 +822,12 @@ class SakuraPage(Page):
         self._selfhost = SelfHostPanel(ctx)
 
         root = QVBoxLayout(self)
-        # 跟其它主页签统一外边距（之前左右只有 12，边框比别的页签明显偏左）。
+        # 与其他主页签统一的外边距
         root.setContentsMargins(24, 12, 24, 12)
         card = Card(radius=15, alpha=0, border=True)  # 内部全透明，跟其它主页签统一
         root.addWidget(card)
         layout = QVBoxLayout(card)
-        # 内容跟边框之间留出跟其它页签一致的间距，之前左右几乎贴边。
+        # 内容与边框的间距与其他页签一致
         layout.setContentsMargins(15, 13, 15, 13)
         self._tabs = PillTabBar(self._tab_labels(),
                                  height=36, pill_height=28, font_size_key="FONT_SIZE_SM")

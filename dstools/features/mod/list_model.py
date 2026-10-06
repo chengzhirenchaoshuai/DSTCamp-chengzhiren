@@ -109,12 +109,8 @@ def sort_mod_data(
 
 
 def merge_visible_mod_ids(installed_ids, configured_mods: dict) -> list[str]:
-    """合并主页需要显示的已安装 Mod 和存档缺失引用。
-
-    已安装内容始终显示；存档里已启用、但当前机器找不到内容的 Mod 也必须
-    显示，否则用户接手其它机器的存档时看不到真正会导致开服缺 Mod 的项。
-    已禁用且没有本地内容的旧记录继续隐藏，避免删除/改名后留下的幽灵行。
-    """
+    """合并要显示的 Mod：已安装的全部显示；存档已启用但本机没有内容的也显示（接手别人的存档时能看到缺失项）；
+    已禁用且本地没有内容的旧记录隐藏。"""
     result = []
     seen = set()
     for mod_id in installed_ids:
@@ -131,9 +127,7 @@ def merge_visible_mod_ids(installed_ids, configured_mods: dict) -> list[str]:
 
 
 def referenced_missing_status_text(status) -> str:
-    """存档引用了、本机却没有文件的 Mod：列表第三行说明原因（未订阅、下载中等）。
-
-    status 是该 Mod 的 Workshop 状态（还没查到时为 None）。"""
+    """存档引用但本机没有文件的 Mod 在列表第三行显示原因（未订阅、下载中等）；status 尚未查到时为 None。"""
     from dstools.features.mod.workshop_status import WorkshopModState
 
     labels = {

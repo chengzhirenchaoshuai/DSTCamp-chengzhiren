@@ -1,8 +1,7 @@
-"""DSTCamp Steam Workshop 短生命周期工作进程。
+"""Steam Workshop 短生命周期工作进程。
 
-普通 ``SteamAPI_Init`` 会把宿主进程登记为 AppID 322330。GUI 进程长期
-存活会让 Steam 一直显示《饥荒：联机版》正在运行，因此所有客户端 UGC
-查询和更新都在本进程完成；写回结果后立即退出，彻底释放游戏身份。
+SteamAPI_Init 会把宿主登记为 AppID 322330，GUI 长期存活会让 Steam 一直显示"正在运行饥荒"，
+所以所有 UGC 查询和更新都在本进程完成，写回结果后立即退出。
 """
 
 from __future__ import annotations

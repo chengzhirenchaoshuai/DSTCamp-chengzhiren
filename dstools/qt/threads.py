@@ -1,8 +1,6 @@
-"""后台任务封装：耗时的磁盘/解析/网络工作放到线程池，结果回到界面线程再回调。
+"""后台任务：耗时工作放线程池，结果经常驻界面线程的 QObject 桥接回到界面线程回调。
 
-取代 Tk 版的"线程 + queue + after 轮询"。回调一定在界面线程执行（经由一个常驻界面线程的
-QObject 桥接，不能直接把普通函数连到信号上——那样会在发信号的工作线程里直接执行）。
-页面用"代数"丢弃过期结果：连续切换存档时，只采用最后一次请求的结果。
+坑：不能把普通函数直接连到信号上，否则会在发信号的工作线程里执行。页面用"代数"丢弃过期结果。
 """
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
@@ -31,9 +29,7 @@ def _get_bridge() -> _Bridge:
 
 
 def _safe_emit(bridge: _Bridge, payload) -> None:
-    """应用退出阶段：底层 C++ 对象可能已经随 QApplication 一起被销毁，工作线程这时
-    才跑完，投递结果已经没有意义（没人在监听了），吞掉即可，不能让后台线程带着
-    异常退出、在控制台刷一屏噪音。"""
+    """应用退出阶段 C++ 对象可能已随 QApplication 销毁，此时投递结果没有意义，吞掉异常即可。"""
     try:
         bridge.delivered.emit(payload)
     except RuntimeError:
@@ -69,8 +65,7 @@ def run_async_with_log(work, on_line, on_done, on_error=None) -> None:
 
 
 def post_to_ui(callback, argument=None) -> None:
-    """从后台线程把一次回调转发到界面线程执行——对应 Tk 版的 ``widget.after(0, ...)``。
-    ServerManager.stop()/stop_all() 的 on_done 就在后台线程直接触发，必须用这个转回来。"""
+    """把回调从后台线程转到界面线程执行（如 ServerManager.stop() 的 on_done）。"""
     _safe_emit(_get_bridge(), (callback, argument))
 
 

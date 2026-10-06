@@ -1,8 +1,4 @@
-"""专服启动前的令牌选择规则。
-
-纯逻辑模块不读写文件也不操作 Tk；调用方负责收集运行中的存档、持久化
-等待释放状态，并在确认选择后写入 cluster_token.txt。
-"""
+"""专服启动前的令牌选择规则（纯逻辑；调用方负责收集运行中的存档、持久化等待状态并写入 cluster_token.txt）。"""
 
 from dataclasses import dataclass
 from typing import Iterable
@@ -36,11 +32,9 @@ def select_token_for_cluster(
     active_uses: Iterable[TokenUse] = (),
     held_fingerprints: Iterable[str] = (),
 ) -> TokenSelection:
-    """为一个存档选择令牌；新令牌独占，旧令牌可跨存档复用。
+    """为存档选择令牌：新令牌独占，旧令牌可跨存档复用；同一存档的多个分片视为同一使用者。
 
-    同一存档的多个分片视为同一使用者。不在全局池中的有效当前令牌视为
-    存档私有配置：保留原值，不受全局占用或等待标记影响，也不会被池中
-    令牌自动替换。未知格式同样只保留当前手动配置。
+    不在全局池中的有效当前令牌（及未知格式）视为存档私有配置，原样保留，不受占用或等待标记影响。
     """
     uses = tuple(active_uses)
     held = set(held_fingerprints)

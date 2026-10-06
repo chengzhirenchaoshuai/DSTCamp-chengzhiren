@@ -1,9 +1,4 @@
-"""专服启动和运行期错误的离线日志诊断。
-
-这里只做保守的证据归类，不修改存档、Mod 或服务器配置。诊断结果区分
-“明确错误”和“疑似原因”，避免把任意一行 Lua Error 都武断地说成 Mod
-冲突；UI 层可以据此显示摘要、建议和原始证据。
-"""
+"""专服启动/运行期错误的离线日志诊断：只做保守的证据归类，区分"明确错误"与"疑似原因"，不修改任何文件。"""
 
 from dataclasses import dataclass
 import re
@@ -62,11 +57,7 @@ def analyze_mod_loading(
     visible_mod_count: int = 0,
 
 ) -> ModLoadStatus:
-    """归纳世界就绪后的 Mod 加载结果。
-
-    集合差集和服务器明确报告的禁用结果都在这里合并；控制台页签只根据
-    返回的失败列表选择成功或失败横幅，不再把它当作服务器启动诊断类别。
-    """
+    """归纳世界就绪后的 Mod 加载结果（集合差集 + 服务器明确报告的禁用），控制台据此显示成功/失败横幅。"""
     missing = (set(enabled_mods) - set(loaded_mods)) | set(failed_mods)
     return ModLoadStatus(
         failed_mods=tuple(sorted(missing, key=str.lower)),
@@ -104,9 +95,7 @@ def _mods(lines: list[str], enabled: Iterable[str], loaded: Iterable[str]) -> tu
     def normalize(values):
         return {str(value).lower() for value in values if str(value).strip()}
 
-    # “疑似相关”只能从配置中确认已启用的 Mod 里产生；日志中的 Mod 搜索
-    # 路径会列出大量未启用 Mod，不能把它们当成嫌疑对象。loaded 仅作为
-    # 没有预读到 modoverrides 时的兜底集合。
+    # 疑似 Mod 只从配置里已启用的集合中产生（日志搜索路径会列出大量未启用 Mod）；loaded 仅作没有预读配置时的兜底
     enabled_set = normalize(enabled)
     loaded_set = normalize(loaded)
     allowed = enabled_set or loaded_set
@@ -130,8 +119,7 @@ def _mods(lines: list[str], enabled: Iterable[str], loaded: Iterable[str]) -> tu
     # Lua 堆栈里出现的 Mod 路径是最有价值的归因证据；有堆栈证据时不把
     # 整个启用列表都显示成“疑似相关”，避免用户误以为每个 Mod 都有问题。
     if stack_mods:
-        # 测试样例和极少数旧日志没有可读的启用集合，此时保留明确出现在
-        # 错误堆栈中的 ID；正常运行时则严格限制为当前已启用集合。
+        # 没有可读启用集合时（测试样例、少数旧日志）保留错误堆栈中明确出现的 ID
         return tuple(sorted(stack_mods & allowed if allowed else stack_mods,
                             key=str.lower))
     # 有 Lua 错误但没有明确 Mod 路径时，不显示整个启用列表，改由 UI 展示
@@ -165,11 +153,9 @@ def diagnose_server_failure(
     loaded_mods: Iterable[str] = (),
     intentional_stop: bool = False,
 ) -> DiagnosticReport | None:
-    """根据一次世界启动或运行期日志生成保守诊断报告。
+    """根据一次世界启动或运行日志生成保守诊断，``None`` 表示无需提醒（正常停止不生成）。
 
-    ``None`` 表示没有错误需要提醒；正常停止不会生成报告。令牌注册冲突
-    不会让进程退出，也可能发生在本地世界已经就绪之后，因此必须先于
-    “进程仍在运行”的快速返回进行判断。其它规则仍按异常退出处理。
+    令牌注册冲突不会让进程退出，可能发生在世界就绪后，所以要在"进程仍在运行"的快速返回之前判断。
     """
     lines = [str(line) for line in log_lines]
     if intentional_stop:
@@ -248,11 +234,7 @@ def diagnose_server_failure(
 
 
 def contains_startup_failure(lines: Iterable[str]) -> bool:
-    """判断日志是否已经明确进入启动失败状态。
-
-    DST 某些启动错误会打印失败信息后继续存活，不能只靠 Popen.poll() 变成
-    非空来触发诊断。
-    """
+    """日志是否已明确进入启动失败状态（某些错误打印后进程仍存活，不能只靠 poll()）。"""
     text = "\n".join(str(line) for line in lines).lower()
     return any(marker in text for marker in _STARTUP_FAILURE_MARKERS)
 

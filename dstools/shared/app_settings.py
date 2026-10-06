@@ -92,7 +92,7 @@ def save_settings(data: dict) -> None:
 
 
 def get_dedicated_server_path() -> Path | None:
-    """取用户之前手动确认过的专用服务器安装目录，没设置过则返回 None。"""
+    """用户手动确认过的专服安装目录，未设置返回 None。"""
     raw = load_settings().get(_KEY_DEDICATED_SERVER_PATH)
     return Path(raw) if raw else None
 
@@ -285,8 +285,7 @@ def get_window_position() -> tuple[int, int] | None:
 
 
 def set_window_position(x: int, y: int) -> None:
-    """记住主窗口关闭前的左上角坐标——下次启动时原样还原（应用户要求，
-    默认行为原来总是贴着屏幕左上角，见 gui/app.py.__init__ 的说明）。"""
+    """记住主窗口关闭前的左上角坐标，下次启动还原。"""
     data = load_settings()
     data[_KEY_WINDOW_POS] = [x, y]
     save_settings(data)
@@ -392,9 +391,7 @@ def set_custom_bg_filename(name: str | None) -> None:
 
 
 def get_backup_retention() -> int:
-    """存档备份最多保留几份，超过的自动删掉最旧的，范围 5~99，默认 10。
-    全局设置，不分存档——UI 上校验过范围，这里再夹一次是防着直接改
-    settings.json 文件塞进范围外的值。"""
+    """存档备份最多保留份数（5~99，默认 10），全局设置；读取时再夹一次范围防止手改配置文件。"""
     value = load_settings().get(_KEY_BACKUP_RETENTION, _DEFAULT_BACKUP_RETENTION)
     try:
         value = int(value)
@@ -470,9 +467,7 @@ def set_sakura_last_node_id(node_id: int | None) -> None:
 
 
 def get_custom_bg_opacity() -> float:
-    """自定义背景图跟当前主题背景色混合时的不透明度，0=完全是主题纯色
-    （图片全隐），1=完全是原图，默认 0.35（让图片弱化成背景氛围，不抢
-    前景文字的可读性）。"""
+    """背景图与主题背景色混合的不透明度（0 全是主题色，1 全是原图），默认 0.35。"""
     return load_settings().get(_KEY_CUSTOM_BG_OPACITY, _DEFAULT_CUSTOM_BG_OPACITY)
 
 
@@ -506,9 +501,7 @@ def set_mod_list_columns(value: int) -> None:
 
 
 def get_selfhost_frp_server() -> dict | None:
-    """自建 frps 服务器的连接信息（host/bind_port/token）——全局一份，
-    不分存档：这个功能对应的是"用户自己有一台云服务器"，同一台服务器
-    通常会被多个存档复用，不需要每个存档各存一份。没配置过返回 None。"""
+    """自建 frps 服务器连接信息（host/bind_port/token），全局一份供多个存档复用，未配置返回 None。"""
     return load_settings().get(_KEY_SELFHOST_FRP_SERVER) or None
 
 
@@ -525,9 +518,7 @@ def _selfhost_mapping_key(cluster_path: Path, shard_name: str) -> str:
 
 
 def get_selfhost_frp_mapping(cluster_path: Path, shard_name: str) -> int | None:
-    """这个世界当前分到的自建 frps 远程端口——DSTCamp 自己的服务器没有
-    像樱花那样的账号 API 能"创建隧道时现查一个没被占用的端口"，只能自
-    己在本地记账分配，见 features/frp_selfhost/deploy.py 的说明。"""
+    """该世界分到的自建 frps 远程端口（自建服务器没有分配 API，只能本地记账，见 frp_selfhost/deploy.py）。"""
     mappings = load_settings().get(_KEY_SELFHOST_FRP_MAPPINGS) or {}
     raw = mappings.get(_selfhost_mapping_key(cluster_path, shard_name))
     try:
@@ -711,10 +702,8 @@ def set_lobby_accel_wireguard(port: int, server_public_key: str) -> None:
 
 
 def get_global_tokens() -> list[str]:
-    """全局令牌池——所有存档共享，"复制为服务器存档"新建出来的存档如果
-    还没有 cluster_token.txt，会固定取列表第一个自动填上（见
-    features/save_browser/cluster_copy.py）；真正启动时会再根据新旧格式和
-    占用状态选择可用项（见 local_service/token_scheduler.py）。"""
+    """全局令牌池（所有存档共享）：复制出的服务器存档没有令牌时自动取第一个；启动时再按新旧格式和占用状态
+    选择可用项（见 token_scheduler.py）。"""
     tokens = load_settings().get(_KEY_GLOBAL_TOKENS) or []
     return [tok for tok in tokens if isinstance(tok, str) and tok]
 
@@ -726,10 +715,9 @@ def set_global_tokens(tokens: list[str]) -> None:
 
 
 def get_token_holds() -> dict[str, dict]:
-    """读取新令牌在 Klei 端疑似尚未释放的本机记录。
+    """读取新令牌疑似未在 Klei 端释放的本机记录。
 
-    ``retry_at`` 之前不再自动选用这个令牌；``failures`` 是连续注册冲突次数，
-    决定下一次等待多久。旧版本写入的记录没有这两项，按"可立即重试"处理。"""
+    ``retry_at`` 之前不自动选用；``failures`` 为连续冲突次数，决定下次等待时长；缺这两项的旧记录视为可立即重试。"""
     raw = load_settings().get(_KEY_TOKEN_HOLDS) or {}
     if not isinstance(raw, dict):
         return {}
@@ -858,10 +846,8 @@ def set_token_switch_after_minutes(minutes: int) -> int:
 
 
 def prune_token_holds(tokens: list[str], expire_before: float | None = None) -> None:
-    """删除已经不在令牌池中的等待状态，避免列表长期积累孤儿记录。
-
-    给了 ``expire_before`` 时，最近一次记录（``since``）早于它的标记也一并删除：
-    存档换用别的令牌后，旧令牌不会再注册成功，标记靠注册成功永远清不掉。"""
+    """删除已不在令牌池中的等待记录；给了 ``expire_before`` 时，更早的记录也删除
+    （存档换用别的令牌后，旧令牌的记录永远不会因注册成功而清除）。"""
     from dstools.shared.token_manager import token_fingerprint
 
     allowed = {token_fingerprint(token) for token in tokens if token}
@@ -879,9 +865,7 @@ def prune_token_holds(tokens: list[str], expire_before: float | None = None) -> 
 
 
 def get_mod_presets() -> list[dict]:
-    """取全部已保存的"mod 配置集"原始数据（features/mod/presets.py 负责
-    转换成 ModPreset 对象、校验字段形状）——这里只管原样存取一个 list，
-    不关心里面每个 dict 长什么样，跟 get_global_tokens() 是同一个分工。"""
+    """取全部 Mod 配置集原始数据（list），转换与校验由 mod/presets.py 负责。"""
     raw = load_settings().get(_KEY_MOD_PRESETS) or []
     return raw if isinstance(raw, list) else []
 

@@ -1,5 +1,4 @@
-""""配置集"相关弹窗（对应 Tk 版 features/mod/tab.py 的
-_SavePresetDialog/_ApplyPresetDialog/_ApplyReportDialog）。"""
+"""Mod 配置集相关弹窗：保存、套用、套用报告。"""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (

@@ -95,9 +95,7 @@ if __name__ == "__main__":
         run_worker_main()
         sys.exit(0)
 
-    # 普通 SteamAPI_Init 会把宿主进程登记成《饥荒：联机版》(322330)。
-    # Workshop 查询/更新必须在短生命周期 Worker 中运行，完成即退出，
-    # 否则长期存活的 GUI 会让 Steam 一直显示游戏正在运行。
+    # Workshop 查询/更新在短生命周期 Worker 中运行（SteamAPI_Init 会把宿主登记成饥荒，GUI 长驻会让 Steam 一直显示游戏在运行）
     if len(sys.argv) > 1 and sys.argv[1] == "--dstcamp-workshop-worker":
         from dstools.features.mod.workshop_worker import main as workshop_worker_main
 
@@ -117,7 +115,7 @@ if __name__ == "__main__":
     if gui_instance is None:
         raise SystemExit(0)
 
-    # 发布入口：Qt 版界面（旧 Tk 版 dstools.gui.app 仍保留在源码中，不再作为入口）
+    # 发布入口：Qt 界面
     from dstools.qt.app import main
 
     try:

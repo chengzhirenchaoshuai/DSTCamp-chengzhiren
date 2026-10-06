@@ -25,11 +25,10 @@ if TYPE_CHECKING:
 
 ProgressFn = Callable[[str, str], None]
 _EXTERNAL_PORT_RE = re.compile(r"mostRecentExternalPort first time set to (\d+)")
-# 专服日志里每个玩家进服的固定序列（据真机 server_log 统计）：
+# 玩家进服的日志序列（真机统计）：
 #   Steam/WeGame P2P：[P2P] ... '<SteamID 或 R:WeGameID>' → Client connected from <伪地址>|1 → Client authenticated
 #   直连：Client connected from [LAN] <真实地址>|<端口> → Client authenticated
-# P2P 的地址是饥荒按会话生成的伪地址（端口恒为 1，常落在组播/保留网段），不是对端真实 IP，
-# 所以日志只能区分"走 Steam/WeGame 网络"还是"IP 直连"，看不出 Steam 内部是打洞直连还是 Valve 中继。
+# 坑：P2P 地址是饥荒生成的伪地址（端口恒为 1），不是对端真实 IP，只能区分"Steam/WeGame 网络"与"IP 直连"
 _CONNECTED_RE = re.compile(r"Client connected from (\[LAN\] )?(\d{1,3}(?:\.\d{1,3}){3})\|\d+")
 _AUTHENTICATED_RE = re.compile(r"Client authenticated: \(([^)]*)\)\s*(.*)$")
 _P2P_PEER_RE = re.compile(r"\[P2P\] (?:Create session:|Received from|Sent to) \S+ '(R:)?")
@@ -160,9 +159,7 @@ def decide_route(evidence: DiagnosticEvidence) -> LobbyDiagnosticReport:
     """至少用两类相互独立证据确认路线，避免把本机回环或保活误判。"""
 
     remote = evidence.remote
-    # mostRecentExternalPort 只在专服进程生命周期内首次赋值时输出。诊断
-    # 可能从第二位玩家才开始，因此“本次没再出现该行”不能当成端口不匹
-    # 配；只有明确抓到一个不同端口时才否决 FRP 结论。
+    # mostRecentExternalPort 只在专服进程内首次赋值时输出，没再出现不代表不匹配；只有抓到不同端口才否决 FRP 结论
     port_matches = not evidence.external_ports or bool(
         evidence.external_ports & evidence.mapped_ports
     )
@@ -186,9 +183,7 @@ def decide_route(evidence: DiagnosticEvidence) -> LobbyDiagnosticReport:
         and api_wg_game
         and capture_wg_game
     )
-    # WireGuard 总计数可能包含保活、TCP、ICMP 或诊断窗口边界上的其它
-    # 小流量，不能据此声称“已确认大厅信令”。只有 Mihomo 或隧道内抓包
-    # 明确识别到 STUN UDP 时，才给出 SIGNAL_ONLY 结论。
+    # WireGuard 总计数可能含保活/TCP/ICMP 等小流量，只有 Mihomo 或隧道抓包明确识别到 STUN UDP 才判 SIGNAL_ONLY
     wg_signal = (
         evidence.mihomo_wg_stun_bytes > 0 or remote.wg_stun_packets > 0
     )

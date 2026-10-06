@@ -1,6 +1,4 @@
-"""本地服务器页的小段纯逻辑，Tk 版（tab.py）与 Qt 版（qt/pages/local_service.py）
-各自维护自己的同名私有实现——Tk 版已冻结不再改动，这里只服务 Qt 版，避免为了共用
-一份代码而去动 Tk 的既有实现。"""
+"""本地服务器页用到的小段纯逻辑。"""
 
 from pathlib import Path
 

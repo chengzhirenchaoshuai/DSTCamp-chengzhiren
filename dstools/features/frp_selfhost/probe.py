@@ -1,11 +1,7 @@
-"""探测自建服务器当前状态——供状态面板展示，也供"分配远程端口时避开
-服务器上已经被占用的端口"使用。
+"""只读探测自建服务器状态（状态面板展示、分配远程端口时避开已占用端口）。
 
-跟 remote_deploy.py 的部署流程是两回事：这里只读、不改任何东西，也不
-接受密码——只用"初次鉴权"已经推上服务器的那把密钥做一次性短连接，探
-测完立刻关掉，不维护常驻会话/心跳。没做过初次鉴权、连不上、或者服务
-器上没有 ss/free/nproc 这类常见工具时都不抛异常，只在返回结果里标出
-"探测不到"，调用方按"--"展示，不弹错误框打断用户。
+只用初次鉴权推上去的密钥做一次性短连接，不接受密码、不保持会话；连不上或缺少 ss/free/nproc
+等工具时不抛异常，结果标为"探测不到"。
 """
 
 from __future__ import annotations
@@ -17,9 +13,7 @@ from dstools.features.frp_selfhost.remote_deploy import (
     KNOWN_HOSTS_PATH, SSH_KEY_PATH, classify_permission, has_local_key,
 )
 
-# 一次 exec_command 里把所有只读检查串起来，一趟连接拿全部数据，不用
-# 每查一项就单开一次 SSH 会话。UID 是 bash 的只读内置变量，不能直接拿
-# 来当普通变量名赋值，这里用 MY_UID 避开。
+# 所有只读检查放在一次 exec_command 里；UID 是 bash 只读内置变量，改用 MY_UID
 _PROBE_SCRIPT = """
 MY_UID="$(id -u)"
 echo "UID:${MY_UID}"
@@ -34,21 +28,13 @@ fi
 echo "CPU:$(nproc 2>/dev/null)"
 free -m 2>/dev/null | awk '/^Mem:/{print "MEM:"$2","$3}'
 if command -v ss >/dev/null 2>&1; then
-    # 按固定列号取"本地地址:端口"这一列并不可靠——不同发行版/iproute2
-    # 版本 ss 的输出到底有没有 Netid 这一列并不统一，列号一旦偏了会整
-    # 段取到"对端地址:端口"（LISTEN/UNCONN 状态下永远是通配符，取到的
-    # 端口全是非数字，被 Python 侧 isdigit() 过滤掉，等于白测）。改成
-    # 不认列号，只认"以冒号+纯数字结尾"这个特征——那一列不管排第几都
-    # 只可能是本地地址:端口（对端在这两种状态下固定是 ":*"，不会匹配）。
+    # 不按列号取本地地址（各版本 ss 是否输出 Netid 列不一致），只匹配"以冒号+数字结尾"的字段，
+    # LISTEN/UNCONN 状态下对端固定为 ":*"，不会误匹配
     echo "PORTS:$(ss -Htlun 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i ~ /:[0-9]+$/) print $i}' | awk -F: '{print $NF}' | sort -un | tr '\\n' ',')"
 else
     echo "PORTS:"
 fi
-# dstcamp-frps 当前实际绑定的端口（不是"服务在不在跑"这种布尔值）——
-# 给客户端判断"目标端口被占用了，但占用者就是 frps 自己"用，不能靠
-# service_active 这个粗粒度状态（服务在跑不代表跑的就是这次要用的端
-# 口，见 gui 端 _start_deploy() 的说明）。装都没装过时这个文件不存
-# 在，grep 找不到东西，字段留空，调用方按"没有正在用的端口"处理。
+# dstcamp-frps 当前绑定的端口，用于判断"端口占用者是否就是 frps 自己"；未安装时为空
 echo "FRPSPORT:$(grep -oP '^bindPort\\s*=\\s*\\K[0-9]+' /opt/dstcamp-frp/frps.toml 2>/dev/null)"
 """.strip()
 
@@ -117,9 +103,7 @@ def probe_server_status(host: str, port: int, username: str, connect_timeout: fl
     client = paramiko.SSHClient()
     if KNOWN_HOSTS_PATH.exists():
         client.load_host_keys(str(KNOWN_HOSTS_PATH))
-    # 探测不做"首次见到主机"这套确认流程——能走到这一步说明"初次鉴权"
-    # 早就 TOFU 过一次了，这里主机密钥对不上直接当成探测失败处理，不
-    # 弹确认框打断一个本该安静运行的后台探测。
+    # 不走首次见到主机的确认流程：初次鉴权时已 TOFU，主机密钥不符直接视为探测失败
     client.set_missing_host_key_policy(paramiko.RejectPolicy())
     try:
         client.connect(hostname=host, port=port, username=username, pkey=pkey,

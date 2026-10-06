@@ -1,8 +1,7 @@
-"""Tk/PIL 共用的字体样式注册表。
+"""字体样式注册表（纯数据）。
 
-新增样式需同时加入字体与许可证、``FONT_STYLES`` 和 i18n 文案。``family``
-必须用 Tk ``Font.actual()`` 真机核对；错误族名只会静默回退。此模块保持纯
-数据，避免与 theme/fonts 形成循环依赖。
+新增样式需同时添加字体文件与许可证（tools/fonts/）、``FONT_STYLES`` 条目和 i18n 文案
+``settings.font_style_<key>``。``family`` 必须是字体文件真实的族名，写错只会静默回退到系统字体。
 """
 
 from dataclasses import dataclass
@@ -10,35 +9,19 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class FontStyleDef:
-    key: str
-    """FONT_STYLE_CHOICE / app_settings.get_font_style_choice() 存的值，
-    也是 i18n strings.py 里 "settings.font_style_<key>" 这条文案 key 的
-    后缀，"字体设置"弹窗按 FONT_STYLES 列表顺序显示。"""
-
-    family: str
-    """Tk font_tuple()/PIL fonts.get_font() 两条渲染路径最终使用的字体
-    族名——必须是真机核对过的准确值，不是猜的。"""
-
-    filename: str | None
-    """tools/fonts/ 下的字体文件名，None 表示这个样式不需要打包字体文
-    件（目前只有 "default" 是这样，直接用系统自带的微软雅黑）。"""
-
-    scale: float = 1.0
-    """FONT_SIZE_SCALE_BY_STYLE：这个样式笔画粗细/网格特性需要整体放
-    大的倍数，1.0 表示不缩放。"""
+    key: str  # 设置里保存的值，也是文案 key 的后缀；字体设置弹窗按列表顺序显示
+    family: str  # 字体族名（须真机核对）
+    filename: str | None  # tools/fonts/ 下的文件名，None 表示用系统自带字体
+    scale: float = 1.0  # 字号整体缩放倍数
 
 
 FONT_STYLES: list[FontStyleDef] = [
-    FontStyleDef(key="default", family="Microsoft YaHei UI Light", filename=None, scale=1.0),
-    # 荆南麦圆体与默认雅黑保持同一磅值（scale=1.0）。
-    FontStyleDef(key="cute", family="KN Maiyuan", filename="KNMaiyuan-Regular.ttf", scale=1.0),
-    # Fusion Pixel Font 简体中文版（TakWolf/fusion-pixel-font，SIL OFL 1.1）。
-    # 已核对项目 i18n/strings.py 用到的全部汉字，字形一个不缺。
-    # 只用 12px 一个设计尺寸：8/10px 版本字形设计不同，混用时同屏风格不一（真机反馈过）。
-    # scale=1.0：实测同一磅值下字形像素尺寸跟雅黑基本一致（用 PIL
-    # getbbox 量过 11~20px 各档）。
+    FontStyleDef(key="default", family="Microsoft YaHei UI Light", filename=None),
+    FontStyleDef(key="cute", family="KN Maiyuan", filename="KNMaiyuan-Regular.ttf"),
+    # Fusion Pixel Font 简体中文版（TakWolf/fusion-pixel-font，SIL OFL 1.1），已核对覆盖文案用到的全部汉字。
+    # 只用 12px 版本（8/10px 字形风格不同，混用不统一）；同磅值下字形尺寸与雅黑基本一致，不缩放。
     FontStyleDef(key="pixel", family="Fusion Pixel 12px Prop zh_hans",
-                 filename="fusion-pixel-12px-proportional-zh_hans.ttf", scale=1.0),
+                 filename="fusion-pixel-12px-proportional-zh_hans.ttf"),
 ]
 
 FONT_STYLE_NAMES: list[str] = [d.key for d in FONT_STYLES]

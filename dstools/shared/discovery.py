@@ -11,17 +11,12 @@ from dstools.models import (
     Shard,
 )
 
-# Klei 根目录的文件夹名——Steam 版叫 DoNotStarveTogether，WeGame(Rail)版
-# 叫 DoNotStarveTogetherRail，是完全独立的两棵目录树（真机验证过：两边可以
-# 同时存在，互不影响）。
+# Klei 根目录名：Steam 版 DoNotStarveTogether，WeGame 版 DoNotStarveTogetherRail，两棵独立目录树可并存
 _STEAM_KLEI_FOLDER = "DoNotStarveTogether"
 _WEGAME_KLEI_FOLDER = "DoNotStarveTogetherRail"
 
-# 兜底候选——只在 get_documents_dir() 读注册表失败（非 Windows/极少数环境）
-# 时才用得上。**坑**：这里以前是唯一的探测方式，只覆盖了"系统目录/文档"和
-# "Documents"两种拼法，真实用户的"文档"目录被重定向到别的盘符时，命名可以
-# 是任意字符串（比如就叫"文档"，不带"系统目录"前缀）——穷举猜文件夹名本
-# 质上不可能覆盖全，读注册表里真实的特殊文件夹路径才是唯一可靠做法。
+# 兜底候选，仅在注册表读取"文档"路径失败时使用。坑：被重定向的"文档"目录名可以是任意字符串，
+# 穷举猜不全，必须优先读注册表
 _EXTRA_SEARCH_DRIVE_SUBPATHS = [
     "系统目录/文档/Klei",
     "文档/Klei",
@@ -62,10 +57,7 @@ def find_klei_root() -> Path | None:
 
 
 def find_wegame_klei_root() -> Path | None:
-    """自动发现 WeGame(Rail) 版 Klei DoNotStarveTogetherRail 根目录——真机
-    验证过目录名固定是这个（跟 Steam 版并列存在于同一个上级 Klei 目录
-    下），内部 Cluster/Master/Caves/cluster_token.txt 等结构跟 Steam 版
-    字节级一致。"""
+    """自动发现 WeGame 版 DoNotStarveTogetherRail 根目录（与 Steam 版并列，内部结构完全一致）。"""
     return _find_klei_root_impl(_WEGAME_KLEI_FOLDER)
 
 
@@ -80,12 +72,7 @@ def find_user_dir(klei_root: Path) -> Path | None:
 
 
 def list_clusters(klei_root: Path) -> list[Path]:
-    """列出给定根目录下的有效 cluster 目录。
-
-    A partially-created directory may contain ``cluster.ini`` but no shard
-    yet (for example after an interrupted create operation).  It is not a
-    usable save and should not appear in the GUI or make discovery fail.
-    """
+    """列出根目录下的有效存档；只有 cluster.ini 没有分片的半成品（创建被中断）不算，也不能让发现失败。"""
     clusters = []
     if not klei_root.exists():
         return clusters
@@ -110,12 +97,8 @@ def list_shards(cluster_path: Path) -> list[Path]:
 
 def discover_environment(klei_root: Path | None = None,
                           wegame_klei_root: Path | None = None) -> DSTEnvironment:
-    """发现完整的 DST 环境，Steam 版和 WeGame 版一起扫描。
-
-    - 根目录下的 cluster（如 Cluster_3）→ SaveSource.SERVER
-    - 用户 ID 目录下的 cluster（如 280257116/Cluster_1）→ SaveSource.LOCAL
-    - 两个平台的根目录是完全独立的两棵目录树，各自按上面规则扫一遍，
-      结果合并进同一个 clusters 列表，用 Cluster.platform 区分。
+    """扫描 Steam 与 WeGame 两棵目录树：根目录下的存档为 SERVER，用户 ID 目录下的为 LOCAL，
+    合并到同一列表，用 Cluster.platform 区分。
     """
     if klei_root is None:
         klei_root = find_klei_root()
@@ -142,9 +125,7 @@ def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> 
             if client_ini.exists():
                 env.client_config = client_ini
         else:
-            # WeGame 版的用户 ID 单独存一份（状态栏按"存档类型"筛选器切
-            # 换显示哪一份，见 gui/app.py._update_status()）——client_ini
-            # 目前没有哪里用到 WeGame 版的，不额外存。
+            # WeGame 版用户 ID 单独存一份（状态栏按存档类型切换显示）
             env.wegame_user_id = user_dir.name
 
     # 根目录下的 cluster → SERVER
@@ -152,13 +133,7 @@ def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> 
         cluster = _build_cluster(cluster_path, SaveSource.SERVER, platform)
         env.clusters.append(cluster)
 
-    # 用户目录下的 cluster → LOCAL。不跟上面 SERVER 的名字去重：服务器
-    # cluster（根目录下）和本地 cluster（用户 ID 目录下）是两棵完全独立
-    # 的目录树，两边各自出现一个同名 cluster（比如都叫 "Cluster_1"，复
-    # 制/改名存档文件夹后很容易撞出这种情况）是真实存在的两个不同 cluster，
-    # 不是同一个被扫到了两次。之前按名字做 seen_names 去重会把它们当
-    # 成重复项，悄悄丢掉每一个名字恰好跟某个服务器 cluster 撞了的本地
-    # cluster。
+    # 用户目录下的存档 → LOCAL。不与 SERVER 按名字去重：两棵目录树中的同名存档是不同的存档
     if user_dir:
         for cluster_path in list_clusters(user_dir):
             cluster = _build_cluster(cluster_path, SaveSource.LOCAL, platform)

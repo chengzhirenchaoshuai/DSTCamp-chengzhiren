@@ -48,11 +48,7 @@ def default_plan_for_location(location: str) -> WorldShardPlan:
 
 
 def shard_plan_from_template(path: Path) -> WorldShardPlan:
-    """Convert a real game-generated leveldataoverride.lua into a plan.
-
-    A missing or malformed template is an explicit error.  Falling back to a
-    hand-written partial default would silently omit official keys.
-    """
+    """把游戏真实生成的 leveldataoverride.lua 转成创建计划；模板缺失或损坏直接报错，不用手写的不完整默认值兜底。"""
     result = load_leveldata(path)
     if result.status != LeveldataStatus.OK or result.preset is None:
         raise ValueError(f"无法读取官方世界模板: {path}")

@@ -1,22 +1,10 @@
-"""存档备份：把一个 cluster 当前状态（世界存档 + 相关配置）打包成 zip。
+"""存档备份：把存档当前状态打包成 zip。
 
-备份内容 = 每个世界的 save/（世界数据）+ modoverrides.lua/leveldataoverride.lua/
-server.ini，加上 cluster 级别的 cluster.ini/cluster_token.txt/adminlist.txt/
-blocklist.txt。故意跳过游戏自己在每个世界下维护的 backup/ 目录和各种
-log/chat_log 文件——那些是 mod 修改历史和日志，跟世界存档数据无关，游戏
-自己已经在滚动维护，没必要跟着备份一遍。
-
-备份文件存在**跟存档同级**的统一 dstcamp_backups/ 目录下、按存档名分子
-目录（如 `<Klei根>/dstcamp_backups/Cluster_3/`），不放进存档目录自己内
-部——换电脑/打包分享存档目录时不会把 DSTCamp 自己的备份也一起带上，跟
-真正的存档内容混在一起；代价是新位置换电脑不会跟着走，是权衡后特意的
-取舍。
-
-保留份数由 app_settings.get_backup_retention() 控制（用户可在"设置备份
-策略"里调整，默认 10），超过的自动删掉最旧的——这条规则对所有备份一视
-同仁，不区分是自动触发还是手动打的。"自动备份"（停服后一次 + 运行期间
-定期）能不能触发，由 app_settings.get_backup_auto_enabled() 单独控制，
-"立即备份"按钮和"恢复前保险备份"这两处手动/防御性备份不受这个开关影响。
+内容：各世界 save/ 与 modoverrides.lua/leveldataoverride.lua/server.ini，以及存档级 cluster.ini/
+cluster_token.txt/adminlist.txt/blocklist.txt；跳过游戏自己滚动维护的 backup/ 与日志。
+备份放在与存档同级的 ``<Klei根>/dstcamp_backups/<存档名>/``，打包分享存档时不会带上。
+保留份数见 get_backup_retention()（超出删最旧的，手动/自动一视同仁）；自动备份受
+get_backup_auto_enabled() 控制，"立即备份"和"恢复前保险备份"不受影响。
 """
 
 import shutil
@@ -79,14 +67,9 @@ def create_backup(cluster_path: Path) -> Path:
 
 
 def restore_backup(cluster_path: Path, backup_zip: Path) -> None:
-    """用某一份备份 zip 覆盖 cluster_path 当前的状态。
+    """用备份 zip 覆盖存档当前状态（调用方须确认相关世界已停止）。
 
-    先把这份备份会覆盖到的每一项（cluster 级配置 + 每个世界的 save/ 和
-    三个配置文件）整个删掉，再解压——不能只是在旧文件上覆盖解压：比如
-    save/session/ 下比这份备份更新的存档槽文件如果不清掉，会跟备份里的
-    旧槽位混在一起，游戏很可能还是照常挑编号最新的槽位，恢复了个寂寞。
-    调用方必须自己确认对应的世界都已经停止（文件被进程占着的话，
-    Windows 上这些删除/覆盖操作会直接失败）。
+    坑：必须先删掉备份涉及的每一项再解压，否则比备份更新的存档槽会残留，游戏仍会加载最新槽位。
     """
     for name in _CLUSTER_ITEMS:
         target = cluster_path / name
@@ -111,11 +94,7 @@ def _prune_old_backups(dest_dir: Path) -> None:
 
 
 def get_backup_summary(zip_path: Path) -> dict:
-    """从一份备份 zip 里取一点基本信息（存档名称/游戏模式/最大玩家数/
-    进度摘要），给"从备份恢复"列表用——解压到临时目录后直接复用
-    config_manager/save_reader 现成的读取逻辑，不重新写一遍解析代码，
-    临时目录用完即删，不碰真实文件。解析失败的字段直接不出现在结果
-    里，不擅自猜测。"""
+    """解压到临时目录读取备份的基本信息（名称/模式/人数/进度）供恢复列表使用；读不出的字段不出现，不猜。"""
     from dstools.features.cluster_config.config_manager import load_cluster_config
     from dstools.features.save_browser.reader import get_save_summary, list_save_sessions
 

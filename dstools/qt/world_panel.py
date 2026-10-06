@@ -1,8 +1,6 @@
-"""世界设置面板：分类标题条 + 三列设置块，只绘制可见部分。
+"""世界设置面板：分类标题条 + 三列设置块，只绘制可见部分，整体按面板宽度等比缩放。
 
-对应 Tk 版 features/world/render.py（PIL 预渲染成图片）——Qt 版直接用 QPainter 画，不需要
-整图/视口缓存那一套。版式常量与 Tk 版"紧凑"布局一致，整体按面板宽度等比缩放（图标、字体、
-内边距同步变化）。规则面板（editable）上每个设置有 < > 箭头，点击发出 value_clicked(key, delta)。
+可编辑面板的每个设置有 < > 箭头，点击发出 value_clicked(key, delta)。
 """
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
@@ -71,7 +69,7 @@ def wrap_text(text: str, metrics: QFontMetricsF, max_width: float) -> list[str]:
 
 
 class _Metrics:
-    """一次布局用到的全部尺寸（跟 Tk 版 render.py 的 _world_panel_metrics 同一套公式）。"""
+    """一次布局用到的全部尺寸。"""
 
     def __init__(self, width: float):
         self.s = s = max(0.3, width / BASE_WIDTH)
@@ -341,7 +339,7 @@ class WorldPanel(QAbstractScrollArea):
 
     # ── 点击 ────────────────────────────────────────────────────────────
     def _hit_test(self, pos) -> tuple[str, int] | None:
-        """返回点中的 (key, delta)；箭头到头（淡出）时不响应，跟 Tk 版一致。"""
+        """返回点中的 (key, delta)；箭头到头（淡出）时不响应。"""
         if not self._editable:
             return None
         self._ensure_layout()

@@ -1,7 +1,5 @@
-"""世界设置页（对应 Tk 版 features/world/tab.py）：编辑 leveldataoverride.lua（世界规则 + 世界生成）。
-
-服务器存档的"世界规则"可点 < > 改值并保存；本地存档和"世界生成"只读。加载在后台线程，
-面板用 QPainter 直接绘制（qt/world_panel.py），不再有 PIL 预渲染。
+"""世界设置页：编辑 leveldataoverride.lua。服务器存档的世界规则可改值保存，本地存档与世界生成只读；后台加载，
+面板见 qt/world_panel.py。
 """
 
 from PySide6.QtCore import Qt, QTimer
@@ -191,9 +189,7 @@ class WorldSettingsPage(Page):
             self._update_banner()
             self._update_tab_labels()
 
-        # 在界面线程先取一次 Mod 页未保存的预览集合——pending_enabled_mod_ids()
-        # 读的是 Mod 页内存里的字典，后台线程里跟 Mod 页开关点击同时发生会有
-        # 竞态；load_world_page() 本身在下面的 run_async 里跑在后台线程。
+        # 在界面线程先取 Mod 页未保存的预览集合（它读 Mod 页内存字典，在后台线程读会与开关点击竞态）
         enabled_mod_ids = self.ctx.pending_enabled_mod_ids(cluster)
         run_async(lambda: page_data.load_world_page(cluster, shard, enabled_mod_ids), done,
                   lambda exc: self._show_info(str(exc), "") if generation == self._generation else None)

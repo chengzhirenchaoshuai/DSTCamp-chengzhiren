@@ -1,10 +1,6 @@
-"""解析并缓存每个 mod 的图标缩略图。
+"""解析并缓存每个 Mod 的图标（Klei atlas：.tex 贴图 + UV 的 .xml）。
 
-每个下载下来的 mod 都自带一份 Klei atlas 格式的图标（一张 .tex 贴图 +
-一份列出 UV 矩形的 .xml）——跟游戏自己的世界设置图标是同一套约定，参见
-world_icons.py 及产出 icons/world/ 的 atlas 拆分工作。本模块对每个 mod
-只做一次转换+裁剪，结果落盘缓存（按 workshop id 建索引，源 .tex 的
-mtime 变化时失效），这样 GUI 反复刷新不会每次都重新调用 ktech.exe。
+每个 Mod 只转换裁剪一次，按 workshop id 落盘缓存，源 .tex 的 mtime 变化时失效，避免反复调用 ktech。
 """
 
 from pathlib import Path
@@ -18,20 +14,14 @@ from dstools.shared.tex_convert import tex_to_png
 from dstools.models import Platform
 
 
-# Mod 列表在 1600px 窗口下的实际图标边长约 100px，即使放大到常见的
-# 2K 窗口也远低于 192px。磁盘缓存仍保留转换后的原始 PNG；这里只限制
-# 进程内的解码尺寸，避免少数 512/960px 图标长期占用数 MiB 内存。
+# 进程内解码尺寸上限：列表实际图标边长约 100px，限制在 192px 以免 512/960px 图标长期占用内存（磁盘仍存原图）
 MAX_RESIDENT_ICON_SIZE = 192
 
 
 def load_mod_icon_image(
     path: Path, max_size: int = MAX_RESIDENT_ICON_SIZE
 ) -> Image.Image:
-    """读取供 GUI 使用的 RGBA 图标，并限制其进程内驻留尺寸。
-
-    原始转换结果继续留在磁盘缓存中，后续若需要更高分辨率仍可重新读取；
-    当前两个 Mod 列表只会把图标缩到行高以内，不需要常驻原始大图。
-    """
+    """读取界面用的 RGBA 图标并限制进程内驻留尺寸（磁盘缓存保留原始转换结果）。"""
     with Image.open(path) as source:
         image = source.convert("RGBA")
     if max(image.size) > max_size:
@@ -40,10 +30,7 @@ def load_mod_icon_image(
 
 
 def _cache_dir_for(platform: Platform) -> Path:
-    """按平台分开的缓存子目录——Steam/WeGame 是两棵完全独立的目录树，
-    即使某个 workshop_id 数字凑巧一样，也可能是内容完全不同的两个 mod
-    （尤其 WeGame 是 19 位长数字，理论上不会跟 Steam 的短 ID 撞，但缓存
-    目录本身仍然按平台分开，不依赖"数字长得不像会撞"这个假设）。"""
+    """按平台分开的缓存子目录（Steam/WeGame 是独立目录树，同 ID 也可能是不同 Mod）。"""
     return cache_dir("mod_icons") / platform.value
 
 
@@ -52,11 +39,7 @@ def get_cached_mod_icon_path(
     mod_folder: Path,
     platform: Platform = Platform.STEAM,
 ) -> Path | None:
-    """只返回仍与源 ``.tex`` 匹配的现有 PNG，不执行任何图像转换。
-
-    首帧加载用这个轻量路径恢复上次已经生成的图标；缓存缺失或失效时
-    返回 ``None``，再由后台调用 :func:`get_mod_icon_path` 完成转换。
-    """
+    """只返回仍与源 .tex 匹配的已有 PNG，不做转换（首帧快速恢复），缺失或失效返回 None 交给后台转换。"""
     if not mod_info.icon or not mod_info.icon_atlas:
         return None
     xml_path = Path(mod_folder) / mod_info.icon_atlas
@@ -74,11 +57,7 @@ def get_cached_mod_icon_path(
 
 def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path,
                        platform: Platform = Platform.STEAM) -> Path | None:
-    """返回该 mod 图标的缓存 PNG 路径，首次使用时才做转换。
-
-    若 mod 没有图标字段、引用的文件不存在、或转换因任何原因失败，都返回
-    None——调用方应把它当作"没有图标"处理，回退到占位图。
-    """
+    """返回 Mod 图标的缓存 PNG 路径，首次使用时转换；没有图标或转换失败返回 None（调用方用占位图）。"""
     cached = get_cached_mod_icon_path(mod_info, mod_folder, platform)
     if cached is not None:
         return cached
@@ -113,10 +92,7 @@ def get_mod_icon_path(mod_info: ModInfo, mod_folder: Path,
     except Exception:
         return None
     finally:
-        # 尽力清理中间产物（整张 atlas 的 PNG）——在 Windows 上刚写完的
-        # 文件可能被临时锁住（比如杀毒软件实时扫描），这里失败不能向上
-        # 抛：最坏情况是缓存目录里留一个多余的 _atlas_*.png，无害，下次
-        # 会被覆盖掉。
+        # 尽力删除中间的整张 atlas PNG；文件可能被杀软临时锁住，失败无害（下次覆盖）
         try:
             atlas_png.unlink(missing_ok=True)
         except OSError:

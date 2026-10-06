@@ -6,11 +6,7 @@ from pathlib import Path
 
 
 class ServerTokenKind(str, Enum):
-    """Klei 服务器令牌格式。
-
-    这里只识别已经实测过的三段式与四段式结构；未知格式仍可由用户手动
-    使用，但不会被自动调度，避免 Klei 再次调整格式时误套并发规则。
-    """
+    """Klei 服务器令牌格式：只识别实测过的三段式与四段式，未知格式可手动使用但不参与自动调度。"""
 
     OLD = "old"
     NEW = "new"
@@ -28,14 +24,7 @@ def classify_token(token: str) -> ServerTokenKind:
 
 
 def extract_token_owner_id(token: str) -> str | None:
-    """从令牌正文里取出所有者的 Klei 用户 ID（KU_/OU_）。
-
-    这个账号是这份专服令牌的生成/授权者，游戏引擎自己就认它在这个专服
-    上天然拥有管理员权限——不需要写进 adminlist.txt 也生效，不是
-    DSTCamp 决定的行为。令牌分段结构和 classify_token() 依据的是同一套
-    实测格式（第二段就是明文 ID）；格式认不出来就返回 None，不去猜测
-    拼凑一个可能是错的 ID。
-    """
+    """从令牌第二段取出所有者的 KU_/OU_ ID（引擎默认其为管理员，无需写入 adminlist）；格式不认识返回 None。"""
     parts = token.strip().split("^")
     if len(parts) < 2 or parts[0] != "pds-g" or not parts[1].startswith(("KU_", "OU_")):
         return None

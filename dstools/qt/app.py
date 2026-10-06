@@ -3,11 +3,9 @@
 import os
 import sys
 
-# 字体引擎按保存的字体样式选：像素字体（Fusion Pixel）在 DirectWrite 引擎下关抗锯齿
-# 会亚像素粘连，只有 FreeType 能把它像素完美栅格化；但 FreeType 会让微软雅黑、麦圆体
-# 失去 ClearType、笔画发细发淡，所以只在像素字体下启用。引擎只能在 QApplication
-# 构造前选定，运行中切换样式要重启才换引擎（见 theme.freetype_engine_active()）。
-# 用 setdefault 避免覆盖测试/调试时显式指定的 QT_QPA_PLATFORM（如 offscreen）。
+# 按保存的字体样式选字体引擎：像素字体在 DirectWrite 下关抗锯齿会亚像素粘连，只有 FreeType 能像素完美；
+# 但 FreeType 会让雅黑、麦圆体失去 ClearType 而发细，所以只在像素字体下启用。引擎须在 QApplication
+# 构造前选定，运行中切换要重启（见 theme.freetype_engine_active()）。setdefault 不覆盖显式指定的 QT_QPA_PLATFORM。
 from dstools.shared.app_settings import get_font_style_choice  # noqa: E402  纯 Python，不依赖 Qt
 
 if get_font_style_choice() == "pixel":
@@ -37,7 +35,7 @@ def _application() -> QApplication:
 
 
 def notify_old_instance_busy(server_count: int) -> None:
-    """更早的旧版本（Tk 版）还在跑专服、无法替用户安全关闭时，提示先手动退出它。"""
+    """更早的 Tk 版旧实例还在跑专服、无法替用户安全关闭时，提示先手动退出它。"""
     from dstools.i18n import t
     from dstools.qt import dialogs
 

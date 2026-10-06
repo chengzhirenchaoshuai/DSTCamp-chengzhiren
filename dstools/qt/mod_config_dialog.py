@@ -1,12 +1,8 @@
-"""单个 Mod 的配置编辑器（对应 Tk 版 features/mod/tab.py 的 ModConfigDialog）。
+"""单个 Mod 的配置编辑器。
 
-每个选项是一个下拉框，限定在 modinfo.lua 自己声明的可选项范围内（resolve_config_value()）
-——不提供自由文本输入框，因为手打的值可能是 mod 自己的 Lua 代码完全没预料到的东西。
-"应用"立刻写进 modoverrides.lua（跟游戏一致，不等单独的"保存"）；"重置"把每个控件还原成
-mod 自己声明的默认值，不写盘；"返回"直接关闭、丢弃未应用的改动。
-
-耗时的 Lua 沙箱解析（整份文件解析/动态选项/汉化叠加）放到后台线程跑，跑的时候先弹一个
-轻量提示，避免用户以为点了没反应；对话框本体等数据就绪后再一次性构建。
+每个选项是限定在 modinfo.lua 声明范围内的下拉框（不提供自由输入，手打值可能是 Mod 未预料的）。
+"应用"立即写入 modoverrides.lua；"重置"恢复默认值但不写盘；"返回"丢弃未应用的改动。
+耗时的沙箱解析（整份文件/动态选项/汉化叠加）在后台进行，数据就绪后一次性构建对话框。
 """
 
 from typing import Any
@@ -81,8 +77,7 @@ def open_mod_config(page, workshop_id: str, mod, mod_info, read_only: bool, read
         ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason).show()
         return
 
-    # 解析通常很快；加载期间只显示忙碌光标，不弹任何提示小窗——之前"正在
-    # 加载"的提示在设置项多的 mod 上会闪一下（真机反馈过），改成纯光标提示。
+    # 加载期间只显示忙碌光标，不弹提示小窗（会在选项多的 Mod 上闪一下）
     QApplication.setOverrideCursor(Qt.CursorShape.BusyCursor)
 
     def finish() -> None:
@@ -152,7 +147,7 @@ class ModConfigDialog(QDialog):
         body = QWidget()
         body.setObjectName("modConfigBody")
         body.setAutoFillBackground(False)
-        # 显式透明：否则滚动区视口和内容控件露出系统调色板的纯灰底（真机反馈过）
+        # 显式透明，否则滚动区露出系统调色板的灰底
         area.setStyleSheet("#modConfigArea, #modConfigArea > QWidget, #modConfigBody "
                            "{ background: transparent; border: none; }")
         self._body_layout = QVBoxLayout(body)
@@ -247,10 +242,7 @@ class ModConfigDialog(QDialog):
         current_value = self.mod.configuration_options.get(opt.name, opt.default)
         choices, current_display, _valid = resolve_config_value(self.mod_info, opt.name, current_value)
 
-        # 显示文本去掉首尾空格：部分 mod 靠补空格在游戏内用等宽字体对齐下
-        # 拉选项文本（如 "禁用" 补尾空格、"空格 + 启用"），这里用比例字体，
-        # 保留空格会显得像夹了空白字符、文本也不居中。只影响显示，写回
-        # modoverrides.lua 的仍是每个选项自己的 data 值。
+        # 显示文本去掉首尾空格（部分 Mod 补空格做等宽对齐，比例字体下显得奇怪）；写回的仍是 data 值
         items = [(str(c["description"]).strip(), c["data"]) for c in choices]
 
         if not items:
@@ -263,11 +255,8 @@ class ModConfigDialog(QDialog):
                 layout.addWidget(self._desc_label(opt.hover))
             return row
 
-        # 按下拉框项的顺序记录 data 与 hover，用索引取值而不是用显示文本当
-        # 键查字典——同一个 mod 可能有两个选项显示文本完全相同（仅 data 和
-        # hover 不同，如 "启用" 同时对应 true 和 -1 两个值），按文本当键会
-        # 把它们合并、悄悄丢掉其中一个（真机复现过：土地夯实器兑换沙之石
-        # 实际 3 个选项，只显示了 2 个）。
+        # 按下拉项顺序记录 data/hover 并用索引取值：显示文本可能重复（如 "启用" 对应 true 和 -1），
+        # 用文本当键会丢掉其中一项
         self.choice_maps[opt.name] = [data for _desc, data in items]
         hovers = [str(c.get("hover", "") or "") for c in choices]
         combo = QComboBox()
@@ -280,9 +269,7 @@ class ModConfigDialog(QDialog):
             hover_text = hovers[i].strip()
             if hover_text:
                 combo.setItemData(i, hover_text, Qt.ItemDataRole.ToolTipRole)
-        # 按当前保存的 data 值定位初始选中项，而不是按显示文本 findText
-        # （显示文本可能重复，findText 只会命中第一个，会把 -1 值误选成
-        # true 值那一条）。
+        # 按已保存的 data 值定位初始项，不能用 findText（显示文本可能重复，只会命中第一个）
         initial = 0
         for idx, (_desc, data) in enumerate(items):
             if data == current_value:

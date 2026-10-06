@@ -1,11 +1,4 @@
-"""构建 DSTCamp 单文件内嵌 EXE，并执行产物冒烟测试。
-
-不再构建外置工具 ZIP 版——ZIP 版更新后会被自动更新统一换成本文件产出
-的内嵌版 EXE，外置 tools/ 从此不再被读取，"用户可手动替换 tools 里的
-文件"这个 ZIP 版存在的初衷早已名存实亡；干脆只发布这一种形态，减少一
-套完全不会再被使用的构建/校验/发布路径。存量 ZIP 版用户的自动更新和
-兼容读取逻辑不受影响（见 auto_update.py、resource_paths.py）。
-"""
+"""构建 DSTCamp 单文件 EXE（内嵌 tools/ 与 icons/），并执行产物冒烟测试。"""
 
 from __future__ import annotations
 

@@ -1,6 +1,4 @@
-"""把整份文件 Lua 沙箱解析结果（resolve_full_modinfo()）应用到一个已经静态解析过的
-ModInfo 上——批量重载（Mod 管理页加载）和单个 mod 兜底（配置弹窗）共用同一份规则，
-确保两条路径产出完全一致的字段。"""
+"""把整份文件沙箱解析结果应用到已静态解析的 ModInfo（批量加载与配置弹窗共用，保证结果一致）。"""
 
 
 def apply_full_sandbox_result(mod_info, result: dict | None) -> None:

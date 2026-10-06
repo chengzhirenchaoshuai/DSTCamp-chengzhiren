@@ -1,10 +1,5 @@
-"""内网穿透页的"自建节点"子页签内容（对应 Tk 版 features/frp_selfhost/tab.py 的
-SelfHostFrpPage）。同一台 VPS 承担两种能力：FRP 内网穿透（把本地专服端口映射到
-公网）和实验性大厅加速（专服流量经 Mihomo TUN + WireGuard 从 VPS 出口发出）。
-
-SSH 部署、探测、WireGuard/Mihomo 相关的纯逻辑全部来自 features/frp_selfhost 下
-已有的 UI 无关模块，这里只做编排和界面。后台线程一律通过 qt/threads.py 的
-post_to_ui()/run_async() 转回界面线程，不需要 Tk 版那套"队列 + 50ms 轮询"。
+"""内网穿透页的"自建节点"子页签：同一台 VPS 提供 FRP 映射，以及实验性大厅加速
+（专服流量经 Mihomo TUN + WireGuard 从 VPS 出口发出）。纯逻辑在 features/frp_selfhost，这里只做编排和界面。
 """
 
 import threading

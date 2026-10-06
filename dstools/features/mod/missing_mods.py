@@ -1,11 +1,8 @@
-"""启动专服前找出存档已启用、但本机没有文件的 Mod。
+"""启动专服前找出存档已启用但本机没有文件的 Mod。
 
-专服对找不到的 Mod 会直接跳过并照常启动，世界在缺 Mod 的状态下加载、保存后，
-依赖这些 Mod 的物品/生物可能被永久移除。这里按专服实际加载路径判断：
-
+坑：专服会跳过缺失的 Mod 照常启动，保存后依赖它的物品/生物可能被永久移除。按专服实际加载路径判断：
 * Workshop V2：``-ugc_directory`` 下 ``content/322330/<id>/modinfo.lua``；
-* Workshop V1：同目录的 ``*_legacy.bin``（启动前会解压），或专服
-  ``mods/workshop-<id>/modinfo.lua``；
+* Workshop V1：同目录 ``*_legacy.bin``（启动前解压），或专服 ``mods/workshop-<id>/modinfo.lua``；
 * 本地 Mod：专服 ``mods/<名称>/modinfo.lua``。
 """
 

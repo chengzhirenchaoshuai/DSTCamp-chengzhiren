@@ -1,8 +1,4 @@
-"""读取并规范化本地 ``modinfo.lua`` 声明的版本信息。
-
-这一层不依赖 Tk。主页 Mod 管理、创建向导和后续 Workshop 状态检测都从
-这里取得同一份可信结果，避免各自执行沙箱或用正则猜测作者的最终赋值。
-"""
+"""读取并规范化本地 modinfo.lua 声明的版本，Mod 页、创建向导与 Workshop 状态检测共用同一份可信结果。"""
 
 from __future__ import annotations
 
@@ -37,9 +33,7 @@ def _normalize_field(result: Any) -> tuple[str, str]:
     if isinstance(value, bool) or not isinstance(value, (str, int, float)):
         return "", VERSION_UNRESOLVED
     value = str(value).strip()
-    # 少数作者把说明文字也写进版本字符串，例如
-    # ``version = "0.0.6  --版本"``。这不是 Lua 语法注释，但也不属于
-    # 版本号；仅清理“空白 + --”形式，避免影响正常的连字符版本。
+    # 少数作者把说明写进版本字符串（如 "0.0.6  --版本"），只清理"空白 + --"形式，不影响带连字符的版本号
     value = _TRAILING_LUA_COMMENT_RE.sub("", value).rstrip()
     return (value, VERSION_CONFIRMED) if value else ("", VERSION_UNDECLARED)
 

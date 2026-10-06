@@ -37,28 +37,12 @@ def tool_binary_dir() -> Path:
 
 
 def runtime_tool_path(relative: str | Path) -> Path:
-    """返回可供长驻子进程使用的工具路径。
+    """返回长驻子进程可用的工具路径。
 
-    单文件版的临时展开目录会随主程序退出而回收，因此先按内容哈希复制到
-    固定数据目录；源码版和 ZIP 外置版直接使用原文件。
-
-    单文件版打包的是 ``<relative>.gz``（见 build_exe.py 的 TOOL_FILES），
-    不是裸可执行文件——PyInstaller 的 bootloader 每次启动都会无条件把
-    整个 tools/ 解压到全新的 ``%TEMP%\\_MEIxxxxxx\\``，不管这个工具有
-    没有被用到；裸 exe（尤其是 frp 系列，经常被杀毒软件按签名直接归进
-    HackTool 类别）每次启动都在临时目录现身一次，是"没做任何操作也被
-    杀软隔离"的真实诱因（remote_deploy.py 顶部注释记录过几乎一样的故
-    障，当时把只转发给远程服务器、本机从不执行的 frps_linux_* 也改成了
-    这个方案）。这里优先找 ``.gz`` 压缩兄弟文件，现场解压后再按内容哈
-    希落地到稳定目录；找不到 ``.gz``（还没来得及压缩的工具）就照旧回
-    退读裸文件。
-
-    源码版和 ZIP 外置版的 tools/ 是启动时就固定存在的目录，不经过
-    _MEIPASS 临时解压，本来没有"每次启动重新落地裸文件"这个问题，裸
-    文件存在时优先直接用；但仓库里 frpc.exe/sakura-frpc.exe 这类工具
-    现在只提交了 ``.gz``（原始 .exe 已删除），源码模式跑起来时裸文件
-    根本不存在，必须跟单文件版一样也走 ``.gz`` 解压落地这条路，否则源
-    码模式直接判定"客户端文件缺失"（曾经真的这样崩过）。
+    tools/ 中的可执行文件以 ``.gz`` 打包：onefile 每次启动都会把 tools/ 解压到新的 _MEI 临时目录，
+    裸 exe（尤其 frp 被杀软归为 HackTool）每次启动都会被隔离。所以优先读 ``.gz`` 现场解压，按内容
+    哈希落地到 data/runtime_tools（_MEI 目录随主程序退出回收，长驻进程不能用）；没有 ``.gz`` 才读裸文件。
+    源码/ZIP 版的裸文件存在时直接使用（仓库只提交了 .gz，源码模式同样要解压）。
     """
     relative = Path(relative)
     if relative.is_absolute() or ".." in relative.parts:
@@ -127,11 +111,7 @@ def path_is_ascii(path: str | Path) -> bool:
 
 
 def validate_cache_root(path: str | Path) -> str | None:
-    """验证缓存目录是否适合存放并运行 ktools。
-
-    返回 ``None`` 表示通过，否则返回稳定错误码供 GUI 翻译。测试文件使用
-    Python 的宽字符文件 API 创建，不会把用户选择的路径交给 ktech。
-    """
+    """验证缓存目录能否存放并运行 ktools，通过返回 None，否则返回错误码（用 Python 宽字符 API 测试，不交给 ktech）。"""
     candidate = Path(path)
     if not candidate.is_absolute():
         return "not_absolute"

@@ -1,10 +1,4 @@
-"""DST 角色 prefab 名到显示名称的对照表.
-
-数据来源：直接解压游戏本体 `data/databundles/scripts.zip` 里的
-`scripts/languages/chinese_s.po`（`msgctxt "STRINGS.CHARACTER_NAMES.<prefab>"`
-条目）逐条核对得到，不是凭记忆写的。只收录官方角色——查不到的 prefab
-（绝大多数是模组自定义角色）一律原样返回，不去猜一个可能是错的名字。
-"""
+"""官方角色 prefab → 显示名称（逐条核对自 scripts.zip 的 chinese_s.po），Mod 角色原样返回。"""
 
 CHARACTER_NAMES: dict[str, dict[str, str]] = {
     "wilson": {"zh": "威尔逊.P.希格斯伯里", "en": "Wilson P. Higgsbury"},

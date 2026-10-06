@@ -1,8 +1,4 @@
-"""跨页面共享的已安装 Mod 目录快照。
-
-这里只保存与具体存档无关的只读/派生信息：ModInfo、实际目录、图标和
-平台。启用状态及 configuration_options 仍由各页面自己的 ModEntry 管理。
-"""
+"""跨页面共享的已安装 Mod 目录快照：只存与存档无关的 ModInfo、目录、图标和平台（启用状态与配置由各页面管理）。"""
 
 from __future__ import annotations
 
@@ -43,7 +39,7 @@ def catalog_source_key(
 
 
 class ModCatalogStore:
-    """线程安全的应用级快照仓库；不调用 Tk，也不保存存档状态。"""
+    """线程安全的应用级快照仓库，不保存存档状态。"""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -86,9 +82,7 @@ class ModCatalogStore:
                 paths=dict(paths),
                 icons=merged_icons,
             )
-            # 每个平台只有当前内容根目录有复用价值。用户更换 Steam 库或
-            # WeGame Mod 目录后，旧路径下的大批 PIL 图标不应常驻到进程
-            # 退出；以后切回旧目录时重新扫描即可。
+            # 每个平台只保留当前内容根目录：更换 Steam 库或 WeGame 目录后旧路径的图标不再常驻内存
             for old_key in tuple(self._snapshots):
                 if old_key != key and old_key[0] == platform.value:
                     self._snapshots.pop(old_key, None)

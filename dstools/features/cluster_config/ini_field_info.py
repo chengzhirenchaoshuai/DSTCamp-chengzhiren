@@ -1,9 +1,5 @@
-"""cluster.ini / server.ini 各字段的中英文显示名与功能说明。
-
-内容整理自 Klei 官方文档与社区维基（Don't Starve Wiki 的 Dedicated Servers /
-Simple Dedicated Server Setup 指南等），只收录这些资料里有据可查的常见字段。
-未收录的字段（例如某些 mod 或非官方修改额外写入的键）原样显示英文键名、不
-附加说明——不对未知字段的含义做任何猜测。
+"""cluster.ini / server.ini 各字段的中英文名与说明，整理自 Klei 官方文档与 Don't Starve Wiki；
+未收录的字段原样显示键名，不猜测含义。
 """
 
 from dstools.i18n import get_lang
@@ -181,10 +177,7 @@ SHARD_FIELD_INFO: dict[tuple[str, str], dict[str, tuple[str, str]]] = {
 }
 
 
-# (section, key) -> [(写入文件的原始值, 中文显示名, 英文显示名), ...]
-# 用下拉框代替自由输入，防止手滑打出游戏不认识的值 -- 下拉框里显示的是
-# 翻译后的名称，但选中后实际写回 ini 文件的仍然是原始英文/locale值,
-# 不会因为翻译显示而改变游戏实际读取的内容。
+# (section, key) -> [(原始值, 中文名, 英文名)]：用下拉框避免手输非法值，写回文件的始终是原始值
 ENUM_FIELDS: dict[tuple[str, str], list[tuple[str, str, str]]] = {
     ("GAMEPLAY", "game_mode"): [
         ("survival", "生存", "Survival"),
@@ -229,20 +222,14 @@ ALWAYS_READONLY_FIELDS: set[tuple[str, str]] = {
     ("NETWORK", "cluster_cloud_id"),
 }
 
-# 这些字段即使值看起来像数字/布尔（密码设成"0"这种纯数字很常见），也必
-# 须原样当字符串处理，不能被 ini_parser.py/config_manager.py 里"猜类型"
-# 的通用逻辑转成 int/bool——转成 int 后 `if password:` 会把密码"0"误判成
-# "没有密码"。
+# 这些字段始终按字符串处理，不做类型推断：密码 "0" 转成 int 后会被 `if password:` 误判为没有密码
 NO_TYPE_COERCE_FIELDS: set[tuple[str, str]] = {
     ("NETWORK", "cluster_password"),
 }
 
 
 def get_field_info(section: str, key: str, is_shard: bool = False) -> tuple[str, str] | None:
-    """查找某个 cluster.ini/server.ini 字段的 (显示名, 说明)，取当前界面语言的版本。
-
-    表里查不到就返回 None——调用方此时应该退回原样显示英文键名，不附加说明。
-    """
+    """返回字段的 (显示名, 说明)（当前界面语言），未收录返回 None（调用方显示原始键名）。"""
     table = SHARD_FIELD_INFO if is_shard else CLUSTER_FIELD_INFO
     info = table.get((section, key))
     if not info:

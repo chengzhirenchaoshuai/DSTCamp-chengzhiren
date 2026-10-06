@@ -1,4 +1,4 @@
-"""页签基类：约定"当前页立即刷新、其余页标脏、切过去时再补"，跟 Tk 版主窗口的规则一致。"""
+"""页签基类：当前页立即刷新，其余页标脏，切过去时再补。"""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget

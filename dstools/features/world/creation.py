@@ -1,10 +1,4 @@
-"""Safe, UI-independent world creation primitives.
-
-The create wizard can build on this module without reusing the existing
-world-editor write path.  It validates the Master location first, creates a
-complete two-shard directory in a temporary sibling, then atomically moves it
-into place.
-"""
+"""与界面无关的世界创建：校验主世界 location，在同级临时目录生成完整的多分片目录后原子移动到位。"""
 
 import copy
 from dataclasses import dataclass, field
@@ -33,9 +27,8 @@ class WorldShardPlan:
     name: str
     description: str = ""
     overrides: dict[str, object] = field(default_factory=dict)
-    # leveldataoverride.lua 除身份字段和 overrides 外的完整 Level 元数据。
-    # 官方创建界面会保留 version、background_node_range、required_prefabs 等
-    # 字段；岛屿冒险的世界生成同样依赖这些数据。
+    # leveldataoverride.lua 中除身份字段和 overrides 外的完整 Level 元数据
+    # （version、background_node_range、required_prefabs 等，岛屿冒险世界生成依赖它们）
     level_data: dict[str, object] = field(default_factory=dict)
 
 
@@ -48,9 +41,7 @@ class WorldCreationPlan:
     caves: WorldShardPlan | None
     cluster_ini: ClusterConfig = field(default_factory=ClusterConfig)
     mod_ids: frozenset[str] = frozenset()
-    # workshop id -> modoverrides.lua entry.  This is intentionally kept
-    # separate from the id set so the creation wizard can preserve each mod's
-    # graphical configuration_options without coupling itself to a live save.
+    # workshop id -> modoverrides.lua 条目，与 ID 集合分开，保留每个 Mod 的配置项而不依赖现有存档
     mod_overrides: dict[str, dict] = field(default_factory=dict)
     shard_configs: dict[str, ShardConfig] = field(default_factory=dict)
     cluster_token: str = ""
@@ -101,8 +92,7 @@ def creation_shards(plan: WorldCreationPlan) -> list[tuple[str, WorldShardPlan]]
 
 
 def shard_is_master(plan: WorldCreationPlan, shard_name: str) -> bool:
-    """分片是否为主世界：优先看 shard_configs 的 [SHARD] is_master；没给配置时
-    沿用旧约定——只有 Master 目录是主世界（旧版 Tk 向导走这条路径）。"""
+    """分片是否为主世界：以 shard_configs 中 [SHARD] is_master 为准，未提供时只有 Master 目录是主世界。"""
     config = plan.shard_configs.get(shard_name)
     if config is not None and "is_master" in config.shard:
         return bool(config.shard["is_master"])
@@ -151,14 +141,7 @@ def _write_lua(path: Path, data: dict) -> None:
 
 
 def default_cluster_config(cluster_name: str = "Cluster_New") -> ClusterConfig:
-    """Return the verified fresh-server ``cluster.ini`` defaults.
-
-    仅限局域网/离线模式默认关闭——之前默认开启，每次新建公网可加入的存档
-    都要先手动关掉这两个开关才能启动，真机反馈过这是重复劳动。跟游戏本身
-    新建专服的默认行为、以及 CLUSTER_INI_DEFAULTS（见 config_manager.py）
-    的缺省值保持一致。仍需要局域网/离线的用户在向导的"服务器配置"子页签
-    里打开即可，创建时会按当时的选择写入。
-    """
+    """新建专服的 cluster.ini 默认值（已核对）。仅限局域网/离线模式默认关闭，与游戏新建专服一致。"""
     return ClusterConfig(
         gameplay={
             "game_mode": "survival",
@@ -208,13 +191,7 @@ def default_shard_config(
 
 
 def _write_default_server_ini(root: Path) -> None:
-    """Write the minimal server.ini that makes a newly-created shard visible.
-
-    The game fills in additional runtime fields on first launch, but the
-    discovery layer (and the dedicated-server launcher) needs the shard file
-    to exist before that first launch.  These values match a fresh DST
-    two-shard cluster observed in the user's verified saves.
-    """
+    """写入让新分片可被发现的最小 server.ini（其余运行时字段由游戏首次启动补齐），取值与真实新建存档一致。"""
     write_server_ini(
         default_shard_config(root.name.casefold() == "master", root.name),
         root / "server.ini",
@@ -273,11 +250,8 @@ def create_world(plan: WorldCreationPlan, destination_root: Path) -> Path:
     if destination.exists():
         raise FileExistsError(destination)
     destination_root.mkdir(parents=True, exist_ok=True)
-    # tempfile.mkdtemp() 按“私有临时目录”的语义创建目录；较新的 Python
-    # 在 Windows 上会为它设置仅当前用户和管理员可访问的 ACL。管理员运行
-    # DSTCamp 时，这套 ACL 会在下面的 os.replace() 后原样留给正式存档，
-    # 导致普通用户无法打开。这里仍在目标根目录内随机建暂存目录以保留原子
-    # 改名，但使用普通 mkdir，让目录继承 Klei 根目录的正常访问权限。
+    # 坑：tempfile.mkdtemp() 在新版 Python/Windows 下会设置仅当前用户可访问的 ACL，管理员运行时
+    # os.replace() 后会原样留给正式存档导致普通用户打不开；改用普通 mkdir 继承 Klei 根目录权限
     while True:
         temp_dir = destination_root / f".{plan.cluster_name}.{secrets.token_hex(8)}"
         try:

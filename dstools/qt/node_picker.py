@@ -1,9 +1,5 @@
-"""内网穿透节点选择弹窗（樱花映射、Lolia映射共用）。
-
-节点可能有几十上百个，用可滚动的卡片网格挑选：每张卡片名称加粗、说明文字一行，
-可选的第三行彩色标记（如流量倍率、高负载），悬停显示节点备注；当前选中的用强调色
-边框，悬停高亮，不满足条件（VIP 等级不够、需实名等）的整体淡化且不可点。调用方按
-分组排好序并填 `group` 时，每组前加小标题。颜色全部取自主题调色板。
+"""内网穿透节点选择弹窗（樱花、Lolia 共用）：可滚动卡片网格，支持分组标题、第三行彩色标记、悬停备注，
+不满足条件（VIP 等级、实名等）的节点淡化且不可点。
 """
 
 import html
@@ -65,9 +61,7 @@ class _NodeCard(QPushButton):
         if choice.tooltip:
             self.setToolTip(choice.tooltip)
 
-    # 不能用 setMinimumHeight() 固定下限：手动设过最小高度后布局不再撑高卡片，
-    # 多出第三行标记时最后一行会被截断（真机反馈）。改为按内部布局实际需要的
-    # 高度给尺寸提示，字体/字号档位/缩放变化时都能自动撑开。
+    # 不能用 setMinimumHeight() 固定下限（布局不再撑高，第三行会被截断），按内部布局实际需要给尺寸提示
     def sizeHint(self) -> QSize:
         hint = self.layout().sizeHint()
         return QSize(hint.width(), max(_CARD_MIN_HEIGHT, hint.height()))

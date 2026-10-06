@@ -1,9 +1,7 @@
-"""Steam 客户端托管的专用服务器更新能力。
+"""通过 Steam 客户端安装/更新专用服务器。
 
-Steamworks 的 ``ISteamApps`` 只能查询 App 信息，不能替应用安装或更新。
-本模块因此只负责两件事：通过 Steam 注册的 ``steam://`` 协议发出请求，
-以及读取 ``appmanifest_*.acf`` 观察真实状态。协议调用本身没有完成回调，
-所以调用方必须把“请求已发出”和“更新已完成”分开处理。
+ISteamApps 不能代为安装或更新，所以只做两件事：用 ``steam://`` 协议发请求，读
+``appmanifest_*.acf`` 观察真实状态。协议没有完成回调，"请求已发出"与"更新已完成"必须分开判断。
 """
 
 from __future__ import annotations
@@ -51,11 +49,8 @@ class SteamUpdateState:
 def action_for_snapshot(
     snapshot: "SteamAppSnapshot", *, remote_build_id: str | None = None
 ) -> str:
-    """根据远程 public Build 和本地 manifest 决定入口动作。
-
-    远程 Build 可用时优先比较版本；查询失败、Build 缺失或非 public 分支
-    时回退 manifest。其余已安装状态使用 validate，由 Steam 客户端负责
-    检查并修复完整性。
+    """决定入口动作：远程 public Build 可用时优先比较版本；查询失败、缺失或非 public 分支时看 manifest；
+    其余已安装状态用 validate，由 Steam 检查修复完整性。
     """
     if snapshot.install_dir is None:
         return "install"
@@ -81,11 +76,9 @@ class SteamAppSnapshot:
 
     @property
     def update_pending(self) -> bool:
-        """只在 manifest 提供明确待更新证据时返回 True。
+        """manifest 有明确待更新证据时才返回 True。
 
-        Steam 的字节字段存在两种写法：有的版本记录剩余量，有的版本
-        保留本次更新总量。后者即使更新完成也不会归零，必须结合已下载
-        和已暂存字节数判断，不能单看 ``BytesToDownload``。
+        坑：BytesToDownload 有的版本记剩余量，有的记本次总量（完成后不归零），须结合已下载/已暂存字节判断。
         """
         if self.state_flags is not None and self.state_flags & _STATE_UPDATE_REQUIRED:
             return True
@@ -113,12 +106,7 @@ class SteamAppSnapshot:
 
     @property
     def download_complete(self) -> bool:
-        """兼容 Steam manifest 的两种写法。
-
-        有的客户端把 ``BytesToDownload`` 写成剩余量（完成时为 0），
-        有的阶段把它写成总量，需要结合 ``BytesDownloaded`` 判断。
-        字段缺失时不在这里猜完成，交给安装文件和稳定轮询继续确认。
-        """
+        """兼容 BytesToDownload 记剩余量或总量两种写法（后者需结合 BytesDownloaded）；字段缺失时不在这里判定完成。"""
         if self.bytes_to_download == 0:
             return True
         if (
@@ -194,9 +182,7 @@ def remote_requires_update(
 ) -> bool:
     """远程 public Build 明确高于本地时返回 True。
 
-    非 public 分支不能拿 public Build 比较；本地或远程 Build 缺失时也不
-    猜测，交回本地 manifest 状态判断。远程服务短暂滞后时可能返回较小
-    Build，因此不能把单纯“不相等”当成更新证据。
+    非 public 分支或任一 Build 缺失时不判断；远程镜像可能短暂滞后返回较小 Build，所以"不相等"不算更新证据。
     """
     if snapshot.branch and snapshot.branch.casefold() != "public":
         return False
@@ -211,11 +197,10 @@ def fetch_public_build_id(
     timeout: float = _REMOTE_BUILD_TIMEOUT,
     opener: Callable[..., object] | None = None,
 ) -> str | None:
-    """查询远程 public 分支 Build ID，失败或响应不可信时返回 None。
+    """查询远程 public 分支 Build ID，失败或不可信时返回 None。
 
-    Steam 官方 Web API 不公开当前 public Build；这里使用开源 SteamCMD
-    API 对 ``app_info`` 的只读镜像。调用方必须在后台线程执行，并在 None
-    时回退本地 manifest，网络故障不能影响专服启动。
+    官方 Web API 不公开 public Build，这里用开源 SteamCMD API 的只读镜像。须在后台线程调用，
+    返回 None 时回退本地 manifest，网络故障不能影响开服。
     """
     request = urllib.request.Request(
         _REMOTE_BUILD_API.format(app_id=app_id),
@@ -452,11 +437,7 @@ def monitor_update(
     remote_build_id: str | None = None,
     cancel_event: threading.Event | None = None,
 ) -> SteamAppSnapshot:
-    """轮询 manifest，供后台线程使用；超时抛出 TimeoutError。
-
-    cancel_event 被置位时立即抛出 InterruptedError：程序退出时线程池要等后台任务
-    结束，不能让最长 15 分钟的轮询把进程拖住。
-    """
+    """后台轮询 manifest，超时抛 TimeoutError；cancel_event 置位时立即抛 InterruptedError，避免退出时被长轮询拖住。"""
     read = snapshot_reader or (lambda: snapshot_app(app_id, libraries))
     deadline = time.monotonic() + max(0.0, timeout)
     latest = before
@@ -475,10 +456,8 @@ def monitor_update(
                 return latest
         else:
             ready_polls = 0
-        # Steam URI 没有完成回调，第一次读到“仍是原 buildid”不能立即
-        # 报成功，否则请求可能只是被 Steam 忽略。连续几次 manifest
-        # 稳定后才把已安装 App 判为“已是最新”。新安装则必须先出现
-        # manifest 和安装目录，绝不以空状态猜测成功。
+        # Steam URI 没有完成回调：已安装 App 需连续几次 manifest 稳定才判为"已是最新"（请求可能被忽略）；
+        # 新安装必须先出现 manifest 和安装目录，不以空状态猜测成功
         if state == SteamUpdateState.UP_TO_DATE:
             unchanged_polls += 1
             if before.manifest_path is not None and unchanged_polls >= max(1, settle_polls):

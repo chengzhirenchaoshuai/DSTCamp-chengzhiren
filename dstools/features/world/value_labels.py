@@ -1,7 +1,4 @@
-"""设置取值（原始值 -> 中英文显示文案）——纯数据模块，不依赖任何界面库。
-
-Tk 版渲染（render.py）和 Qt 版世界面板共用这一份，新增取值文案只改这里。
-"""
+"""世界设置取值的中英文显示文案（纯数据）。"""
 
 from dstools.i18n import get_lang, t
 
@@ -49,15 +46,8 @@ _VALUE_LABELS = {
     "uncommon": {"zh": "较少", "en": "Less"},
     "mostly": {"zh": "很多", "en": "Lots"},
     "insane": {"zh": "疯狂", "en": "Insane"},
-    # ocean_waterplant（海草）/ocean_seastack 这两个"世界生成(仅查看)"
-    # 字段用的是独立的一套频率取值，不是"never"/"rare"/"default"这些普
-    # 通值——真机核对过游戏自己的 scripts/map/customize.lua：
-    # `ocean_worldgen_frequency_descriptions[i] = {text = data.text, data
-    # = "ocean_"..data.data}`，是拿 worldgen_frequency_descriptions 原样
-    # 复制一份文案、只在取值前面加"ocean_"前缀，显示文字和不带前缀的版
-    # 本完全一样，不是另一套语义。之前只补了 "ocean_uncommon" 一个，其
-    # 它几档漏了（真机反馈过："海草"这一项的值直接显示成了原始字符串
-    # "ocean_default"，没翻译成中文）。
+    # ocean_waterplant/ocean_seastack 的取值是 worldgen 频率表加 "ocean_" 前缀（见 customize.lua），
+    # 文案与不带前缀的版本相同，每一档都要登记，否则会显示原始字符串
     "ocean_never": {"zh": "无", "en": "None"},
     "ocean_rare": {"zh": "很少", "en": "Little"},
     "ocean_uncommon": {"zh": "较少", "en": "Less"},
@@ -79,9 +69,7 @@ _VALUE_LABELS = {
     "huge": {"zh": "巨大", "en": "Huge"},
 }
 
-# 按 key 单独覆盖的取值：同一个原始值在不同设置里含义不同（比如
-# "default" 对活动来说是"自动"，对大多数其它设置是"默认"）。这里的条目
-# 会覆盖 _VALUE_LABELS 里对应 key 的通用文案。
+# 按 key 单独覆盖的文案：同一原始值在不同设置中含义不同（如活动的 "default" 是"自动"）
 _PER_KEY_LABELS = {
     # 活动：default 是"自动"，none 是"无"
     "specialevent": {"default": {"zh": "自动", "en": "Auto"}, "none": {"zh": "无", "en": "None"}},

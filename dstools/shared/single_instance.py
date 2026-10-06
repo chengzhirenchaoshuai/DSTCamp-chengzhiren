@@ -12,10 +12,8 @@ from typing import Callable
 
 
 _ERROR_ALREADY_EXISTS = 183
-# 重复启动时发给已有主窗口的自定义消息名，wParam 带上发起方的版本编码。
-# 已有实例收到后回复自己的版本编码；发起方不比自己新时还会自己走 Qt 的恢复流程。
-# 不能从外部直接 ShowWindow：被 Qt hide() 到托盘的窗口会被系统显示出来，
-# 但 Qt 仍认为它是隐藏的，结果窗口不绘制、任务栏点不开也关不掉。
+# 重复启动时发给已有主窗口的自定义消息，wParam 为发起方版本编码，对方回复自己的版本编码。
+# 坑：不能从外部 ShowWindow：被 Qt hide() 到托盘的窗口会被系统显示，但 Qt 仍认为隐藏，导致不绘制、点不开也关不掉
 ACTIVATE_MESSAGE_NAME = "DSTCamp.ActivateExistingWindow"
 _WINDOW_TITLES = (
     "DSTCamp · 本地服务器管理",
@@ -159,10 +157,10 @@ def _window_pid(hwnd) -> int:
 
 
 def _ask_existing_instance(hwnd, pid: int, my_code: int) -> int | None:
-    """把自己的版本编码发给已有实例，返回对方回复的版本编码。
+    """把自己的版本编码发给已有实例并返回对方的版本编码。
 
-    不认识这条消息的旧版本（1.6.0 及更早）回复 0；对方卡死或超时返回 None。
-    对方不比自己旧时会自己弹出窗口，所以先把当前进程的前台权限让给它。
+    不认识该消息的旧版本（1.6.0 及更早）回复 0，卡死或超时返回 None。对方不比自己旧时会自己弹窗，
+    所以先把前台权限让给它。
     """
     from ctypes import wintypes
 
@@ -300,10 +298,8 @@ def _has_other_visible_window(pid: int, main_hwnd) -> bool:
 def _close_qt_instance(hwnd, pid: int) -> bool:
     """借旧版本（Qt 版）自己的退出流程关闭它，返回旧进程是否已退出。
 
-    旧版本的关闭按钮只在"关闭时最小化到托盘"关闭时才真正退出：没有专服直接
-    退出；有专服时弹它自己的确认框，用户确认后先 c_shutdown() 存档关服再退出。
-    所以临时关掉这个设置、发 WM_CLOSE，等旧版本读完设置（弹出确认框或已退出）
-    立刻改回原值。用户在确认框里点取消时旧版本保持运行，这里等到超时返回 False。
+    旧版本只有在"关闭时最小化到托盘"关闭时才真正退出：临时关掉该设置后发 WM_CLOSE，它读完设置
+    （弹确认框或已退出）立即改回。有专服时它会询问并存档关服；用户取消则保持运行，超时返回 False。
     """
     from ctypes import wintypes
 
@@ -362,12 +358,11 @@ def _terminate_process(pid: int) -> bool:
 def acquire_gui_instance(
     on_old_instance_busy: Callable[[int], None] | None = None,
 ) -> SingleInstance | None:
-    """获取 DSTCamp GUI 实例；返回 None 表示当前进程应直接退出。
+    """获取 GUI 实例；返回 None 表示当前进程应退出。
 
-    已有实例不比自己旧：让它弹出窗口，返回 None。已有实例更旧：Qt 版借它自己的
-    退出流程关闭（有专服时由它询问并存档关服）；更早的 Tk 版没有这套流程，没有专服
-    就直接结束进程，有专服则调用 ``on_old_instance_busy(专服数)`` 提示用户先手动退出。
-    旧实例退出后接管 Mutex 继续启动。已有实例卡死无响应时不动它，返回 None。
+    已有实例不比自己旧：让它弹窗。更旧：Qt 版借它的退出流程关闭；更早的 Tk 版没有这套流程，
+    没有专服直接结束，有专服则回调 ``on_old_instance_busy(专服数)`` 提示手动退出。
+    旧实例退出后接管 Mutex 继续启动；已有实例卡死时不动它。
     """
     from dstools import __version__
 

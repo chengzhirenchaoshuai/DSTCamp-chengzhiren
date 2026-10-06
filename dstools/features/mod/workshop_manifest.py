@@ -34,11 +34,7 @@ class ManifestVerification:
 
 
 def sdbm_path_hash(relative_path: str) -> int:
-    """计算游戏 Manifest 使用的 SDBM 路径哈希。
-
-    路径统一成正斜杠并转小写；真实 Workshop 样本验证过根目录文件和多级
-    ``scripts/components/...`` 路径均与 MNFS 中的32位条目完全一致。
-    """
+    """游戏 Manifest 使用的 SDBM 路径哈希（路径统一为小写正斜杠，已用真实样本验证）。"""
     normalized = str(relative_path).replace("\\", "/").strip("/").lower()
     value = 0
     for byte in normalized.encode("utf-8"):
@@ -77,11 +73,7 @@ def load_mod_manifest(path: Path) -> ModManifest:
 def verify_mod_manifest(
     mod_folder: Path, manifest_path: Path | None = None
 ) -> ManifestVerification:
-    """检查 Manifest 声明的路径是否仍存在；额外文件不会判为损坏。
-
-    MNFS 只保存路径哈希，不保存内容哈希，因此它可以可靠发现缺失/改名，
-    不能判断某个仍存在的文件内容是否被手动修改。
-    """
+    """检查 Manifest 声明的路径是否都存在（额外文件不算损坏）。MNFS 只存路径哈希，能发现缺失/改名，不能发现内容修改。"""
     mod_folder = Path(mod_folder)
     manifest_path = (
         Path(manifest_path) if manifest_path else mod_folder / "mod.manifest"
@@ -90,9 +82,7 @@ def verify_mod_manifest(
         return ManifestVerification(False, None)
     try:
         manifest = load_mod_manifest(manifest_path)
-        # ``Path.rglob`` 在数百个 Mod、数万文件的 Windows Workshop 目录中
-        # 开销很高。只维护尚未找到的声明哈希；完整 Mod 一旦全部命中便
-        # 立即停止，既不扫描额外缓存文件，也不建立完整路径集合。
+        # rglob 在大量 Mod 的目录中开销很高：只跟踪未命中的声明哈希，全部命中立即停止
         expected = set(manifest.path_hashes)
         missing_set = set(expected)
         for current_root, _dirs, files in os.walk(mod_folder):

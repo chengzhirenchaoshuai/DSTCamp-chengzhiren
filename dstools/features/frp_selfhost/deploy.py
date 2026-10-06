@@ -1,10 +1,7 @@
-"""生成自建 frps 的配置文本和一键部署脚本——纯字符串拼接，不碰网络
-（真正的 SSH 执行在 remote_deploy.py）。
+"""生成自建 frps 的配置文本和一键部署脚本（纯字符串拼接，SSH 执行在 remote_deploy.py）。
 
-FRP_VERSION 只影响"脚本自己下载"这条路径的版本号；本地打包的
-frpc.exe（v0.70.1）和 frps_linux_*（v0.70.0）差一个补丁版本——查过
-v0.70.1 更新日志，三处修复都跟这里用到的基础 UDP 代理+token 鉴权无
-关，协议兼容，不需要同步升级。
+FRP_VERSION 只影响脚本自行下载的版本；打包的 frpc v0.70.1 与 frps v0.70.0 协议兼容（v0.70.1 的修复与
+这里用到的 UDP 代理 + token 鉴权无关）。
 """
 
 import secrets
@@ -21,9 +18,7 @@ def generate_token() -> str:
 
 
 def build_frps_toml(bind_port: int, token: str) -> str:
-    """服务端 frps.toml——只开最基础的鉴权+监听，不开 dashboard（多一个
-    暴露在公网的管理页面，对大多数只是想转发游戏流量的用户来说没必要，
-    要用可以自己在生成的文件里加）。"""
+    """服务端 frps.toml：只开鉴权与监听，不开 dashboard（避免多暴露一个公网管理页）。"""
     return (
         f'bindAddr = "0.0.0.0"\n'
         f'bindPort = {bind_port}\n'
@@ -35,20 +30,11 @@ def build_frps_toml(bind_port: int, token: str) -> str:
 
 
 def build_install_script(bind_port: int, token: str, local_frps_path: str | None = None) -> str:
-    """生成幂等的一键部署 bash 脚本：装 frps 二进制、写 frps.toml、注
-    册成 systemd 服务并启动。
+    """生成幂等的一键部署 bash 脚本：安装 frps、写 frps.toml、注册 systemd 服务并启动。
 
-    `local_frps_path`：remote_deploy.py 已经把 frps 二进制 SFTP 传到
-    服务器时传这个绝对路径，脚本直接复制，跳过"识别架构+从 GitHub 下
-    载"——国内云服务器访问 GitHub 经常慢到几 KB/s 甚至被重置，这样能
-    绕开；留空则退回自己下载。
-
-    幂等相关（应用户要求）：dstcamp-frps 服务已经在跑时只重写配置+重
-    启，不重装；目标端口被*其它*服务占用时跳过安装，不贸然覆盖可能
-    正在用的服务。
-
-    云服务商安全组放行端口这一步做不到自动化，脚本最后会提醒用户自
-    己去控制台开。"""
+    ``local_frps_path`` 不为空时直接复制已上传的二进制，跳过从 GitHub 下载（国内访问很慢）。
+    服务已在运行时只重写配置并重启；目标端口被其他服务占用时跳过安装。云服务商安全组无法自动放行，
+    脚本最后提醒用户手动处理。"""
     frps_toml = build_frps_toml(bind_port, token)
     if local_frps_path:
         fetch_frps_block = f'''echo "==> 使用已经上传好的 frps 二进制（{local_frps_path}）..."
@@ -122,21 +108,11 @@ print_success() {{
     echo "=========================================="
 }}
 
-# 目标端口冲突检测——必须在"服务是否已经在跑"判断*之前*、对所有情况
-# 都执行一遍，不能只放在"服务从没装过"那条分支里（服务已在跑、改了新
-# 端口、新端口又被别的服务占用时，会直接命中"改配置重启"分支跳过检
-# 测，直到 restart 真的绑定失败才暴露）。用 dstcamp-frps 自己当前的
-# MainPID 和目标端口监听者的 PID 比对，而不是看"端口被监听的进程叫不
-# 叫 frps"或"服务在不在跑"——这样"改回同一个端口重新部署"（监听者就
-# 是自己）和"改成一个被别的服务占用的新端口"（监听者 PID 对不上）才
-# 能被正确区分开。
+# 端口冲突检测必须在"服务是否在跑"之前对所有情况执行（服务已在跑但换了被占用的新端口时也要拦下）。
+# 用 dstcamp-frps 的 MainPID 与端口监听者 PID 比对，区分"监听者就是自己"与"被其他服务占用"。
 if command -v ss >/dev/null 2>&1; then
     frps_pid="$(systemctl show -p MainPID --value "$SERVICE_NAME" 2>/dev/null || echo 0)"
-    # 目标端口没被占用是最常见的正常情况，这时 grep -oP 找不到匹配会
-    # 以退出码 1 收场——脚本开头 `set -euo pipefail` 会把这个"没匹配
-    # 到"当成致命错误直接杀掉整个脚本，且还没走到任何 echo，日志里看
-    # 不到原因。后面 `[ -n "$port_pid" ]` 本来就要处理"没找到"这个正
-    # 常分支，加 `|| true` 让"没占用"和"占用了"都能正常走到下面判断。
+    # 坑：端口未占用时 grep 无匹配返回 1，会被 set -euo pipefail 静默终止脚本，所以加 || true
     port_pid="$(ss -Htlnp "sport = :${{BIND_PORT}}" 2>/dev/null | grep -oP 'pid=\\K[0-9]+' | head -1 || true)"
     if [ -n "$port_pid" ] && [ "$port_pid" != "$frps_pid" ]; then
         port_holder="$(ss -Htlnp "sport = :${{BIND_PORT}}" 2>/dev/null | grep -oP '\\(\\("\\K[^"]+' | head -1 || true)"
@@ -144,15 +120,12 @@ if command -v ss >/dev/null 2>&1; then
         echo "为避免打断现有服务，跳过安装/更新。如果这就是你自己之前配置的 frps，"
         echo "请确认它的鉴权 token 和 DSTCamp 里填写的一致；如果不是，需要先手动"
         echo "停掉占用该端口的服务，再重新运行本脚本。"
-        # 用退出码 3 而不是 0——这里是"什么都没做，主动放弃"，跟 exit 0
-        # 的"部署/更新真的成功了"是两种不同结果，调用方（remote_
-        # deploy.py）要靠这个区分，不然会误报"部署完成"。
+        # 退出码 3 表示主动放弃（什么都没做），remote_deploy.py 据此与部署成功(0)区分
         exit 3
     fi
 fi
 
-# 情况一：本工具之前已经部署过、服务还在跑——只更新配置+重启，不用
-# 重新下载安装一遍。
+# 已部署且服务在运行：只更新配置并重启
 if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
     echo "==> 检测到 ${{SERVICE_NAME}} 服务已经在运行，复用现有安装，只更新配置。"
     write_config_and_restart

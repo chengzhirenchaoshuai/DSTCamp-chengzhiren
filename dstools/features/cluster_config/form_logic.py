@@ -1,9 +1,4 @@
-"""服务器配置页的表单描述与数据装载——不含任何界面代码（Qt 版页面直接使用）。
-
-对应 Tk 版 cluster_config/tab.py 里 _make_row/_load_config_impl/_load_shard_config_impl/
-_render_shard_fields/_backfill_slave_shard_fields/_load_id_list_into/_load_token 中"决定显示什么"的部分。
-界面层只负责按 FieldSpec 画控件、把当前值收集回来交给保存逻辑（save_checks.py）。
-"""
+"""服务器配置页的表单描述与数据装载（纯逻辑）：界面按 FieldSpec 画控件并把当前值交给 save_checks.py。"""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -164,7 +159,7 @@ class ShardForm:
             if not self.config.shard.get("is_master", True):
                 self.backfill_slave_fields()
             else:
-                # 曾经当过从世界又改回主世界：文件里可能留着 name/id 旧值，主世界不需要
+                # 从世界改回主世界时文件里可能残留 name/id，主世界不需要
                 self.drop_slave_only_fields()
             # 这两个端口不分主从、常驻显示；文件里没有就放空字符串占位，不自动填值
             for section, key in SHARD_PORT_OPTIONAL_FIELDS:

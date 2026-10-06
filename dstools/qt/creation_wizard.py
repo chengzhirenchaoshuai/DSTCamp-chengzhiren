@@ -1,10 +1,7 @@
-"""创建服务器存档向导（对应 Tk 版 features/world/creation_tab.py + creation_entry.py）。
+"""创建服务器存档向导。
 
-三个子页签复用主页已经验证过的组件：服务器配置直接复用 qt/pages/server_config.py 的
-ServerConfigPage（草稿存档指向临时目录，不影响任何真实存档）；世界设置复用
-qt/world_panel.py 的 WorldPanel；Mod 复用 qt/mod_panel.py 的 ModListPanel 和
-qt/mod_config_dialog.py 的配置弹窗。窗口本身是普通 QDialog，不复刻主窗口的无边框
-自绘标题栏——这是一个次要的工具窗口，用系统原生窗口边框更省事也更合理。
+三个子页签复用主页组件：服务器配置用 ServerConfigPage（草稿存档在临时目录）、世界设置用 WorldPanel、
+Mod 用 ModListPanel 与配置弹窗。
 """
 
 import copy
@@ -122,8 +119,7 @@ class DraftServerPanel(ServerConfigPage):
         cluster = self.ctx.selected_cluster()
         if any(s.name == shard_name for s in cluster.shards):
             return
-        # 下面的 load() 会按草稿文件重建表单；先把表单当前值（房间名等）写进草稿，
-        # 否则还没落盘的修改会被冲掉（真机反馈过删掉 Master 后房间名变回 Cluster_New）。
+        # load() 会按草稿文件重建表单，先把未落盘的表单值写进草稿，否则会被冲掉
         self.read_creation_settings()
         from dstools.shared.ini_parser import write_server_ini
         path = cluster.path / shard_name
@@ -147,9 +143,7 @@ class DraftServerPanel(ServerConfigPage):
         self.load()
 
     def read_creation_settings(self) -> dict:
-        """静默落盘当前表单值（不做整段范围校验——跟 Tk 版向导同样的取舍：严格校验
-        留给下面创建时的端口冲突检查，以及用户真正启动这个新存档时本地服务器页的预检），
-        再读回给 create_world() 用。"""
+        """静默落盘当前表单值并读回给 create_world()；不做整段范围校验（留给创建时的端口检查和开服预检）。"""
         cluster = self.ctx.selected_cluster()
         config = load_cluster_config(cluster.path)
         for grid in self._cluster_grids:
@@ -268,15 +262,11 @@ class CreationWizardDialog(QDialog):
         self._attention_frame: _AttentionFrame | None = None
         # 标题（含任务栏显示）只写"创建服务器存档"，不带 DSTCamp 前缀。
         self.setWindowTitle(t("save.create_server_save"))
-        # 默认房间名跟游戏创建界面一致："{Steam 昵称}的世界"（STRINGS.UI.
-        # SERVERCREATIONSCREEN.NEWGAME_FMT）；读不到昵称时退回旧行为——房间名
-        # 跟着存档名称输入框同步。
+        # 默认房间名与游戏一致："{Steam 昵称}的世界"（NEWGAME_FMT），读不到昵称时跟随存档名称
         persona = read_steam_persona_name()
         self._default_room_name = t("world.creation_default_room_name", name=persona) if persona else ""
         dialogs.fit_to_screen(self, 1400, 860)
-        # 无边框 + 自绘标题栏（主题底色、跟主窗口同款最小化/最大化/关闭按钮）。原生标题栏
-        # 在 Windows 10 上改不了颜色（DWM 标题栏着色只有 Windows 11 支持）。
-        # WindowMinMaxButtonsHint 保留系统层面的最小化能力：最小化后能从任务栏点回来。
+        # 无边框 + 自绘标题栏（Windows 10 原生标题栏改不了颜色）；保留 MinMax 提示以便从任务栏还原
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint
                             | Qt.WindowType.WindowMinMaxButtonsHint)
 
@@ -284,8 +274,7 @@ class CreationWizardDialog(QDialog):
         self._plan_caves: creation.WorldShardPlan | None = None
         # 用户删掉的 Master/Caves；_reload_template() 不能再按模板把它们补回来。
         self._removed_fixed_shards: set[str] = set()
-        # 关闭前确认用：世界/Mod 页的用户操作直接置 _dirty；服务器配置表单字段太多，
-        # 改为关闭时跟打开时的快照比对（_server_baseline）。
+        # 关闭前确认：世界/Mod 页操作直接置 _dirty，服务器配置字段多，改为与打开时的快照比对
         self._dirty = False
         self._server_baseline: dict | None = None
         self._extra_plans: dict[str, creation.WorldShardPlan] = {}
@@ -1102,8 +1091,7 @@ class CreationWizardDialog(QDialog):
                     if any(claim.owner_key in planned_keys for claim in c.claims)]
         if not conflicts:
             return True
-        # 每个冲突端口一行，写明是跟哪个现有存档的哪个世界冲突（之前只列端口号，
-        # 用户看不出是哪个存档）。
+        # 每个冲突端口一行，写明与哪个存档的哪个世界冲突
         lines = []
         for conflict in conflicts[:8]:
             owners = sorted({f"{claim.cluster_name}（{claim.shard_name}）" if claim.shard_name else claim.cluster_name
@@ -1255,7 +1243,7 @@ class CreationWizardDialog(QDialog):
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
-        # setWindowFlags()/resize() 在标题栏建好之前就会触发这些事件，先判空。
+        # setWindowFlags()/resize() 在标题栏建好前就会触发事件，先判空
         if event.type() == event.Type.WindowStateChange and hasattr(self, "_grips"):
             self._max_button.update()  # 最大化/还原图标跟着切换
             for grip in self._grips:

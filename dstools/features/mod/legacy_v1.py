@@ -175,13 +175,10 @@ def resolve_legacy_package_version(workshop_id: int, archive_path: Path):
 
 
 def discover_legacy_runtime_targets() -> list[Path]:
-    """返回 DSTCamp 应维护的 V1 运行目录，链接目标只保留一次。
+    """返回 DSTCamp 应维护的 V1 运行目录（去重）：当前开服程序实际读取的 ``mods``。
 
-    官方客户端会把 ``*_legacy.bin`` 缓存到 ``cached_mods``，再自行解压到
-    客户端 ``mods/workshop-<id>``；只为客户端玩游戏时 DSTCamp 不必接管该
-    目录。这里只返回当前开服程序实际读取的 ``mods``（见 server_runtime）：
-    独立专服模式是专服 ``mods``，游戏客户端模式是客户端 ``mods``。专服
-    ``mods`` 本身是指向客户端 ``mods`` 的 junction 时也只有这一个目标。
+    独立专服模式是专服 ``mods``，游戏客户端模式是客户端 ``mods``（客户端玩游戏时由官方客户端自己解压，
+    不接管）；专服 ``mods`` 是指向客户端的 junction 时也只有一个目标。
     """
     from dstools.features.local_service.server_runtime import current_runtime
 
@@ -409,12 +406,7 @@ def find_legacy_runtime_residual_dirs() -> dict[int, tuple[Path, ...]]:
 
 
 def legacy_runtime_matches_package(archive_path: Path, runtime_dir: Path) -> bool:
-    """逐文件核对运行目录是否包含 Legacy 包的准确内容。
-
-    不能只比较 ``modinfo.lua`` 的 ``version``：作者可能更新文件却忘记修改
-    版本。这里以包内每个文件的大小和 CRC 为准；运行目录中由 Mod 自己
-    产生的额外文件不影响判断。
-    """
+    """逐文件按大小和 CRC 核对运行目录是否与 Legacy 包一致（作者可能更新文件却不改 version），忽略 Mod 自己生成的额外文件。"""
     archive = Path(archive_path)
     runtime = Path(runtime_dir)
     if not runtime.is_dir() or not (runtime / "modinfo.lua").is_file():
@@ -442,17 +434,11 @@ def legacy_runtime_matches_package(archive_path: Path, runtime_dir: Path) -> boo
 def prepare_enabled_legacy_mods(
     workshop_ids, server_mods_root: Path
 ) -> LegacyPreparationResult:
-    """用本地 Legacy 包准备当前存档启用的 V1 Mod。
+    """启动前用本地已校验的 Legacy 包原子部署当前存档启用的 V1 Mod。
 
-    真机确认：独立专服只有在 ``dedicated_server_mods_setup.lua`` 中出现
-    ``ServerModSetup(id)`` 时，才会查询 LegacyItem、下载 ``*_legacy.bin``
-    并执行 ``cWorkshopMod::UnzipMod``；只有 ``modoverrides.lua`` 会静默
-    跳过未展开的 V1。DSTCamp 已有自己的可追踪更新流程，因此启动前直接
-    使用已下载且通过校验的包做本地原子部署，避免依赖旧版服务器下载链路。
-
-    创意工坊目录里已有 V2 内容（根目录有 ``modinfo.lua``）的项目一律跳过，即使
-    还残留着 ``*_legacy.bin``：专服 ``mods/workshop-<id>`` 会优先于 V2 加载，解压
-    出来就会用旧版挡住新版（真机案例见 v1_shadow.py）。
+    真机确认：独立专服只有在 dedicated_server_mods_setup.lua 写了 ServerModSetup(id) 时才会下载并
+    解压 V1，只靠 modoverrides.lua 会静默跳过，所以由 DSTCamp 自行部署。
+    Workshop 目录已有 V2 内容的项目一律跳过：解压到专服 mods 会优先于 V2 加载，用旧版挡住新版（见 v1_shadow.py）。
     """
     from dstools.features.mod.parser import find_workshop_dir
 

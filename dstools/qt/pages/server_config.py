@@ -1,9 +1,6 @@
-"""服务器配置页（对应 Tk 版 features/cluster_config/tab.py）。
+"""服务器配置页：房间设置（cluster.ini）、世界设置（各世界 server.ini）、管理员、黑名单、服务器令牌。
 
-五个子页签：房间设置（cluster.ini，三列卡片）、世界设置（server.ini，每个世界一份）、
-管理员、黑名单、服务器令牌。取值/校验/端口冲突检查都在 features/cluster_config 下的
-不依赖界面的模块里（form_logic.py / save_checks.py），这里只负责画控件和收集当前值。
-本地存档的配置由游戏客户端自己管理和重写，这里一律只读展示。
+取值/校验/端口冲突检查在 features/cluster_config 的纯逻辑模块中；本地存档由游戏客户端管理，只读展示。
 """
 
 import webbrowser
@@ -69,13 +66,8 @@ class IdListPanel(QWidget):
         self._title.setFont(theme.font("FONT_SIZE_BASE", bold=True))
         self._list = QListWidget()
         self._list.setFont(theme.font("FONT_SIZE_SM"))
-        # 全局 QSS 给 QListWidget 统一画了一层半透明白底（见 theme.qss()），管理员/
-        # 黑名单这两个列表真机反馈过想要全透明、透出背景图；只在这两个用到
-        # IdListPanel 的地方覆盖，不改全局规则（其它用 QListWidget 的弹窗列表还是
-        # 需要那层底色撑可读性）。
-        # 切到管理员/黑名单页时，列表会自动拿到焦点并画出一圈浅色（近白）边框/焦点框，
-        # 看起来像"被选中"；外层卡片已经有主题色描边，这里去掉列表自身的边框和焦点框，
-        # 也不再让它在切页时自动抢焦点（点击列表仍可获得焦点、正常选中行）。
+        # 管理员/黑名单列表全透明透出背景图（只覆盖这里，其他列表仍需全局的半透明底色）；
+        # 去掉列表自身的边框与焦点框，切页时也不自动抢焦点
         self._list.setStyleSheet("QListWidget { background: transparent; border: none; outline: 0; }")
         self._list.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._list.itemSelectionChanged.connect(self._sync_remove_state)
@@ -340,17 +332,13 @@ class ServerConfigPage(Page):
             self._stack.addWidget(widget)
 
         theme.changed.connect(self._on_theme_changed)
-        # 内网穿透页开关映射会顺带把 server_port 改成只读/可编辑，这个页不一定
-        # 正在显示；跟主题切换同一套"正显示就立即重载，不然只标脏"的规则。
+        # 内网穿透页开关映射会改变 server_port 的可编辑性；正显示就立即重载，否则标脏
         ctx.cluster_config_saved.connect(self._on_cluster_config_saved_elsewhere)
         self.retranslate()
 
     def _on_cluster_config_saved_elsewhere(self, cluster) -> None:
-        # 只标脏、不在这里立即重载：这个页面自己保存时也会走到这个槽（先 emit 后
-        # 跟一段"只重建变化部分、保留当前世界选择"的精确刷新），这里如果跟着无条件
-        # 整页 load() 会跟那段精确刷新打架（把世界下拉框重置回 Master）。单窗口一次
-        # 只显示一个页签，只有自己保存能在"正显示时"触发这个槽，外部页（如内网穿透）
-        # 触发时这个页必然不在前台，标脏即可，下次切过来自然重新加载。
+        # 只标脏不重载：本页保存时也会触发此槽，并自行做"保留当前世界选择"的精确刷新，整页 load()
+        # 会把世界下拉框重置回 Master；外部页触发时本页必然不在前台，标脏即可
         current = self.ctx.selected_cluster()
         if current is not None and cluster is not None and str(current.path) == str(cluster.path):
             self.stale = True
@@ -487,9 +475,7 @@ class ServerConfigPage(Page):
             grid.add_header(f"[{section}]", size_key="FONT_SIZE_XS", heading=False, top_gap=6)
             for spec in fields:
                 is_master_field = form.is_server and spec.section == "SHARD_SHARD" and spec.key == "is_master"
-                # "世界名称"/"世界编号"内容都很短（"Master"、一两位数字），文本框却
-                # 跟其它长文本字段一样撑满整列宽度，真机反馈过很奇怪；固定成跟端口
-                # 号输入框差不多的宽度。
+                # 世界名称/编号内容很短，输入框固定为与端口输入框相近的宽度
                 is_short_text = spec.section == "SHARD_SHARD" and spec.key in ("name", "id")
                 grid.add_field(spec, on_toggled=self._on_is_master_toggled if is_master_field else None,
                                fixed_width=160 if is_short_text else None)

@@ -1,8 +1,4 @@
-"""存档信息页的展示数据：只做取数与整理，不含任何界面代码（Qt 版页面直接使用）。
-
-对应 Tk 版 save_browser/tab.py 里 _build_selected_cluster_row()/_refresh_saves()/
-_refresh_players() 中"取数据"的那部分逻辑，界面层只负责把这些结果画出来。
-"""
+"""存档信息页的展示数据（只取数整理，不含界面代码）。"""
 
 from dataclasses import dataclass, field
 from pathlib import Path

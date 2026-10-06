@@ -1,13 +1,8 @@
-"""专服 ``mods/workshop-<id>`` 旧副本覆盖创意工坊 V2 新版的检测与隔离。
+"""专服 ``mods/workshop-<id>`` 旧副本挡住 Workshop V2 新版的检测与清理。
 
-游戏规则（真机确认）：专服 ``mods/workshop-<id>`` 只要存在，就优先于 ``-ugc_directory``
-里的创意工坊 V2 内容加载。老 Mod 早年是 V1 时解压出来的文件夹，作者改成 V2 后 Steam
-不会清理它，于是 V2 怎么更新、重新订阅都没用，专服一直加载这份旧副本（真机案例：
-378160973 Global Positions，V2 是 1.7.6，专服 mods 里旧副本是 1.7.5）。
-
-检测到就清理：普通文件夹移到 Windows 回收站（可还原）；``workshop-<id>`` 本身是
-目录联接/符号链接的，只删除链接本身（os.rmdir/unlink），绝不进入链接目标。游戏自己
-也会在 V2 可用时淘汰旧 V1 副本，所以不再逐个询问。
+真机确认：专服 ``mods/workshop-<id>`` 存在时优先于 ``-ugc_directory`` 的 V2 内容加载。老 Mod 从 V1 改为 V2 后
+Steam 不会清理当年解压出的文件夹，于是怎么更新都加载旧副本（案例：378160973 V2 为 1.7.6，旧副本 1.7.5）。
+检测到就清理：普通文件夹移入回收站；本身是联接/符号链接的只删链接（os.rmdir/unlink），不进入目标。
 """
 
 from __future__ import annotations
@@ -52,10 +47,7 @@ def _version_of(workshop_id: str, folder: Path) -> str:
 
 def find_shadowed_mods(workshop_ids, server_mods_root: Path, workshop_content_root: Path | None,
                        with_versions: bool = True) -> list[ShadowedMod]:
-    """列出被专服 mods 旧副本挡住的 V2 Mod。
-
-    条件：创意工坊 V2 目录有 ``modinfo.lua``，且专服 ``mods/workshop-<id>`` 存在
-    （普通文件夹或链接都算：专服都会优先读它）。"""
+    """列出被专服 mods 旧副本挡住的 V2 Mod（V2 目录有 modinfo.lua，且专服 mods/workshop-<id> 存在，文件夹或链接均算）。"""
     if workshop_content_root is None:
         return []
     mods_root = Path(server_mods_root)

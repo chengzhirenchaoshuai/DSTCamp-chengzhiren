@@ -1,9 +1,7 @@
-"""读取并精确修改 Steam 的 ``appworkshop_322330.acf`` Workshop 安装清单。
+"""精确修改 Steam 的 ``appworkshop_322330.acf``。
 
-只删除目录不够：清单里仍记录为"已安装"的条目，Steam 发现目录缺失后会在
-下次启动游戏时当成损坏重新下载。这里在 Steam 完全退出后，把未订阅条目从
-``WorkshopItemsInstalled`` / ``WorkshopItemDetails`` 中整行删除并同步
-``SizeOnDisk``；其余字节保持原样，原子替换写入。
+只删目录不够：清单仍记为已安装的条目会被 Steam 当成损坏重新下载。Steam 完全退出后，把未订阅条目从
+WorkshopItemsInstalled/WorkshopItemDetails 中整行删除并同步 SizeOnDisk，其余字节不变，原子写入。
 """
 
 from __future__ import annotations
@@ -198,10 +196,7 @@ def build_pruned_text(text: str, workshop_ids) -> str:
 
 
 def prune_workshop_acf(acf: WorkshopAcf, workshop_ids) -> bool:
-    """把指定未订阅条目从清单删除；返回是否实际改写。
-
-    调用方必须保证 Steam 已完全退出，否则 Steam 退出时会用内存状态覆盖。
-    """
+    """从清单删除指定未订阅条目，返回是否改写（Steam 必须已退出，否则退出时会用内存状态覆盖）。"""
     path = Path(acf.path)
     current = path.read_bytes()
     if current != acf.raw:
@@ -246,10 +241,7 @@ def clear_orphan_records(
     launch_steam,
     running_dst_processes,
 ) -> OrphanCleanupResult:
-    """退出 Steam 后清除孤立记录，再按原状态重启 Steam。
-
-    退出 Steam 之后重新读取清单并重新筛选，只清除仍满足条件的条目。
-    """
+    """退出 Steam 后重新读取并筛选清单、清除孤立记录，再按原状态重启 Steam。"""
     if running_dst_processes():
         raise WorkshopAcfError("游戏或专用服务器正在运行，请退出后再清理")
     path = workshop_acf_path(content_root)

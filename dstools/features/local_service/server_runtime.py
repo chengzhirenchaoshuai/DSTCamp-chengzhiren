@@ -1,15 +1,10 @@
-"""开服程序（运行时）的唯一来源。
+"""开服程序（运行时）的唯一来源，由"开服程序"选项（server_runtime_mode）决定：
 
-用哪个程序开服由界面上的"开服程序"选项决定（设置键 server_runtime_mode）：
+- 自动：装了独立专服就用它，否则用游戏客户端自带的开服程序；
+- 游戏客户端 / 独立专服：固定使用指定的一种，找不到如实报告，绝不偷偷换另一种。
 
-- 自动：装了独立专服工具就用它，否则用游戏客户端自带的开服程序；
-- 游戏客户端 / 独立专服：固定使用指定的一种，找不到就如实报告未检测到，
-  绝不偷偷换成另一种——用户以为在用 A、实际跑的是 B，是后续各种怪问题
-  的根源。
-
-开服目录、服务器读取的 mods、更新检测的 App ID、LuaJIT 副本位置、Mod
-更新用的 Steam API DLL 都从 resolve_runtime() 的结果派生。业务代码不要
-再直接调用 find_dedicated_server_dir() 之类的目录探测函数（有测试守护）。
+开服目录、mods、更新用 App ID、LuaJIT 副本位置、Steam API DLL 都从 resolve_runtime() 派生，
+业务代码不得直接调用 find_dedicated_server_dir() 等探测函数（有测试守护）。
 """
 
 from __future__ import annotations
@@ -99,9 +94,7 @@ def set_runtime_mode(mode: RuntimeMode) -> None:
 
 
 def migrate_runtime_settings() -> None:
-    """旧版本把手动选的客户端目录也存在专服路径里；挪到客户端路径并切到客户端模式。
-
-    只处理"专服路径实际指向客户端目录"这一种情况，幂等，可以反复调用。"""
+    """迁移旧设置：专服路径实际指向客户端目录时挪到客户端路径并切到客户端模式（幂等）。"""
     stored = app_settings.get_dedicated_server_path()
     if stored is None or not is_client_install_dir(stored):
         return

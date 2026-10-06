@@ -1,9 +1,7 @@
-"""Mod 管理页（对应 Tk 版 features/mod/tab.py 的 ModManagerTab）。
+"""Mod 管理页。
 
-Mod 列表用 qt/mod_panel.py 的自绘面板（对应 Tk 版"PIL 预渲染成图片"架构，见该文件顶部
-说明）；单个 Mod 的配置编辑、配置集、推荐订阅、Workshop 更新分别拆到同目录下的独立模块。
-本地存档/未选中存档时整页只读：本地存档的 Mod 启用状态其实由客户端账号级、加密的
-modindex 决定，这里改 modoverrides.lua 不保证真的生效。
+列表使用 qt/mod_panel.py 的自绘面板；配置编辑、配置集、推荐订阅、Workshop 更新拆在同目录独立模块。
+本地存档或未选存档时整页只读：本地存档的 Mod 启用状态由客户端加密的 modindex 决定，改 modoverrides.lua 不保证生效。
 """
 
 import os
@@ -82,9 +80,7 @@ class ModPage(Page):
         self._workshop_status_error = ""
         self._workshop_log_dialog = None
 
-        # 跟世界设置/存档信息/内网穿透这几个主页签同一个外壳：外圈一圈主题色圆角
-        # 边框，内部全透明（alpha=0），之前这个页没套这层，真机反馈过跟其它页签
-        # 不统一。
+        # 与其他主页签相同的外壳：主题色圆角边框、内部透明
         page_layout = QVBoxLayout(self)
         page_layout.setContentsMargins(24, 12, 24, 12)
         card = Card(radius=15, alpha=0, border=True)
@@ -636,14 +632,8 @@ class ModPage(Page):
                         apply_full_sandbox_result(mod_info, result)
                         full_resolved_cache[wid] = mod_info
                 mod_infos[wid] = mod_info
-                # 快速静态解析（full=False）不保证拿到版本号（有些 mod 的 version
-                # 要跑一遍轻量沙箱才能确定），先收集起来，交给 _apply_loaded_mods
-                # 之后另起一个后台任务补上，不用等用户手动点"重新加载"才刷新。
-                # 不能因为命中 self._full_resolved_cache（version_status 已是
-                # confirmed）就跳过：mod 文件可能在软件运行期间被 Steam 客户端
-                # 或"更新"操作替换过，缓存里的版本已过期。version_cache 按
-                # modinfo.lua 的内容哈希判断是否真变了——没变秒回、变了才重新
-                # 跑沙箱，所以全部收集不会带来无谓开销。
+                # 静态解析不保证拿到版本号，统一收集后另起后台任务补齐。即使命中完整解析缓存也要收集：
+                # Mod 可能在运行期间被 Steam 更新；version_cache 按内容哈希判断，没变时立即返回
                 if mod_info and mod_folder and not full:
                     version_targets.append((wid, mod_folder, mod_info.workshop_id))
                 if mod_info and mod_folder and wid not in icon_imgs:
@@ -667,9 +657,7 @@ class ModPage(Page):
     def _apply_loaded_mods(self, gen: int, result: dict) -> None:
         if gen != self._refresh_gen:
             return
-        # 排序只在这里（真正重新加载数据时）做一次，跟 Tk 版和创建向导一致；
-        # 单纯切换某个 mod 的启用开关（_on_toggle）不重新排序，保存后再刷新
-        # 一次才会跳到新位置，点开关那一下不会让这一行立刻跳动。
+        # 只在重新加载数据时排序；切换启用开关不重排，避免该行立即跳动
         priority_mod_id = luajit_injector.WORKSHOP_MOD_KEY if result["luajit_active"] else None
         self._mod_data = sort_mod_data(result["mod_data"], result["mod_infos"], priority_mod_id=priority_mod_id)
         self._mod_infos = result["mod_infos"]
@@ -1002,10 +990,8 @@ class ModPage(Page):
         return ids
 
     def _workshop_candidate_ids(self) -> list[int]:
-        """合并本地目录、V1 包和存档配置中的项目；订阅项由 Steam 补入。更新弹窗要能
-        处理"已安装但当前世界没启用""残留文件""V1 包已就绪但还没展开"这些不只是
-        "当前已加载 mod 列表"能覆盖的场景，跟 Tk 版 _workshop_candidate_ids() 同一
-        个合并逻辑。"""
+        """合并本地目录、V1 包与存档配置中的项目（订阅项由 Steam 补入），覆盖"已安装但未启用""残留文件"
+        "V1 包未展开"等不在当前列表中的情况。"""
         from dstools.features.mod.legacy_v1 import find_legacy_packages, find_legacy_runtime_residual_dirs
         from dstools.features.mod.parser import find_workshop_residual_dirs
         ids = list(self._workshop_mod_ids())
@@ -1122,9 +1108,9 @@ class ModPage(Page):
 
     def _update_workshop_mods(self, ids: list[int], expected_versions=None, force_redownload_ids=None,
                               on_progress=None, on_line=None, on_finish=None) -> None:
-        """后台调用 SteamUGC 更新——供 Workshop 更新弹窗复用，弹窗自己负责进度展示。
-        `on_finish`：默认是这个页自己的 _finish_workshop_update；更新弹窗传入自己的
-        包装版本（先把汇总行打进日志窗口，再调用默认版本收尾），不靠临时替换方法名。"""
+        """后台调用 SteamUGC 更新，供 Workshop 更新弹窗复用（弹窗负责进度展示）。
+
+        ``on_finish`` 默认是本页的 _finish_workshop_update，更新弹窗可传入自己的包装版本。"""
         from dstools.features.mod.workshop_api import WorkshopUpdateCancelled, update_workshop_items
         if self._workshop_update_running:
             return

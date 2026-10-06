@@ -1,8 +1,4 @@
-"""服务器配置保存前的校验与端口冲突检查——不含任何界面代码（Qt 版页面直接使用）。
-
-对应 Tk 版 cluster_config/tab.py 的 _validate_entry_ranges 与一组 _find_*_port_conflict 方法，
-原本依赖 self.app 的部分（有哪些存档、某存档是否在运行、端口是否被映射接管）改成显式参数。
-"""
+"""服务器配置保存前的范围校验与端口冲突检查（纯逻辑，存档列表、运行状态、映射接管等由参数传入）。"""
 
 from typing import Callable
 
@@ -21,9 +17,7 @@ Values = dict[tuple[str, str], object]   # (分区, 键) -> 界面上当前的�
 
 
 def validate_ranges(values: Values, *, shard: bool) -> str | None:
-    """校验所有带范围约束的字段，返回第一条错误文案；全部合法返回 None。
-
-    输入框的数字过滤只负责减少误输入；保存时仍需完整校验，避免程序赋值、旧配置或空值绕过控件。"""
+    """校验所有带范围约束的字段，返回第一条错误文案，全部合法返回 None（输入过滤之外仍需完整校验旧配置与空值）。"""
     for (section, key), raw in values.items():
         is_shard_section = section.startswith("SHARD_")
         if is_shard_section != shard:
@@ -65,7 +59,7 @@ def build_shard_config(shard: Shard, values: Values):
     for (section, key), raw in values.items():
         if section.startswith("SHARD_"):
             set_shard_option(shard_config, section.replace("SHARD_", ""), key, raw)
-    # 磁盘上残留的从世界专属 name/id 不会出现在当前表单里；切回主世界保存时要清掉，不然旧值原样写回
+    # 切回主世界保存时清掉磁盘上残留的从世界 name/id，否则旧值会原样写回
     if shard_config.shard.get("is_master", True):
         for section, key in SHARD_SLAVE_ONLY_FIELDS:
             getattr(shard_config, section.lower()).pop(key, None)

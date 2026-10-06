@@ -1,8 +1,4 @@
-"""DST 配置文件的 INI 解析器。
-
-用 Python 内置的 configparser，保留 key 的大小写——DST 的
-cluster.ini/server.ini 要求如此。
-"""
+"""cluster.ini/server.ini 的 INI 读写（基于 configparser，保留 key 大小写）。"""
 
 from configparser import ConfigParser
 from pathlib import Path
@@ -20,13 +16,7 @@ class _CaseSensitiveConfigParser(ConfigParser):
 
 
 def _write_ini_value(f, key: str, val_str: str) -> None:
-    """写一行 `key = value`，按 configparser 自己读取续行的方式处理值里
-    内嵌的换行：第一行是 `key = <第一行内容>`，后续每一行都必须缩进，
-    才会被当成同一个值的*续行*（读回来拼接成 "\n"），而不是一行独立、
-    格式错误的内容——原样不缩进地写入内嵌的 "\n"（简单粗暴的
-    `f"{key} = {val_str}\n"`）会产出一份连这个项目自己基于 configparser
-    的读取器都解析不回去的文件。
-    """
+    """写一行 ``key = value``：值内嵌换行时后续行必须缩进，configparser 才会读回成同一个值的续行。"""
     lines = val_str.split("\n")
     f.write(f"{key} = {lines[0]}\n")
     for cont in lines[1:]:
@@ -34,12 +24,9 @@ def _write_ini_value(f, key: str, val_str: str) -> None:
 
 
 def _read_ini(path: Path) -> _CaseSensitiveConfigParser:
-    """读取 INI 文件，保留 key 大小写。
+    """读取 INI 并保留 key 大小写。
 
-    DST 的 cluster.ini/server.ini 正常是 UTF-8，但用户可能用记事本或第三方
-    工具以 ANSI/GBK 编码保存过（文件里只要有一个中文字符就可能触发）。这里
-    先读成字节，依次尝试 UTF-8 → gb18030（GBK 超集，能正确解出中文），都解
-    不动时用 errors="replace" 兜底，保证绝不因编码问题崩溃。
+    文件可能被记事本等以 GBK 保存过，依次尝试 UTF-8 → gb18030，最后 errors="replace" 兜底，不因编码崩溃。
     """
     data = path.read_bytes()
     text: str | None = None
@@ -98,14 +85,7 @@ def _coerce_dict_values(d: dict[str, str], section: str = "") -> dict:
 # ── Cluster INI ────────────────────────────────────────────────────────
 
 def parse_cluster_ini(path: Path) -> ClusterConfig:
-    """把 cluster.ini 解析成 ClusterConfig 模型。
-
-    Args:
-        path: cluster.ini 的路径。
-
-    Returns:
-        带类型的 ClusterConfig。
-    """
+    """把 cluster.ini 解析成 ClusterConfig。"""
     parser = _read_ini(path)
     return ClusterConfig(
         gameplay=_coerce_dict_values(_section_to_dict(parser, "GAMEPLAY"), "GAMEPLAY"),
@@ -117,12 +97,7 @@ def parse_cluster_ini(path: Path) -> ClusterConfig:
 
 
 def write_cluster_ini(config: ClusterConfig, path: Path) -> None:
-    """把 ClusterConfig 写回 cluster.ini 文件。
-
-    Args:
-        config: 要写入的 ClusterConfig。
-        path: 目标文件路径。
-    """
+    """把 ClusterConfig 写回 cluster.ini。"""
     sections = [
         ("GAMEPLAY", config.gameplay),
         ("NETWORK", config.network),
@@ -149,14 +124,7 @@ def write_cluster_ini(config: ClusterConfig, path: Path) -> None:
 # ── Server INI ─────────────────────────────────────────────────────────
 
 def parse_server_ini(path: Path) -> ShardConfig:
-    """把 server.ini 解析成 ShardConfig 模型。
-
-    Args:
-        path: server.ini 的路径。
-
-    Returns:
-        带类型的 ShardConfig。
-    """
+    """把 server.ini 解析成 ShardConfig。"""
     parser = _read_ini(path)
     return ShardConfig(
         network=_coerce_dict_values(_section_to_dict(parser, "NETWORK"), "NETWORK"),
@@ -167,12 +135,7 @@ def parse_server_ini(path: Path) -> ShardConfig:
 
 
 def write_server_ini(config: ShardConfig, path: Path) -> None:
-    """把 ShardConfig 写回 server.ini 文件。
-
-    Args:
-        config: 要写入的 ShardConfig。
-        path: 目标文件路径。
-    """
+    """把 ShardConfig 写回 server.ini。"""
     sections = [
         ("NETWORK", config.network),
         ("SHARD", config.shard),

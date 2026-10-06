@@ -1,7 +1,4 @@
-"""世界设置页的数据装载与编辑逻辑——不含任何界面代码（Qt 版页面直接使用）。
-
-对应 Tk 版 world/tab.py 的 _load_world() 与 _on_rule_click()，界面层只负责显示和转发点击。
-"""
+"""世界设置页的数据装载与编辑逻辑（不含界面代码）。"""
 
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -49,10 +46,8 @@ class WorldPageData:
 def load_world_page(
     cluster: Cluster | None, shard_name: str, enabled_mod_ids=None,
 ) -> WorldPageData:
-    """`enabled_mod_ids`：Mod 管理页尚未保存的启用集合预览（不分具体哪个世界），
-    传入时优先于磁盘上 modoverrides.lua 的已保存状态——即时预览开关效果，不等
-    用户先点保存；为 None 时按磁盘实际内容取（Mod 页未迁移完成，或没有未保存的
-    修改）。"""
+    """``enabled_mod_ids`` 为 Mod 页尚未保存的启用集合，传入时优先于磁盘上的 modoverrides.lua（即时预览），
+    为 None 时按磁盘内容。"""
     if cluster is None:
         return WorldPageData(STATUS_NO_CLUSTER)
     is_server = cluster.source == SaveSource.SERVER
@@ -98,10 +93,9 @@ def load_world_page(
 
 
 def step_rule_value(data: WorldPageData, key: str, delta: int) -> None:
-    """把一条世界规则的取值往前/后挪一格（钳制在两端，不绕回，跟游戏内行为一致）。
+    """把规则取值前/后移一格（两端钳制不绕回，与游戏一致）。
 
-    存档里已有这个 key 就直接改它；还没有（刚启用的 mod、或游戏没写过的冷门设置）就从这个 key
-    真正的初始值起点挪一格，"转正"成会被保存的 WorldOverride，并替换界面上原本仅展示的默认项。
+    存档已有该 key 直接改；没有（刚启用的 Mod、游戏未写过的设置）则从其初始值起移动，转为会被保存的 WorldOverride。
     """
     preset = data.preset
     values = get_value_set(key, data.mod_settings, location=data.location, is_rule=True)

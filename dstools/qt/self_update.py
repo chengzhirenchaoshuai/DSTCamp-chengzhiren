@@ -1,8 +1,6 @@
-"""Qt 版 DSTCamp 自动更新：发现新版本的提示窗、下载进度、替换并重启。
+"""自动更新的界面部分：新版本提示窗、下载进度、替换并重启。
 
-下载、长度与 SHA-256 校验、新 EXE 冒烟启动、PowerShell 替换助手（失败回滚旧 EXE）
-都复用 shared/auto_update.py，跟 Tk 版 gui/app.py 的 _show_update_prompt()/
-_download_and_install_update() 是同一条流程，这里只负责 Qt 界面部分。
+下载、长度与 SHA-256 校验、新 EXE 冒烟启动、PowerShell 替换助手（失败回滚）都在 shared/auto_update.py。
 """
 
 from __future__ import annotations

@@ -1,7 +1,4 @@
-"""把世界文件数据转换为可渲染的世界设置视图模型。
-
-这里不依赖 Tkinter，也不读写文件；编辑页和未来的创建存档向导都可复用。
-"""
+"""把世界文件数据转换为可渲染的世界设置视图模型（不读写文件，编辑页与创建向导共用）。"""
 
 from dataclasses import dataclass
 
@@ -69,11 +66,7 @@ def build_world_view_model(
             target.setdefault(category, []).append(override)
 
     def add_builtin_defaults(is_rule: bool, target: dict) -> None:
-        # 补原版设置的"默认"占位——只要存档里没这个 key 就补，让只读的
-        # "世界生成"界面也跟游戏一样显示完整的资源/刷新点列表（grass/
-        # rock/bees/spiders 等）。之前这里跳过了 resources/creatures_spawners/
-        # hostile_spawners 三个分类，导致 mod 世界（如海难）里这三个分类只
-        # 有 mod 设置、原版设置整段缺失，跟游戏"原版+mod 混排"不一致。
+        # 存档里没有的原版设置补"默认"占位，世界生成也显示完整的资源/刷新点列表（Mod 世界同样原版 + Mod 混排）
         for key, (category, name) in _get_settings(location, is_rule).items():
             if key in seen_keys or key in hidden_vanilla:
                 continue

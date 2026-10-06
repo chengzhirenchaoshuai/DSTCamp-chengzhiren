@@ -18,19 +18,14 @@ from dstools.shared.update_check import UpdateRelease
 
 ProgressCallback = Callable[[int, int], None]
 
-# 标准安装固定用这个名字，不再随版本号变化——旧方案每次更新都改名
-# （DSTCamp-1.3.7.exe -> DSTCamp-1.3.8.exe），文件名一变，钉在任务栏/
-# 桌面的快捷方式就会失效，而且没法原地覆盖，必须靠"移出旧文件、移入
-# 新文件"两步替换，这正是更新残留文件的根源之一。
+# 标准安装固定使用这个文件名：随版本改名会让任务栏/桌面快捷方式失效，也无法原地覆盖
 STANDARD_EXE_NAME = "DSTCamp.exe"
 # 旧版本按 Release 文件名逐版本改名；识别出这类命名是为了把它们一次性
 # 迁移到固定的 STANDARD_EXE_NAME，之后不再改名。
 _LEGACY_VERSIONED_EXE_NAME_RE = re.compile(
     r"^DSTCamp-\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?\.exe$", re.IGNORECASE
 )
-# launch_update_helper() 生成隐藏 staged 文件用的命名规律；
-# cleanup_stale_update_artifacts() 复用同一模式做清理扫描，两处共用一份
-# 定义，避免以后改命名规则时漏改其中一处。
+# 隐藏 staged 文件的命名规律，launch_update_helper() 与 cleanup_stale_update_artifacts() 共用
 _HIDDEN_STAGED_GLOB = ".*.update-*.exe"
 # 与 _helper_script() 里 PS1 模板内 $LogFile 的文件名保持一致。
 _UPDATE_LOG_NAME = "apply_update.log"
@@ -147,12 +142,7 @@ def ensure_install_dir_writable() -> None:
 
 
 def resolve_install_target(current_exe: Path, staged_exe: Path) -> Path:
-    """标准安装固定用 STANDARD_EXE_NAME；用户自定义的 EXE 名称保持不变。
-
-    staged_exe（下载产物，仍然带版本号）只用来定位新文件内容，不影响本
-    地安装名字——下载产物命名和本地安装命名是两个独立概念。旧版本号命
-    名的安装会在这次更新里一次性迁移到固定名字，之后保持不变。
-    """
+    """标准安装固定用 STANDARD_EXE_NAME，用户自定义的 EXE 名称保持不变；旧的带版本号安装名在本次迁移。"""
     del staged_exe  # 保留参数只为了调用方语义清晰，命名不再影响安装目标
     current = Path(current_exe).resolve()
     is_standard = current.name == STANDARD_EXE_NAME or bool(
@@ -208,13 +198,9 @@ def _safe_rmtree(path: Path) -> None:
 
 
 def cleanup_stale_update_artifacts() -> None:
-    """尽力清理历史更新流程遗留的文件；单个文件删除失败不影响启动。
+    """尽力清理历史更新遗留的 ``*.exe.old``、staged 文件和失败日志，单个失败不影响启动。
 
-    不区分"上一次更新是成功、失败、还是进程被杀掉"——只要走到这里说明
-    当前进程已经在正常启动，安装目录里任何 ``*.exe.old``、隐藏 staged
-    文件、失败日志都已经是用不上的历史残留，可以直接清掉；不依赖任何
-    持久化的更新状态，也不需要单独修补 PowerShell 助手脚本每条失败分
-    支——助手脚本失败时重新拉起的旧 EXE，下次启动一样会跑到这里清理。
+    能正常启动到这里就说明这些都已是残留，不依赖持久化的更新状态。
     """
     if not getattr(sys, "frozen", False):
         return
@@ -242,14 +228,9 @@ def cleanup_stale_update_artifacts() -> None:
 
 
 def cleanup_vestigial_external_tools() -> None:
-    """清理存量 ZIP 版用户更新到内嵌版后，不再被读取的外置 tools/ 目录。
+    """清理存量 ZIP 版更新到内嵌版后不再被读取的外置 tools/ 目录。
 
-    ``tool_binary_dir()`` 内嵌 tools 存在就优先用内嵌的，外置 tools/ 一旦
-    跟内嵌版共存，就已经是永远不会再被任何代码路径读取的死目录（含长
-    驻子进程用的 ``runtime_tool_path()``）——这里只在"当前 EXE 自带内嵌
-    tools 且同级还有一份外置 tools/"这个可证明安全的前提下才删除，不看
-    EXE 叫什么名字，兼容任何自定义命名。不再发布 ZIP 版之后，这里只服
-    务仍在使用旧版 ZIP 安装、尚未经历过自动更新的存量用户。
+    只在"当前 EXE 自带内嵌 tools 且同级还有外置 tools/"时删除（此时外置目录不会被任何代码读取）。
     """
     if not getattr(sys, "frozen", False):
         return

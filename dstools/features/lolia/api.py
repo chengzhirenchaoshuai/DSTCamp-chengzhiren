@@ -1,15 +1,9 @@
-"""LoliaFRP 开放 API 客户端与 OAuth2 登录（纯逻辑，不依赖界面）。
+"""LoliaFRP 开放 API 客户端与 OAuth2 登录（纯逻辑），接口见 https://api-docs.lolia.link/。
 
-接口定义见官方文档 https://api-docs.lolia.link/（base `https://api.lolia.link/api/v1`），
-鉴权按官方推荐走 OAuth2 授权码 + PKCE：DSTCamp 在 Lolia 登记为 public 客户端（桌面程序
-保管不了 client_secret），回调地址登记为 `http://127.0.0.1/callback`——官方说明回环地址
-按 RFC 8252 忽略端口匹配，所以登录时临时监听一个随机端口即可。
-
-令牌：access_token 有效期 24 小时，refresh_token 30 天且刷新时不变、不顺延（官方文档），
-所以 30 天后必须重新登录。令牌存 `%APPDATA%/DSTCamp/security/lolia/oauth.json`。
-
-隧道归属：Lolia 的隧道名由服务端随机生成，不能像樱花那样按名字认领，改为在 remark 里
-写入 `DSTCamp dc_<哈希>` 标记（哈希规则复用樱花的 sanitize_tunnel_name，同一世界恒定）。
+鉴权用 OAuth2 授权码 + PKCE（public 客户端，回调 ``http://127.0.0.1/callback``，回环地址按 RFC 8252
+忽略端口，登录时临时监听随机端口）。access_token 24 小时，refresh_token 30 天且刷新时不顺延，到期须重新登录；
+令牌存 security/lolia/oauth.json。隧道名由服务端随机生成，归属靠 remark 中的 ``DSTCamp dc_<哈希>`` 标记
+（哈希复用樱花的 sanitize_tunnel_name）。
 """
 
 import base64
@@ -60,9 +54,7 @@ def client_id() -> str:
 
 
 def check_client_id(cid: str) -> bool:
-    """无副作用地检查 client_id 是否有效：用假的 refresh_token 请求令牌接口，
-    有效的应用返回 invalid_grant（令牌无效），无效的返回 invalid_client（真机验证）。
-    网络错误照常抛 LoliaError。"""
+    """用假 refresh_token 请求令牌接口检查 client_id：有效返回 invalid_grant，无效返回 invalid_client（真机验证）。"""
     try:
         _post_form(TOKEN_URL, {"grant_type": "refresh_token", "client_id": cid, "refresh_token": "dstcamp_probe"})
     except LoliaAuthError as exc:

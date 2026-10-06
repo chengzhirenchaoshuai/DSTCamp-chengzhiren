@@ -6,20 +6,13 @@ from pathlib import Path
 
 
 class SaveSource(Enum):
-    """存档来源类型.
-
-    SERVER: 位于 DST 根目录下的 Cluster (如 Cluster_3)，独立服务器存档.
-    LOCAL:  位于用户ID目录下的 Cluster (如 280257116/Cluster_1)，本地游戏存档.
-    """
+    """存档来源：SERVER 为根目录下的专服存档（如 Cluster_3），LOCAL 为用户 ID 目录下的本地存档。"""
     SERVER = "server"
     LOCAL = "local"
 
 
 class Platform(Enum):
-    """存档所属的发行平台——Steam 版和 WeGame(Rail) 版的 Klei 根目录
-    （DoNotStarveTogether / DoNotStarveTogetherRail）、专用服务器安装目录
-    互不相同，但 cluster.ini/server.ini 等配置文件格式完全一致，因此按平台
-    区分只影响"去哪个根目录下找/存"，不影响配置读写本身。"""
+    """发行平台：Steam 与 WeGame 的根目录和专服目录不同，配置文件格式一致。"""
     STEAM = "steam"
     WEGAME = "wegame"
 
@@ -48,13 +41,9 @@ class SaveSlot:
 
 @dataclass
 class PlayerCharacterSave:
-    """一个玩家在某个存档会话里的角色状态 (从其子文件夹最新槽位解析).
+    """玩家在某个存档会话里的角色状态（解析其子文件夹最新槽位）。
 
-    session/<session_id>/ 下面除了世界自己的数字存档槽，还有一批以玩家
-    ID 命名的子文件夹，每个对应一个在这个世界里玩过的玩家。这个 ID 是
-    cluster.ini [ACCOUNT] encode_user_path 设置对真实 Klei 账号 ID 做混淆
-    编码后的结果 (默认开启)，不是 Klei 账号 ID 本身，也没有验证过的解码
-    算法能还原回去——界面上只能原样展示，不能当成真实账号 ID 使用。
+    子文件夹名默认经 encode_user_path 混淆编码，不是 Klei 账号 ID 且无法还原，只能原样展示。
     """
 
     player_id: str
@@ -163,13 +152,8 @@ class Cluster:
 
 @dataclass
 class DSTEnvironment:
-    """DST 环境信息.
-
-    klei_root 一直是 Steam 版根目录（DoNotStarveTogether），保持这个字段
-    含义不变是为了不影响已经假设"只有一个根目录"的旧代码（比如 -conf_dir
-    的计算）；WeGame 版（DoNotStarveTogetherRail）是完全独立的第二棵目录
-    树，只在 wegame_klei_root 里单独记录，两边的 Cluster 会一起出现在
-    clusters 列表里，靠各自的 Cluster.platform 区分。"""
+    """DST 环境信息：klei_root 固定是 Steam 版根目录，WeGame 版另记在 wegame_klei_root，
+    两边的存档一起放在 clusters 中按 platform 区分。"""
 
     klei_root: Path | None = None
     wegame_klei_root: Path | None = None
@@ -179,7 +163,5 @@ class DSTEnvironment:
     client_config: Path | None = None
 
     def klei_root_for(self, platform: Platform) -> Path | None:
-        """按平台取对应的根目录——凡是要往"根目录"下新建/复制存档的地方
-        （比如把本地存档复制成服务器存档），都应该按 cluster.platform 现查
-        这个方法，而不是直接用 klei_root（那个永远是 Steam 版的）。"""
+        """按平台取根目录；在根目录下新建/复制存档时必须用它，不能直接用 klei_root。"""
         return self.wegame_klei_root if platform == Platform.WEGAME else self.klei_root

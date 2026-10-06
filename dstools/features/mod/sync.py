@@ -1,8 +1,7 @@
 """让专服复用客户端 Mod 内容。
 
-Steam V2 通过 ``-ugc_directory`` 直接读取 Workshop，不复制内容。V1、
-手动 Mod 和 WeGame 使用整个 ``mods`` 目录联接。替换真实目录前必须由 GUI
-展示精确路径并确认；解除联接时先完整复制到同盘临时目录，再原子替换。
+Steam V2 通过 ``-ugc_directory`` 直接读取 Workshop，不复制；V1、手动 Mod 和 WeGame 用整个 ``mods``
+目录联接。替换真实目录前界面必须展示精确路径并确认；解除联接时先完整复制到同盘临时目录再原子替换。
 """
 
 import os
@@ -18,11 +17,7 @@ from dstools.models import Cluster
 
 
 def get_enabled_mod_ids(cluster: Cluster) -> list[str]:
-    """并集 cluster 下每个世界 modoverrides.lua 里 enabled=True 的 mod，
-    去掉 "workshop-" 前缀，返回排序去重后的纯数字 ID 列表。只用于"这个
-    存档有没有启用任何 mod"这个前置判断（没启用就不需要点同步），跟下面
-    整个 mods/ 目录联接的动作本身无关——那是按这台机器一次性生效的，不
-    分具体是哪个存档。"""
+    """汇总存档各世界 modoverrides.lua 中启用的 Mod，返回排序去重的纯数字 ID（用于判断是否需要同步）。"""
     ids: set[str] = set()
     for shard in cluster.shards:
         if not shard.mod_overrides_path:
@@ -71,14 +66,9 @@ class ModSyncPlan:
 
 
 def plan_mod_sync(install_dir: Path, client_mods_dir: Path | None) -> ModSyncPlan:
-    """纯计算，不碰文件系统的写操作（只有只读的 exists()/iterdir()/
-    resolve() 检查）。client_mods_dir 由调用方按存档的平台传入——Steam
-    用 modinfo_reader.find_game_mods_dir()，WeGame 用
-    modinfo_reader.find_wegame_client_dir(root) / "mods"（root 来自
-    app_settings.get_wegame_root_path()，需要 GUI 层引导用户手动选一次），
-    这里不关心具体是哪个平台。GUI 层应该先调这个，如果 needs_confirm_
-    delete 为 True 就弹窗确认（把 lost_on_replace 列给用户看），再调
-    apply_mod_sync()。"""
+    """只读地计算同步计划。client_mods_dir 由调用方按平台传入（Steam：find_game_mods_dir()，
+    WeGame：find_wegame_client_dir(root) / "mods"）。needs_confirm_delete 为 True 时界面须先展示
+    lost_on_replace 并确认，再调用 apply_mod_sync()。"""
     plan = ModSyncPlan()
     plan.client_mods_dir = client_mods_dir
     if (
@@ -131,9 +121,7 @@ class ModSyncResult:
 
 
 def apply_mod_sync(plan: ModSyncPlan, install_dir: Path, on_log=None) -> ModSyncResult:
-    """执行 plan 里算好的同步动作——调用方（GUI 层）必须已经就
-    plan.needs_confirm_delete 拿到用户确认；这里不会再检查一遍，也不会
-    因为看到需要删除就跳过，直接按 plan 执行。"""
+    """按计划执行同步（调用方须已就 needs_confirm_delete 取得确认，这里不再检查）。"""
 
     def log(line: str) -> None:
         if on_log:
@@ -230,9 +218,7 @@ def detach_mod_sync_junction(
         log(t("sync.copy_client_mods_done", path=str(target)))
     except OSError as exc:
         result.errors.append(_friendly_os_error(exc, target))
-        # 极少数情况下复制完成、联接也已删除，但最终重命名失败。优先把
-        # 已经完整复制好的临时目录放回目标；仍失败则保留临时目录并在错
-        # 误中给出位置，避免无声丢失副本。
+        # 复制完成、联接已删但最终改名失败：优先把临时目录放回目标，仍失败则保留并在错误中给出位置
         if not os.path.lexists(target) and staging.exists():
             try:
                 staging.rename(target)
@@ -258,10 +244,9 @@ def detach_mod_sync_junction(
 
 
 def _ensure_junction(target: Path, src: Path, *, allow_replace: bool = False) -> bool:
-    """永久删除已有目标并建立指向 ``src`` 的目录联接。
+    """永久删除已有目标并建立指向 ``src`` 的目录联接，返回是否删除过已有目标。
 
-    GUI 必须在调用前展示精确目标路径并取得用户确认。返回是否删除过已有
-    目标；工具不创建长期备份，建链失败时原目标也不会自动恢复。
+    界面须在调用前展示精确路径并确认；不做长期备份，建链失败不会自动恢复原目标。
     """
     target = Path(target)
     src = Path(src)

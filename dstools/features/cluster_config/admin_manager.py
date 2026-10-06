@@ -4,14 +4,7 @@ from pathlib import Path
 
 
 def read_adminlist(path: Path) -> list[str]:
-    """读取权限名单，每一行是一个 DST 用户 ID（如 KU_... 或 OU_...）。
-
-    Args:
-        path: adminlist.txt 的路径。
-
-    Returns:
-        管理员 ID 列表，文件不存在时返回空列表。
-    """
+    """读取名单文件（每行一个 KU_/OU_ 用户 ID），不存在返回空列表。"""
     if not path.exists():
         return []
     content = path.read_text(encoding="utf-8").strip()
@@ -21,27 +14,14 @@ def read_adminlist(path: Path) -> list[str]:
 
 
 def write_adminlist(path: Path, admins: list[str]) -> None:
-    """把管理员 ID 列表写入 adminlist.txt。
-
-    Args:
-        path: adminlist.txt 的路径。
-        admins: 要写入的 Klei 用户 ID 列表。
-    """
+    """把用户 ID 列表写入名单文件。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     content = "\n".join(admins) + "\n"
     path.write_text(content, encoding="utf-8")
 
 
 def add_admin(path: Path, admin_id: str) -> bool:
-    """添加一个管理员，已存在则不重复添加。
-
-    Args:
-        path: adminlist.txt 的路径。
-        admin_id: 要添加的 DST 用户 ID（如 KU_xxx 或 OU_xxx）。
-
-    Returns:
-        添加成功返回 True，已存在则返回 False。
-    """
+    """添加一个 ID，已存在返回 False。"""
     admins = read_adminlist(path)
     if admin_id in admins:
         return False
@@ -51,15 +31,7 @@ def add_admin(path: Path, admin_id: str) -> bool:
 
 
 def remove_admin(path: Path, admin_id: str) -> bool:
-    """移除一个管理员。
-
-    Args:
-        path: adminlist.txt 的路径。
-        admin_id: 要移除的 Klei 用户 ID。
-
-    Returns:
-        移除成功返回 True，未找到则返回 False。
-    """
+    """移除一个 ID，未找到返回 False。"""
     admins = read_adminlist(path)
     if admin_id not in admins:
         return False

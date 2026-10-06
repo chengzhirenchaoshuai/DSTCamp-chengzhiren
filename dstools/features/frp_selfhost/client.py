@@ -1,19 +1,10 @@
-"""本地 frpc.exe 客户端进程的配置生成与生命周期管理，连接用户自建的
-frps 服务器。
+"""连接自建 frps 的本地 frpc.exe：配置生成与进程生命周期。
 
-结构照抄 features/sakura/frpc.py 的 FrpcProcess/FrpcManager，区别是
-这里用标准的 `-c <配置文件>` 启动一份包含存档内所有已映射世界的
-frpc.toml——一个存档共用一个进程，不像 SakuraFrp 那样一世界一进程
-（这边没有远程 API 管理"隧道"，配置只能自己攒成一份文件）。
+一个存档一个进程，用 ``-c <配置文件>`` 启动，配置包含存档内所有已映射世界。
 
-**孤儿进程认领**（真机复现过的 bug）：DSTCamp 没走"停止"按钮就退出
-时，spawn 出去的 frpc.exe 不会跟着死，会变孤儿继续转发流量，新一轮
-DSTCamp 内存是空的，界面显示"未启动"但玩家其实连得上。
-`FrpcManager.reconcile()` 用 `tasklist` 筛 frpc.exe 候选 PID，
-PowerShell `Get-CimInstance` 读命令行按配置文件路径精确匹配认领——
-跟 dedicated_server.py 探测 WeGame 外部进程时特意不读命令行不是一回
-事：那边是别的程序启动的进程，读不到；这里是 DSTCamp 自己上次启动
-的，同一用户账户下真机验证过能正常读到。
+孤儿进程认领：DSTCamp 未经"停止"退出时 frpc 会继续转发，重启后界面却显示未启动。
+``FrpcManager.reconcile()`` 用 tasklist 找候选 PID，再用 PowerShell Get-CimInstance 读命令行按配置
+文件路径精确认领（自己启动的进程，同一用户下能读到命令行）。
 """
 
 import csv
@@ -94,11 +85,8 @@ class FrpcStatus(Enum):
 
 
 def build_frpc_toml(server_host: str, server_port: int, token: str, proxies: list[dict]) -> str:
-    """`proxies`：[{"name": ..., "type": "udp"|"tcp", "local_port": ...,
-    "remote_port": ...}, ...]，每个世界一条。server_host 理论上是用户手
-    填的 IP/域名，不像 proxy name（DSTCamp 自己生成）那样绝对可控，这
-    里简单转义掉双引号/反斜杠防止破坏 TOML 字符串语法，不做更复杂的校
-    验——填错了 frpc 连不上会在日志里明确报错，不会静默出问题。"""
+    """生成 frpc.toml；proxies 为 [{"name", "type", "local_port", "remote_port"}]，每世界一条。
+    server_host 由用户填写，只转义双引号/反斜杠防止破坏 TOML，填错由 frpc 日志报错。"""
     def _esc(s: str) -> str:
         return s.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -124,13 +112,9 @@ def build_frpc_toml(server_host: str, server_port: int, token: str, proxies: lis
 
 
 class FrpcProcess:
-    """一个存档对应的 frpc.exe 子进程，用 `-c <配置文件>` 启动。frpc 没
-    有优雅关闭指令，停止直接 terminate() -> kill()。
+    """一个存档的 frpc.exe 子进程（无优雅关闭指令，直接 terminate → kill）。
 
-    `adopted_pid` 不为 None 时代表这是一个"认领"来的孤儿进程（见模块顶
-    部说明）——这种情况下 `self.proc` 是 None（没有 Popen 句柄，也就没
-    有 stdout 管道可读），状态查询/终止全部改用 PID 直接操作系统进程表
-    （`_pid_exists()`/`_kill_pid()`），而不是走 `self.proc` 那一套。"""
+    ``adopted_pid`` 不为 None 表示认领来的孤儿进程：没有 Popen 句柄和 stdout，状态与终止都按 PID 操作。"""
 
     def __init__(self, cluster_path: Path, frpc_exe: Path, config_path: Path, *, adopted_pid: int | None = None):
         self.cluster_path = cluster_path
@@ -143,9 +127,7 @@ class FrpcProcess:
         self._out_queue: "queue.Queue[str]" = queue.Queue()
 
     def start(self) -> None:
-        # frpc.exe 被杀毒软件隔离/手动删除时 Popen 抛 FileNotFoundError，之前
-        # 没捕获导致用户点启动"没反应"。提前检查并捕获 OSError，记下可读的
-        # 失败原因，让 UI 能显示"启动失败 + 原因"。
+        # 被杀软隔离/删除时 Popen 抛 FileNotFoundError，提前检查并记录可读的失败原因
         if not self.frpc_exe.exists():
             self.status = FrpcStatus.CRASHED
             self.error = "frpc.exe 不存在（可能被杀毒软件隔离或已手动删除）"
@@ -209,8 +191,7 @@ class FrpcProcess:
                 pass
 
     def stop_blocking(self, term_timeout: float = 5.0) -> None:
-        """会阻塞调用方所在线程直到进程退出，调用方必须放到后台线程
-        跑，不要在 Tk 主线程直接调用。"""
+        """阻塞到进程退出，须在后台线程调用。"""
         self.status = FrpcStatus.STOPPING
         if self._adopted_pid is not None:
             # taskkill /F 本身就是同步的强制杀，不需要再轮询等待退出。
@@ -229,10 +210,7 @@ class FrpcProcess:
 
 
 class FrpcManager:
-    """管理这个 DSTCamp 进程自己启动的 frpc 子进程集合，key 是存档路径
-    字符串（一个存档所有已映射世界共用一个进程，不像 sakura 那样按
-    (存档, 世界) 分别建进程）。stop() 的回调在后台线程里触发，调用方要
-    用 .after(0, ...) 转回 Tk 主线程。"""
+    """管理本进程启动的 frpc，key 为存档路径；stop() 回调在后台线程触发，操作界面需转回界面线程。"""
 
     def __init__(self):
         self._procs: dict[str, FrpcProcess] = {}
@@ -250,9 +228,7 @@ class FrpcManager:
         return list(self._procs.values())
 
     def reconcile(self, cluster_path: Path, frpc_exe: Path, config_path: Path) -> FrpcProcess | None:
-        """用到某个存档的 frpc 状态前调用——已跟踪的直接返回，不重复
-        扫描；没跟踪就按配置文件路径找孤儿进程认领进来（见模块顶部说
-        明）。确实没在跑则返回 None。"""
+        """返回存档的 frpc 进程：已跟踪的直接返回，否则按配置文件路径认领孤儿进程，都没有返回 None。"""
         key = str(cluster_path)
         if key in self._procs:
             return self._procs[key]

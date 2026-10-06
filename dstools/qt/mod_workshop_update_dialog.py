@@ -1,10 +1,7 @@
-"""Workshop 更新选择器（对应 Tk 版 ModManagerTab._open_workshop_update_dialog 的完整功能）。
+"""Workshop 更新选择器：扫描状态、筛选搜索、批量/单个更新，以及残留清理和取消订阅引用移除。
 
-核心流程：扫描 Workshop 状态、按筛选/搜索挑选、批量或单个更新，另加残留文件清理
-（单个/一键批量）、取消订阅引用移除——这三块跟“更新”共用同一份状态扫描结果
-（``WorkshopModStatus``），每行按状态优先级只显示一个最合适的操作按钮，跟 Tk 版
-逻辑一致：能更新优先显示"更新"；不能更新但存档里还引用着已取消订阅的项显示
-"移除引用"；都不是、但本地还留着残留文件显示"清理残留"。
+三者共用同一份 WorkshopModStatus 扫描结果，每行按优先级只显示一个操作：能更新显示"更新"，
+否则存档仍引用已取消订阅项时显示"移除引用"，否则有残留文件时显示"清理残留"。
 """
 
 import html
@@ -132,10 +129,8 @@ class WorkshopUpdateDialog(QDialog):
         self._loading = False
         self._selected: set[str] = set()
         self._cleanup_running: set[str] = set()
-        # 本地已安装/V1 包/存档引用/残留目录合并出的全量候选集——不止"当前已加载
-        # 的 mod 列表"，缓存里的订阅项也先参与首帧展示，避免刚检测出的缺失项在
-        # 关闭对话框后立刻消失（真正刷新时仍只把本地扫描项作为输入，Steam 重新
-        # 枚举订阅集合后，已取消订阅的陈旧项自然被移除）。
+        # 全量候选（本地安装/V1 包/存档引用/残留目录），缓存的订阅项也参与首帧，避免刚检测出的缺失项一关窗就消失；
+        # 真正刷新时 Steam 重新枚举订阅，已取消订阅的陈旧项自然移除
         local_ids = [str(wid) for wid in page._workshop_candidate_ids()]
         known = set(local_ids)
         self._ids = list(local_ids)
@@ -197,8 +192,7 @@ class WorkshopUpdateDialog(QDialog):
         inner = QWidget()
         inner.setObjectName("updateListInner")
         inner.setAutoFillBackground(False)
-        # 显式透明：本窗口设置过自己的样式表，滚动区视口和内容控件会露出系统调色板
-        # 的纯灰底（真机反馈"整个 Mod 列表区域都是灰色"），这里让它透出主题底色。
+        # 显式透明：本窗口有自己的样式表，滚动区会露出系统调色板灰底
         area.setStyleSheet("#updateListArea, #updateListArea > QWidget, #updateListInner "
                            "{ background: transparent; border: none; }")
         self._rows_layout = QVBoxLayout(inner)
@@ -367,14 +361,8 @@ class WorkshopUpdateDialog(QDialog):
         self._cleanup_all_btn.setEnabled(has_residual and not self._cleanup_running)
 
     def _make_row(self, wid: str, index: int) -> QWidget:
-        # 偶数行/奇数行交替，颜色跟主 Mod 列表（mod_panel.py._paint_row）同一对
-        # CARD_BG/CARD_BG_ALT——真机反馈过用 PRIMARY_LIGHT 交替色太深，改回跟主
-        # 列表一致的浅色调；每行套一个 Card（自带 CARD_BORDER 描边）+ 行间距，
-        # 才有"跟外层一样带边框"的独立卡片感，不是几行贴在一起看不出分界。
-        # 用 Card（QPainter 自绘）而不是 setStyleSheet("background: ...")：给容器
-        # 控件直接设不带选择器的 styleSheet 会连带压掉里面 QPushButton 的全局主题
-        # 样式（真机验证过，按钮会变得跟父容器同色、完全看不出是个按钮），Card 走
-        # paintEvent 画底色，不影响子控件正常吃到全局 QSS。
+        # 交替行色与主 Mod 列表一致（CARD_BG/CARD_BG_ALT），每行一个 Card 带描边形成独立卡片。
+        # 坑：用 Card 自绘而不是给容器设无选择器的 styleSheet，后者会压掉子 QPushButton 的全局样式
         row = Card(radius=0, alpha=255, fill_key="CARD_BG_ALT" if index % 2 == 0 else "CARD_BG")
         row.setFixedHeight(_ROW_H)
         layout = QHBoxLayout(row)
@@ -460,8 +448,7 @@ class WorkshopUpdateDialog(QDialog):
         tag.setFont(theme.font("FONT_SIZE_SM", bold=True))  # 跟版本号文字同字号
         tag.setToolTip(t("mod.format_tag_v1_tip" if legacy else "mod.format_tag_v2_tip"))
         background, color = mod_format_tag_colors("V1" if legacy else "V2")
-        # 样式必须用对象名限定只作用于标签本身：悬停提示框（QTipLabel）会继承触发它的
-        # 控件的样式表，不加选择器时提示框也被画成圆角，四个角露出黑点（真机反馈过）。
+        # 样式必须用对象名限定：悬停提示框会继承控件样式表，否则提示框也画成圆角、四角露出黑点
         tag.setObjectName("modFormatTag")
         tag.setStyleSheet(f"QLabel#modFormatTag {{ background: {background.name()}; color: {color.name()}; "
                           "border-radius: 4px; padding: 0px 5px; }")

@@ -1,14 +1,11 @@
-"""内网穿透页的"Lolia映射"子页签。
+"""内网穿透页的"Lolia 映射"子页签。
 
-两种用法：
-- 登录（OAuth2，features/lolia/api.py）：选一个节点，开启映射时自动为每个世界创建/复用
-  UDP 隧道（remark 标记归属），拉取官方「原版 frpc 配置」；关闭映射时删除这些隧道。
-- 不登录：用户在 Lolia 控制台自己建隧道，给每个世界粘贴「原版 frpc 配置」或
-  「LoliaFRP-CLI 快捷启动」命令（features/lolia/config.py 的 parse_source 识别）。
+- 登录（OAuth2，features/lolia/api.py）：选节点后开启映射时为每个世界创建/复用 UDP 隧道（remark 标记归属）
+  并拉取「原版 frpc 配置」，关闭映射时删除这些隧道；
+- 不登录：用户在控制台自建隧道，为每个世界粘贴「原版 frpc 配置」或「LoliaFRP-CLI 快捷启动」命令。
 
-两种用法最终都是每个世界生成一份本地配置、改写本地端口，交给自建节点那份原版
-frpc.exe 以 `-c` 启动——进程管理复用 features/frp_selfhost/client.py 的 FrpcManager
-（每个世界一个进程，孤儿进程按配置路径认领）。
+两种方式都为每个世界生成本地配置，交给自建节点的原版 frpc.exe 以 ``-c`` 启动，进程管理复用
+frp_selfhost/client.py 的 FrpcManager。
 """
 
 import threading
@@ -717,9 +714,8 @@ class LoliaPanel(QWidget):
 
     @staticmethod
     def _prepare_with_oauth(cluster, shards, node_id: int, log) -> dict:
-        """工作线程里跑：为每个世界创建/复用隧道并拉取配置，返回
-        {世界名: (本地 TOML, 远程端口, 节点地址, 隧道名)}。中途失败时已建的隧道带
-        remark 标记，下次开启会被复用，不会重复占用名额。"""
+        """（工作线程）为每个世界创建/复用隧道并拉取配置，返回 {世界名: (本地 TOML, 远程端口, 节点地址, 隧道名)}；
+        中途失败已建的隧道带 remark 标记，下次开启会复用。"""
         user = lolia_api.get_user_info()
         if not user.get("has_qq"):
             raise lolia_config.LoliaError(t("lolia.qq_required"))

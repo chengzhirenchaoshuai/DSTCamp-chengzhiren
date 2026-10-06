@@ -1,9 +1,4 @@
-"""DST leveldataoverride.lua 文件的世界设置读取器。
-
-解析世界生成预设和 override 设置。中文名、分类、排序和图标另外由
-dstools.features.world.categories / dstools.features.world.icons 负责解析——
-这个模块只做原始的 Lua I/O。
-"""
+"""leveldataoverride.lua 的读写（只做 Lua I/O，名称、分类、图标见 categories.py / icons.py）。"""
 
 import os
 import tempfile
@@ -105,14 +100,7 @@ def _write_text_atomically(path: Path, text: str) -> None:
 
 
 def save_leveldata(preset: WorldPreset, path: Path) -> None:
-    """把修改后的世界 override 写回 leveldataoverride.lua 文件。
-
-    只修改 'overrides' 的值，保留其它字段不变。
-
-    参数：
-        preset: 可能已修改过 overrides 的 WorldPreset。
-        path: 目标文件路径。
-    """
+    """把 overrides 写回 leveldataoverride.lua，其他字段保持不变。"""
     from dstools.shared.lua_parser import parse_lua_file
     from dstools.shared.lua_parser import serialize_lua_table
 

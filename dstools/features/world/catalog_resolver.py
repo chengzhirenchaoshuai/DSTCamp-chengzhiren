@@ -1,21 +1,11 @@
-"""世界设置目录解析器。
-
-原版目录只负责 forest/cave。Mod 世界（例如 porkland）通过这里把原版
-基础目录与 Mod 的增删规则组合起来；Mod 自己的条目仍由 mod_settings.py
-提供，避免把 Mod 设置写进原版分类表。
-"""
+"""世界设置目录解析：原版目录只覆盖 forest/cave，Mod 世界（如 porkland）在这里组合原版基础与 Mod 的增删规则。"""
 
 from typing import Any
 
 
-# Above the Clouds/Porkland（3322803908）猪镇世界显示的原版 key 白名单，
-# 逐项来自 modcustomizeitems.lua 的 change_items + delete_items：
-#   - change_items 把这 12 个原版 key 的 world 列表扩展进 porkland；
-#   - world=nil（master_controlled）的全局项里，没被 delete_items 删掉的
-#     global（day/ghostenabled/...）和 survivors（extrastartingitems/...）仍
-#     全显示，也要收进来；被 delete_items 删掉的（specialevent/autumn/...、
-#     events 全部、resources 全部）则不放进来。
-# 猪镇世界 = 这些原版 key + mod 自己新增的 key（PORKLAND_SETTINGS）。
+# Above the Clouds（3322803908）猪镇显示的原版 key 白名单，来自 modcustomizeitems.lua：
+# change_items 扩展进 porkland 的 12 个原版 key，加上 world=nil 的全局项中未被 delete_items 删除的
+# global/survivors 项。猪镇世界 = 这些原版 key + Mod 新增 key（PORKLAND_SETTINGS）。
 PORKLAND_MOD_ID = "3322803908"
 PORKLAND_VANILLA_KEYS = frozenset({
     # change_items
@@ -61,16 +51,9 @@ def _resolve_ia_vanilla_settings(
         if is_rule else
         (categories.FOREST_GEN_DICT, categories.CAVE_ALL_GEN_DICT)
     )
-    # 白名单（vanilla_options_in_islands/in_volcano）里的 key 是 mod 把
-    # 原版 key 的 world 列表显式扩展进海难/火山的，两个世界都收。
-    #
-    # 另外还有一批"全局"原版 key（global/events/survivor 分类，以及
-    # regrowth 里唯一 world=nil 的 basicresource_regrowth）在 customize.lua
-    # 里 world 字段是 nil（没有限制），是 master_controlled 的全局设置，
-    # **只在 Master 分片显示**——真机核对过 day/autumn/specialevent/
-    # ghostenabled/crow_carnival/extrastartingitems 等都没有 world 字段。
-    # 海难（shipwrecked）是 Master，要显示；火山（volcanoworld）是 Caves
-    # 分片、依照洞穴做设置，不显示这批全局项。所以用 show_global 区分。
+    # 白名单中的 key 被 Mod 显式扩展进海难/火山，两个世界都显示。
+    # world=nil 的全局原版项（global/events/survivors 及 basicresource_regrowth）只在 Master 分片显示：
+    # 海难是 Master 要显示，火山是 Caves 分片不显示，所以用 show_global 区分。
     full_show_categories = (
         {"global", "events", "survivor"} if is_rule else {"global"}
     )
@@ -117,14 +100,8 @@ def resolve_vanilla_categories(location: str, setting_type: str) -> list[tuple[s
     if location in {"porkland", "shipwrecked", "volcanoworld"}:
         settings = resolve_vanilla_settings(location, setting_type == "rules")
         used_categories = {category for category, _names in settings.values()}
-        # mod 设置（登记了 group）映射到的官方分类也要放进分类列表——否
-        # 则像海滩世界的 global（mild/hurricane/monsoon/dry/poison 都归
-        # 它）会因不在列表里而被 render 过滤掉、整组不显示。世界设置和世
-        # 界生成用的是两套不同的分类 key，所以按 setting_type 选 GROUP_TO_
-        # CATEGORY（rules）或 GROUP_TO_CATEGORY_GEN（gen）；两者的值都是
-        # 官方分类 key，跟 SURFACE_RULES/CAVE_RULES（或 SURFACE_GEN/
-        # CAVE_GEN）里的 key 对齐。并进去只影响"分类标题是否出现"，不影
-        # 响每个分类下实际有哪些设置（那由 grouped 决定，空分类会被过滤）。
+        # Mod 设置映射到的官方分类也要加入分类列表，否则如海难的 global 组会因分类缺失整组不显示。
+        # 规则与生成用两套分类 key（GROUP_TO_CATEGORY / _GEN）；空分类之后会被过滤
         from dstools.features.world.mod_settings import GROUP_TO_CATEGORY, GROUP_TO_CATEGORY_GEN
         mapping = GROUP_TO_CATEGORY if setting_type == "rules" else GROUP_TO_CATEGORY_GEN
         used_categories |= set(mapping.values())

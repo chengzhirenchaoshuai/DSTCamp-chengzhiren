@@ -1,10 +1,4 @@
-"""MenuStrip 触发的一批次级设置/信息弹窗：背景图、字体样式、Windows Defender
-排除项、缓存目录、关于（含只读版本检查）。
-
-每个弹窗背后的实际逻辑早就绪（qt/theme.py 的 set_font_style()、qt/background.py
-的 Background、shared/windows_defender.py、shared/resource_paths.py 的缓存目录
-校验、shared/update_check.py 的只读版本检查）——这里只是把它们接到 Qt 界面上。
-"""
+"""菜单触发的次级设置/信息弹窗：背景图、字体样式、Windows Defender 排除项、缓存目录、关于。"""
 
 import os
 import webbrowser
@@ -92,8 +86,7 @@ class BackgroundImageDialog(dialogs.Dialog):
         self._refresh_bg()
 
     def _on_opacity_change(self, value: int) -> None:
-        # Qt 每次绘制都直接现读 background.opacity 现场画，不像 Tk 那套要重建
-        # 共享大图，不需要节流；持久化写盘放到松手时（sliderReleased）再做一次。
+        # 绘制时现读 opacity，无需节流；松开滑块时再持久化
         self._window.background.opacity = value / 100
         self._window.update()
 
@@ -308,9 +301,7 @@ def _defender_aggregate_state(states: list[DefenderState]) -> DefenderState:
 
 
 class WindowsDefenderDialog(dialogs.Dialog):
-    """"设置"菜单"Windows Defender 排除项…"——可检测、可撤销且必须经用户确认
-    的精确排除入口。跟 Tk 版一样只服务于已核对过"安全"的最小范围目标（单个
-    文件/固定子目录/通配符），不做任何用户没主动确认过的改动。"""
+    """"Windows Defender 排除项"：可检测、可撤销、须经用户确认，只针对最小范围的已核对目标。"""
 
     def __init__(self, window):
         super().__init__(window, t("settings.defender_title"), 660)
@@ -470,13 +461,7 @@ class WindowsDefenderDialog(dialogs.Dialog):
 
 
 class CacheDirDialog(dialogs.Dialog):
-    """"设置"菜单"缓存目录…"——集中展示缓存路径及更改/恢复默认/打开目录三个操作。
-
-    "立即重启"目前只提示用户手动重启，不做任何自动重启动作：Tk 版的真正重启会
-    拉起一个等待型辅助进程、优雅停掉正在跑的本地专服、再退出重启，但那套辅助
-    进程当前唯一的共享入口 scripts/run_gui.py 只知道拉起 Tk；Qt 还没有成为正式
-    入口，在这之前接一个"看似重启、实际拉起 Tk"的假动作比"如实告诉用户自己
-    重启"更容易误导人，所以先不做。"""
+    """"缓存目录"：展示当前路径并提供更改、恢复默认、打开目录；更改后可选择立即重启。"""
 
     def __init__(self, window):
         super().__init__(window, t("settings.cache_dir_label"), 620)
@@ -571,7 +556,6 @@ class CacheDirDialog(dialogs.Dialog):
             [(t("settings.restart_now"), "restart"), (t("dlg.cancel_btn"), "cancel")],
             default="restart", min_width=520)
         if choice == "restart":
-            # 之前这里只弹一句"重启后生效"的提示，并没有真正重启
             window = self.parent()
             self.accept()
             if hasattr(window, "restart_app"):
@@ -604,10 +588,7 @@ class ManualUpdateDialog(dialogs.Dialog):
 
 
 class AboutDialog(dialogs.Dialog):
-    """"关于"——版本/简介/作者信息 + 项目地址链接 + 提醒更新开关 + 检查更新。
-
-    "检查更新"查到新版本时显示一条链接，点开就是跟启动时一样的更新窗口（立即更新/
-    打开下载页），自动下载替换走 qt/self_update.py。"""
+    """"关于"：版本、简介、项目地址、提醒更新开关与检查更新（发现新版本时打开与启动时相同的更新窗口）。"""
 
     def __init__(self, window):
         super().__init__(window, t("menu.about"), 520)

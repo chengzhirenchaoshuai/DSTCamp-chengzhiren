@@ -1,8 +1,4 @@
-"""Windows 剪贴板辅助函数。
-
-Tk 的 clipboard_append 只能放文本；复制压缩包时需要写入 CF_HDROP，
-这样用户可以直接在群聊窗口粘贴文件，而不是先粘贴一段路径文字。
-"""
+"""Windows 剪贴板：以 CF_HDROP 复制文件，用户可直接在聊天窗口粘贴文件而不是路径文字。"""
 
 from __future__ import annotations
 
@@ -14,11 +10,7 @@ from pathlib import Path
 
 
 def copy_file_to_clipboard(path: Path, root=None) -> bool:
-    """将单个文件以 Windows 文件拖放格式复制到剪贴板。
-
-    非 Windows 或系统剪贴板暂时被其他程序占用时返回 False；调用方可在
-    Tk 主线程中退回复制路径文字。这样不会从后台线程调用 Tk。
-    """
+    """以文件拖放格式把单个文件复制到剪贴板；非 Windows 或剪贴板被占用时返回 False（调用方退回复制路径）。"""
     path = Path(path).resolve()
     if sys.platform != "win32":
         return False

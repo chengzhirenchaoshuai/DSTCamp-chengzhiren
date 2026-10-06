@@ -29,11 +29,7 @@ def _raise_walk_error(error: OSError) -> None:
 def create_save_bundle(
     cluster_path: Path, output_dir: Path | None = None,
 ) -> Path:
-    """把整个存档目录压缩为 ZIP，返回生成文件路径。
-
-    ZIP 内保留存档根目录名，解压后可直接得到完整的 Cluster 目录。为避免
-    意外把目录外的大量内容带入压缩包，不跟随符号链接或 Windows junction。
-    """
+    """把整个存档目录（含根目录名）压缩为 ZIP 并返回路径；不跟随符号链接或 junction。"""
     cluster_path = Path(cluster_path).resolve()
     if not cluster_path.is_dir():
         raise FileNotFoundError(f"存档目录不存在：{cluster_path}")

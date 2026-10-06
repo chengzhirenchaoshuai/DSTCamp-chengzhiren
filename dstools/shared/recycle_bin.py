@@ -28,9 +28,7 @@ class _SHFILEOPSTRUCTW(ctypes.Structure):
 
 
 def move_to_recycle_bin(path: Path) -> None:
-    """把 path 整体移到回收站。失败（被占用等）或用户在系统询问里取消时抛 OSError。
-
-    调用方负责先排除目录联接/符号链接：链接应该用 os.rmdir/os.unlink 只删链接本身。"""
+    """把 path 整体移到回收站，失败或用户取消时抛 OSError；链接须由调用方先排除，用 os.rmdir/unlink 只删链接。"""
     target = Path(path).resolve()
     if not target.exists():
         raise FileNotFoundError(f"路径不存在：{target}")

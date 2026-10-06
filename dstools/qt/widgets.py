@@ -1,7 +1,4 @@
-"""Qt 版通用自绘控件：圆角开关、半透明圆角卡片、胶囊页签条、缩放热区。
-
-颜色一律在 paintEvent 里现查 ``theme.color()``；子控件默认透明，能直接透出主窗口画的背景图。
-"""
+"""通用自绘控件：圆角开关、半透明圆角卡片、胶囊页签条、缩放热区（颜色在 paintEvent 里现查）。"""
 
 from PySide6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPen, QPixmap
@@ -61,10 +58,7 @@ class Card(QWidget):
         self._alpha = alpha
         self._fill_key = fill_key
         self._border_key = border_key
-        # None：沿用旧行为，边框跟着底色一起显/隐（alpha<=0 时全透明，连边框也不画）。
-        # 显式传 True/False 可以让边框独立于底色——alpha=0 + border=True 就是"只有一
-        # 圈描边、内部完全透明"，服务器配置页"房间设置/世界设置"文字元素外圈边框用的
-        # 就是这个组合。
+        # None：边框随底色显隐；True/False 让边框独立于底色（alpha=0 + True 即"只有描边、内部透明"）
         self._border = border
 
     def paintEvent(self, _event):
@@ -138,13 +132,10 @@ class PillTabBar(QWidget):
         self._hover = -1
         self._pill_h = pill_height
         self._font_size_key = font_size_key  # None 表示用应用默认字体；子页签条传较小的字号键
-        self._gap = gap  # 页签之间的间距；Mod 管理页筛选这排真机反馈过嫌宽，传小一点
-        # 每个页签自身文字左右的内边距——之前只调小 gap（页签之间的连接间隙）真机反馈
-        # 感觉不出变化：未选中的页签只画文字、没有底色，两个文字之间的视觉间隔其实主
-        # 要来自这份内边距（默认公式每边着 16px），不是 gap 那几像素，两个都要收才有感觉。
+        self._gap = gap  # 页签之间的间距
+        # 页签文字左右内边距：未选中页签只画文字，视觉间隔主要来自这里而不是 gap
         self._pad = pad if pad is not None else (44 if font_size_key is None else 32)
-        # 每个页签按自己文字宽度各算各的，字数不一样时看起来大小不一（真机反馈过
-        # "全部"比"已启用"窄一截不好看）；开了这个之后统一用最宽的那个宽度。
+        # 统一用最宽页签的宽度，避免字数不同时大小不一
         self._uniform_width = uniform_width
         self.setFixedHeight(height)
         self.setMouseTracking(True)
@@ -163,8 +154,7 @@ class PillTabBar(QWidget):
             self.update()
 
     def _rects(self) -> list[QRectF]:
-        # 左对齐、固定在左边距起画（跟 Tk 版 pill_tabs.py._redraw() 一致）——不是
-        # 居中，窗口缩放时页签不会跟着左右移动。
+        # 从左边距起左对齐绘制（不居中），窗口缩放时页签位置不动
         metrics = QFontMetrics(self._font())
         widths = [metrics.horizontalAdvance(text) + self._pad for text in self._labels]
         if self._uniform_width and widths:
@@ -185,10 +175,7 @@ class PillTabBar(QWidget):
         return font
 
     def sizeHint(self) -> QSize:
-        # 没有这个重写，装进 QHBoxLayout 跟别的控件抢横向空间（尤其是后面跟了
-        # addStretch() 时）会被挤成 0 宽——纯放在 QVBoxLayout 里独占一行时不会
-        # 出问题（布局本来就会把整行宽度让给唯一的子控件），Mod 管理页"筛选"这排
-        # 就是前一种布局，真机反馈过页签压根不可见/点不到。
+        # 坑：放进 QHBoxLayout 并与 addStretch() 抢空间时会被挤成 0 宽，必须提供尺寸提示
         rects = self._rects()
         width = int(rects[-1].right()) + 24 if rects else 0
         return QSize(width, self.height())
@@ -256,9 +243,7 @@ class Banner(QWidget):
 
     def set_text(self, text: str) -> None:
         self._text = text
-        # 还没放进布局（没有父控件）时不能 setVisible(True)：没有父控件的控件一显示就是
-        # 独立顶层窗口，启动时会在屏幕中间闪一下（真机反馈过）。先只记下文字，等放进
-        # 布局、收到 ParentChange 时再按文字决定显隐。
+        # 还没放进布局时不能 setVisible(True)：无父控件会成为顶层窗口在屏幕中间闪一下，等 ParentChange 再决定显隐
         if self.parentWidget() is not None:
             self.setVisible(bool(text))
         self._relayout()
@@ -297,10 +282,9 @@ class Banner(QWidget):
 
 
 class FrostedMenu(QMenu):
-    """跟下拉框展开列表同一种"假透明"效果的菜单：弹出时截一张主窗口在这块区域的
-    画面并压淡，画在菜单最底层，菜单自身的半透明底色（QSS 里 FrostedMenu 规则）
-    叠在上面。不开 WA_TranslucentBackground，避免 Windows 上弹出窗口整块发黑。
-    截图失败（弹出位置跑出主窗口、托盘菜单等）就退回实色底，不报错。"""
+    """"假透明"菜单：弹出时截取主窗口对应区域压淡后画在底层，菜单半透明底色叠在上面。
+
+    不开 WA_TranslucentBackground（Windows 上会整块发黑）；截图失败时退回实色底。"""
 
     def __init__(self, *args):
         super().__init__(*args)

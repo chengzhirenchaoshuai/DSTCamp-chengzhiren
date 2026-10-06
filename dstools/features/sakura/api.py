@@ -1,12 +1,7 @@
-"""SakuraFrp（樱花内网穿透 / natfrp.com）开放 API 客户端。
+"""SakuraFrp（natfrp.com）开放 API 客户端，接口定义见 https://github.com/natfrp/api。
 
-纯逻辑，不依赖 tkinter。API 定义来自官方 https://github.com/natfrp/api
-（base URL `https://api.natfrp.com/v4`），认证方式是 Bearer Token（用户从
-自己的樱花网页后台复制出来的 API Token，不是账号密码登录）。
-
-隧道发现约定：DSTCamp 自己创建的隧道用 `dstcamp-{cluster目录名}-{shard名}`
-命名，靠这个命名约定在 list_tunnels() 结果里现查匹配，不在本地维护一份隧
-道 ID 缓存表——樱花账号里的隧道才是权威数据源。
+使用用户后台复制的 API Token（Bearer）认证。DSTCamp 创建的隧道按命名约定在 list_tunnels()
+结果中现查，不在本地缓存隧道 ID。
 """
 
 import hashlib
@@ -21,10 +16,7 @@ from dstools.shared.ssl_context import default_ssl_context
 _API_BASE = "https://api.natfrp.com/v4"
 _USER_AGENT = f"DSTCamp/{__version__} (+https://github.com/chengzhirenchaoshuai/DSTCamp-chengzhiren)"
 
-# 樱花的 Cloudflare WAF 会挡掉默认的 urllib User-Agent（"Python-urllib/x.y"
-# 这类明显的脚本 UA 会直接 403、body 是 "error code: 1010"），实测换成任
-# 何一个不在它黑名单里的自定义 UA 就能正常通过——不需要伪装成浏览器，一个
-# 老实标明自己身份的 UA 就够了。
+# 坑：樱花的 Cloudflare WAF 会以 403（error code: 1010）拦截默认的 Python-urllib UA，换一个自定义 UA 即可
 
 # /nodes 返回的 flag 位域（见 github.com/natfrp/api 的 openapi.yaml）。
 _NODE_FLAG_ALLOW_CREATE = 1 << 2
@@ -63,10 +55,7 @@ def _request(token: str, method: str, path: str, params: dict | None = None, tim
             body = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        # 樱花的错误响应通常是 {"code":..,"msg":"人话原因"}（比如"当前用户
-        # 无权使用该节点，请检查 VIP 是否到期"）——尽量把这句话摘出来放进
-        # 异常消息本身，GUI 层直接把 str(e) 显示给用户就有意义，不用另外
-        # 再解析一次 body。解析失败就退回原始 body/纯状态码。
+        # 错误响应通常是 {"code", "msg"}，把 msg 放进异常消息供界面直接显示；解析失败退回原始 body/状态码
         detail = body
         try:
             parsed = json.loads(body)
@@ -113,10 +102,8 @@ def get_traffic(token: str, tunnel_id: int) -> dict:
 
 
 def get_user_info(token: str) -> dict:
-    """`GET /user/info`——账号信息，关键字段：`tunnels`(隧道数上限，取代
-    猜测的免费版固定上限 2)、`group.level`(账号自己的用户组/VIP等级，拿
-    来跟 `/nodes` 每个节点的 `vip` 字段比，判断这个账号能不能用某个节
-    点)、`traffic`(`[今日已用, 总剩余]`，单位字节)。"""
+    """``GET /user/info``：tunnels（隧道数上限）、group.level（与节点 vip 字段比较判断可用性）、
+    traffic（[今日已用, 总剩余] 字节）。"""
     return _request(token, "GET", "/user/info") or {}
 
 
@@ -137,22 +124,10 @@ def node_accepts_new_tunnel(node: dict) -> bool:
 
 def sanitize_tunnel_name(cluster_folder_name: str, shard_name: str, source: str, platform: str,
                          cluster_identity: str | None = None) -> str:
-    """樱花的隧道名规则是 3-20 个字符，只能用字母数字和下划线——**不允许
-    短横线**（实测真实报错："隧道名不符合规范(3-20个字符,只能使用字母数
-    字和下划线)"）。存档目录名是用户自己起的，长度、字符集都不可控，直
-    接拼 `dstcamp-{cluster}-{shard}` 这种可读命名大概率超长/带非法字符，
-    改用短哈希：格式固定合法、确定性可复现（同一个世界每次都算出同一个
-    名字，find_dstcamp_tunnel() 才能现查匹配到）。
+    """生成确定性的隧道名（短哈希）。
 
-    `source`（`SaveSource.value`，"server"/"local"）和 `platform`
-    （`Platform.value`，"steam"/"wegame"）必须一起参与哈希，不能只用
-    `(cluster_folder_name, shard_name)`——不同来源/平台的存档目录名完全
-    可能撞同一个名字（比如"复制为服务器存档"生成的那份，或者 Steam/
-    WeGame 两边都叫 Cluster_2），只按目录名+世界名算隧道名会让它们互相
-    冒充对方的映射状态（真机复现过的 bug）。目前只有 SaveSource.SERVER
-    的存档会走到这里（sakura_tab.py 已经在 UI 层挡掉本地存档），但
-    source 仍然作为显式参数传入而不是硬编码 "server"，让这份签名本身
-    就说明清楚"隧道身份跟这两个维度绑定"这件事，不依赖调用方自觉。"""
+    坑：隧道名只允许 3-20 个字母数字下划线（不允许短横线），存档目录名不可控，所以用哈希。
+    source 和 platform 必须参与哈希：不同来源/平台的存档可能同名，只按目录名+世界名会互相冒充映射状态。"""
     identity = cluster_identity or cluster_folder_name
     digest = hashlib.sha1(f"{platform}:{source}:{identity}:{shard_name}".encode("utf-8")).hexdigest()
     return f"dc_{digest[:12]}"

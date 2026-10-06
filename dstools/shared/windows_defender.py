@@ -183,11 +183,7 @@ def _run_powershell(script: str, *, timeout: int = 20) -> subprocess.CompletedPr
 
 _FULLPATH_HELPER_SNIPPET = """
 function DstCamp-FullPath([string]$p) {
-    # [IO.Path]::GetFullPath() 在 Windows PowerShell 5.1（.NET Framework）
-    # 下遇到 '*' 会抛"非法字符路径"异常——temp_wildcard 目标的 '_MEI*'
-    # 恰好带星号，直接调用会让整个脚本在 $ErrorActionPreference='Stop'
-    # 下终止。星号是路径里唯一会出现的通配符，先换成安全占位符解析，
-    # 再换回来，就不会丢失匹配语义。
+    # 坑：PowerShell 5.1 的 GetFullPath() 遇到 '*' 会抛异常（'_MEI*' 目标带星号），先换成占位符解析再换回
     if ($p.Contains('*')) {
         $safe = $p.Replace('*', '_DSTCAMP_WILDCARD_')
         $resolved = [IO.Path]::GetFullPath($safe).TrimEnd([char[]]'\\/')
@@ -309,10 +305,7 @@ try {{
         -Wait -PassThru
     exit $process.ExitCode
 }} catch {{
-    # 不能在这里再调用 Write-Error——外层 $ErrorActionPreference='Stop'
-    # 会让 Write-Error 本身变成终止性错误，'exit 1223' 永远执行不到，
-    # 未捕获的错误会被 PowerShell 序列化成 CLIXML 写进 stderr，糊在界
-    # 面上。UAC 被拒绝、RunAs 本身失败等情况统一按 1223（取消）处理。
+    # 坑：不能调用 Write-Error（Stop 模式下它本身会终止，exit 永远执行不到）；UAC 拒绝等统一按 1223（取消）处理
     exit 1223
 }}
 """
@@ -389,15 +382,8 @@ $relay = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{relay_enc
 if (-not (Get-Command {command} -ErrorAction SilentlyContinue)) {{ exit 2 }}
 $modifyDone = $false
 try {{
-    # 整段命令执行 + 复查都包在同一个 try 里——之前复查那段代码（尤其
-    # 是 $wanted = DstCamp-FullPath $t 这行）没被任何 try/catch 罩住，
-    # 一旦抛异常就是未捕获的终止错误，PowerShell 默认以 exit 1 退出，
-    # 界面上只能看到"PowerShell exit 1"这种没有信息量的提示，还会被
-    # 误判成"修改失败"（哪怕 Add/Remove 命令本身已经真的成功了）。这
-    # 里统一兜底：捕获后把真实异常信息写进中转文件（直接 UTF8 落盘，
-    # 不走 stderr，没有代码页乱码问题），再按 $modifyDone 是否已经为
-    # true 决定退出码——命令本身没跑完是 exit 4（真失败），命令跑完了
-    # 只是后面复查环节出错是 exit 5（当成功处理）。
+    # 修改与复查包在同一个 try 里：未捕获异常会让 PowerShell 以无信息的 exit 1 退出并被误判为失败。
+    # 异常信息以 UTF-8 写入中转文件；修改未完成为 exit 4（失败），只是复查出错为 exit 5（按成功处理）
     foreach ($t in $targets) {{
         {command} -ExclusionPath $t -ErrorAction Stop
     }}

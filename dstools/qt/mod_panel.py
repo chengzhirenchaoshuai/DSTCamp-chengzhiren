@@ -1,8 +1,6 @@
-"""Mod 列表面板：图标 + 名字/ID/版本 + 开关 + 配置按钮 + 创意工坊链接 + 打开目录。
+"""Mod 列表面板：图标、名称/ID/版本、开关、配置按钮、创意工坊链接与打开目录。
 
-对应 Tk 版 features/mod/render.py（PIL 预渲染成图片 + 命中区域列表，见该文件顶部对
-ttk.Treeview 局限性的说明）——Qt 版沿用 qt/world_panel.py 的思路，直接用 QPainter
-在 QAbstractScrollArea 的视口上画可见行，不需要整图缓存/裁剪那一套。
+用 QPainter 在 QAbstractScrollArea 视口上只画可见行（与 world_panel.py 相同思路）。
 """
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
@@ -78,9 +76,7 @@ class ModListPanel(QAbstractScrollArea):
         self._default_icon_cache: dict[int, QPixmap] = {}
         self._folder_icon_cache: dict[int, QPixmap] = {}
         self._center_message = ""  # 列表为空时画在首行位置的提示（如"正在加载 Mod 列表..."）
-        # 锁定开关的"LuaJIT 补丁生效中"提示延迟显示：悬停满 0.7 秒才弹，
-        # 0.7 秒内移开就取消（这是自绘列表上的即时提示，不走 QToolTip 的
-        # 全局悬停延迟）。
+        # 锁定开关的"LuaJIT 补丁生效中"提示：悬停满 0.7 秒才弹，提前移开即取消（自绘提示，不走 QToolTip 延迟）
         self._locked_tip_timer = QTimer(self)
         self._locked_tip_timer.setSingleShot(True)
         self._locked_tip_timer.setInterval(700)
@@ -207,8 +203,7 @@ class ModListPanel(QAbstractScrollArea):
         name_font = theme.panel_font(15 * s)
         id_font = theme.panel_font(12 * s)
         btn_font = theme.panel_font(13 * s)
-        # "配置"按钮文字单独用 14 号，比链接文字（btn_font，13 号）更醒目
-        # ——之前跟链接文字共用 13，真机反馈偏小看不清。
+        # "配置"按钮文字用 14 号，比链接文字（13 号）更醒目
         cfg_font = theme.panel_font(14 * s)
         return name_font, id_font, btn_font, cfg_font
 
@@ -316,9 +311,7 @@ class ModListPanel(QAbstractScrollArea):
         self._paint_pill(painter, cols["cfg_x1"], cy - m.cfg_h / 2, m.cfg_w, m.cfg_h,
                          t("mod.config_btn"), cfg_font, enabled=row.get("has_config", False))
 
-        # 创意工坊链接 + 打开目录——打开目录图标紧跟在链接文字实际宽度之后画，不是
-        # 固定贴在整个链接列的最右端；之前固定在列宽最右端时，中文"创意工坊"这种
-        # 短文字后面会空出一大截，看起来图标离文字很远、又贴着列表右边缘很挤。
+        # 打开目录图标紧跟链接文字实际宽度之后绘制，而不是固定在列最右端
         has_link = row.get("has_link", False)
         link_color = theme.color("ACCENT") if has_link else _LINK_DISABLED
         link_text = t("mod.workshop_link_btn") if has_link else t("mod.no_workshop_link")
@@ -582,10 +575,7 @@ class ModListPanel(QAbstractScrollArea):
             return None
         if cols["cfg_x1"] <= x <= cols["cfg_x2"] and row.get("has_config"):
             return ("config", wid)
-        # 命中范围贴着实际文字宽度（跟 _paint_row 是同一次量宽），不是整个链接列
-        # 宽——链接列比文字本身宽得多，用整列宽度会让文字右边的空白也能点、鼠标
-        # 悬停还显示手型，之前真机反馈过这个问题；打开目录图标也紧跟在文字后面
-        # （同 _paint_row 的动态定位），不是固定贴着列的最右端。
+        # 命中范围贴合实际文字宽度（与 _paint_row 同一次量宽），文字右侧空白不可点
         link_text = t("mod.workshop_link_btn") if row.get("has_link") else t("mod.no_workshop_link")
         link_w = QFontMetricsF(btn_font).horizontalAdvance(link_text)
         if row.get("has_link") and cols["link_x1"] <= x <= cols["link_x1"] + link_w:

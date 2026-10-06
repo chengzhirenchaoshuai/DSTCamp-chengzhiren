@@ -1,4 +1,4 @@
-""""订阅推荐模组"引导弹窗（对应 Tk 版 ModManagerTab._open_recommend_mods）。"""
+"""订阅推荐 Mod 的引导弹窗。"""
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap

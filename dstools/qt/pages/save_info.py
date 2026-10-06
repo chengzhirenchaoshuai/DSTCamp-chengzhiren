@@ -1,8 +1,6 @@
-"""存档信息页（对应 Tk 版 features/save_browser/tab.py 的显示部分）。
+"""存档信息页：存档概览 → 世界选择 → 会话信息 → 玩家角色状态。
 
-页面从上到下：存档概览 -> 世界选择 -> 世界信息（会话）-> 每个玩家角色状态。
-取数据全部放后台线程（features/save_browser/view_data.py），界面线程只负责画；
-连续切换存档/世界时用"代数"丢弃过期结果。
+取数在后台线程（features/save_browser/view_data.py），连续切换时用"代数"丢弃过期结果。
 """
 
 import os
@@ -288,10 +286,7 @@ class SaveInfoPage(Page):
         if player.icon_path:
             pixmap = QPixmap(str(player.icon_path))
             if not pixmap.isNull():
-                # 按物理像素缩放：头像框在 125%/175% 缩放的屏幕上实际有 AVATAR_SIZE×缩放比 个
-                # 物理像素。高清头像（制作栏头像，约 150~190 像素）直接缩到这个物理尺寸并标上
-                # 像素比，Qt 不再二次放大；只有 Tab 键小头像（约 60 像素）可用时绝不放大，
-                # 按原尺寸显示——放大只会把本来就小的原图拉糊。
+                # 按物理像素缩放并设置像素比，避免 Qt 二次放大；只有约 60px 的小头像可用时不放大，按原尺寸显示
                 dpr = self.devicePixelRatioF()
                 box = round(AVATAR_SIZE * dpr)
                 if pixmap.width() > box or pixmap.height() > box:

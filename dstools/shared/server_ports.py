@@ -1,9 +1,4 @@
-"""DST 本机服务器端口解析与冲突检测。
-
-这里计算的是游戏进程最终会使用的有效端口，而不只是 INI 文件里显式写出
-来的字段。多个功能都会用到这套规则（世界创建、服务器配置、本地开服和
-内网穿透），因此放在 shared，避免各页签各自维护一份不完整的判断。
-"""
+"""计算存档各分片最终使用的本机端口并做冲突检测（世界创建、服务器配置、开服和内网穿透共用）。"""
 
 from __future__ import annotations
 
@@ -38,10 +33,8 @@ LAN_SERVER_PORT_FALLBACK = 10999
 class PortClaim:
     """一个进程准备占用的本机 UDP 端口。
 
-    ``binding=False`` 表示该端口只是配置文件里的一项取值，游戏运行时并不
-    真正绑定它（Steam 的 master_server_port / authentication_port）。冲突
-    检测要跳过这类端口，但分配新端口时仍要避开，免得和其它存档的同类配置
-    撞成一样的值。
+    ``binding=False`` 表示只是配置项、游戏运行时并不真正绑定（Steam 的 master_server_port /
+    authentication_port）：冲突检测跳过，但分配新端口时仍会避开。
     """
 
     cluster_path: str
@@ -152,11 +145,9 @@ def collect_cluster_port_claims(
         cluster_config_override: ClusterConfig | None = None,
         shard_config_overrides: dict[str, ShardConfig] | None = None,
 ) -> tuple[list[PortClaim], list[PortIssue]]:
-    """解析一个存档中指定分片实际会占用的全部本机 UDP 端口。
+    """解析存档指定分片实际占用的全部 UDP 端口（``shard_names=None`` 为全部分片）。
 
-    ``shard_names=None`` 表示全部分片。``master_port`` 只由主世界监听，
-    因此只有目标集合包含主世界时才产生这一条 claim。server.ini 中同名
-    SHARD 字段优先于 cluster.ini，符合游戏的分片覆盖规则。
+    master_port 只有主世界监听；server.ini 中的 SHARD 字段优先于 cluster.ini（游戏的分片覆盖规则）。
     """
     selected = set(shard_names) if shard_names is not None else None
     cluster_config = cluster_config_override or _cluster_config(cluster)
@@ -174,12 +165,8 @@ def collect_cluster_port_claims(
         config = config_overrides.get(shard.name) or _shard_config(shard)
         is_master = bool(config.shard.get("is_master", True))
 
-        # master_server_port / authentication_port 是 Steam 的内部端口，游戏
-        # 运行时并不真正绑定（见 cluster_config/ini_field_info.py 里人工核对
-        # 过的字段说明）。这里仍把它们收进 claims 供“分配端口”时避开，但标成
-        # binding=False 让冲突检测跳过，避免多世界存档（岛屿冒险的 Master/
-        # Caves/Hamlet/Shipwrecked/Volcano 五个世界都留空、取默认 27016/8766）
-        # 被误判成冲突。
+        # Steam 内部端口运行时不真正绑定（见 ini_field_info.py），标 binding=False：分配时避开、冲突检测跳过，
+        # 否则岛屿冒险等多世界存档都取默认 27016/8766 会被误判冲突
         server_port, server_source = _effective_server_port(
             config.network.get("server_port"), cluster=cluster, shard=shard,
             lan_restricted=lan_restricted,
@@ -231,11 +218,7 @@ def collect_cluster_port_claims(
 
 
 def find_port_conflicts(claims: Iterable[PortClaim]) -> list[PortConflict]:
-    """按本机 UDP 端口做保守冲突检测，同一 claim 的重复输入会被去重。
-
-    跳过 binding=False 的端口（游戏运行时不真正绑定的 Steam 内部端口），
-    这些端口即使多个存档共用同一个值，也不会在系统层面真正打架。
-    """
+    """按本机 UDP 端口做冲突检测（同一 claim 去重，跳过 binding=False 的端口）。"""
     by_port: dict[int, dict[tuple[str, str | None, str, int | None], PortClaim]] = {}
     for claim in claims:
         if not claim.binding:
@@ -427,10 +410,7 @@ def format_lan_port_issues(issues: Iterable[PortIssue]) -> str:
 def lan_restriction_names(
         cluster: Cluster, config: ClusterConfig | None = None,
 ) -> list[str]:
-    """返回当前开启的 LAN 限制名称（仅限局域网 / 离线模式）。
-
-    ``config`` 为空时读取磁盘上的 cluster.ini；保存流程传入尚未落盘的表单值。
-    """
+    """返回当前开启的 LAN 限制名称（仅限局域网/离线模式）；``config`` 为空时读磁盘，保存流程传入未落盘的表单值。"""
     network = (config or _cluster_config(cluster)).network
     names = []
     if network.get("lan_only_cluster", False):
@@ -441,10 +421,7 @@ def lan_restriction_names(
 
 
 def disable_lan_restrictions(cluster: Cluster) -> None:
-    """关闭仅限局域网和离线模式并原子写回 cluster.ini。
-
-    调用方负责取得用户确认，并保证存档没有进程在运行。
-    """
+    """关闭仅限局域网和离线模式并原子写回 cluster.ini（调用方负责确认且存档未运行）。"""
     config = copy.deepcopy(_cluster_config(cluster))
     config.network["lan_only_cluster"] = False
     config.network["offline_cluster"] = False
@@ -456,11 +433,9 @@ def disable_lan_restrictions(cluster: Cluster) -> None:
 
 def rewrite_cluster_ports_atomic(cluster: Cluster, used: Iterable[int], *,
                                  create_backup: bool = True) -> tuple[int, dict[str, dict[str, int]]]:
-    """把一个已停止存档的整组端口原子改成不冲突值。
+    """把已停止存档的整组端口原子改成不冲突值（调用方负责确认，且没有进程或映射在运行）。
 
-    调用方负责取得用户确认，并保证目标存档没有进程或端口映射正在运行。
-    多个 INI 无法由文件系统提供真正的跨文件事务，因此这里保留每个原文件
-    的字节；任一替换失败就逐个恢复，避免只改成功一半。
+    多个 INI 没有跨文件事务：保留各原文件字节，任一替换失败就逐个恢复。
     """
     cluster_path = cluster.path / "cluster.ini"
     cluster_config = copy.deepcopy(_cluster_config(cluster))

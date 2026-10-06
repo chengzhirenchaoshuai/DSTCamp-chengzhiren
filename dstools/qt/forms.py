@@ -1,8 +1,4 @@
-"""根据 FieldSpec 画配置表单的通用构件（服务器配置页与创建向导共用）。
-
-FieldSpec 来自 features/cluster_config/form_logic.py，只描述"这一行是什么类型、当前值是什么"；
-这里按类型选控件：开关 / 下拉 / 仅数字输入 / 单行文本 / 折行文本 / 只读文字。
-"""
+"""按 FieldSpec（form_logic.py）类型生成表单控件：开关/下拉/数字/单行/折行文本/只读文字（服务器配置页与创建向导共用）。"""
 
 from PySide6.QtCore import QRegularExpression, Qt
 from PySide6.QtGui import QRegularExpressionValidator
@@ -49,14 +45,8 @@ class FormGrid(QWidget):
             label.setToolTip(spec.description)
         editor = self._make_editor(spec, on_toggled)
         self._grid.addWidget(label, self._row, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        # 固定宽度的控件（端口号输入框/开关，或调用方显式传入 fixed_width 的短文本
-        # 字段，比如世界名称/世界编号）必须显式加 AlignLeft，不然只给了纵向对齐、
-        # 横向没给的话 Qt 会把它摆在这一格（因为列 1 撑满宽度）里说不准的位置——
-        # 真机反馈过端口号输入框会跟着窗口宽度左右挪动。可以自然撑满宽度的控件
-        # （文本框/下拉框）不加这个，让它们继续填满、不留空白。
-        # 只读字段（QLabel，设了 setMaximumWidth(360)）也必须加：不给横向对齐时，Qt 会把
-        # 这个最大宽度当成整列 1 的上限，多余宽度全摊给标签列，标签和控件被一起推到右侧，
-        # 窗口越宽越靠右（真机：内网穿透映射接管端口、"游戏端口"变只读时出现）。
+        # 固定宽度控件（端口、开关、显式 fixed_width 的短字段）和只读标签必须显式 AlignLeft：
+        # 否则端口输入框会随窗口宽度左右漂移，只读标签的 maximumWidth 还会把多余宽度推给标签列
         editor_align = Qt.AlignmentFlag.AlignVCenter
         if spec.kind in ("int", "bool", "readonly") or fixed_width is not None:
             editor_align |= Qt.AlignmentFlag.AlignLeft
@@ -108,8 +98,7 @@ class FormGrid(QWidget):
             widget.setValidator(QRegularExpressionValidator(QRegularExpression("[0-9]*")))
             lo, hi = spec.limits
             widget.setToolTip(t("cluster.range_hint", min=lo, max=hi))
-            # 端口这类数字字段最多 5 位数，没必要跟着表单所在列一起拉伸；固定宽度，
-            # 不随窗口缩放变化（真机反馈过端口号输入框跟着变宽很奇怪）。
+            # 端口等数字字段最多 5 位，固定宽度不随窗口拉伸
             widget.setFixedWidth(100)
         return FieldEditor(spec, widget, widget.text)
 

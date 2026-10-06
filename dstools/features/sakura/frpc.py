@@ -1,10 +1,4 @@
-"""SakuraFrp 客户端 frpc.exe 的本地进程生命周期管理。
-
-进程生命周期参考 features/local_service/dedicated_server.py 的
-ServerManager 三件套——同样是"长驻子进程，stdout 走管道由 GUI 轮询，停止
-要在后台线程跑"。跟 DST 服务器进程唯一的实质区别：frpc 没有 c_shutdown()
-这种可以发送的优雅关闭指令，停止直接 terminate() -> kill()。
-"""
+"""SakuraFrp 的 frpc.exe 进程生命周期管理（长驻子进程，stdout 管道轮询；无优雅关闭指令，停止即 terminate → kill）。"""
 
 import queue
 import subprocess
@@ -27,15 +21,10 @@ class FrpcStatus(Enum):
 
 
 class FrpcProcess:
-    """一个 (cluster, shard) 对应的 frpc.exe 子进程。
+    """一个 (存档, 世界) 的 frpc.exe 子进程，用 ``-f <Token>:<隧道ID>`` 启动，由 frpc 向樱花拉取配置。
 
-    用 `-f <Token>:<隧道ID>` 启动（SakuraFrp 官方文档"frpc 基本使用指
-    南"里的写法），不是传统 frp 的 `-c <配置文件>`——frpc 自己拿着 Token
-    向 SakuraFrp 服务器现拉配置，DSTCamp 不需要在本地生成/维护一份 frpc
-    配置文件。**注意**：只有从樱花后台"软件下载"页单独下载的独立版
-    frpc 才能这样直接运行；SakuraFrp Launcher 安装包里带的那份 frpc.exe
-    是锁死的，只认自己的 SakuraFrpService 调用，任何参数都会被拒绝并打
-    印"is not intended to be run directly"，不能拿来用。
+    坑：只有樱花后台单独下载的独立版 frpc 能这样运行；启动器安装包里的 frpc.exe 只认 SakuraFrpService，
+    直接运行会提示 "is not intended to be run directly"。
     """
 
     def __init__(self, cluster_path: Path, shard_name: str, frpc_exe: Path, token: str, tunnel_id: int):
@@ -50,10 +39,7 @@ class FrpcProcess:
         self._out_queue: "queue.Queue[str]" = queue.Queue()
 
     def start(self) -> None:
-        # frpc.exe 被杀毒软件隔离/手动删除时，Popen 会抛 FileNotFoundError，
-        # 之前没捕获，异常被 Tk 回调吞掉，用户点启动"没反应"却不知道为什么。
-        # 这里提前检查文件存在性并捕获 OSError，记下可读的失败原因，让 UI 能
-        # 显示"启动失败 + 原因"。
+        # 被杀软隔离/删除时 Popen 抛 FileNotFoundError，提前检查并记录可读的失败原因
         if not self.frpc_exe.exists():
             self.status = FrpcStatus.CRASHED
             self.error = "frpc.exe 不存在（可能被杀毒软件隔离或已手动删除）"
@@ -108,8 +94,7 @@ class FrpcProcess:
                 pass
 
     def stop_blocking(self, term_timeout: float = 5.0) -> None:
-        """frpc 没有优雅关闭指令，直接 terminate -> kill。会阻塞调用方所在
-        线程直到进程退出，调用方必须放到后台线程跑，不要在 Tk 主线程直接调用。"""
+        """terminate → kill，阻塞到进程退出，须在后台线程调用。"""
         self.status = FrpcStatus.STOPPING
         self.terminate()
         deadline = time.monotonic() + term_timeout
@@ -123,10 +108,7 @@ class FrpcProcess:
 
 
 class FrpcManager:
-    """管理这个 DSTCamp 进程自己启动的 frpc 子进程集合，key 用
-    (cluster.path 字符串, shard 名字)，跟 dedicated_server.ServerManager 同一
-    个键规则。stop() 的回调在后台线程里触发，调用方要用 .after(0, ...) 转回
-    Tk 主线程。"""
+    """管理本进程启动的 frpc，key 为 (存档路径, 世界名)；stop() 回调在后台线程触发，操作界面需转回界面线程。"""
 
     def __init__(self):
         self._procs: dict[tuple[str, str], FrpcProcess] = {}

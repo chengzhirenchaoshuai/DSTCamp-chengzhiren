@@ -194,10 +194,7 @@ def _draw_card(painter: QPainter, rect: QRectF, entry: ExportModEntry, icon, fon
 
 
 def render_mod_list_image(entries: list[ExportModEntry], icon_images: dict, title: str, subtitle: str) -> QImage:
-    """把条目画成一张图片（界面线程调用：用到 QPixmap 和主题字体）。
-
-    subtitle 是"存档 · 世界 · 数量 · 时间"格式的文案，这里从右边拆成横幅里的几个标签；
-    从右拆是因为只有存档名可能自带" · "。"""
+    """把条目画成一张图片（界面线程调用）。subtitle 为"存档 · 世界 · 数量 · 时间"，从右拆分（只有存档名可能含" · "）。"""
     chips = [part for part in subtitle.rsplit(" · ", 3) if part.strip()]
     cols = _column_count(len(entries))
     rows = max(1, (len(entries) + cols - 1) // cols)
@@ -280,7 +277,7 @@ class ModListImageDialog(dialogs.Dialog):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
-        # 构造时 resize 发生在布局生效之前，那时滚动区域还很窄；显示后布局到位再按实际宽度算一次。
+        # 构造时布局尚未生效、滚动区还很窄，显示后按实际宽度再算一次
         QTimer.singleShot(0, self._update_preview)
 
     def _update_preview(self) -> None:

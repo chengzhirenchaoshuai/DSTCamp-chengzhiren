@@ -1,8 +1,4 @@
-"""本地服务器页：一个正在运行的世界的控制台标签（对应 Tk 版 _ConsolePane）。
-
-只读日志 + 命令输入框 + 常用指令快捷按钮 + 搜索栏 + 崩溃诊断/Mod 加载检查提示条。
-不依赖 Tk；由 qt/pages/local_service.py 的定时器驱动 pump()。
-"""
+"""运行中世界的控制台标签：只读日志、命令输入、快捷指令、搜索栏、崩溃诊断与 Mod 加载提示条（由本地服务器页定时器驱动 pump()）。"""
 
 from pathlib import Path
 
@@ -128,10 +124,7 @@ class TabCloseButton(QAbstractButton):
 
 
 class _ConsoleTabBar(QTabBar):
-    """世界页签条：每个页签的关闭角标由这里手动摆到页签右上角。
-
-    Qt 自带的页签按钮（setTabButton）只能放在文字左右并垂直居中，摆不到角上，
-    所以角标只作为普通子控件挂在页签条上，按 tabData 记在对应页签里，布局变化时重新定位。"""
+    """世界页签条：关闭角标手动摆到页签右上角（setTabButton 只能放在文字左右），布局变化时重新定位。"""
 
     def place_close_buttons(self) -> None:
         alive = set()
@@ -288,13 +281,13 @@ class ConsolePane(QWidget):
         search_row.addWidget(up_btn)
         search_row.addWidget(down_btn)
         search_row.addWidget(close_btn)
-        # 搜索栏常驻显示（之前默认隐藏、只能按 Ctrl+F 打开，界面上看不到入口）
+        # 搜索栏常驻显示，提供可见入口（也可 Ctrl+F）
         self._search_line.installEventFilter(self)  # Shift+Enter 跳到上一个
         outer.addWidget(self._search_bar)
 
         self.text = QPlainTextEdit()
         self.text.setReadOnly(True)
-        self.text.setMaximumBlockCount(20_000)  # 对应 Tk 版 _CONSOLE_MAX_LINES
+        self.text.setMaximumBlockCount(20_000)
         self.text.setFont(theme.font("FONT_SIZE_SM"))
         outer.addWidget(self.text, 1)
 

@@ -101,9 +101,7 @@ class WorkshopModStatus:
                 WorkshopModState.MISSING,
                 WorkshopModState.UPDATE_AVAILABLE,
                 WorkshopModState.SUSPECTED_OUTDATED,
-                # 新订阅的 V1 Mod 可能只有有效 Legacy 包、尚未展开运行
-                # 目录；仍应显示“更新”，由更新流程决定下载还是直接复用
-                # 并部署现有包。
+                # 新订阅的 V1 可能只有有效 Legacy 包尚未展开，仍显示"更新"，由更新流程决定下载或直接部署
                 WorkshopModState.LEGACY_PACKAGE_READY,
             }
         )
@@ -389,10 +387,8 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
         else ""
     )
 
-    # Steam Workshop 的普通标签会把作者填写的值自动转成小写，例如本地
-    # ``V0.1.5`` 的远程标签会变成 ``v0.1.5``。比较时复用 ModIndex 版本层
-    # 的“去首尾空白 + 小写”规则；原始字符串仍保留给界面显示。不移除 V
-    # 前缀、不把数字重新格式化，避免把真正不同的版本误判为相同。
+    # Workshop 标签会把值转为小写（V0.1.5 → v0.1.5），比较时只做"去首尾空白 + 小写"，不去 V 前缀、
+    # 不重排数字，原始字符串仍用于显示
     remote_version = evidence.remote_version.strip()
     if (
         remote_version
