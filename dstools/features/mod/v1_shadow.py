@@ -67,9 +67,8 @@ def find_shadowed_mods(workshop_ids, server_mods_root: Path, workshop_content_ro
             continue
         result.append(ShadowedMod(
             workshop_id, shadow_path, v2_path,
-            _version_of(workshop_id, shadow_path) if with_versions else "",
-            _version_of(workshop_id, v2_path) if with_versions else "",
-            _name_of(v2_path),
+            shadow_version=_version_of(workshop_id, shadow_path) if with_versions else "",
+            name=_name_of(v2_path),
         ))
     return result
 

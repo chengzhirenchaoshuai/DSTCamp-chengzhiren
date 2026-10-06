@@ -599,5 +599,20 @@ def test_export_entries_keep_enabled_server_mods_only():
     assert (entries[1].version, entries[1].id_text) == ("", "")
 
 
+def test_shadowed_v1_copy_is_detected_only_when_v2_exists():
+    """专服 mods 里的旧副本只有在 Workshop 已有 V2 内容时才算挡住新版。"""
+    from dstools.features.mod.v1_shadow import find_shadowed_mods
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        mods, content = root / "mods", root / "content"
+        for wid in ("111", "222"):
+            (mods / f"workshop-{wid}").mkdir(parents=True)
+        (content / "111").mkdir(parents=True)
+        (content / "111" / "modinfo.lua").write_text('name = "New"', encoding="utf-8")
+        found = find_shadowed_mods(["workshop-111", "222", "333"], mods, content, with_versions=False)
+    assert [(m.workshop_id, m.name) for m in found] == [("111", "New")]
+
+
 if __name__ == "__main__":
     run(globals())

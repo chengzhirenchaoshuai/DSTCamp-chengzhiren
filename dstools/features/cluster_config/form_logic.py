@@ -241,19 +241,16 @@ def load_id_list(cluster: Cluster, path_attr: str) -> IdList:
     nicknames = known_nicknames(cluster.shards) if cluster.source == SaveSource.SERVER else {}
     labels = [f"{a}（{nicknames[a]}）" if nicknames.get(a) else a for a in ids]
     row_ids: list[str | None] = list(ids)
-    hint = None
     if path_attr == "adminlist_path" and cluster.source == SaveSource.SERVER:
-        # 服务器令牌所有者天然拥有管理员权限（游戏引擎自己认），不需要写进 adminlist.txt；
-        # 只追加一条只读提示帮用户确认，它不是真实文件内容
+        # 令牌所有者天然是管理员（引擎认定），不写进文件，只追加一行只读提示
         owner_id = extract_token_owner_id(read_token(cluster.token_path)) if cluster.token_path else None
         if owner_id and owner_id not in ids:
-            hint = t("admin.token_owner_hint", id=owner_id)
-            labels.append(hint)
+            labels.append(t("admin.token_owner_hint", id=owner_id))
             row_ids.append(None)
     if not labels:
         labels.append(t("blocklist.empty") if path_attr == "blocklist_path" else t("admin.empty"))
         row_ids.append(None)
-    return IdList(labels, row_ids, hint)
+    return IdList(labels, row_ids)
 
 
 def is_valid_dst_user_id(value: str) -> bool:
