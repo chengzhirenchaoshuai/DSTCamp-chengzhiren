@@ -59,6 +59,57 @@ def get_documents_dir() -> Path:
     return Path.home() / "Documents"
 
 
+# ── 关闭电源节流（EcoQoS） ─────────────────────────────────────────
+# 进程没有显式声明时，Windows 会按启发式规则对后台/无窗口进程做电源节流
+# （降频、调度到大小核 CPU 的能效核、忽略高精度计时器请求）。专服无窗口，
+# 开服工具切到后台后可能被判为可节流，导致模拟跟不上、主机性能变黄。
+# 这里对专服进程显式声明"不节流"，参考微软 SetProcessInformation 文档。
+
+_PROCESS_SET_INFORMATION = 0x0200
+_PROCESS_POWER_THROTTLING_INFO_CLASS = 4  # PROCESS_INFORMATION_CLASS.ProcessPowerThrottling
+_PROCESS_POWER_THROTTLING_CURRENT_VERSION = 1
+_PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1
+_PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION = 0x4
+
+
+def _disable_power_throttling(pid: int) -> bool:
+    """对指定进程关闭执行速度节流与计时器精度节流，返回是否成功。
+
+    ControlMask 置位、StateMask 清零表示"由程序接管且始终不节流"。旧系统
+    不支持某个标志位时整体调用会失败，此时退回只关执行速度节流；失败不影响开服。
+    """
+    import ctypes
+    from ctypes import wintypes
+
+    class _ThrottlingState(ctypes.Structure):
+        _fields_ = [("Version", wintypes.ULONG),
+                    ("ControlMask", wintypes.ULONG),
+                    ("StateMask", wintypes.ULONG)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    set_info = getattr(kernel32, "SetProcessInformation", None)
+    if set_info is None:
+        return False
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    set_info.restype = wintypes.BOOL
+    set_info.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+
+    handle = kernel32.OpenProcess(_PROCESS_SET_INFORMATION, False, pid)
+    if not handle:
+        return False
+    try:
+        for mask in (_PROCESS_POWER_THROTTLING_EXECUTION_SPEED | _PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION,
+                     _PROCESS_POWER_THROTTLING_EXECUTION_SPEED):
+            state = _ThrottlingState(_PROCESS_POWER_THROTTLING_CURRENT_VERSION, mask, 0)
+            if set_info(handle, _PROCESS_POWER_THROTTLING_INFO_CLASS, ctypes.byref(state), ctypes.sizeof(state)):
+                return True
+        return False
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 # ── Steam 专用服务器安装目录发现 ──────────────────────────────────
 # 注册表读取 + libraryfolders.vdf 解析统一放到 steam_discovery.py（原来
 # 这里和 modinfo_reader.py 各写了一份，后者是硬编码猜路径的弱版本，导致
@@ -344,7 +395,9 @@ class ServerProcess:
             self.cluster_name, self.shard_name, self.conf_dir_arg,
             self.ugc_directory, self.extra_args
         )
-        creationflags = subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0
+        # 专服没有窗口，拿不到前台时间片加成；提到"高于正常"，避免和同机
+        # 前台运行的游戏客户端等程序抢 CPU 时吃亏。
+        creationflags = (subprocess.CREATE_NO_WINDOW | subprocess.ABOVE_NORMAL_PRIORITY_CLASS) if IS_WINDOWS else 0
         self.proc = subprocess.Popen(
             [str(exe)] + args,
             cwd=str(exe.parent),
@@ -352,6 +405,8 @@ class ServerProcess:
             text=True, encoding="utf-8", errors="replace",
             creationflags=creationflags,
         )
+        if IS_WINDOWS:
+            _disable_power_throttling(self.proc.pid)
         self.status = ServerStatus.RUNNING
         threading.Thread(target=self._read_loop, daemon=True).start()
 
