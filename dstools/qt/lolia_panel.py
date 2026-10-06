@@ -39,7 +39,7 @@ from dstools.shared import app_settings
 from dstools.shared.resource_paths import data_dir, runtime_tool_path
 from dstools.shared.server_ports import stable_path_key
 
-_FRPC_CONFIG_DIR_NAME = "lolia_frpc_config"
+_FRPC_DATA_NAME = "lolia_frpc_config"
 
 
 def _frpc_exe_path():
@@ -483,7 +483,7 @@ class LoliaPanel(QWidget):
         return cluster.path / shard.name
 
     def _frpc_config_path(self, cluster, shard):
-        root = data_dir(_FRPC_CONFIG_DIR_NAME)
+        root = data_dir(_FRPC_DATA_NAME)
         return root / f"{cluster.path.name}__{stable_path_key(cluster.path)}__{shard.name}.toml"
 
     def has_active_mapping(self, cluster, shard) -> bool:

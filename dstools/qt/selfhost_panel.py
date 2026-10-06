@@ -34,7 +34,7 @@ from dstools.qt.lan_mapping_guard import ensure_lan_free_for_mapping
 from dstools.shared.resource_paths import data_dir, runtime_tool_path
 from dstools.shared.server_ports import stable_path_key
 
-_FRPC_CONFIG_CACHE_NAME = "frp_selfhost_config"
+_FRPC_DATA_NAME = "frp_selfhost_config"
 MIHOMO_RELEASES_URL = "https://github.com/MetaCubeX/mihomo/releases"
 MIHOMO_LANZOU_URL = "https://wwblt.lanzout.com/iN5Vd4714e6h"
 MIHOMO_LANZOU_CODE = "c0mu"
@@ -854,7 +854,7 @@ class SelfHostPanel(QWidget):
 
     # ── frpc 本地进程 ───────────────────────────────────────────────────
     def _frpc_config_path(self, cluster_path):
-        root = data_dir(_FRPC_CONFIG_CACHE_NAME, legacy_cache_name=_FRPC_CONFIG_CACHE_NAME)
+        root = data_dir(_FRPC_DATA_NAME, legacy_cache_name=_FRPC_DATA_NAME)
         current = root / f"{cluster_path.name}__{stable_path_key(cluster_path)}.toml"
         if current.exists():
             return current

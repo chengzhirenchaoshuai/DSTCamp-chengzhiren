@@ -1,4 +1,18 @@
-"""统一解析只读发布资源、外置工具和可写运行时目录。"""
+"""统一解析只读发布资源与可写运行时目录。
+
+固定资源（每次启动都要用，随 EXE 打包，只读）：
+    icons/{app,ui,world,avatars,recommended}  tools/{fonts,ktools,vcredist,frp_selfhost,frpc-sakura}
+
+%APPDATA%/DSTCamp/（运行时可写）：
+    settings.json   全部用户设置
+    cache/          可随时清空、按需重建（可在设置中改位置，须为纯 ASCII 路径）：
+                    mod_full_resolve、mod_versions、mod_chs_translation、mod_icons/<平台>、legacy_v1_read、
+                    world_mod_icons、character_icons、connection_log、lobby_accel_mihomo、runtime/{ktools,ktech_jobs}
+    data/           需要保留的用户数据：background、player_registry、port_backups、auto_restart、updates、
+                    runtime_tools（长驻工具的解压副本）、frpc_config / frp_selfhost_config / lolia_frpc_config
+    security/       凭据与主机信任：frp_selfhost（SSH 密钥/known_hosts）、lobby_accel_wireguard、
+                    lobby_accel_mihomo、lolia（OAuth 令牌）
+"""
 
 import gzip
 import hashlib

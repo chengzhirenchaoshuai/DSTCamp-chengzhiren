@@ -38,7 +38,7 @@ from dstools.shared.token_manager import is_valid_token, mask_token
 
 _FALLBACK_MAX_TUNNELS = 2
 _SUB_TAB_KEYS = ["sakura", "lolia", "selfhost"]  # 子页签顺序，同时是 nat_sub_tab 的取值
-_FRPC_CACHE_NAME = "frpc_config"
+_FRPC_DATA_NAME = "frpc_config"
 
 
 def _format_bytes_adaptive(num_bytes: float) -> str:
@@ -54,7 +54,7 @@ def _format_bytes_adaptive(num_bytes: float) -> str:
 def _frpc_pointer_path(cluster_path, shard_name, app_env):
     """本地隧道 ID 指针文件路径（不是完整 frpc 配置，见 dedicated_server 同类说明）。"""
     from dstools.shared.resource_paths import data_dir
-    root = data_dir(_FRPC_CACHE_NAME, legacy_cache_name=_FRPC_CACHE_NAME)
+    root = data_dir(_FRPC_DATA_NAME, legacy_cache_name=_FRPC_DATA_NAME)
     current = root / f"{cluster_path.name}__{stable_path_key(cluster_path)}__{shard_name}.txt"
     if current.exists():
         return current

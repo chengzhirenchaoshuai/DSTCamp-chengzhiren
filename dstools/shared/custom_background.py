@@ -6,11 +6,11 @@ from pathlib import Path
 from dstools.shared.app_settings import get_custom_bg_filename, set_custom_bg_filename
 from dstools.shared.resource_paths import data_dir
 
-_CACHE_NAME = "background"
+_DATA_NAME = "background"
 
 
-def _cache_dir() -> Path:
-    return data_dir(_CACHE_NAME, legacy_cache_name=_CACHE_NAME)
+def _data_dir() -> Path:
+    return data_dir(_DATA_NAME, legacy_cache_name=_DATA_NAME)
 
 
 def get_custom_bg_path() -> Path | None:
@@ -18,14 +18,14 @@ def get_custom_bg_path() -> Path | None:
     name = get_custom_bg_filename()
     if not name:
         return None
-    path = _cache_dir() / name
+    path = _data_dir() / name
     return path if path.exists() else None
 
 
 def set_custom_bg_image(source: Path) -> Path:
     """复制一份到数据目录（保留扩展名）并覆盖旧图，原图移动或删除不影响已选背景。"""
-    _clear_cached_file()
-    d = _cache_dir()
+    _clear_saved_file()
+    d = _data_dir()
     d.mkdir(parents=True, exist_ok=True)
     dest = d / f"custom_bg{source.suffix.lower()}"
     shutil.copyfile(source, dest)
@@ -35,12 +35,12 @@ def set_custom_bg_image(source: Path) -> Path:
 
 def clear_custom_bg_image() -> None:
     """删除背景图文件并清空设置。"""
-    _clear_cached_file()
+    _clear_saved_file()
     set_custom_bg_filename(None)
 
 
-def _clear_cached_file() -> None:
-    d = _cache_dir()
+def _clear_saved_file() -> None:
+    d = _data_dir()
     if not d.exists():
         return
     for f in d.iterdir():
