@@ -1,0 +1,4 @@
+# 源码与文档统一使用 LF 换行
+*.py text eol=lf
+*.md text eol=lf
+*.toml text eol=lf

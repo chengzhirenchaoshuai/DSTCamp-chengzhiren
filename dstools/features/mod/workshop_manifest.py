@@ -117,7 +117,3 @@ def verify_mod_manifest(
         )
     except (ManifestFormatError, OSError, ValueError) as exc:
         return ManifestVerification(True, False, error=str(exc))
-
-
-
-

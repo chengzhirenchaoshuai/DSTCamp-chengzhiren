@@ -704,4 +704,3 @@ def _lua_value(value: Any) -> str:
         return f"{{ {items} }}"
     else:
         return f'"{value}"'
-

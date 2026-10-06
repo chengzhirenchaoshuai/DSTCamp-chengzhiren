@@ -143,4 +143,3 @@ class LobbyAccelCoordinator:
         self.mihomo.stop()
         self.status = LobbyAccelStatus.STOPPED
         self.error = None
-

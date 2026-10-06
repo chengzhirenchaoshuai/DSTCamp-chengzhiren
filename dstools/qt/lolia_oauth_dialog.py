@@ -128,4 +128,3 @@ class LoliaOAuthAppDialog(dialogs.Dialog):
             lolia_api.clear_tokens()
             self.changed = True
         self.accept()
-

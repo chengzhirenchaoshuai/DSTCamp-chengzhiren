@@ -1463,4 +1463,3 @@ class SelfHostPanel(QWidget):
         progress.scroll_to_start()
         progress.finish()
         self._refresh_lobby_row()
-

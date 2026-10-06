@@ -2018,5 +2018,3 @@ def subscribe_workshop_items(
         {"action": "subscribe", "ids": ids, "dll_path": str(dll_path) if dll_path else None}
     )
     return {int(key): str(value) for key, value in (payload.get("results") or {}).items()}
-
-
