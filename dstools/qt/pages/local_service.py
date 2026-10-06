@@ -981,9 +981,16 @@ class LocalServicePage(Page):
             reason = t("local.luajit_blocked_running")
             self._set_luajit_btns(reason, reason)
             return
+        shared = luajit_injector.uses_game_bin64(bin64_dir.parent)
         state = luajit_injector.detect_state(bin64_dir)
+        if shared and luajit_injector.game_trigger_in_use(bin64_dir):
+            self._luajit_status_label.setText(t("local.luajit_state_active_shared"))
+            self._luajit_install_btn.setText(t("local.luajit_reinstall_btn"))
+            reason = t("local.luajit_blocked_game_running")
+            self._set_luajit_btns(reason, reason)
+            return
         if state is luajit_injector.InjectorState.ACTIVE:
-            self._luajit_status_label.setText(t("local.luajit_state_active"))
+            self._luajit_status_label.setText(t("local.luajit_state_active_shared" if shared else "local.luajit_state_active"))
             self._luajit_install_btn.setText(t("local.luajit_reinstall_btn"))
             self._set_luajit_btns("", "")
         elif state is luajit_injector.InjectorState.DISABLED_LEFTOVER:
@@ -1005,6 +1012,9 @@ class LocalServicePage(Page):
         if plan.blocked_reason == "server_running":
             dialogs.show_warning(self.window(), t("local.luajit_confirm_install_title"), t("local.luajit_blocked_running"))
             return
+        if plan.blocked_reason == "game_running":
+            dialogs.show_warning(self.window(), t("local.luajit_confirm_install_title"), t("local.luajit_blocked_game_running"))
+            return
         if plan.blocked_reason == "workshop_not_subscribed":
             if dialogs.ask_yes_no(self.window(), t("local.luajit_confirm_install_title"),
                                    t("local.luajit_workshop_not_subscribed_msg")):
@@ -1012,9 +1022,10 @@ class LocalServicePage(Page):
             return
         cluster = self.get_cluster()
         mod_overrides_paths = [s.mod_overrides_path for s in cluster.shards if s.mod_overrides_path] if cluster else []
+        shared = luajit_injector.uses_game_bin64(plan.bin64_dir.parent)
         if not dialogs.ask_yes_no_with_auxiliary(
                 self.window(), t("local.luajit_confirm_install_title"),
-                t("local.luajit_confirm_install_msg"),
+                t("local.luajit_confirm_install_msg_shared" if shared else "local.luajit_confirm_install_msg"),
                 t("local.luajit_runtime_btn"), self._open_luajit_runtime_download, min_width=560):
             return
         self._luajit_busy = True
@@ -1052,7 +1063,13 @@ class LocalServicePage(Page):
         if self._any_running_for_bin64(bin64_dir):
             dialogs.show_warning(self.window(), t("local.luajit_confirm_uninstall_title"), t("local.luajit_blocked_running"))
             return
-        if not dialogs.ask_yes_no(self.window(), t("local.luajit_confirm_uninstall_title"), t("local.luajit_confirm_uninstall_msg")):
+        shared = luajit_injector.uses_game_bin64(bin64_dir.parent)
+        if shared and luajit_injector.game_trigger_in_use(bin64_dir):
+            dialogs.show_warning(self.window(), t("local.luajit_confirm_uninstall_title"), t("local.luajit_blocked_game_running"))
+            return
+        # 游戏专服与客户端共用游戏 bin64 的 Winmm.dll：卸载会连客户端的 LuaJIT 一起卸载，必须讲清楚。
+        message = t("local.luajit_confirm_uninstall_msg_shared" if shared else "local.luajit_confirm_uninstall_msg")
+        if not dialogs.ask_yes_no(self.window(), t("local.luajit_confirm_uninstall_title"), message):
             return
         lines: list[str] = []
         luajit_injector.apply_uninstall(bin64_dir, on_log=lines.append)

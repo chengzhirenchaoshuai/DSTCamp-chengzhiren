@@ -1,9 +1,16 @@
-"""管理 Steam 专服的 DontStarveLuaJIT2 隔离副本。
+"""管理 Steam 开服程序的 DontStarveLuaJIT2 注入。
 
-真实 ``bin64`` 永不修改；``Winmm.dll`` 注入壳装入同级 ``luajit`` 副本，
-真实 ``Injector.dll`` 与依赖留在 Workshop Mod 目录，并用作者约定的路径
-标记连接两者。游戏版本、Mod 声明版本、布局或注入壳内容变化时更新副本。
-WeGame 不在支持范围内。
+两种方式，按开服程序目录自动区分：
+
+- 独立专服：真实 ``bin64`` 永不修改；``Winmm.dll`` 注入壳装入同级 ``luajit``
+  隔离副本。游戏版本、Mod 声明版本、布局或注入壳内容变化时更新副本。
+- 游戏专服（游戏客户端目录自带的开服程序）：按作者 README 的方式只把
+  ``Winmm.dll`` 放进游戏 ``bin64``——"专用服务器同理（同样只装 Winmm.dll 到
+  游戏 bin64）"，卸载即删除它。客户端与游戏专服共用这一份，是否已安装只看
+  ``Winmm.dll`` 在不在，与 DSTCamp 的 LuaJIT 开关无关。
+
+两种方式都把真实 ``Injector.dll`` 与依赖留在 Workshop Mod 目录，并用作者约定
+的路径标记 ``data/unsafedata/ds_luajit_injector.path`` 连接。WeGame 不在支持范围内。
 """
 
 import hashlib
@@ -72,6 +79,48 @@ _LEGACY_MOD_FOLDER_NAME = "dstcamp_luajit_mod"
 
 def get_luajit_dir(install_dir: Path) -> Path:
     return install_dir / LUAJIT_DIR_NAME
+
+
+def uses_game_bin64(install_dir: Path) -> bool:
+    """游戏专服直接装进游戏 bin64（与客户端共用），独立专服用隔离副本。"""
+    from dstools.features.local_service.dedicated_server import is_client_install_dir
+    return is_client_install_dir(install_dir)
+
+
+def _game_trigger_file(bin64_dir: Path) -> Path | None:
+    """游戏 bin64 里现有的注入壳；作者脚本两种大小写都会处理。"""
+    for name in (TRIGGER_FILE, "winmm.dll"):
+        candidate = bin64_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _file_in_use(path: Path) -> bool:
+    """已被进程加载的 DLL 不能以写方式打开（共享冲突），用来判断游戏或服务器是否正在用它。"""
+    try:
+        with path.open("r+b"):
+            return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def game_trigger_in_use(bin64_dir: Path) -> bool:
+    """游戏专服模式下 Winmm.dll 是否正被游戏客户端或服务器占用（此时无法覆盖或删除）。"""
+    trigger = _game_trigger_file(bin64_dir)
+    return trigger is not None and _file_in_use(trigger)
+
+
+def _remove_stale_luajit_copy(install_dir: Path, log) -> None:
+    """清理 DSTCamp 早先在游戏目录生成的 luajit 隔离副本。只删带本工具
+    version.json 标记的目录，不碰别人放的同名文件夹。"""
+    luajit_dir = get_luajit_dir(install_dir)
+    if (luajit_dir / _MARKER_FILE).is_file():
+        shutil.rmtree(luajit_dir, ignore_errors=True)
+        if not luajit_dir.exists():
+            log(t("local.luajit_log_stale_copy_removed", dir=str(luajit_dir)))
 
 
 def current_game_build_id(install_dir: Path) -> str | None:
@@ -278,6 +327,8 @@ def detect_state(bin64_dir: Path) -> InjectorState:
     防止界面显示已启用但实际启动时悄悄回退。配套 Mod 的订阅状态另见
     is_workshop_subscribed()。"""
     install_dir = bin64_dir.parent
+    if uses_game_bin64(install_dir):
+        return InjectorState.ACTIVE if _game_trigger_file(bin64_dir) else InjectorState.NOT_INSTALLED
     if not _runtime_ready(install_dir):
         return InjectorState.NOT_INSTALLED
     return InjectorState.ACTIVE if get_luajit_enabled() else InjectorState.DISABLED_LEFTOVER
@@ -287,7 +338,7 @@ def detect_state(bin64_dir: Path) -> InjectorState:
 class InstallPlan:
     bin64_dir: Path | None = None
     current_state: InjectorState = InjectorState.NOT_INSTALLED
-    # "bin64_not_found" / "server_running" / "workshop_not_subscribed" / None
+    # "bin64_not_found" / "server_running" / "game_running" / "workshop_not_subscribed" / None
     blocked_reason: str | None = None
 
 
@@ -303,6 +354,9 @@ def plan_install(bin64_dir: Path | None, server_running: bool) -> InstallPlan:
     if server_running:
         return InstallPlan(bin64_dir=bin64_dir, current_state=detect_state(bin64_dir),
                             blocked_reason="server_running")
+    if uses_game_bin64(bin64_dir.parent) and game_trigger_in_use(bin64_dir):
+        return InstallPlan(bin64_dir=bin64_dir, current_state=detect_state(bin64_dir),
+                            blocked_reason="game_running")
     if not is_workshop_subscribed():
         return InstallPlan(bin64_dir=bin64_dir, current_state=detect_state(bin64_dir),
                             blocked_reason="workshop_not_subscribed")
@@ -405,6 +459,7 @@ def apply_install(bin64_dir: Path, mod_overrides_paths: list[Path], on_log=None)
 
     result = InstallResult()
     install_dir = bin64_dir.parent
+    game_bin64 = uses_game_bin64(install_dir)
 
     luajit_dir = get_luajit_dir(install_dir)
     try:
@@ -416,17 +471,23 @@ def apply_install(bin64_dir: Path, mod_overrides_paths: list[Path], on_log=None)
             log(result.errors[-1])
             return result
 
-        _rebuild_luajit_copy(bin64_dir, luajit_dir, source_dir, on_log=log)
-        write_injector_path_marker(install_dir, injector_path)
+        if game_bin64:
+            # 作者方式：只把注入壳放进游戏 bin64，客户端与游戏专服共用。
+            _copy_injector_shell_into(source_dir, bin64_dir, on_log=log)
+            write_injector_path_marker(install_dir, injector_path)
+            _remove_stale_luajit_copy(install_dir, log)
+        else:
+            _rebuild_luajit_copy(bin64_dir, luajit_dir, source_dir, on_log=log)
+            write_injector_path_marker(install_dir, injector_path)
 
-        build_id = current_game_build_id(install_dir) or ""
-        luajit_version = current_injector_version() or ""
-        write_marker(luajit_dir, LuajitMarker(
-            DST_version=build_id,
-            luajit_version=luajit_version,
-            layout_version=_LAYOUT_VERSION,
-            trigger_sha256=_file_sha256(trigger_path),
-        ))
+            build_id = current_game_build_id(install_dir) or ""
+            luajit_version = current_injector_version() or ""
+            write_marker(luajit_dir, LuajitMarker(
+                DST_version=build_id,
+                luajit_version=luajit_version,
+                layout_version=_LAYOUT_VERSION,
+                trigger_sha256=_file_sha256(trigger_path),
+            ))
 
         n_shards = 0
         for mo_path in mod_overrides_paths:
@@ -436,7 +497,9 @@ def apply_install(bin64_dir: Path, mod_overrides_paths: list[Path], on_log=None)
             n_shards += 1
         log(t("local.luajit_log_mod_enabled", n=n_shards))
 
-        set_luajit_enabled(True)
+        # 全局开关只管独立专服的隔离副本；游戏专服是否生效只看 Winmm.dll。
+        if not game_bin64:
+            set_luajit_enabled(True)
         result.ok = True
     except Exception as exc:
         detail = f"{type(exc).__name__}: {exc}"
@@ -455,6 +518,23 @@ def apply_uninstall(bin64_dir: Path, on_log=None) -> bool:
         if on_log:
             on_log(line)
 
+    install_dir = bin64_dir.parent
+    if uses_game_bin64(install_dir):
+        # 作者的卸载方式：删除游戏 bin64 的注入壳和路径标记；客户端的 LuaJIT 一并卸载。
+        removed = False
+        try:
+            for name in (TRIGGER_FILE, "winmm.dll"):
+                target = bin64_dir / name
+                if target.is_file():
+                    target.unlink()
+                    removed = True
+            (install_dir / _INJECTOR_PATH_MARKER).unlink(missing_ok=True)
+        except OSError as exc:
+            log(t("local.luajit_error_operation_failed", detail=f"{type(exc).__name__}: {exc}"))
+            return False
+        log(t("local.luajit_log_game_uninstalled") if removed else t("local.luajit_log_already_not_active"))
+        return removed
+
     if not get_luajit_enabled():
         log(t("local.luajit_log_already_not_active"))
         return False
@@ -469,6 +549,8 @@ def resolve_launch_bin64_dir(install_dir: Path) -> Path | None:
     已启用且副本有效，返回副本目录。纯只读判断，不做任何联网/重新生成
     的副作用——调用方（gui/local_service_tab.py._do_start_shard()）应该
     已经用 needs_regeneration() 提前处理过"要不要先重新生成"这件事。"""
+    if uses_game_bin64(install_dir):
+        return None  # 游戏专服的注入壳就在真实 bin64 里，直接从真实目录启动
     if not get_luajit_enabled():
         return None
     luajit_dir = get_luajit_dir(install_dir)
@@ -484,6 +566,8 @@ def needs_regeneration(install_dir: Path) -> bool:
     哈希。这样旧版整包复制布局会自动完整重建；作者只替换 DLL 而未更新
     modinfo.lua 的版本号时，也不会漏掉更新。纯本地读取，不联网。
     """
+    if uses_game_bin64(install_dir):
+        return _game_needs_refresh(install_dir)
     if not get_luajit_enabled():
         return False
     luajit_dir = get_luajit_dir(install_dir)
@@ -516,6 +600,51 @@ def needs_regeneration(install_dir: Path) -> bool:
     )
 
 
+def _game_needs_refresh(install_dir: Path) -> bool:
+    """游戏专服：只在已安装（bin64 有 Winmm.dll）时检查。路径标记缺失或指向旧位置
+    需要修复；注入壳与配套 Mod 里的不一致时需要更新——但游戏或服务器正在占用它就
+    无法覆盖，这时沿用当前版本，不阻止开服（边玩游戏边开服很常见）。"""
+    bin64_dir = install_dir / "bin64"
+    trigger = _game_trigger_file(bin64_dir)
+    current_payload = _injector_payload_file()
+    if trigger is None or current_payload is None:
+        return False
+    marked = read_injector_path_marker(install_dir)
+    if marked is None or marked.resolve() != current_payload.resolve():
+        return True
+    source = _trigger_source_file()
+    if source is not None and _file_sha256(source) != _file_sha256(trigger):
+        return not _file_in_use(trigger)
+    return False
+
+
+def _refresh_game_install(bin64_dir: Path, log) -> InstallResult:
+    """游戏专服的启动前修复：写路径标记，必要时更新注入壳（被占用时跳过并说明）。"""
+    result = InstallResult()
+    install_dir = bin64_dir.parent
+    source_dir = _injector_source_dir()
+    injector_path = _injector_payload_file()
+    trigger_path = _trigger_source_file(source_dir)
+    if source_dir is None or injector_path is None or trigger_path is None:
+        result.errors.append(t("local.luajit_error_no_injector_source"))
+        log(result.errors[-1])
+        return result
+    try:
+        current = _game_trigger_file(bin64_dir)
+        if current is None or _file_sha256(current) != _file_sha256(trigger_path):
+            if current is not None and _file_in_use(current):
+                log(t("local.luajit_log_shell_locked"))
+            else:
+                _copy_injector_shell_into(source_dir, bin64_dir, on_log=log)
+        write_injector_path_marker(install_dir, injector_path)
+        _remove_stale_luajit_copy(install_dir, log)
+        result.ok = True
+    except Exception as exc:
+        result.errors.append(t("local.luajit_error_operation_failed", detail=f"{type(exc).__name__}: {exc}"))
+        log(result.errors[-1])
+    return result
+
+
 def regenerate(bin64_dir: Path, on_log=None) -> InstallResult:
     """游戏版本变了/配套 Mod 发布了新版本、副本过期时用——按哪个版本实际
     变了选择性更新，不是不管三七二十一整个重来：只有游戏本体更新过
@@ -529,6 +658,9 @@ def regenerate(bin64_dir: Path, on_log=None) -> InstallResult:
     def log(line: str) -> None:
         if on_log:
             on_log(line)
+
+    if uses_game_bin64(bin64_dir.parent):
+        return _refresh_game_install(bin64_dir, log)
 
     result = InstallResult()
     install_dir = bin64_dir.parent

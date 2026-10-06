@@ -2879,6 +2879,61 @@ def _make_fake_install_dir(root: Path, build_id: str | None = None) -> Path:
     return install_dir
 
 
+def test_luajit_game_bin64_install():
+    """游戏专服按作者方式：Winmm.dll 直接放进游戏 bin64（与客户端共用），不建 luajit 副本。"""
+    from unittest.mock import patch
+
+    import dstools.features.local_service.luajit_injector as lj
+    from dstools.shared.app_settings import get_luajit_enabled
+
+    print("\n" + "=" * 60)
+    print("Test: LuaJIT 游戏专服安装方式")
+    with _isolated_settings_dir(), tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        install_dir = root / "steamapps" / "common" / "Don't Starve Together"
+        bin64 = install_dir / "bin64"
+        bin64.mkdir(parents=True)
+        (bin64 / "dontstarve_dedicated_server_nullrenderer_x64.exe").write_bytes(b"server")
+        (bin64 / "dontstarve_steam_x64.exe").write_bytes(b"client")
+        stale = get_luajit_dir(install_dir)
+        stale.mkdir()
+        write_marker(stale, LuajitMarker(DST_version="1", luajit_version="1"))
+        with _fake_workshop_dir(root, [WORKSHOP_ID], with_injector_files=True, mod_version="3.0.0") as workshop:
+            assert lj.uses_game_bin64(install_dir)
+            assert detect_state(bin64) is InjectorState.NOT_INSTALLED
+            assert not needs_regeneration(install_dir), "未安装时不需要启动前修复"
+
+            result = lj.apply_install(bin64, [])
+            assert result.ok, result.errors
+            assert (bin64 / "Winmm.dll").read_bytes() == b"fake winmm", "注入壳应直接放进游戏 bin64"
+            marker = install_dir / "data" / "unsafedata" / "ds_luajit_injector.path"
+            assert Path(marker.read_text(encoding="utf-8").strip()).read_bytes() == b"fake injector"
+            assert not stale.exists(), "旧的 luajit 隔离副本应被清理"
+            assert get_luajit_enabled() is False, "游戏专服不改独立专服用的全局开关"
+            assert detect_state(bin64) is InjectorState.ACTIVE
+            assert resolve_launch_bin64_dir(install_dir) is None, "直接从真实 bin64 启动"
+            assert not needs_regeneration(install_dir)
+            print("  PASS: 安装只放 Winmm.dll 到游戏 bin64，从真实 bin64 启动")
+
+            source = workshop / WORKSHOP_ID / "bin64" / "windows" / "Winmm.dll"
+            source.write_bytes(b"new winmm")
+            assert needs_regeneration(install_dir), "配套 Mod 更新了注入壳，应在启动前更新"
+            assert regenerate(bin64).ok
+            assert (bin64 / "Winmm.dll").read_bytes() == b"new winmm"
+
+            source.write_bytes(b"newer winmm")
+            with patch.object(lj, "_file_in_use", return_value=True):
+                assert not needs_regeneration(install_dir), "被占用时沿用当前版本，不阻止开服"
+                assert regenerate(bin64).ok
+            assert (bin64 / "Winmm.dll").read_bytes() == b"new winmm"
+            print("  PASS: 注入壳随配套 Mod 更新；被游戏占用时跳过更新但不阻止开服")
+
+            assert apply_uninstall(bin64) is True
+            assert not (bin64 / "Winmm.dll").exists() and not marker.exists()
+            assert detect_state(bin64) is InjectorState.NOT_INSTALLED
+            print("  PASS: 卸载删除游戏 bin64 的 Winmm.dll 与路径标记")
+
+
 def test_luajit_injector():
     """luajit_injector.py 只测离线可测的纯逻辑（游戏版本读取/隔离副
     本三态检测/resolve_launch_bin64_dir/标记文件往返/需要重新生成的判
@@ -3518,6 +3573,7 @@ def main():
         test_sakura_token_settings_roundtrip,
         test_frpc_manager_key_convention,
         test_luajit_injector,
+        test_luajit_game_bin64_install,
         test_steam_library_folder_casing,
         test_font_style_switch,
         test_frp_selfhost_port_conflict_detection,
