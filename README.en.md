@@ -18,19 +18,18 @@
   <a href="#-features">Features</a> ·
   <a href="#-storage-layout">Storage</a> ·
   <a href="#-development">Development</a> ·
-  <a href="#160-changes">Changelog</a> ·
+  <a href="#161-changes">Changelog</a> ·
   <a href="README.md">中文</a>
 </p>
 
 ---
 
-## ✨ 1.6.0 highlights
+## ✨ 1.6.1 highlights
 
-- 🌐 **New Lolia mapping**: another tunneling option — sign in, pick a node, and a tunnel is created for each world in one click, then removed automatically when you turn it off.
-- 🎮 **Host without the dedicated server**: run worlds with the server program bundled in the game client; LuaJIT and Mod updates work there too.
-- 🔠 **Global font size levels**: Small / Standard / Large / Extra Large, with crisper pixel and KN Maiyuan fonts.
-- 🖼️ **Export your Mod list as an image**: generate a picture of the enabled Mods to preview, save, or copy.
-- 🎟️ **Smarter token pool**: after a crash the original token is retried automatically, so a crash no longer ties up an extra token.
+- 🧱 **Multi-column Mod list**: the Mod page and the create-save wizard can show 1, 2, or 3 columns, so more Mods fit on screen.
+- 🔁 **Upgrade without quitting first**: just open the new version — the old one, and any dedicated servers it runs, are shut down safely.
+- 🚀 **No background throttling**: dedicated servers keep full speed while DSTCamp is in the background instead of being throttled by Windows.
+- 📡 **Direct-connect codes retry automatically**: failed lookups retry with a countdown and refresh once the world is ready.
 
 ## 🧭 Features
 
@@ -106,9 +105,27 @@ python scripts/build_exe.py         # stage allowlisted resources in build/, wri
 
 `tests/_harness.py` runs every `test_*` function in definition order, so new tests need no registration. Real Windows GUI, Steam, frpc, and game behavior still require manual validation before release.
 
-## 1.6.0 changes
+## 1.6.1 changes
 
 ### ✨ New features
+
+- **Multi-column Mod list**: the Mod lists on the Mod page and in the create-save wizard switch between 1, 2, and 3 columns (one shared, remembered setting); multi-column view is compact, with the switch and Configure button on the right of each cell.
+- **New version replaces the old one**: opening a new version while an old one is still running closes the old one and starts the new one; if the old version is running dedicated servers, it asks first, then saves and stops them before exiting, leaving no server processes behind.
+- **No background throttling for servers**: after a dedicated server starts, Windows power throttling is turned off for it and its priority is raised above normal, so it is no longer slowed down while DSTCamp is in the background.
+- **Bundled Server LuaJIT uses the author's method**: Winmm.dll is placed directly in the game's bin64 and shared with the client, and a LuaJIT installed by the author's script is recognized; uninstalling deletes that file (the client's LuaJIT goes with it, as the confirmation explains); while the file is in use by the game or a server, the buttons are disabled with a reason.
+- **More reliable direct-connect codes**: when the public or tunnel code fails or times out, it retries after 5/15/30/60 s with a countdown, and once retries run out you can click the row to retry; codes refresh when the master world becomes ready; Lolia and self-hosted mappings read local settings directly instead of being slowed by the Sakura API, and Sakura API errors show "Failed to fetch" instead of "Not mapped".
+- The "Game client" server program option is renamed "Bundled Server".
+
+### 🐞 Fixes
+
+- After closing to the tray, launching the app again made the window appear only on the taskbar; it could not be restored, clicked, or closed.
+
+<details>
+<summary><strong>Earlier versions (1.3.5 ~ 1.6.0)</strong></summary>
+
+### 1.6.0
+
+#### ✨ New features
 
 - **Lolia mapping** (new tunneling sub-tab): after OAuth sign-in it shows account traffic, bandwidth limit (Mbps), and tunnel usage, and warns early when available traffic is 0 so you can check in; pick a node to create a UDP tunnel per world — worlds may sit on different nodes, each with its own frpc — and tunnels are deleted when mapping is turned off; nodes are grouped by region with traffic multiplier and high-load labels; when frpc exits, the server's failure reason is shown; if the built-in sign-in app stops working, a guide lets you use your own client_id.
 - **Card-style node picker**: shared by Sakura and Lolia, with cards that grow to fit their content; the Sakura account area now matches Lolia.
@@ -122,7 +139,7 @@ python scripts/build_exe.py         # stage allowlisted resources in build/, wri
 - 19 official character portraits now ship with the app and are preferred in the save browser; unused world-setting icons were removed, shrinking the package by about 2 MB.
 - Tooltips use a light-yellow background and appear after 0.1 s on hover (0.7 s for the Mod list lock switch); larger "Configure" text in the Mod list; "Ready" in direct-connect codes is green and a world's "Stopping" is red; when picking users from a save, the "Only users of the current save" switch is hidden if there are no candidates.
 
-### 🐞 Fixes
+#### 🐞 Fixes
 
 - With a dark system theme, log areas in dialogs such as the LuaJIT update and tooltips on drop-down list items had a black background.
 - The LuaJIT install confirmation lacked the "Download VC++ 2023" link; the LuaJIT buttons were re-enabled while installing.
@@ -134,9 +151,6 @@ python scripts/build_exe.py         # stage allowlisted resources in build/, wri
 - When a running world exited abnormally with no identifiable cause, the diagnosis was titled "Server failed to start"; it now reads "Server exited unexpectedly".
 - The public direct-connect status text was cut off.
 - The first character of labels and drop-downs was clipped with the pixel and KN Maiyuan fonts; KN Maiyuan strokes had uneven weight; menus did not follow the font size after a restart.
-
-<details>
-<summary><strong>Earlier versions (1.3.5 ~ 1.5.1)</strong></summary>
 
 ### 1.5.1
 
