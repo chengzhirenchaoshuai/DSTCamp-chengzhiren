@@ -36,6 +36,7 @@ class UpdateRelease:
     exe_url: str = ""
     sha256: str = ""
     size: int = 0
+    notes: str = ""  # Release 说明（Markdown），已去掉末尾的下载提示
 
     @property
     def can_auto_update(self) -> bool:
@@ -89,7 +90,18 @@ def _parse_release(data: dict, source: str) -> UpdateRelease | None:
                     size = 0
         except (urllib.error.URLError, TimeoutError, ValueError, TypeError, OSError):
             pass
-    return UpdateRelease(version, page_url, source, exe_url, sha256, size)
+    notes = _strip_download_footer(str(data.get("body") or ""))
+    return UpdateRelease(version, page_url, source, exe_url, sha256, size, notes)
+
+
+def _strip_download_footer(body: str) -> str:
+    """去掉说明末尾"---"分隔线之后的下载提示，弹窗里已有更新按钮，不需要它。"""
+    lines = body.replace("\r\n", "\n").rstrip().split("\n")
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].strip() == "---":
+            lines = lines[:index]
+            break
+    return "\n".join(lines).strip()
 
 
 def check_latest_release() -> UpdateRelease | None:

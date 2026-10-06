@@ -8,11 +8,12 @@ from __future__ import annotations
 import sys
 import webbrowser
 
-from PySide6.QtWidgets import QHBoxLayout, QPushButton
+from PySide6.QtWidgets import QHBoxLayout, QPushButton, QTextBrowser
 
 from dstools import __version__
 from dstools.i18n import t
 from dstools.qt import dialogs
+from dstools.qt.theme import theme
 from dstools.qt.threads import post_to_ui, run_async
 from dstools.qt.widgets import ToggleSwitch
 from dstools.shared.app_settings import get_remind_update_enabled, set_remind_update_enabled
@@ -29,10 +30,18 @@ class UpdatePromptDialog(dialogs.Dialog):
     （跟"关于"里的"提醒更新"是同一个设置）。"""
 
     def __init__(self, parent, release: UpdateRelease):
-        super().__init__(parent, t("update.title"), "sm")
+        super().__init__(parent, t("update.title"), "md" if release.notes else "sm")
         self.action = "cancel"
         key = "update.prompt" if release.can_auto_update else "update.manual_only"
         self.body.addWidget(self.text_label(t(key, version=release.version)))
+        if release.notes:
+            self.body.addWidget(self.heading_label(t("update.notes_heading")))
+            notes = QTextBrowser()
+            notes.setOpenExternalLinks(True)
+            notes.setFont(theme.font("FONT_SIZE_SM"))
+            notes.setMarkdown(release.notes)
+            notes.setMinimumHeight(260)
+            self.body.addWidget(notes, 1)
 
         remind_row = QHBoxLayout()
         remind_row.addWidget(self.text_label(t("update.dont_remind_again"), wrap=False))
