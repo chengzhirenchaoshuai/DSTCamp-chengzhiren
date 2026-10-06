@@ -1,9 +1,8 @@
 """登记从真实 Mod 源码核验过的世界设置。
 
-信任边界是 ``AddCustomizeItem``、``worldsettings_overrides.lua`` 和图集 XML；
-不自动猜测任意 Mod。只有实际注册的 ``name`` 才能展示，孤立的 ``WSO.Pre``
-定义不算可用设置。可选值以 UI 的 ``desc`` 为准，而不是实现细节
-``tuning_vars``。未登记 key 继续透传 Lua，但不在界面中伪造配置。
+信任来源只有 ``AddCustomizeItem``、``worldsettings_overrides.lua`` 和图集 XML，不猜测
+任意 Mod；只展示实际注册过的 ``name``（孤立的 ``WSO.Pre`` 不算）；取值以 UI 的
+``desc`` 为准，不抄 ``tuning_vars``。未登记 key 原样保留在 Lua 中，不在界面伪造。
 """
 
 from dataclasses import dataclass
@@ -17,9 +16,7 @@ from dstools.features.world.location_profiles import (
 )
 
 
-# mod 源码 AddCustomizeItem(category, group, name, ...) 里的 group（游戏内
-# 部组名）→ DSTCamp 自己的分类 key。登记了 group 的 mod 设置会归到官方分
-# 类（跟原版设置混排），而不是单独占一个 mod 分类。键是游戏内 group 名。
+# AddCustomizeItem 的 group（游戏内部组名）→ DSTCamp 分类 key；登记了 group 的设置与原版混排
 GROUP_TO_CATEGORY = {
     "global": "global",             # 全局
     "porkland_settings_global": "porkland_global",  # 猪镇全局（云霄国度 mod 单独建的组）
@@ -34,13 +31,8 @@ GROUP_TO_CATEGORY = {
     "lunar_mutations": "lunar",     # 月亮变异
 }
 
-# 世界生成（LEVELCATEGORY.WORLDGEN）的 group → DSTCamp 分类 key。跟上面
-# GROUP_TO_CATEGORY 的区别：世界生成的分类是"资源/生物以及刷新点/敌对生
-# 物以及刷新点"，不是世界设置那套"资源再生/生物/敌对生物/巨兽"——同一个
-# game 内部 group 名（resources/animals/monsters）在两套分类里指向不同的
-# key，所以必须分开两张表（真机读游戏本体 customize.lua 的 WORLDGEN group
-# 定义确认：animals 的 text 是 WORLDGENERATION_ANIMALS=生物以及刷新点，
-# monsters 是敌对生物以及刷新点，misc 是"世界"）。
+# 世界生成的 group → 分类 key。同名 group 在世界生成里指向不同分类（如 animals 是
+# "生物以及刷新点"），与 GROUP_TO_CATEGORY 分开（已对照本体 customize.lua）。
 GROUP_TO_CATEGORY_GEN = {
     "global": "global",               # 全局
     "misc": "world",                  # 世界
@@ -62,28 +54,18 @@ class ModWorldSetting:
                          # None 表示只读展示，不需要取值列表
     mod_id: str          # 贡献这条设置的 workshop id（不带前缀）
     icon_element: str | None = None  # mod 图标图集里对应的 Element name
-                                      # （含 ".tex" 后缀，跟图集 XML 里
-                                      # 写的原样一致），None 表示没有
-    # 存档里没有这个 key 时（比如刚启用这个 mod）该用哪个值占位——绝大
-    # 多数 mod 都遵循"default 就是没碰过的初始状态"这个惯例，但不是每个
-    # 都这样：真机核对过 Island Adventures 的 poison/dst_boats/ia_boats/
-    # ia_drowning 这几个 key，它们的取值表里根本没有 "default" 这个
-    # 值——真实的两档是 "none"/"always"，AddCustomizeItem 声明的初始值
-    # 也确实是这两个之一，不是 "default"。硬编码 "default" 会让占位行显
-    # 示一个这个 key 实际上不存在的档位，所以做成每条各自可覆盖的字段。
+                                      # （含 ".tex" 后缀，与图集 XML 一致），None 表示没有
+    # 存档里没有该 key 时的占位值。坑：不是所有 Mod 都有 "default" 档，
+    # 如 Island Adventures 的 poison/dst_boats 等只有 "none"/"always"
     initial_value: str = "default"
     # 对应 AddCustomizeItem() 的 ``world`` 字段；None 表示源码没有限制。
     locations: frozenset[str] | None = None
     # 对应官方 ``master_controlled``，只在 Master 分片显示和编辑。
     master_controlled: bool = False
-    # 对应 AddCustomizeItem() 的 ``group``（游戏内部组名，如 "misc"/
-    # "resources"/"animals"/"monsters"/"giants"）；None 表示还没登记 group
-    # （这条设置仍按 mod 名单独分类，见 get_mod_categories()）。
+    # AddCustomizeItem 的 group；None 表示按 Mod 名单独分类（见 get_mod_categories）
     group: str | None = None
-    # 对应 AddCustomizeItem() 的 ``order`` 字段（官方分类内排序键，见
-    # categories.py 的 get_order_key()）；None 表示源码没写 order，按显示
-    # 名排序。类型放宽到 float：个别 mod（如樱花林的 cherry_bugseason/
-    # cherrift）用 3.06/3.07 这样的小数 order 插进整数 order 之间。
+    # AddCustomizeItem 的 order（分类内排序键）；None 按显示名排序。
+    # 用 float：樱花林等用 3.06 这类小数插在整数之间
     order: float | None = None
 
     @property
@@ -99,31 +81,14 @@ class ModWorldSetting:
         return is_master_world or not self.master_controlled
 
 
-# workshop-1289779251 == Cherry Forest（简体中文社区里通称"新版樱花林"，
-# 跟旧版《樱花森林》mod 区分）
-#
-# 来源（1.6.106 版本，真机文件路径
-# steamapps/workshop/content/322330/1289779251/）：
-#   - key/category 取自 scripts/map/cherry_customizations.lua 里的
-#     `customizations` 表——这是唯一一处 AddCustomizeItem 调用点（在
-#     init/init_worldgen.lua 里用 for 循环遍历这张表逐条注册），不是直
-#     接字面量调用。
-#   - 世界设置类(is_rule=True)的合法取值取自同文件里对应的
-#     `WSO.Pre.<key>` 函数体的 tuning_vars 局部表 key——"default" 档位
-#     大多以注释形式出现（`--default = {...}`），这不是遗漏，而是它对
-#     应"不覆盖，沿用 mod 自己写死的默认 TUNING 值"，`OverrideTuning
-#     Variables(nil)` 天然是安全的空操作，"default" 仍是一档真实可选、
-#     游戏内滑块上会出现的选项。
-#   - 中文名取自 mod 自带的官方简体中文翻译
-#     scripts/cherry_strings/ch/strings.lua 的
-#     `STRINGS.UI.CUSTOMIZATIONSCREEN.<KEY>`（社区译者 driftee/漫天风子
-#     翻译，modinfo.lua 的 Special Thanks 有署名），不是 DSTCamp 自己翻的。
-#   - 世界生成类(is_rule=False，只读)的 10 个资源频率条目同样来自
-#     `customizations` 表 + 上面同一份中文翻译文件，只读不需要取值列表。
-#   - icon_element 取自 images/worldgen_cherry.xml 图集里的 <Element
-#     name="..."> ——跟 init_worldgen.lua 里 `v.image = "worldsettings_"
-#     ..v.name` / `"worldgen_"..v.name` 这条命名规则完全对得上，图集里
-#     实测每一条都真实存在。
+# workshop-1289779251 == Cherry Forest（新版樱花林），1.6.106
+# 来源（content/322330/1289779251/）：
+#   - key/category：scripts/map/cherry_customizations.lua 的 customizations 表
+#     （init/init_worldgen.lua 循环调用 AddCustomizeItem）；
+#   - 取值：同文件 WSO.Pre.<key> 的 tuning_vars 键。"default" 常以注释形式出现，
+#     表示沿用 Mod 默认 TUNING，仍是真实可选档；
+#   - 中文名：scripts/cherry_strings/ch/strings.lua 的 STRINGS.UI.CUSTOMIZATIONSCREEN；
+#   - 图标：images/worldgen_cherry.xml，命名规则 worldsettings_/worldgen_ + name。
 _CHERRY_FOREST_ID = "1289779251"
 
 CHERRY_FOREST_SETTINGS: dict[str, ModWorldSetting] = {
@@ -203,57 +168,22 @@ CHERRY_FOREST_SETTINGS: dict[str, ModWorldSetting] = {
 }
 
 # workshop-3435352667 == Island Adventures - Core（岛屿冒险 - 核心）
-# workshop-1467214795 == Island Adventures - Shipwrecked（岛屿冒险 - 海难，
-#   硬依赖 Core，Klei 的依赖机制会连带自动启用 Core，所以这两个 mod 几乎
-#   总是同时启用；分开登记成两个 category 是因为它们终究是两个独立
-#   mod，各自的世界设置 key 也确实分别注册在各自的文件里）。
-#
-# 来源（真机文件路径 steamapps/workshop/content/322330/<id>/）：
-#   - key/category 取自两个 mod 各自的 modservercreationmain.lua 里
-#     `ia_settings_customize_table`（世界设置，可编辑）/
-#     `ia_worldgen_customize_table`（世界生成，只读）——这两个 mod 用
-#     modservercreationmain.lua 而不是 modworldgenmain.lua 做注册，
-#     入口文件名跟 Cherry Forest 不一样，说明这确实是"每个 mod 各自约
-#     定"，新增其它 mod 支持时不能假设固定用哪个文件名。
-#   - 世界设置类(is_rule=True)的合法取值以 `AddCustomizeItem` 里登记的
-#     `desc` 为准（没写 desc 则继承所属组默认 desc，animals/monsters/
-#     giants 三组在游戏本体 customize.lua 里都是 frequency_descriptions
-#     5 档）——不是去抄 worldsettings_overrides_ia.lua 的 tuning_vars
-#     键。两个 mod 里少数 key 的 tuning_vars 键跟 desc 不一致（如
-#     primeape/snake 用 few/many、floods/oceanwaves/tigershark/kraken
-#     的 Post 函数用 9 档 MULTIPLY 表），那些只是"该档改哪个数值"的实现
-#     细节，UI 选项永远由 desc 决定，见 _IA_NRDOA 的注释。
-#   - 中文名这次不是 lua 文件而是 gettext 格式：Core 模组
-#     languages/ia_sc.po（简体中文，抽样比对确认不是 languages/ia_tc.po
-#     那份繁体）里 `msgctxt "STRINGS.UI.CUSTOMIZATIONSCREEN.<KEY 大写>"`
-#     对应的 msgstr——Shipwrecked 自己没有 languages 目录，它引用的字符
-#     串实际也定义在 Core 的这份 .po 里（真机 grep 确认过，两个 mod 共
-#     用同一份翻译文件）。
-#   - icon_element 取自 Core 的 images/hud/customization_core.xml（贴图
-#     customization_core.tex）和 Shipwrecked 的
-#     images/hud/customization_shipwrecked.xml（贴图
-#     customization_shipwrecked.tex）——这次两个 mod 各自独立的图集，
-#     不是共用一份。
-#
-# **登记但需注意的 1 个 key**：
-#   - `mosquito`：customize 表注册的 key 是单数 "mosquito"（取值由 desc 决定，
-#     monsters 组默认 frequency_descriptions 5 档），但 worldsettings_overrides_ia.lua
-#     里定义的 Post 函数名是复数 "mosquitos"——整个 mod 目录搜索确认不存在任何
-#     `Post.mosquito`/`Pre.mosquito`（单数）定义。这是 mod 自己的命名不一致 bug：
-#     游戏 UI 会显示"毒蚊子"，但调整它时 Post 不执行、可能不生效。登记显示名/
-#     取值是照着游戏 UI 来，调整是否生效由 mod 的 bug 决定，不是 DSTCamp 能修的。
+# workshop-1467214795 == Island Adventures - Shipwrecked（岛屿冒险 - 海难，硬依赖 Core）
+# 来源（content/322330/<id>/）：
+#   - key/category：各自 modservercreationmain.lua 的 ia_settings_customize_table（可编辑）
+#     与 ia_worldgen_customize_table（只读）。注册入口文件名因 Mod 而异，不能假设；
+#   - 取值：以 AddCustomizeItem 的 desc 为准（未写则继承组默认 desc，animals/monsters/
+#     giants 为 frequency_descriptions 5 档），tuning_vars 的 few/many 或 9 档 MULTIPLY
+#     只是实现细节；
+#   - 中文名：Core 的 languages/ia_sc.po（简体）msgctxt STRINGS.UI.CUSTOMIZATIONSCREEN.<KEY>，
+#     Shipwrecked 共用这份翻译；
+#   - 图标：Core 的 images/hud/customization_core.xml，Shipwrecked 的 customization_shipwrecked.xml。
+# 注意：mosquito 注册为单数，但 Post 函数名是复数 mosquitos，属 Mod 自身 bug（调整可能不生效）。
 _IA_CORE_ID = "3435352667"
 _IA_SHIPWRECKED_ID = "1467214795"
 
 IA_CORE_SETTINGS: dict[str, ModWorldSetting] = {
-    # poison/dst_boats/ia_boats/ia_drowning 这 4 个共用 desc =
-    # enableddisabled_descriptions，真机核对过：合法取值是 "none"/
-    # "always" 这两个字面量（不是"default"）——tuning_vars 表里唯一
-    # 的实际分支是 "none"，"default" 只以注释形式出现且从未被
-    # AddCustomizeItem 的初始 value 用到；4 个 key 的初始 value 分别是
-    # "always"(poison/dst_boats)、"none"(ia_boats/ia_drowning)，两者
-    # 都不是"default"，说明这个描述符从来不会产生"default"这个字符
-    # 串，初始值就是这两档之一。
+    # 这 4 个 desc 为 enableddisabled_descriptions，合法值只有 "none"/"always"，没有 "default"
     "poison": ModWorldSetting(
         key="poison", is_rule=True, mod_id=_IA_CORE_ID, group="global",
         name={"zh": "中毒", "en": "Poison"},
@@ -286,21 +216,12 @@ IA_CORE_SETTINGS: dict[str, ModWorldSetting] = {
         icon_element="snakes.tex"),
 }
 
-# 频率类(desc = frequency_descriptions)的 5 档取值。重要：岛屿 mod 里凡
-# 是 desc 用 frequency_descriptions、或继承 animals/monsters/giants 组的
-# 默认 desc（这三个组的 desc 在游戏本体 customize.lua 里都写死是
-# frequency_descriptions，5 档）的设置，UI 上真实显示、用户能选的档就
-# 是这 5 个——即便它们的 WSO.Pre/Post 函数体内部用了一套不一样的键
-# （如 few/many，或 MULTIPLY 的 9 档倍率表），那只是"选了 rare/often 后
-# 实际改哪个数值"的实现细节，选项列表永远由 desc 决定。所以这里统一取
-# desc 的 5 档，而不是去抄 tuning_vars 的键。
+# 频率类 5 档：desc 为 frequency_descriptions 或继承 animals/monsters/giants 组默认 desc 的，
+# UI 可选档就是这 5 个，WSO 内部用的 few/many 或 MULTIPLY 表只是实现细节
 _IA_NRDOA = ["never", "rare", "default", "often", "always"]
 # 再生速度类(desc = regrowth_descriptions)的 6 档取值。
 _IA_REGROWTH = ["never", "veryslow", "slow", "default", "fast", "veryfast"]
-# 季节长度类(mild/hurricane/monsoon/dry)——取自
-# SEASON_FRIENDLY_LENGTHS/SEASON_HARSH_LENGTHS 两张共享表的 key（两张表
-# key 完全一样，只是具体天数不同），额外还有一个特殊值 "random"（走
-# GetRandomItem 分支，随机挑一档）。这里 "default" 是正常键，不是注释。
+# 季节长度类（mild/hurricane/monsoon/dry）：SEASON_FRIENDLY/HARSH_LENGTHS 的 key 加特殊值 "random"
 _IA_SEASON_LENGTH = ["noseason", "veryshortseason", "shortseason", "default",
                      "longseason", "verylongseason", "random"]
 
@@ -423,22 +344,14 @@ IA_SHIPWRECKED_SETTINGS: dict[str, ModWorldSetting] = {
     "dragoon_setting": ModWorldSetting(key="dragoon_setting", is_rule=True, mod_id=_IA_SHIPWRECKED_ID, group="monsters",
         name={"zh": "呆龙", "en": "Dragoons"}, values=_IA_NRDOA,
         icon_element="dragoons.tex"),
-    # chessnavy_setting 没有用 tuning_vars 表，是直接对 difficulty 字符
-    # 串 if/elseif 判断（never/rare/often/always 四档各自设不同倍率，
-    # never 额外整个禁用），任何其它字符串(含 default)都落进"启用但不
-    # 特别设置倍率"的分支——语义上就是标准 5 档频率量表的中间档，采用
-    # 跟其它同样用这套 desc 的原版设置一致的取值列表。
+    # chessnavy_setting 直接对 never/rare/often/always 做 if 判断，其余值（含 default）走默认分支，取标准 5 档
     "chessnavy_setting": ModWorldSetting(key="chessnavy_setting", is_rule=True, mod_id=_IA_SHIPWRECKED_ID, group="monsters",
         name={"zh": "浮船骑士", "en": "Floaty Boaty Knights"}, values=_IA_NRDOA,
         icon_element="chess_monsters.tex"),
     "twister": ModWorldSetting(key="twister", is_rule=True, mod_id=_IA_SHIPWRECKED_ID, group="giants",
         name={"zh": "豹卷风", "en": "Sealnado"}, values=_IA_NRDOA,
         icon_element="twister.tex"),
-    # tigershark/kraken 没写 desc，继承 giants 组的默认 desc
-    # （frequency_descriptions 5 档），所以取值就是 NRDOA——它们的 Post
-    # 函数内部虽然用了 9 档 MULTIPLY 表（决定触发概率）和 6 档
-    # MULTIPLY_COOLDOWNS 表（决定冷却），但 UI 上用户能选的档永远由
-    # desc 决定，veryrare/uncommon/mostly/insane 这些键 UI 选不到。
+    # tigershark/kraken 未写 desc，继承 giants 组的 5 档；Post 里的 9 档/6 档 MULTIPLY 表在 UI 上选不到
     "tigershark": ModWorldSetting(key="tigershark", is_rule=True, mod_id=_IA_SHIPWRECKED_ID, group="giants",
         name={"zh": "虎鲨", "en": "Tiger Sharks"}, values=_IA_NRDOA,
         icon_element="tigershark.tex"),
@@ -542,52 +455,17 @@ IA_SHIPWRECKED_SETTINGS: dict[str, ModWorldSetting] = {
         name={"zh": "呆龙窝", "en": "Dragoon Dens"}, values=None, icon_element="dragoonden.tex"),
 }
 
-# workshop-3322803908 == "云霄国度-Above the Clouds"（把《饥荒：单机版》
-# 猪镇/Porkland 的内容移植进 DST 的 mod，modinfo.lua 的 name 字段本身就
-# 是 "云霄国度-Above the Clouds" 这个固定字符串，不随语言变化）。
-#
-# 机制跟前面几个 mod 不一样，来源（真机文件路径
-# steamapps/workshop/content/322330/3322803908/）：
-#   - key/category 全部取自 modcustomizeitems.lua 的 `customize_items`
-#     表（直接调用 `AddCustomizeItem(category, group, name, itemsettings)`
-#     注册，不经过 for 循环遍历一个独立表——写法比前面几个 mod 更直接）。
-#   - 这个 mod 很多条目自己没写 `desc` 字段（比如 monsters 组的
-#     `bill_setting`/`mosquito_setting`，animals 组的 `dungbeetle_setting`
-#     等），一开始以为是数据缺失——直接读游戏本体
-#     data/databundles/scripts.zip 里的 scripts/map/customize.lua 源码确
-#     认：`options = function(item) return FunctionOrValue(item.desc or
-#     item.group.desc, location) end`，item 没写 desc 时会继承它所属的
-#     **原版** group（"monsters"/"animals"）自己的 desc——这两个原版分组
-#     在同一份 customize.lua 里写死是 `frequency_descriptions`
-#     （["never","rare","default","often","always"]），不是瞎猜出来的默
-#     认值。这个 mod 里凡是自己写了 `desc` 的条目（`roc_setting`/
-#     `pugalisk_fountain`/misc 组几个）,取值以条目自己的 desc 为准。
-#   - `enable_descriptions`（misc 组 brambles/fog/glowflycycle/poison/
-#     hayfever 用）是这个 mod 在 modcustomizeitems.lua 里现场定义的局部
-#     表，跟原版 customize.lua 的 `yesno_descriptions` 字面量完全一致
-#     （["never","default"]），同样已核对源码确认。
-#   - `temperate`/`humid`/`lush`（猪镇专属的三段式季节，替代原版
-#     春/夏/秋/冬）取值用 `season_length_descriptions`，跟岛屿冒险的季
-#     节长度设置是同一套七档取值（noseason/veryshortseason/shortseason/
-#     default/longseason/verylongseason/random）。
-#   - 中文名取自 scripts/languages/pl_chinese_s.po 里
-#     `msgctxt "STRINGS.UI.CUSTOMIZATIONSCREEN.<KEY 大写>"` 对应的
-#     msgstr（gettext 格式，跟岛屿冒险同一套约定）。
-#   - icon_element 统一取自 images/hud/customization_porkland.xml 图集
-#     （这个 mod 所有条目——不管是不是原版组下的——都在结尾统一被赋值
-#     `itemsettings.atlas = pl_atlas` 指向这一份图集，包括 temperate/
-#     humid/lush 这几个走 AddCustomizeGroup 单独建组的条目，因为
-#     customize.lua 里 `atlas = function(item) return item.atlas or
-#     item.group.atlas end` 同样有 group 兜底），40 个条目的 image 名字
-#     在图集里全部核对到，无缺失。
-#
-# **命名收录待观察项（不是排除，只是如实记录）**：`poison` 这个 key 跟
-# 岛屿冒险核心 mod（workshop-3435352667）的 `poison` 撞名，两者含义完全
-# 不同（这个 mod 是"猪镇毒气孢子"开关，岛屿冒险是"是否会中毒"开关）。
-# leveldataoverride.lua 的 overrides 表是全局扁平命名空间，两个 mod 同
-# 时启用时哪个生效以 get_mod_world_settings() 的合并顺序（后登记覆盖先
-# 登记）为准，这是如实反映游戏引擎本身命名空间不隔离的行为，不是这次改
-# 动引入的新问题。
+# workshop-3322803908 == 云霄国度-Above the Clouds（移植单机版猪镇 Porkland）
+# 来源（content/322330/3322803908/）：
+#   - key/category：modcustomizeitems.lua 的 customize_items 表，直接调用 AddCustomizeItem；
+#   - 未写 desc 的条目继承所属原版 group 的 desc（本体 customize.lua：
+#     ``item.desc or item.group.desc``），monsters/animals 为 frequency_descriptions；
+#   - enable_descriptions 是 Mod 局部表，与原版 yesno_descriptions 相同（never/default）；
+#   - temperate/humid/lush 用 season_length_descriptions 七档；
+#   - 中文名：scripts/languages/pl_chinese_s.po；
+#   - 图标：images/hud/customization_porkland.xml（全部条目统一指向该图集，40 项已核对）。
+# 注意：poison 与岛屿冒险的 poison 撞名但含义不同；overrides 是全局扁平命名空间，
+# 同时启用时以合并顺序（后登记覆盖）为准，这是游戏本身的行为。
 _PORKLAND_ID = "3322803908"
 
 # 原版 monsters/animals 组的默认 desc，以及这个 mod 自己复刻的
@@ -839,18 +717,12 @@ _set_verified_scope(
     master_controlled=True,
 )
 
-# workshop-3360553731 == Beneath the World Below（深埋之下）
-#
-# 来源（0.4.15.17，真机文件路径
-# steamapps/workshop/content/322330/3360553731/）：
-#   - 25 个无条件条目取自 scripts/mains/init/bwb_customizations.lua 的
-#     customizations 表；init_worldgen.lua 逐条调用 AddCustomizeItem。
-#   - desc 为 frequency/yesno/enableddisabled/season_length 时使用游戏对应
-#     描述表的真实值；nightmareclock/cave_season_start 使用 Mod 自己声明
-#     的 data 顺序。widow_setting/widow_bags 只在同时启用 DSTU 正式版或
-#     测试版时动态加入，见 BENEATH_WORLD_BELOW_DSTU_SETTINGS。
-#   - 中英文名取自 scripts/wormstrings.lua、wormstrings_en.lua 的
-#     RegisterWorldSettingStrings；图标元素取自 Mod 自带图集 XML。
+# workshop-3360553731 == Beneath the World Below（深埋之下），0.4.15.17
+# 来源（content/322330/3360553731/）：
+#   - 25 个无条件条目：scripts/mains/init/bwb_customizations.lua，init_worldgen.lua 逐条注册；
+#   - desc 为标准描述表时用游戏真实值，nightmareclock/cave_season_start 用 Mod 自己的 data 顺序；
+#     widow_setting/widow_bags 仅同时启用 DSTU 时加入（见 BENEATH_WORLD_BELOW_DSTU_SETTINGS）；
+#   - 中英文名：scripts/wormstrings.lua、wormstrings_en.lua；图标取自 Mod 图集 XML。
 _BWB_ID = "3360553731"
 _BWB_FREQUENCY = ["never", "rare", "default", "often", "always"]
 _BWB_YES_NO = ["never", "default"]
@@ -1020,10 +892,8 @@ MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
     _BWB_ID: BENEATH_WORLD_BELOW_SETTINGS,
 }
 
-# Mod 对原版世界设置目录的补丁。深埋之下不只新增设置，还会在前端直接
-# 修改 OPTIONS：隐藏原版“大蠕虫”，并让“石虾”“洞穴蠕虫袭击”排在它
-# 新增的衍生项之前。这里按同样语义登记，已有存档中的 override 仍保留，
-# 只是不再作为可编辑项展示。
+# 深埋之下在前端修改了原版 OPTIONS：隐藏"大蠕虫"，把"石虾""洞穴蠕虫袭击"排到新增项之前。
+# 已有存档里的 override 仍保留，只是不再作为可编辑项展示。
 MOD_VANILLA_WORLD_PATCHES = {
     _BWB_ID: {
         CAVE_LOCATION: {
@@ -1033,11 +903,8 @@ MOD_VANILLA_WORLD_PATCHES = {
     },
 }
 
-# workshop id -> mod 显示名（中英文）。两个用途：1) 世界设置界面的"分类标
-# 题"（get_mod_categories 用，只针对登记了世界设置的 mod）；2) mod 管理页
-# 签列表的 mod 名本地化（features/mod/tab.py 的 _localize_mod_name 用）。
-# 山河表里(3401927745)已撤销世界设置登记（它的设置实际走 mod 配置而非世
-# 界设置），但 mod 列表仍要用这个中文名，所以保留在这里。
+# workshop id -> Mod 显示名（中英文），用于世界设置分类标题和 Mod 列表名称本地化。
+# 山河表里（3401927745）没有世界设置，只为 Mod 列表中文名保留。
 MOD_DISPLAY_NAMES: dict[str, dict] = {
     _CHERRY_FOREST_ID: {"zh": "新版樱花林", "en": "Cherry Forest"},
     _IA_CORE_ID: {"zh": "岛屿冒险 - 核心", "en": "Island Adventures - Core"},
@@ -1063,14 +930,8 @@ def get_mod_world_settings(
     location: str | None = None,
     is_master_world: bool = True,
 ) -> dict[str, ModWorldSetting]:
-    """合并 `enabled_mod_ids`（不带前缀的纯数字 workshop id 集合，调用方
-    传 features/mod/sync.py 的 get_enabled_mod_ids() 结果）里每个*已登记
-    过*的 mod 贡献的世界设置。
-
-    不同 mod 之间理论上可能用了同一个 key 互相覆盖——这是游戏引擎本身
-    的行为（leveldataoverride.lua 的 overrides 表是全局扁平命名空间，不
-    按 mod 隔离），这里如实反映（后登记的覆盖先登记的），不做额外去重
-    或警告。"""
+    """合并 ``enabled_mod_ids``（纯数字 ID）中已登记 Mod 的世界设置；同名 key 后登记覆盖先登记
+    （与游戏 overrides 全局扁平命名空间一致）。"""
     normalized = {str(mod_id).removeprefix("workshop-") for mod_id in enabled_mod_ids}
     merged: dict[str, ModWorldSetting] = {}
     for mod_id, settings in MOD_WORLD_SETTINGS.items():
@@ -1119,10 +980,7 @@ def filter_mod_world_settings(
 
 
 def get_mod_categories(mod_settings: dict) -> list[tuple[str, dict]]:
-    """从已经合并好的 mod_settings（get_mod_world_settings() 的返回值）
-    里，为「还没登记 group」的 mod 各生成一条 (category_key, 显示名)——
-    登记过 group 的设置已经按官方分类混排，这里不再单独占一个 mod 分类。
-    保持 mod_settings 里第一次出现该 mod_id 的顺序，不重复。"""
+    """为未登记 group 的 Mod 各生成一条 (分类 key, 显示名)，按首次出现顺序去重。"""
     cats: list[tuple[str, dict]] = []
     seen: set[str] = set()
     for info in mod_settings.values():

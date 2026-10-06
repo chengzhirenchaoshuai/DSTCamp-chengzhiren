@@ -1,18 +1,8 @@
-"""
-真源说明：这两份字典的完整性是拿本机真实的 Master/Caves 两个
-leveldataoverride.lua 的 override key 全集核对过的（不是靠 config_json 截图
-或 worldsettings_overrides.lua 推断存在性，那两者只用于提供分类/中文名/取值
-参考）。CAVE_RULES_DICT/CAVE_GEN_DICT 里大约 40 个真实存在的 key 故意没有
-收录——这些是森林专属的规则（day/darkness/specialevent/ghostenabled/
-season_start/年度活动开关等），洞穴的 leveldataoverride.lua 里虽然也写了这些
-key(应该是跟随森林同步的备份值)，但洞穴的"自定义世界"界面并不单独显示/可调
-它们，所以不放进洞穴的任何一张表里。
+"""世界设置分类、中英文名与排序。
 
-双语说明：每个分类/设置项的显示名都是 {"zh": 中文名, "en": English Name}，
-查询函数按当前界面语言（dstools.i18n.get_lang()）取值——跟
-features/cluster_config/ini_field_info.py 用的是同一套模式。英文名是照饥荒
-联机版官方"自定义世界"界面本身的措辞翻译的，个别生僻/非官方公开命名的条目
-（罕见小设施类）按最贴近的英文描述处理，不是逐字对照游戏文件抠出来的。
+字典完整性已用真实 Master/Caves 的 leveldataoverride.lua key 全集核对。洞穴存档里也会写入
+day/specialevent 等森林专属规则（同步的备份值），但洞穴界面不显示它们，所以不收进洞穴表。
+英文名按游戏"自定义世界"界面措辞翻译。
 """
 
 from dstools.i18n import get_lang
@@ -64,10 +54,7 @@ CATEGORY_COLORS = {
     "bosses": "#d32f2f", "lunar": "#00bcd4",
     "resources": "#009688", "creatures_spawners": "#1565c0",
     "hostile_spawners": "#c62828",
-    # 每个贡献过世界设置的 mod 各自一个分类（标题用 mod 自己的名字，见
-    # mod_settings.py 的 get_mod_categories()），这里按 category key
-    # (f"mod_{workshop_id}") 各给一个颜色，跟原版分类明显区分开。新增一
-    # 个 mod 的支持时要在这里补一行。
+    # 每个贡献世界设置的 Mod 各占一个分类（f"mod_{workshop_id}"）及颜色；新增 Mod 支持时在这里补一行
     "mod_1289779251": "#795548",  # 新版樱花林(Cherry Forest)
     "mod_3435352667": "#3949ab",  # 岛屿冒险 - 核心(Island Adventures - Core)
     "mod_1467214795": "#00838f",  # 岛屿冒险 - 海难(Island Adventures - Shipwrecked)
@@ -91,9 +78,7 @@ FOREST_RULES_DICT = {
     "resettime": ("global", {"zh": "死亡重置倒计时", "en": "Reset Time"}),
     "beefaloheat": ("global", {"zh": "皮弗娄牛交配频率", "en": "Beefalo Heat"}),
     "krampus": ("global", {"zh": "坎普斯", "en": "Krampus"}),
-    # 活动|events
-    # 用户核实：真实存档里根本没有 midsummer_cawnival 这个 key(是瞎编的)，
-    # 游戏截图"盛夏嘉年华"对应的真实 key 是 crow_carnival，已删掉 midsummer_cawnival。
+    # 活动|events（游戏中"盛夏嘉年华"的真实 key 是 crow_carnival）
     "crow_carnival": ("events", {"zh": "盛夏嘉年华", "en": "Crow Carnival"}),
     "hallowed_nights": ("events", {"zh": "万圣夜", "en": "Hallowed Nights"}),
     "winters_feast": ("events", {"zh": "冬季盛宴", "en": "Winter's Feast"}),
@@ -212,8 +197,7 @@ FOREST_RULES_DICT = {
     "mutated_buzzard_gestalt": ("lunar", {"zh": "水晶冠秃鹫", "en": "Mutated Buzzards"}),
     "penguins_moon": ("lunar", {"zh": "冰冻企鹅", "en": "Mutated Penguins"}),
     "moon_spider": ("lunar", {"zh": "破碎蜘蛛", "en": "Mutated Spiders"}),
-    # 用户核实：森林里"世界规则/世界生成"这俩 key 之前写反了，能调整的其实是
-    # mutated_spiderqueen(和洞穴同一个模式)，moon_spiders 应该在"世界生成"里。
+    # 森林可调的是 mutated_spiderqueen（与洞穴相同），moon_spiders 属于世界生成
     "mutated_spiderqueen": ("lunar", {"zh": "破碎蜘蛛洞", "en": "Mutated Spider Den"}),
     "mutated_bearger": ("lunar", {"zh": "装甲熊獾", "en": "Mutated Bearger"}),
     "mutated_warg": ("lunar", {"zh": "附身座狼", "en": "Mutated Warg"}),
@@ -400,24 +384,16 @@ CAVE_GEN_DICT = {
     "tentacles": ("hostile_spawners", {"zh": "触手", "en": "Tentacles"}),
 }
 
-# 经真实 DST 洞穴 leveldataoverride.lua 样本核对后确认：以下条目并不是
-# "地面专属"，而是 Master/Caves 共享的世界规则/生成项。此前洞穴表漏掉
-# 它们，导致文件存在却被 UI 当作未知项隐藏。这里复用地面表的已验证名称、
-# 分类和取值定义，避免维护两份会漂移的副本；洞穴专属表仍优先覆盖同名项。
-# 洞穴的自定义世界界面不会显示森林专属的“全局/活动/冒险家”目录，
-# 也不会显示基础资源再生、世界生成-全局、世界-道路。存档里可能仍
-# 保留这些 key（游戏会写入共享/备份值），但它们不是洞穴可编辑项，
-# 因此不能并入洞穴目录。
+# 以下条目是 Master/Caves 共享的规则/生成项（已用真实洞穴存档核对），复用地面表定义，
+# 洞穴专属表仍优先覆盖同名项。洞穴界面不显示森林专属的全局/活动/冒险家目录、基础资源再生、
+# 世界生成-全局和道路，这些 key 即使出现在洞穴存档里也不并入洞穴目录。
 CAVE_ALL_RULES_DICT = dict(CAVE_RULES_DICT)
 CAVE_ALL_GEN_DICT = dict(CAVE_GEN_DICT)
 
 # ── 查询函数 ─────────────────────────────────────────────────────────────
 
 def localized_name(names: dict) -> str:
-    """从 {"zh":.., "en":..} 里取当前界面语言的版本，缺失兜底回中文。公开
-    给 app.py 用——rules_dict/gen_dict 里"存档里没有、要补默认值"的那些
-    key 是直接从 _get_settings() 拿原始字典条目的，不经过 get_setting_
-    info()，需要自己再调一次这个函数把 name 部分本地化。"""
+    """从 {"zh", "en"} 取当前界面语言的名称，缺失时回退中文。"""
     return names.get(get_lang()) or names.get("zh") or ""
 
 
@@ -432,19 +408,14 @@ def _get_settings(location: str, is_rule: bool):
 
 
 def get_setting_info(key: str, location: str = "forest", mod_settings: dict | None = None):
-    """取一个设置的 (category, is_rule, name)。
-    先查原版规则表，再查原版生成表，都查不到、且 mod_settings 里有登记
-    过这个 key（features/world/mod_settings.py，调用方传当前存档已启用
-    mod 贡献的登记表）就归到 "mod" 分类；再查不到就返回
-    ("other", False, key)（未登记的 mod key，走现有的"不显示"兜底）。
+    """取设置的 (category, is_rule, name)：依次查原版规则表、生成表、已启用 Mod 的登记；
+    都没有返回 ("other", False, key)（未登记 key 不显示）。
     """
     from dstools.features.world.catalog_resolver import resolve_setting_info
     return resolve_setting_info(key, location, mod_settings)
 
 
-# 官方 customize.lua 里每个设置项的 order 字段（只记有 order 的；无 order 的
-# 设置项在官方 UI 里按"显示名"字符串排序，见 get_order_key()）。这是官方世界
-# 设置界面分类内顺序的权威来源——不是 categories.py 字典的插入顺序。
+# 官方 customize.lua 中各设置的 order（分类内排序的权威来源）；没有 order 的按显示名排序（见 get_order_key）
 RULE_ITEM_ORDER = {
     # 全局
     "specialevent": 1, "autumn": 2, "winter": 3, "spring": 4, "summer": 5,
@@ -480,10 +451,8 @@ GEN_ITEM_ORDER = {
 def get_order_key(key: str, name: str, location: str = "forest",
                   is_rule: bool = True, mod_settings: dict | None = None,
                   order_overrides: dict[str, float] | None = None):
-    """返回设置项在分类内的排序键，完全复刻官方 customize.lua 的
-    GetOptionsFromGroup 排序：有 order 的按 order 升序排前面；无 order 的按
-    显示名（当前语言字符串，近似引擎 stringidsorter 的 Unicode 码点比较）排
-    后面。mod 设置若登记了 order 也一并参与排序。"""
+    """分类内排序键，复刻官方 GetOptionsFromGroup：有 order 的按 order 升序在前，没有的按显示名在后；
+    Mod 登记的 order 一并参与。"""
     order = order_overrides.get(key) if order_overrides else None
     if order is None:
         order = (RULE_ITEM_ORDER if is_rule else GEN_ITEM_ORDER).get(key)
@@ -501,13 +470,8 @@ def get_order_key(key: str, name: str, location: str = "forest",
 def get_categories(location: str, setting_type: str, mod_categories=None) -> list[tuple[str, str]]:
     """取指定地点和设置类型的分类列表。
 
-    mod_categories：features/world/mod_settings.py 的 get_mod_categories()
-    返回值（当前存档已启用、且贡献了世界设置的 mod，各自一条），排在最
-    前面（"全局"之前）——应用户要求，mod 加的设置更显眼，装了好几个带
-    世界设置的 mod 时，这几个分类按 get_mod_categories() 给的顺序排在
-    一起，不打散插进原版分类里。分类本身要不要显示（这个存档实际有没
-    有对应的条目）由调用方（world/render.py 的 visible_cats 过滤）决
-    定，这里只负责把"存在哪些分类、什么顺序"这件事拼完整。
+    Mod 分类（get_mod_categories() 的结果）排在最前面并保持给定顺序，便于用户找到 Mod 新增的
+    设置；分类是否显示由调用方按实际条目过滤。
     """
     from dstools.features.world.catalog_resolver import resolve_vanilla_categories
     raw = resolve_vanilla_categories(location, setting_type)

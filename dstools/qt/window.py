@@ -163,10 +163,9 @@ class TitleBar(QWidget):
 
 
 class MenuStrip(QWidget):
-    """标题栏下方的文字菜单条：文件 / 主题 / 设置。后续随功能迁移逐项补齐。
+    """标题栏下方的文字菜单条：文件 / 主题 / 设置。
 
-    语言切换不重建菜单（重建要重新登记 F5 快捷键，容易越切越重复），改成保留每个
-    QAction 的引用，retranslate() 时逐个 setText()。"""
+    切换语言不重建菜单（重建要重新登记 F5 快捷键，容易重复），保留 QAction 引用逐个 setText()。"""
 
     def __init__(self, window: "MainWindow"):
         super().__init__()
@@ -244,9 +243,7 @@ class MenuStrip(QWidget):
         menu.addAction(clear_cache)
         self._clear_cache_action = clear_cache
 
-        # 手动入口——正常情况下 Mod 管理页签会自动探测缺运行库并弹横幅，这里是留
-        # 给"探测漏检"场景的兜底：哪怕以后还有别的没覆盖到的报错场景，用户也能
-        # 不看提示、自己主动点这里装。
+        # 手动入口：Mod 页会自动探测缺运行库并提示，这里兜底漏检的情况
         vcredist = QAction(t("app.install_vcredist"), self)
         vcredist.setToolTip(t("app.install_vcredist_hint"))
         vcredist.triggered.connect(self._window.install_vcredist)
@@ -336,9 +333,7 @@ class ClusterBar(QWidget):
         self._ctx = ctx
         self._populating = False
         row = QHBoxLayout(self)
-        # 右边距跟各页面内容区的 root.setContentsMargins(8, ...) 对齐（主窗口外壳本身
-        # 还有 2px 边框），"刷新"才能跟"校验服务器完整性"这类页面级按钮一样贴右边——
-        # 之前左右都用 24，"刷新"比页面按钮明显更靠里，真机反馈过。
+        # 右边距与各页面内容区对齐（外壳另有 2px 边框），"刷新"与页面级按钮右对齐
         row.setContentsMargins(24, 4, 8, 4)
         row.setSpacing(10)
         self._platform_label, self._archive_label = QLabel(), QLabel()
@@ -346,19 +341,14 @@ class ClusterBar(QWidget):
             label.setProperty("heading", True)
         self._platform = QComboBox()
         self._platform.addItems(["Steam", "WeGame"])
-        # 宽度至少 110，并随字号自适应内容：写死 110 时大/特大字号下放不下
-        # "WeGame" 和箭头，文字被挤掉一截（真机反馈过）。Fixed 策略让它不随窗口拉伸。
+        # 宽度至少 110 并随字号自适应（写死在大字号下放不下 "WeGame" 和箭头），Fixed 不随窗口拉伸
         self._platform.setMinimumWidth(110)
         self._platform.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._platform.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._cluster = _RefreshingCombo()
         self._cluster.about_to_open.connect(self.reload)
         self._cluster.setFixedWidth(360)  # 固定宽度，不随窗口拉伸变化
-        # "创建服务器存档"针对的是整个存档集合，不属于某一个已选存档的基本信息；
-        # 放在全局存档选择器右侧，跟 Tk 版 gui/app.py 的 _create_save_btn 位置一致。
-        # 字号跟全局按钮保持一致（不再单独放大），真机反馈过这两个按钮没必要
-        # 跟别处不一样。
-        # "打开位置"从存档信息页挪到这里，放在"创建服务器存档"左侧，打开当前选中存档的文件夹。
+        # "创建服务器存档"作用于整个存档集合，放在全局存档选择器右侧；"打开位置"在其左侧，打开当前存档文件夹
         self._open_location = QPushButton()
         self._open_location.clicked.connect(self._on_open_location)
         self._create_save = QPushButton()
@@ -438,9 +428,7 @@ class MainWindow(QWidget):
         root.setSpacing(0)
         self.titlebar = TitleBar(self)
         self.menu_strip = MenuStrip(self)
-        # 全局默认字号改成 FONT_SIZE_SM 后主页签跟着变小了，真机反馈偏小；
-        # 显式指定比子页签（FONT_SIZE_BASE）再大一档，维持"主页签 > 子页签 > 正文"
-        # 的层级。
+        # 主页签显式比子页签（FONT_SIZE_BASE）大一档，保持"主页签 > 子页签 > 正文"的层级
         self.tabbar = PillTabBar([t(f"tab.{key}") for key in TAB_KEYS], font_size_key="FONT_SIZE_MD", bold=True)
         self.cluster_bar = ClusterBar(ctx, self)
         self.stack = QStackedWidget()
@@ -448,7 +436,7 @@ class MainWindow(QWidget):
         self._update_notice = QLabel("")
         self._update_notice.linkActivated.connect(self._open_update_notice)
         self._update_release = None
-        # 下载更新时在状态栏右侧原位显示进度条（跟 Tk 版一致），平时隐藏
+        # 下载更新时在状态栏右侧显示进度条，平时隐藏
         self._update_progress = QProgressBar()
         self._update_progress.setRange(0, 100)
         self._update_progress.setTextVisible(False)
@@ -456,9 +444,7 @@ class MainWindow(QWidget):
         self._update_progress.setVisible(False)
         self._updater = SelfUpdater(self)
         status_row = QHBoxLayout()
-        # 左边距跟各页面内容区左边缘对齐（本地服务器页"内网穿透代码:"这类标签的左边
-        # 缘实测在 X=10；之前 18 的左边距比页面内容多缩进了 10px，真机反馈过状态栏
-        # 文字和页面内容没对齐）。
+        # 左边距与页面内容左边缘对齐
         status_row.setContentsMargins(8, 4, 18, 6)
         status_row.addWidget(self.status, 1)
         status_row.addWidget(self._update_progress)
@@ -607,9 +593,8 @@ class MainWindow(QWidget):
             self.show_cache_dir_dialog()
 
     def start_update_check(self) -> None:
-        """启动时后台查一次最新 Release；查不到/没有更新就什么都不做，不重试。
-        有新版本时始终点亮状态栏右侧那行提示（不受"提醒更新"开关影响）；"提醒更新"
-        开着（默认开）才额外弹出更新窗口——跟 Tk 版 _start_update_check() 一致。"""
+        """启动时后台查一次最新 Release，失败不重试。有新版本时始终点亮状态栏提示，
+        "提醒更新"开关打开（默认）时才额外弹窗。"""
         from dstools.shared.update_check import check_latest_release
 
         def done(result) -> None:
@@ -649,9 +634,7 @@ class MainWindow(QWidget):
         self._update_notice.setText(t("update.downloading", version=version, percent=percent))
 
     def switch_language(self, lang: str) -> None:
-        """切换界面语言：静态文案（标题栏/菜单/存档栏/页签名/托盘）立即全量刷新；
-        当前页签内容跟切主题/切存档同一套骨架——重的整页重建只做当前页，其余标脏，
-        真正切过去时再补。"""
+        """切换界面语言：标题栏/菜单/存档栏/页签名/托盘立即刷新；页面内容只重建当前页，其余标脏切过去再补。"""
         old_lang = get_lang()
         if old_lang == lang:
             return
@@ -746,12 +729,12 @@ class MainWindow(QWidget):
         for screen in QGuiApplication.screens():
             virtual = virtual.united(screen.geometry())
         dpr = QGuiApplication.primaryScreen().devicePixelRatio()
-        saved = get_window_position()  # 物理像素（Tk 版同一份设置）
+        saved = get_window_position()  # 物理像素
         if saved is not None:
             x, y = round(saved[0] / dpr), round(saved[1] / dpr)
             if (virtual.left() - width + MIN_VISIBLE <= x <= virtual.right() - MIN_VISIBLE
                     and virtual.top() <= y <= virtual.bottom() - MIN_VISIBLE):
-                # 启动时整窗放进所在显示器工作区：上次的位置配上现在的尺寸可能半截落在屏幕外
+                # 启动时把整窗放进所在显示器工作区，避免上次位置配新尺寸后半截落在屏幕外
                 screen = QGuiApplication.screenAt(QPoint(x + MIN_VISIBLE, y)) or QGuiApplication.primaryScreen()
                 area = screen.availableGeometry()
                 x = max(area.left(), min(x, area.right() - width + 1))
@@ -872,9 +855,8 @@ class MainWindow(QWidget):
         self.ctx.manager.stop_all(on_all_done=lambda: post_to_ui(lambda _a: self.quit_app()))
 
     def restart_app(self) -> None:
-        """重启 DSTCamp：有专服在跑时先确认并安全关闭，再启动等待型辅助进程
-        （scripts/run_gui.py --restart-helper），它等本进程退出、单实例锁释放后
-        再重新启动程序。跟 Tk 版 _restart_app()/_quit_and_restart() 同一套做法。"""
+        """重启 DSTCamp：有专服在跑时先确认并安全关闭，再启动辅助进程（run_gui.py --restart-helper），
+        等本进程退出、单实例锁释放后重新启动。"""
         running = self.ctx.manager.running()
         if running:
             world_count = len(running)

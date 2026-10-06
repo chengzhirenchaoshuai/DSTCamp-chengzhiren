@@ -1,7 +1,4 @@
-"""用游戏自身的 PNG 文件做世界设置图标。
-
-PNG 图标运行时从仓库或发布包的 ``icons/world`` 加载。
-"""
+"""世界设置 key → ``icons/world`` 下 PNG 图标（取自游戏贴图）的映射。"""
 
 from pathlib import Path
 from typing import Optional
@@ -14,15 +11,7 @@ _ICON_DIR = bundled_resource_dir() / "icons" / "world"
 
 
 def get_icon_path(key: str, location: str = "forest") -> Optional[Path]:
-    """按映射表查一个世界设置 key 对应的 PNG 图标路径。
-
-    参数：
-        key: 世界设置 key（例如 "rifts_enabled"）。
-        location: "forest" 或 "cave"。优先查该地点自己的表，洞穴场景下
-                  洞穴专属图标优先，反之亦然。
-    """
-    # 优先查当前地点自己的表，查不到再退回另一个地点——这样共用的 key
-    # 只要有一边定义了图标就能解析出来。
+    """查 key 的图标路径：先查当前地点的表，再退回另一地点（共用 key 只需一边登记）。"""
     if location == "cave":
         order = (CAVE_RULES_ICONS, CAVE_GEN_ICONS, FOREST_RULES_ICONS, FOREST_GEN_ICONS)
     else:
@@ -30,19 +19,11 @@ def get_icon_path(key: str, location: str = "forest") -> Optional[Path]:
 
     for d in order:
         filename = d.get(key)
-        if filename and not filename.startswith('???'):
+        if filename:
             p = _ICON_DIR / filename
             if p.exists():
                 return p
     return None
-
-
-
-# ── 基于 PIL 的图标加载（供栅格合成面板使用）─────────────────────────
-
-_pil_cache: dict[tuple[str, int], object] = {}
-
-
 
 
 # ── KEY → PNG 文件名 映射 ───────────────────────────────────────────────

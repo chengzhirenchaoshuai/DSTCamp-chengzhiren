@@ -1,8 +1,4 @@
-"""纯 Python 实现的 DST 配置文件 Lua 表解析器。
-
-DST 只用一个受限的 Lua 子集：仅 `return { ... }` 这种数据表字面量。
-本解析器只处理这个子集，不依赖任何 Lua 运行时。
-"""
+"""纯 Python 的 Lua 数据表解析/序列化器，只支持 DST 配置文件用到的 ``return { ... }`` 字面量子集。"""
 
 import re
 from enum import Enum, auto
@@ -110,10 +106,7 @@ class LuaTokenizer:
                 self.col += 1
                 continue
 
-            # 数字。裸的前导小数点（".01"，不带符号）本身也是合法的 Lua 十进
-            # 制字面量，不只是 "-.01" 这种带符号的形式——不加这个分支，"."
-            # 会落到下面"未知字符跳过"那段逻辑里被悄悄丢掉，把 ".01" 变成
-            # 错误的 "01"。
+            # 数字；裸前导小数点（".01"）也是合法字面量，否则 "." 会被跳过变成 "01"
             if c.isdigit() or \
                (c == '.' and self.pos + 1 < len(self.text) and self.text[self.pos + 1].isdigit()) or \
                (c == '-' and self.pos + 1 < len(self.text) and
@@ -383,10 +376,7 @@ class LuaTableParser:
         return token
 
     def parse(self) -> dict:
-        """解析一个 Lua `return { ... }` 表达式，把表转换成 Python dict 返回。
-
-        同时兼容省略 `return` 关键字、直接以 `{` 开头的文件。
-        """
+        """解析 ``return { ... }``（也兼容省略 return、直接以 ``{`` 开头）为 Python dict。"""
         token = self._peek()
 
         # 可选的 'return' 关键字
@@ -411,14 +401,8 @@ class LuaTableParser:
 
         if token.type == TokenType.IDENTIFIER:
             if isinstance(token.value, str):
-                # 真正的 true/false/nil 在词法分析器里已经直接转成了
-                # bool/None（见 LuaTokenizer._read_identifier），走到这
-                # 里 value 还是 str 的，说明是别的裸标识符——外部变量引
-                # 用，或者函数调用打头那部分（比如 en_zh(...) 的
-                # "en_zh"）。本解析器不执行代码，没法知道它实际引用的是
-                # 什么，绝不能把标识符名字本身悄悄当成字面量返回（之前
-                # 就是这样把 en_zh("en","zh") 错解析成字符串 "en_zh" 的，
-                # 真机复现过）。
+                # true/false/nil 已在词法阶段转换；仍是 str 的是外部变量或函数调用名（如 en_zh(...)），
+                # 本解析器不执行代码，不能把标识符名当字面量返回
                 raise LuaParseError(
                     f"Unexpected bare identifier {token.value!r} (not "
                     "true/false/nil) -- looks like a variable reference or "
@@ -444,18 +428,10 @@ class LuaTableParser:
         )
 
     def _parse_table(self) -> dict:
-        """把一个表字面量 { ... } 解析成 Python dict。
-
-        同时处理键值对和数组风格的条目：混合表（既有键值对又有数组）里，
-        数组位置的下标会作为字符串形式的整数 key 存进同一个 dict。
-        """
+        """解析表字面量为 dict；混合表中的数组项以字符串形式的整数下标为 key。"""
         token = self._advance()  # 吃掉 {
         if token.type != TokenType.LBRACE:
-            # 空文件/被截断的文件（比如云同步占位符、写入中途被打断）走到
-            # 这里 token 会是 EOF 而不是 '{'——之前直接假定是 '{' 往下
-            # 走，实际上会在下一次按下标取 token 时抛出语义不明的
-            # IndexError，被上层吞成一句笼统的"格式错误"，没法跟真正的
-            # Lua 语法错误、编码错误区分开。
+            # 空文件或被截断的文件（云同步占位、写入中断）这里是 EOF，明确报错以区别于语法/编码错误
             raise LuaParseError(
                 f"Expected '{{' to start table, got {token.type.name} ({token.value!r})",
                 token.line, token.col,
@@ -527,39 +503,16 @@ class LuaTableParser:
 # ── 对外的高层 API ─────────────────────────────────────────────────────
 
 def parse_lua_table(text: str, filename: str = "<string>") -> dict:
-    """把一个 Lua `return { ... }` 表字面量字符串解析成 Python dict。
-
-    Args:
-        text: Lua 源码文本。
-        filename: 可选，出错信息里显示的文件名。
-
-    Returns:
-        解析出的嵌套 Python dict。
-
-    Raises:
-        LuaParseError: 文本无法解析时抛出。
-    """
+    """把 Lua ``return { ... }`` 文本解析成嵌套 dict，失败抛 LuaParseError（filename 用于报错信息）。"""
     parser = LuaTableParser(text, filename)
     return parser.parse()
 
 
 def parse_lua_value(text: str, filename: str = "<value>") -> Any:
-    """解析单个 Lua 值表达式：表、字符串、数字、布尔值，或 nil。
+    """解析单个 Lua 值表达式（表、字符串、数字、布尔或 nil），用于 Mod 的 default/data 等字段。
 
-    跟要求完整 `return { ... }` 表的 parse_lua_table() 不同，这个函数接受
-    任意单个值表达式——用在诸如 mod 配置项的 `default = <value>`、选项的
-    `data = <value>` 这类场景，值既可能是裸标量（true、5、"text"），也
-    可能是一个表。
-
-    真实遇到过的坑：mod 作者有时把 `default` 写成一次函数调用，比如
-    `default = en_zh("en", "zh")`（按游戏 locale 挑语言）——本解析器不
-    识别圆括号，也不认识函数调用，`_parse_value()` 只会吃掉打头的标识符
-    "en_zh" 就当作解析完成返回，后面的 `("en", "zh")` 被无声丢弃，得到
-    一个语法上"成功"但内容完全错误的结果（字面量字符串 "en_zh"）。这里
-    补一道检查：值解析完之后如果还有没吃完的 token，说明这根本不是一个
-    单纯的字面量，明确报错，而不是悄悄返回一个像模像样但错误的值——调
-    用方（mod/parser.py 的 _coerce_lua_value）捕获这个异常后会回退成保
-    留原始文本，不会把这种情况伪装成解析成功。
+    坑：作者可能写成函数调用（``default = en_zh("en", "zh")``），只吃掉标识符会得到错误的
+    字面量 "en_zh"；值解析完仍有剩余 token 时明确报错，调用方回退为保留原始文本。
     """
     parser = LuaTableParser(text, filename)
     value = parser._parse_value()
@@ -578,28 +531,15 @@ _KLEI_PERSISTENT_STRING_HEADER_RE = re.compile(r'^KLEI\s*\d+ ')
 
 
 def _strip_klei_persistent_string_header(text: str) -> str:
-    """去掉游戏引擎 TheSim:SetPersistentString() 写文件时加的头部。
-
-    真机确认过：leveldataoverride.lua 如果是游戏内某些流程（而不是
-    DSTCamp 或服务器建档工具的纯文本写入）通过这个引擎 API 落盘的，
-    开头会带 "KLEI<版本号> " 这样的头（如 "KLEI     1 "），游戏自己读
-    这个文件走的是配套的 TheSim:GetPersistentString()，引擎内部会把
-    这段头吃掉；我们是直接读原始字节，不去掉就会把 "KLEI" 当成非法
-    token 报"格式错误"，但文件本身完全合法。
+    """去掉 TheSim:SetPersistentString() 写入的 ``KLEI<版本号> `` 文件头（游戏读取时会自动剥离，
+    直接读原始字节必须手动去掉，否则合法文件会被判为格式错误）。
     """
     match = _KLEI_PERSISTENT_STRING_HEADER_RE.match(text)
     return text[match.end():] if match else text
 
 
 def parse_lua_file(path: Path) -> dict:
-    """解析一个包含 `return { ... }` 表的 Lua 文件。
-
-    Args:
-        path: .lua 文件路径。
-
-    Returns:
-        解析出的嵌套 Python dict。
-    """
+    """解析包含 ``return { ... }`` 的 Lua 文件为嵌套 dict。"""
     text = path.read_text(encoding="utf-8")
     text = _strip_klei_persistent_string_header(text)
     return parse_lua_table(text, str(path))
@@ -608,16 +548,7 @@ def parse_lua_file(path: Path) -> dict:
 # ── Lua 表序列化 ───────────────────────────────────────────────────────
 
 def serialize_lua_table(data: dict, indent: int = 4, _level: int = 0) -> str:
-    """把 Python dict 序列化成格式良好的 Lua 表字符串。
-
-    Args:
-        data: 要序列化的 dict。
-        indent: 每级缩进的空格数。
-        _level: 内部用的递归深度计数。
-
-    Returns:
-        格式化后的 Lua 表字符串："return {\\n  ...\\n}"
-    """
+    """把 dict 序列化成带缩进的 ``return { ... }`` Lua 文本。"""
     if not data:
         return "return {}"
 
@@ -684,9 +615,7 @@ def _lua_value(value: Any) -> str:
             return str(int(value))
         return str(value)
     elif isinstance(value, str):
-        # Lua 的短字符串不能直接跨行。按顺序先转义反斜杠，
-        # 再转义会破坏引号或行结构的字符，保证序列化结果可被
-        # 游戏和本项目解析器共同读取。
+        # Lua 短字符串不能跨行：先转义反斜杠，再转义引号和控制字符
         escaped = (
             value.replace('\\', '\\\\')
             .replace('"', '\\"')

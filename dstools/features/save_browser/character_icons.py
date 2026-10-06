@@ -1,26 +1,12 @@
-"""角色 Tab 键头像解包，以及模组自定义角色的中文名/头像查找。
+"""角色头像解包，以及 Mod 自定义角色的中文名/头像查找。
 
-一开始用的是 `data/bigportraits/<prefab>.tex`（角色选择界面那种带盾牌
-形花边、整个身体入镜的大插画），但那张图里人物本身只占一小部分、裁出来
-当小图标看不清楚是谁。改用游戏自己在"Tab 键玩家列表"里显示的头像资源
-——这是 Klei 专门给"标出某个玩家当前是谁"这个场景做的小图标，官方角色
-的这批图打包成一张图集在 `data/databundles/images.zip` 的
-`images/avatars.tex`+`.xml` 里（元素名形如 `avatar_wilson.tex`，风格是
-黑白线稿，跟游戏内 HUD 头像一致，不是缺陷）；模组角色如果也做了同名的
-Tab 键头像，通常在自己文件夹的 `images/avatars/avatar_<prefab>.tex`（+
-同名 .xml）——在真实安装的一个模组里验证过这个路径，且模组自己画的这批
-图通常是彩色的（跟官方风格不同，这是模组作者自己的美术选择）。
+头像优先用"制作栏角色头像"（``images/crafting_menu_avatars``，约 256px，官方全收录），
+找不到再退回 Tab 键头像（``images/avatars``，约 60px，高缩放屏上发虚）。官方图集在
+``data/databundles/images.zip``；Mod 角色在自己目录下的同名路径（Mod 头像常是彩色，属作者风格）。
+不用 bigportraits：人物只占画面一小部分，缩小后认不出。
 
-Tab 键头像每个只有约 60 像素，在 125%/175% 缩放的屏幕上会被放大发虚。游戏里
-还有一套同画风的"制作栏角色头像"（`images/crafting_menu_avatars.tex`+`.xml`，
-每格约 256 像素，元素名同样是 `avatar_<prefab>.tex`），官方角色全部收录，部分
-模组也自带（`images/crafting_menu_avatars/avatar_<prefab>.tex`）——优先用它，
-找不到再退回 Tab 键头像。
-模组自定义角色的中文名来自该模组自己 scripts/prefabs/<prefab>.lua 里的
-`STRINGS.CHARACTER_NAMES.<prefab> = "..."` 这一行字面量赋值（在真实安装
-的模组里验证过这个写法），用正则整段扫描该模组全部 .lua 文件即可，不需
-要真的跑一遍这个模组的 Lua 代码。找不到就是找不到，原样回退显示英文
-prefab，不去猜测模组作者用了别的写法。
+Mod 角色中文名取自其 .lua 中 ``STRINGS.CHARACTER_NAMES.<prefab> = "..."`` 的字面量赋值，
+正则扫描即可；找不到就显示英文 prefab，不猜其他写法。
 """
 
 import re
@@ -40,25 +26,19 @@ _CACHE_DIR = cache_dir("character_icons")
 # 新角色上线后包里还没有的，仍按下面的流程从本机游戏文件里提取。
 _BUNDLED_AVATAR_DIR = bundled_resource_dir() / "icons" / "avatars"
 
-# 一次性扫描某个模组文件夹里全部 STRINGS.CHARACTER_NAMES.xxx = "..." 声明，
-# 而不是每次只找一个 prefab——同一个模组常常一次装好几个自定义角色，扫一
-# 遍缓存下来，比每个角色各扫一遍全部 .lua 文件更划算。
+# 一次扫描并缓存整个 Mod 的全部 CHARACTER_NAMES 声明（一个 Mod 常含多个角色）
 _mod_name_cache: dict[str, dict[str, str]] = {}
 
 _ALL_NAMES_RE = re.compile(r'STRINGS\s*\.\s*CHARACTER_NAMES\s*\.\s*(\w+)\s*=\s*"([^"]*)"')
 
-# 官方头像图集（元素名 -> (u1,u2,v1,v2)）解析结果只需要按 images.zip 的 mtime
-# 失效一次，不必每次都重新读 zip；None 表示"确认取不到"，同样值得缓存，避免
-# 每个未知角色都重新尝试一次注定失败的 zip 读取。键是 (zip 路径, 图集名)。
+# 官方头像图集解析结果，按 images.zip 的 mtime 失效；None（确认取不到）同样缓存。键为 (zip 路径, 图集名)
 _official_atlas_cache: dict[tuple[str, str], tuple[Path, dict[str, tuple[float, float, float, float]]] | None] = {}
 # 高清优先：制作栏角色头像（约 256 像素一格）→ Tab 键头像（约 95 像素一格）
 _OFFICIAL_ATLASES = (("crafting_menu_avatars", "avatar_hd_official"), ("avatars", "avatar_official"))
 
 
 def _crop_by_uv_trimmed(img: Image.Image, uv: tuple[float, float, float, float]) -> Image.Image:
-    """裁出 UV 矩形后再按 alpha 通道的真实非透明范围收一次边——有些头像
-    贴图裁出来的矩形四周还留了透明边距，图标显示时人物能占满，不是贴着
-    一圈空白。"""
+    """裁出 UV 矩形后再按 alpha 非透明范围收边，去掉贴图四周的透明边距。"""
     crop = crop_by_uv(img, uv)
     bbox = crop.split()[-1].getbbox()
     return crop.crop(bbox) if bbox else crop
@@ -104,9 +84,7 @@ def _convert_and_crop(tex_path: Path, xml_path: Path | None, cache_key: str) -> 
 
 
 def _find_official_install_dir() -> Path | None:
-    """官方客户端/专用服务器安装目录（带 data/databundles/ 的那一层），
-    两种安装都试一遍，哪个先找到就用哪个——遍历全部 Steam 库文件夹，不只
-    是第一个（DST 完全可能装在跟 Steam 客户端本体不同的库/盘符下）。"""
+    """官方客户端/专服中带 data/databundles/ 的安装目录，遍历全部 Steam 库，先找到先用。"""
     for steam in find_all_steam_libraries():
         for folder_name in ("Don't Starve Together", "Don't Starve Together Dedicated Server"):
             candidate = steam / "steamapps" / "common" / folder_name
@@ -116,9 +94,7 @@ def _find_official_install_dir() -> Path | None:
 
 
 def _get_official_avatar_atlas(atlas_name: str = "avatars"):
-    """返回 (整张官方头像图集转换后的 PNG 路径, {元素名: uv})，取不到就是 None。
-    官方头像打包在 images.zip 里，不是松散文件，要先解压 .tex 出来转换一次再
-    缓存，不必每次都重新解压 + 跑 ktech.exe。"""
+    """返回 (官方头像图集转换后的 PNG 路径, {元素名: uv})，取不到为 None；从 images.zip 解压转换一次后缓存。"""
     install_dir = _find_official_install_dir()
     if not install_dir:
         return None
@@ -205,12 +181,10 @@ def find_mod_character_name(mod_folder: Path, prefab: str) -> str | None:
 
 
 def get_mod_avatar_path(mod_folder: Path, workshop_id: str, prefab: str) -> Path | None:
-    """模组自带的角色头像，按清晰度依次找：
-    1. 制作栏头像 images/crafting_menu_avatars/avatar_<prefab>.tex（约 256 像素，少数模组才有）；
-    2. 存档栏头像 images/saveslot_portraits/<prefab>.tex（同画风，多为 128 像素，本机统计 77 个
-       模组角色里 66 个都有）；
-    3. Tab 键头像 images/avatars/avatar_<prefab>.tex（多为 64 像素），也顺带试一下 images/ 根目录
-       （不是所有模组都建 avatars/ 子目录）。"""
+    """Mod 自带角色头像，按清晰度依次查找：
+    1. 制作栏头像 images/crafting_menu_avatars/avatar_<prefab>.tex（约 256px，少数 Mod 有）；
+    2. 存档栏头像 images/saveslot_portraits/<prefab>.tex（多为 128px，大部分 Mod 角色有）；
+    3. Tab 键头像 images/avatars/avatar_<prefab>.tex（约 64px），也试 images/ 根目录。"""
     for tex_path, cache_prefix in (
         (mod_folder / "images" / "crafting_menu_avatars" / f"avatar_{prefab}.tex", "avatar_hd_mod"),
         (mod_folder / "images" / "saveslot_portraits" / f"{prefab}.tex", "avatar_slot_mod"),
@@ -229,16 +203,11 @@ def get_mod_avatar_path(mod_folder: Path, workshop_id: str, prefab: str) -> Path
 def resolve_character(prefab: str, mod_overrides_path: Path | None,
                        platform: Platform = Platform.STEAM,
                        wegame_client_mods_dir: Path | None = None) -> tuple[str, Path | None]:
-    """解析一个角色 prefab 的显示名 + 头像路径。
+    """解析角色 prefab 的显示名与头像路径。
 
-    先查官方角色表；查不到（说明是模组角色）再去这个世界的模组里找同名
-    声明（已启用的优先，已停用的兜底），连带该模组自带的头像一起用；名字读不出来（脚本加密）
-    但模组带了头像时，显示英文 prefab + 头像；都找不到就原样显示英文
-    prefab、不给头像——不去猜测未知模组的命名规则。
-
-    platform/wegame_client_mods_dir 透传给 find_mod_folder()——WeGame 存
-    档的 mod 内容不在 Steam 目录下，不传就永远找不到 WeGame 玩家用的自
-    定义角色模组，只能回退显示英文 prefab。
+    先查官方角色表；否则在该世界的 Mod 中找声明（已启用优先，已停用兜底）并带上其头像；名字读不出
+    （脚本加密）但有头像时显示英文 prefab + 头像；都没有则只显示英文 prefab。
+    WeGame 需透传 platform/wegame_client_mods_dir，否则找不到其 Mod 目录。
     """
     from dstools.features.save_browser.character_names import CHARACTER_NAMES, get_character_display_name
     if prefab in CHARACTER_NAMES:
@@ -249,8 +218,7 @@ def resolve_character(prefab: str, mod_overrides_path: Path | None,
         from dstools.features.mod.parser import find_mod_folder
         overrides = load_mod_overrides(mod_overrides_path)
         icon_only: Path | None = None
-        # 已停用的模组排在后面也查：存档里的角色可能是模组被停用之前
-        # 创建的，角色数据还在，头像资源也还在。
+        # 也查已停用的 Mod：角色可能在 Mod 停用前创建
         for entry in sorted(list_mods(overrides), key=lambda e: not e.enabled):
             mod_folder = find_mod_folder(entry.workshop_id, platform, wegame_client_mods_dir)
             if not mod_folder:

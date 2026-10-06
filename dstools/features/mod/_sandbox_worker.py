@@ -1,20 +1,11 @@
-"""在独立 Lua 5.1 子进程中执行片段并通过 JSON 返回结果。
-
-独立进程是超时边界：父进程可以终止死循环，而线程内嵌解释器无法可靠恢复。
-"""
+"""在独立 Lua 5.1 子进程中执行片段并通过 JSON 返回结果（独立进程是超时边界，内嵌解释器的死循环无法可靠中止）。"""
 
 import json
 import sys
 
 
 def _configure_worker_streams() -> None:
-    """把实际 Worker 管道统一为 UTF-8，但保持模块可被无控制台 EXE 导入。
-
-    PyInstaller ``--windowed`` 进程没有控制台时，未重定向的标准流可能是
-    ``None``。发布冒烟测试只需要导入本模块，不应因此崩溃；真正的沙箱
-    子进程由 ``subprocess.run(input=..., capture_output=True)`` 提供管道，
-    会在进入 ``main()`` 后完成编码配置和可用性校验。
-    """
+    """把 Worker 的标准流统一为 UTF-8；无控制台的 EXE 中标准流可能是 None，导入时不能崩溃。"""
     streams = (
         (sys.stdin, "replace"),
         (sys.stdout, "replace"),
@@ -26,10 +17,7 @@ def _configure_worker_streams() -> None:
 
 
 def _to_plain(value, _seen=None):
-    """把一张 Lua 表（dict 形状或数组形状）递归转换成能直接 JSON 化的
-    Python 普通数据。其它任何东西（函数、userdata 等）都退化成
-    str()，而不是让整个结果失败——具体需要什么形状由调用方事后自己
-    校验。"""
+    """把 Lua 表递归转成可 JSON 化的 Python 数据；函数、userdata 等退化为 str()，形状由调用方校验。"""
     _seen = _seen if _seen is not None else set()
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
@@ -55,35 +43,16 @@ def main():
     from lupa.lua51 import LuaRuntime
     rt = LuaRuntime(unpack_returned_tuples=True, register_eval=False)
     g = rt.globals()
-    # 纵深防御：调用方只会喂给它 mod 的 modinfo.lua 里
-    # configuration_options 被赋值*之前*的那部分内容（局部辅助函数/表/
-    # for 循环），从不会喂整个 mod——但这段文本终究是不可信的第三方内
-    # 容，所以不管怎样，任何能碰到文件系统/操作系统/进程/另一段 Lua 代
-    # 码的东西都要在运行前清空。
+    # 纵深防御：输入是不可信的第三方代码，运行前清空所有能接触文件系统/系统/进程/加载代码的接口
     for name in ("os", "io", "require", "dofile", "loadfile", "load",
                  "loadstring", "package", "debug", "collectgarbage"):
         g[name] = None
 
-    # 真实游戏引擎会给每份 modinfo.lua 提供 `locale`（通过
-    # LOC.GetLocaleCode()），mod 大量依赖它做双语文本——到处都是
-    # `local isCh = locale == "zh" or locale == "zhr"` 接着
-    # `isCh and "中文" or "English"` 这种写法。这里不设置的话，所有这类
-    # 判断都会算成 false，解析出来的每个选项都会悄悄变成英文而不是中
-    # 文——设成 "zh"（简体中文的真实代码，对照过真实 mod 源码确认，不
-    # 是猜的）能让沙箱按游戏对中文语言玩家的方式解析选项，跟本工具整
-    # 体中文优先的界面一致。
+    # 引擎会提供 locale，Mod 普遍用 ``locale == "zh"`` 选择中文文本；不设置时所有选项都会解析成英文
     g["locale"] = "zh"
 
-    # 引擎还会给每份 modinfo.lua 的执行环境注入一个
-    # `ChooseTranslationTable(tbl) -> tbl[locale] or tbl[1]` 辅助函数
-    # （对照过游戏自己的 modindex.lua 源码确认，不是猜的）——有些 mod
-    # 直接用它（而不是/或者同时用）`cond and "a" or "b"` 这种写法，其中
-    # 一个真实 mod（Insight）做得更绝：它把引擎注入的这份复制到一个局
-    # 部变量后清掉了全局引用，而它*自己*的辅助函数在全局不存在时会回
-    # 退成英文——所以这里不设置的话，不只是少一个功能，还会让所有用到
-    # 这个套路的 mod 悄悄把文本解析成英文而不是中文。多余的参数（有些
-    # mod 会调用 ChooseTranslationTable(tbl, key)，这里用不到）直接忽
-    # 略，跟真实 Lua 的行为一致。
+    # 引擎注入的 ChooseTranslationTable(tbl) -> tbl[locale] or tbl[1]（见 modindex.lua）。
+    # Insight 等会把它拷到局部后清掉全局，缺了就回退英文；多余参数与真实 Lua 一样忽略
     def _choose_translation_table(tbl, *_args):
         try:
             val = tbl["zh"]
@@ -98,14 +67,8 @@ def main():
 
     g["ChooseTranslationTable"] = _choose_translation_table
 
-    # 真实引擎的 KnownModIndex:InitializeModInfo(id) 会重新解析目标 mod
-    # 的 modinfo.lua 并返回一份完整信息表——沙箱这边没有能力（也不需要）
-    # 真的重新解析，只给一个"什么都没有"的空表占位，够用的原因是：调用
-    # 方（真实抓到的用例是"Chinese++ Pro"的翻译文件）只会取它的
-    # .description 字段做字符串替换，取不到真实描述就是空字符串，不影响
-    # 这条沙箱真正关心的 configuration_options 字段（在这类调用之后独立
-    # 赋值，不依赖这次调用的返回值）。批量跑过 116 份真实翻译文件验证过：
-    # 加这一个桩，成功率从需要它的近一半文件直接失败，变成整体 84% 成功。
+    # KnownModIndex:InitializeModInfo 的桩：返回空表即可。Chinese++ Pro 等翻译文件只取其 description
+    # 做替换，不影响 configuration_options；116 份真实翻译文件抽样，加桩后成功率升到 84%
     def _known_mod_index_stub(_self, *_args):
         return rt.table_from({"description": ""})
 
@@ -116,31 +79,16 @@ def main():
 
 
 def run_worker_main() -> None:
-    """崩溃安全的入口函数——这个文件作为脚本直接运行时
-    （`python _sandbox_worker.py`，即 sandbox._worker_command() 在开发
-    模式下启动的子进程）和打包后的 exe 带 `--lua-sandbox-worker` 参数重
-    新调用自己时（见 run_gui.py）都会调用它。一个 mod 的 Lua 代码片段
-    执行失败（真实的 Lua 运行时错误——比如引用了这个沙箱没提供的引擎全
-    局变量——是预期内的常见情况，不是 bug）绝不能表现成一个可见的崩溃
-    弹窗；父进程只会检查退出码，从不读 stderr，所以这里退出码为 1 就已
-    经是"沙箱解析不出来"这条路径的完整处理结果了。
+    """崩溃安全的 Worker 入口（源码直接运行与打包 EXE 带 ``--lua-sandbox-worker`` 两条路径都走这里）。
 
-    这段逻辑原来是直接写在下面 `if __name__ == "__main__":` 里的，只有
-    这个文件作为顶层脚本执行时才会跑到——开发模式下没问题，但
-    run_gui.py 打包模式的分支是直接 import 并调用 `main()`，完全绕过了
-    这道判断，导致一个未处理的 LuaError 会一路往上抛，PyInstaller 自己
-    的"Unhandled exception in script"弹窗会直接甩到用户面前。两条入口
-    路径都必须走同一层包装。
+    Lua 运行时错误（如引用沙箱没有的引擎全局）是常见的预期情况，只以退出码 1 表示解析失败，
+    父进程不读 stderr。坑：异常处理不能只写在 ``if __name__ == "__main__"`` 里，打包模式直接
+    调用 main()，未处理的 LuaError 会弹出 PyInstaller 的崩溃窗口。
     """
     try:
         main()
     except Exception as e:
-        # 父进程（sandbox.run_lua_snippet）从不读 stderr——只检查退出
-        # 码——但这里写入本身不能再抛出*第二个*未处理的异常。上面已经
-        # 把 stderr 配成 errors="backslashreplace"，所以不管 str(e) 产
-        # 生什么都能表示出来（Lua 错误消息里可能内嵌来自 mod 源码的原
-        # 始/解码异常字节），但这里的写入仍然加了保护，以防 str(e) 本
-        # 身出问题。
+        # 写 stderr 本身也不能再抛异常（错误消息可能含 Mod 源码的异常字节）
         try:
             sys.stderr.write(str(e))
         except Exception:

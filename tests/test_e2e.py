@@ -100,8 +100,8 @@ from dstools.features.sakura.api import find_dstcamp_tunnel, sanitize_tunnel_nam
 from dstools.features.sakura.frpc import FrpcManager
 from dstools.shared.app_settings import get_sakura_token, set_sakura_token
 from dstools.shared.app_settings import get_luajit_enabled, set_luajit_enabled
+from dstools.shared.cluster_names import validate_cluster_folder_name
 from dstools.features.save_browser.cluster_copy import (
-    validate_cluster_folder_name,
     suggest_new_cluster_name,
     copy_local_cluster_to_server,
 )
@@ -111,7 +111,6 @@ from dstools.features.local_service.luajit_injector import (
     InjectorState,
     LuajitMarker,
     apply_uninstall,
-    cleanup_legacy_local_mod_entry,
     detect_state,
     get_luajit_dir,
     is_workshop_subscribed,
@@ -3053,18 +3052,6 @@ def test_luajit_injector():
             with _fake_workshop_dir(root, [WORKSHOP_ID]):
                 assert is_workshop_subscribed() is True
         print("  PASS: is_workshop_subscribed() 按创意工坊本地内容目录判定正确")
-
-        with tempfile.TemporaryDirectory() as tmp_mo:
-            mo = load_mod_overrides(Path(tmp_mo) / "modoverrides.lua")
-            enable_mod(mo, "dstcamp_luajit_mod")  # 早前版本遗留的旧 key
-            enable_mod(mo, "workshop-123456")  # 无关的其它 mod，不该被动到
-            assert cleanup_legacy_local_mod_entry(mo) is True
-            assert "dstcamp_luajit_mod" not in mo.mods
-            assert "workshop-123456" in mo.mods
-            assert cleanup_legacy_local_mod_entry(mo) is False, (
-                "已经清过一次，重复调用应该是无操作"
-            )
-        print("  PASS: cleanup_legacy_local_mod_entry() 只清掉旧 key，不动其它 mod")
 
         plan_missing = plan_install(None, server_running=False)
         assert plan_missing.blocked_reason == "bin64_not_found"

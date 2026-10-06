@@ -16,8 +16,9 @@ from PySide6.QtWidgets import (
 from dstools.features.local_service.backup_manager import create_backup, list_backups, restore_backup
 from dstools.features.local_service.dedicated_server import detect_external_shard_processes
 from dstools.features.save_browser import view_data
+from dstools.shared.cluster_names import validate_cluster_folder_name
 from dstools.features.save_browser.cluster_copy import (
-    copy_local_cluster_to_server, suggest_new_cluster_name, validate_cluster_folder_name,
+    copy_local_cluster_to_server, suggest_new_cluster_name,
 )
 from dstools.features.save_browser.save_bundle import create_save_bundle, default_save_bundle_output_dir
 from dstools.features.save_browser.save_delete import recycle_cluster_dir

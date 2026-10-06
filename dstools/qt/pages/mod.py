@@ -589,7 +589,7 @@ class ModPage(Page):
         version_targets = []
         luajit_active = False
         overrides = load_mod_overrides(overrides_path)
-        overrides_dirty = luajit_injector.cleanup_legacy_local_mod_entry(overrides)
+        overrides_dirty = False
         if luajit_bin64_dir is not None:
             luajit_active = (luajit_injector.detect_state(luajit_bin64_dir) is luajit_injector.InjectorState.ACTIVE
                              and luajit_injector.is_workshop_subscribed())

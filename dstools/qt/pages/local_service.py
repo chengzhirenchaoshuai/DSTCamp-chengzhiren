@@ -1,10 +1,7 @@
-"""本地服务器页（对应 Tk 版 features/local_service/tab.py）。
+"""本地服务器页：世界启动/停止/重启、各世界控制台（qt/local_console.py）、直连代码
+（局域网/公网/内网穿透）、安装目录、Steam 更新与 LuaJIT 补丁。
 
-一键启动/管理饥荒专用服务器：世界启动器（启动/停止/重启每个世界）+ 每个已启动世界的
-控制台标签（qt/local_console.py）+ 直连代码（局域网/公网/内网穿透）+ 安装目录/Steam 更新/
-LuaJIT 性能补丁。内网穿透相关的"是否有映射/frpc 是否在转发"通过 AppContext 的钩子对接
-（sakura 页迁移后接管，见 context.py 顶部注释），迁移完成前这些钩子的默认值等价于
-"没有这个功能在占用/未就绪"，不是假数据——只是如实反映"这个功能还没迁移"。
+内网穿透的映射与 frpc 状态通过 AppContext 的钩子获取。
 """
 
 import ctypes
@@ -147,9 +144,8 @@ def _fetch_public_ipv4() -> str | None:
 
 
 def _tun_proxy_detected() -> bool:
-    """默认出口或查询域名的解析结果落在 198.18.0.0/15 时，判定代理软件的 TUN 模式接管了流量。
-
-    TUN 模式在路由层接管流量，绕过系统代理也没用，查到的公网 IP 可能是代理出口。
+    """默认出口或查询域名解析落在 198.18.0.0/15 时，判定代理软件 TUN 模式接管了流量
+    （此时查到的公网 IP 可能是代理出口）。
     """
     try:
         if ipaddress.ip_address(_route_source_ip("8.8.8.8")) in _PROXY_TUN_NETWORK:
@@ -203,8 +199,7 @@ class _ShardRow(QWidget):
         self.start_btn = QPushButton(t("local.start_btn"))
         self.stop_btn = QPushButton(t("local.stop_btn"))
         self.restart_btn = QPushButton(t("local.restart_btn"))
-        # 跟上方"全部启动/全部停止/..."一排统一字号，之前漏了这里，每个世界一行的
-        # 启动/停止/重启按钮还是默认大字号，真机反馈过两者明显不一致。
+        # 与上方批量按钮统一字号
         for button in (self.start_btn, self.stop_btn, self.restart_btn):
             button.setFont(theme.font("FONT_SIZE_SM"))
         self.start_btn.clicked.connect(lambda: page.start_shard(page.get_cluster(), shard))
@@ -274,9 +269,8 @@ class _RollbackDialog(dialogs.Dialog):
 class _ConnectRow(QWidget):
     """一行直连代码：标题 + 值（点击复制）+ 状态。"""
 
-    # 直连代码最长的现实样式——IPv4 最长形式 + 5 位端口 + 打码密码，用来给"值"这一
-    # 列定一个够用的固定宽度。之前值列跟着布局拉伸到填满整行剩余宽度，"未就绪"这
-    # 类状态文字被推到窗口最右边，跟真正的值文本之间空出一大截，真机反馈过。
+    # 直连代码最长的现实样式（IPv4 + 5 位端口 + 打码密码），用来给值列定固定宽度，
+    # 避免状态文字被拉伸推到最右侧
     _VALUE_SAMPLE = 'c_connect("255.255.255.255", 65535, "***")'
 
     def __init__(self, title: str, hint: str, on_click):
@@ -358,22 +352,18 @@ class LocalServicePage(Page):
 
         ctx.token_uses = self.token_usage_snapshot
         ctx.cluster_config_saved.connect(self._on_cluster_config_saved)
-        # 这个页签要在用户切到别的页签时仍然继续监督正在运行的专服进程和直连代码，
-        # 不能等用户"切回来"才刷新——不像其它纯配置页可以懒加载，这里直接订阅存档
-        # 切换信号，不依赖 Page.load() 的懒加载闸门。
+        # 切到其他页签时仍需监督运行中的专服与直连代码，所以直接订阅存档切换，不走懒加载
         ctx.cluster_changed.connect(self.on_cluster_changed)
         # F5/刷新全部：重新探测专用服务器工具（运行期间才装好的专服也能识别），WeGame 存档顺带重查进程
         ctx.env_changed.connect(self._on_env_refreshed)
 
-        # 跟世界设置/存档信息/内网穿透这几个主页签同一个外壳：外圈一圈主题色圆角
-        # 边框，内部全透明（alpha=0），透出主窗口背景图；之前这个页没套这层，真机
-        # 反馈过跟其它页签不统一。
+        # 与其他主页签相同的外壳：主题色圆角边框、内部透明透出背景图
         page_layout = QVBoxLayout(self)
         page_layout.setContentsMargins(24, 12, 24, 12)
         card = Card(radius=15, alpha=0, border=True)
         page_layout.addWidget(card)
         root = QVBoxLayout(card)
-        # 跟其它主页签统一的内边距（之前 8 偏紧，内容几乎贴着边框）。
+        # 与其他主页签统一的内边距
         root.setContentsMargins(15, 13, 15, 13)
         root.setSpacing(6)
 
@@ -398,8 +388,7 @@ class LocalServicePage(Page):
         self._console_tabs = ConsoleTabWidget()
         splitter.addWidget(self._console_tabs)
         splitter.setSizes([320, 900])
-        # 默认隐藏：一进页面就占大半个页面宽度的空控制台很突兀，真机反馈过。
-        # QSplitter 对隐藏的子控件会自动收起宽度和拖拽手柄，不需要额外处理布局。
+        # 默认隐藏空控制台；QSplitter 会自动收起隐藏子控件的宽度和手柄
         self._console_tabs.setVisible(False)
 
         self._detect_install_dir()
@@ -485,18 +474,11 @@ class LocalServicePage(Page):
         self._stop_all_btn.clicked.connect(self._stop_all)
         self._restart_all_btn.clicked.connect(self._restart_all)
         self._logs_btn.clicked.connect(self._get_logs)
-        # 直角边框已经是 QPushButton 的全局默认样式；这里只保留字号调小。
-        # QPushButton 默认横向 sizePolicy 是 Minimum（sizeHint 只是下限，布局有多余
-        # 空间时仍会把它撑大）——这几个按钮之前没设固定宽度，会随窗口拖拽跟着变宽
-        # 变窄，真机反馈过。"全部启动/全部停止/全部重启"这 3 个固定成跟上面"更换
-        # 路径"按钮一样的宽度（真机反馈要求对齐这个参照）；"获取日志文件"文字更长，
-        # 不参与这个统一宽度，保持自己的 sizeHint。
+        # 只调小字号（直角边框是全局默认）。QPushButton 默认横向策略会随窗口拉伸，需固定宽度
         buttons = (self._start_all_btn, self._stop_all_btn, self._restart_all_btn, self._logs_btn)
         for button in buttons:
             button.setFont(theme.font("FONT_SIZE_SM"))
-        # 这 3 个按钮宽度跟随字号自适应：横向 sizePolicy 用 Fixed，宽度=sizeHint 且
-        # 不随窗口拖拽撑大（之前 setFixedWidth 固定成"更换路径"宽度，切到更大字号档
-        # 时文字溢出）。三键都是 4 个汉字，sizeHint 接近，基本对齐。
+        # 横向 Fixed、宽度取 sizeHint：随字号自适应，不随窗口拉伸（写死宽度在大字号下会溢出）
         for button in (self._start_all_btn, self._stop_all_btn, self._restart_all_btn):
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         for button in buttons:
@@ -542,8 +524,7 @@ class LocalServicePage(Page):
         extra_row.addWidget(QLabel(t("local.extra_args_label")))
         self._extra_args_edit = QLineEdit(get_dedicated_server_extra_args())
         self._extra_args_edit.setFixedWidth(240)
-        # 只接受鼠标点击获得焦点：旁边"获取日志文件"等按钮点击后会暂时禁用自己，
-        # Qt 会把焦点顺延给 Tab 链上的下一个控件，之前就是这样平白落到这个输入框上。
+        # 只接受鼠标点击获得焦点：旁边按钮点击后暂时禁用自己，焦点会顺延落到这个输入框
         self._extra_args_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._extra_args_edit.editingFinished.connect(self._save_extra_args)
         extra_row.addWidget(self._extra_args_edit)
@@ -573,9 +554,7 @@ class LocalServicePage(Page):
         title_fm = QFontMetrics(self._lan_row._title.font())
         title_w = max(title_fm.horizontalAdvance(r._title.text()) for r in rows) + 4
         status_fm = QFontMetrics(self._lan_row._status.font())
-        # 状态列宽不能只看当前显示文字：初始三行都还没 set_status 会退化成最小值 60，
-        # 容不下"● 疑似代理"这类较长状态（真机反馈过"理"被截一半）。把可能出现的状态
-        # 文案一并纳入宽度计算。
+        # 状态列宽要按所有可能出现的状态文案计算，否则"● 疑似代理"这类长文案会被截断
         status_texts = [f"● {t(key)}" for key in (
             "local.connect_ready", "local.connect_not_ready", "local.connect_proxy_suspected")]
         status_texts += [r._status.text() for r in rows if r._status.text()]
@@ -900,9 +879,8 @@ class LocalServicePage(Page):
             dialog.append(t("local.steam_remote_build", remote=remote_build_id, local=before.build_id or "-"))
         else:
             dialog.append(t("local.steam_remote_fallback"))
-        # 已安装时"更新"也必须发 validate：Steam 对已安装 App 的 steam://install 直接忽略，
-        # 而且会把从未运行过的专服的自动更新推迟数天；validate 会立即以最高优先级先更新
-        # 到最新 Build 再校验（真机 content_log 已核实）。
+        # 已安装时"更新"也要发 validate：steam://install 对已安装 App 会被忽略，且从未运行过的
+        # 专服自动更新可能被推迟数天；validate 会以最高优先级立即更新（真机 content_log 核实）
         validate = mode != "install"
         uri = steam_client_updater.build_update_uri(app_id, validate=validate)
         dialog.append(t("local.steam_update_requested", uri=uri))
@@ -1127,8 +1105,8 @@ class LocalServicePage(Page):
     def _start_token_selection(self, cluster, *, retry_current: bool = False) -> TokenSelection | None:
         """只计算启动要用的令牌，不写文件；离线存档返回 None。
 
-        仍在 Klei 释放等待期内的新令牌不选；``retry_current`` 为 True 时忽略当前
-        令牌自己的等待标记，按用户意愿用原令牌再试（冲突时会重新进入等待）。"""
+        跳过仍在 Klei 释放等待期内的新令牌；``retry_current`` 为 True 时忽略当前令牌自己的
+        等待标记，用原令牌再试。"""
         if load_cluster_config(cluster.path).network.get("offline_cluster", False):
             return None
         current = read_token(self._start_token_path(cluster))
@@ -1159,8 +1137,8 @@ class LocalServicePage(Page):
     def _choose_start_token(self, cluster, *, allow_switch: bool = True, retry_current: bool = False) -> bool | str:
         """为启动选令牌并写入存档，不弹窗（自动重启用）。
 
-        ``allow_switch`` 为 False 时，存档已有有效令牌就不换成池里的其它令牌：
-        崩溃后用原令牌拉起、冲突时让专服自己重试，免得每崩一次就多占一个令牌。"""
+        ``allow_switch`` 为 False 时保留存档已有的有效令牌：崩溃后用原令牌拉起、冲突时让专服
+        自己重试，避免每崩一次就多占一个令牌。"""
         selection = self._start_token_selection(cluster, retry_current=retry_current)
         if (selection is not None and selection.changed and not allow_switch
                 and is_valid_token(read_token(self._start_token_path(cluster)))):
@@ -1168,9 +1146,7 @@ class LocalServicePage(Page):
         return self._apply_start_token(cluster, selection)
 
     def _alternative_start_token(self, cluster) -> str | None:
-        """令牌池里能替换当前令牌的另一个令牌（不写文件）；没有返回 None。
-
-        存档自己可能仍在运行（注册冲突中），所以不把它自己的占用算进去。"""
+        """令牌池中能替换当前令牌的另一个（不写文件），没有返回 None；存档自身的占用不计入。"""
         cluster_key = str(cluster.path)
         current = read_token(self._start_token_path(cluster))
         held = set(blocking_token_holds(time.time()))
@@ -1237,10 +1213,9 @@ class LocalServicePage(Page):
         self._auto_restart.on_failure(proc, report)  # 要在令牌等待标记更新之后，它按标记决定等多久
 
     def _record_token_hold(self, proc, report) -> None:
-        """主世界崩溃或注册冲突时，记下新令牌在 Klei 端尚未释放（TOKEN_HOLD_DURATION 内不自动分给别的存档）。
+        """主世界崩溃或注册冲突时，记录新令牌在 Klei 端尚未释放（TOKEN_HOLD_DURATION 内不分给别的存档）。
 
-        崩溃只在主世界注册成功过时才记：注册前就失败（Mod 报错、端口、世界生成等）
-        Klei 端没有房间要释放，记了只会白白锁住令牌，让池子很快被"占满"。"""
+        崩溃只在主世界注册成功过时才记录：注册前失败的 Klei 端没有房间要释放，记了只会白白锁住令牌。"""
         if report.category != "token_conflict" and not (
                 getattr(proc, "is_master", True) and getattr(proc, "registered", False)):
             return
@@ -1545,9 +1520,8 @@ class LocalServicePage(Page):
         return False
 
     def _resolve_v1_shadows(self, enabled_ids, server_mods_root: Path) -> bool:
-        """启用的 V2 Mod 在专服 mods 下还有旧副本时直接清理（见 features/mod/v1_shadow.py）：
-        文件夹移到回收站、链接只删链接，完成后弹一个渐隐提示，不打断启动。
-        清理失败（文件被占用）返回 False 并报错——否则专服会照样加载旧版本。"""
+        """启用的 V2 Mod 在专服 mods 下还有旧副本时直接清理（见 v1_shadow.py）：文件夹移入回收站、
+        链接只删链接，完成后渐隐提示。清理失败返回 False 并报错，否则专服会照样加载旧版本。"""
         from dstools.features.mod.parser import find_shared_ugc_directory
         from dstools.features.mod.v1_shadow import find_shadowed_mods, remove_shadowed_mods
 
@@ -1935,8 +1909,8 @@ class LocalServicePage(Page):
     def _get_lan_ip() -> str:
         """本机局域网 IP：优先取默认网关对应的私网地址，多个时取跃点最小的。
 
-        只看"访问外网走哪张网卡"会被代理软件 TUN 模式或 Tailscale 出口节点抢走默认路由，
-        得到 198.18.x、100.x 这类别人连不上的虚拟地址。找不到时回退到原来的外网出口地址。
+        坑：只看外网出口网卡会被 TUN 模式或 Tailscale 抢走默认路由，得到 198.18.x、100.x 这类
+        别人连不上的地址。找不到时回退到外网出口地址。
         """
         try:
             gateways = _default_gateways()

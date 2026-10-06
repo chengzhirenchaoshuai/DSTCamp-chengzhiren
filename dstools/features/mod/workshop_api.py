@@ -26,9 +26,7 @@ from dstools.features.mod.workshop_manifest import verify_mod_manifest
 
 DST_APP_ID = 322330
 
-# SteamAPI_Init 会从“当前工作目录”读取 steam_appid.txt。DSTCamp 自己的
-# 当前目录通常是项目/打包目录，而 steam_appid.txt 在 bin64 旁边；只在
-# 初始化这一瞬间临时切换，并用进程级锁避免两个后台更新线程同时切目录。
+# SteamAPI_Init 从当前工作目录读 steam_appid.txt（在 bin64 旁），只在初始化瞬间切换目录，进程级锁防止并发切换
 _STEAM_INIT_CWD_LOCK = threading.Lock()
 
 ITEM_SUBSCRIBED = 1 << 0
@@ -148,24 +146,19 @@ def _decode_c_string(data: bytes) -> str:
 def _parse_ugc_details_buffer(raw: bytes) -> WorkshopItemDetails:
     """读取 SteamUGCDetails_t 的稳定前缀字段。
 
-    v015 以后结构尾部可能继续扩展，因此原生调用使用宽裕的原始缓冲区，
-    这里只按 Steamworks SDK 长期稳定的字段偏移取值，避免 ctypes 结构尺寸
-    落后于用户机器上的 DLL 时发生越界写入。
+    v015 之后结构尾部可能扩展，原生调用用宽裕的原始缓冲区，这里只按 SDK 长期稳定的偏移取值，
+    避免 ctypes 结构尺寸落后于用户 DLL 时越界写入。
     """
     import struct
 
     if len(raw) < 9764:
         raise ValueError("SteamUGCDetails_t 返回缓冲区过短")
-    # SteamUGCDetails_t 按 8 字节对齐：三个 bool 位于 8184..8186，
-    # m_rgchTags[1025] 从 8187 开始；其后补齐到 8 字节边界，主文件句柄
-    # 从 9216 开始。旧偏移少算了 bool/尾部 padding，标题虽正常但标签
-    # 永远从字符串中间读取，导致 Klei 发布的 ``version:x.y.z`` 丢失。
+    # 按 8 字节对齐：三个 bool 在 8184..8186，m_rgchTags[1025] 从 8187 开始，主文件句柄从 9216 开始。
+    # 坑：漏算 bool/padding 时标签从字符串中间读，Klei 的 ``version:x.y.z`` 标签丢失
     tags_text = _decode_c_string(raw[8187:9212])
     content_handle = struct.unpack_from("<Q", raw, 9216)[0]
     file_size = max(0, struct.unpack_from("<i", raw, 9492)[0]) if content_handle else 0
-    # 现代目录式 ISteamUGC 项目通常不填旧版 RemoteStorage 的主文件句柄、
-    # 文件名和大小，文件名缓冲区也不保证清零；没有句柄/大小时必须忽略，
-    # 不能把未初始化字节显示给用户。
+    # 目录式项目通常不填旧版主文件句柄/文件名/大小，缓冲区也不保证清零，没有句柄/大小时必须忽略
     filename = _decode_c_string(raw[9232:9492]) if content_handle else ""
     return WorkshopItemDetails(
         workshop_id=struct.unpack_from("<Q", raw, 0)[0],
@@ -284,10 +277,8 @@ class WorkshopBatchResult:
 
 _WORKSHOP_WORKER_FLAG = "--dstcamp-workshop-worker"
 
-# 单文件版里 Worker 是同一个 EXE，PyInstaller 6.9+ 默认让它复用主进程的
-# _MEI 临时目录。主程序退出时若 Worker 还在跑（例如 Mod 更新中途关闭），
-# 它加载的 python3*.dll 等文件会锁住该目录，bootloader 清理失败并弹出
-# "Failed to remove temporary directory"。退出时统一结束仍存活的 Worker。
+# 坑：onefile 下 Worker 复用主进程的 _MEI 目录，主程序退出时 Worker 仍在跑会锁住目录，
+# bootloader 弹出 "Failed to remove temporary directory"，所以退出时统一结束存活的 Worker
 _ACTIVE_WORKERS: set[subprocess.Popen] = set()
 _ACTIVE_WORKERS_LOCK = threading.Lock()
 
@@ -311,11 +302,7 @@ _WORKER_TMP_NAME_RE = re.compile(rf"^{_WORKER_TMP_PREFIX}[a-z0-9_]{{8}}$")
 
 
 def cleanup_stale_worker_dirs() -> None:
-    """启动时清理以前残留的 Worker 临时目录（尽力而为）。
-
-    查询中途退出程序时，Worker 还占着目录里的 events.jsonl，退出阶段删不掉，
-    会留在系统临时目录里；单实例启动时不会有别的 Worker 在用这些目录。
-    """
+    """启动时尽力清理残留的 Worker 临时目录（退出时 Worker 仍占用 events.jsonl 导致删不掉的）。"""
     try:
         entries = list(Path(tempfile.gettempdir()).iterdir())
     except OSError:
@@ -517,12 +504,7 @@ def _load_dll(path: Path):
 
 
 def find_steam_api_dll(explicit: Path | None = None) -> Path | None:
-    """查找可复用的 DST ``steam_api64.dll``。
-
-    优先用户显式传入的路径，再用当前开服程序（server_runtime）自带的那份，
-    最后查各 Steam 库里的游戏和专服；两者的 Steam API DLL 在实机上内容
-    一致，任意一份都足以支持普通 SteamUGC。
-    """
+    """查找可用的 ``steam_api64.dll``：显式路径 > 当前开服程序自带 > 各 Steam 库的游戏/专服。"""
     if explicit:
         candidate = explicit.expanduser()
         return candidate if candidate.is_file() else None
@@ -626,12 +608,10 @@ class SteamWorkshopSession:
         self._started = True
 
     def _init_steam_api(self, initializer: Callable[[], Any]) -> bool:
-        """在 DLL 旁边读取 steam_appid.txt 后恢复 DSTCamp 的工作目录。
+        """切到 DLL 目录初始化 Steam API 后恢复工作目录。
 
-        独立专服 bin64 自带 steam_appid.txt，游戏客户端 bin64 没有；只装
-        客户端时改用 Steam 认可的 ``SteamAppId`` 环境变量提供 App ID（真机
-        核对：客户端 DLL 不带它时 SteamAPI_Init 失败，带上后读取订阅正常）。
-        初始化结束即恢复，避免影响之后启动的子进程。"""
+        客户端 bin64 没有 steam_appid.txt，需临时设置 ``SteamAppId`` 环境变量（真机核对：
+        不设时 SteamAPI_Init 失败），初始化后恢复，避免影响之后的子进程。"""
         previous = os.getcwd()
         need_app_id = not (self.dll_path.parent / "steam_appid.txt").is_file()
         with _STEAM_INIT_CWD_LOCK:
@@ -681,12 +661,10 @@ class SteamWorkshopSession:
     def subscribed_item_ids(
         self, *, include_locally_disabled: bool = True
     ) -> list[int]:
-        """枚举当前 Steam 用户为 DST 订阅的全部 Workshop 项目。
+        """枚举当前 Steam 账号为 DST 订阅的全部 Workshop 项目。
 
-        这份账号级列表不依赖 ``appworkshop_322330.acf`` 和内容目录，因此
-        也是发现“仍在订阅、但 ACF 与实际文件均已丢失”项目的唯一可靠入口。
-        额外的 ``bool`` 参数在新版 Steamworks 中用于包含本地禁用项目；
-        x64 下旧版 v015 包装会安全忽略多余参数。
+        不依赖 ACF 和内容目录，是发现"仍在订阅但文件与 ACF 都丢失"项目的唯一入口。
+        额外的 bool 参数在新版 Steamworks 中表示包含本地禁用项，旧版 v015 会忽略。
         """
         self._ensure_started()
         self._require(
@@ -1078,9 +1056,8 @@ class SteamWorkshopSession:
                     max(0, int(source_details.time_updated)),
                 )
                 result.details["legacy_path_recovered_from_source"] = True
-        # Steam 的 Installed 位和 GetItemInstallInfo 可能在文件被手动删除后
-        # 仍保留旧值。只有物理目录、modinfo 和可用 Manifest 都通过验收，
-        # 才能跳过 DownloadItem；否则把本次请求标记为修复。
+        # 文件被手动删除后 Installed 位和安装信息可能仍是旧值，物理目录、modinfo 与
+        # Manifest 都通过才跳过 DownloadItem，否则按修复处理
         if (
             not force_redownload
             and result.state.installed
@@ -1102,9 +1079,8 @@ class SteamWorkshopSession:
                     )
                     if legacy_result.completed:
                         return legacy_result
-                    # 只有包本身损坏或版本不匹配时，重新从 Steam 拉包才可能
-                    # 修复。目录占用、没有部署目标等错误必须原样返回，不能
-                    # 再误入只适用于 V2 目录的 modinfo.lua 强制修复。
+                    # 只有包损坏或版本不匹配才重新拉包；目录占用、无部署目标等错误原样返回，
+                    # 不能误入只适用于 V2 目录的 modinfo.lua 强制修复
                     if not legacy_result.details.get("legacy_retry_download"):
                         return legacy_result
                     legacy_result.details["legacy_local_repair_error"] = (
@@ -1259,13 +1235,11 @@ class SteamWorkshopSession:
     def _download_legacy_item(
         self, result: WorkshopDownloadResult, install_info: WorkshopInstallInfo | None
     ) -> WorkshopDownloadResult:
-        """用旧版 RemoteStorage 接口修复 Legacy Workshop 文件。
+        """用旧版 RemoteStorage 接口修复 Legacy（V1）Workshop 文件。
 
-        Legacy 项目的 ``GetItemInstallInfo`` 返回的是 ``*_legacy.bin`` 文件，
-        并非目录。Steam 即使发现该文件被删除，也可能继续保留 Installed 位；
-        此时现代 ``ISteamUGC::DownloadItem`` 会接受请求但永远不产生传输。
-        文件名本身包含旧接口所需的 UGCHandle，因此直接下载到 Steam 记录的
-        原位置，完成后仍按实际文件大小验收。
+        坑：V1 安装信息返回的是 ``*_legacy.bin`` 文件；文件被删后 Installed 位可能保留，现代
+        DownloadItem 会接受请求却永不传输。文件名里包含旧接口需要的 UGCHandle，直接下载到原
+        位置，完成后按实际文件大小验收。
         """
         if install_info is None:
             result.error = "Steam 没有返回 Legacy Mod 的安装记录"
@@ -1480,9 +1454,7 @@ class SteamWorkshopSession:
         self._ensure_started()
         if not result.accepted:
             return result
-        # V1 可能直接复用现有 *_legacy.bin 完成本地包验收，没有创建新的
-        # Steam API 下载调用。此时 completed=True，不能再进入 Legacy
-        # 下载等待并制造伪错误。
+        # V1 可能直接用现有 *_legacy.bin 通过验收（completed=True），不能再进入下载等待制造伪错误
         if result.completed:
             return result
         if result.state is not None and result.state.legacy_item:
@@ -1528,9 +1500,8 @@ class SteamWorkshopSession:
                 and not result.state.needs_update
                 and transfer_finished
             ):
-                # DownloadItem 可能在第一次查询时仍返回旧的 Installed 状态；
-                # 至少连续几次稳定且留出一个短暂启动窗口，再读安装目录，
-                # 避免把“请求已接受”误报成“新文件已经落盘”。
+                # DownloadItem 刚发起时可能仍返回旧的 Installed 状态，需连续稳定几次并留出启动窗口，
+                # 避免把"请求已接受"误报为"新文件已落盘"
                 stable_installed_polls += 1
             else:
                 stable_installed_polls = 0
@@ -1698,12 +1669,7 @@ def _update_workshop_items_in_process(
     on_item_start: Callable[[int, int, int], None] | None = None,
     on_item_complete: Callable[[int, int, WorkshopDownloadResult], None] | None = None,
 ) -> WorkshopBatchResult:
-    """使用普通 SteamUGC 会话批量检查/更新 Workshop Mod。
-
-    这里故意不接受 ``workshop_folder`` 或服务器后端参数：Mod 管理页的
-    默认批量更新必须只更新 Steam 的共享 Workshop 缓存，不创建
-    ``ugc_mods/<Cluster>`` 副本。专服 UGC 仍可由底层的显式 API 单独诊断。
-    """
+    """用普通 SteamUGC 会话批量检查/更新 Workshop Mod，只更新 Steam 共享 Workshop 缓存。"""
     unique_ids: list[int] = []
     seen: set[int] = set()
     for raw_id in workshop_ids:
@@ -1734,9 +1700,8 @@ def _update_workshop_items_in_process(
     try:
         with SteamWorkshopSession(resolved_dll) as session:
             source_details: dict[int, WorkshopItemDetails] = {}
-            # DownloadItem 对已下架/私密项目有时仍返回 true，但之后永远不会
-            # 产生下载状态。先做一次批量源端预检，只有明确的逐项目错误才
-            # 短路；网络查询整体失败时仍保留原下载路径，避免误拦正常 Mod。
+            # 已下架/私密项目的 DownloadItem 可能返回 true 但永不下载：先批量预检源端，
+            # 只有明确的逐项错误才短路，整体查询失败仍走原下载路径
             try:
                 for start in range(0, total, 50):
                     for item in session.query_item_details(
@@ -1904,12 +1869,9 @@ def _get_workshop_item_snapshot_in_process(
     dict[int, WorkshopInstallInfo],
     dict[int, WorkshopItemDetails],
 ]:
-    """在一次 Steam 会话中读取状态、安装记录和可选的源端详情。
+    """在同一次 Steam 会话中读取状态、安装记录和可选的源端详情（更新选择器刷新用）。
 
-    Mod 更新选择器一次刷新需要三类证据。以前分别调用三个公共函数，
-    每类都会单独 ``SteamAPI_Init/Shutdown``；这里专供组合刷新路径复用
-    同一会话。源端标题只是展示增强，查询失败时仍保留本地状态和安装
-    记录，不能让一次网络问题抹掉已经取得的可靠证据。
+    源端详情只是展示增强，查询失败时保留本地状态与安装记录。
     """
     requested_ids = list(
         dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0)
@@ -1926,9 +1888,7 @@ def _get_workshop_item_snapshot_in_process(
         subscribed_ids = session.subscribed_item_ids() if include_subscribed else []
         ids = list(dict.fromkeys((*requested_ids, *subscribed_ids)))
         id_set = set(ids)
-        # 新枚举出来的 ID 没有本地 ModInfo 可提供名称，只查询这些新增项；
-        # 已扫描项目仍只按调用方给出的 detail_ids 查询，避免数百个 Mod
-        # 每次都重新访问源端详情。
+        # 只为新枚举出的 ID 查询详情（没有本地名称），已扫描项目仍只查 detail_ids，避免每次查几百个
         details_to_query = list(
             dict.fromkeys(
                 (

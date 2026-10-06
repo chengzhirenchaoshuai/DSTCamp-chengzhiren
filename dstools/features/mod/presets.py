@@ -1,20 +1,11 @@
-""""配置集"——把一批 mod 的启用状态+配置项打包存起来，供之后一键套用到
-任意存档，省得每次都手动逐个开关/调配置。
+"""Mod 配置集：保存一批 Mod 的启用状态与配置项，一键套用到任意存档。
 
-设计上刻意跟 ModEntry 同形（{enabled, configuration_options}），这样
-应用配置集能直接复用 manager.py 已经跑通的读写逻辑，不用另起一套。
-
-**已知坑（应用配置集时必须处理，见 plan_apply_preset 的说明）**：
-1) mod 取消订阅——这台机器上找不到了，仍然写入 modoverrides.lua（游戏
-   本来就容忍"配置存在但内容缺失"），但要在报告里明确提示，不能悄悄过去。
-2) mod 更新导致配置项增删——预设里的旧 key 现在 mod 已经不再声明，跳过
-   不写；mod 新增的 key 预设没有，天然保持默认值，不需要特殊处理。
-3) 配置项 key/个数没变，但候选值(data)变了——按当前 mod_info 的
-   opt.choices 重新核对一遍，值不在候选范围内就报出来，不拦截（Lua 本
-   来就不校验），但让用户知道要去检查。
-4) 依赖"Configs Extended"(workshop-3317960157)的自由文本类配置——这类
-   选项没有固定候选列表，值校验对它们不适用，只做"key 是否还存在"的检
-   查；额外提示这个共享库本身在不在，因为它不在的话这些配置不会真正生效。
+形状与 ModEntry 一致（{enabled, configuration_options}），复用 manager.py 的读写逻辑。
+套用时需处理（见 plan_apply_preset）：
+1. Mod 已取消订阅：仍写入（游戏容忍缺失），但在报告中提示；
+2. Mod 更新删除了配置项：跳过不写；新增的项保持默认；
+3. 候选值变化：按当前 choices 核对，不在范围内只提示不拦截；
+4. 依赖 Configs Extended 的自由文本配置：只检查 key 是否存在，并提示该共享库是否已安装。
 """
 
 from dataclasses import dataclass, field
@@ -31,20 +22,13 @@ if TYPE_CHECKING:
 
 _FORMAT_VERSION = 1
 
-# "Configs Extended"共享库——集合/数组/文本/字典这几种自由文本配置类型
-# 最终都要靠它才能在游戏里真正生效（见 parser.py ModConfigOption 的
-# is_set_config 等字段说明）。
+# Configs Extended 共享库：集合/数组/文本/字典类配置要靠它才能生效
 CONFIGS_EXTENDED_WORKSHOP_ID = "workshop-3317960157"
 
 
 @dataclass
 class ModPreset:
-    """一份 mod 状态快照。
-
-    mods: workshop_id -> {"enabled": bool, "configuration_options": dict}，
-    跟 ModEntry 的形状对应，故意不用 ModEntry 本身（那个类还有 name/
-    description 字段，预设不需要存这些跟着 mod 本身变化的展示信息）。
-    """
+    """Mod 状态快照：mods 为 workshop_id -> {"enabled", "configuration_options"}（不存展示信息）。"""
     name: str
     mods: dict[str, dict] = field(default_factory=dict)
     created_at: str = ""
@@ -63,22 +47,17 @@ class ApplyIssue:
 
 @dataclass
 class ApplyPlan:
-    """apply_preset() 真正写盘之前，先算好的只读计划——供 GUI 层弹窗给
-    用户看完再确认。"""
+    """apply_preset() 写盘前的只读计划，供界面确认。"""
     preset: ModPreset
     ok_ids: list[str] = field(default_factory=list)  # 会被写入的 mod id（含带 issue 的）
     issues: list[ApplyIssue] = field(default_factory=list)
     needs_configs_extended: bool = False  # 用了自由文本配置，但这台机器没有 Configs Extended
-    # wid -> 这个 mod 里判定为"已废弃"的配置项 key 集合——apply_preset()
-    # 写入时会跳过这些 key，不是简单地把 issues 列表原样丢给它重新判断
-    # 一遍（stale_option 的判定只应该发生一次，写入逻辑只管照办）。
+    # wid -> 判定为已废弃的配置项 key，apply_preset() 直接跳过（只判定一次）
     stale_options: dict = field(default_factory=dict)
 
 
 def list_presets() -> list[ModPreset]:
-    """按名字排序返回全部已保存的配置集；单条数据形状不对就跳过它，不
-    让一条坏数据拖垮整个列表（跟 mod_resolve_cache.py 对损坏缓存的容错
-    是同一个态度）。"""
+    """按名字排序返回全部配置集；单条数据损坏时跳过，不影响整个列表。"""
     presets = []
     for item in app_settings.get_mod_presets():
         if not isinstance(item, dict):
@@ -136,26 +115,11 @@ def delete_preset(name: str) -> None:
 
 def capture_preset(name: str, mod_data: dict, mod_infos: dict, selected_ids: set,
                     source_platform: str) -> ModPreset:
-    """从 ModManagerTab 当前界面状态（mod_data: workshop_id -> ModEntry，
-    可能含尚未点"保存"的改动）按 selected_ids 打包成一份 ModPreset。
+    """把当前界面状态（可能含未保存改动）中 selected_ids 的 Mod 打包成配置集。
 
-    **真机复现过的坑**：`entry.configuration_options` 是直接从
-    modoverrides.lua 原样读回来的，里面可能已经混进"null"/""这种键——
-    不是刚发生的 mod 更新造成的，而是标题类选项的占位名字（见
-    parser.py ModConfigOption 的说明："AddTitle(title)"这类辅助函数会
-    生成 `{name="null", ...}` 这样的标题项，游戏自己序列化整张表时可能
-    连这种非真实选项也一并写了进去）。这种键从来就不对应任何真实可编
-    辑的设置，如果原样打包进预设，套用时会被 plan_apply_preset() 判定
-    成"stale_option"，报出"这个 mod 已经不再声明"——但用户压根没更新过
-    mod，这个提示只会显得莫名其妙。这里在打包时就用 mod_infos 里这个
-    mod 当前声明的真实（非标题）选项名单过滤一遍，从源头上不让这类从
-    来就不是"设置项"的键混进预设——真正意义上的"mod 更新后删除了某个
-    选项"仍然会在 plan_apply_preset() 里被正确检测到（因为它在打包这一
-    刻还是白名单里的合法选项）。
-
-    mod_infos 拿不到解析结果（None）、或者解析出的 schema 认不出来
-    （ModInfo.unsupported_schema）时没有可信的白名单可用，宁可整段原样
-    保留，也不在没把握的情况下悄悄丢掉用户真实设置过的值。
+    坑：modoverrides.lua 里可能混有标题项的占位键（如 AddTitle 生成的 "null"），打包时按 Mod
+    当前声明的非标题选项过滤，否则套用时会被误报为"已不再声明的选项"。拿不到可信的选项名单
+    （未解析或 schema 不识别）时整段原样保留，不丢用户的真实设置。
     """
     mods = {}
     for wid in selected_ids:
@@ -178,15 +142,9 @@ def _is_freeform_option(opt) -> bool:
 
 
 def plan_apply_preset(preset: ModPreset, mod_infos: dict) -> ApplyPlan:
-    """核对预设内容和当前这台机器实际解析出来的 mod 信息，算出一份不修
-    改任何文件的只读计划——调用方（GUI 层）应该先把 plan.issues 展示给
-    用户看完再决定是否真的调用 apply_preset()。
+    """对照本机解析出的 Mod 信息生成只读计划，界面展示 plan.issues 后再决定是否 apply_preset()。
 
-    Args:
-        mod_infos: workshop_id -> ModInfo | None，覆盖范围应该是"这台机
-            器当前能看到的每一个已安装 mod"（ModManagerTab._mod_infos 正
-            是这样的字典——见 _load_mods_worker 的 docstring），键不存在
-            表示这台机器根本没有这个 mod（取消订阅/卸载/从没装过）。
+    mod_infos 应覆盖本机全部已安装 Mod，键不存在表示本机没有该 Mod。
     """
     plan = ApplyPlan(preset=preset)
     needs_ce = False
@@ -203,8 +161,7 @@ def plan_apply_preset(preset: ModPreset, mod_infos: dict) -> ApplyPlan:
 
         plan.ok_ids.append(wid)
         if info is None:
-            # 曾经装过、但这次 modinfo.lua 解析不出来（文件损坏/被占
-            # 用）——仍然写入，只是没法做选项级别的校验。
+            # 装过但 modinfo.lua 这次解析失败：仍写入，只是无法做选项级校验
             continue
 
         current_opts = {o.name: o for o in info.config_options if not o.is_header}
@@ -220,14 +177,8 @@ def plan_apply_preset(preset: ModPreset, mod_infos: dict) -> ApplyPlan:
                 if wid != CONFIGS_EXTENDED_WORKSHOP_ID and not has_configs_extended:
                     needs_ce = True
                 continue
-            # 只对有固定候选列表、且不是"解析不出具体选项"的动态选项做值
-            # 合法性核对——这两类之外的值没法判断"合法范围"是什么，不猜测。
-            # mod 自己声明的 default 不一定出现在 options 枚举表里（比
-            # 如"西瓜刀"workshop-1553396970 的 baojilv/aoerange 两项，
-            # default=0，但 options 列表是 1%~100%/1~15，没有 0 这一
-            # 档）——这种"default 是脱离选项列表之外的哨兵值，表示用户
-            # 从没碰过这项设置"在很多 mod 里是合法写法，值等于
-            # opt.default 时不算异常，不是候选值变化导致的。
+            # 只核对有固定候选列表的非动态选项。坑：default 可以是候选列表之外的哨兵值
+            # （如 workshop-1553396970 的 default=0 而选项为 1~100%），等于 default 不算异常
             if opt.choices and not opt.is_dynamic and value != opt.default:
                 if not any(c.get("data") == value for c in opt.choices):
                     plan.issues.append(ApplyIssue(wid, display_name, "invalid_value",
@@ -238,14 +189,9 @@ def plan_apply_preset(preset: ModPreset, mod_infos: dict) -> ApplyPlan:
 
 
 def apply_preset(cluster: "Cluster", plan: ApplyPlan, clear_first: bool = False) -> int:
-    """把 plan.ok_ids 里的 mod 状态套到 cluster 每个世界的
-    modoverrides.lua 上，返回处理过的世界数。
+    """把 plan.ok_ids 的 Mod 状态写入存档每个世界的 modoverrides.lua，返回处理的世界数。
 
-    默认是合并语义：只覆盖预设列出的这些 mod，其余 mod（不管是当前已启
-    用的，还是预设没提到的）原样保留。clear_first=True 时先清空每个世界
-    已有的整份 mod 状态，只保留预设内容——对应"应用前清空当前所有mod状
-    态"这个可选项，调用方（GUI 层）必须已经就这个更激进的选项拿到用户
-    明确确认。
+    默认合并：只覆盖配置集中的 Mod；clear_first=True 先清空现有 Mod 状态（调用方须已获用户确认）。
     """
     from dstools.features.mod.manager import load_mod_overrides, save_mod_overrides
 

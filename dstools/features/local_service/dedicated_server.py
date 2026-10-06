@@ -1,8 +1,6 @@
-"""饥荒专用服务器（Dedicated Server）的安装目录发现、conf_dir 计算与进程管理。
+"""专用服务器安装目录发现、conf_dir 计算与进程管理（不依赖界面）。
 
-只服务于 SaveSource.SERVER 类型的 Cluster 开服场景，不含任何 tkinter 依赖，
-方便独立验证。长驻子进程的 stdout/stdin 都走管道，不弹出真实控制台窗口，
-GUI 层自己用 Text 控件展示输出（见 features/local_service/tab.py）。
+子进程 stdout/stdin 走管道，不弹控制台窗口，输出由界面层展示。
 """
 
 import csv
@@ -29,7 +27,7 @@ IS_WINDOWS = sys.platform == "win32"
 if IS_WINDOWS:
     import winreg
 
-DEDICATED_SERVER_APP_ID = "343050"  # 真机 appmanifest 文件名验证过（曾经错写成 343080，无路径逻辑受影响，只是展示文案错了）
+DEDICATED_SERVER_APP_ID = "343050"  # 已用真机 appmanifest 文件名核对
 CLIENT_APP_ID = "322330"
 _INSTALL_DIR_NAME = "Don't Starve Together Dedicated Server"
 _EXE_NAMES = {64: "dontstarve_dedicated_server_nullrenderer_x64.exe", 32: "dontstarve_dedicated_server_nullrenderer.exe"}
@@ -38,9 +36,7 @@ _BIN_DIRS = {64: "bin64", 32: "bin"}
 
 
 # ── "文档"特殊文件夹 ──────────────────────────────────────────────
-# -conf_dir 参数的隐式基准目录是 Windows"文档"特殊文件夹下的 Klei\，而不是
-# 未重定向的 ~/Documents——本仓库 discovery.py 自己的候选路径列表里就有
-# "文档"被重定向到 D 盘的场景，必须读真实值，猜不得。
+# -conf_dir 的隐式基准是 Windows "文档"特殊文件夹下的 Klei\，"文档"可能被重定向到其他盘，必须读真实值
 
 def get_documents_dir() -> Path:
     """返回真实的"文档"特殊文件夹路径，取不到（非 Windows/注册表读取失败）时退回 ~/Documents。"""
@@ -60,10 +56,8 @@ def get_documents_dir() -> Path:
 
 
 # ── 关闭电源节流（EcoQoS） ─────────────────────────────────────────
-# 进程没有显式声明时，Windows 会按启发式规则对后台/无窗口进程做电源节流
-# （降频、调度到大小核 CPU 的能效核、忽略高精度计时器请求）。专服无窗口，
-# 开服工具切到后台后可能被判为可节流，导致模拟跟不上、主机性能变黄。
-# 这里对专服进程显式声明"不节流"，参考微软 SetProcessInformation 文档。
+# 无窗口的专服在工具切到后台后可能被 Windows 节流（降频、调度到能效核），导致模拟跟不上、
+# 主机性能变黄，所以显式声明"不节流"（见微软 SetProcessInformation 文档）。
 
 _PROCESS_SET_INFORMATION = 0x0200
 _PROCESS_POWER_THROTTLING_INFO_CLASS = 4  # PROCESS_INFORMATION_CLASS.ProcessPowerThrottling
@@ -73,10 +67,9 @@ _PROCESS_POWER_THROTTLING_IGNORE_TIMER_RESOLUTION = 0x4
 
 
 def _disable_power_throttling(pid: int) -> bool:
-    """对指定进程关闭执行速度节流与计时器精度节流，返回是否成功。
+    """关闭指定进程的执行速度与计时器精度节流，返回是否成功；失败不影响开服。
 
-    ControlMask 置位、StateMask 清零表示"由程序接管且始终不节流"。旧系统
-    不支持某个标志位时整体调用会失败，此时退回只关执行速度节流；失败不影响开服。
+    旧系统不支持计时器标志位时整体调用失败，退回只关执行速度节流。
     """
     import ctypes
     from ctypes import wintypes
@@ -111,17 +104,12 @@ def _disable_power_throttling(pid: int) -> bool:
 
 
 # ── Steam 专用服务器安装目录发现 ──────────────────────────────────
-# 注册表读取 + libraryfolders.vdf 解析统一放到 steam_discovery.py（原来
-# 这里和 modinfo_reader.py 各写了一份，后者是硬编码猜路径的弱版本，导致
-# 不是开发者本人机器的 Steam 装哪儿都找不到——见 steam_discovery.py 顶部
-# 注释）。
+# 注册表与 libraryfolders.vdf 解析统一在 steam_discovery.py。
 
 def is_valid_install_dir(path: Path) -> bool:
-    """检查目录下 bin64/bin 是否存在对应的专用服务器可执行文件，并且确实
-    是"Dedicated Server"这个安装包，不是普通游戏客户端——饥荒客户端自己
-    的 bin64 目录里也内置了同一份 dontstarve_dedicated_server_nullrenderer*.exe
-    （给游戏内"开办本地游戏"功能用），只看 exe 在不在会把客户端目录也
-    误判成有效的专用服务器安装目录。"""
+    """目录下是否有专服 exe 且确实是独立专服安装包。
+
+    坑：客户端 bin64 里也自带同名专服 exe（供"开办本地游戏"），只看 exe 会误判。"""
     if "dedicated server" not in path.name.lower():
         return False
     return _has_server_exe(path)
@@ -134,10 +122,7 @@ def _has_server_exe(path: Path) -> bool:
 def is_client_install_dir(path: Path) -> bool:
     """游戏客户端安装目录：bin64/bin 里同时有客户端 exe 和自带的专服 exe。
 
-    真机核对过（版本 756039）：客户端自带的专服 exe 与独立专服工具的
-    SHA256 完全相同，scripts.zip 全部条目 CRC 一致；用它带令牌、5 个创意
-    工坊 Mod、地面+洞穴实际开服，Steam 初始化、Mod 加载、洞穴连接和
-    c_shutdown 关服都正常。"""
+    真机核对（756039）：自带专服 exe 与独立专服 SHA256 相同，可正常开服。"""
     if "dedicated server" in path.name.lower():
         return False
     return any(
@@ -156,10 +141,7 @@ def pick_bitness(install_dir: Path) -> int:
 
 
 def find_bin64_dir(install_dir: Path) -> Path | None:
-    """install_dir 是专用服务器安装根目录（bin64/bin 的上一级）——给
-    luajit_injector.py 这类需要直接操作 bin64 内容的功能用，跟
-    pick_bitness() 不同，这里找不到对应 exe 时返回 None 而不是抛异常，方
-    便调用方优雅处理"还没检测到安装目录"这种情况。"""
+    """专服安装根目录（bin64/bin 的上一级），找不到返回 None 而不是抛异常。"""
     try:
         b = pick_bitness(install_dir)
     except FileNotFoundError:
@@ -168,11 +150,7 @@ def find_bin64_dir(install_dir: Path) -> Path | None:
 
 
 def find_dedicated_server_dir() -> Path | None:
-    """按优先级探测专用服务器安装目录，找不到返回 None（调用方应弹出安装引导）。
-
-    优先级：用户手动确认过的路径 > find_all_steam_libraries() 找到的全部
-    Steam 库文件夹（注册表读真实值，游戏装在非默认库/盘符也能找到）。
-    """
+    """按优先级探测专服安装目录：用户手动确认的路径 > 全部 Steam 库；找不到返回 None。"""
     remembered = app_settings.get_dedicated_server_path()
     if remembered and is_valid_install_dir(remembered):
         return remembered
@@ -210,10 +188,8 @@ def resolve_conf_dir_arg(klei_root: Path) -> str | None:
 def build_launch_args(cluster_name: str, shard_name: str, conf_dir_arg: str | None,
                        ugc_directory: str | None = None,
                        extra_args: str = "") -> list[str]:
-    """ugc_directory：真机验证过，传这台机器 Steam 的 steamapps/workshop
-    目录能让服务器直接读那份内容，不再各自建一份 ugc_mods（见
-    modinfo_reader.find_shared_ugc_directory()）；找不到就是 None，不传
-    这个参数，服务器退回默认行为，不影响正常启动。"""
+    """ugc_directory 用 Steam 的 steamapps/workshop（见 parser.find_shared_ugc_directory），
+    找不到为 None，不传该参数，服务器退回默认行为。"""
     args = ["-console", "-cluster", cluster_name, "-shard", shard_name]
     if ugc_directory:
         args = args + ["-ugc_directory", ugc_directory]
@@ -241,38 +217,14 @@ class ServerStatus(Enum):
     CRASHED = "crashed"
 
 
-# 进程起来了(RUNNING)不代表世界真的加载完、能进游戏了——Master 和非
-# Master(Secondary/老版本叫 Slave) 的"真正就绪"判断不是同一回事，用真
-# 实 server_log.txt 核对过（用户亲测的当前版本日志 + 一份 2019 年的历史
-# 存档日志：https://github.com/rawii22/DSTSaves）：
-#
-# - Master：玩家能进游戏不需要等副本(Caves 等)连上。不能使用
-#   "Reset() returning"：新建世界时临时 worldgen Lua 也会打印完整的
-#   "About to start a server" + "Reset() returning"，但随后会销毁临时
-#   Lua 环境并重新加载正式世界。真实日志确认正式 Master 初始化完成后会
-#   打印 "Sim paused"（空服暂停）或 "Sim unpaused"；这两种状态都只在
-#   正式 Sim 建立后出现。旧版本的 "DST_Master_Ready" 继续兼容。
-# - Secondary：必须真的连上 Master 之后才有意义，日志里打
-#   "... is now ready!"（当前版本叫 "secondary shard LUA is now
-#   ready!"，旧版本叫 "Slave LUA is now ready!"）。
-#
-# 坑：新建世界的临时 worldgen 流程和正式启动流程高度相似，甚至都会出现
-# "About to start..." 与 "Reset() returning"。启动分界线仍用于过滤更早
-# 的杂音，但 Master 必须再等正式 Sim 状态，不能把 Reset 当完成标记。
-#
-# 真机复现过的坑（用户反馈"公告/玩家列表/重置世界/回档"全部一直只读，
-# 哪怕世界明明已经加载完）：这行的措辞不是固定的，跟 cluster.ini 的
-# [SHARD] shard_enabled 这个开关联动——用户亲测对比过：
-# shard_enabled=true（真正的多世界/世界互联集群）时打的是
-# "About to start a shard with these settings:"；shard_enabled=false
-# （单一、不联机的独立世界）时变成"About to start a server with the
-# following settings:"（shard→server，these→the following）。之前只认
-# 前一种措辞，用户这份 shard_enabled=false 的 aaa 存档全程匹配不上，
-# real_start_seen 永远是 False，后面"reset() returning"再怎么出现都不
-# 会被检查（同一份日志能证实 reset() returning 其实正常打印了两次——一
-# 次预备流程的假阳性，一次真的就绪，问题只出在这行前置标记）。现在两种
-# 措辞都收进来，不管 shard_enabled 开没开都认得出真正开始加载世界的
-# 分界线。
+# 进程 RUNNING 不等于世界可进入，Master 与 Secondary 的就绪标记不同（已用真实 server_log.txt 核对）：
+# - Master：正式 Sim 建立后打印 "Sim paused"/"Sim unpaused"（兼容旧版 "DST_Master_Ready"）。
+#   坑：新建世界的临时 worldgen 也会打印 "About to start..." 和 "Reset() returning"，
+#   随后销毁重载，不能把 Reset 当完成标记；
+# - Secondary：连上 Master 后打印 "secondary shard LUA is now ready!"（旧版为 "Slave LUA ..."）。
+# 启动分界线有两种措辞，随 cluster.ini 的 shard_enabled 变化：
+# true 为 "About to start a shard with these settings"，false 为
+# "About to start a server with the following settings"，两种都要认，否则单世界存档永远不就绪。
 _REAL_START_MARKERS = (
     "about to start a shard with these settings",
     "about to start a server with the following settings",
@@ -280,20 +232,14 @@ _REAL_START_MARKERS = (
 _MASTER_READY_MARKERS = ("sim paused", "sim unpaused", "dst_master_ready")
 _SECONDARY_READY_MARKERS = ("is now ready!",)
 
-# 工具为运行环境自动维护的配套组件仍必须参与“是否缺失”的完整性检查，
-# 但不应混进玩家主动选择的 Mod 数量。这里仅登记已经明确由 DSTCamp 管理
-# 的 LuaJIT 配套 Mod，不能按名称或其它特征猜测普通 Mod。
+# DSTCamp 为运行环境自动维护的配套 Mod（仅 LuaJIT），参与缺失检查但不计入玩家选择的 Mod 数
 _INTERNAL_MOD_KEYS = frozenset({"workshop-3444078585"})
 
 
 def advance_world_ready_marker(
     line: str, is_master: bool, real_start_seen: bool,
 ) -> tuple[bool, bool]:
-    """消费一行日志并返回（已进入正式启动阶段，本行是否确认就绪）。
-
-    后台进程判定和 GUI 已展示进度共用同一函数，避免两边对启动标记的理解
-    漂移；GUI 只有实际消费到就绪行后才显示 Mod 检查结果。
-    """
+    """消费一行日志，返回（已进入正式启动阶段, 本行是否确认就绪）；进程判定与界面进度共用。"""
     lowered = line.lower()
     if not real_start_seen:
         real_start_seen = any(marker in lowered for marker in _REAL_START_MARKERS)
@@ -301,16 +247,9 @@ def advance_world_ready_marker(
     markers = _MASTER_READY_MARKERS if is_master else _SECONDARY_READY_MARKERS
     return real_start_seen, any(marker in lowered for marker in markers)
 
-# Mod 加载完整性检查——真机核对过多份 server_log.txt（正常/无缺失场
-# 景），服务器解析 modoverrides.lua 时会先打一行 "modoverrides.lua
-# enabling <id>"（这一行只反映"配置里启用了"，跟这个 mod 是否真的存
-# 在/加载成功无关，folder 缺失/损坏时也一样会打这行），真正找到对应文
-# 件夹并成功解析 modinfo.lua 之后才会另外打一行 "Loading mod: <id>
-# (<name>) Version:<version>"。两个集合一减，剩下的就是"配置里启用了
-# 但服务器没能真的加载"的 mod——不需要额外自己解析 modoverrides.lua
-# 文件（跟服务器实际读到的内容保证一致，不用担心读错文件路径/游戏后
-# 续版本改了 Lua 表结构），也不依赖任何"加载失败"专属错误文案的格式
-# （那种文案没有在真机日志里见到过，没法核实，不敢假设）。
+# Mod 加载完整性：配置启用时打印 "modoverrides.lua enabling <id>"（不代表加载成功），
+# 真正加载才打印 "Loading mod: <id> (<name>) Version:..."，两者之差即配置启用但未加载的 Mod。
+# 不依赖"加载失败"文案（真机日志里没见过，无法核实）。
 _MOD_ENABLING_RE = re.compile(r"modoverrides\.lua enabling (\S+)", re.IGNORECASE)
 _MOD_LOADING_RE = re.compile(r"loading mod:\s*(\S+)\s*\(", re.IGNORECASE)
 _MOD_REGISTER_RE = re.compile(r"Registering Mod\s+(\S+)", re.IGNORECASE)
@@ -339,15 +278,11 @@ class ServerProcess:
         self.is_master = is_master
         self.ugc_directory = ugc_directory
         self.extra_args = extra_args
-        # 给 luajit_injector.py 用：真的要跑起来的 exe 所在目录改成
-        # 别的地方（LuaJIT 隔离副本），而不是 install_dir 下的 bin64/。
-        # install_dir 本身语义不变，仍然是"这份安装归哪个 cluster 管"这
-        # 层判断（_any_running_for_bin64() 之类）依据的安装根目录。
+        # LuaJIT 模式下实际运行的 exe 目录（隔离副本），install_dir 仍表示所属安装根目录
         self.bin64_override = bin64_override
         self.status = ServerStatus.STARTING
-        # 只要用户或界面明确请求过关服，退出及随后到达的尾部日志都不应
-        # 再触发崩溃诊断。不能只看 STOPPING：进程退出后状态会变 STOPPED，
-        # stdout 读取线程仍可能晚一轮把最后几行送进界面队列。
+        # 明确请求过关服后，退出及其后到达的尾部日志都不触发崩溃诊断
+        # （进程退出后状态变 STOPPED，读取线程仍可能晚一轮送来最后几行）
         self.intentional_shutdown = False
         self.world_ready = False
         # 主世界是否已在 Klei 完成房间注册；没注册过就崩溃时 Klei 端没有
@@ -358,9 +293,7 @@ class ServerProcess:
         # 只保留最近一段日志供异常退出诊断使用，避免长时间运行的世界
         # 无限增长内存；完整日志仍然照常显示在控制台文本框里。
         self._recent_log_lines = deque(maxlen=500)
-        # Mod 加载完整性检查用，见 _MOD_ENABLING_RE/_MOD_LOADING_RE 顶部
-        # 说明。missing_mods 在 world_ready 变 True 那一刻算一次定型，
-        # None 表示"世界还没就绪，还没到算的时候"。
+        # world_ready 变 True 时计算一次；None 表示世界尚未就绪
         self.mods_enabled: set[str] = set()
         self.mods_loaded: set[str] = set()
         self.mods_failed: set[str] = set()
@@ -373,10 +306,7 @@ class ServerProcess:
         return len(self.mods_enabled - _INTERNAL_MOD_KEYS)
 
     def start(self) -> None:
-        # 服务器对“完全不存在的 Mod”可能连
-        # ``modoverrides.lua enabling ...`` 都不打印，只显示
-        # ``No mods registered``。启动前先读取配置中的启用集合，才能在
-        # world_ready 时准确识别“配置启用但实际没有加载”的 Mod。
+        # 完全不存在的 Mod 服务器可能连 enabling 行都不打印，所以启动前先读配置里的启用集合
         overrides_path = self.cluster_path / self.shard_name / "modoverrides.lua"
         try:
             overrides = load_mod_overrides(overrides_path)
@@ -465,7 +395,7 @@ class ServerProcess:
         return tuple(getattr(self, "_recent_log_lines", ()))
 
     def read_available_lines(self, max_lines: int | None = None) -> list[str]:
-        """非阻塞读取日志；可限制单批数量，避免错误风暴长期占住 Tk。"""
+        """非阻塞读取日志；可限制单批数量，避免错误风暴长期占用界面线程。"""
         lines = []
         while max_lines is None or len(lines) < max_lines:
             try:
@@ -480,9 +410,8 @@ class ServerProcess:
         try:
             self.proc.stdin.write(text + "\n")
             self.proc.stdin.flush()
-            # 用户在控制台手动输入 c_shutdown() 与界面“停止”语义相同：
-            # 进程接下来退出属于预期关闭，不能被轮询器归类为崩溃并弹诊断。
-            # 必须等写入成功后再改状态，否则管道已断时会把真实异常隐藏掉。
+            # 控制台手动 c_shutdown() 与"停止"按钮同义，之后的退出不算崩溃；
+            # 写入成功后再改状态，管道已断时不能掩盖真实异常
             if _SHUTDOWN_COMMAND_RE.fullmatch(text):
                 self.intentional_shutdown = True
                 self.status = ServerStatus.STOPPING
@@ -497,11 +426,7 @@ class ServerProcess:
         return self.proc.poll() if self.proc else None
 
     def sync_expected_exit(self) -> int | None:
-        """同步预期关服的最终状态，并返回当前退出码。
-
-        界面按钮由 stop_blocking() 等待并置为 STOPPED；用户直接在控制台
-        输入 c_shutdown() 没有等待线程，只能由控制台轮询在进程退出后收口。
-        """
+        """同步预期关服的最终状态并返回退出码（控制台手动 c_shutdown 时由轮询收口）。"""
         exit_code = self.poll_exit_code()
         if exit_code is not None and self.status == ServerStatus.STOPPING:
             self.status = ServerStatus.STOPPED
@@ -522,14 +447,11 @@ class ServerProcess:
                 pass
 
     def stop_blocking(self, graceful_timeout: float = 30.0, term_timeout: float = 5.0) -> None:
-        """依次尝试优雅关服(c_shutdown)->terminate->kill，会阻塞调用方所在线程
-        直到进程退出，调用方必须放到后台线程跑，不要在 Tk 主线程直接调用。"""
+        """依次尝试 c_shutdown → terminate → kill，阻塞到进程退出，必须在后台线程调用。"""
         self.intentional_shutdown = True
         self.status = ServerStatus.STOPPING
         if self.request_shutdown():
-            # c_shutdown() 会保存世界再退出。大型/多 Mod 存档可能明显超过
-            # 旧的 5 秒，给每个分片 30 秒；stop_all() 会并行等待所有分片，
-            # 不会按世界数量线性叠加等待时间。
+            # c_shutdown() 会先存档，大型存档可能超过 5 秒，每个分片等 30 秒（stop_all 并行等待）
             deadline = time.monotonic() + graceful_timeout
             while time.monotonic() < deadline:
                 if self.poll_exit_code() is not None:
@@ -544,13 +466,8 @@ class ServerProcess:
                 return
             time.sleep(0.2)
         self.kill()
-        # 真机复现过的坑：Popen.kill() 在 Windows 上只是发起
-        # TerminateProcess()，不保证调用返回时进程已经真的退出（大存档
-        # 写盘、系统繁忙时能晚个几秒才真断气）——上面两段等待循环都是等
-        # poll_exit_code() 确认过才置 STOPPED，唯独这里 kill() 之后直接
-        # 无条件置 STOPPED，导致 GUI 显示"已停止"，但真实进程还占着这份
-        # 存档的文件句柄。用 Popen.wait() 真的等到退出（或最多再等
-        # term_timeout 这么久，避免罕见情况下无限阻塞）。
+        # 坑：Windows 上 kill() 返回时进程未必已退出，直接置 STOPPED 会让存档句柄仍被占用；
+        # 用 wait() 等到真正退出（最多 term_timeout）
         try:
             self.proc.wait(timeout=term_timeout)
         except subprocess.TimeoutExpired:
@@ -559,12 +476,9 @@ class ServerProcess:
 
 
 class ServerManager:
-    """管理这个 DSTCamp 进程自己启动的服务器子进程集合。key 用
-    (cluster.path 字符串, shard 名字) 而不是 cluster 名字本身——两个不同目录
-    的 Cluster 可能重名。
+    """管理本进程启动的专服子进程，key 为 (存档路径, 分片名)（不同目录的存档可能重名）。
 
-    stop()/stop_all() 的回调都在后台线程里触发，如果回调要碰 Tk 控件，
-    调用方自己要用 .after(0, ...) 转回主线程。
+    stop()/stop_all() 的回调在后台线程触发，操作界面需自行转回界面线程。
     """
 
     def __init__(self):
@@ -635,17 +549,9 @@ class ServerManager:
 
 
 # ── WeGame 等外部启动的世界进程探测 ──────────────────────────────────
-# WeGame 版专用服务器不是 DSTCamp 自己拉起的子进程（Rail 会话令牌只有
-# WeGame 客户端能签发，见 gui/local_service_tab.py 顶部说明），
-# ServerManager 那套"记着自己启动的 subprocess.Popen 句柄"完全用不上。
-# 只能反过来扫系统进程——用 tasklist 按可执行文件名找 dontstarve_
-# dedicated_server*.exe 进程，netstat 查它们各自绑定的 UDP 端口，跟每
-# 个世界 server.ini 里配置的 server_port 比对：端口能对上，说明这个进
-# 程确实是这个世界、而且真的绑定成功（不是进程起来了但端口被占用/绑
-# 定失败）。真机验证过这个匹配方式：两个不同的进程不可能绑定同一个
-# UDP 端口，用端口反查比试图读命令行参数可靠——命令行/可执行文件路径
-# 在没有管理员权限的前提下，`Get-CimInstance`/`wmic` 对不是当前会话
-# 启动的进程一律返回空，读不到。
+# WeGame 专服由 WeGame 客户端拉起（Rail 会话令牌只有它能签发），只能反向扫描系统进程：
+# tasklist 找专服进程，netstat 查其绑定的 UDP 端口，与各世界 server.ini 的端口比对。
+# 端口唯一，比读命令行可靠（非管理员读不到其他会话进程的命令行）。
 
 
 def _find_dst_process_pids() -> dict[int, float]:
@@ -657,9 +563,7 @@ def _find_dst_process_pids() -> dict[int, float]:
             out = subprocess.run(
                 ["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"],
                 capture_output=True, text=True, timeout=10,
-                # tasklist 按系统代码页输出（中文系统的"没有运行的任务"提示是 GBK）；
-                # Python 开了 UTF-8 模式时按 UTF-8 解码会失败、stdout 变成 None。
-                # 用系统代码页解码并容错，数据行本身是 ASCII，不受影响。
+                # tasklist 按系统代码页输出（中文系统为 GBK），UTF-8 模式下解码会失败，故按代码页容错解码
                 encoding="mbcs" if IS_WINDOWS else None, errors="replace",
                 creationflags=subprocess.CREATE_NO_WINDOW if IS_WINDOWS else 0,
             ).stdout
@@ -681,9 +585,7 @@ def _find_dst_process_pids() -> dict[int, float]:
 
 
 def _udp_ports_by_pid() -> dict[int, set[int]]:
-    """返回 {pid: {绑定的本地 UDP 端口, ...}}——`netstat -ano` 是 Windows
-    自带命令，不需要管理员权限就能看到别的进程绑的端口（跟命令行参数
-    那种需要权限的信息不是一回事）。"""
+    """返回 {pid: {绑定的本地 UDP 端口}}；netstat -ano 无需管理员权限。"""
     result: dict[int, set[int]] = {}
     try:
         out = subprocess.run(
@@ -707,12 +609,9 @@ def _udp_ports_by_pid() -> dict[int, set[int]]:
 
 
 def detect_external_shard_processes(cluster) -> dict[str, dict]:
-    """按 (进程存在, 端口真的绑定成功) 探测这个存档每个世界的运行状态，
-    不依赖 DSTCamp 自己有没有启动过它——给 WeGame 存档"检测服务器状态"
-    用。返回 {世界名: {"configured_port": int|None, "running": bool,
-    "pid": int|None, "mem_mb": float|None}}；`running` 只在"存在这个端
-    口绑定成功的 dontstarve 进程"时才是 True，进程列表里有 dontstarve
-    进程但端口对不上（比如是另一个存档的世界）不算这个世界在跑。"""
+    """按"进程存在且端口绑定成功"探测存档各世界状态（不依赖本进程是否启动过）。
+
+    返回 {世界名: {"configured_port", "running", "pid", "mem_mb"}}；端口对不上的专服进程不算该世界。"""
     pid_mem = _find_dst_process_pids()
     pid_ports = _udp_ports_by_pid()
     result: dict[str, dict] = {}
@@ -734,11 +633,7 @@ def detect_external_shard_processes(cluster) -> dict[str, dict]:
 
 
 def detect_external_running_clusters(clusters) -> set[str]:
-    """一次系统扫描识别所有有 DST 世界真实绑定端口的存档路径。
-
-    用于令牌独占预检；与逐个调用 detect_external_shard_processes() 相比，
-    不会为每个存档重复执行 tasklist/netstat。
-    """
+    """一次系统扫描找出所有有世界真实绑定端口的存档路径（供令牌独占预检）。"""
     pid_mem = _find_dst_process_pids()
     if not pid_mem:
         return set()

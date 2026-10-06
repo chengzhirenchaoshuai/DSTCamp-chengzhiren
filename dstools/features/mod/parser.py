@@ -1,7 +1,4 @@
-"""Mod 信息读取器——解析已下载的 DST mod 的 modinfo.lua。
-
-发现 mod 安装目录，读取配置项定义，供 GUI 提供合适的下拉框编辑器。
-"""
+"""modinfo.lua 静态解析：发现 Mod 目录，读取元数据与配置项定义。"""
 
 import re
 from dataclasses import dataclass, field
@@ -12,9 +9,7 @@ from dstools.shared.lua_parser import parse_lua_value
 from dstools.shared.steam_discovery import find_all_steam_libraries
 from dstools.models import Platform
 
-# 双引号 Lua 字符串的内容：任意非引号/反斜杠字符，或反斜杠转义字符（这样
-# 字符串里的 `\"`，例如 `hover = "default is \"detailed\""`，不会被误判
-# 成字符串的结束引号——一个简单的 `[^"]*` 会在那里就截断）。
+# 双引号字符串内容，支持 `\"` 转义（朴素的 `[^"]*` 会在转义引号处截断）
 _QSTR = r'(?:[^"\\]|\\.)*'
 # 单引号字符串同理——Lua 把 ' 和 " 一视同仁，不少 mod 整个文件都用单引号。
 _QSTR_SINGLE = r"(?:[^'\\]|\\.)*"
@@ -42,22 +37,11 @@ _ANY_STRING = re.compile(rf'"{_QSTR}"|\'{_QSTR_SINGLE}\'')
 
 
 def _replace_idents_outside_strings(text: str, subst_map: dict[str, str]) -> str:
-    """一次扫描把 `subst_map` 里的每个标识符都换成对应的替换值，绝不会
-    匹配到带引号字符串内部。
+    """一次扫描把 ``subst_map`` 中的标识符替换为对应值，跳过引号字符串内部。
 
-    一个普通的标识符边界正则没法区分"这是对该参数的引用"和"这个参数名恰
-    好是同一个函数体里*另一个*字符串字面量内容中出现的英文单词"——不这样
-    处理的话，一个名叫比如 "default" 的辅助函数参数会悄悄破坏同一函数体
-    内恰好包含单词 "default" 的任何兜底字符串（一个真实 mod 的英文选项
-    标签 'default' 就是这样变成了字面文本 'nil'）。
-
-    **性能坑（真机复现+cProfile 定位过）**：以前是每个标识符单独调一次
-    `re.sub()`，被一个真实 mod 暴露出问题——那个 mod 用共享辅助函数批量
-    生成了 421 个配置选项，`_inline_helper_call()` 每次调用平均要替换
-    11+ 个参数，421×11 ≈ 4857 次独立的正则扫描，仅这一个 mod 的解析就
-    吃掉 700ms+，占那次全量 Mod 列表加载耗时的大头。改成一次正则扫描命
-    中全部标识符（交替分支 `\\b(?:ident1|ident2|...)\\b`），把
-    O(调用次数 × 参数个数) 次扫描收成 O(调用次数) 次。
+    坑：参数名常与字符串里的英文单词相同（如 "default"），按单词边界替换会把
+    字符串内容改坏；逐个标识符 re.sub 在 400+ 选项的 Mod 上耗时 700ms+，
+    所以合并成一个交替分支正则一次扫完。
     """
     if not subst_map:
         return text
@@ -77,23 +61,11 @@ _LONG_BRACKET_OPEN = re.compile(r"\[(=*)\[")
 
 
 def _strip_lua_comments(text: str) -> str:
-    """把 Lua 注释（`-- 行注释` 和 `--[[ 块注释 ]]`/`--[=[ ... ]=]`）替换
-    成等长的空白文本，其它字符——包括换行符——原封不动留在原位。
+    """把 Lua 行注释/块注释替换为等长空白（保留换行），其余字符原位不动。
 
-    这个函数在本模块读取的每份文件上都会先跑一遍，*正是因为*本文件里其
-    它每个函数（_find_local_tables、_extract_choices、
-    _extract_field_raw 等）都是用朴素的花括号/圆括号深度计数来定位内
-    容，根本不知道 `--` 注释的存在。有个真实 mod 在一份正常的可选项列表
-    后面注释掉了一条尾部选项，类似
-    `--, {description = "Areborestone", data = 2, hover = "..."}}`——注
-    释里这些多出来的 `{`/`}` 被当成普通字符计数，提前把外层表*过早*闭
-    合，悄悄截断了几行之后*下一个*选项的内容（这正是这个 bug 暴露的方
-    式：几行之后一个完全不相干的选项解析出来选项数是零）。先把注释剥离
-    掉，就能让本文件里所有按位置扫描的逻辑都不用管注释，仍然保持正确。
-
-    对引号敏感（两种引号风格和 `[[...]]`/`[=[...]=]` 长括号字符串都原样
-    跳过），这样一个恰好包含字面 "--"（用作破折号分隔符在普通文本里很常
-    见）的 hover/description 字符串就不会被误判成注释。
+    本模块其他函数都靠括号深度计数定位，不认识注释；注释里多出的 ``{``/``}``
+    会让外层表提前闭合、截断后续选项，所以每个文件先过一遍这里。对引号和
+    长括号字符串敏感，文本里的 "--" 不会被当成注释。
     """
     out = []
     i = 0
@@ -143,22 +115,16 @@ def _strip_lua_comments(text: str) -> str:
 
 
 def _unescape_lua_string(s: str) -> str:
-    """解码 Lua 字符串转义序列（\\n、\\t 等）——用正则而不是真正的 Lua
-    tokenizer 捕获字符串时，这些转义会原样留在字符串里，变成字面的两字
-    符序列，不解码的话，比如本该含制表符的标题标签就会显示成字面的反斜
-    杠加 t。"""
+    """解码 Lua 字符串转义（\\n、\\t 等），正则捕获的字符串里转义原样保留。"""
     return re.sub(r"\\(.)", lambda m: _LUA_ESCAPES.get(m.group(1), m.group(0)), s)
 
 
 @dataclass
 class ModConfigOption:
-    """来自 modinfo.lua 的单条 mod 配置项定义。
+    """modinfo.lua 中的单条配置项定义。
 
-    **加/删/改字段时记得把 mod_resolve_cache._CACHE_FORMAT_VERSION 加
-    一**——真机复现过的坑：磁盘缓存只按 modinfo.lua 的 mtime 判断新鲜
-    度，不知道"DSTCamp 自己的解析代码变了"，字段形状一变，缓存里没有新
-    字段时 `ModConfigOption(**o)` 会用默认值悄悄补上（不报错，不会触发
-    重新解析），表现为"明明修了 bug，但界面还是老样子"。"""
+    坑：增删字段时必须把 mod/cache.py 的 _CACHE_FORMAT_VERSION 加一，否则旧缓存
+    会以默认值补齐新字段，表现为"修了 bug 界面不变"。"""
 
     name: str = ""  # 配置键名
     label: str = ""  # 显示标签
@@ -167,32 +133,14 @@ class ModConfigOption:
     choices: list[dict] = field(default_factory=list)
     # 每个选项：{"description": "...", "data": value, "hover": "..."}
     is_header: bool = False  # 纯视觉分区标题，不是真实设置项
-    # mod 声明了一个 `options` 表，但解析不出一份固定的可选项列表——比如
-    # `options = GenerateFontSizeOptions(x)`（一个函数调用，结果依赖
-    # modinfo.lua 里没有字面写出的数据/逻辑），或者 `options = someVar`
-    # 而 someVar 是用 for 循环拼出来的，不是赋值成一张字面量表。这跟
-    # "选项列表本来就没有/是空的"不同：选项确实存在，只是要在 Lua 运行
-    # 时才能算出来，文本解析器无法重现——resolve_config_value() 的调用
-    # 方据此把这个情况展示出来，而不是悄悄显示一个空下拉框。
+    # options 存在但需运行 Lua 才能得出（函数调用或循环拼出的变量），区别于"本来就没有选项"
     is_dynamic: bool = False
-    # `options = ...` 未解析的原始右侧表达式（例如 "cleancycle" 或
-    # "GenerateOptionsFromList(true, FONTS)"），只在 is_dynamic 为真时才
-    # 保留——基于 lua_sandbox 的解析（见下面的 resolve_dynamic_option()）
-    # 用它连同 ModInfo.dynamic_preamble，按需真正丢进一个沙箱化 Lua 解
-    # 释器跑一遍，不需要重新解析整个文件。
+    # is_dynamic 时保留 options 的原始表达式，供沙箱按需求值（见 resolve_dynamic_option）
     raw_options_expr: str = ""
-    # 这个选项自己的 `client = true`——不是引擎字段，是部分 mod 作者用来
-    # 标记"这个选项只在玩家自己客户端有意义"（快捷键、HUD 位置等）的约
-    # 定。专用服务器管理工具只编辑 modoverrides.lua（服务端配置），显示/
-    # 编辑纯客户端选项只会误导，见 visible_config_options() 整个隐藏掉。
+    # 选项自己的 client = true：作者约定的纯客户端设置，管理工具不显示（见 visible_config_options）
     client: bool = False
-    # 下面四个也不是引擎字段，是共享库 mod "Configs Extended"（创意工坊
-    # 3317960157）的约定，最终仍然写回同一份 modoverrides.lua，只是值的
-    # 形状原生下拉框表达不了，ModConfigDialog 改用专门编辑控件：
-    # - is_set_config：字符串当 key 的集合（{["heatrock"]=true, ...}）
-    # - is_array_config：普通有序数组
-    # - is_text_config：纯字符串
-    # - is_dictionary_config：字符串键值对表（{["草"]="6个", ...}）
+    # 以下四项是 "Configs Extended"（3317960157）的约定，值形状下拉框表达不了，配置弹窗用专门控件：
+    # 集合 {["k"]=true}、有序数组、纯字符串、字符串键值对表
     is_set_config: bool = False
     is_array_config: bool = False
     is_text_config: bool = False
@@ -206,10 +154,8 @@ class ModInfo:
     name: str = ""
     author: str = ""
     version: str = ""
-    # Mod 管理列表展示版本时只信任完整 Lua 沙箱成功执行后的最终值。
-    # pending/confirmed/undeclared/unresolved 分别表示等待解析、已确认、
-    # 作者未声明、无法在当前沙箱环境确认；静态解析到的 version 不会因此
-    # 丢失，但不能冒充 confirmed。
+    # 版本只信任完整沙箱执行后的最终值：pending/confirmed/undeclared/unresolved；
+    # 静态解析到的 version 保留但不能冒充 confirmed
     version_status: str = "pending"
     version_source: str = ""
     version_compatible: str = ""
@@ -219,49 +165,25 @@ class ModInfo:
     icon: str = ""  # 例如 "modicon.tex"，相对于 icon_atlas 所在文件夹
     icon_atlas: str = ""  # 例如 "images/modicon.xml"，相对于 mod_folder
     config_options: list[ModConfigOption] = field(default_factory=list)
-    # modinfo.lua 里 `configuration_options` 被赋值*之前*的全部内容——mod
-    # 常用来以编程方式构建选项列表的局部辅助函数/表/for 循环。保留下来，
-    # 供之后按需调用的 resolve_dynamic_option() 在 Lua 沙箱里执行它（加
-    # 一句 `return <raw_options_expr>`），不需要到那时再重新读取/切分源
-    # 文件。
+    # configuration_options 赋值之前的全部源码（辅助函数/局部表），供沙箱按需求值动态选项
     dynamic_preamble: str = ""
-    # mod 声明了 `configuration_options` 块，但没有一条条目匹配本解析
-    # 器认识的形状（比如 Insight 直接用选项名当键 `display_timers =
-    # {label=...}`，而不是数组条目 `{name="display_timers", label=...}`）
-    # ——整套 schema 没识别出来，config_options 会是空的，界面要能说明
-    # 原因，不能暗示这个 mod 没有配置。
+    # 声明了 configuration_options 但没有一条能识别（如 Insight 以选项名作键），界面需说明原因
     unsupported_schema: bool = False
     # 本次会话是否已经为这个 mod 尝试过 resolve_full_modinfo()（不管成
     # 败都会设置），避免弹窗反复打开时重复跑一遍较慢的沙箱解析。
     full_sandbox_tried: bool = False
-    # modinfo.lua 的 `client_only_mod = true`：这个 mod 只影响客户端，
-    # 不需要通过 modoverrides.lua 同步，是游戏 mod 界面用来标"本地模组"
-    # 的字段。
-    # **坑**（DontStarveLuaJIT2 作者确认过）：`server_only_mod` 引擎本身
-    # 不读，是给第三方开服工具用的约定——`client_only_mod=true` 同时写
-    # `server_only_mod=true`，是想让这类工具仍当"服务器 mod"处理（配置
-    # 能在 modoverrides.lua 编辑），只是不进游戏内"服务器 mod 列表"。判
-    # 定要不要走"客户端专属、只读"分支时，`server_only_mod`/
-    # `all_clients_require_mod` 有一个为真就要盖过 `client_only_mod`。
+    # client_only_mod = true：只影响客户端，不经 modoverrides.lua 同步。
+    # 坑：server_only_mod / all_clients_require_mod 任一为真时要盖过 client_only_mod
+    # （引擎不读，是给开服工具的约定，DontStarveLuaJIT2 作者确认）
     client_only: bool = False
-    # 本次会话是否已经为这个 mod 尝试过叠加"Chinese++ Pro"（创意工坊
-    # workshop-2941527805）的配置项翻译——同 full_sandbox_tried 一样，
-    # 只是个会话内的一次性开关，不管有没有成功叠加都会设置，避免弹窗
-    # 重复打开时反复起沙箱子进程。见 features/mod/chs_translation.py。
+    # 本会话是否已尝试叠加 Chinese++ Pro 的配置项翻译（一次性开关，避免反复起沙箱，见 chs_translation.py）
     chs_translation_tried: bool = False
 
 
 def visible_config_options(
     config_options: list[ModConfigOption],
 ) -> list[ModConfigOption]:
-    """过滤掉标记为 client=true 的纯客户端配置项（见 ModConfigOption.client
-    上的说明），供 ModConfigDialog 渲染前调用。
-
-    按"标题 + 紧随其后的选项"分组处理，不是简单地逐条丢弃：如果某个分
-    组标题（比如这个模组自己的"Client Settings"分区标题）底下的选项全
-    部因为是纯客户端设置被过滤掉了，这个标题本身也一起去掉，不留一个
-    后面空空如也的孤立标题。分组边界就是 config_options 列表里天然的
-    顺序（is_header 的条目本身没有真实设置，只是视觉分隔符）。"""
+    """过滤 client=true 的纯客户端配置项；分组标题下的选项全被滤掉时，标题一并去掉。"""
     sections: list[tuple[ModConfigOption | None, list[ModConfigOption]]] = []
     current_header: ModConfigOption | None = None
     current_options: list[ModConfigOption] = []
@@ -294,9 +216,8 @@ _MAX_PUBLISHED_FILE_ID = (1 << 64) - 1
 def is_workshop_content_id(value: str | int) -> bool:
     """是否为 Steam ``content/322330/<PublishedFileId_t>`` 的标准目录名。
 
-    Steam Workshop ID 是非零 ``uint64``，落盘时使用无前导零的 ASCII
-    十进制字符串。不能用 ``str.isdigit()``：它也接受全角数字等 Unicode
-    字符；也不能限制十位，PublishedFileId_t 并没有这个长度约束。
+    非零 uint64、无前导零的 ASCII 十进制；不能用 ``str.isdigit()``（会接受全角数字），
+    也不能限制位数。
     """
     text = str(value)
     if not text or not text.isascii() or not text.isdecimal():
@@ -310,23 +231,14 @@ def is_workshop_content_id(value: str | int) -> bool:
 
 
 def is_custom_steam_mod_id(value: str | int) -> bool:
-    """是否为 Steam 游戏 ``mods/`` 下非标准 Workshop 命名的自定义 Mod。
-
-    Steam 扫描会把创意工坊项目统一成 ``workshop-<PublishedFileId_t>``，
-    手动放进游戏 ``mods/`` 目录的 Mod 则保留真实文件夹名，例如
-    ``CommonModSets``。分类不依赖某台机器的盘符或 Steam 安装位置。
-    """
+    """是否为 Steam 游戏 ``mods/`` 下手动放入、非 ``workshop-<id>`` 命名的自定义 Mod。"""
     text = str(value)
     prefix = "workshop-"
     return not (text.startswith(prefix) and is_workshop_content_id(text[len(prefix) :]))
 
 
 def split_installed_mod_counts(mod_ids, platform: Platform) -> tuple[int, int]:
-    """返回 ``(普通模组数, 自定义模组数)``，供相关 Mod 页统一统计。
-
-    自定义目录是 Steam ``mods/`` 的命名约定；WeGame 的 Mod ID 本来就不
-    带 ``workshop-`` 前缀，不能套用这条规则，因此全部计入普通模组。
-    """
+    """返回 ``(普通模组数, 自定义模组数)``；WeGame 的 ID 不带 ``workshop-`` 前缀，全部计为普通。"""
     ids = list(mod_ids)
     if platform != Platform.STEAM:
         return len(ids), 0
@@ -335,14 +247,7 @@ def split_installed_mod_counts(mod_ids, platform: Platform) -> tuple[int, int]:
 
 
 def find_workshop_dir() -> Path | None:
-    """查找 DST workshop 内容目录。
-
-    **坑**：这里以前只查 find_steam_root() 返回的"随便一个"根目录（还是
-    硬编码猜开发者自己机器路径的弱版本），DST 装在非默认 Steam 库、或者
-    Steam 装在别的机器上跟这里硬编码的路径对不上时，就永远找不到——mod
-    图标/名称/配置项全都读不出来，正是这个原因。现在遍历
-    find_all_steam_libraries()（注册表读真实值，含全部库文件夹）里每一个
-    库，不只是第一个。"""
+    """查找 DST Workshop 内容目录：遍历注册表里的全部 Steam 库，不能只看默认库。"""
     for steam in find_all_steam_libraries():
         workshop = steam / "steamapps" / "workshop" / "content" / DST_APP_ID
         if workshop.exists():
@@ -351,10 +256,7 @@ def find_workshop_dir() -> Path | None:
 
 
 def is_mod_subscribed(workshop_id: str) -> bool:
-    """判断某个 workshop mod 是否已订阅。本地判断依据：workshop 内容目录
-    下有没有对应子文件夹、且带 modinfo.lua（确认下载完整，不是空目录/半
-    途）——订阅是 Steam 账号操作，DSTCamp 没有 API 能代劳，也没有比"本地
-    内容在不在"更权威的判断。"""
+    """以本地是否存在带 modinfo.lua 的 Workshop 目录判断已订阅（DSTCamp 无法查询账号订阅）。"""
     workshop_dir = find_workshop_dir()
     if workshop_dir is None or not is_workshop_content_id(workshop_id):
         return False
@@ -363,11 +265,10 @@ def is_mod_subscribed(workshop_id: str) -> bool:
 
 
 def detect_mod_format(workshop_id, workshop_root: Path | None, steam_state=None) -> str | None:
-    """返回创意工坊 Mod 的格式 "V1" / "V2"，判断不了返回 None（本地手动安装的 Mod 等）。
+    """返回 Workshop Mod 格式 "V1"/"V2"，无法判断（如本地手动安装）返回 None。
 
-    有 Steam 状态（更新检测的结果）时以 Steam 的 LegacyItem 状态位为准；没有时看本地
-    创意工坊目录：根目录有 modinfo.lua 是 V2，只有 *_legacy.bin 是 V1——跟启动专服前
-    判断要不要解压 V1 包是同一条规则。"""
+    有 Steam 状态时以 LegacyItem 位为准；否则根目录有 modinfo.lua 为 V2，只有
+    ``*_legacy.bin`` 为 V1。"""
     if steam_state is not None:
         return "V1" if steam_state.legacy_item else "V2"
     text = str(workshop_id).removeprefix("workshop-")
@@ -385,16 +286,9 @@ def detect_mod_format(workshop_id, workshop_root: Path | None, steam_state=None)
 
 
 def find_shared_ugc_directory() -> Path | None:
-    """专用服务器 `-ugc_directory` 启动参数要用的路径——真机验证过：直接
-    传这台机器 Steam 自己维护的 `steamapps/workshop` 目录（`content/322330/
-    <id>/` + `appworkshop_322330.acf` 都已经在这儿），服务器会直接读取，
-    完全不会在每个 cluster/shard 下再各建一份 `ugc_mods` 副本——之前
-    features/mod/sync.py 把每个 V2 Mod 的内容复制进
-    `ugc_mods/<cluster>/<shard>/content/322330/<id>/`（外加复制校验文件）
-    的做法已经被这个参数取代：一份内容所有存档共享，客户端更新了服务器
-    立刻用到最新版本，不用重新同步。找不到 Steam 库就返回 None，调用方
-    （dedicated_server.py 的 build_launch_args）按"不传这个参数，服务器
-    退回默认的按 cluster/shard 各自建 ugc_mods"处理，不是错误。"""
+    """专服 ``-ugc_directory`` 参数：直接用 Steam 的 ``steamapps/workshop``（真机验证），
+    所有存档共享一份内容，不再在每个 shard 下生成 ugc_mods 副本。找不到返回 None，
+    调用方不传该参数即可。"""
     for steam in find_all_steam_libraries():
         workshop = steam / "steamapps" / "workshop"
         if (workshop / "content" / DST_APP_ID).exists():
@@ -403,12 +297,7 @@ def find_shared_ugc_directory() -> Path | None:
 
 
 def find_game_mods_dir() -> Path | None:
-    """查找 DST 游戏 mods 目录（手动安装的 mod）。
-
-    用户手动确认过的覆盖路径（app_settings.get_steam_mods_path()，"Mod管
-    理"页签"更换路径"按钮设置）优先——跟开服程序目录先查用户手动选择的
-    路径是同一个"手动兜底"套路。没设置过/设置的路径不存在了才走自动识别。
-    """
+    """查找 DST 游戏 mods 目录：优先用户在 Mod 页手动指定的路径，失效时再自动识别。"""
     from dstools.shared import app_settings
 
     override = app_settings.get_steam_mods_path()
@@ -423,12 +312,7 @@ def find_game_mods_dir() -> Path | None:
 
 
 def is_dedicated_server_mods_dir(path: Path) -> bool:
-    """路径是否就是独立专服的目标 ``mods``，用于阻止源目标自指。
-
-    未安装客户端时，旧逻辑会把专服 ``mods`` 回退成“客户端源目录”，最终
-    让软连接的源和目标完全相同。这里同时识别用户保存的专服安装路径和
-    Steam 各库中的标准安装路径；只做路径比较，不修改用户设置。
-    """
+    """路径是否就是独立专服的 ``mods``，用于阻止同步时源和目标指向同一目录。"""
     from dstools.shared import app_settings
 
     candidate = Path(path)
@@ -459,18 +343,12 @@ def is_dedicated_server_mods_dir(path: Path) -> bool:
 
 
 # ── WeGame(Rail) / Mod 路径发现 ──────────────────────────────────────
-#
-# WeGame 没有 Steam Workshop 那套独立内容缓存（steamapps/workshop/content/
-# <appid>/ 这种）——真机验证 + 多方社区资料互相印证过：所有 mod 内容都
-# 直接放在两个产品各自的 mods/ 文件夹里，没有第二套机制，也就用不上
-# -ugc_directory 那一套。WeGame 的 rail_apps 安装根目录没有可靠的注册表
-# 项能查（不像 Steam），只能读用户手动确认过的路径。
+# WeGame 没有独立的 Workshop 内容缓存，Mod 都在各产品自己的 mods/ 下；安装根目录
+# 无可靠注册表项，只能用用户手动确认过的路径。
 
 
 def _find_wegame_product_dir(root: Path, name_prefix: str) -> Path | None:
-    """在 WeGame 根目录(rail_apps)下按前缀通配匹配"饥荒：联机版(数字)"/
-    "饥荒联机版专用服务器(数字)"这类文件夹——具体数字 ID 不同安装可能不
-    一样，不能写死，用 glob 通配，选第一个真的有 mods/ 子目录的匹配项。"""
+    """在 rail_apps 下按名称前缀通配匹配客户端/专服目录（数字 ID 因安装而异），取第一个带 mods/ 的。"""
     if not root.exists():
         return None
     for candidate in sorted(root.glob(f"{name_prefix}(*)")):
@@ -491,11 +369,7 @@ def find_wegame_server_dir(wegame_root: Path) -> Path | None:
 
 
 def resolve_wegame_client_mods_dir(platform: Platform) -> Path | None:
-    """给 find_mod_folder() 用的 wegame_client_mods_dir 参数——Steam 平台
-    不需要这个参数，永远返回 None；WeGame 平台读用户手动选过的
-    app_settings.get_wegame_root_path()，没设置过就是 None（调用方应优雅
-    处理成"这个 mod 没有名字/图标"，不弹目录选择框打扰用户，真要设置见
-    "Mod管理"页签的"同步到服务器"按钮）。"""
+    """WeGame 平台返回用户设置的客户端 mods 目录，Steam 或未设置时返回 None（调用方不弹窗打扰）。"""
     if platform != Platform.WEGAME:
         return None
     from dstools.shared.app_settings import get_wegame_root_path
@@ -513,25 +387,10 @@ def find_mod_folder(
     wegame_client_mods_dir: Path | None = None,
     steam_runtime_mods_dir: Path | None = None,
 ) -> Path | None:
-    """按给定的 workshop ID 查找 mod 文件夹。
+    """按 Workshop ID（``workshop-123`` 或 ``123``）查找 Mod 目录，找不到返回 None。
 
-    Steam(默认): Workshop content dir (<steam>/steamapps/workshop/content/
-    322330/<id>/) 优先，再退回 game mods dir (<steam>/steamapps/common/
-    Don't Starve Together/mods/<id>/)。
-
-    WeGame: 没有 Workshop 内容缓存那一套（真机验证过），只查
-    wegame_client_mods_dir（调用方传入，来自
-    find_wegame_client_dir(root)/"mods"，root 是用户手动选过的 WeGame 安
-    装根目录）——**坑**：以前这里不分平台，一律走 Steam 这两条路径，导致
-    WeGame 存档的 mod 图标/名称/配置项全都解析到了错误（或者根本不存在）
-    的 Steam 目录下。
-
-    Args:
-        workshop_id: 完整的 workshop ID，如 "workshop-2797939615"，
-                    或者只是数字部分 "2797939615"。
-
-    Returns:
-        mod 文件夹路径，找不到则返回 None。
+    Steam：先查 Workshop 内容目录，再查游戏 mods 目录。
+    WeGame：只查调用方传入的 ``wegame_client_mods_dir``，不能落到 Steam 目录。
     """
     raw_id = str(workshop_id)
     mod_id = raw_id.removeprefix("workshop-")
@@ -567,19 +426,10 @@ def list_installed_mod_ids(
     legacy_packages: dict[int, Path] | None = None,
     steam_runtime_mods_dir: Path | None = None,
 ) -> list[str]:
-    """枚举每一个可读取 Mod 的 ID，包括目录式内容和有效 V1 包。
+    """枚举所有可读取的 Mod ID（目录式内容和有效 V1 包）。
 
-    modoverrides.lua 里只会列出玩家*碰过*的 mod（启用过，或者启用后又
-    显式禁用过)——一个刚订阅、玩家从没打开过配置/开关的 mod 根本不会出
-    现在里面。游戏内 mod 界面仍然会显示它（显示为禁用），做法是列出每
-    个已安装目录或 Legacy 包再跟 modoverrides.lua 交叉核对，而不是直接
-    遍历 modoverrides.lua 本身。
-
-    **坑**：以前这里不分平台，一律扫 Steam 的两个目录，导致查看 WeGame
-    存档时，Steam 本地装的 mod 也会混进"已安装"列表里显示出来（WeGame 的
-    mod id 是 19 位长数字，跟 Steam 数字 ID 长度明显不同，混进去很显眼）。
-    platform=Platform.WEGAME 时只扫 wegame_client_mods_dir（调用方传入，
-    见 find_mod_folder() 同款参数的说明），不碰 Steam 那两个目录。
+    modoverrides.lua 只记录玩家改过的 Mod，必须扫描安装目录再交叉核对。
+    WeGame 只扫 ``wegame_client_mods_dir``，避免混入 Steam 本地 Mod。
     """
     ids = []
     seen = set()
@@ -660,14 +510,7 @@ def find_workshop_residual_dirs() -> dict[int, Path]:
 
 
 def _workshop_id_from_folder(mod_folder: Path) -> str:
-    """按标准 Workshop 命名把 mod 文件夹名换成 "workshop-<id>"——本地/手动
-    装的 mod 文件夹名本来就没有这个前缀，Workshop 订阅内容的文件夹名是
-    裸的数字 ID，两种情况统一成同一个约定。这也是真实游戏引擎注入进每个
-    modinfo.lua 执行环境的 `folder_name` 全局变量的值（真机验证过：
-    `modindex.lua` 的 `ModIndex:InitializeModInfo()` 直接把这个 mod 的标
-    识符设成 `env.folder_name`），沙箱执行 modinfo.lua 时也要提供同一个
-    值，见 resolve_full_modinfo() 调用 lua_sandbox.resolve_full_config_
-    options() 时传的 folder_name 参数。"""
+    """文件夹名统一成 ``workshop-<id>``，与引擎注入 modinfo.lua 的 ``folder_name`` 一致。"""
     return (
         "workshop-" + mod_folder.name
         if not mod_folder.name.startswith("workshop-")
@@ -676,14 +519,7 @@ def _workshop_id_from_folder(mod_folder: Path) -> str:
 
 
 def parse_modinfo(mod_folder: Path) -> ModInfo | None:
-    """解析一个 mod 的 modinfo.lua，提取元数据和配置项。
-
-    Args:
-        mod_folder: 含 modinfo.lua 的 mod 文件夹路径。
-
-    Returns:
-        ModInfo 对象，若 modinfo.lua 无法解析则返回 None。
-    """
+    """解析一个 Mod 目录的 modinfo.lua，无法解析返回 None。"""
     modinfo_path = mod_folder / "modinfo.lua"
     if not modinfo_path.exists():
         return None
@@ -694,15 +530,8 @@ def parse_modinfo(mod_folder: Path) -> ModInfo | None:
     workshop_id = _workshop_id_from_folder(mod_folder)
     info = ModInfo(workshop_id=workshop_id)
 
-    # 简单的顶层字段（name/author/version/icon/.../description）通常只
-    # 在 configuration_options 之前被有意义地赋值一次——在*整个*文件里
-    # 搜索比如 `name = "..."` 有风险，可能匹配到 configuration_options
-    # 深处某个选项里同名的字段（有个真实 mod 就踩了这个坑：它顶层的
-    # `name` 用了 _extract_string 认不出的语法
-    # `name = Ch and [[中文]] or [[English]]`，导致搜索落空、继续找文
-    # 件里*下一个* `name = "..."`，而那恰好是一个字面叫 "Language" 的
-    # 配置选项——结果是悄悄取到一个错误值，而不是干脆没找到名字）。把搜
-    # 索范围限制在 configuration_options 之前的文本能彻底排除这种情况。
+    # 顶层字段只在 configuration_options 之前搜索：全文件搜索会把同名的选项字段
+    # （如名为 "Language" 的选项的 name）误当成 Mod 名
     idx = text.find("configuration_options")
     header = text[:idx] if idx != -1 else text
 
@@ -717,10 +546,7 @@ def parse_modinfo(mod_folder: Path) -> ModInfo | None:
         fm = re.search(rf"\b{name}\s*=\s*(true|false)\b", header)
         return bool(fm) and fm.group(1) == "true"
 
-    # server_only_mod/all_clients_require_mod 只要有一个为真，就说明作者
-    # 明确想让这个 mod 被"开服工具"当服务器 mod 处理（配置走
-    # modoverrides.lua，不是只读）——盖过 client_only_mod 的默认结论。见
-    # ModInfo.client_only 字段上的说明。
+    # server_only_mod / all_clients_require_mod 任一为真即按服务器 Mod 处理（见 ModInfo.client_only）
     if _flag("client_only_mod") and not (
         _flag("server_only_mod") or _flag("all_clients_require_mod")
     ):
@@ -740,48 +566,24 @@ def parse_modinfo(mod_folder: Path) -> ModInfo | None:
 
 
 def _extract_quoted(text: str, key: str) -> str | None:
-    """查找 `key = "字面量"`（任一引号风格）——如果值用的是 DST 自己的某
-    种本地化约定，则取其中的中文变体：
+    """查找 ``key = 字面量``，遇到本地化写法时取中文：
 
-    - 常见的双语三元惯用写法（Lua 没有 ?: 运算符，mod 通常写成
-      `key = Ch and "中文" or "English"`，按语言选一个字符串）——取第一
-      个字面量，按约定，当条件变量命名像是语言检查（Ch/isCh/ZH/或从
-      locale 派生）时，第一个就是中文那个。
-    - `key = ChooseTranslationTable({["zh"]="中文", ["en"]="English"})`
-      或形状相同的裸表 `key = {"default", ["zh"]="中文", ...}`——这是
-      DST 自己*官方*的约定，从游戏实际的 modindex.lua 里确认过：
-      ModIndex:InitializeModInfo() 会专门为此给每份 modinfo.lua 的执行
-      环境提供一个 `ChooseTranslationTable(tbl) -> tbl[locale] or
-      tbl[1]` 辅助函数。见 _extract_localized_table()。
+    - 三元写法 ``key = IDENT and "A" or "B"``：取含汉字的一侧；
+    - ``ChooseTranslationTable({...})`` 或同形状裸表（官方约定，见 _extract_localized_table）。
 
-    对三元惯用写法刻意收得很窄：只有紧跟在 `=` 后面的
-    `IDENTIFIER and <字面量>` 才算数——`=` 和字面量之间但凡有更复杂的东
-    西（字符串拼接、没有字面量的裸变量引用、循环下标），一律不匹配而不
-    是去猜，因为盲目抓取"表达式里第一个字面量"可能悄悄得出一个错误（而
-    不只是不精确）的答案——例如一个 for 循环里每次迭代都构造
-    `i .. (ZH and "(默认)" or "(Default)") or i`，这确实需要真正执行
-    Lua 才能算出来，必须保持未解析状态。
-
-    返回原始（仍带 Lua 转义）的字符串内容，或 None。
+    只认紧跟 ``=`` 的简单形状，更复杂的表达式（拼接、循环）返回 None 而不是去猜。
+    返回仍带 Lua 转义的原始字符串。
     """
     m = re.search(rf"\b{re.escape(key)}\s*=\s*\w+\s+and\s+(?:{_QUOTED_ALT})", text)
     if m:
         first = _pick_quoted(m)
-        # 三元惯用写法 `key = IDENT and A or B`：多数 mod 写 `Ch/ZH and
-        # "中文" or "英文"`（A=中文），但也有 `L/EN and "英文" or "中文"`
-        # （A=英文）这种反过来的。不靠条件变量命名去猜，直接看 A/B 哪个含
-        # 汉字，取中文那个（都没有或都是中文就维持原样取 A）——这样两种写
-        # 法都能拿到中文名。
+        # 三元写法的中英顺序因 Mod 而异，不按条件变量名猜，直接取含汉字的一侧
         if not _contains_cjk(first):
             or_m = re.search(rf"\s+or\s+(?:{_QUOTED_ALT})", text[m.end() :])
             if or_m and _contains_cjk(_pick_quoted(or_m)):
                 return _pick_quoted(or_m)
         return first
-    # Island Adventures 等 Mod 使用一个非常直接的双语辅助函数：
-    # ``name = en_zh("English", "中文")``。批量列表扫描不会执行任意
-    # modinfo.lua，因此只识别这个已经从真实源码确认过、两个参数都是
-    # 字符串字面量的安全形状，并取第二个中文参数；更复杂的函数调用仍
-    # 保持未解析，交给按需 Lua 沙箱处理。
+    # Island Adventures 等用 ``en_zh("English", "中文")``：只认两个参数都是字面量的形状，取中文
     m = re.search(
         rf"\b{re.escape(key)}\s*=\s*en_zh\s*\(\s*"
         rf"(?:{_QUOTED_ALT})\s*,\s*(?:{_QUOTED_ALT})\s*\)",
@@ -790,9 +592,7 @@ def _extract_quoted(text: str, key: str) -> str | None:
     )
     if m:
         return m.group(3) if m.group(3) is not None else m.group(4)
-    # 同样的惯用写法，但用 `[[...]]` 长括号字符串而不是带引号的——例如
-    # `name =\nCh and\n[[ 卡尼猫]] or\n[[ Carney]]`（真实 mod 的例子；
-    # 也说明这可以跨多行，\s* 本来就能匹配换行符，天然兼容）。
+    # 同样的三元写法但用 [[...]] 长括号字符串，可跨行
     m = re.search(
         rf"\b{re.escape(key)}\s*=\s*\w+\s+and\s+\[\[(.*?)\]\]", text, re.DOTALL
     )
@@ -805,13 +605,8 @@ def _extract_quoted(text: str, key: str) -> str | None:
 
 
 def _extract_localized_table(text: str, key: str) -> str | None:
-    """查找 `key = ChooseTranslationTable({...})` 或裸表
-    `key = {"default", ["zh"] = "...", ...}`——DST 自己官方的逐字段本地
-    化约定（见 _extract_quoted 的 docstring）。优先取显式的
-    `["zh"]`/`['zh']` 条目；否则退回到表里第一个裸（无键）字符串，跟
-    ChooseTranslationTable 自己的 `tbl[locale] or tbl[1]` 兜底逻辑一致。
-
-    返回原始（仍带 Lua 转义）的字符串内容，或 None。
+    """查找 ``ChooseTranslationTable({...})`` 或裸表：优先 ``["zh"]``，否则取第一个无键字符串
+    （与官方 ``tbl[locale] or tbl[1]`` 一致）。返回仍带转义的原始字符串或 None。
     """
     m = re.search(
         rf"\b{re.escape(key)}\s*=\s*(?:ChooseTranslationTable\s*\(\s*)?(\{{)", text
@@ -837,9 +632,7 @@ def _extract_localized_table(text: str, key: str) -> str | None:
     if zm:
         return _pick_quoted(zm)
 
-    # 没有 zh 条目——退回到第一个裸（无键）字符串，也就是 tbl[1]
-    # （`[key] = value` 形式的条目永远不算"裸"字符串，所以这天然会跳过
-    # 其它每个语言的条目，找到目标）。
+    # 没有 zh 条目时退回第一个无键字符串，即 tbl[1]
     for entry_m in re.finditer(rf"{_QUOTED_ALT}", block):
         preceding = block[: entry_m.start()]
         if re.search(r'\[\s*[\'"]?\w*[\'"]?\s*\]\s*=\s*$', preceding):
@@ -851,13 +644,7 @@ def _extract_localized_table(text: str, key: str) -> str | None:
 def _extract_label_or_hover(
     block: str, key: str, local_tables: dict | None
 ) -> str | None:
-    """按常规方式提取一个选项的 `label`/`hover`（_extract_quoted——字面
-    量字符串，或 DST 自己的三元/ChooseTranslationTable 本地化惯用写
-    法）——如果它是对一个本地表的单层点号引用（`label = configs.language`，
-    真实 mod 自己"每个选项标签共享同一个字典"的约定——`options` 用同样
-    约定的情况见 _extract_choices 的 docstring），先解析这个引用，再对
-    解析出来的值重新走一遍同样的提取。
-    """
+    """提取选项的 label/hover；值是本地表的单层点号引用（如 ``configs.language``）时先解引用。"""
     val = _extract_quoted(block, key)
     if val is not None:
         return val
@@ -867,9 +654,7 @@ def _extract_label_or_hover(
     resolved = _resolve_dotted_ref(raw, local_tables)
     if resolved is None:
         return None
-    # 把解析出来的值包装成一句合成的赋值语句，对它重新走一遍同样的字面
-    # 量/三元/本地化表提取——复用 _extract_quoted，不用把它那三种兜底
-    # 形状再抄一遍。
+    # 包装成一句赋值后复用 _extract_quoted 的全部提取规则
     return _extract_quoted(f"__resolved__ = {resolved}", "__resolved__")
 
 
@@ -911,11 +696,7 @@ def _extract_description(text: str, info: ModInfo):
 
 
 def _extract_configuration_options(text: str) -> list[ModConfigOption] | None:
-    """从 modinfo.lua 里提取并解析 configuration_options = { ... }。
-
-    用基于文本的方式：找到 configuration_options 赋值语句，提取表内容
-    块，再解析出各条选项。
-    """
+    """从 modinfo.lua 文本中提取并解析 ``configuration_options = {...}``。"""
     # 查找 configuration_options = {
     idx = text.find("configuration_options")
     if idx == -1:
@@ -950,10 +731,7 @@ def _extract_configuration_options(text: str) -> list[ModConfigOption] | None:
 
 
 def _has_nontrivial_table(text: str, idx: int) -> bool:
-    """如果 `configuration_options`（位于 `idx`）后面的 `{ ... }` 里有任
-    何实质内容则返回 True——用于区分"这个 mod 确实声明了零个选项"
-    （`configuration_options = {}`）和"这个 mod 有选项，但没有一个匹配
-    本解析器认识的形状"（ModInfo.unsupported_schema）两种情况。"""
+    """``configuration_options`` 的表里是否有实际内容，用于区分"零个选项"和"形状不认识"。"""
     brace_start = text.find("{", idx)
     if brace_start == -1:
         return False
@@ -969,13 +747,7 @@ def _has_nontrivial_table(text: str, idx: int) -> bool:
 
 
 def _find_local_tables(text: str) -> dict:
-    """查找 `local NAME = { ... }` 形式的表字面量定义。
-
-    有些 mod 通过一个局部变量在多个选项之间共享一份可选项列表（比如一
-    张 `color_options` 表被红/绿/蓝三个滑块共用），而不是在每个选项里
-    重复写一遍字面量表。
-    返回：dict，名字 -> 表文本（含外层花括号）。
-    """
+    """查找 ``local NAME = {...}`` 表定义（多个选项共享一份选项列表时用），返回 名字 -> 表文本。"""
     tables = {}
     for m in re.finditer(r"local\s+(\w+)\s*=\s*\n?\s*\{", text):
         name = m.group(1)
@@ -993,18 +765,10 @@ def _find_local_tables(text: str) -> dict:
 
 
 def _resolve_dotted_ref(expr: str, local_tables: dict | None) -> str | None:
-    """针对 _find_local_tables 找到的 `local IDENT = {...}` 表，解析一个
-    单层的 `IDENT.FIELD` 引用（例如 `configs.language`、
-    `options.retrofit`）——返回该表内 FIELD 对应值的原始文本（一个带引
-    号的字符串，或一张嵌套表），如果 `expr` 不是纯粹的单层点号查找、或
-    者 IDENT 不是已知的本地表，则返回 None。
+    """解析对本地表的单层 ``IDENT.FIELD`` 引用，返回该字段值的原始文本，否则 None。
 
-    这正是 mod 自己 `local options = {toggle = {...}, ...}` 这种"按名
-    字索引的可选项列表字典"约定所需要的：`options.toggle` 必须精确解析
-    到 "toggle" 这一条，而不是整张 "options" 表（把点号引用当成裸的
-    "options" 处理——这里恰好也确实有一张叫这个名字的本地表——会悄悄把
-    这个 mod 里*每一个*选项都解析成同一份合并后的列表，原因见
-    _extract_choices 的 docstring）。
+    坑：``options = options.toggle`` 必须取到 toggle 那一条，当成整张 options 表会让
+    所有选项解析成同一份列表。
     """
     m = re.match(r"^(\w+)\.(\w+)$", expr.strip())
     if not m or not local_tables:
@@ -1017,25 +781,16 @@ def _resolve_dotted_ref(expr: str, local_tables: dict | None) -> str | None:
 
 
 def _find_local_functions(text: str) -> dict:
-    """查找 `local function NAME(params) ... end` 形式的定义。
+    """查找 ``local function NAME(params) ... end``，返回 名字 -> (参数列表, 函数体)。
 
-    很多 mod 会定义一个小的辅助函数（常见命名如 AddOption/MakeOption
-    等），从几个位置字面量参数构建出一张选项表，然后在
-    configuration_options 里反复调用它，而不是手写每一张表。这为
-    _inline_helper_call() 把这类调用解析回它们会产生的表提供了支持，让
-    这样定义的选项不会被悄悄丢掉（且保留它们在文件里的原始顺序）。
-
-    返回：dict，名字 -> (params: list[str], body_text: str)
+    很多 Mod 用 AddOption 之类的辅助函数批量生成选项，供 _inline_helper_call 展开。
     """
     functions = {}
     for m in re.finditer(r"local\s+function\s+(\w+)\s*\(([^)]*)\)", text):
         name = m.group(1)
         params = [p.strip() for p in m.group(2).split(",") if p.strip()]
         start = m.end()
-        # 粗略的基于关键字的深度计数器，用来找到这个函数自己对应的
-        # "end"——对 mod 实际这样写的、短小单一用途的辅助函数体（几个字
-        # 面量表字段，最多一个 if/then/else）已经够用。不是真正的 Lua
-        # 解析器。
+        # 按关键字粗略计数找到匹配的 end，够应付 Mod 里短小的辅助函数，不是完整 Lua 解析
         depth = 1
         body_end = None
         for line_m in re.finditer(r".*\n?", text[start:]):
@@ -1054,9 +809,7 @@ def _find_local_functions(text: str) -> dict:
 
 
 def _split_call_args(text: str, open_paren_idx: int):
-    """给定一次调用的开圆括号 '(' 的下标，返回 (原始参数字符串列表, 紧
-    跟在匹配的闭圆括号 ')' 之后的下标)——按顶层逗号切分，同时正确处理嵌
-    套的圆括号/花括号和带引号字符串。"""
+    """从开括号下标起按顶层逗号切分调用参数，返回 (参数列表, 闭括号后的下标)。"""
     depth = 1  # 已经在调用自己的开圆括号内部了
     i = open_paren_idx + 1
     in_str = None
@@ -1095,14 +848,9 @@ def _split_call_args(text: str, open_paren_idx: int):
 
 
 def _inline_helper_call(name: str, args: list, local_functions: dict) -> str | None:
-    """把一次类似 AddOption("key", "Label", "Hover", false) 的调用解析
-    成它函数体本来会产生的字面量选项表文本——用调用处的字面量参数文本
-    替换函数的形参，并解析任何单层的字面量 if/else。
+    """把 ``AddOption("key", "Label", ...)`` 这类调用展开成函数体产生的字面量表文本。
 
-    返回合成出来的表文本（能被 _parse_single_option 解析），如果被调用
-    的不是一个认识的本地辅助函数、某个参数不是能安全替换的纯字面量、
-    或者函数体化简不到一张单独的字面量表，则返回 None——不管哪种
-    "None" 情况，调用方都会跳过这条记录，而不是去猜它的值。
+    参数不是纯字面量、函数未知或函数体化简不成单张表时返回 None，调用方跳过而不是猜。
     """
     if name not in local_functions:
         return None
@@ -1116,25 +864,14 @@ def _inline_helper_call(name: str, args: list, local_functions: dict) -> str | N
     for param in params[len(args) :]:
         subst[param] = "nil"
 
-    # 参数名（比如 "name"、"hover"）经常跟表自己的字段键
-    # （"name = ..."、"hover = ..."）撞名，这些绝不能被替换——只有那些
-    # 不紧跟裸 "=" 的引用才是参数被*使用*的地方，用负向先行断言跳过
-    # "key = " 这种位置。它还经常跟函数体里*另一个*字符串字面量内容里
-    # 出现的普通英文单词撞名（一个真实例子：参数名叫 "default"，同一函
-    # 数体里恰好有个内容是 "default" 的英文兜底字符串）——
-    # _replace_idents_outside_strings 会跳过引号内的一切内容，这种情况
-    # 也不会发生。替换分两遍进行，先换成不透明的占位符，这样第二遍替
-    # 换时，一个参数的字面量文本内容永远不会被误当成另一个参数的名字
-    # （比如一个恰好含有 "hover" 内容的悬浮提示字符串）。
+    # 坑：参数名常与表字段键（name = ...）或字符串里的英文单词撞名——跳过紧跟 "=" 的位置
+    # 和引号内容；分两遍先换成占位符，防止已替换进来的字面量再被当成另一个参数名。
     placeholders = {param: f"\x00{i}\x00" for i, param in enumerate(subst)}
     result = _replace_idents_outside_strings(body, placeholders)
     for param, placeholder in placeholders.items():
         result = result.replace(placeholder, subst[param])
 
-    # 解析单条字面量 "if <字面量> == <字面量> then A else B end"（这是
-    # AddOption 风格辅助函数选取默认开/关措辞常用的形状）。只处理已经
-    # 替换完成的字面量比较；其它情况都意味着这次调用没法安全化简，直
-    # 接放弃。
+    # 只化简一层字面量比较的 if/else（辅助函数选默认开关措辞的常见写法），其余放弃
     if_m = re.search(r"if\s+(.+?)\s+then\b(.*?)\belse\b(.*?)\bend\b", result, re.DOTALL)
     if if_m:
         cond, then_branch, else_branch = if_m.groups()
@@ -1167,23 +904,10 @@ def _parse_options_table(
     local_functions: dict | None = None,
     local_tables: dict | None = None,
 ) -> list[ModConfigOption]:
-    """用基于文本的提取方式解析 configuration_options 表里的各条条目。
+    """解析 configuration_options 表的各条目，结果顺序与源文件一致。
 
-    每条条目要么是一张字面量表：
-    {
-        name = "option_name",
-        label = "Display Label",
-        hover = "Tooltip text",
-        options = {
-            {description = "Desc1", data = value1},
-            {description = "Desc2", data = value2},
-        },
-        default = value,
-    }
-    要么是对本地定义的辅助函数的调用（比如 AddOption(...)、
-    AddOptionHeader(...)），由 _inline_helper_call() 解析回同样的形状
-    ——见其 docstring。返回列表里的顺序总是跟条目在源文件里出现的顺序
-    一致。
+    条目可以是字面量表 ``{name=..., label=..., hover=..., options={...}, default=...}``，
+    也可以是本地辅助函数调用（由 _inline_helper_call 展开）。
     """
     local_functions = local_functions or {}
     options = []
@@ -1258,10 +982,7 @@ def _parse_single_option(
         if hover is not None:
             opt.hover = _unescape_lua_string(hover)
 
-    # 提取 default。这里要感知花括号/引号深度（不是简单的"匹配到下一个
-    # 逗号为止"正则），因为 default 本身可能是一张 Lua 表，比如
-    # `default = {}` 或 `default = {["1"] = 8}`——朴素的 `[^,\n}]+` 模式
-    # 会在第一个内部逗号/花括号处就停下，悄悄截断它（只捕获到 "{"）。
+    # default 可能是表（如 {["1"] = 8}），要按括号/引号深度提取，不能截到第一个逗号
     default_raw = _extract_field_raw(block, "default")
     if default_raw is not None:
         opt.default = _coerce_lua_value(default_raw)
@@ -1276,27 +997,14 @@ def _parse_single_option(
 
     opt.choices = _extract_choices(block, local_tables)
 
-    # 分区标题/分隔符条目，不是真实设置——两个独立的信号，任一成立即可：
-    #  - name == ""：没有键，永远没法存回 modoverrides.lua，所以游戏自
-    #    己不管 `options` 长什么样，都会把它当成纯展示用。
-    #  - 单个描述为空的选项：有些 mod 自己写了个标题辅助函数（比如一个
-    #    自定义的 `AddTitle(title)`，返回
-    #    `{name="null", label=title, options={{description="",data=0}}}`），
-    #    用 "null" 这样的占位名字而不是 ""——这种空描述单选项跟
-    #    AddOptionHeader 产生的非交互式标题是同一种形状，只是写法不同。
+    # 标题/分隔条目的两种信号：name 为空（无法存回 modoverrides.lua），
+    # 或只有一个空描述选项（如自定义 AddTitle 返回 name="null" 的写法）
     if opt.name == "" or (
         len(opt.choices) == 1 and opt.choices[0].get("description") == ""
     ):
         opt.is_header = True
     elif not opt.choices and re.search(r"\boptions\s*=", block):
-        # 作者确实声明了一个 `options` 表，但 _extract_choices 解析出来
-        # 是空的——不是"没有可选项"，而是"解析不出它们是什么"。两种已知
-        # 形状：`options = SomeFunction(args)`（一个在运行时构建列表的
-        # 辅助函数，比如从字号表生成）和 `options = someVar`，其中
-        # someVar 不是字面量 `local someVar = {...}`，而是用 for 循环一
-        # 点点拼出来的——两者都需要真正执行 Lua 才能解析，这个基于文本
-        # 的解析器刻意不去尝试（按需真正执行的沙箱化解析见
-        # lua_sandbox.resolve_dynamic_option()）。
+    # 声明了 options 却解析为空：是函数调用或循环拼出的变量，需执行 Lua 才能得到（见沙箱解析）
         opt.is_dynamic = True
         opt.raw_options_expr = _extract_field_raw(block, "options") or ""
 
@@ -1304,16 +1012,9 @@ def _parse_single_option(
 
 
 def _extract_field_raw(block: str, key: str) -> str | None:
-    """在一个 Lua 表块里查找 `key = <value>`，只返回 <value> 的原始文
-    本——在该字段自己的顶层逗号或外层块的闭花括号处停止。
+    """在 Lua 表块中查找 ``key = <value>``，返回值的原始文本。
 
-    这里对花括号/方括号/圆括号/引号深度都敏感，不是简单的"匹配到下一个
-    逗号或花括号为止"正则：一个值本身是 Lua 表的字段（例如
-    `data = {["1"] = "World One", ["2"] = "World Two"}`）或者带多个参数
-    的函数调用（例如 `options = GenerateOptionsFromList(true, FONTS)`）
-    自己就含有逗号和括号，朴素的 `[^,}]+` 模式会立刻在那里停下——悄悄截
-    断/破坏这个值（这正是以前每个 `data`/`default` 是表而不是简单标量
-    的 mod 选项都会解析出错的原因）。
+    按括号/引号深度找到字段结束位置：值本身可能是表或多参数函数调用，含逗号和括号。
     """
     m = re.search(rf"\b{re.escape(key)}\s*=\s*", block)
     if m is None:
@@ -1348,25 +1049,12 @@ def _extract_field_raw(block: str, key: str) -> str | None:
 
 
 def _extract_choices(block: str, local_tables: dict | None = None) -> list[dict]:
-    """从一个配置选项块里提取 options 可选项。
+    """提取一个配置项的 options 列表。
 
-    `options` 通常是一张字面量 `{ ... }` 表，但有些 mod 通过局部变量在
-    多个选项之间共享可选项——要么是整体共享（`local color_options = {...}`
-    然后 `options = color_options`），要么更常见的是共享一张*按名字*索
-    引的可选项列表字典，每个选项按字段取自己那份
-    （`local options = {toggle = {...}, volume = {...}, ...}` 然后
-    `options = options.toggle`、`options = options.volume` 等——确实有
-    真实 mod 这样写，而且把这张共享表本身命名为 "options" 相当常见，所
-    以必须处理带字段访问的后缀，不能只处理裸表查找：如果只认
-    `options = options` 而忽略 `.toggle`/`.volume` 部分，会把每一个选
-    项都解析成*同一张*整个共享表，而不是它自己对应的那一条）。
+    支持字面量表、整体共享的局部变量（``options = color_options``）和按名索引的共享字典
+    （``options = options.toggle``，必须取到对应字段而不是整张表）。
     """
-    # 锚定在紧跟 `=` 的 `options`（不只是"这个块里某处出现了 options 这
-    # 个单词"）——一个简单的 block.find("options") 可能匹配到一段完全
-    # 不相干的 hover/label 字符串里的这个单词（一个真实 mod 的悬浮提示
-    # 文本写着 "Note: Some options below may affect..."，结果匹配到的
-    # 是这里，而不是几行之后真正的 `options = {...}` 字段，导致整个可
-    # 选项列表悄悄变成空的）。
+    # 锚定紧跟 "=" 的 options 字段，避免匹配到 hover 文案里的 "options" 单词
     field_m = re.search(r"\boptions\s*=", block)
     if not field_m:
         return []
@@ -1399,11 +1087,7 @@ def _extract_choices(block: str, local_tables: dict | None = None) -> list[dict]
         if options_text is None:
             return []
 
-    # 用花括号深度遍历（跟外层选项表循环同样的做法）来解析每条
-    # `{description=..., data=..., hover=...}`，而不是对整个 options_text
-    # 用一个单一的正则——一条选项自己的 `data` 可能是一张嵌套表，含有花
-    # 括号/逗号，否则单趟正则会分不清一条选项在哪里结束、下一条从哪里
-    # 开始。
+    # 按括号深度逐条解析，单条选项的 data 可能是含逗号的嵌套表
     choices = []
     inner = options_text[1:-1] if len(options_text) >= 2 else ""
     i = 0
@@ -1441,14 +1125,7 @@ def _extract_choices(block: str, local_tables: dict | None = None) -> list[dict]
 
 
 def _coerce_lua_value(val_str: str) -> Any:
-    """把一个 Lua 字面量字符串（标量或表）转换成 Python 值。
-
-    交给真正的 Lua tokenizer/parser（parse_lua_value）处理，而不是手写
-    标量判断逻辑，这样表形式的 default/data（例如 `{}`、
-    `{["1"] = "World One"}`）解析出来的嵌套 dict 形状，跟
-    load_mod_overrides() 对真实保存值产生的形状一致——否则两者在
-    resolve_config_value() 里永远没法比较相等。
-    """
+    """用真正的 Lua 解析器把字面量转成 Python 值，保证与 load_mod_overrides() 读出的形状一致可比较。"""
     val_str = val_str.strip()
     try:
         return parse_lua_value(val_str)
@@ -1460,17 +1137,7 @@ def _coerce_lua_value(val_str: str) -> Any:
 
 
 def resolve_config_value(mod_info: ModInfo, key: str, current_value: Any) -> tuple:
-    """对某个 mod 配置键，确定其合法可选项列表和当前值。
-
-    Args:
-        mod_info: 已解析的 ModInfo。
-        key: 配置键名。
-        current_value: modoverrides.lua 里当前存储的值。
-
-    Returns:
-        (choices_list, current_display_value, is_valid) 元组。
-        choices_list：{"description": str, "data": Any} 字典组成的列表。
-    """
+    """返回 (可选项列表, 当前显示值, 是否有效)；可选项为 {"description", "data"} 字典列表。"""
     for opt in mod_info.config_options:
         if opt.name == key:
             choices = opt.choices
@@ -1487,24 +1154,13 @@ def resolve_config_value(mod_info: ModInfo, key: str, current_value: Any) -> tup
 
 
 # ── 整份文件的 Lua 沙箱解析 ───────────────────────────────────────────
-#
-# 下面全部内容都是"先尝试用真正的 Lua 解释器跑一遍整个 mod"这条路径
-# （见 lua_sandbox.resolve_full_config_options），由 ModConfigDialog 按
-# 需调用，代替/优先于上面基于静态正则的解析器。这里刻意跟静态解析器重
-# 复了一点逻辑（标题检测、本地化值解析），而不是共用同一份：两边输入
-# 的形状不同（这里是已经执行完的 Python 值，那边是原始源码文本），共
-# 用一个辅助函数反而得同时兼容两种形状，实际省不下多少代码。
+# 配置弹窗按需调用，优先于上面的静态解析。输入是已执行完的 Python 值，
+# 与静态解析形状不同，少量逻辑（标题识别、本地化取值）分开实现。
 
 
 def _resolve_localized_value(val: Any) -> str:
-    """给定一个 label/hover/description 字段已经执行完的值——可能是纯
-    字符串，也可能是 DST 自己的逐字段本地化约定
-    （`{"English", ["zh"] = "中文", ...}`，经过沙箱的 JSON 往返之后是
-    形如 {"1": "English", "zh": "中文", ...} 的 dict，因为一张 Lua 数
-    组的第一个元素和一个 "zh" 键能共存于同一张表）——如果有中文字符串
-    就返回它，否则返回第一个位置元素，都没有就返回一个合理的字符串兜
-    底。绝不抛异常。
-    """
+    """从已执行的 label/hover/description 值取显示文本：字符串直接用；本地化表
+    （JSON 往返后形如 {"1": "English", "zh": "中文"}）优先取中文，否则取第一个元素。不抛异常。"""
     if val is None:
         return ""
     if isinstance(val, str):
@@ -1524,14 +1180,10 @@ def _resolve_localized_value(val: Any) -> str:
 
 
 def _choices_from_lua_value(val: Any) -> list[dict]:
-    """把一个已经执行完的 `options` 值转换成 _extract_choices() 产出的
-    同样形状。处理两种真实存在的 schema：普通的
-    `{description=..., data=..., hover=...}` 表数组（常见约定），以及
-    DST 的按标识符做键的约定（`{[false] = {description=...}, [true] = {...}}`，
-    Insight 就用这个），这种约定经过 JSON 往返后变成一个按 data 值的
-    *字符串*形式（"false"/"true"/"0" 等）为键的 dict —— _coerce_lua_value()
-    （真正的 Lua tokenizer）把这个键转换回正确类型的值，这样才能跟
-    modoverrides.lua 里实际保存的值比较相等。
+    """把已执行的 options 值转成 _extract_choices 的形状。
+
+    支持普通的选项数组和以 data 值为键的写法（Insight：``{[false] = {...}}``）；后者 JSON
+    往返后键变成字符串，需用 _coerce_lua_value 还原类型才能与存档值比较。
     """
     if isinstance(val, list):
         choices = []
@@ -1563,19 +1215,9 @@ def _choices_from_lua_value(val: Any) -> list[dict]:
 
 
 def _options_from_lua_result(result: Any) -> list[ModConfigOption] | None:
-    """把一个 mod 的 `configuration_options` 全局变量已经执行完的值转换
-    成 ModConfigOption 对象列表。
+    """把已执行的 configuration_options 转成 ModConfigOption 列表。
 
-    处理两种真实存在的顶层形状：标准的
-    `{name=..., label=..., options=..., default=...}` 表数组，以及
-    DST 的按标识符做键的约定，每个选项直接用自己的名字做键
-    （`{display_timers = {label=..., ...}, ...}`，Insight 就用这个）
-    ——对这种形状，当表本身没有另外声明 name 字段时，dict 的键就成为
-    这个选项的名字。
-
-    如果 `result` 两种形状都不像（既不是列表也不是 dict，或者根本不含
-    任何表条目），则返回 None——这种情况下调用方应该保留静态解析器已
-    经算出来的结果，跟其它任何解析失败的处理方式一致。
+    支持标准数组和以选项名为键的表（Insight）；两种都不像时返回 None，调用方保留静态解析结果。
     """
     entries: list[tuple[Any, dict]] = []
     if isinstance(result, list):
@@ -1609,9 +1251,7 @@ def _options_from_lua_result(result: Any) -> list[ModConfigOption] | None:
         opt.is_dictionary_config = bool(d.get("is_dictionary_config"))
         opt.choices = _choices_from_lua_value(d.get("options"))
 
-        # 跟 _parse_single_option 同样的两个标题信号（见其 docstring）：
-        # 没有名字可存，或者 mod 作者自己的标题辅助函数常见的单个空描
-        # 述选项这种形状。
+        # 与 _parse_single_option 相同的两个标题信号
         if opt.name == "" or (
             len(opt.choices) == 1 and opt.choices[0].get("description") == ""
         ):
@@ -1624,29 +1264,15 @@ def _options_from_lua_result(result: Any) -> list[ModConfigOption] | None:
 
 
 def resolve_full_modinfo(mod_folder: Path, timeout: float | None = None) -> dict | None:
-    """尝试通过真正把整份 modinfo.lua 丢进 Lua 沙箱运行（见 lua_sandbox.py）
-    来解析一个 mod 的元数据和整个 `configuration_options`，代替本模块
-    平常用的基于静态正则的解析器。
+    """把整份 modinfo.lua 放进 Lua 沙箱执行，解析元数据和 configuration_options。
 
-    应该按需尝试（用户打开某个具体 mod 的配置弹窗时——见 gui/app.py 的
-    ModConfigDialog），绝不在批量扫描 mod 列表时调用；对这里解析不出来
-    的部分，保留静态解析器已经算好的 ModInfo 原样不动——大多数
-    modinfo.lua 会引用这个沙箱没有提供的 DST 引擎全局变量（GLOBAL、
-    STRINGS、TheNet 等），这些会直接失败（很快）并照旧走兜底路径。一旦
-    *真的*成功，它能一次性绕开所有静态解析的边界情况（Lua 注释、引号
-    风格、共享表的点号引用、ChooseTranslationTable、有条件地重新赋值
-    的局部变量/字段等）——让真正的 Lua 5.1 解释器去处理实际语法，而不
-    是本模块一条正则一条正则地重新推导——这不仅覆盖配置选项，还覆盖比
-    如某个 mod 的 `name` 在 `if locale == "zh" then ... end` 里被有条
-    件地重新赋值成中文变体的情况，这是只抓文件里*第一个*
-    `name = "..."` 的静态解析器跟不上的。
+    只在打开配置弹窗时按需调用，不用于批量扫描。能处理静态解析覆盖不到的写法
+    （条件赋值的中文名、共享表、ChooseTranslationTable 等）；引用了沙箱没有的引擎
+    全局变量时会快速失败。
 
-    返回一个 dict，含 "name"/"author"/"version"/"version_compatible"/
-    "description"/"icon"/"icon_atlas" 中的任意几个（只有 mod 实际设置过的字段才会出
-    现，且已经本地化成纯字符串）和 "config_options"（一个
-    list[ModConfigOption]，只有 configuration_options 解析出可识别的
-    形状时才会出现）——如果文件读取失败，或者执行整体失败/超时，则返
-    回 None。调用方应该应用其中出现的键，其余部分保持现有 ModInfo 不变。
+    返回已本地化的字段（name/author/version/version_compatible/description/icon/
+    icon_atlas，仅包含 Mod 实际设置的）及可识别时的 "config_options"；读取或执行
+    失败返回 None。
     """
     modinfo_path = mod_folder / "modinfo.lua"
     if not modinfo_path.exists():

@@ -1,16 +1,13 @@
-"""管理 Steam 开服程序的 DontStarveLuaJIT2 注入。
+"""管理 Steam 开服程序的 DontStarveLuaJIT2 注入（WeGame 不支持）。
 
-两种方式，按开服程序目录自动区分：
+按开服程序目录自动区分两种方式：
+- 独立专服：真实 ``bin64`` 永不修改，``Winmm.dll`` 注入壳装入同级 ``luajit`` 隔离副本；
+  游戏版本、Mod 声明版本、布局或注入壳变化时更新副本。
+- 游戏专服（客户端目录自带的开服程序）：按作者 README 只把 ``Winmm.dll`` 放进游戏
+  ``bin64``，卸载即删除；与客户端共用，是否安装只看该文件，与 DSTCamp 的开关无关。
 
-- 独立专服：真实 ``bin64`` 永不修改；``Winmm.dll`` 注入壳装入同级 ``luajit``
-  隔离副本。游戏版本、Mod 声明版本、布局或注入壳内容变化时更新副本。
-- 游戏专服（游戏客户端目录自带的开服程序）：按作者 README 的方式只把
-  ``Winmm.dll`` 放进游戏 ``bin64``——"专用服务器同理（同样只装 Winmm.dll 到
-  游戏 bin64）"，卸载即删除它。客户端与游戏专服共用这一份，是否已安装只看
-  ``Winmm.dll`` 在不在，与 DSTCamp 的 LuaJIT 开关无关。
-
-两种方式都把真实 ``Injector.dll`` 与依赖留在 Workshop Mod 目录，并用作者约定
-的路径标记 ``data/unsafedata/ds_luajit_injector.path`` 连接。WeGame 不在支持范围内。
+真实 ``Injector.dll`` 及依赖都留在 Workshop Mod 目录，通过作者约定的路径标记
+``data/unsafedata/ds_luajit_injector.path`` 连接。
 """
 
 import hashlib
@@ -57,10 +54,7 @@ _SERVER_EXECUTABLE_NAMES = (
 # 隔离副本目录名——跟真实 bin64/ 同级（install_dir 下），整个复制一份
 # bin64 内容进去，注入文件也装进这里，真实 bin64/ 永远不被触碰。
 LUAJIT_DIR_NAME = "luajit"
-# 副本目录里记录"这份副本是照哪个游戏版本/哪个配套 Mod 版本生成的"的标
-# 记文件——两者任一变了就说明副本可能过期，需要整个重新生成（见
-# needs_regeneration()）。放在副本目录内部，游戏 exe 不会关心这个多出来
-# 的文件（bin64 里本来就有一堆它不认识的文件）。
+# 副本目录内的标记文件：记录副本对应的游戏版本与配套 Mod 版本，任一变化即需重建（见 needs_regeneration）
 _MARKER_FILE = "version.json"
 
 # 配套 Mod 在创意工坊的物品 ID（作者确认，固定值，不是猜的）。
@@ -69,12 +63,6 @@ WORKSHOP_ID = "3444078585"
 WORKSHOP_MOD_KEY = f"workshop-{WORKSHOP_ID}"
 WORKSHOP_PAGE_URL = f"https://steamcommunity.com/sharedfiles/filedetails/?id={WORKSHOP_ID}"
 
-# 早前一版实现（这次会话里已经废弃）曾经把配套 Mod 当本地/手动装的 mod
-# 处理，装成服务器 mods/ 目录下一个叫这个名字的文件夹，并在
-# modoverrides.lua 里用这个名字当 key 启用——现在已经确认配套 Mod 必须走
-# 创意工坊订阅（WORKSHOP_MOD_KEY），不再创建/使用这个文件夹，只保留这个
-# 常量给 cleanup_legacy_local_mod_entry() 清理老用户机器上的残留 key。
-_LEGACY_MOD_FOLDER_NAME = "dstcamp_luajit_mod"
 
 
 def get_luajit_dir(install_dir: Path) -> Path:
@@ -124,19 +112,12 @@ def _remove_stale_luajit_copy(install_dir: Path, log) -> None:
 
 
 def current_game_build_id(install_dir: Path) -> str | None:
-    """薄封装 steam_discovery.read_game_version_file()——install_dir 是专
-    用服务器安装根目录，游戏自己把版本号写在这个目录下的 version.txt
-    里，见该函数的说明。"""
+    """读取专服安装根目录下 version.txt 的游戏版本号。"""
     return read_game_version_file(install_dir)
 
 
 def current_injector_version() -> str | None:
-    """配套 Mod 订阅内容自己 modinfo.lua 里作者写的 version 字段（真机验
-    证过是 "1.10.1" 这种语义化版本号）——直接复用
-    modinfo_reader.parse_modinfo() 现成的解析逻辑，不用再自己写一份正则
-    去读 appworkshop_322330.acf 的 manifest 哈希：作者自己声明的版本号比
-    Steam 内部同步状态更直接地反映"这个 Mod 是不是发布了新版本"。找不到
-    订阅内容/modinfo.lua 解析失败/没写 version 字段都返回 None。"""
+    """配套 Mod 订阅内容 modinfo.lua 中作者声明的 version（如 "1.10.1"），找不到返回 None。"""
     mod_dir = _workshop_mod_dir()
     if mod_dir is None:
         return None
@@ -205,13 +186,10 @@ def _file_sha256(path: Path | None) -> str:
 
 @dataclass
 class LuajitMarker:
-    """记录 luajit/ 这份副本是照哪个游戏版本(DST_version)、哪个配
-    套 Mod 版本(luajit_version)生成的；layout_version 用来迁移作者安装布局，
-    trigger_sha256 用来识别 Mod 未改声明版本但 Winmm.dll 已变化的情况。
-    落盘成 version.json 时字段名跟这里一致；
-    DST_version 内部仍然存成字符串（跟 current_game_build_id() 的返回类
-    型一致，避免读取到非纯数字内容时的转换风险），只在写 JSON 时转成不
-    带引号的数字——原始数据（version.txt 内容）本来就一直是纯数字。"""
+    """副本标记：生成副本时的游戏版本(DST_version)、配套 Mod 版本(luajit_version)、
+    布局版本(layout_version) 与 Winmm.dll 哈希(trigger_sha256，识别 Mod 版本号未变但 DLL 已变)。
+
+    DST_version 内部存字符串，写 JSON 时转为数字。"""
     DST_version: str
     luajit_version: str
     layout_version: int = 1
@@ -219,9 +197,7 @@ class LuajitMarker:
 
 
 def read_marker(luajit_dir: Path) -> LuajitMarker | None:
-    """读 luajit_dir/_MARKER_FILE，文件不存在/内容损坏/字段缺失都返回
-    None，不抛异常——调用方（needs_regeneration()）把 None 当"这份副本还
-    没成功装过/标记丢失"处理，不是"版本没变"。"""
+    """读取副本标记；缺失或损坏返回 None（调用方视为"未成功安装"，而不是"版本没变"）。"""
     path = luajit_dir / _MARKER_FILE
     if not path.exists():
         return None
@@ -236,10 +212,7 @@ def read_marker(luajit_dir: Path) -> LuajitMarker | None:
 
 
 def write_marker(luajit_dir: Path, marker: LuajitMarker) -> None:
-    """原子写入（写临时文件再 rename，避免中途中断留下半截 json 被
-    read_marker() 读出损坏数据）。DST_version 落盘成不带引号的数字（真机
-    的 version.txt 内容一直是纯数字），非纯数字的极端情况兜底存成字符
-    串，不强行 int() 转换崩溃。"""
+    """原子写入标记（临时文件再 rename）；DST_version 非纯数字时退回存字符串。"""
     path = luajit_dir / _MARKER_FILE
     part_path = path.with_suffix(".json.part")
     dst_version_value = int(marker.DST_version) if marker.DST_version.isdigit() else marker.DST_version
@@ -285,12 +258,9 @@ def _runtime_ready(install_dir: Path) -> bool:
 
 
 def is_workshop_subscribed() -> bool:
-    """这台机器的 Steam 账号是不是已经订阅过配套 Mod。本地判断依据是
-    find_workshop_dir()（<steam>/steamapps/workshop/content/322330/）下
-    有没有 WORKSHOP_ID 这个子文件夹、且带 modinfo.lua（确认真的下载完
-    整，不是半途或者空目录）——订阅本身是 Steam 账号操作，DSTCamp 没有
-    API 能代劳，也没有比"本地内容在不在"更权威的判断依据，找不到就当作
-    没订阅，调用方应该引导用户去 WORKSHOP_PAGE_URL 手动订阅一次再重试。"""
+    """本机 Steam 是否已订阅配套 Mod：以 Workshop 目录下带 modinfo.lua 的 WORKSHOP_ID 子目录为准。
+
+    未订阅时调用方引导用户去 WORKSHOP_PAGE_URL 手动订阅。"""
     workshop_dir = find_workshop_dir()
     if workshop_dir is None:
         return False
@@ -298,18 +268,6 @@ def is_workshop_subscribed() -> bool:
     return candidate.exists() and (candidate / "modinfo.lua").exists()
 
 
-def cleanup_legacy_local_mod_entry(overrides) -> bool:
-    """移除早前版本遗留的本地 mod key（_LEGACY_MOD_FOLDER_NAME）——那时
-    候把配套 Mod 当本地/手动装的 mod 处理，会把这个 key 写进
-    modoverrides.lua；现在已经改成走创意工坊订阅（WORKSHOP_MOD_KEY），
-    这个旧 key 不会再被写入，但已经写过的机器上还留着——对应的本地文件
-    夹一旦被手动删掉，这个 key 就会变成一行"有 enabled 状态但 modinfo.lua
-    已经不存在"的幽灵条目。overrides 参数是 core.mod_manager.ModOverrides
-    实例，原地修改；返回是否真的清理了（供调用方决定要不要落盘）。"""
-    if _LEGACY_MOD_FOLDER_NAME in overrides.mods:
-        del overrides.mods[_LEGACY_MOD_FOLDER_NAME]
-        return True
-    return False
 
 
 class InjectorState(Enum):
@@ -319,13 +277,10 @@ class InjectorState(Enum):
 
 
 def detect_state(bin64_dir: Path) -> InjectorState:
-    """纯函数。隔离副本模式下，"生效中"不再是"真实 bin64 里有没有触发文
-    件"，而是"副本存不存在 + 当前有没有启用"——真实 bin64_dir 从头到尾不
-    会被这个模块写入任何文件，只用来算出 install_dir（bin64_dir.parent）
-    去找同级的 luajit/。新版运行时必须同时具备副本中的 Winmm.dll，以及
-    能解析到现存 Injector.dll 的作者路径标记；任一缺失都按未安装处理，
-    防止界面显示已启用但实际启动时悄悄回退。配套 Mod 的订阅状态另见
-    is_workshop_subscribed()。"""
+    """计算隔离副本的状态（纯函数，不写真实 bin64）。
+
+    副本中的 Winmm.dll 和能解析到现存 Injector.dll 的路径标记缺一即视为未安装，
+    防止界面显示已启用、启动时却悄悄回退。订阅状态另见 is_workshop_subscribed()。"""
     install_dir = bin64_dir.parent
     if uses_game_bin64(install_dir):
         return InjectorState.ACTIVE if _game_trigger_file(bin64_dir) else InjectorState.NOT_INSTALLED
@@ -343,12 +298,9 @@ class InstallPlan:
 
 
 def plan_install(bin64_dir: Path | None, server_running: bool) -> InstallPlan:
-    """纯只读计算，不碰网络/写操作（is_workshop_subscribed() 只读本地磁
-    盘）。GUI 层先调这个决定按钮能不能点/弹什么提示；blocked_reason 是
-    内部标识符，不是文案，GUI 自己按 key 转翻译（跟 mod_sync.py 的
-    plan_mod_sync() 是同一个"先算 plan、GUI 层弹窗确认、再执行"套路）。
-    "workshop_not_subscribed" 排在 bin64/运行检查之后——没有 bin64 目录
-    或服务器正在跑时，先解决这两个更基础的问题，不用一开始就提示去订阅。"""
+    """只读地计算安装计划；blocked_reason 是内部标识，界面自行翻译。
+
+    先检查 bin64 与运行状态，再检查是否订阅配套 Mod。"""
     if bin64_dir is None or not bin64_dir.exists():
         return InstallPlan(bin64_dir=None, blocked_reason="bin64_not_found")
     if server_running:
@@ -385,10 +337,8 @@ def _copy_injector_shell_into(source_dir: Path, dest_dir: Path, on_log=None) -> 
 def _rebuild_luajit_copy(bin64_dir: Path, luajit_dir: Path, source_dir: Path, on_log=None) -> None:
     """在临时目录完整构建 LuaJIT 副本，校验通过后再替换正式目录。
 
-    不能先 ``rmtree(luajit_dir)`` 再直接 ``copytree``：Windows 杀毒软件、
-    Steam 同步、磁盘空间或文件占用都可能让复制中途失败，留下只有注入 DLL
-    的半成品。临时目录方案保证失败时旧副本仍然可用，成功时正式目录一次性
-    切换到完整副本。"""
+    坑：先删正式目录再复制，中途被杀软、文件占用或磁盘空间打断就只剩半成品；
+    临时目录方案保证失败时旧副本可用。"""
     def log(line: str) -> None:
         if on_log:
             on_log(line)
@@ -401,17 +351,14 @@ def _rebuild_luajit_copy(bin64_dir: Path, luajit_dir: Path, source_dir: Path, on
     try:
         log(t("local.luajit_log_copying_bin64"))
         shutil.copytree(bin64_dir, temp_dir)
-        # 用户可能曾按作者旧版说明手动改过真实 bin64。DSTCamp 不删除真实
-        # 文件，但隔离副本必须清掉旧版顶层载荷，避免与路径标记指向的新
-        # Injector 混用。这里只处理作者安装脚本列出的精确文件名。
+        # 清掉按作者旧版说明手动复制进来的顶层载荷（只处理安装脚本列出的精确文件名），
+        # 避免与路径标记指向的新 Injector 混用；真实 bin64 中的文件不删
         for name in _LEGACY_PAYLOAD_FILES:
             (temp_dir / name).unlink(missing_ok=True)
         log(t("local.luajit_log_copying_injector"))
         _copy_injector_shell_into(source_dir, temp_dir, on_log=log)
 
-        # 先在临时目录校验，再触碰正式目录。除了注入锚点，也校验真实
-        # bin64/bin 中实际存在的服务器启动文件，直接覆盖“只剩 DLL”的
-        # 半成品问题。
+        # 在临时目录先校验注入锚点和实际的服务器启动文件，再触碰正式目录
         expected_server_files = [
             name for name in _SERVER_EXECUTABLE_NAMES
             if (bin64_dir / name).is_file()
@@ -444,15 +391,13 @@ def _rebuild_luajit_copy(bin64_dir: Path, luajit_dir: Path, source_dir: Path, on
 
 
 def apply_install(bin64_dir: Path, mod_overrides_paths: list[Path], on_log=None) -> InstallResult:
-    """真正执行安装，四步：①从已订阅的创意工坊配套 Mod 内容里取注入文件
-    源目录（不联网——不再从 GitHub 下载，直接读本地订阅内容，Steam 自己
-    负责把这份内容维持在作者发布的稳定版）②整个覆盖式复制真实 bin64_dir
-    到同级的 luajit/ 隔离副本（真实 bin64_dir 本身永远不写入任何内
-    容）③只把 Winmm.dll 放进副本，写入 Injector.dll 绝对路径及版本/哈希
-    标记 ④在每一份传入的 modoverrides.lua 里启用创意工坊配套
-    Mod，最后打开 app_settings 里的 LuaJIT 开关。调用方必须已经拿到
-    plan_install() 的确认（bin64_dir 有效、服务器未运行、创意工坊物品已
-    订阅），这里不重复检查。全程把中文日志行喂给 on_log。"""
+    """执行安装（调用方须已通过 plan_install 确认）：
+
+    1. 从已订阅的配套 Mod 取注入文件（不联网，Steam 负责保持稳定版）；
+    2. 复制真实 bin64 到同级 luajit/ 隔离副本；
+    3. 只把 Winmm.dll 放进副本，写入 Injector.dll 路径及版本/哈希标记；
+    4. 在各 modoverrides.lua 启用配套 Mod，并打开 LuaJIT 开关。
+    日志通过 on_log 输出。"""
     def log(line: str) -> None:
         if on_log:
             on_log(line)
@@ -509,11 +454,7 @@ def apply_install(bin64_dir: Path, mod_overrides_paths: list[Path], on_log=None)
 
 
 def apply_uninstall(bin64_dir: Path, on_log=None) -> bool:
-    """"关闭"LuaJIT——只是把 app_settings 里的开关关掉，下次启动服务器
-    改用真实 bin64（见 resolve_launch_bin64_dir()）。不删 luajit/
-    副本（保留着，下次重新开启不需要重新复制一遍 bin64），也不碰创意工
-    坊配套 Mod 的启用状态。已经是关闭状态时直接返回 False（幂等，调用方
-    不需要先查状态）。"""
+    """关闭 LuaJIT 开关（幂等），下次启动用真实 bin64；保留副本和配套 Mod 启用状态。"""
     def log(line: str) -> None:
         if on_log:
             on_log(line)
@@ -544,11 +485,9 @@ def apply_uninstall(bin64_dir: Path, on_log=None) -> bool:
 
 
 def resolve_launch_bin64_dir(install_dir: Path) -> Path | None:
-    """给 dedicated_server.ServerProcess 用：LuaJIT 未启用，或副本不存
-    在/不完整（注入壳或 Injector 路径标记缺失），返回 None（调用方回退到真实 bin64）；
-    已启用且副本有效，返回副本目录。纯只读判断，不做任何联网/重新生成
-    的副作用——调用方（gui/local_service_tab.py._do_start_shard()）应该
-    已经用 needs_regeneration() 提前处理过"要不要先重新生成"这件事。"""
+    """返回启动用的副本目录；未启用或副本不完整返回 None（回退真实 bin64）。
+
+    纯只读，是否需要重建由调用方提前用 needs_regeneration() 处理。"""
     if uses_game_bin64(install_dir):
         return None  # 游戏专服的注入壳就在真实 bin64 里，直接从真实目录启动
     if not get_luajit_enabled():
@@ -560,11 +499,10 @@ def resolve_launch_bin64_dir(install_dir: Path) -> Path | None:
 
 
 def needs_regeneration(install_dir: Path) -> bool:
-    """判断已启用的隔离运行时是否需要在启动前修复或更新。
+    """已启用的隔离运行时是否需要在启动前修复或更新（纯本地读取）。
 
-    除游戏和 Mod 声明版本外，还校验新版布局、路径标记和 Winmm.dll 内容
-    哈希。这样旧版整包复制布局会自动完整重建；作者只替换 DLL 而未更新
-    modinfo.lua 的版本号时，也不会漏掉更新。纯本地读取，不联网。
+    除游戏与 Mod 版本外还校验布局、路径标记和 Winmm.dll 哈希：旧布局自动重建，
+    作者只换 DLL 不改版本号时也能发现。
     """
     if uses_game_bin64(install_dir):
         return _game_needs_refresh(install_dir)
@@ -601,9 +539,8 @@ def needs_regeneration(install_dir: Path) -> bool:
 
 
 def _game_needs_refresh(install_dir: Path) -> bool:
-    """游戏专服：只在已安装（bin64 有 Winmm.dll）时检查。路径标记缺失或指向旧位置
-    需要修复；注入壳与配套 Mod 里的不一致时需要更新——但游戏或服务器正在占用它就
-    无法覆盖，这时沿用当前版本，不阻止开服（边玩游戏边开服很常见）。"""
+    """游戏专服：仅在已安装时检查。路径标记缺失/过期需修复，注入壳不一致需更新；
+    文件被游戏或服务器占用时沿用当前版本，不阻止开服。"""
     bin64_dir = install_dir / "bin64"
     trigger = _game_trigger_file(bin64_dir)
     current_payload = _injector_payload_file()
@@ -646,15 +583,12 @@ def _refresh_game_install(bin64_dir: Path, log) -> InstallResult:
 
 
 def regenerate(bin64_dir: Path, on_log=None) -> InstallResult:
-    """游戏版本变了/配套 Mod 发布了新版本、副本过期时用——按哪个版本实际
-    变了选择性更新，不是不管三七二十一整个重来：只有游戏本体更新过
-    （DST_version 跟旧标记不一致）才整个删除重建（重新复制一遍真实
-    bin64_dir，通常是 GB 级、耗时的一步），因为这种情况下 bin64 里任何
-    文件都可能变了；如果只是配套 Mod 发布了新版本（DST_version 没变，
-    只有 luajit_version 或 Winmm.dll 变了），不动已经在的 bin64 内容，只
-    覆盖注入壳并刷新路径标记。旧标记读不到或旧安装布局需要迁移时完整重建，
-    从而自然清掉旧版曾复制到 luajit/ 的 Injector.dll、deps 和 plugins。
-    找不到完整订阅内容时返回失败，不使用残缺或旧文件继续启动。"""
+    """副本过期时按变化选择性更新：
+
+    - 游戏版本变化：删除并重建整个副本（bin64 可能全变）；
+    - 只有配套 Mod 版本或 Winmm.dll 变化：只覆盖注入壳并刷新路径标记；
+    - 标记缺失或布局需要迁移：完整重建，顺带清掉旧版复制进来的 Injector/deps/plugins。
+    找不到完整订阅内容时返回失败，不用残缺文件启动。"""
     def log(line: str) -> None:
         if on_log:
             on_log(line)

@@ -1,8 +1,4 @@
-"""DST 存档元数据读取。
-
-读取 .meta 文件和存档会话目录，提取世界信息（天数、季节、时段等），
-不需要解析二进制存档本身。
-"""
+"""读取存档 .meta 与会话目录中的世界信息（天数、季节、时段等），不解析二进制存档。"""
 
 from pathlib import Path
 
@@ -11,17 +7,7 @@ from dstools.models import PlayerCharacterSave, SaveMetadata, SaveSession, SaveS
 
 
 def list_save_sessions(shard_path: Path) -> list[SaveSession]:
-    """列出一个世界（shard）存档目录下的全部会话。
-
-    一个存档会话是 save/session/ 下的一个目录，里面装着编号存档槽
-    文件（如 0000000488）和各自对应的 .meta 文件。
-
-    Args:
-        shard_path: 世界目录路径（如 Cluster_3/Master/）。
-
-    Returns:
-        SaveSession 对象列表。
-    """
+    """列出世界目录（如 Cluster_3/Master/）下 save/session/ 中的全部存档会话。"""
     sessions = []
     session_dir = shard_path / "save" / "session"
 
@@ -45,14 +31,7 @@ def list_save_sessions(shard_path: Path) -> list[SaveSession]:
 
 
 def _read_meta_file(meta_path: Path) -> SaveMetadata | None:
-    """读取并解析一个 .meta 文件，提取存档元数据。
-
-    Args:
-        meta_path: .meta 文件路径。
-
-    Returns:
-        SaveMetadata，文件不存在或解析失败则返回 None。
-    """
+    """解析一个 .meta 文件，不存在或解析失败返回 None。"""
     if not meta_path.exists():
         return None
 
@@ -101,14 +80,7 @@ def _build_session(session_path: Path) -> SaveSession:
 
 
 def read_session_metadata(session: SaveSession) -> SaveMetadata | None:
-    """从会话里最新的 .meta 文件读取元数据。
-
-    Args:
-        session: 要读取的 SaveSession。
-
-    Returns:
-        SaveMetadata，找不到任何 .meta 文件则返回 None。
-    """
+    """读取会话中最新 .meta 的元数据，没有则返回 None。"""
     meta_files = [s.meta_file for s in session.slots if s.meta_file and s.meta_file.exists()]
     if not meta_files:
         return None
@@ -117,14 +89,7 @@ def read_session_metadata(session: SaveSession) -> SaveMetadata | None:
 
 
 def get_save_summary(session: SaveSession) -> str:
-    """生成一个存档会话的人类可读摘要。
-
-    Args:
-        session: 要生成摘要的 SaveSession。
-
-    Returns:
-        人类可读的字符串，如 "第417天, 夏季第12天, 白天"。
-    """
+    """生成会话摘要，如 "第417天, 夏季第12天, 白天"。"""
     parts = []
 
     if session.metadata:
@@ -159,16 +124,10 @@ def get_save_summary(session: SaveSession) -> str:
 
 
 def _extract_lua_table_text(raw: bytes) -> str:
-    """从玩家存档槽位文件的原始字节中提取出 `return {...}` 这一段文本.
+    """从玩家存档槽原始字节中截取 ``return {...}`` 文本。
 
-    这类文件不是纯 Lua 文本——开头有几个字节的二进制前缀，结尾有时跟着
-    几十到几百字节的遗留垃圾数据（实测是游戏覆写文件时，新内容比旧内容
-    短、又没有截断文件留下的残留，偶尔看着像可读文本但其实不是存档的一
-    部分）。从 `return` 关键字开始正向扫描、按花括号深度找真正的表结尾，
-    跳过引号字符串内部的花括号干扰，比直接找最后一个 `}` 可靠——最后一
-    个 `}` 有不小概率落在这段垃圾数据里，会把垃圾当成表内容混进来，或者
-    因为中间夹了非 UTF-8 字节直接解码失败。找到深度归零的位置后，后面
-    不管是什么内容都直接丢弃，不需要关心它是什么、有多长。
+    文件开头有二进制前缀，结尾可能残留游戏覆写时没截断的垃圾数据；从 ``return`` 起按
+    花括号深度（跳过字符串）找到表结尾，之后的内容全部丢弃。不能直接找最后一个 ``}``。
     """
     idx = raw.find(b"return")
     if idx == -1:
@@ -210,13 +169,9 @@ def _read_player_slot_table(path: Path) -> dict:
 
 
 def list_session_players(session: SaveSession) -> list[PlayerCharacterSave]:
-    """列出一个存档会话里，每个玩家的最新角色状态.
+    """列出存档会话里每个玩家的最新角色状态。
 
-    session.path 下面除了世界自己的数字存档槽（文件），还有一批子目录，
-    每个对应一个在这个世界玩过的玩家（详见 PlayerCharacterSave 的说
-    明——文件夹名是混淆编码过的，不是真实 Klei 账号 ID）。一个玩家的数
-    据解析失败不能连累其他玩家、也不能让调用方拿到空列表——只把这一条
-    记录标上 parse_error，player_id 之外的字段留空，其余玩家不受影响。
+    玩家子目录名是混淆编码，不是真实账号 ID；单个玩家解析失败只标记 parse_error，不影响其他玩家。
     """
     players: list[PlayerCharacterSave] = []
     if not session.path.exists():
@@ -235,13 +190,8 @@ def list_session_players(session: SaveSession) -> list[PlayerCharacterSave]:
                 player.parse_error = "no save slot found"
                 players.append(player)
                 continue
-            # 跨世界传送、或者进程被异常打断保存时，DST 可能把编号最新的
-            # 槽位写成一个 0 字节的占位文件，真正可用的最新角色数据还在
-            # 上一个槽位里——真机在本地存档上复现过这个情况（Caves/Master
-            # 世界最新槽位均为 0 字节，Master 上一个槽位仍是完整数据）。
-            # 优先选最新的非空槽位；全部都是空的（比如玩家从没在这个世界
-            # 存过档）才退回原来最新编号的那个，交给下面的解析逻辑按原样
-            # 报错，不掩盖真正没有数据的情况。
+            # 跨世界传送或保存被打断时，最新槽位可能是 0 字节占位文件（真机复现），
+            # 优先取最新的非空槽位；全为空才退回最新编号，交给下面按原样报错
             non_empty = [f for f in slot_files if f.stat().st_size > 0]
             latest = non_empty[-1] if non_empty else slot_files[-1]
             meta_path = entry / f"{latest.name}.meta"
@@ -298,27 +248,19 @@ def list_session_players(session: SaveSession) -> list[PlayerCharacterSave]:
 
 
 def refresh_player_registry(shards: list) -> bool:
-    """扫描这批世界的 server_log.txt，把里面看到的账号合并进跨存档共享的
-    玩家登记簿。调用方想让登记簿覆盖更多存档（比如"从存档选择"要能挑到
-    别的存档里出现过的人），就把所有存档的世界都传进来——历史备份走解析
-    缓存，重复扫描很便宜。"""
+    """把这批世界 server_log.txt 中出现的账号合并进跨存档玩家登记簿（历史日志走解析缓存）。"""
     from dstools.features.save_browser.connection_log import sync_registry_from_shard_paths
 
     return sync_registry_from_shard_paths([shard.path for shard in shards])
 
 
 def make_identity_resolver(shard_path: Path):
-    """返回一个 resolve(player_id) -> (账号ID, 昵称) | None，把存档里的玩家
-    文件夹标识对应到真实账号。
+    """返回 resolve(player_id) -> (账号ID, 昵称) | None，按以下有依据的顺序认人：
 
-    依次尝试（都是有依据的，不猜）：
-    1. 这个世界自己的日志里关联到的（"Resuming user" 紧跟 "User ID
-       assigned ownership"）；
-    2. 跨存档玩家登记簿里记过的文件夹标识——加密算法对同一个账号是固
-       定的，别的存档里见过这个标识，新建的存档不用等自己的日志就能认；
-    3. 文件夹名是明文格式（账号 ID + 固定的一个尾部 "_"，见
-       player_registry.account_from_plain_folder）。
-    昵称统一用登记簿里的最新昵称，查不到时是空字符串。
+    1. 本世界日志中的关联（"Resuming user" 紧跟 "User ID assigned ownership"）；
+    2. 跨存档登记簿记录过的文件夹标识（同一账号的混淆值固定）；
+    3. 明文文件夹名（账号 ID + 尾部 "_"，见 player_registry.account_from_plain_folder）。
+    昵称取登记簿中的最新值，没有则为空字符串。
     """
     from dstools.features.save_browser.connection_log import (
         collect_player_identity_log, sync_registry_from_shard_paths,
@@ -344,26 +286,12 @@ def make_identity_resolver(shard_path: Path):
 
 
 def list_known_player_ids(shards: list) -> list[tuple[str, str, bool]]:
-    """列出可以直接加管理员/黑名单的真实账号：跨存档共享的玩家登记簿里
-    记过的全部账号（不限于传入的这批世界），再补上这批世界存档里能认出
-    的账号。
+    """列出可加入管理员/黑名单的真实账号：登记簿中的全部账号，加上这批世界存档能认出的账号。
 
-    登记簿（shared/player_registry.py）来自各存档 server_log.txt 里的
-    "Client authenticated"/"User ID assigned ownership" 记录，按账号记，
-    玩家换角色、换存档都不影响；这批世界的日志会先合并进去再读，保证是
-    最新的。存档文件夹按 make_identity_resolver() 的规则认账号，认不出
-    的（混淆编码、日志和登记簿都没记录）跳过，不拿混淆值冒充真实 ID 写
-    进 adminlist/blocklist。
-
-    明文文件夹名比真实账号 ID 多一个固定的尾部 "_"（如 "KU_dwt6dfPl_"，
-    账号是 "KU_dwt6dfPl"），直接写带下划线的会匹配不上真实账号，认人时
-    统一去掉。
+    认不出的混淆文件夹跳过，不拿混淆值冒充账号 ID；明文文件夹名的尾部 "_" 需去掉。
 
     Returns:
-        按账号 ID 排序的 (账号ID, 辨识提示, 是否属于这批世界) 列表——提示优
-        先用登记簿里的昵称，没有昵称退回角色显示名，都没有就是空字符串；
-        "属于这批世界"指这批世界的日志里连过、或存档文件夹能认出是他，
-        供"只看当前存档"筛选用。
+        按账号排序的 (账号ID, 辨识提示, 是否属于这批世界)；提示优先用昵称，其次角色名。
     """
     from dstools.features.save_browser.character_names import get_character_display_name
     from dstools.features.save_browser.connection_log import collect_shard_accounts
@@ -374,10 +302,7 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str, bool]]:
     seen_ids: set[str] = set(registry)
     nicknames = {a: info["nickname"] for a, info in registry.items() if info.get("nickname")}
 
-    # 昵称已经在登记簿里，这里遍历存档只为：认出存档文件夹对应的账号
-    # （标记为"当前存档的人"、补上登记簿没有的明文账号），顺便给没有昵称
-    # 的账号找个角色名当提示。角色名不是身份（换局就变），只在完全没有
-    # 昵称时才用来凑数。
+    # 遍历存档只为认出文件夹对应的账号、标记"当前存档的人"，并给无昵称账号补角色名提示
     in_current: set[str] = set()
     character_hints: dict[str, str] = {}
     for shard in shards:
@@ -400,15 +325,7 @@ def list_known_player_ids(shards: list) -> list[tuple[str, str, bool]]:
 
 
 def known_nicknames(shards: list) -> dict[str, str]:
-    """"账号ID -> 已确认昵称"的映射，来自跨存档共享的玩家登记簿（先把这批
-    世界的日志合并进去）。
-
-    只包含真正查到过 "Client authenticated" 记录的昵称——不像
-    list_known_player_ids() 那样在查不到昵称时退回角色名当辅助提示，这
-    里要的是"已确认的玩家名称"，管理员/黑名单列表拿这个只标注真正核实
-    过的昵称，不用角色名（角色名换局就变，不是玩家身份）凑数。别的存档
-    里记下的昵称在这里同样能用。
-    """
+    """账号ID -> 已确认昵称（仅来自 "Client authenticated" 记录，不用角色名凑数）。"""
     from dstools.shared import player_registry
 
     refresh_player_registry(shards)

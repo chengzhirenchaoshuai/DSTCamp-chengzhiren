@@ -1,7 +1,6 @@
-"""Microsoft Defender 排除项的检测与受控修改。
+"""Microsoft Defender 排除项的检测与受控修改（只处理 PowerShell 边界，不弹界面）。
 
-本模块只负责 Windows/PowerShell 边界，不弹界面。修改操作必须由 GUI 在用户
-明确确认后调用；PowerShell 通过 ``runas`` 请求管理员权限，不能静默提权。
+修改必须由界面在用户明确确认后调用，PowerShell 通过 ``runas`` 请求管理员权限，不静默提权。
 """
 
 from __future__ import annotations
@@ -30,9 +29,8 @@ class DefenderTarget:
     """一个最小范围的 Defender 排除目标。"""
 
     path: Path
-    # file：主 EXE；legacy_zip_folder：存量 ZIP 版整个解压目录；
-    # runtime_tools：frpc 等长驻工具的哈希缓存目录；temp_wildcard：
-    # PyInstaller 每次启动的随机解压目录（用 ``_MEI*`` 通配符覆盖）。
+    # file：主 EXE；legacy_zip_folder：存量 ZIP 版解压目录；runtime_tools：frpc 等长驻工具目录；
+    # temp_wildcard：PyInstaller 每次启动的随机解压目录（``_MEI*`` 通配）
     kind: str
 
 
@@ -54,15 +52,10 @@ class DefenderChangeResult:
 
 
 def resolve_defender_targets() -> list[DefenderTarget]:
-    """冻结发布版才返回目标，源码模式绝不排除 Python 或仓库目录。
+    """返回需要排除的目标；只有冻结发布版才有，源码模式绝不排除 Python 或仓库目录。
 
-    存量 ZIP 版的 ``tools`` 位于 EXE 同级，frpc 直接从这里运行，从来不
-    经过 ``_MEIPASS``/``runtime_tools``，排除整个解压目录就够了。标准内
-    嵌单文件版（现在唯一会新产生的安装形态）需要三个目标：主 EXE 本
-    身、frpc 等长驻工具实际运行时所在的 ``runtime_tools`` 持久化目录
-    （见 resource_paths.runtime_tool_path()），以及 PyInstaller 每次启动
-    解压到的 ``_MEIxxxxxx`` 临时目录——这个名字每次启动都不一样，没法
-    排除某一个具体路径，只能用 ``_MEI*`` 通配符覆盖。
+    存量 ZIP 版排除整个解压目录即可；单文件版需要主 EXE、runtime_tools（见
+    resource_paths.runtime_tool_path）和每次启动名字都不同的 ``_MEI*`` 临时目录。
     """
     if sys.platform != "win32" or not getattr(sys, "frozen", False):
         return []
@@ -117,9 +110,7 @@ def _encoded_command(script: str) -> str:
 
 
 def _paths_assignment(targets: Sequence[DefenderTarget]) -> str:
-    """把多个路径分别作为 UTF-8 数据嵌入脚本，构造成 PowerShell 数组
-    ``$targets``，避免任何字符串注入；数组下标与传入的 targets 顺序
-    一一对应，供后续按下标输出/解析结果。"""
+    """把路径以 UTF-8 数据嵌入脚本构造 PowerShell 数组 ``$targets``（防注入），下标与 targets 顺序一致。"""
     entries = []
     for target in targets:
         encoded = base64.b64encode(
@@ -133,14 +124,8 @@ def _paths_assignment(targets: Sequence[DefenderTarget]) -> str:
 
 
 def _clean_powershell_error(raw: str) -> str:
-    """PowerShell 非交互执行、且 stderr 被重定向捕获（不是真实控制台）
-    时，未捕获的终止错误、以及 Write-Progress 产生的进度流，都会被序列
-    化成 CLIXML 写进 stderr（形如 ``#< CLIXML`` 后跟一段 ``<Objs ...>``
-    XML），直接显示给用户没有意义，还会因为超长文本把界面撑爆。这里先
-    整体丢弃进度流对象（``<Obj S="progress">...``，从来不是需要展示的
-    错误信息），再只从真正的错误流元素（``<S S="Error">...</S>``）里抠
-    出人能看的文本；抠不出来就退回一句通用提示，绝不把原始 XML 糊到界
-    面上。"""
+    """从 PowerShell 写到 stderr 的 CLIXML 中提取可读错误：丢弃进度流对象，只取 Error 流文本，
+    取不到时返回通用提示，不把原始 XML 显示给用户。"""
     text = raw.strip()
     if not text or "<Objs" not in text:
         return text
@@ -164,11 +149,7 @@ def _powershell_executable() -> str:
 
 
 def _console_output_encoding() -> str:
-    """Windows PowerShell 5.1（.NET Framework）向重定向句柄写 stdout/
-    stderr 时，走的是系统控制台代码页（``GetOEMCP()``），不是 UTF-8——
-    这跟我们往脚本里传参时用的 UTF-8 base64 编码是两回事，输出方向若
-    硬按 UTF-8 解码，中文 Windows（代码页通常是 936/GBK）下的中文错误
-    信息会被拆成一串乱码问号。取不到时退回 UTF-8。"""
+    """PowerShell 5.1 向重定向句柄输出用系统 OEM 代码页（中文系统为 GBK），不是 UTF-8；取不到时退回 UTF-8。"""
     try:
         codepage = ctypes.windll.kernel32.GetOEMCP()
     except (AttributeError, OSError):
@@ -252,13 +233,9 @@ if (-not (Get-Command Get-MpPreference -ErrorAction SilentlyContinue)) {
 def _parse_check_lines(
     lines: list[str], count: int, *, elevated: bool
 ) -> list[DefenderState] | None:
-    """把逐行的 excluded/not_excluded/unavailable 解析回 DefenderState 列表；
-    行数对不上说明输出被截断或格式异常，返回 None 交给调用方报错。
+    """把逐行的 excluded/not_excluded/unavailable 解析为 DefenderState 列表，行数不符返回 None。
 
-    ``elevated`` 表示查询本身是不是在管理员权限下跑的（不是当前 Python
-    进程本身的权限）——check_defender_exclusion_elevated() 的内层脚本
-    始终经过 UAC，传 True；check_defender_exclusion() 没有提权，实际权限
-    取决于调用方进程自己，传 is_process_elevated()。"""
+    ``elevated`` 表示查询本身是否以管理员身份运行（提权检测传 True，普通检测传当前进程权限）。"""
     if len(lines) != count:
         return None
     states = []
@@ -309,20 +286,11 @@ $lines | ForEach-Object {{ Write-Output "{_MARKER_PREFIX}$_" }}
 
 
 def _run_elevated_powershell(script: str) -> subprocess.CompletedProcess[str]:
-    """通过系统 ``runas`` 弹出 UAC，并等待提权子进程结束。
+    """通过 ``runas`` 弹出 UAC 并等待提权子进程结束。
 
-    脚本内容先写到一个临时 ``.ps1`` 文件、用 ``-File`` 启动，不能继续
-    像之前那样把整段脚本内联进 ``-EncodedCommand`` 再塞进
-    ``Start-Process -Verb RunAs`` 的 ``-ArgumentList``——``-Verb RunAs``
-    走的是 UAC 提升链路（AppInfo 服务的 COM 提升 moniker），跟普通
-    ``CreateProcess`` 不是一回事，对参数长度敏感得多；脚本逻辑稍微复
-    杂一点（比如排除项改动脚本加上重试、诊断中转文件之后）编码后能
-    到七八千字符，提权这条路径就会在真正执行我们的逻辑之前就失败退
-    出，表现为一个跟脚本内容完全无关的 exit 1——这也是之前反复扩大
-    try/catch 覆盖范围都没能解决问题的真正原因。改成 ``-File`` 之后，
-    ``-ArgumentList`` 里只有一个固定长度的文件路径，不会再随脚本逻辑
-    变长而变得不可靠；用 ``-ExecutionPolicy Bypass`` 是因为 ``-File``
-    启动（不同于 ``-EncodedCommand``）要经过系统执行策略检查。
+    坑：脚本必须写入临时 .ps1 用 ``-File`` 启动。内联 ``-EncodedCommand`` 放进
+    ``Start-Process -Verb RunAs`` 的参数时，UAC 提升链路对参数长度很敏感，脚本稍长就会在执行
+    前以 exit 1 失败。``-File`` 需配合 ``-ExecutionPolicy Bypass``。
     """
     script_path = Path(tempfile.gettempdir()) / (
         f".dstcamp-defender-run-{os.getpid()}-{secrets.token_hex(6)}.ps1"
@@ -358,13 +326,7 @@ try {{
 def check_defender_exclusion_elevated(
     targets: Sequence[DefenderTarget],
 ) -> list[DefenderState]:
-    """经用户确认的 UAC 只读检测，返回可验证的精确排除状态。
-
-    ``Start-Process -Verb RunAs`` 没法把提权子进程的 stdout 直接带回父
-    进程，所以让提权子进程把结果逐行写到一个临时中转文件，等
-    ``-Wait`` 结束后由本进程（跟子进程同一个用户，有读权限）读回来，
-    读完即删——不依赖任何进程间管道。
-    """
+    """经用户确认的 UAC 只读检测：提权子进程无法回传 stdout，改为写临时中转文件，结束后读回即删。"""
     if not targets:
         return []
     relay = Path(tempfile.gettempdir()) / (
@@ -482,9 +444,7 @@ try {{
         finally:
             relay.unlink(missing_ok=True)
     if result.returncode in (0, 5):
-        # exit 5：命令本身没抛异常，只是复查阶段出了问题（重试查询失
-        # 败，或复查本身抛了异常），不能当成修改失败——真实场景验证过
-        # 这种情况下修改其实已经生效了。
+        # exit 5：修改命令没抛异常，只是复查失败；实测此时修改已生效，不能算失败
         return DefenderChangeResult(True, detail=relay_detail)
     detail = relay_detail or _clean_powershell_error(result.stderr or result.stdout)
     return DefenderChangeResult(

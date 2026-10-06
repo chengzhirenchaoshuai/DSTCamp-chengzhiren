@@ -1,7 +1,4 @@
-"""Qt 版通用对话框：消息框、文件位置、日志窗口，以及存档信息页用到的几个输入对话框。
-
-对话框沿用 Tk 版的形态（原生标题栏 + 主题底色），样式由全局 QSS 统一提供。
-"""
+"""Qt 通用对话框：消息框、文件位置、日志窗口及存档信息页用到的输入对话框（样式由全局 QSS 提供）。"""
 
 import ctypes
 import subprocess
@@ -35,8 +32,7 @@ from dstools.shared.app_settings import (
 
 
 # ── 弹窗规范 ────────────────────────────────────────────────────────────
-# 所有弹窗只在这三档宽度里选，不再各自写具体像素（数值待真机肉眼确认后微调）：
-#   sm：提示、确认类短消息；md：表单、列表、较长说明；lg：日志、报告、多段详情。
+# 弹窗宽度只在三档里选：sm 提示/确认短消息；md 表单、列表、较长说明；lg 日志、报告、多段详情。
 DIALOG_WIDTHS = {"sm": 420, "md": 560, "lg": 760}
 DIALOG_MARGINS = (20, 18, 20, 16)  # 左、上、右、下
 DIALOG_SPACING = 10
@@ -55,10 +51,9 @@ def screen_work_area(widget: QWidget | None = None) -> QRect:
 
 
 def fit_to_screen(widget: QWidget, width: int, height: int, area: QRect | None = None) -> None:
-    """按期望尺寸 resize，但不超过工作区的 SCREEN_FILL_RATIO；最小尺寸也一并压到工作区以内。
+    """按期望尺寸 resize，但不超过工作区的 SCREEN_FILL_RATIO（最小尺寸同样压到工作区内）。
 
-    高缩放（如 2K@175%、1080p@150% 以上）时逻辑工作区只有 1100~1460 宽、600~800 高，
-    写死的 1400x860 之类会超出屏幕，底部按钮点不到。"""
+    高缩放时逻辑工作区可能只有 1100~1460×600~800，写死大尺寸会让底部按钮点不到。"""
     area = area or screen_work_area(widget)
     max_w = int(area.width() * SCREEN_FILL_RATIO)
     max_h = int(area.height() * SCREEN_FILL_RATIO)
@@ -120,11 +115,10 @@ class _MessageIcon(QWidget):
 
 
 class MessageDialog(QDialog):
-    """统一样式的消息框，替代 QMessageBox（后者会把正文重设成 9pt 系统字体、图标列
-    宽度不受控、按钮样式不统一）。
+    """统一样式的消息框，替代 QMessageBox（会把正文重设为 9pt 系统字体、按钮样式不统一）。
 
-    buttons 是 [(文字, 返回值, 样式)]，样式取 primary/secondary/danger；secondary
-    按钮靠左（取消类），其余按传入顺序靠右。关闭窗口/按 Esc 返回 escape。"""
+    buttons 为 [(文字, 返回值, 样式)]，样式 primary/secondary/danger；secondary 靠左，其余按顺序靠右。
+    关闭窗口/Esc 返回 escape。"""
 
     def __init__(self, parent, kind: str, title: str, text: str, buttons: list[tuple[str, object, str]],
                  default=None, escape=None, size: str = "sm", rich: bool = False,
@@ -238,10 +232,10 @@ def ask_yes_no_with_auxiliary(parent, title: str, text: str, auxiliary_label: st
 
 def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], default: str = "",
                min_width: int = 0, danger_values: tuple[str, ...] = (), rich: bool = False) -> str:
-    """多选项询问：choices 是 [(按钮文字, 返回值)]，default 是默认（回车）按钮。
+    """多选项询问：choices 为 [(按钮文字, 返回值)]，default 为回车默认项。
 
-    返回值为 "cancel" 的选项当作取消类按钮放在左侧；关闭窗口/按 Esc 返回 "cancel"
-    （有这一项时）或空串——调用方一律按"取消"处理。danger_values 里的选项用红色按钮。"""
+    返回值 "cancel" 的选项作为取消按钮放左侧；关闭/Esc 返回 "cancel"（有该项时）或空串。
+    danger_values 中的选项用红色按钮。"""
     has_cancel = any(value == "cancel" for _label, value in choices)
     buttons = [(label, value, "secondary" if value == "cancel" else
                 "danger" if value in danger_values else "primary") for label, value in choices]
@@ -250,12 +244,10 @@ def ask_choice(parent, title: str, text: str, choices: list[tuple[str, str]], de
 
 
 class _Toast(QWidget):
-    """自己画圆角底色+边框+文字，不靠 QSS——QSS 的 border-radius 画在一个本身还是
-    矩形的原生窗口上，四个圆角外侧那块没画到的区域会露出窗口本身的底色（真机反馈
-    过是刺眼的黑块，"圆角框好像架在一个黑色长方体上"）。开 WA_TranslucentBackground
-    配合手工画的圆角裁剪区才能让四角真正透明；这个属性对这种"整个窗口就是我自己画
-    的一张位图"的简单自绘场景是安全的，跟 QComboBoxPrivateContainer 那种复杂原生
-    容器开出全黑是两回事，不是同一个坑。"""
+    """手工绘制圆角底色、边框和文字。
+
+    坑：QSS 的 border-radius 画在矩形原生窗口上，圆角外侧会露出黑块；这里开 WA_TranslucentBackground
+    配合手绘圆角才能真正透明。整窗自绘的简单场景开这个属性是安全的，与下拉弹出容器发黑不是同一问题。"""
 
     _PAD_X, _PAD_Y, _RADIUS = 18, 8, 8
 
@@ -293,11 +285,9 @@ class _Toast(QWidget):
 
 
 def show_toast(parent, text: str, ms: int = 1400) -> None:
-    """轻提示：浮在父窗口中央，淡入淡出后自动消失，不抢焦点、不需要点击。
-    Tk 版靠逐帧手动改窗口 alpha 属性模拟淡入淡出；Qt 有现成的属性动画，直接对
-    QGraphicsOpacityEffect.opacity 做补间，比之前"啪一下出现、啪一下消失"要
-    顺滑。背景跟下拉展开列表同一个"假透明"思路：截一张父窗口当时的内容贴上去、
-    叠一层白色压淡到约 15% 透明度，不是真的透出桌面。"""
+    """轻提示：浮在父窗口中央，淡入淡出后自动消失，不抢焦点。
+
+    对 QGraphicsOpacityEffect.opacity 做属性动画；背景用截取父窗口并压淡的"假透明"。"""
     anchor = parent.window() if parent is not None else None
     toast = _Toast(anchor, text)
     if anchor is not None:
@@ -377,12 +367,10 @@ def _find_explorer_window(folder: Path) -> int:
 
 
 def _open_in_explorer_foreground(path: Path) -> None:
-    """在资源管理器里选中文件，并把它的窗口提到最上层。
+    """在资源管理器中选中文件并把窗口提到最上层。
 
-    /select 会转交给已在运行的 explorer 进程去开窗口，它没有前台权限，窗口会被压
-    在本应用下面（真机反馈过；先调 AllowSetForegroundWindow 让出前台权限实测也没
-    用）。改为由本进程（此刻就是前台进程，有权切换前台窗口）轮询找到那个资源管理器
-    窗口，再自己调 SetForegroundWindow 把它提上来；最多等约 3 秒，找不到就算了。"""
+    坑：/select 由已运行的 explorer 开窗口，它没有前台权限会被压在下面（AllowSetForegroundWindow 也无效）；
+    改为本进程轮询找到该窗口后自己 SetForegroundWindow，最多等约 3 秒。"""
     subprocess.Popen(["explorer.exe", "/select,", str(path)])
     if sys.platform != "win32":
         return
@@ -423,8 +411,7 @@ def show_file_location(parent, title: str, path, location_label: str, copied_mes
 class Dialog(QDialog):
     """通用小对话框基类：统一宽度档位、边距、字号和底部按钮行（取消靠左、主操作靠右）。
 
-    width 可以传档位名（"sm"/"md"/"lg"）或旧的像素值（自动归到最近的档位），作为最小
-    宽度——内容更宽时仍可撑开。"""
+    width 传档位名（"sm"/"md"/"lg"）或像素值（归到最近档位），作为最小宽度，内容更宽时可撑开。"""
 
     def __init__(self, parent, title: str, width: int | str = "sm", confirm_text: str | None = None):
         super().__init__(parent)
@@ -649,11 +636,9 @@ _LOG_TAG_STYLE = {
 
 
 class LogDialog(Dialog):
-    """实时追加日志的窗口：任务没跑完前不能关闭，finish() 之后才出现可点的"确认"。
+    """实时追加日志的窗口：任务完成前不能关闭，finish() 后才出现"确认"。
 
-    ``closable=True``（Steam 更新等：下载由 Steam 客户端自己完成，应用只是旁观打日志）
-    允许用户提前关闭窗口，不等待 finish()。``on_cancel``（内网穿透诊断等中途可取消的
-    耗时操作用）额外加一个"取消"按钮，点一次就禁用，不等待任务真正响应。"""
+    ``closable=True``（如 Steam 更新只是旁观日志）允许提前关闭；``on_cancel`` 额外提供一次性的"取消"按钮。"""
 
     def __init__(self, parent, title: str, closable: bool = False, on_cancel=None, cancel_text: str | None = None):
         super().__init__(parent, title, 640)
