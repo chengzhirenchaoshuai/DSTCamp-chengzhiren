@@ -133,6 +133,16 @@ class ModPage(Page):
         self._recommend_btn.clicked.connect(self._open_recommend_mods)
         filter_row.addWidget(self._recommend_btn)
         filter_row.addStretch()
+        # 列表列数切换（1/2/3 列），选择记在设置里，下次打开沿用。
+        self._column_choices = app_settings.MOD_LIST_COLUMN_CHOICES
+        self._columns_tabs = PillTabBar(
+            [t("mod.columns_option", count=n) for n in self._column_choices],
+            height=32, pill_height=24, font_size_key="FONT_SIZE_SM", gap=2, pad=12, uniform_width=True)
+        self._columns_tabs.setToolTip(t("mod.columns_hint"))
+        columns = app_settings.get_mod_list_columns()
+        self._columns_tabs.set_current_index(self._column_choices.index(columns))
+        self._columns_tabs.current_changed.connect(self._on_columns_changed)
+        filter_row.addWidget(self._columns_tabs)
         root.addLayout(filter_row)
 
         status_row = QHBoxLayout()
@@ -165,6 +175,7 @@ class ModPage(Page):
         self._list_panel.folder_requested.connect(self._on_open_mod_folder)
         self._list_panel.copy_id_requested.connect(self._on_copy_id)
         self._list_panel.copy_name_requested.connect(self._on_copy_name)
+        self._list_panel.set_column_count(columns)
         root.addWidget(self._list_panel, 1)
 
         bottom_row = QHBoxLayout()
@@ -274,6 +285,11 @@ class ModPage(Page):
     def _on_shard_select(self, _index: int = 0) -> None:
         self._current_shard_name = self._shard_combo.currentText()
         self._refresh_mods()
+
+    def _on_columns_changed(self, index: int) -> None:
+        columns = self._column_choices[index]
+        app_settings.set_mod_list_columns(columns)
+        self._list_panel.set_column_count(columns)
 
     def _toggle_show_local(self) -> None:
         self._show_local = not self._show_local

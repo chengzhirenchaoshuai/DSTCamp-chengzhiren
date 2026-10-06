@@ -35,6 +35,8 @@ _KEY_BACKUP_AUTO_ENABLED = "backup_auto_enabled"
 _KEY_SAKURA_TOKEN = "sakura_api_token"
 _KEY_SAKURA_LAST_NODE = "sakura_last_node_id"
 _KEY_LUAJIT_ENABLED = "luajit_enabled"
+_KEY_MOD_LIST_COLUMNS = "mod_list_columns"
+MOD_LIST_COLUMN_CHOICES = (1, 2, 3)
 _KEY_LAST_PLATFORM = "last_platform"
 _KEY_NAT_SUB_TAB = "nat_sub_tab"
 _DEFAULT_NAT_SUB_TAB = "sakura"
@@ -492,6 +494,18 @@ def get_luajit_enabled() -> bool:
 def set_luajit_enabled(value: bool) -> None:
     data = load_settings()
     data[_KEY_LUAJIT_ENABLED] = bool(value)
+    save_settings(data)
+
+
+def get_mod_list_columns() -> int:
+    """Mod 管理页列表显示几列（1/2/3），默认 1 列；配置里是非法值时也退回 1。"""
+    value = load_settings().get(_KEY_MOD_LIST_COLUMNS, 1)
+    return value if value in MOD_LIST_COLUMN_CHOICES else 1
+
+
+def set_mod_list_columns(value: int) -> None:
+    data = load_settings()
+    data[_KEY_MOD_LIST_COLUMNS] = value if value in MOD_LIST_COLUMN_CHOICES else 1
     save_settings(data)
 
 

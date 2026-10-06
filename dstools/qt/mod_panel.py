@@ -23,6 +23,12 @@ SWITCH_W, SWITCH_H = 76, 34
 CFG_W, CFG_H = 116, 40
 LINK_W = 100  # 只是列的锚点起始位置，链接文字/图标按实际宽度紧跟着画，不撑满这个宽度
 COL_GAP = 16
+# 多列时每格的紧凑尺寸（按基准宽度 1300 的像素，随面板宽度同比缩放）
+GRID_GAP = 10
+GRID_ICON = 64
+GRID_SWITCH_W, GRID_SWITCH_H = 54, 26
+GRID_CFG_W, GRID_CFG_H = 64, 26
+GRID_FOLDER = 18
 
 _OFF_COLOR = QColor("#bdbdbd")
 _CFG_DISABLED_BG = QColor("#cfd8dc")
@@ -32,9 +38,10 @@ _DEFAULT_ICON_PATH = bundled_resource_dir() / "icons" / "ui" / "mod_icon_default
 _OPEN_FOLDER_ICON_PATH = bundled_resource_dir() / "icons" / "ui" / "open_file_folder_fluent.png"
 
 
-def mod_list_height(row_count: int, width: int) -> int:
+def mod_list_height(row_count: int, width: int, columns: int = 1) -> int:
     s = width / BASE_WIDTH
-    return max(int(PAD_X * s + row_count * (ROW_H * s + ROW_GAP)), 40)
+    lines = (row_count + columns - 1) // columns
+    return max(int(PAD_X * s + lines * (ROW_H * s + ROW_GAP)), 40)
 
 
 class _Metrics:
@@ -65,6 +72,7 @@ class ModListPanel(QAbstractScrollArea):
         self._icon_images: dict = {}
         self._icon_pixmap_cache: dict = {}
         self._interactive = True
+        self._column_count = 1  # 1 列为原横排；2/3 列为紧凑格子（Mod 管理页可切换）
         self._layout_width = -1
         self._total_h = 0
         self._default_icon_cache: dict[int, QPixmap] = {}
@@ -102,6 +110,16 @@ class ModListPanel(QAbstractScrollArea):
     def clear(self) -> None:
         self.set_rows([], {})
 
+    def set_column_count(self, count: int) -> None:
+        """切换显示列数；顺序按从左到右、从上到下排。"""
+        count = max(1, int(count))
+        if count == self._column_count:
+            return
+        self._column_count = count
+        self._layout_width = -1
+        self._update_scrollbar()
+        self.viewport().update()
+
     def set_center_message(self, text: str) -> None:
         """设置列表为空时首行位置显示的提示文字；传空串取消。"""
         if text != self._center_message:
@@ -113,7 +131,7 @@ class ModListPanel(QAbstractScrollArea):
         if width == self._layout_width:
             return
         self._layout_width = width
-        self._total_h = mod_list_height(len(self._rows), max(1, width))
+        self._total_h = mod_list_height(len(self._rows), max(1, width), self._column_count)
 
     def _update_scrollbar(self) -> None:
         self._ensure_layout()
@@ -219,6 +237,9 @@ class ModListPanel(QAbstractScrollArea):
         name_font, id_font, btn_font, cfg_font = self._fonts(m.s)
         name_fm, id_fm = QFontMetricsF(name_font), QFontMetricsF(id_font)
 
+        if self._column_count > 1:
+            self._paint_grid(painter, m, width, offset, view_h)
+            return
         first = max(0, int((offset - m.pad_x) // m.row_step) - 1)
         last = min(len(self._rows), int((offset + view_h - m.pad_x) // m.row_step) + 2)
         for i in range(first, last):
@@ -317,6 +338,162 @@ class ModListPanel(QAbstractScrollArea):
                 dpr = folder_icon.devicePixelRatio()
                 painter.drawPixmap(QPointF(folder_x, cy - folder_icon.height() / dpr / 2), folder_icon)
 
+    # ── 多列紧凑格子 ────────────────────────────────────────────────────
+    def _grid_fonts(self, s: float):
+        name_font = theme.panel_font(14 * s)
+        meta_font = theme.panel_font(11 * s)
+        btn_font = theme.panel_font(12 * s)
+        return name_font, meta_font, btn_font
+
+    def _cell_rect(self, m: _Metrics, width: float, index: int) -> QRectF:
+        n = self._column_count
+        gap = GRID_GAP * m.s
+        cell_w = (width - 2 * m.pad_x - (n - 1) * gap) / n
+        line, col = divmod(index, n)
+        return QRectF(m.pad_x + col * (cell_w + gap), m.pad_x + line * m.row_step, cell_w, m.row_h)
+
+    def _cell_geometry(self, m: _Metrics, cell: QRectF, row: dict, fonts) -> dict:
+        """一格内各元素的位置（绘制与点击共用）：图标 / 名称 / ID·版本 / 开关、配置、链接、目录。"""
+        s = m.s
+        name_font, meta_font, btn_font = fonts
+        icon = max(16, round(GRID_ICON * s))
+        icon_x = cell.left() + 10 * s
+        text_x = icon_x + icon + 12 * s
+        text_w = max(20.0, cell.right() - 10 * s - text_x)
+        name_rect = QRectF(text_x, cell.top() + cell.height() * 0.06, text_w, cell.height() * 0.28)
+        meta_rect = QRectF(text_x, cell.top() + cell.height() * 0.34, text_w, cell.height() * 0.24)
+        action_cy = cell.top() + cell.height() * 0.76
+        switch = QRectF(text_x, action_cy - GRID_SWITCH_H * s / 2, GRID_SWITCH_W * s, GRID_SWITCH_H * s)
+        cfg = QRectF(switch.right() + 10 * s, action_cy - GRID_CFG_H * s / 2, GRID_CFG_W * s, GRID_CFG_H * s)
+        has_link = row.get("has_link", False)
+        link_text = t("mod.workshop_link_btn") if has_link else t("mod.no_workshop_link")
+        link_w = QFontMetricsF(btn_font).horizontalAdvance(link_text)
+        link = QRectF(cfg.right() + 12 * s, action_cy - GRID_CFG_H * s / 2, link_w, GRID_CFG_H * s)
+        folder_size = round(GRID_FOLDER * s)
+        folder = QRectF(link.right() + 8 * s, action_cy - folder_size / 2, folder_size, folder_size)
+        return dict(icon=icon, icon_x=icon_x, name_rect=name_rect, meta_rect=meta_rect, action_cy=action_cy,
+                    switch=switch, cfg=cfg, link=link, link_text=link_text, folder=folder, folder_size=folder_size)
+
+    def _paint_grid(self, painter, m: _Metrics, width: float, offset: float, view_h: float) -> None:
+        n = self._column_count
+        fonts = self._grid_fonts(m.s)
+        name_font, meta_font, btn_font = fonts
+        name_fm, meta_fm = QFontMetricsF(name_font), QFontMetricsF(meta_font)
+        first_line = max(0, int((offset - m.pad_x) // m.row_step) - 1)
+        last_line = int((offset + view_h - m.pad_x) // m.row_step) + 2
+        for i in range(first_line * n, min(len(self._rows), last_line * n)):
+            cell = self._cell_rect(m, width, i)
+            if cell.bottom() < offset or cell.top() > offset + view_h:
+                continue
+            self._paint_cell(painter, m, cell, self._rows[i], i // n, fonts, name_fm, meta_fm)
+
+    def _paint_cell(self, painter, m, cell: QRectF, row: dict, line: int, fonts, name_fm, meta_fm) -> None:
+        name_font, meta_font, btn_font = fonts
+        s = m.s
+        wid = row["workshop_id"]
+        geo = self._cell_geometry(m, cell, row, fonts)
+        painter.setPen(QPen(theme.color("CARD_BORDER"), 1))
+        painter.setBrush(theme.color("CARD_BG_ALT") if line % 2 == 0 else theme.color("CARD_BG"))
+        painter.drawRoundedRect(cell, 8 * s, 8 * s)
+
+        icon = self._icon_pixmap(wid, geo["icon"])
+        if icon is not None:
+            dpr = icon.devicePixelRatio()
+            painter.drawPixmap(QPointF(geo["icon_x"], cell.top() + (cell.height() - icon.height() / dpr) / 2), icon)
+
+        name_rect = geo["name_rect"]
+        painter.setFont(name_font)
+        painter.setPen(theme.color("TEXT"))
+        painter.drawText(name_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         self._elide(row["name"] or wid, name_fm, name_rect.width()))
+
+        # 第二行：ID · 版本（版本后面照样跟 V1/V2 标签，放不下就不画）
+        meta_rect = geo["meta_rect"]
+        painter.setFont(meta_font)
+        painter.setPen(theme.color("TEXT_MUTED"))
+        id_text = self._elide(str(wid), meta_fm, meta_rect.width())
+        painter.drawText(meta_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, id_text)
+        version = row.get("version_text", "")
+        rest_x = meta_rect.left() + meta_fm.horizontalAdvance(id_text)
+        rest_w = meta_rect.right() - rest_x
+        if version and rest_w > 20 * s:
+            version_text = self._elide(f" · {version}", meta_fm, rest_w)
+            version_rect = QRectF(rest_x, meta_rect.top(), rest_w, meta_rect.height())
+            painter.drawText(version_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, version_text)
+            self._paint_format_tag(painter, row.get("mod_format"), version_rect, version_text, meta_font, meta_fm, s)
+
+        # 操作行：开关 / 本地徽章、配置、创意工坊链接、打开目录
+        switch = geo["switch"]
+        cy = geo["action_cy"]
+        if row.get("is_local"):
+            self._paint_badge(painter, switch.left(), cy, switch.width(), switch.height(), t("mod.local_badge"),
+                              meta_font)
+        else:
+            self._paint_switch(painter, switch.left(), cy, switch.width(), switch.height(), row["enabled"],
+                               locked=bool(row.get("locked")))
+        cfg = geo["cfg"]
+        self._paint_pill(painter, cfg.left(), cfg.top(), cfg.width(), cfg.height(), t("mod.config_btn"),
+                         btn_font, enabled=row.get("has_config", False))
+        has_link = row.get("has_link", False)
+        link = geo["link"]
+        if link.right() <= cell.right() - 6 * s:
+            painter.setFont(btn_font)
+            painter.setPen(theme.color("ACCENT") if has_link else _LINK_DISABLED)
+            painter.drawText(link, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, geo["link_text"])
+            if has_link:
+                painter.drawLine(QPointF(link.left(), cy + 8 * s), QPointF(link.right(), cy + 8 * s))
+        folder = geo["folder"]
+        if row.get("has_folder") and folder.right() <= cell.right() - 6 * s:
+            folder_icon = self._folder_icon(geo["folder_size"])
+            if folder_icon is not None:
+                dpr = folder_icon.devicePixelRatio()
+                painter.drawPixmap(QPointF(folder.left(), cy - folder_icon.height() / dpr / 2), folder_icon)
+
+    def _hit_test_grid(self, x: float, y: float):
+        width = self.viewport().width()
+        m = _Metrics(width)
+        n = self._column_count
+        line = int((y - m.pad_x) // m.row_step)
+        if line < 0:
+            return None
+        gap = GRID_GAP * m.s
+        cell_w = (width - 2 * m.pad_x - (n - 1) * gap) / n
+        col = int((x - m.pad_x) // (cell_w + gap))
+        if not 0 <= col < n:
+            return None
+        index = line * n + col
+        if index >= len(self._rows):
+            return None
+        cell = self._cell_rect(m, width, index)
+        if not cell.contains(QPointF(x, y)):
+            return None
+        row = self._rows[index]
+        wid = row["workshop_id"]
+        fonts = self._grid_fonts(m.s)
+        geo = self._cell_geometry(m, cell, row, fonts)
+        point = QPointF(x, y)
+        name_fm, meta_fm = QFontMetricsF(fonts[0]), QFontMetricsF(fonts[1])
+        name_rect, meta_rect = geo["name_rect"], geo["meta_rect"]
+        name_text = self._elide(row["name"] or wid, name_fm, name_rect.width())
+        if name_rect.contains(point) and x <= name_rect.left() + name_fm.horizontalAdvance(name_text) + 6 * m.s:
+            return ("copy_name", wid)
+        if meta_rect.contains(point) and x <= meta_rect.left() + meta_fm.horizontalAdvance(str(wid)) + 6 * m.s:
+            return ("copy_id", wid)
+        if geo["switch"].contains(point):
+            if row.get("is_local"):
+                return None
+            if row.get("locked"):
+                return ("locked", wid)
+            return ("toggle", wid) if self._interactive else None
+        if geo["cfg"].contains(point) and row.get("has_config"):
+            return ("config", wid)
+        visible_right = cell.right() - 6 * m.s
+        if row.get("has_link") and geo["link"].right() <= visible_right and geo["link"].contains(point):
+            return ("link", wid)
+        if row.get("has_folder") and geo["folder"].right() <= visible_right and geo["folder"].contains(point):
+            return ("folder", wid)
+        return None
+
     @staticmethod
     def _elide(text: str, metrics: QFontMetricsF, max_width: float) -> str:
         if not text:
@@ -373,6 +550,8 @@ class ModListPanel(QAbstractScrollArea):
         """返回 (kind, workshop_id)，kind 取值 toggle/config/link/folder/copy_id/copy_name/locked。"""
         offset = self.verticalScrollBar().value()
         y = pos.y() + offset
+        if self._column_count > 1:
+            return self._hit_test_grid(pos.x(), y)
         width = self.viewport().width()
         m = _Metrics(width)
         cols = self._columns(m, width)
