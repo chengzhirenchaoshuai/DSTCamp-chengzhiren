@@ -1,6 +1,7 @@
 """本地服务器页的崩溃自动重启调度（判定规则见 features/local_service/auto_restart.py）：
 
-1. 世界运行后崩溃，等 CRASH_RESTART_DELAY 秒再拉起；主世界崩溃时整组重启，从世界崩溃只重启自己；
+1. 世界运行后崩溃，等 CRASH_RESTART_DELAY 秒再拉起；主世界崩溃时整组重启（只含崩溃时实际在运行的世界，
+   用户只开了地上就只重启地上），从世界崩溃只重启自己；
 2. 拉起前：原令牌仍在等待期、开启换令牌且已过设定分钟数（默认 0）、池中有空闲令牌时直接换用；
    否则用原令牌拉起（忽略其等待标记）；
 3. 注册冲突时不停服，等专服自行重试成功；设定了等待分钟数时，到点仍冲突且池中有替代令牌才停服换令牌重启；
@@ -37,8 +38,9 @@ class _ClusterState:
     budget: CrashBudget = field(default_factory=CrashBudget)
     phase: str = "idle"          # idle / scheduled / waiting_token / starting / waiting_release / gave_up
     due: float = 0.0             # 下一次动作的时刻（time.time()）
-    full: bool = False           # True：整组重启；False：只重启 shards
+    full: bool = False           # True：整组重启 group；False：只重启 shards
     shards: set[str] = field(default_factory=set)
+    group: set[str] = field(default_factory=set)  # 崩溃时实际在运行的世界（含崩溃的那个），整组重启的范围
     crashed_at: float = 0.0
     attempts: int = 0            # 本轮崩溃后已拉起几次
     conflicts: int = 0           # 本轮注册冲突次数
@@ -65,7 +67,7 @@ class AutoRestartController(QObject):
         state = self._state(cluster)
         now = time.time()
         in_attempt = (state.phase in ("starting", "waiting_release")
-                      and (state.full or proc.shard_name in state.shards))
+                      and proc.shard_name in (state.group if state.full else state.shards))
         if report.category == "token_conflict":
             if in_attempt:
                 state.conflicts += 1
@@ -82,6 +84,7 @@ class AutoRestartController(QObject):
             # 已在排队：又有世界崩溃，主世界崩溃时升级为整组重启
             state.full |= bool(getattr(proc, "is_master", True))
             state.shards.add(proc.shard_name)
+            state.group.add(proc.shard_name)
             return
         if not state.budget.allow(now):
             self._give_up(cluster, state, t("local.auto_restart_reason_limit", count=MAX_CRASH_RESTARTS))
@@ -89,6 +92,8 @@ class AutoRestartController(QObject):
         state.crashed_at = now
         state.full = bool(getattr(proc, "is_master", True))
         state.shards = {proc.shard_name}
+        # 崩溃的进程已不算"运行中"，要单独补进去；没开过的世界（如用户只开了地上）不在范围内
+        state.group = {s.name for s in cluster.shards if self._running(cluster, s.name)} | {proc.shard_name}
         state.attempts = state.conflicts = 0
         state.registered = state.switched = state.switch_pending = False
         self._schedule(cluster, state, "scheduled", now + CRASH_RESTART_DELAY)
@@ -161,8 +166,8 @@ class AutoRestartController(QObject):
         master = self._page._master_shard(cluster)
         master_running = master is not None and self._running(cluster, master.name)
         state.full = state.full or not master_running
-        targets = list(ordered_shards(cluster)) if state.full else [s for s in cluster.shards if s.name in state.shards]
-        stop_first = [s for s in (cluster.shards if state.full else targets) if self._running(cluster, s.name)]
+        targets = self._target_shards(cluster, state)
+        stop_first = [s for s in targets if self._running(cluster, s.name)]
         self._page._stop_shards_and_then(cluster, stop_first, lambda: self._start(cluster, state, targets))
 
     def _start(self, cluster, state: _ClusterState, targets) -> None:
@@ -237,8 +242,11 @@ class AutoRestartController(QObject):
                 self._log(cluster, f"距崩溃 {self._elapsed(state)} 仍注册冲突，"
                                    f"换用令牌 {token_fingerprint(token)[:8]} 重启")
                 state.phase, state.full, state.switch_pending = "starting", True, True
-                targets = list(ordered_shards(cluster))
-                self._stop_cluster_then(cluster, lambda: self._start(cluster, state, targets))
+                # 令牌是整个存档共用的：此刻在运行的世界都要停下换新令牌再拉起，并入重启范围
+                state.group |= {s.name for s in cluster.shards if self._running(cluster, s.name)}
+                targets = self._target_shards(cluster, state)
+                running = [s for s in targets if self._running(cluster, s.name)]
+                self._page._stop_shards_and_then(cluster, running, lambda: self._start(cluster, state, targets))
                 return
             self._log(cluster, f"距崩溃 {self._elapsed(state)} 仍注册冲突，令牌池没有可换的令牌，继续等原令牌")
             self._schedule(cluster, state, "waiting_release", state.crashed_at + TOKEN_WAIT_LIMIT)
@@ -261,7 +269,7 @@ class AutoRestartController(QObject):
         if cluster is None:
             state.phase = "idle"
             return
-        names = [s.name for s in cluster.shards] if state.full else list(state.shards)
+        names = [s.name for s in self._target_shards(cluster, state)]
         procs = [self._page.manager.get(cluster.path, name) for name in names]
         if not procs or any(proc is None or proc.status not in RUNNING_LIKE or not proc.world_ready for proc in procs):
             return
@@ -278,13 +286,15 @@ class AutoRestartController(QObject):
     def _state(self, cluster) -> _ClusterState:
         return self._states.setdefault(str(cluster.path), _ClusterState())
 
+    @staticmethod
+    def _target_shards(cluster, state: _ClusterState) -> list:
+        """本轮要重启的世界（按启动顺序）：整组重启是崩溃时在运行的那组，否则只是崩溃的世界。"""
+        names = state.group if state.full else state.shards
+        return [shard for shard in ordered_shards(cluster) if shard.name in names]
+
     def _running(self, cluster, shard_name: str) -> bool:
         proc = self._page.manager.get(cluster.path, shard_name)
         return proc is not None and proc.status in RUNNING_LIKE
-
-    def _stop_cluster_then(self, cluster, on_done) -> None:
-        running = [s for s in cluster.shards if self._running(cluster, s.name)]
-        self._page._stop_shards_and_then(cluster, running, on_done)
 
     def _schedule(self, cluster, state: _ClusterState, phase: str, due: float) -> None:
         self._stop_timer(state)

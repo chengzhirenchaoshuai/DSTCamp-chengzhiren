@@ -422,6 +422,16 @@ def test_auto_restart_controller_flow() -> None:
             controller.on_failure(make_proc("Master", ready=False, status=ServerStatus.CRASHED), crash)
             assert key not in controller._states or controller._states[key].phase == "idle"
 
+            # 1b. 用户只开了地上（洞穴没开）：地上崩溃只重启地上，不能把没开的洞穴也拉起来
+            controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
+            controller._run(key)
+            assert [e for e in events if e[0] == "start"] == [("start", "Master")]
+            procs["Master"].world_ready, procs["Master"].status = True, ServerStatus.RUNNING
+            controller.on_registered(procs["Master"])
+            assert controller._states[key].phase == "idle", "只等崩溃前在运行的世界就绪"
+            events.clear()
+            choose_calls.clear()
+
             # 2. 主世界跑起来后崩溃、洞穴还在：整组重启（先停洞穴再全部拉起）
             make_proc("Caves")
             controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
