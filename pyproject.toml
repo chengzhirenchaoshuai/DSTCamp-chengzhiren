@@ -26,3 +26,4 @@ build = ["pyinstaller>=6.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["dstools*"]
