@@ -38,6 +38,7 @@ from dstools.shared.app_settings import (
     get_window_size, set_creation_wizard_size, set_minimize_on_close, set_window_position, set_window_size,
 )
 from dstools.shared.resource_paths import bundled_resource_dir
+from dstools.shared.single_instance import activate_message_id
 
 TAB_KEYS = ["local", "world", "mods", "server", "saves", "sakura"]
 BASE_W, BASE_H = 1600, 900  # 默认尺寸（逻辑像素，Qt 自动按显示器缩放，不需要 DPI 补丁）
@@ -52,6 +53,8 @@ _MOUSE_DOWN_MESSAGES = {0x0201, 0x0204, 0x0207, 0x00A1, 0x00A4, 0x00A7}
 # 模态期间 Qt 会禁用主窗口，真实点击不再产生上面的消息，系统只发 WM_SETCURSOR：
 # lParam 低位是命中码 HTERROR（-2），高位是触发它的鼠标消息
 WM_SETCURSOR, HTERROR = 0x0020, 0xFFFE
+# 重复启动时第二个进程发来的"恢复已有窗口"消息（见 shared/single_instance.py）
+WM_DSTCAMP_ACTIVATE = activate_message_id()
 (WMSZ_LEFT, WMSZ_RIGHT, WMSZ_TOP, WMSZ_TOPLEFT, WMSZ_TOPRIGHT,
  WMSZ_BOTTOM, WMSZ_BOTTOMLEFT, WMSZ_BOTTOMRIGHT) = range(1, 9)
 
@@ -786,6 +789,10 @@ class MainWindow(QWidget):
     def nativeEvent(self, event_type, message):
         if event_type == b"windows_generic_MSG":
             msg = wintypes.MSG.from_address(int(message))
+            if WM_DSTCAMP_ACTIVATE and msg.message == WM_DSTCAMP_ACTIVATE:
+                # 窗口可能已 hide() 到托盘，必须走 Qt 自己的显示流程，状态才一致
+                self.restore_from_tray()
+                return True, 0
             if msg.message == WM_SIZING:
                 rect = RECT.from_address(msg.lParam)
                 enforce_aspect(msg.wParam, rect)
