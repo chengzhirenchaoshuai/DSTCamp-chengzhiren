@@ -1,7 +1,8 @@
 """本地服务器页的崩溃自动重启调度（判定规则见 features/local_service/auto_restart.py）：
 
-1. 世界运行后崩溃，等 CRASH_RESTART_DELAY 秒再拉起；主世界崩溃时整组重启（只含崩溃时实际在运行的世界，
-   用户只开了地上就只重启地上），从世界崩溃只重启自己；
+1. 世界运行后崩溃，等 CRASH_RESTART_DELAY 秒再拉起，只重启崩溃的世界。主世界崩溃时洞穴等从世界保持运行：
+   饥荒会让它暂停并每 10 秒左右重连，主世界回来后自动回退到对应快照（"Synchronizing backward to master
+   snapshot"），存档保持一致，无需重启从世界；
 2. 拉起前：原令牌仍在等待期、开启换令牌且已过设定分钟数（默认 0）、池中有空闲令牌时直接换用；
    否则用原令牌拉起（忽略其等待标记）；
 3. 注册冲突时不停服，等专服自行重试成功；设定了等待分钟数时，到点仍冲突且池中有替代令牌才停服换令牌重启；
@@ -38,7 +39,7 @@ class _ClusterState:
     budget: CrashBudget = field(default_factory=CrashBudget)
     phase: str = "idle"          # idle / scheduled / waiting_token / starting / waiting_release / gave_up
     due: float = 0.0             # 下一次动作的时刻（time.time()）
-    full: bool = False           # True：整组重启 group；False：只重启 shards
+    full: bool = False           # True：整组重启 group（只在超时换令牌时）；False：只重启 shards
     shards: set[str] = field(default_factory=set)
     group: set[str] = field(default_factory=set)  # 崩溃时实际在运行的世界（含崩溃的那个），整组重启的范围
     crashed_at: float = 0.0
@@ -81,8 +82,7 @@ class AutoRestartController(QObject):
                 self._give_up(cluster, state, report.title)
             return
         if state.phase in ("scheduled", "waiting_token"):
-            # 已在排队：又有世界崩溃，主世界崩溃时升级为整组重启
-            state.full |= bool(getattr(proc, "is_master", True))
+            # 已在排队：又有世界崩溃，一并重启它
             state.shards.add(proc.shard_name)
             state.group.add(proc.shard_name)
             return
@@ -90,7 +90,7 @@ class AutoRestartController(QObject):
             self._give_up(cluster, state, t("local.auto_restart_reason_limit", count=MAX_CRASH_RESTARTS))
             return
         state.crashed_at = now
-        state.full = bool(getattr(proc, "is_master", True))
+        state.full = False
         state.shards = {proc.shard_name}
         # 崩溃的进程已不算"运行中"，要单独补进去；没开过的世界（如用户只开了地上）不在范围内
         state.group = {s.name for s in cluster.shards if self._running(cluster, s.name)} | {proc.shard_name}
@@ -165,7 +165,8 @@ class AutoRestartController(QObject):
         state.phase = "starting"
         master = self._page._master_shard(cluster)
         master_running = master is not None and self._running(cluster, master.name)
-        state.full = state.full or not master_running
+        if master is not None and not master_running and master.name in state.group:
+            state.shards.add(master.name)  # 从世界崩溃时主世界也已经掉了：从世界单独起来连不上，带上主世界
         targets = self._target_shards(cluster, state)
         stop_first = [s for s in targets if self._running(cluster, s.name)]
         self._page._stop_shards_and_then(cluster, stop_first, lambda: self._start(cluster, state, targets))

@@ -432,14 +432,15 @@ def test_auto_restart_controller_flow() -> None:
             events.clear()
             choose_calls.clear()
 
-            # 2. 主世界跑起来后崩溃、洞穴还在：整组重启（先停洞穴再全部拉起）
-            make_proc("Caves")
+            # 2. 地上、洞穴都在跑，地上崩溃：只重启地上，洞穴保持运行等饥荒自动重连并回退快照
+            caves = make_proc("Caves")
             controller.on_failure(make_proc("Master", status=ServerStatus.CRASHED), crash)
             state = controller._states[key]
-            assert state.phase == "scheduled" and state.full
+            assert state.phase == "scheduled" and not state.full
             controller._run(key)
-            assert ("stop", ("Master", "Caves")) in events or ("stop", ("Caves",)) in events
-            assert [e for e in events if e[0] == "start"] == [("start", "Master"), ("start", "Caves")]
+            assert not any(e[0] == "stop" and "Caves" in e[1] for e in events), "不能停洞穴"
+            assert [e for e in events if e[0] == "start"] == [("start", "Master")]
+            assert procs["Caves"] is caves
             assert state.phase == "starting" and state.attempts == 1
             assert choose_calls == [(False, True)], "崩溃后用原令牌拉起，不换池中其它令牌"
 
