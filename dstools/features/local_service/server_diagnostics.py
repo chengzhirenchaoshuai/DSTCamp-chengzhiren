@@ -39,7 +39,6 @@ class DiagnosticReport:
     suggestions: tuple[str, ...]
     evidence: tuple[str, ...] = ()
     related_mods: tuple[str, ...] = ()
-    certain: bool = False
 
     @property
     def banner_text(self) -> str:
@@ -152,7 +151,7 @@ def _lua_report(
         f"{shard_name} 在{phase}检测到 Lua 运行时错误，可能由 Mod Bug 或兼容性冲突导致。",
         ("优先禁用日志中列出的疑似 Mod，并重新启动服务器。",
          "如果禁用后恢复，再逐个启用最近更新或新增的 Mod。"),
-        _lua_evidence(lines), related_mods, False,
+        _lua_evidence(lines), related_mods,
     )
 
 
@@ -188,7 +187,7 @@ def diagnose_server_failure(
             ("如果房间刚刚崩溃或被强制结束，无需停服：服务器会自动重试，Klei 释放旧注册后自动上线（通常需要半小时左右）。",
              "如果同一新令牌正被其他存档或其他机器使用，请停止对方，或停服后从全局令牌池换用可用令牌。"),
             _evidence(lines, ("e_rowid_exist", "master server broadcast error")),
-            (), True,
+            (),
         )
 
     # 已就绪且仍存活的世界通常不属于“启动/退出诊断”，但 Lua 错误可能只
@@ -205,7 +204,7 @@ def diagnose_server_failure(
         return DiagnosticReport(
             "runtime", "运行库缺失", "服务器启动时找不到 Visual C++ 运行库。",
             ("确认专服位数与运行库位数匹配。", "LuaJIT 模式请安装 VC++ 2023 x64；Mod 图标问题请安装 VC++ 2013 x86。"),
-            _evidence(lines, ("dll", "找不到指定模块", "cannot find")), related_mods, True,
+            _evidence(lines, ("dll", "找不到指定模块", "cannot find")), related_mods,
         )
 
     if any(token in lower for token in (
@@ -215,7 +214,7 @@ def diagnose_server_failure(
         return DiagnosticReport(
             "port", "端口占用", "服务器需要使用的网络端口已被其他进程占用。",
             ("检查服务器配置中的端口。", "关闭占用该端口的程序，或为当前存档分配新的端口。"),
-            _evidence(lines, ("address already", "bind", "端口")), related_mods, True,
+            _evidence(lines, ("address already", "bind", "端口")), related_mods,
         )
 
     if any(token in lower for token in (
@@ -226,14 +225,14 @@ def diagnose_server_failure(
         return DiagnosticReport(
             "permission", "文件访问失败", "服务器没有权限读取或写入所需文件。",
             ("确认当前用户对专服安装目录和存档目录有读写权限。", "检查杀毒软件是否拦截了专服或 LuaJIT 副本。"),
-            _evidence(lines, ("access is denied", "permission", "拒绝访问")), related_mods, True,
+            _evidence(lines, ("access is denied", "permission", "拒绝访问")), related_mods,
         )
 
     if "must specify the task set for a level" in lower or "error loading worldgen_main.lua" in lower:
         return DiagnosticReport(
             "world_generation", "世界生成配置错误", f"{shard_name} 在世界生成阶段缺少有效的世界预设或任务集。",
             ("检查当前世界类型与世界生成预设是否匹配。", "如果刚卸载或更新了世界配置 Mod，请重新扫描 Mod 并重新保存世界设置。"),
-            _evidence(lines, ("task set", "worldgen_main.lua")), related_mods, True,
+            _evidence(lines, ("task set", "worldgen_main.lua")), related_mods,
         )
 
     if any(marker in lower for marker in _RUNTIME_LUA_ERROR_MARKERS):
@@ -244,7 +243,7 @@ def diagnose_server_failure(
         "unknown", "服务器异常退出" if world_ready else "服务器启动失败",
         "服务器进程异常退出，但暂时无法从日志确定单一原因。",
         ("先查看控制台末尾日志。", "检查令牌、端口、存档权限和最近更新的 Mod。"),
-        tuple(line.strip() for line in lines[-3:] if line.strip()), related_mods, False,
+        tuple(line.strip() for line in lines[-3:] if line.strip()), related_mods,
     )
 
 

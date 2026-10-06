@@ -597,8 +597,6 @@ class ServerManager:
         return [p for p in self._procs.values()
                 if p.status in (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING)]
 
-    def any_running(self) -> bool:
-        return bool(self.running())
 
     def stop(self, cluster_path: Path, shard_name: str, on_done=None) -> None:
         proc = self.get(cluster_path, shard_name)

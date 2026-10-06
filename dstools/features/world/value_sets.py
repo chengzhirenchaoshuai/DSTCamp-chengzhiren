@@ -257,10 +257,6 @@ OCEAN_WORLDGEN_SET = [f"ocean_{value}" for value in WORLDGEN_FREQUENCY_SET]
 # frequency values (``default``, ``rare`` ...).
 OCEAN_FREQUENCY_KEYS = {"ocean_seastack", "ocean_waterplant"}
 
-UNCONFIRMED_KEYS = {
-}
-
-
 def get_value_set(
     key: str, mod_settings: dict | None = None,
     location: str | None = None, is_rule: bool = True,
@@ -270,8 +266,7 @@ def get_value_set(
     mod_settings（features/world/mod_settings.py 登记表，调用方传当前存
     档已启用 mod 贡献的部分）优先——mod 登记的取值不一定是标准 5 档
     （比如 Cherry Forest 的 cherry_bugseason 只有 default/enabled 两档），
-    不能让它退回错误的通用列表。原版 key 没有特殊登记的（常见情况，也
-    是 UNCONFIRMED_KEYS 未经验证时的兜底）一律退回标准的 5 档取值。
+    不能让它退回错误的通用列表。原版 key 没有特殊登记的一律退回标准的 5 档取值。
     """
     if mod_settings:
         info = mod_settings.get(key)

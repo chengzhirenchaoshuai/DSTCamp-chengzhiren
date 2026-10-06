@@ -213,13 +213,6 @@ def with_required_dependencies(mod_ids) -> frozenset[str]:
     return frozenset(normalized)
 
 
-def missing_required_dependencies(mod_ids) -> dict[str, frozenset[str]]:
-    """返回当前选择中缺少的硬依赖。"""
-    normalized = normalize_mod_ids(mod_ids)
-    missing: dict[str, frozenset[str]] = {}
-    if IA_SHIPWRECKED_MOD_ID in normalized and IA_CORE_MOD_ID not in normalized:
-        missing[IA_SHIPWRECKED_MOD_ID] = frozenset({IA_CORE_MOD_ID})
-    return missing
 
 
 def resolve_world_location_profile(enabled_mod_ids) -> WorldLocationProfile:

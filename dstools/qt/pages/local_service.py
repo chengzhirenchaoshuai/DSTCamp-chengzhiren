@@ -845,7 +845,6 @@ class LocalServicePage(Page):
         remote_build_id = self._remote_build_for_runtime()
         mode = steam_client_updater.action_for_snapshot(snapshot, remote_build_id=remote_build_id)
         labels = {"install": "local.steam_install_btn", "update": "local.steam_update_btn", "validate": "local.steam_validate_btn"}
-        self._steam_update_mode = mode
         # 更新进行中按钮保持"查看更新日志"，不被定时刷新改回去。
         self._steam_update_btn.setText(t("local.steam_view_log_btn" if self._steam_update_running else labels[mode]))
         self._steam_update_hint.setVisible(mode == "update")
@@ -2336,9 +2335,6 @@ class LocalServicePage(Page):
 
         run_async(work, done, error)
 
-    # ── 轮询 ────────────────────────────────────────────────────────────
-    def has_running_servers(self) -> bool:
-        return self.manager.any_running()
 
     def _maybe_periodic_backup(self) -> None:
         if not get_backup_auto_enabled():

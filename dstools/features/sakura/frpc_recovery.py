@@ -51,8 +51,3 @@ def inspect_sakura_frpc() -> SakuraFrpcHealth:
     except OSError as exc:
         return _health_from_os_error(path, exc)
     return SakuraFrpcHealth("ready", path)
-
-
-def classify_sakura_frpc_launch_error(path: Path, exc: OSError) -> str:
-    """给进程启动边界复用的稳定错误类型。"""
-    return _health_from_os_error(path, exc).status

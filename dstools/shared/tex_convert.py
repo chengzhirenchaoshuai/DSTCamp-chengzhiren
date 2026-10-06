@@ -19,7 +19,6 @@ from pathlib import Path
 
 from dstools.shared.resource_paths import (
     cache_root_dir,
-    path_is_ascii,
     runtime_tool_path,
     tool_binary_dir,
     validate_cache_root,
@@ -84,9 +83,6 @@ def probe_ktech_runtime() -> bool:
     return _runtime_missing
 
 
-def ktech_cache_path_invalid() -> bool:
-    """缓存路径含非 ASCII 字符时，旧版 ImageMagick 无法可靠运行。"""
-    return not path_is_ascii(cache_root_dir())
 
 
 def _ktools_bundle_digest(source_dir: Path) -> str:

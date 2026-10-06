@@ -9,8 +9,8 @@ import os
 from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
+from PySide6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
     QProgressBar, QSizePolicy, QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
@@ -24,7 +24,6 @@ from dstools.qt.background import Background
 from dstools.qt.context import AppContext
 from dstools.qt.pages.local_service import LocalServicePage
 from dstools.qt.pages.mod import ModPage
-from dstools.qt.pages.placeholder import PlaceholderPage
 from dstools.qt.pages.sakura import SakuraPage
 from dstools.qt.pages.save_info import SaveInfoPage
 from dstools.qt.pages.server_config import ServerConfigPage
@@ -501,19 +500,11 @@ class MainWindow(QWidget):
         self.current_page().load()
 
     def _make_page(self, key: str):
-        if key == "local":
-            return LocalServicePage(self.ctx)
-        if key == "mods":
-            return ModPage(self.ctx)
-        if key == "saves":
-            return SaveInfoPage(self.ctx)
-        if key == "world":
-            return WorldSettingsPage(self.ctx)
-        if key == "server":
-            return ServerConfigPage(self.ctx)
-        if key == "sakura":
-            return SakuraPage(self.ctx)
-        return PlaceholderPage(self.ctx, key)
+        page_cls = {
+            "local": LocalServicePage, "world": WorldSettingsPage, "mods": ModPage,
+            "server": ServerConfigPage, "saves": SaveInfoPage, "sakura": SakuraPage,
+        }[key]
+        return page_cls(self.ctx)
 
     def goto_tab(self, key: str) -> None:
         index = TAB_KEYS.index(key)

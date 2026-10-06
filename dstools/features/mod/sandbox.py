@@ -227,16 +227,6 @@ def resolve_mod_versions(
     return result
 
 
-def resolve_mod_version(
-    file_text: str, timeout: float = FULL_FILE_TIMEOUT, folder_name: str | None = None
-) -> dict[str, Any] | None:
-    """完整执行 modinfo.lua，只返回作者最终声明的 version。
-
-    返回 ``{"declared": bool, "value": scalar}``；执行失败/超时或结果形状
-    异常返回 None。调用方负责只接受字符串和数字，绝不猜测其它 Lua 类型。
-    """
-    result = resolve_mod_versions(file_text, timeout=timeout, folder_name=folder_name)
-    return result.get("version") if result is not None else None
 
 
 _FIELDS_TO_READ_BACK = (

@@ -7,7 +7,6 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from dstools.shared.steam_discovery import find_all_steam_libraries
 
 
 MANIFEST_MAGIC = b"MNFS"
@@ -120,67 +119,5 @@ def verify_mod_manifest(
         return ManifestVerification(True, False, error=str(exc))
 
 
-def read_cached_manifest_version(install_root: Path, workshop_id: int | str) -> str:
-    """读取游戏上次激活的 Manifest 版本；不存在或不可读时返回空串。"""
-    path = (
-        Path(install_root)
-        / "cached_mod_manifests"
-        / f"workshop-{int(workshop_id)}.manifest.version"
-    )
-    try:
-        return path.read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        return ""
 
 
-def find_cached_manifest_versions(
-    workshop_ids: list[int] | tuple[int, ...],
-    *,
-    extra_install_roots: list[Path] | tuple[Path, ...] = (),
-) -> dict[int, str]:
-    """读取 Klei 游戏/专服缓存的 Workshop ``version``。
-
-    官方 Mod 页面先通过 ``TheSim:StartWorkshopQuery()`` 发起查询，再用
-    ``TheSim:GetWorkshopVersion()`` 获取远程 ``modinfo.version``。引擎会
-    将结果保存到安装目录的 ``cached_mod_manifests/*.manifest.version``；
-    DSTCamp 复用这份与官方同源的缓存。游戏和专服可能各有一份，选择最后
-    修改时间最新的非空值。缓存不存在时不猜版本。
-    """
-    ids = tuple(dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0))
-    if not ids:
-        return {}
-
-    roots: list[Path] = []
-    seen: set[str] = set()
-
-    def add_root(path: Path) -> None:
-        candidate = Path(path)
-        key = str(candidate.resolve(strict=False)).casefold()
-        if key not in seen:
-            seen.add(key)
-            roots.append(candidate)
-
-    for root in extra_install_roots:
-        add_root(Path(root))
-    for library in find_all_steam_libraries():
-        common = library / "steamapps" / "common"
-        add_root(common / "Don't Starve Together")
-        add_root(common / "Don't Starve Together Dedicated Server")
-
-    newest: dict[int, tuple[int, str]] = {}
-    for root in roots:
-        cache_dir = root / "cached_mod_manifests"
-        if not cache_dir.is_dir():
-            continue
-        for workshop_id in ids:
-            path = cache_dir / f"workshop-{workshop_id}.manifest.version"
-            try:
-                version = path.read_text(encoding="utf-8", errors="replace").strip()
-                modified_ns = path.stat().st_mtime_ns
-            except OSError:
-                continue
-            if version and (
-                workshop_id not in newest or modified_ns > newest[workshop_id][0]
-            ):
-                newest[workshop_id] = (modified_ns, version)
-    return {workshop_id: item[1] for workshop_id, item in newest.items()}

@@ -127,7 +127,6 @@ def plan_mod_sync(install_dir: Path, client_mods_dir: Path | None) -> ModSyncPla
 class ModSyncResult:
     linked: bool = False
     already_linked: bool = False
-    skipped_no_client_mods: bool = False
     errors: list[str] = field(default_factory=list)
 
 
@@ -143,7 +142,6 @@ def apply_mod_sync(plan: ModSyncPlan, install_dir: Path, on_log=None) -> ModSync
     result = ModSyncResult()
 
     if plan.client_mods_dir is None:
-        result.skipped_no_client_mods = True
         log(t("sync.no_client_mods_dir"))
         return result
 

@@ -172,14 +172,6 @@ def _load_shard_files(shard_path: Path) -> list[tuple[float, dict[str, Any]]]:
     return results
 
 
-def parse_resume_log_lines(log_path: Path) -> list[tuple[str, str, str]]:
-    """解析单个日志文件，抽取"续接/还原进入"记录（不走缓存，供单文件场
-    景直接调用）。
-
-    Returns:
-        (时间戳, session_id, player_id) 的列表，按文件里出现的先后顺序。
-    """
-    return [tuple(item) for item in _parse_file_raw(log_path)["resumes"]]
 
 
 def collect_player_connection_log(shard_path: Path) -> dict[tuple[str, str], list[str]]:

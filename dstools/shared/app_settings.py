@@ -358,10 +358,6 @@ def get_cache_use_exe_dir() -> bool:
     return load_settings().get(_KEY_CACHE_USE_EXE_DIR, False)
 
 
-def set_cache_use_exe_dir(value: bool) -> None:
-    data = load_settings()
-    data[_KEY_CACHE_USE_EXE_DIR] = value
-    save_settings(data)
 
 
 def get_cache_dir_override() -> Path | None:
@@ -522,10 +518,6 @@ def set_selfhost_frp_server(host: str, bind_port: int, token: str) -> None:
     save_settings(data)
 
 
-def clear_selfhost_frp_server() -> None:
-    data = load_settings()
-    data.pop(_KEY_SELFHOST_FRP_SERVER, None)
-    save_settings(data)
 
 
 def _selfhost_mapping_key(cluster_path: Path, shard_name: str) -> str:

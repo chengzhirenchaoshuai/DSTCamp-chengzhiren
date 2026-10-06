@@ -381,15 +381,6 @@ class ModPage(Page):
         runtime = self._runtime()
         return runtime.install_dir if runtime and not runtime.is_client else None
 
-    def _is_server_mod_path(self, path: Path) -> bool:
-        root = self._server_mods_root()
-        if root is None:
-            return False
-        try:
-            Path(path).resolve(strict=False).relative_to(root.resolve(strict=False))
-            return True
-        except (OSError, ValueError):
-            return False
 
     def _passive_sync_dirs(self, cluster):
         if not cluster or cluster.source != SaveSource.SERVER:
@@ -1160,7 +1151,6 @@ class ModPage(Page):
 
         thread = threading.Thread(target=worker, daemon=True)
         thread.start()
-        self._workshop_cancel_event = cancel_event
 
     def _finish_workshop_update(self, updated: int, up_to_date: int, failed: int,
                                 cancelled: bool = False, error: str | None = None) -> None:

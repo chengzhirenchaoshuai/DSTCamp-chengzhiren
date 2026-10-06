@@ -1156,11 +1156,6 @@ class SelfHostPanel(QWidget):
 
         run_async(work, done, lambda exc: done((False, str(exc))))
 
-    def stop_lobby_accel(self) -> None:
-        if self._diagnostic_session is not None:
-            self._diagnostic_session.cancel()
-        self.lobby_accel.stop()
-        self._refresh_lobby_row()
 
     def stop_lobby_accel_async(self) -> None:
         if self._lobby_accel_busy:
@@ -1469,5 +1464,3 @@ class SelfHostPanel(QWidget):
         progress.finish()
         self._refresh_lobby_row()
 
-    def retheme(self) -> None:
-        pass  # Qt 全局 QSS/theme.changed 已覆盖颜色刷新，这里不需要额外处理

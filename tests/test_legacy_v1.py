@@ -28,7 +28,6 @@ from dstools.features.mod.workshop_cleanup import (
 )
 from dstools.features.mod.workshop_api import (
     SteamWorkshopSession,
-    WorkshopBackend,
     WorkshopDownloadResult,
     WorkshopItemState,
 )
@@ -123,7 +122,7 @@ def main() -> None:
                 pipeline_target if (pipeline_target / "modinfo.lua").is_file() else None
             )
             update = WorkshopDownloadResult(
-                WorkshopBackend.CLIENT, 123, accepted=True, state=WorkshopItemState(7)
+                123, accepted=True, state=WorkshopItemState(7)
             )
             finished = SteamWorkshopSession._finish_legacy_install(
                 update, archive, expected_version="1.0", force=True
@@ -138,7 +137,7 @@ def main() -> None:
 
             shutil.rmtree(pipeline_server_target)
             repair = WorkshopDownloadResult(
-                WorkshopBackend.CLIENT, 123, accepted=True, state=WorkshopItemState(7)
+                123, accepted=True, state=WorkshopItemState(7)
             )
             repaired = SteamWorkshopSession._finish_legacy_install(
                 repair, archive, expected_version="1.0", force=False
@@ -159,7 +158,6 @@ def main() -> None:
             # V1 目录部署失败必须保留原始原因，不能把 *_legacy.bin 当成
             # V2 目录继续执行 modinfo.lua 强制修复。
             class FailedLegacySession:
-                backend = WorkshopBackend.CLIENT
 
                 def _ensure_started(self):
                     pass
@@ -190,7 +188,7 @@ def main() -> None:
             # 仅当现有下载包本身与目标版本不一致时，才允许重新向
             # Steam 请求 Legacy 包。
             stale_package = WorkshopDownloadResult(
-                WorkshopBackend.CLIENT, 123, accepted=True, state=WorkshopItemState(7)
+                123, accepted=True, state=WorkshopItemState(7)
             )
             stale_package = SteamWorkshopSession._finish_legacy_install(
                 stale_package, archive, expected_version="9.9", force=False

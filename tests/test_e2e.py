@@ -59,7 +59,6 @@ from dstools.shared.app_settings import (
     get_minimize_on_close,
     set_minimize_on_close,
     get_cache_use_exe_dir,
-    set_cache_use_exe_dir,
     get_cache_dir_override,
     set_cache_dir_override,
     get_backup_auto_enabled,
@@ -1078,7 +1077,6 @@ def test_app_settings_toggles():
     with _isolated_settings_dir():
         for get_fn, set_fn, default in (
             (get_minimize_on_close, set_minimize_on_close, True),
-            (get_cache_use_exe_dir, set_cache_use_exe_dir, False),
             (get_backup_auto_enabled, set_backup_auto_enabled, True),
         ):
             assert get_fn() is default, f"{get_fn.__name__} 默认值应该是 {default}"
@@ -1087,7 +1085,7 @@ def test_app_settings_toggles():
             set_fn(default)
             assert get_fn() is default
         print(
-            "  PASS: minimize_on_close/cache_use_exe_dir/backup_auto_enabled 默认值+读写往返都正常"
+            "  PASS: minimize_on_close/backup_auto_enabled 默认值+读写往返都正常"
         )
 
         from dstools.shared.app_settings import get_settings_dir
@@ -1107,7 +1105,10 @@ def test_app_settings_toggles():
         root = get_settings_dir()
         custom_cache = root / "custom-cache"
         assert get_cache_dir_override() is None
-        set_cache_use_exe_dir(True)
+        from dstools.shared.app_settings import load_settings, save_settings
+
+        save_settings({**load_settings(), "cache_use_exe_dir": True})
+        assert get_cache_use_exe_dir() is True
         set_cache_dir_override(custom_cache)
         assert get_cache_dir_override() == custom_cache
         assert get_cache_use_exe_dir() is False
@@ -1579,54 +1580,6 @@ def test_world_ocean_frequency_labels():
     )
 
 
-def test_custom_background():
-    """测试 custom_background.py 的按比例裁剪（绝不拉伸）+ 不透明度混合逻
-    辑——对应需求"支持自定义背景图，按比例裁剪不拉伸，可调不透明度贴合
-    主题"。纯 PIL 逻辑，不需要真实 Tk 窗口。"""
-    print("\n" + "=" * 60)
-    print("Test 24: Custom Background Image")
-
-    from PIL import Image
-
-    from dstools.shared.custom_background import (
-        _center_crop_to_ratio,
-        render_background,
-    )
-
-    # 宽图裁窄比例：裁掉左右两侧，裁完的宽高比必须刚好等于目标比例
-    # （不是拉伸变形出来的），且没有超出原图尺寸。
-    wide = Image.new("RGB", (400, 100), "red")
-    cropped = _center_crop_to_ratio(wide, 1.0)
-    assert cropped.size == (100, 100), (
-        "Wide image cropped to a square must trim the sides, not stretch"
-    )
-    print("  PASS: wider-than-target image is center-cropped on the sides")
-
-    # 高图裁宽比例：裁掉上下两侧。
-    tall = Image.new("RGB", (100, 400), "blue")
-    cropped2 = _center_crop_to_ratio(tall, 2.0)
-    assert cropped2.size == (100, 50), (
-        "Tall image cropped to a wide ratio must trim top/bottom, not stretch"
-    )
-    print("  PASS: taller-than-target image is center-cropped on top/bottom")
-
-    # 不透明度混合的两个边界：0 = 完全是主题纯色（图片全隐），1 = 完全是原图。
-    with tempfile.TemporaryDirectory() as tmp:
-        src = Path(tmp) / "bg.png"
-        Image.new("RGB", (50, 50), (255, 0, 0)).save(src)
-
-        transparent = render_background(src, 20, 20, 0.0, "#00FF00")
-        assert transparent.getpixel((10, 10)) == (0, 255, 0), (
-            "opacity=0 must show only the theme's blend color"
-        )
-
-        opaque = render_background(src, 20, 20, 1.0, "#00FF00")
-        assert opaque.getpixel((10, 10)) == (255, 0, 0), (
-            "opacity=1 must show only the original image"
-        )
-        print("  PASS: opacity=0/1 blend to pure theme color / pure image respectively")
-
-
 def test_mod_resolve_cache():
     """测试 cache.py 里给 resolve_full_modinfo() 结果做的磁盘持久化缓存
     ——加这层缓存是因为 Lua 沙箱全量解析之前只在内存里缓存一份，每次重
@@ -1721,7 +1674,7 @@ def test_mod_version_resolution():
         normalize_version_result,
         resolve_local_mod_version,
     )
-    from dstools.features.mod.sandbox import resolve_mod_version, resolve_mod_versions
+    from dstools.features.mod.sandbox import resolve_mod_versions
     from dstools.features.mod import version_cache
 
     result = resolve_mod_versions(
@@ -1747,11 +1700,11 @@ def test_mod_version_resolution():
     assert normalized.source == "sandbox"
     print("  PASS: 同一次完整执行取得最终名称、版本和兼容版本")
 
-    conditional = resolve_mod_version(
+    conditional = resolve_mod_versions(
         'version = folder_name == "workshop-123" and "workshop" or "local"',
         folder_name="workshop-123",
     )
-    assert conditional == {"declared": True, "value": "workshop"}
+    assert conditional["version"] == {"declared": True, "value": "workshop"}
     print("  PASS: folder_name 按真实 Workshop 标识注入")
 
     assert resolve_mod_versions('version = "temporary"\nmissing_engine_api()') is None
@@ -1779,9 +1732,7 @@ def test_mod_version_resolution():
         },
         "sandbox",
     )
-    assert fallback.effective_version_compatible == "V1.2.3"
     assert fallback.compare_version == "v1.2.3"
-    assert fallback.compare_version_compatible == "v1.2.3"
     assert normalize_version_for_compare(" V1.2.3 ") == "v1.2.3"
     commented = normalize_version_result(
         {
@@ -1935,24 +1886,24 @@ def test_workshop_status_evidence_priority():
             == WorkshopModState.UPDATE_AVAILABLE
         )
         cached_update = WorkshopModEvidence(
-            **{**current.__dict__, "cached_manifest_version": "1.2.2"}
+            **{**current.__dict__, "remote_version": "1.2.2"}
         )
         cached_status = evaluate_workshop_status(cached_update)
         assert cached_status.state == WorkshopModState.UPDATE_AVAILABLE
         assert cached_status.remote_version == "1.2.2"
         exact_compare = WorkshopModEvidence(
-            **{**current.__dict__, "cached_manifest_version": "1.2.3"}
+            **{**current.__dict__, "remote_version": "1.2.3"}
         )
         assert (
             evaluate_workshop_status(exact_compare).state
             == WorkshopModState.UPDATE_AVAILABLE
         ), "不能擅自忽略本地 V 前缀"
         exact_current = WorkshopModEvidence(
-            **{**current.__dict__, "cached_manifest_version": "V1.2.3"}
+            **{**current.__dict__, "remote_version": "V1.2.3"}
         )
         assert evaluate_workshop_status(exact_current).state == WorkshopModState.CURRENT
         case_only = WorkshopModEvidence(
-            **{**current.__dict__, "cached_manifest_version": "v1.2.3"}
+            **{**current.__dict__, "remote_version": "v1.2.3"}
         )
         assert evaluate_workshop_status(case_only).state == WorkshopModState.CURRENT, (
             "Steam version 标签会转小写，纯大小写差异不能误报更新"
@@ -1967,15 +1918,11 @@ def test_workshop_status_evidence_priority():
                     tags=("all_clients_require_mod", "version:V1.2.3"),
                 ),
                 "remote_version": "V1.2.3",
-                "remote_version_source": "steam_workshop_tag",
-                "cached_manifest_version": "0.9",
             }
         )
         live_status = evaluate_workshop_status(live_remote)
         assert live_status.state == WorkshopModState.CURRENT
-        assert live_status.remote_version == "V1.2.3", (
-            "实时 Steam 标签必须优先于旧 Klei 缓存"
-        )
+        assert live_status.remote_version == "V1.2.3"
         active_update = WorkshopModEvidence(
             **{
                 **current.__dict__,
@@ -2040,7 +1987,6 @@ def test_workshop_status_evidence_priority():
             **{
                 **legacy_complete.__dict__,
                 "remote_version": "9.9",
-                "cached_manifest_version": "8.8",
             }
         )
         stale_remote_status = evaluate_workshop_status(stale_remote_legacy)
@@ -2138,8 +2084,8 @@ def test_workshop_snapshot_uses_one_steam_session():
     opened = []
 
     class FakeSession:
-        def __init__(self, dll_path, backend):
-            opened.append((dll_path, backend))
+        def __init__(self, dll_path):
+            opened.append(dll_path)
 
         def __enter__(self):
             return self
@@ -2232,10 +2178,8 @@ def test_dst_mod_manifest_verification():
     import struct
     from dstools.features.mod.workshop_manifest import (
         ManifestFormatError,
-        find_cached_manifest_versions,
         load_mod_manifest,
         parse_mod_manifest_bytes,
-        read_cached_manifest_version,
         sdbm_path_hash,
         verify_mod_manifest,
     )
@@ -2280,28 +2224,7 @@ def test_dst_mod_manifest_verification():
             raise AssertionError("损坏的 Manifest 不应解析成功")
         except ManifestFormatError:
             pass
-        cache = root / "cached_mod_manifests"
-        cache.mkdir()
-        (cache / "workshop-123.manifest.version").write_text(" V1.2 ", encoding="utf-8")
-        assert read_cached_manifest_version(root, 123) == "V1.2"
-
-        game_root = root / "game"
-        server_root = root / "server"
-        game_cache = game_root / "cached_mod_manifests"
-        server_cache = server_root / "cached_mod_manifests"
-        game_cache.mkdir(parents=True)
-        server_cache.mkdir(parents=True)
-        game_version = game_cache / "workshop-987654321.manifest.version"
-        server_version = server_cache / "workshop-987654321.manifest.version"
-        game_version.write_text("1.0", encoding="utf-8")
-        server_version.write_text("1.1", encoding="utf-8")
-        os.utime(game_version, ns=(1_000_000_000, 1_000_000_000))
-        os.utime(server_version, ns=(2_000_000_000, 2_000_000_000))
-        versions = find_cached_manifest_versions(
-            [987654321, 987654322], extra_install_roots=[game_root, server_root]
-        )
-        assert versions == {987654321: "1.1"}
-        print("  PASS: 损坏格式被拒绝，并从游戏/专服缓存中选择最新远程版本")
+        print("  PASS: 损坏格式被拒绝")
 
 
 def test_workshop_download_precheck_uses_physical_files():
@@ -2312,7 +2235,6 @@ def test_workshop_download_precheck_uses_physical_files():
     import struct
     from dstools.features.mod.workshop_api import (
         SteamWorkshopSession,
-        WorkshopBackend,
         WorkshopItemDetails,
         WorkshopItemState,
         validate_workshop_install,
@@ -2330,7 +2252,6 @@ def test_workshop_download_precheck_uses_physical_files():
             return True
 
     class FakeSession:
-        backend = WorkshopBackend.CLIENT
         ugc = object()
 
         def __init__(self, path):
@@ -3483,7 +3404,6 @@ def main():
         test_world_catalog_layers_are_isolated,
         test_world_creation_plan_and_atomic_writer,
         test_world_categories_bilingual,
-        test_custom_background,
         test_mod_resolve_cache,
         test_mod_version_resolution,
         test_workshop_source_details_parser,

@@ -1,10 +1,4 @@
-"""五套颜色主题的调色板数据——纯数据模块，不依赖任何界面库。
-
-Tk 版（shared/gui/theme.py）和 Qt 版（qt/theme.py）共用这一份，新增主题/改色
-只改这里。键的含义见 shared/gui/theme.py 顶部注释（WINDOW_ALPHA/FONT_FAMILY/
-FONT_SIZE_*/CARD_RADIUS/CARD_MARGIN 等布局常量各套主题保持一致，只有调色板相
-关键按主题取值）。
-"""
+"""五套颜色主题的调色板（纯数据）。新增颜色键须五套主题同时添加（测试会校验键一致）。"""
 
 THEMES = {
     "gray": {
@@ -13,8 +7,6 @@ THEMES = {
         "CARD_BG": "#FDFEFE", "CARD_BG_ALT": "#EFF3F4", "CARD_BORDER": "#D6DEE1",
         "SHADOW": "#C9D3D6", "ERROR": "#c62828", "SUCCESS": "#2E7D32", "HEADING": "#33393D",
         "BANNER_BG": "#fff3cd", "BANNER_TEXT": "#856404",
-        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
-        "CARD_MARGIN": 24,
         "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
         "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
     },
@@ -24,8 +16,6 @@ THEMES = {
         "CARD_BG": "#FFFFFF", "CARD_BG_ALT": "#F4FBF7", "CARD_BORDER": "#CFEEDD",
         "SHADOW": "#C9E4D8", "ERROR": "#c62828", "SUCCESS": "#2E7D32", "HEADING": "#37474f",
         "BANNER_BG": "#fff3cd", "BANNER_TEXT": "#856404",
-        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
-        "CARD_MARGIN": 24,
         "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
         "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
     },
@@ -35,8 +25,6 @@ THEMES = {
         "CARD_BG": "#FFFFFF", "CARD_BG_ALT": "#F5F8FE", "CARD_BORDER": "#D3E1FA",
         "SHADOW": "#C7D6F0", "ERROR": "#c62828", "SUCCESS": "#2E7D32", "HEADING": "#33415C",
         "BANNER_BG": "#fdecc8", "BANNER_TEXT": "#7a5a12",
-        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
-        "CARD_MARGIN": 24,
         "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
         "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
     },
@@ -46,8 +34,6 @@ THEMES = {
         "CARD_BG": "#FFFFFF", "CARD_BG_ALT": "#FDF6EC", "CARD_BORDER": "#F0DBB4",
         "SHADOW": "#E8D2A0", "ERROR": "#c62828", "SUCCESS": "#2E7D32", "HEADING": "#6B4A28",
         "BANNER_BG": "#fde3df", "BANNER_TEXT": "#a3392f",
-        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
-        "CARD_MARGIN": 24,
         "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
         "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
     },
@@ -57,8 +43,6 @@ THEMES = {
         "CARD_BG": "#FFFFFF", "CARD_BG_ALT": "#FFF5F8", "CARD_BORDER": "#F5C4D3",
         "SHADOW": "#F0B8CB", "ERROR": "#c62828", "SUCCESS": "#2E7D32", "HEADING": "#7A3B54",
         "BANNER_BG": "#fff3cd", "BANNER_TEXT": "#856404",
-        "WINDOW_ALPHA": 1.0, "FONT_FAMILY": "Microsoft YaHei UI Light", "CARD_RADIUS": 34,
-        "CARD_MARGIN": 24,
         "FONT_SIZE_XL": 18, "FONT_SIZE_LG": 15, "FONT_SIZE_MD": 12,
         "FONT_SIZE_BASE": 11, "FONT_SIZE_SM": 10, "FONT_SIZE_XS": 9,
     },

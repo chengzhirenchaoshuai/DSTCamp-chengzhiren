@@ -460,13 +460,6 @@ class Dialog(QDialog):
         self.add_footer([cancel], [confirm])
         return confirm
 
-    def add_close_button(self, text: str | None = None) -> QPushButton:
-        """只有一个"关闭/确认"按钮的对话框：主题色、靠右。"""
-        close = QPushButton(text or t("dlg.close_btn"))
-        close.clicked.connect(self.accept)
-        close.setDefault(True)
-        self.add_footer([], [close])
-        return close
 
     def heading_label(self, text: str) -> QLabel:
         """对话框内的小标题：统一 FONT_SIZE_MD 加粗。"""

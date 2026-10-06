@@ -33,7 +33,6 @@ from dstools.shared.server_ports import (
 )
 from dstools.shared.token_manager import is_valid_token, mask_token, write_token
 
-SUB_KEYS = ["cluster", "shard", "admin", "block", "token"]
 KLEI_SERVERS_URL = "https://accounts.klei.com/account/game/servers?game=DontStarveTogether"
 
 

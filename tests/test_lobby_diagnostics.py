@@ -121,7 +121,6 @@ def test_frp_route_requires_log_and_remote_port_evidence() -> None:
     )
     report = decide_route(evidence)
     assert report.route == DiagnosticRoute.FRP
-    assert report.through_vps
 
     evidence.remote.frp_packets = 0
     assert decide_route(evidence).route != DiagnosticRoute.FRP
@@ -162,7 +161,6 @@ def test_stun_only_is_not_reported_as_game_acceleration() -> None:
     )
     report = decide_route(evidence)
     assert report.route == DiagnosticRoute.SIGNAL_ONLY
-    assert not report.through_vps
 
 
 def test_wireguard_counter_delta_alone_is_not_reported_as_signal() -> None:
@@ -179,7 +177,6 @@ def test_wireguard_counter_delta_alone_is_not_reported_as_signal() -> None:
     )
     report = decide_route(evidence)
     assert report.route == DiagnosticRoute.INCONCLUSIVE
-    assert not report.through_vps
 
 
 def test_server_and_tcpdump_lines_are_classified() -> None:
@@ -270,7 +267,6 @@ def test_player_connection_kind_from_server_log() -> None:
         LobbyDiagnosticSession._consume_server_line(evidence, line, tracker)
     report = decide_route(evidence)
     assert report.route == DiagnosticRoute.DIRECT and report.confidence == "high"
-    assert not report.through_vps
 
 
 def main() -> int:

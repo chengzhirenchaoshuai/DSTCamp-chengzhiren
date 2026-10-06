@@ -19,7 +19,7 @@ from enum import Enum
 from pathlib import Path
 
 from dstools.features.local_service.dedicated_server import (
-    CLIENT_APP_ID, DEDICATED_SERVER_APP_ID, find_bin64_dir, find_dedicated_server_dir,
+    CLIENT_APP_ID, DEDICATED_SERVER_APP_ID, find_dedicated_server_dir,
     is_client_install_dir, is_valid_install_dir,
 )
 from dstools.shared import app_settings
@@ -60,9 +60,6 @@ class ServerRuntime:
         """服务器实际读取的 mods（V1 与手动安装的 Mod）。"""
         return self.install_dir / "mods"
 
-    @property
-    def bin_dir(self) -> Path | None:
-        return find_bin64_dir(self.install_dir)
 
     @property
     def steam_api_dll(self) -> Path | None:

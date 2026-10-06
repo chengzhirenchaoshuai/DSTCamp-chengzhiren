@@ -43,23 +43,6 @@ def get_icon_path(key: str, location: str = "forest") -> Optional[Path]:
 _pil_cache: dict[tuple[str, int], object] = {}
 
 
-def get_pil_icon(key: str, size: int = 48, location: str = "forest"):
-    """获取一个世界设置 key 对应的、缓存过的 PIL RGBA 图像，缩放到 `size`。"""
-    path = get_icon_path(key, location)
-    if not path:
-        return None
-    cache_key = (str(path), size)
-    if cache_key in _pil_cache:
-        return _pil_cache[cache_key]
-    try:
-        from PIL import Image
-        img = Image.open(path).convert("RGBA")
-        if img.size != (size, size):
-            img = img.resize((size, size), Image.LANCZOS)
-        _pil_cache[cache_key] = img
-        return img
-    except Exception:
-        return None
 
 
 # ── KEY → PNG 文件名 映射 ───────────────────────────────────────────────

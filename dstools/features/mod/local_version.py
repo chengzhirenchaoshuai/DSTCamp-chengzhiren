@@ -69,22 +69,6 @@ class LocalModVersion:
             else ""
         )
 
-    @property
-    def effective_version_compatible(self) -> str:
-        """游戏在未声明 ``version_compatible`` 时回退到 ``version``。"""
-        if self.compatible_status == VERSION_CONFIRMED:
-            return self.version_compatible
-        if (
-            self.compatible_status == VERSION_UNDECLARED
-            and self.status == VERSION_CONFIRMED
-        ):
-            return self.version
-        return ""
-
-    @property
-    def compare_version_compatible(self) -> str:
-        return normalize_version_for_compare(self.effective_version_compatible)
-
 
 def normalize_version_result(
     result: dict[str, Any] | None, source: str

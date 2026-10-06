@@ -26,7 +26,6 @@ class WorldOverride:
     is_rule: bool = False  # True 表示世界规则（可编辑），False 表示世界生成（只读）
     icon: str = ""       # Unicode 图标
     category: str = ""     # 分类 key
-    cat_name: str = ""     # 分类显示名
 
 
 @dataclass
@@ -84,16 +83,6 @@ def load_leveldata(path: Path) -> LeveldataLoadResult:
     return LeveldataLoadResult(LeveldataStatus.OK, preset=preset)
 
 
-def parse_leveldata(path: Path) -> WorldPreset | None:
-    """解析一个 leveldataoverride.lua 文件。
-
-    参数：
-        path: leveldataoverride.lua 的路径。
-
-    返回：
-        WorldPreset，文件不存在或解析失败时返回 None。
-    """
-    return load_leveldata(path).preset
 
 
 def _write_text_atomically(path: Path, text: str) -> None:

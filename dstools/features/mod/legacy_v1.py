@@ -40,7 +40,6 @@ class LegacyPackageValidation:
     valid: bool
     archive_path: Path
     entry_count: int = 0
-    expanded_size: int = 0
     error: str = ""
 
 
@@ -616,36 +615,6 @@ def deploy_legacy_package(
     return result
 
 
-def mirror_legacy_runtime_folder(source: Path, target: Path) -> None:
-    """原子复制没有可用 Legacy 包的已解压 V1 目录。"""
-    source = Path(source)
-    target = Path(target)
-    if not source.is_dir() or not (source / "modinfo.lua").is_file():
-        raise OSError(f"V1 Mod 源目录无效：{source}")
-    if _same_location(source, target):
-        return
-    stage = _next_sibling(target, "stage")
-    backup = _next_sibling(target, "backup")
-    moved_old = False
-    try:
-        shutil.copytree(source, stage)
-        if os.path.lexists(target):
-            if os.path.isjunction(target) or not target.is_dir():
-                raise OSError(f"目标不是普通 Mod 目录：{target}")
-            target.rename(backup)
-            moved_old = True
-        stage.rename(target)
-        if moved_old:
-            shutil.rmtree(backup)
-    except Exception:
-        if os.path.lexists(target) and moved_old and os.path.lexists(backup):
-            shutil.rmtree(target, ignore_errors=True)
-        if moved_old and os.path.lexists(backup) and not os.path.lexists(target):
-            backup.rename(target)
-        raise
-    finally:
-        if stage.exists():
-            shutil.rmtree(stage, ignore_errors=True)
 
 
 def _same_location(left: Path, right: Path) -> bool:

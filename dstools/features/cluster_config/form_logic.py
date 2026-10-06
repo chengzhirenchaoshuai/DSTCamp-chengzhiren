@@ -236,7 +236,6 @@ class ShardForm:
 class IdList:
     labels: list[str]
     row_ids: list[str | None]      # 与 labels 一一对应的真实 ID；提示行/空状态行为 None
-    token_hint: str | None = None
 
 
 def load_id_list(cluster: Cluster, path_attr: str) -> IdList:

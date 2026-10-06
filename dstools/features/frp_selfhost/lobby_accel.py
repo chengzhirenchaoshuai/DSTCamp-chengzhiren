@@ -6,7 +6,6 @@ Mihomo 的进程规则只能区分专服程序名，不能区分同一 exe 启�
 
 from __future__ import annotations
 
-import socket
 import threading
 from dataclasses import dataclass
 from enum import Enum
@@ -145,17 +144,3 @@ class LobbyAccelCoordinator:
         self.status = LobbyAccelStatus.STOPPED
         self.error = None
 
-    @staticmethod
-    def resolve_server_addresses() -> set[str]:
-        """解析 frps 主机地址，供后续出口 IP 真机校验使用。"""
-        server = app_settings.get_selfhost_frp_server() or {}
-        host = str(server.get("host", "")).strip()
-        if not host:
-            return set()
-        try:
-            return {
-                item[4][0]
-                for item in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
-            }
-        except socket.gaierror:
-            return set()

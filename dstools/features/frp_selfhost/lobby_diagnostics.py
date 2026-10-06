@@ -110,8 +110,6 @@ class RemoteEvidence:
     wg_capture_ready: bool = False
     frp_packets: int = 0
     frp_bytes: int = 0
-    wg_packets: int = 0
-    wg_bytes: int = 0
     wg_stun_packets: int = 0
     wg_stun_bytes: int = 0
     wg_non_stun_packets: int = 0
@@ -156,10 +154,6 @@ class LobbyDiagnosticReport:
     route: DiagnosticRoute
     confidence: str
     evidence: DiagnosticEvidence
-
-    @property
-    def through_vps(self) -> bool:
-        return self.route in {DiagnosticRoute.FRP, DiagnosticRoute.WIREGUARD}
 
 
 def decide_route(evidence: DiagnosticEvidence) -> LobbyDiagnosticReport:
@@ -331,8 +325,6 @@ class _RemoteCollector:
                 self.evidence.frp_packets += 1
                 self.evidence.frp_bytes += length
                 return
-            self.evidence.wg_packets += 1
-            self.evidence.wg_bytes += length
             if re.search(r"\.3478(?:\s|:|$)", line):
                 self.evidence.wg_stun_packets += 1
                 self.evidence.wg_stun_bytes += length

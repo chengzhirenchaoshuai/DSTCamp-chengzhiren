@@ -54,8 +54,6 @@ class WorkshopModEvidence:
     active_version: LocalModVersion | None = None
     active_path: Path | None = None
     remote_version: str = ""
-    remote_version_source: str = ""
-    cached_manifest_version: str = ""
     manifest_valid: bool | None = None
     manifest_error: str = ""
     legacy_package_valid: bool | None = None
@@ -190,8 +188,7 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
             remote_version=str(
                 legacy_package_version
                 if steam is not None and steam.legacy_item
-                else evidence.remote_version or evidence.cached_manifest_version
-                or ""
+                else evidence.remote_version
             ).strip(),
             reasons=tuple(reason for reason in reasons if reason),
             evidence=evidence,
@@ -396,9 +393,7 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
     # ``V0.1.5`` 的远程标签会变成 ``v0.1.5``。比较时复用 ModIndex 版本层
     # 的“去首尾空白 + 小写”规则；原始字符串仍保留给界面显示。不移除 V
     # 前缀、不把数字重新格式化，避免把真正不同的版本误判为相同。
-    remote_version = str(
-        evidence.remote_version or evidence.cached_manifest_version or ""
-    ).strip()
+    remote_version = evidence.remote_version.strip()
     if (
         remote_version
         and source_version.status == VERSION_CONFIRMED
@@ -463,7 +458,6 @@ def inspect_workshop_items(
     discovered_paths: dict[int, Path] | None = None,
     active_paths: dict[int, Path] | None = None,
     legacy_active_root: Path | None = None,
-    cached_manifest_versions: dict[int, str] | None = None,
     query_source: bool = True,
     source_detail_ids: list[int] | tuple[int, ...] = (),
     include_subscribed: bool = False,
@@ -491,7 +485,6 @@ def inspect_workshop_items(
     workshop_content_paths = workshop_content_paths or {}
     legacy_runtime_residual_paths = legacy_runtime_residual_paths or {}
     configured = {int(item) for item in configured_ids if int(item) > 0}
-    cached_manifest_versions = cached_manifest_versions or {}
     statuses = {}
     for workshop_id in ids:
         install = installs.get(workshop_id)
@@ -568,8 +561,6 @@ def inspect_workshop_items(
                 shadow_version = resolve_local_mod_version(
                     str(workshop_id), shadow_path, f"workshop-{workshop_id}")
         source_details = details.get(workshop_id)
-        live_remote_version = workshop_version_from_details(source_details)
-        cached_remote_version = cached_manifest_versions.get(workshop_id, "")
         evidence = WorkshopModEvidence(
             workshop_id=workshop_id,
             steam_state=state,
@@ -579,15 +570,7 @@ def inspect_workshop_items(
             source_version=source_version,
             active_version=active_version,
             active_path=active_path,
-            remote_version=live_remote_version,
-            remote_version_source=(
-                "steam_workshop_tag"
-                if live_remote_version
-                else "klei_manifest_cache"
-                if cached_remote_version
-                else ""
-            ),
-            cached_manifest_version=cached_remote_version,
+            remote_version=workshop_version_from_details(source_details),
             manifest_valid=(
                 verification.valid
                 if verification is not None and verification.available

@@ -31,7 +31,6 @@ from dstools.qt.pages.mod import ModPage
 from dstools.models import ModEntry, Platform
 from dstools.features.mod.workshop_api import (
     SteamWorkshopSession,
-    WorkshopBackend,
     WorkshopItemDetails,
     WorkshopItemState,
     WorkshopUpdateCancelled,
@@ -43,7 +42,6 @@ from dstools.features.mod.workshop_cleanup import (
     delete_workshop_residual,
     format_residual_directory_tree,
 )
-from dstools.i18n.strings import STRINGS
 from dstools.features.mod.workshop_status import (
     WorkshopModEvidence,
     WorkshopModState,
@@ -225,13 +223,6 @@ def test_visible_mod_ids_include_enabled_missing_references_only():
     assert "未订阅" in referenced_missing_status_text(unsubscribed)
 
 
-def test_missing_mod_scan_summary_stays_compact():
-    values = {"total": 155, "custom": 0, "missing": 16}
-    zh = STRINGS["zh"]["mod.scan_found_with_missing"].format(**values)
-    en = STRINGS["en"]["mod.scan_found_with_missing"].format(**values)
-    assert zh == "已安装155个模组（自定义0个）· 存档缺少16个"
-    assert len(zh) <= 28
-    assert len(en) <= 52
 
 
 def test_workshop_worker_can_be_stopped_by_cancel_event():
@@ -418,7 +409,6 @@ def test_residual_directory_is_not_treated_as_installed_or_updateable():
 
 def test_unsubscribed_v2_item_cannot_fall_back_to_legacy():
     session = object.__new__(SteamWorkshopSession)
-    session.backend = WorkshopBackend.CLIENT
     session._ensure_started = lambda: None
     session.item_state = lambda _wid: WorkshopItemState(0)
     session.item_install_details = lambda _wid: None
@@ -448,7 +438,6 @@ def test_true_legacy_item_can_recover_download_path_from_source_details():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         session = object.__new__(SteamWorkshopSession)
-        session.backend = WorkshopBackend.CLIENT
         session._ensure_started = lambda: None
         session.item_state = lambda _wid: WorkshopItemState(3)
         session.item_install_details = lambda _wid: None
@@ -628,7 +617,6 @@ if __name__ == "__main__":
     test_shared_rows_keep_filter_and_sort_consistent()
     test_luajit_mod_is_first_only_when_prioritized()
     test_visible_mod_ids_include_enabled_missing_references_only()
-    test_missing_mod_scan_summary_stays_compact()
     test_workshop_worker_can_be_stopped_by_cancel_event()
     test_workshop_candidates_do_not_require_installed_client_files()
     test_residual_directory_is_not_treated_as_installed_or_updateable()

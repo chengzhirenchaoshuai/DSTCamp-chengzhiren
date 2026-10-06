@@ -117,12 +117,6 @@ def check_latest_release() -> UpdateRelease | None:
     )
 
 
-def check_latest_version() -> tuple[str, str] | None:
-    """兼容旧调用方，返回 ``(版本号, Release 页面地址)``。"""
-    release = check_latest_release()
-    if release is None:
-        return None
-    return release.version, release.page_url
 
 
 def is_newer_version(current: str, latest: str) -> bool:

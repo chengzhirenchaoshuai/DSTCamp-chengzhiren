@@ -24,7 +24,6 @@ class ShadowedMod:
     shadow_path: Path       # 专服 mods/workshop-<id>（旧副本）
     v2_path: Path           # 创意工坊 content/322330/<id>
     shadow_version: str = ""
-    v2_version: str = ""
     name: str = ""          # V2 modinfo 里的 name，弹窗展示用；读不到时为空
 
 

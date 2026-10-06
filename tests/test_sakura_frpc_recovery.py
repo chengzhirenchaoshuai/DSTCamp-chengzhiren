@@ -38,7 +38,6 @@ def test_security_block_has_a_structured_status() -> None:
     ):
         health = frpc_recovery.inspect_sakura_frpc()
     assert health.status == "blocked" and health.path == client
-    assert frpc_recovery.classify_sakura_frpc_launch_error(client, blocked) == "blocked"
 
 
 def test_enable_mapping_aborts_before_remote_changes_when_client_is_missing() -> None:

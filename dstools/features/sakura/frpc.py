@@ -14,7 +14,6 @@ import time
 from enum import Enum
 from pathlib import Path
 
-from dstools.features.sakura.frpc_recovery import classify_sakura_frpc_launch_error
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -48,7 +47,6 @@ class FrpcProcess:
         self.status = FrpcStatus.STARTING
         self.proc: subprocess.Popen | None = None
         self.error: str | None = None
-        self.failure_kind: str | None = None
         self._out_queue: "queue.Queue[str]" = queue.Queue()
 
     def start(self) -> None:
@@ -58,7 +56,6 @@ class FrpcProcess:
         # 显示"启动失败 + 原因"。
         if not self.frpc_exe.exists():
             self.status = FrpcStatus.CRASHED
-            self.failure_kind = "missing"
             self.error = "frpc.exe 不存在（可能被杀毒软件隔离或已手动删除）"
             return
         try:
@@ -72,9 +69,6 @@ class FrpcProcess:
             )
         except OSError as exc:
             self.status = FrpcStatus.CRASHED
-            self.failure_kind = classify_sakura_frpc_launch_error(
-                self.frpc_exe, exc
-            )
             self.error = f"启动失败：{exc}"
             return
         self.status = FrpcStatus.RUNNING

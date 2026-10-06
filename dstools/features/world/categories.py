@@ -496,13 +496,6 @@ def get_order_key(key: str, name: str, location: str = "forest",
     return (1, 0, name)
 
 
-def get_order(key: str, location: str = "forest", is_rule: bool = True) -> int:
-    """按字典的插入顺序取显示排序。"""
-    d = _get_settings(location, is_rule)
-    try:
-        return list(d).index(key)
-    except ValueError:
-        return 9999
 
 
 def get_categories(location: str, setting_type: str, mod_categories=None) -> list[tuple[str, str]]:
