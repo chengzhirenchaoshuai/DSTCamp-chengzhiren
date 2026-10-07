@@ -47,16 +47,17 @@ def _client_only_keys() -> set[str]:
     return keys
 
 
-def start_sync(ctx, parent=None, on_done=None) -> None:
-    """后台同步一次；parent 不为空时在其窗口上提示结果，on_done(report) 在界面线程回调。"""
+def start_sync(ctx, parent=None, on_done=None) -> bool:
+    """后台同步一次；parent 不为空时在其窗口上提示结果。on_done(report) 在界面线程回调，失败时 report 为 None、
+    原因见 last_error。返回 False 表示同步不可用（未开启或找不到账号目录），此时不会回调。"""
     if not sync_available(ctx):
-        return
+        return False
     if on_done is not None:
         _state["callbacks"].append(on_done)
     if _state["running"]:
         _state["rerun"] = True
         _state["parent"] = parent if parent is not None else _state["parent"]
-        return
+        return True
     user_dir, account = game_account(ctx)
     _state["running"] = True
     # 本轮只回调开始前登记的；运行中新登记的留给补跑那一轮（它们要看到补跑后的状态）
@@ -70,18 +71,29 @@ def start_sync(ctx, parent=None, on_done=None) -> None:
     def finish(report) -> None:
         _state["running"] = False
         if report is not None:
+            _state["last_error"] = ""
             last_states.clear()
             last_states.update(report.states)
             if parent is not None:
                 _notify(parent, report)
-            for callback in run_callbacks:
-                callback(report)
+        for callback in run_callbacks:
+            callback(report)
         if _state["rerun"]:
             rerun_parent = _state["parent"]
             _state["rerun"], _state["parent"] = False, None
             start_sync(ctx, rerun_parent)
 
-    run_async(work, finish, lambda _exc: finish(None))
+    def fail(exc: Exception) -> None:
+        _state["last_error"] = str(exc) or type(exc).__name__
+        finish(None)
+
+    run_async(work, finish, fail)
+    return True
+
+
+def last_error() -> str:
+    """最近一次同步失败的原因（成功后清空）。"""
+    return _state.get("last_error", "")
 
 
 def _notify(parent, report) -> None:

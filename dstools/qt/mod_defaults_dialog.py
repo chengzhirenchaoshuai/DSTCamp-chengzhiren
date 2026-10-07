@@ -6,6 +6,9 @@
 非模态打开：其中弹出的配置弹窗挂在主窗口下，本弹窗若是模态会挡住它。
 """
 
+import re
+import time
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
@@ -24,6 +27,9 @@ from dstools.qt.widgets import Card, PillTabBar
 from dstools.shared.resource_paths import bundled_resource_dir
 
 _FILTER_DEBOUNCE_MS = 150
+_LOG_LINES_SHOWN = 300
+# sync.log 里的游戏配置文件名（冲突行后面紧跟全角冒号）
+_FILE_NAME_RE = re.compile(r"modconfiguration_[^\s：:]+")
 _ICON_SIZE = 56
 _DEFAULT_ICON_PATH = bundled_resource_dir() / "icons" / "ui" / "mod_icon_default.png"
 # 状态 -> (文案键, 颜色键)
@@ -181,6 +187,12 @@ class GlobalDefaultsDialog(dialogs.Dialog):
         self._sync_line.setWordWrap(True)
         self._sync_line.setFont(theme.font("FONT_SIZE_XS", bold=True))
         intro_box.addWidget(self._sync_line)
+        # 最近一次同步的进度/结果（同步中、完成摘要或失败原因）
+        self._result_line = QLabel()
+        self._result_line.setWordWrap(True)
+        self._result_line.setFont(theme.font("FONT_SIZE_XS"))
+        self._result_line.setVisible(False)
+        intro_box.addWidget(self._result_line)
         self.body.addWidget(intro)
 
         tools = QHBoxLayout()
@@ -227,9 +239,12 @@ class GlobalDefaultsDialog(dialogs.Dialog):
         rescan.clicked.connect(lambda: self.load(force=True))
         close = dialogs.style_button(QPushButton(t("mod.back")), "secondary")
         close.clicked.connect(self.close)
+        log_btn = dialogs.style_button(QPushButton(t("mod.global_defaults_log")), "secondary")
+        log_btn.clicked.connect(self._show_log)
+        self._syncing = False
         self._sync_btn = QPushButton(t("mod.default_config_sync_now"))
-        self._sync_btn.clicked.connect(lambda: self.page._start_config_sync(notify=True))
-        self.add_footer(left=(close, rescan), right=(self._sync_btn,))
+        self._sync_btn.clicked.connect(self._sync_now)
+        self.add_footer(left=(close, rescan, log_btn), right=(self._sync_btn,))
         self._default_icon = QPixmap(str(_DEFAULT_ICON_PATH)) if _DEFAULT_ICON_PATH.exists() else None
 
     # ── 加载 ────────────────────────────────────────────────────────────
@@ -286,7 +301,81 @@ class GlobalDefaultsDialog(dialogs.Dialog):
         enabled = sync_available(self.page.ctx)
         self._sync_line.setText(t("mod.global_defaults_sync_on") if enabled else t("mod.default_config_sync_off"))
         self._sync_line.setStyleSheet(f"color: {theme.hex('SUCCESS' if enabled else 'TEXT_MUTED')};")
-        self._sync_btn.setEnabled(enabled)
+        self._sync_btn.setEnabled(enabled and not self._syncing)
+
+    # ── 同步进度与结果 ──────────────────────────────────────────────────
+    def _sync_now(self) -> None:
+        if not self.page._start_config_sync(notify=False):
+            self._refresh_sync_line()
+            dialogs.show_warning(self, t("mod.default_config_sync_now"), t("mod.default_config_sync_off"))
+
+    def _set_result(self, text: str, color_key: str) -> None:
+        self._result_line.setText(text)
+        self._result_line.setStyleSheet(f"color: {theme.hex(color_key)};")
+        self._result_line.setVisible(True)
+
+    def set_syncing(self) -> None:
+        """同步已发起（本弹窗按钮或保存默认配置后自动触发）：按钮禁用并显示进度。"""
+        self._syncing = True
+        self._sync_btn.setEnabled(False)
+        self._sync_btn.setText(t("mod.global_defaults_syncing_btn"))
+        self.setCursor(Qt.CursorShape.BusyCursor)
+        self._set_result(t("mod.global_defaults_syncing"), "ACCENT")
+
+    def on_sync_done(self, report) -> None:
+        """同步结束：恢复按钮，显示本次结果摘要并刷新各行状态；report 为 None 表示失败。"""
+        from dstools.qt.mod_config_sync import last_error
+
+        self._syncing = False
+        self.unsetCursor()
+        self._sync_btn.setText(t("mod.default_config_sync_now"))
+        self._refresh_sync_line()
+        stamp = time.strftime("%H:%M:%S")
+        if report is None:
+            self._set_result(t("mod.global_defaults_sync_failed", time=stamp, error=last_error() or "?"), "ERROR")
+            return
+        parts = []
+        for items, key in ((report.pulled, "mod.config_sync_pulled"), (report.pushed, "mod.config_sync_pushed"),
+                           (report.pending, "mod.config_sync_pending"), (report.conflicts, "mod.global_defaults_conflicts"),
+                           (report.errors, "mod.global_defaults_errors")):
+            if items:
+                parts.append(t(key, count=len(items)))
+        detail = " · ".join(parts) if parts else t("mod.global_defaults_up_to_date")
+        color = "ERROR" if report.errors else ("ACCENT" if report.pending else "SUCCESS")
+        text = t("mod.global_defaults_sync_result", time=stamp, detail=detail)
+        if report.pending:
+            text += "\n" + t("mod.global_defaults_pending_hint")
+        self._set_result(text, color)
+        self.refresh_states()
+
+    def _show_log(self) -> None:
+        """同步日志：最新在前，文件名替换为 Mod 名称。"""
+        from dstools.features.mod.config_memory import memory_dir
+
+        try:
+            lines = (memory_dir() / "sync.log").read_text(encoding="utf-8").splitlines()
+        except OSError:
+            lines = []
+        log = dialogs.LogDialog(self, t("mod.global_defaults_log"), closable=True)
+        if not lines:
+            log.append(t("mod.global_defaults_log_empty"))
+        for line in reversed(lines[-_LOG_LINES_SHOWN:]):
+            # 行格式"日期 时间 动作 文件…"，动作为 拉取/推送/冲突/错误（见 config_memory.append_log）
+            action = line.split(" ", 3)[2] if line.count(" ") >= 3 else ""
+            tag = {"错误": "result_error", "冲突": "result_warning"}.get(action)
+            log.append(_FILE_NAME_RE.sub(lambda m: self._file_display_name(m.group(0)), line), tag)
+        log.scroll_to_start()
+        log.finish()
+        log.exec()
+
+    def _file_display_name(self, file_name: str) -> str:
+        key = file_name[len("modconfiguration_"):]
+        client = key.endswith("_CLIENT")
+        key = key.removesuffix("_CLIENT")
+        info = self._infos.get(key)
+        name = localize_mod_name(key, info.name) if info else ""
+        label = f"{name} [{key}]" if name else key
+        return label + (" (CLIENT)" if client else "")
 
     def refresh_states(self) -> None:
         """按记忆与最近一次同步结果刷新每行的状态标签与计数。"""

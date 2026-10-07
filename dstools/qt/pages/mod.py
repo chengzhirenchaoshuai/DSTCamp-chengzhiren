@@ -891,9 +891,18 @@ class ModPage(Page):
         self._refresh_global_defaults()
         self._start_config_sync(notify=True)
 
-    def _start_config_sync(self, notify: bool = False) -> None:
-        start_config_sync(self.ctx, self if notify else None,
-                          on_done=lambda _report: self._refresh_global_defaults())
+    def _start_config_sync(self, notify: bool = False) -> bool:
+        """发起同步；全局默认配置弹窗开着时显示"同步中"并在结束后展示结果。返回同步是否已启动或排队。"""
+        started = start_config_sync(self.ctx, self if notify else None, on_done=self._on_config_sync_done)
+        dialog = self._global_defaults_dialog
+        if started and dialog is not None and dialog.isVisible():
+            dialog.set_syncing()
+        return started
+
+    def _on_config_sync_done(self, report) -> None:
+        # 不判断可见性：同步中途关掉弹窗，也要复位它的"同步中"状态
+        if self._global_defaults_dialog is not None:
+            self._global_defaults_dialog.on_sync_done(report)
 
     def _refresh_global_defaults(self) -> None:
         if self._global_defaults_dialog is not None and self._global_defaults_dialog.isVisible():
