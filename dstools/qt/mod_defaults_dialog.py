@@ -149,7 +149,8 @@ class _ModRow(Card):
         self.chip = QLabel()
         self.chip.setFont(theme.font("FONT_SIZE_XS", bold=True))
         self.chip.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        box.addWidget(self.chip)
+        # 垂直居中按自身高度显示，否则会被拉伸到整行（图标）高度，描边显得很高
+        box.addWidget(self.chip, 0, Qt.AlignmentFlag.AlignVCenter)
         edit_btn = QPushButton(t("mod.default_config_edit"))
         edit_btn.setFont(theme.font("FONT_SIZE_SM"))
         edit_btn.clicked.connect(lambda: dialog.page._open_default_config(key, info))
