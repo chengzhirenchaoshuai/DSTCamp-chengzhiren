@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
 )
 
 from dstools.features.local_service import luajit_injector
@@ -44,9 +44,8 @@ from dstools.qt import dialogs
 from dstools.qt.mod_config_dialog import open_mod_config
 from dstools.qt.mod_config_sync import start_sync as start_config_sync
 from dstools.qt.mod_panel import ModListPanel
-from dstools.qt.mod_defaults_panel import ModDefaultsPanel
-from dstools.qt.mod_presets_dialogs import SavePresetDialog
-from dstools.qt.mod_presets_panel import ModPresetsPanel
+from dstools.qt.mod_defaults_dialog import GlobalDefaultsDialog
+from dstools.qt.mod_presets_dialogs import ApplyPresetDialog, SavePresetDialog
 from dstools.qt.mod_recommend_dialog import RecommendModsDialog
 from dstools.qt.pages.base import Page
 from dstools.qt.theme import theme
@@ -75,7 +74,7 @@ class ModPage(Page):
         self._filter_timer = QTimer(self, singleShot=True, interval=_FILTER_DEBOUNCE_MS)
         self._filter_timer.timeout.connect(self._render_list)
         self._current_shard_name = ""
-        self._show_local = False
+        self._global_defaults_dialog = None
 
         # 更新状态（供 Workshop 更新弹窗共享，避免重复扫描）
         self._workshop_update_running = False
@@ -91,23 +90,9 @@ class ModPage(Page):
         page_layout.setContentsMargins(24, 12, 24, 12)
         card = Card(radius=15, alpha=0, border=True)
         page_layout.addWidget(card)
-        outer = QVBoxLayout(card)
+        root = QVBoxLayout(card)
         # 跟其它主页签统一的内边距。
-        outer.setContentsMargins(15, 13, 15, 13)
-        # 子页签：存档 Mod（按当前存档）/ 默认配置（全局，对应游戏主菜单"模组"）/ 配置集
-        self._view_tabs = PillTabBar([t("mod.view_save"), t("mod.view_defaults"), t("mod.view_presets")],
-                                     height=34, pill_height=26, font_size_key="FONT_SIZE_SM", gap=2, pad=18)
-        self._view_tabs.current_changed.connect(self._on_view_changed)
-        view_row = QHBoxLayout()
-        view_row.addWidget(self._view_tabs)
-        view_row.addStretch()
-        outer.addLayout(view_row)
-        self._view_stack = QStackedWidget()
-        outer.addWidget(self._view_stack, 1)
-        save_view = QWidget()
-        self._view_stack.addWidget(save_view)
-        root = QVBoxLayout(save_view)
-        root.setContentsMargins(0, 0, 0, 0)
+        root.setContentsMargins(15, 13, 15, 13)
 
         location_row = QHBoxLayout()
         location_row.addWidget(QLabel(t("mod.location_label")))
@@ -128,9 +113,9 @@ class ModPage(Page):
         self._shard_combo.setMinimumWidth(160)
         self._shard_combo.activated.connect(self._on_shard_select)
         tool_row.addWidget(self._shard_combo)
-        self._show_local_btn = QPushButton(t("mod.show_local"))
-        self._show_local_btn.clicked.connect(self._toggle_show_local)
-        tool_row.addWidget(self._show_local_btn)
+        self._global_defaults_btn = QPushButton(t("mod.global_defaults_btn"))
+        self._global_defaults_btn.clicked.connect(self._open_global_defaults)
+        tool_row.addWidget(self._global_defaults_btn)
         tool_row.addStretch()
         root.addLayout(tool_row)
 
@@ -141,7 +126,8 @@ class ModPage(Page):
         self._filter_edit.textChanged.connect(lambda _t: self._filter_timer.start())
         filter_row.addWidget(self._filter_edit)
         self._filter_tabs = PillTabBar(
-            [t("mod.show_all"), t("mod.show_enabled"), t("mod.show_disabled"), t("mod.show_custom")],
+            [t("mod.show_all"), t("mod.show_enabled"), t("mod.show_disabled"), t("mod.show_custom"),
+             t("mod.show_client")],
             height=32, pill_height=24, font_size_key="FONT_SIZE_SM", gap=2, pad=16, uniform_width=True)
         self._filter_tabs.current_changed.connect(lambda _i: self._render_list())
         filter_row.addWidget(self._filter_tabs)
@@ -195,6 +181,12 @@ class ModPage(Page):
         root.addWidget(self._list_panel, 1)
 
         bottom_row = QHBoxLayout()
+        self._preset_save_btn = QPushButton(t("mod.preset_save_btn"))
+        self._preset_save_btn.clicked.connect(self._save_as_preset)
+        bottom_row.addWidget(self._preset_save_btn)
+        self._preset_apply_btn = QPushButton(t("mod.preset_apply_btn"))
+        self._preset_apply_btn.clicked.connect(self._apply_preset_dialog)
+        bottom_row.addWidget(self._preset_apply_btn)
         bottom_row.addStretch()
         self._save_btn = QPushButton(t("mod.save_btn"))
         self._save_btn.setEnabled(False)
@@ -216,14 +208,10 @@ class ModPage(Page):
         bottom_row.addWidget(self._workshop_update_btn)
         # 跟本地服务器页"全部启动/全部停止/..."一排操作按钮统一字号（方角已经是
         # 全局默认样式，这里只需要再调小字号）。
-        for button in (self._save_btn, self._apply_current_btn, self._workshop_update_btn):
+        for button in (self._preset_save_btn, self._preset_apply_btn, self._save_btn,
+                      self._apply_current_btn, self._workshop_update_btn):
             button.setFont(theme.font("FONT_SIZE_SM"))
         root.addLayout(bottom_row)
-
-        self._defaults_panel = ModDefaultsPanel(self)
-        self._view_stack.addWidget(self._defaults_panel)
-        self._presets_panel = ModPresetsPanel(self)
-        self._view_stack.addWidget(self._presets_panel)
 
         ctx.pending_enabled_mod_ids = self.get_pending_enabled_mod_ids
         ctx.workshop_mods_changed.connect(self._on_workshop_mods_changed)
@@ -272,8 +260,10 @@ class ModPage(Page):
         save_state = self._editable(c) and self._dirty
         self._save_btn.setEnabled(save_state)
         self._apply_current_btn.setEnabled(save_state and is_server)
-        self._export_image_btn.setEnabled(is_server)
-        self._presets_panel.refresh()
+        preset_state = is_server
+        self._preset_save_btn.setEnabled(preset_state)
+        self._preset_apply_btn.setEnabled(preset_state)
+        self._export_image_btn.setEnabled(preset_state)
         if is_server:
             self._local_banner.set_text("")
         elif self._local_shardindex(c):
@@ -320,11 +310,6 @@ class ModPage(Page):
         app_settings.set_mod_list_columns(columns)
         self._list_panel.set_column_count(columns)
 
-    def _toggle_show_local(self) -> None:
-        self._show_local = not self._show_local
-        self._show_local_btn.setText(t("mod.back_to_list") if self._show_local else t("mod.show_local"))
-        self._render_list()
-
     def _reload_full(self) -> None:
         self._refresh_mods(full=True)
 
@@ -332,7 +317,6 @@ class ModPage(Page):
         self.on_cluster_changed(self.get_cluster())
 
     def retranslate(self) -> None:
-        self._defaults_panel.retranslate()
         self.on_cluster_changed(self.get_cluster())
 
     # ── Mod 位置 / 同步到服务器 ──────────────────────────────────────────
@@ -781,10 +765,12 @@ class ModPage(Page):
         cluster = self.get_cluster()
         platform = cluster.platform if cluster else Platform.STEAM
         locked_id = luajit_injector.WORKSHOP_MOD_KEY if self._luajit_mod_locked else None
-        show_map = {0: "all", 1: "enabled", 2: "disabled", 3: "custom"}
-        rows = build_mod_rows(self._mod_data, self._mod_infos, self._filter_edit.text(),
-                              show_map[self._filter_tabs.current_index()], platform,
-                              show_local=self._show_local, separate_client_mods=True, locked_mod_id=locked_id)
+        show_map = {0: "all", 1: "enabled", 2: "disabled", 3: "custom", 4: "client"}
+        show = show_map[self._filter_tabs.current_index()]
+        # "全部"同时列出客户端模组；"客户端模组"只列它们；其余筛选只看服务端 Mod
+        rows = build_mod_rows(self._mod_data, self._mod_infos, self._filter_edit.text(), show, platform,
+                              show_local=show == "client", separate_client_mods=show != "all",
+                              locked_mod_id=locked_id)
         from dstools.features.mod.parser import detect_mod_format, find_workshop_dir
 
         workshop_root = find_workshop_dir()
@@ -899,14 +885,28 @@ class ModPage(Page):
         try:
             remember(workshop_id, dict(options), replace=True)
         except OSError as exc:
-            dialogs.show_error(self.window(), t("mod.view_defaults"), str(exc))
+            dialogs.show_error(self.window(), t("mod.global_defaults_btn"), str(exc))
             return
-        self._defaults_panel.refresh_states()
+        self._refresh_global_defaults()
         self._start_config_sync(notify=True)
 
     def _start_config_sync(self, notify: bool = False) -> None:
         start_config_sync(self.ctx, self if notify else None,
-                          on_done=lambda _report: self._defaults_panel.refresh_states())
+                          on_done=lambda _report: self._refresh_global_defaults())
+
+    def _refresh_global_defaults(self) -> None:
+        if self._global_defaults_dialog is not None and self._global_defaults_dialog.isVisible():
+            self._global_defaults_dialog.refresh_states()
+
+    def _open_global_defaults(self) -> None:
+        """全局默认配置弹窗（非模态：其中打开的配置弹窗挂在主窗口下，模态会挡住它）；只保留一个实例。"""
+        if self._global_defaults_dialog is None:
+            self._global_defaults_dialog = GlobalDefaultsDialog(self)
+        dialog = self._global_defaults_dialog
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+        dialog.load()
 
     def _on_link(self, workshop_id: str) -> None:
         numeric_id = workshop_id.replace("workshop-", "")
@@ -1048,13 +1048,11 @@ class ModPage(Page):
             return
         SavePresetDialog(self).exec()
 
-    def _on_view_changed(self, index: int) -> None:
-        self._view_stack.setCurrentIndex(index)
-        if index == 1:
-            self._defaults_panel.load()
-            self._defaults_panel.refresh_states()
-        elif index == 2:
-            self._presets_panel.refresh()
+    def _apply_preset_dialog(self) -> None:
+        if self._loading:
+            dialogs.show_info(self.window(), t("mod.preset_apply_btn"), t("mod.loading"))
+            return
+        ApplyPresetDialog(self).exec()
 
     # ── Workshop 更新 ────────────────────────────────────────────────────
     def _export_mod_list_image(self) -> None:
