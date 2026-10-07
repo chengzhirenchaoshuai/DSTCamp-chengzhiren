@@ -464,8 +464,8 @@ IA_SHIPWRECKED_SETTINGS: dict[str, ModWorldSetting] = {
 #   - temperate/humid/lush 用 season_length_descriptions 七档；
 #   - 中文名：scripts/languages/pl_chinese_s.po；
 #   - 图标：images/hud/customization_porkland.xml（全部条目统一指向该图集，40 项已核对）。
-# 注意：poison 与岛屿冒险的 poison 撞名但含义不同；overrides 是全局扁平命名空间，
-# 同时启用时以合并顺序（后登记覆盖）为准，这是游戏本身的行为。
+# 注意：poison 与岛屿冒险的 poison 撞名但含义不同；本体 AddCustomizeItem 遇到已注册的 name 直接
+# return，同时启用时界面上只有先加载的 Mod（岛屿冒险核心 priority 5）那一条，见 get_mod_world_settings。
 _PORKLAND_ID = "3322803908"
 
 # 原版 monsters/animals 组的默认 desc，以及这个 mod 自己复刻的
@@ -892,6 +892,16 @@ MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
     _BWB_ID: BENEATH_WORLD_BELOW_SETTINGS,
 }
 
+# workshop id -> modinfo.lua 的 priority（未写按 0），本体 mods.lua 按它降序加载 Mod，
+# 决定同名世界设置谁先注册。同 priority 时游戏按 modinfo.name 排序，已登记的 Mod 之间没有这种情况。
+MOD_LOAD_PRIORITY: dict[str, float] = {
+    _CHERRY_FOREST_ID: 0,
+    _IA_CORE_ID: 5,
+    _IA_SHIPWRECKED_ID: 4,
+    _PORKLAND_ID: -1,
+    _BWB_ID: -9999999,
+}
+
 # 深埋之下在前端修改了原版 OPTIONS：隐藏"大蠕虫"，把"石虾""洞穴蠕虫袭击"排到新增项之前。
 # 已有存档里的 override 仍保留，只是不再作为可编辑项展示。
 MOD_VANILLA_WORLD_PATCHES = {
@@ -930,21 +940,26 @@ def get_mod_world_settings(
     location: str | None = None,
     is_master_world: bool = True,
 ) -> dict[str, ModWorldSetting]:
-    """合并 ``enabled_mod_ids``（纯数字 ID）中已登记 Mod 的世界设置；同名 key 后登记覆盖先登记
-    （与游戏 overrides 全局扁平命名空间一致）。"""
+    """合并 ``enabled_mod_ids``（纯数字 ID）中已登记 Mod 的世界设置。
+
+    按游戏加载顺序（MOD_LOAD_PRIORITY 降序）合并，同名 key 先注册的生效：本体 customize.lua 的
+    AddCustomizeItem 开头 ``if GetItemFromName(name) ~= nil then return end``。先全量合并再按
+    location 过滤，否则先注册项在当前世界不可见时会错误露出后注册的同名项。"""
     normalized = {str(mod_id).removeprefix("workshop-") for mod_id in enabled_mod_ids}
     merged: dict[str, ModWorldSetting] = {}
-    for mod_id, settings in MOD_WORLD_SETTINGS.items():
-        if mod_id not in normalized:
-            continue
+    ordered_ids = sorted(
+        (mod_id for mod_id in MOD_WORLD_SETTINGS if mod_id in normalized),
+        key=lambda mod_id: -MOD_LOAD_PRIORITY.get(mod_id, 0),
+    )
+    for mod_id in ordered_ids:
+        settings = dict(MOD_WORLD_SETTINGS[mod_id])
+        if mod_id == _BWB_ID and normalized.intersection(_BWB_DSTU_IDS):
+            settings.update(BENEATH_WORLD_BELOW_DSTU_SETTINGS)
         for key, info in settings.items():
-            if location is None or info.visible_in(location, is_master_world):
-                merged[key] = info
-    if _BWB_ID in normalized and normalized.intersection(_BWB_DSTU_IDS):
-        for key, info in BENEATH_WORLD_BELOW_DSTU_SETTINGS.items():
-            if location is None or info.visible_in(location, is_master_world):
-                merged[key] = info
-    return merged
+            merged.setdefault(key, info)
+    if location is None:
+        return merged
+    return filter_mod_world_settings(merged, location, is_master_world)
 
 
 def get_mod_vanilla_world_patches(

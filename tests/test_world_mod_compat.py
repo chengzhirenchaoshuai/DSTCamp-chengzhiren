@@ -157,6 +157,11 @@ def test_setting_location_isolation() -> None:
     assert "shipwrecked_season_start" in island_master
     assert "shipwrecked_season_start" not in island_secondary
 
+    # 同名 poison 先注册（岛屿冒险核心 priority 5）的生效；它在非主分片不可见时也不能露出猪镇那条
+    both = {IA_CORE_MOD_ID, PORKLAND_MOD_ID}
+    assert get_mod_world_settings(both, PORKLAND_LOCATION, True)["poison"].mod_id == IA_CORE_MOD_ID
+    assert "poison" not in get_mod_world_settings(both, PORKLAND_LOCATION, False)
+
     bwb_forest = get_mod_world_settings({"3360553731"}, FOREST_LOCATION, True)
     bwb_cave = get_mod_world_settings({"3360553731"}, CAVE_LOCATION, True)
     bwb_secondary = get_mod_world_settings({"3360553731"}, CAVE_LOCATION, False)
