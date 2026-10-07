@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from dstools.features.local_service import luajit_injector
 from dstools.features.local_service.dedicated_server import detect_external_shard_processes, find_bin64_dir
 from dstools.features.mod.cache import load_cached_result, save_result
+from dstools.features.mod.config_memory import recall, recall_for, remember
 from dstools.features.mod.icons import get_cached_mod_icon_path, get_mod_icon_path, load_mod_icon_image
 from dstools.features.mod.legacy_v1 import find_legacy_packages, materialize_legacy_package_for_read
 from dstools.features.mod.list_model import (
@@ -41,6 +42,7 @@ from dstools.i18n import t
 from dstools.models import ModEntry, ModOverrides, Platform, SaveSource
 from dstools.qt import dialogs
 from dstools.qt.mod_config_dialog import open_mod_config
+from dstools.qt.mod_config_sync import start_sync as start_config_sync, sync_available
 from dstools.qt.mod_panel import ModListPanel
 from dstools.qt.mod_presets_dialogs import ApplyPresetDialog, SavePresetDialog
 from dstools.qt.mod_recommend_dialog import RecommendModsDialog
@@ -286,6 +288,10 @@ class ModPage(Page):
             self._current_shard_name = ""
         self._shard_combo.blockSignals(False)
         self._refresh_mods()
+
+    def load(self) -> None:
+        super().load()
+        start_config_sync(self.ctx, self)
 
     def _wegame_root_missing(self, cluster) -> bool:
         if not cluster or cluster.platform != Platform.WEGAME:
@@ -823,6 +829,9 @@ class ModPage(Page):
         if not mod:
             return
         mod.enabled = not mod.enabled
+        if mod.enabled and not mod.configuration_options:
+            # 存档里还没有这个 Mod 的配置：套用配置记忆（DSTCamp 或游戏里最近一次的配置）
+            mod.configuration_options = recall_for(workshop_id, self._mod_infos.get(workshop_id))
         normalized_id = str(workshop_id).removeprefix("workshop-")
         if normalized_id == IA_SHIPWRECKED_MOD_ID and mod.enabled:
             core_key = find_mod_key(self._mod_data, IA_CORE_MOD_ID)
@@ -857,9 +866,25 @@ class ModPage(Page):
             return
         if not mod_info.config_options and not mod_info.unsupported_schema:
             return
-        read_only = mod_info.client_only or not self._editable(self.get_cluster())
-        reason = "client_only" if mod_info.client_only else "local_save"
-        open_mod_config(self, workshop_id, mod, mod_info, read_only, reason)
+        if mod_info.client_only:
+            # 纯客户端 Mod 的配置只存在游戏客户端（不进存档）：开启同步时编辑记忆中的副本，应用后推送到游戏
+            read_only = not sync_available(self.ctx)
+            if not read_only:
+                mod = ModEntry(workshop_id=workshop_id, enabled=mod.enabled,
+                               configuration_options=recall(workshop_id) or {})
+            open_mod_config(self, workshop_id, mod, mod_info, read_only, "client_only")
+            return
+        read_only = not self._editable(self.get_cluster())
+        open_mod_config(self, workshop_id, mod, mod_info, read_only, "local_save")
+
+    def _remember_config(self, workshop_id: str, options: dict) -> None:
+        """记住在 DSTCamp 中应用的配置，并触发与游戏的同步（游戏关闭时立即推送）。"""
+        try:
+            remember(workshop_id, dict(options))
+        except OSError as exc:
+            dialogs.show_toast(self, str(exc))
+            return
+        start_config_sync(self.ctx, self)
 
     def _on_link(self, workshop_id: str) -> None:
         numeric_id = workshop_id.replace("workshop-", "")

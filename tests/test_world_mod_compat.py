@@ -474,6 +474,7 @@ def _main_mod_dependency_page() -> ModPage:
     tab.get_cluster = lambda: SimpleNamespace(source=SaveSource.SERVER)
     tab.window = lambda: None
     tab._luajit_mod_locked = False
+    tab._mod_infos = {}
     tab._mod_data = {
         f"workshop-{IA_SHIPWRECKED_MOD_ID}": ModEntry(
             workshop_id=f"workshop-{IA_SHIPWRECKED_MOD_ID}", enabled=False,

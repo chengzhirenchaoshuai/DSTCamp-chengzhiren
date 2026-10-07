@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 
 from dstools.features.mod import chs_translation
 from dstools.features.mod.cache import load_cached_result, save_result
+from dstools.features.mod.config_memory import recall_for, same_value
 from dstools.features.mod.parser import (
     find_mod_folder, resolve_config_value, resolve_full_modinfo, visible_config_options,
 )
@@ -126,6 +127,8 @@ class ModConfigDialog(QDialog):
         if read_only:
             banner_key = "mod.read_only_local" if read_only_reason == "client_only" else "mod.read_only_local_save"
             root.addWidget(self._banner(t(banner_key), "#607d8b"))
+        elif mod_info.client_only:
+            root.addWidget(self._banner(t("mod.client_only_sync_banner"), "#607d8b"))
         if mod_info.unsupported_schema:
             root.addWidget(self._banner(t("mod.unsupported_schema"), theme.hex("ERROR")))
         elif remaining_dynamic:
@@ -207,6 +210,10 @@ class ModConfigDialog(QDialog):
             reset_btn = dialogs.style_button(QPushButton(t("mod.reset")), "secondary")
             reset_btn.clicked.connect(self._reset)
             btn_row.addWidget(reset_btn)
+            if recall_for(workshop_id, mod_info):
+                import_btn = dialogs.style_button(QPushButton(t("mod.import_memory_btn")), "secondary")
+                import_btn.clicked.connect(self._import_memory)
+                btn_row.addWidget(import_btn)
         btn_row.addStretch()
         if not read_only:
             apply_btn = QPushButton(t("mod.apply"))
@@ -483,8 +490,11 @@ class ModConfigDialog(QDialog):
         return lines
 
     def _reset_raw_widget(self, opt, kind: str, data: dict) -> None:
+        self._fill_raw_widget(kind, data, opt.default)
+
+    def _fill_raw_widget(self, kind: str, data: dict, value: Any) -> None:
         if kind == "text":
-            data["edit"].setText("" if opt.default is None else str(opt.default))
+            data["edit"].setText("" if value is None else str(value))
             return
         for i in reversed(range(data["items_layout"].count())):
             item = data["items_layout"].takeAt(i)
@@ -494,11 +504,11 @@ class ModConfigDialog(QDialog):
                 widget.deleteLater()
         data["edits"].clear()
         if kind == "dict":
-            for key, value in self._raw_value_to_pairs(opt.default):
-                data["add_row"](key, value)
+            for key, item in self._raw_value_to_pairs(value):
+                data["add_row"](key, item)
             return
-        for value in self._raw_value_to_lines(kind, opt.default):
-            data["add_row"](value)
+        for item in self._raw_value_to_lines(kind, value):
+            data["add_row"](item)
 
     # ── 应用 / 重置 ─────────────────────────────────────────────────────
     def _reset(self) -> None:
@@ -517,24 +527,70 @@ class ModConfigDialog(QDialog):
                     self.vars[opt.name].setCurrentIndex(idx)
                     break
 
-    def _apply(self) -> None:
+    def _collect_values(self) -> dict:
+        """读取界面上各配置项的当前值。"""
+        values = {}
         for opt in self.mod_info.config_options:
             if opt.is_header:
                 continue
             if opt.name in self.raw_widgets:
                 kind, data = self.raw_widgets[opt.name]
-                self.mod.configuration_options[opt.name] = self._read_raw_widget_value(kind, data)
+                values[opt.name] = self._read_raw_widget_value(kind, data)
                 continue
             if opt.name not in self.vars:
                 continue
-            combo = self.vars[opt.name]
             datas = self.choice_maps[opt.name]
-            idx = combo.currentIndex()
+            idx = self.vars[opt.name].currentIndex()
             if 0 <= idx < len(datas):
-                self.mod.configuration_options[opt.name] = datas[idx]
+                values[opt.name] = datas[idx]
+        return values
+
+    def _import_memory(self) -> None:
+        """把配置记忆（DSTCamp 或游戏里最近一次的配置）填进界面，先列出差异确认；仍需"应用"才保存。"""
+        memory = recall_for(self.workshop_id, self.mod_info)
+        current = self._collect_values()
+        changes = [opt for opt in self.mod_info.config_options
+                   if not opt.is_header and opt.name in memory and opt.name in current
+                   and not same_value(current[opt.name], memory[opt.name])]
+        if not changes:
+            dialogs.show_info(self, t("mod.import_memory_btn"), t("mod.import_memory_none"))
+            return
+        lines = [f"{opt.label or opt.name}: {self._describe(opt, current[opt.name])} → "
+                 f"{self._describe(opt, memory[opt.name])}" for opt in changes[:15]]
+        if len(changes) > 15:
+            lines.append(t("mod.import_memory_more", count=len(changes) - 15))
+        if not dialogs.ask_yes_no(self, t("mod.import_memory_btn"),
+                                  t("mod.import_memory_confirm", changes="\n".join(lines))):
+            return
+        for opt in changes:
+            value = memory[opt.name]
+            if opt.name in self.raw_widgets:
+                kind, data = self.raw_widgets[opt.name]
+                self._fill_raw_widget(kind, data, value)
+                continue
+            for idx, data in enumerate(self.choice_maps[opt.name]):
+                if same_value(data, value):
+                    self.vars[opt.name].setCurrentIndex(idx)
+                    break
+
+    @staticmethod
+    def _describe(opt, value: Any) -> str:
+        for choice in opt.choices:
+            if same_value(choice.get("data"), value):
+                return str(choice.get("description") or value)
+        return str(value)
+
+    def _apply(self) -> None:
+        self.mod.configuration_options.update(self._collect_values())
+        if self.mod_info.client_only:
+            # 纯客户端 Mod 不进存档，只记入配置记忆并推送到游戏客户端
+            self.page._remember_config(self.workshop_id, self.mod.configuration_options)
+            self.close()
+            return
         # 立刻写进当前世界的 modoverrides.lua（跟游戏内配置界面一致）；"应用到所有
         # 世界"还没做，标脏让 保存/应用 按钮保持可点。
         self.page._mark_dirty()
         self.page._save_mods(silent=True)
+        self.page._remember_config(self.workshop_id, self.mod.configuration_options)
         self.page._render_list()
         self.close()

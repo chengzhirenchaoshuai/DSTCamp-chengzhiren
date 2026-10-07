@@ -33,8 +33,9 @@ from dstools.qt.threads import post_to_ui, run_async
 from dstools.qt.self_update import SelfUpdater, is_update_available
 from dstools.qt.widgets import FrostedMenu, Grip, PillTabBar, ThemeMenuItem, TitleButton
 from dstools.shared.app_settings import (
-    get_creation_wizard_size, get_minimize_on_close, get_remind_update_enabled, get_window_position,
-    get_window_size, set_creation_wizard_size, set_minimize_on_close, set_window_position, set_window_size,
+    get_creation_wizard_size, get_minimize_on_close, get_mod_config_sync_enabled, get_remind_update_enabled,
+    get_window_position, get_window_size, set_creation_wizard_size, set_minimize_on_close,
+    set_mod_config_sync_enabled, set_window_position, set_window_size,
 )
 from dstools.shared.resource_paths import bundled_resource_dir
 from dstools.shared.single_instance import activate_message_id, version_code
@@ -217,6 +218,8 @@ class MenuStrip(QWidget):
         self._bg_settings_action.setText(t("theme.custom_bg_settings"))
         self._font_settings_action.setText(t("theme.font_settings"))
         self._minimize_action.setText(t("settings.minimize_on_close_label"))
+        self._mod_sync_action.setText(t("settings.mod_config_sync_label"))
+        self._mod_sync_action.setToolTip(t("settings.mod_config_sync_hint"))
         self._defender_action.setText(t("settings.defender_label"))
         self._cache_dir_action.setText(t("settings.cache_dir_label"))
         self._lang_menu.setTitle(t("settings.language_label"))
@@ -284,6 +287,14 @@ class MenuStrip(QWidget):
         self._font_settings_action = font_settings
         return menu
 
+    def _on_settings_menu_hovered(self, action) -> None:
+        if action is self._mod_sync_action:
+            menu = self.sender()
+            rect = menu.actionGeometry(action)
+            QToolTip.showText(menu.mapToGlobal(rect.topRight()) + QPoint(8, 0), action.toolTip(), menu)
+        else:
+            QToolTip.hideText()
+
     def _settings_menu(self) -> QMenu:
         menu = FrostedMenu(self)
         lang_menu = FrostedMenu(t("settings.language_label"), self)
@@ -304,6 +315,13 @@ class MenuStrip(QWidget):
         minimize.triggered.connect(lambda checked: set_minimize_on_close(bool(checked)))
         menu.addAction(minimize)
         self._minimize_action = minimize
+        mod_sync = QAction(t("settings.mod_config_sync_label"), self, checkable=True)
+        mod_sync.setChecked(get_mod_config_sync_enabled())
+        mod_sync.setToolTip(t("settings.mod_config_sync_hint"))
+        mod_sync.triggered.connect(lambda checked: set_mod_config_sync_enabled(bool(checked)))
+        menu.addAction(mod_sync)
+        self._mod_sync_action = mod_sync
+        menu.hovered.connect(self._on_settings_menu_hovered)
         defender = QAction(t("settings.defender_label"), self)
         defender.triggered.connect(self._window.show_defender_dialog)
         menu.addAction(defender)

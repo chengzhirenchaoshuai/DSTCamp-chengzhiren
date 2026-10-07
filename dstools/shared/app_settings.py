@@ -37,6 +37,7 @@ _KEY_SAKURA_LAST_NODE = "sakura_last_node_id"
 _KEY_LUAJIT_ENABLED = "luajit_enabled"
 _KEY_MOD_LIST_COLUMNS = "mod_list_columns"
 MOD_LIST_COLUMN_CHOICES = (1, 2, 3)
+_KEY_MOD_CONFIG_SYNC = "mod_config_sync_enabled"
 _KEY_LAST_PLATFORM = "last_platform"
 _KEY_NAT_SUB_TAB = "nat_sub_tab"
 _DEFAULT_NAT_SUB_TAB = "sakura"
@@ -497,6 +498,17 @@ def get_mod_list_columns() -> int:
 def set_mod_list_columns(value: int) -> None:
     data = load_settings()
     data[_KEY_MOD_LIST_COLUMNS] = value if value in MOD_LIST_COLUMN_CHOICES else 1
+    save_settings(data)
+
+
+def get_mod_config_sync_enabled() -> bool:
+    """Mod 配置记忆与游戏客户端 mod_config_data 双向同步，默认开启。"""
+    return bool(load_settings().get(_KEY_MOD_CONFIG_SYNC, True))
+
+
+def set_mod_config_sync_enabled(enabled: bool) -> None:
+    data = load_settings()
+    data[_KEY_MOD_CONFIG_SYNC] = bool(enabled)
     save_settings(data)
 
 

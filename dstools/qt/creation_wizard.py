@@ -818,6 +818,17 @@ class CreationWizardDialog(QDialog):
     def _save_mods(self, silent: bool = False) -> None:
         self._sync_mod_overrides()
 
+    def _remember_config(self, workshop_id: str, options: dict) -> None:
+        """配置弹窗"应用"后调用：记入 Mod 配置记忆并与游戏同步（同 Mod 页）。"""
+        from dstools.features.mod.config_memory import remember
+        from dstools.qt.mod_config_sync import start_sync
+
+        try:
+            remember(workshop_id, dict(options))
+        except OSError:
+            return
+        start_sync(self.ctx, self)
+
     def _sync_mod_overrides(self) -> None:
         self._mod_overrides = {}
         for mod_id, mod in self._mod_data.items():
@@ -1014,6 +1025,10 @@ class CreationWizardDialog(QDialog):
             return
         self._dirty = True
         mod.enabled = not mod.enabled
+        if mod.enabled and not mod.configuration_options:
+            # 还没配置过：套用配置记忆（DSTCamp 或游戏里最近一次的配置）
+            from dstools.features.mod.config_memory import recall_for
+            mod.configuration_options = recall_for(mod_id, self._mod_infos.get(mod_id))
         if mod.enabled:
             self._selected_mod_ids.add(mod_id)
         else:

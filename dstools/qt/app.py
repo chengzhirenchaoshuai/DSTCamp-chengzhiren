@@ -63,6 +63,9 @@ def main() -> int:
     window.start_update_check()
     # 延迟到主窗口渲染稳定后再弹缓存目录警告，避免弹窗抢在窗口还没显示完整前出现
     QTimer.singleShot(500, window.check_cache_dir_on_startup)
+    # Mod 配置记忆与游戏客户端同步：启动时静默跑一次（结果写 sync.log），打开 Mod 页时再跑并提示
+    from dstools.qt.mod_config_sync import start_sync
+    QTimer.singleShot(2000, lambda: start_sync(window.ctx))
     return app.exec()
 
 

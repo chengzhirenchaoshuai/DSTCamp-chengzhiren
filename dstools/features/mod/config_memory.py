@@ -58,7 +58,7 @@ def save_memory(data: dict, path: Path | None = None) -> None:
     tmp.replace(path)
 
 
-def _same_value(a: Any, b: Any) -> bool:
+def same_value(a: Any, b: Any) -> bool:
     """严格比较：Python 中 True == 1，但对 Mod 配置是不同的值。"""
     if isinstance(a, bool) or isinstance(b, bool):
         return type(a) is type(b) and a == b
@@ -70,7 +70,7 @@ def _same_value(a: Any, b: Any) -> bool:
 def same_values(a: dict | None, b: dict | None) -> bool:
     if a is None or b is None:
         return False
-    return all(_same_value(a[k], b[k]) for k in a.keys() & b.keys())
+    return all(same_value(a[k], b[k]) for k in a.keys() & b.keys())
 
 
 # ── DSTCamp 一方 ────────────────────────────────────────────────────────
@@ -108,9 +108,20 @@ def sanitize_values(values: dict, mod_info) -> dict:
         value = values[opt.name]
         free_form = (opt.is_dynamic or opt.is_set_config or opt.is_array_config
                      or opt.is_text_config or opt.is_dictionary_config or not opt.choices)
-        if free_form or any(_same_value(choice.get("data"), value) for choice in opt.choices):
+        if free_form or any(same_value(choice.get("data"), value) for choice in opt.choices):
             result[opt.name] = value
     return result
+
+
+def recall_for(mod_key: str, mod_info, *, path: Path | None = None) -> dict:
+    """取记忆中的配置并按当前 modinfo 校验；没有记忆或 modinfo 时返回空字典。"""
+    if mod_info is None:
+        return {}
+    try:
+        values = recall(mod_key, path=path)
+    except OSError:
+        return {}
+    return sanitize_values(values, mod_info) if values else {}
 
 
 # ── 双向同步 ────────────────────────────────────────────────────────────
@@ -126,6 +137,27 @@ class SyncReport:
     @property
     def changed(self) -> bool:
         return bool(self.pulled or self.pushed or self.conflicts)
+
+
+_LOG_MAX_LINES = 1000
+
+
+def append_log(report: SyncReport, path: Path | None = None) -> None:
+    """把有动作的同步结果追加到 sync.log（只保留最近若干行），供事后核对被覆盖的一方。"""
+    lines = [f"拉取 {name}" for name in report.pulled] + [f"推送 {name}" for name in report.pushed]
+    lines += [f"冲突 {name}：{'游戏' if winner == 'game' else 'DSTCamp'} 较新，以其为准" for name, winner in report.conflicts]
+    lines += [f"错误 {name}：{message}" for name, message in report.errors]
+    if not lines:
+        return
+    path = path or memory_dir() / "sync.log"
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        old = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join((old + [f"{stamp} {line}" for line in lines])[-_LOG_MAX_LINES:]) + "\n",
+                        encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _backup(path: Path, backup_dir: Path) -> None:
