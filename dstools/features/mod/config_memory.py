@@ -1,11 +1,15 @@
-"""Mod 配置记忆：DSTCamp 记住每个 Mod 最近一次的配置，并与游戏客户端的 mod_config_data 双向同步。
+"""Mod 默认配置：对应游戏主菜单"模组"里的全局配置，与游戏客户端的 mod_config_data 双向同步。
 
-记忆按 (kind, mod_key) 存：kind 为 "server"（对应 modconfiguration_<mod>）或 "client"（_CLIENT 文件）。
+游戏有两类配置文件（见游戏脚本 ModsTab:ConfigureSelectedMod、ModIndex:GetModConfigurationName）：
+- 主菜单"模组"（全局）：client_config=true，普通 Mod 写 modconfiguration_<mod>_CLIENT，
+  client_only Mod 写 modconfiguration_<mod>；这是默认配置的同步对象。
+- 存档"模组"页：写存档 shardindex 和不带后缀的 modconfiguration_<mod>，后者每次选中存档都会被覆盖，
+  只是中转，不同步。所以普通 Mod 不带后缀的文件一律忽略。
+
 每条记录含 values、updated_at，以及每个游戏账号上次同步时双方一致的值 synced[账号]，作为三方比较的基准：
 只有一方相对基准变化时向另一方同步；双方都变化时以较新的一方为准（游戏一方取文件修改时间），
 覆盖游戏文件前备份原文件。写游戏文件只能在游戏关闭时进行，否则保持待推送，下次同步再推。
-
-比较只看双方都有的选项：游戏文件含全部选项，DSTCamp 一方可能只有界面可见的那部分。
+比较只看双方都有的选项。
 """
 
 import json
@@ -19,7 +23,8 @@ from typing import Any
 from dstools.features.mod import game_mod_config
 from dstools.shared.resource_paths import data_dir
 
-_KINDS = ("server", "client")
+# 第 1 版同步的是存档中转文件（每次选存档都会被覆盖），内容不可信：升级时丢弃，重新从游戏拉取
+_VERSION = 2
 _lock = threading.RLock()
 
 
@@ -41,12 +46,9 @@ def load_memory(path: Path | None = None) -> dict:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         data = {}
-    if not isinstance(data, dict):
-        data = {}
-    data.setdefault("version", 1)
-    mods = data.setdefault("mods", {})
-    for kind in _KINDS:
-        mods.setdefault(kind, {})
+    if not isinstance(data, dict) or data.get("version") != _VERSION:
+        data = {"version": _VERSION}
+    data.setdefault("defaults", {})
     return data
 
 
@@ -73,37 +75,43 @@ def same_values(a: dict | None, b: dict | None) -> bool:
     return all(same_value(a[k], b[k]) for k in a.keys() & b.keys())
 
 
+def game_file_name(mod_key: str, client_only: bool) -> str:
+    """默认配置对应的游戏全局配置文件名。"""
+    return game_mod_config.file_name(mod_key, client=not client_only)
+
+
 # ── DSTCamp 一方 ────────────────────────────────────────────────────────
 
-def remember(mod_key: str, values: dict, *, client: bool = False, now: float | None = None,
+def remember(mod_key: str, values: dict, *, replace: bool = False, now: float | None = None,
              path: Path | None = None) -> None:
-    """记录在 DSTCamp 中应用的配置；与已有记录合并，保留界面未显示的选项。"""
-    if not values:
-        return
+    """保存在 DSTCamp 中修改的默认配置；replace=False 时与已有记录合并。"""
     with _lock:
         data = load_memory(path)
-        rec = data["mods"]["client" if client else "server"].setdefault(mod_key, {"values": {}, "synced": {}})
-        merged = dict(rec.get("values") or {})
-        merged.update(values)
-        if same_values(merged, rec.get("values")) and merged.keys() == (rec.get("values") or {}).keys():
+        rec = data["defaults"].setdefault(mod_key, {"values": {}, "synced": {}})
+        old = rec.get("values") or {}
+        merged = dict(values) if replace else {**old, **values}
+        if same_values(merged, old) and merged.keys() == old.keys():
             return
         rec["values"] = merged
         rec["updated_at"] = time.time() if now is None else now
         save_memory(data, path)
 
 
-def recall(mod_key: str, *, client: bool = False, path: Path | None = None) -> dict | None:
+def recall(mod_key: str, *, path: Path | None = None) -> dict | None:
     with _lock:
-        rec = load_memory(path)["mods"]["client" if client else "server"].get(mod_key)
-    return dict(rec["values"]) if rec and rec.get("values") else None
+        rec = load_memory(path)["defaults"].get(mod_key)
+    return dict(rec["values"]) if rec and rec.get("values") is not None else None
 
 
-def sanitize_values(values: dict, mod_info) -> dict:
-    """按当前 modinfo 过滤记忆的配置：丢掉已不存在的选项，取值不在可选范围的回退默认值（即不写入）。
+def sanitize_values(values: dict, mod_info, *, for_save: bool = True) -> dict:
+    """按当前 modinfo 过滤默认配置：丢掉已不存在的选项，取值不在可选范围的不写入（即用 Mod 默认值）。
+    for_save 时去掉 client=true 的客户端选项（不属于存档；client_only Mod 除外）。
     动态选项与 Configs Extended 的集合/数组/文本/字典类选项无法枚举取值，原样保留。"""
     result = {}
     for opt in getattr(mod_info, "config_options", None) or []:
         if opt.is_header or not opt.name or opt.name not in values:
+            continue
+        if for_save and opt.client and not mod_info.client_only:
             continue
         value = values[opt.name]
         free_form = (opt.is_dynamic or opt.is_set_config or opt.is_array_config
@@ -114,7 +122,7 @@ def sanitize_values(values: dict, mod_info) -> dict:
 
 
 def recall_for(mod_key: str, mod_info, *, path: Path | None = None) -> dict:
-    """取记忆中的配置并按当前 modinfo 校验；没有记忆或 modinfo 时返回空字典。"""
+    """取默认配置并按当前 modinfo 校验，用于写入存档；没有记录或 modinfo 时返回空字典。"""
     if mod_info is None:
         return {}
     try:
@@ -133,6 +141,8 @@ class SyncReport:
     pending: list[str] = field(default_factory=list)
     conflicts: list[tuple[str, str]] = field(default_factory=list)  # (文件名, "game"/"dstcamp" 胜出方)
     errors: list[tuple[str, str]] = field(default_factory=list)
+    # mod_key -> "synced"（与游戏一致）/"pending"（等游戏关闭后写入）/"error"
+    states: dict[str, str] = field(default_factory=dict)
 
     @property
     def changed(self) -> bool:
@@ -165,40 +175,41 @@ def _backup(path: Path, backup_dir: Path) -> None:
     shutil.copy2(path, backup_dir / path.name)
 
 
-def sync_with_game(user_dir: Path, account: str, *, can_write: bool, memory_path: Path | None = None,
-                   backup_dir: Path | None = None) -> SyncReport:
-    """与 user_dir 下的游戏配置双向同步；can_write=False（游戏运行中）时只拉取，需要推送的记为 pending。"""
+def sync_with_game(user_dir: Path, account: str, client_only_keys: set[str], *, can_write: bool,
+                   memory_path: Path | None = None, backup_dir: Path | None = None) -> SyncReport:
+    """与 user_dir 下游戏的全局配置双向同步。client_only_keys 为本机已安装的 client_only Mod，决定对应哪个文件；
+    未安装（无法判断）的 Mod 只认 _CLIENT 文件。can_write=False（游戏运行中）时只拉取，需要推送的记为 pending。"""
     report = SyncReport()
     config_dir = game_mod_config.mod_config_dir(user_dir)
     backup_dir = backup_dir or _backup_dir()
     with _lock:
         data = load_memory(memory_path)
         files = game_mod_config.list_config_files(config_dir)
-        keys = set(files)
-        for kind in _KINDS:
-            keys.update((key, kind == "client") for key in data["mods"][kind])
+        keys = {key for key, client in files if client != (key in client_only_keys)}
+        keys.update(data["defaults"])
         dirty = False
-        for key, client in sorted(keys):
-            kind = "client" if client else "server"
-            path = files.get((key, client)) or config_dir / game_mod_config.file_name(key, client)
+        for key in sorted(keys):
+            path = config_dir / game_file_name(key, key in client_only_keys)
             name = path.name
             try:
                 game = game_mod_config.read_values(path) if path.exists() else None
             except game_mod_config.GameConfigError as exc:
                 report.errors.append((name, str(exc)))  # 解析不了的文件既不拉取也不覆盖
+                report.states[key] = "error"
                 continue
-            rec = data["mods"][kind].get(key)
+            rec = data["defaults"].get(key)
             mine = rec.get("values") if rec else None
             synced = rec.setdefault("synced", {}) if rec else {}
             base = synced.get(account)
 
-            # 注意区分"没有记录"（None）与"记录为空"（游戏里没有选项的 Mod，值为 {}）
+            # 注意区分"没有记录"（None）与"记录为空"（没有选项的 Mod，值为 {}）
             if game is None and not mine:
                 continue
             if game is not None and mine is not None and same_values(game, mine):
                 if base is None or not same_values(base, mine):
                     synced[account] = dict(mine)
                     dirty = True
+                report.states[key] = "synced"
                 continue
             if game is None:
                 action = "push"
@@ -216,12 +227,14 @@ def sync_with_game(user_dir: Path, account: str, *, can_write: bool, memory_path
                     report.conflicts.append((name, "game" if newer_game else "dstcamp"))
 
             if action == "pull":
-                data["mods"][kind][key] = {"values": dict(game), "updated_at": path.stat().st_mtime,
-                                           "synced": {**synced, account: dict(game)}}
+                data["defaults"][key] = {"values": dict(game), "updated_at": path.stat().st_mtime,
+                                         "synced": {**synced, account: dict(game)}}
                 report.pulled.append(name)
+                report.states[key] = "synced"
                 dirty = True
             elif not can_write:
                 report.pending.append(name)
+                report.states[key] = "pending"
             else:
                 try:
                     if path.exists():
@@ -229,9 +242,11 @@ def sync_with_game(user_dir: Path, account: str, *, can_write: bool, memory_path
                     game_mod_config.write_values(path, mine)
                 except (OSError, game_mod_config.GameConfigError) as exc:
                     report.errors.append((name, str(exc)))
+                    report.states[key] = "error"
                     continue
                 synced[account] = dict(mine)
                 report.pushed.append(name)
+                report.states[key] = "synced"
                 dirty = True
         if dirty:
             save_memory(data, memory_path)

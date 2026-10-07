@@ -1,6 +1,6 @@
-"""Mod 配置记忆与游戏客户端 mod_config_data 的同步入口。
+"""Mod 默认配置与游戏全局配置（主菜单"模组"）的同步入口。
 
-启动、打开 Mod 页、配置弹窗"应用"后触发，在后台执行；同一时间只跑一个，运行中再次触发则结束后补跑一次。
+启动、打开 Mod 页、保存默认配置后触发，在后台执行；同一时间只跑一个，运行中再次触发则结束后补跑一次。
 只用 Steam 账号目录（WeGame 客户端进程名未核实，无法确认游戏已关闭）。不弹模态框，结果写 sync.log 并轻提示。
 """
 
@@ -13,7 +13,9 @@ from dstools.qt import dialogs
 from dstools.qt.threads import run_async
 from dstools.shared import app_settings
 
-_state = {"running": False, "rerun": False, "parent": None}
+_state = {"running": False, "rerun": False, "parent": None, "callbacks": []}
+# 最近一次同步得到的各 Mod 状态（mod_key -> synced/pending/error），供默认配置列表显示
+last_states: dict[str, str] = {}
 
 
 def game_account(ctx) -> tuple[Path, str] | None:
@@ -29,26 +31,51 @@ def sync_available(ctx) -> bool:
     return app_settings.get_mod_config_sync_enabled() and game_account(ctx) is not None
 
 
-def start_sync(ctx, parent=None) -> None:
-    """后台同步一次；parent 不为空时在其窗口上提示同步结果。"""
+def _client_only_keys() -> set[str]:
+    """本机已安装的 client_only Mod：它们的全局配置文件不带 _CLIENT 后缀。"""
+    from dstools.features.mod.parser import find_mod_folder, list_installed_mod_ids, parse_modinfo
+
+    keys = set()
+    for wid in list_installed_mod_ids():
+        try:
+            folder = find_mod_folder(wid)
+            info = parse_modinfo(folder) if folder else None
+        except Exception:
+            continue
+        if info and info.client_only:
+            keys.add(wid)
+    return keys
+
+
+def start_sync(ctx, parent=None, on_done=None) -> None:
+    """后台同步一次；parent 不为空时在其窗口上提示结果，on_done(report) 在界面线程回调。"""
     if not sync_available(ctx):
         return
+    if on_done is not None:
+        _state["callbacks"].append(on_done)
     if _state["running"]:
         _state["rerun"] = True
         _state["parent"] = parent if parent is not None else _state["parent"]
         return
     user_dir, account = game_account(ctx)
     _state["running"] = True
+    # 本轮只回调开始前登记的；运行中新登记的留给补跑那一轮（它们要看到补跑后的状态）
+    run_callbacks, _state["callbacks"] = _state["callbacks"], []
 
     def work():
-        report = sync_with_game(user_dir, account, can_write=not is_dst_client_running())
+        report = sync_with_game(user_dir, account, _client_only_keys(), can_write=not is_dst_client_running())
         append_log(report)
         return report
 
     def finish(report) -> None:
         _state["running"] = False
-        if report is not None and parent is not None:
-            _notify(parent, report)
+        if report is not None:
+            last_states.clear()
+            last_states.update(report.states)
+            if parent is not None:
+                _notify(parent, report)
+            for callback in run_callbacks:
+                callback(report)
         if _state["rerun"]:
             rerun_parent = _state["parent"]
             _state["rerun"], _state["parent"] = False, None

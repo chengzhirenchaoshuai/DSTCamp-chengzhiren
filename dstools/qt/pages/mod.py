@@ -14,7 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
+    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from dstools.features.local_service import luajit_injector
@@ -42,9 +42,11 @@ from dstools.i18n import t
 from dstools.models import ModEntry, ModOverrides, Platform, SaveSource
 from dstools.qt import dialogs
 from dstools.qt.mod_config_dialog import open_mod_config
-from dstools.qt.mod_config_sync import start_sync as start_config_sync, sync_available
+from dstools.qt.mod_config_sync import start_sync as start_config_sync
 from dstools.qt.mod_panel import ModListPanel
-from dstools.qt.mod_presets_dialogs import ApplyPresetDialog, SavePresetDialog
+from dstools.qt.mod_defaults_panel import ModDefaultsPanel
+from dstools.qt.mod_presets_dialogs import SavePresetDialog
+from dstools.qt.mod_presets_panel import ModPresetsPanel
 from dstools.qt.mod_recommend_dialog import RecommendModsDialog
 from dstools.qt.pages.base import Page
 from dstools.qt.theme import theme
@@ -89,9 +91,23 @@ class ModPage(Page):
         page_layout.setContentsMargins(24, 12, 24, 12)
         card = Card(radius=15, alpha=0, border=True)
         page_layout.addWidget(card)
-        root = QVBoxLayout(card)
+        outer = QVBoxLayout(card)
         # 跟其它主页签统一的内边距。
-        root.setContentsMargins(15, 13, 15, 13)
+        outer.setContentsMargins(15, 13, 15, 13)
+        # 子页签：存档 Mod（按当前存档）/ 默认配置（全局，对应游戏主菜单"模组"）/ 配置集
+        self._view_tabs = PillTabBar([t("mod.view_save"), t("mod.view_defaults"), t("mod.view_presets")],
+                                     height=34, pill_height=26, font_size_key="FONT_SIZE_SM", gap=2, pad=18)
+        self._view_tabs.current_changed.connect(self._on_view_changed)
+        view_row = QHBoxLayout()
+        view_row.addWidget(self._view_tabs)
+        view_row.addStretch()
+        outer.addLayout(view_row)
+        self._view_stack = QStackedWidget()
+        outer.addWidget(self._view_stack, 1)
+        save_view = QWidget()
+        self._view_stack.addWidget(save_view)
+        root = QVBoxLayout(save_view)
+        root.setContentsMargins(0, 0, 0, 0)
 
         location_row = QHBoxLayout()
         location_row.addWidget(QLabel(t("mod.location_label")))
@@ -179,12 +195,6 @@ class ModPage(Page):
         root.addWidget(self._list_panel, 1)
 
         bottom_row = QHBoxLayout()
-        self._preset_save_btn = QPushButton(t("mod.preset_save_btn"))
-        self._preset_save_btn.clicked.connect(self._save_as_preset)
-        bottom_row.addWidget(self._preset_save_btn)
-        self._preset_apply_btn = QPushButton(t("mod.preset_apply_btn"))
-        self._preset_apply_btn.clicked.connect(self._apply_preset_dialog)
-        bottom_row.addWidget(self._preset_apply_btn)
         bottom_row.addStretch()
         self._save_btn = QPushButton(t("mod.save_btn"))
         self._save_btn.setEnabled(False)
@@ -206,10 +216,14 @@ class ModPage(Page):
         bottom_row.addWidget(self._workshop_update_btn)
         # 跟本地服务器页"全部启动/全部停止/..."一排操作按钮统一字号（方角已经是
         # 全局默认样式，这里只需要再调小字号）。
-        for button in (self._preset_save_btn, self._preset_apply_btn, self._save_btn,
-                      self._apply_current_btn, self._workshop_update_btn):
+        for button in (self._save_btn, self._apply_current_btn, self._workshop_update_btn):
             button.setFont(theme.font("FONT_SIZE_SM"))
         root.addLayout(bottom_row)
+
+        self._defaults_panel = ModDefaultsPanel(self)
+        self._view_stack.addWidget(self._defaults_panel)
+        self._presets_panel = ModPresetsPanel(self)
+        self._view_stack.addWidget(self._presets_panel)
 
         ctx.pending_enabled_mod_ids = self.get_pending_enabled_mod_ids
         ctx.workshop_mods_changed.connect(self._on_workshop_mods_changed)
@@ -258,10 +272,8 @@ class ModPage(Page):
         save_state = self._editable(c) and self._dirty
         self._save_btn.setEnabled(save_state)
         self._apply_current_btn.setEnabled(save_state and is_server)
-        preset_state = is_server
-        self._preset_save_btn.setEnabled(preset_state)
-        self._preset_apply_btn.setEnabled(preset_state)
-        self._export_image_btn.setEnabled(preset_state)
+        self._export_image_btn.setEnabled(is_server)
+        self._presets_panel.refresh()
         if is_server:
             self._local_banner.set_text("")
         elif self._local_shardindex(c):
@@ -291,7 +303,7 @@ class ModPage(Page):
 
     def load(self) -> None:
         super().load()
-        start_config_sync(self.ctx, self)
+        self._start_config_sync(notify=True)
 
     def _wegame_root_missing(self, cluster) -> bool:
         if not cluster or cluster.platform != Platform.WEGAME:
@@ -320,6 +332,7 @@ class ModPage(Page):
         self.on_cluster_changed(self.get_cluster())
 
     def retranslate(self) -> None:
+        self._defaults_panel.retranslate()
         self.on_cluster_changed(self.get_cluster())
 
     # ── Mod 位置 / 同步到服务器 ──────────────────────────────────────────
@@ -830,7 +843,7 @@ class ModPage(Page):
             return
         mod.enabled = not mod.enabled
         if mod.enabled and not mod.configuration_options:
-            # 存档里还没有这个 Mod 的配置：套用配置记忆（DSTCamp 或游戏里最近一次的配置）
+            # 存档里还没有这个 Mod 的配置：套用默认配置（对应游戏主菜单"模组"里的全局配置）
             mod.configuration_options = recall_for(workshop_id, self._mod_infos.get(workshop_id))
         normalized_id = str(workshop_id).removeprefix("workshop-")
         if normalized_id == IA_SHIPWRECKED_MOD_ID and mod.enabled:
@@ -867,24 +880,33 @@ class ModPage(Page):
         if not mod_info.config_options and not mod_info.unsupported_schema:
             return
         if mod_info.client_only:
-            # 纯客户端 Mod 的配置只存在游戏客户端（不进存档）：开启同步时编辑记忆中的副本，应用后推送到游戏
-            read_only = not sync_available(self.ctx)
-            if not read_only:
-                mod = ModEntry(workshop_id=workshop_id, enabled=mod.enabled,
-                               configuration_options=recall(workshop_id) or {})
-            open_mod_config(self, workshop_id, mod, mod_info, read_only, "client_only")
+            # 纯客户端 Mod 的配置只在游戏客户端（不进存档），即它的默认配置
+            self._open_default_config(workshop_id)
             return
         read_only = not self._editable(self.get_cluster())
         open_mod_config(self, workshop_id, mod, mod_info, read_only, "local_save")
 
-    def _remember_config(self, workshop_id: str, options: dict) -> None:
-        """记住在 DSTCamp 中应用的配置，并触发与游戏的同步（游戏关闭时立即推送）。"""
-        try:
-            remember(workshop_id, dict(options))
-        except OSError as exc:
-            dialogs.show_toast(self, str(exc))
+    def _open_default_config(self, workshop_id: str, mod_info=None) -> None:
+        """编辑默认配置；mod_info 由默认配置面板传入（它独立扫描，不依赖当前存档）。"""
+        mod_info = mod_info or self._mod_infos.get(workshop_id)
+        if not mod_info or (not mod_info.config_options and not mod_info.unsupported_schema):
             return
-        start_config_sync(self.ctx, self)
+        entry = ModEntry(workshop_id=workshop_id, configuration_options=recall(workshop_id) or {})
+        open_mod_config(self, workshop_id, entry, mod_info, False, "", default_mode=True)
+
+    def _save_default_config(self, workshop_id: str, options: dict) -> None:
+        """保存默认配置（整份替换），并触发与游戏的同步（游戏关闭时立即写入游戏全局配置）。"""
+        try:
+            remember(workshop_id, dict(options), replace=True)
+        except OSError as exc:
+            dialogs.show_error(self.window(), t("mod.view_defaults"), str(exc))
+            return
+        self._defaults_panel.refresh_states()
+        self._start_config_sync(notify=True)
+
+    def _start_config_sync(self, notify: bool = False) -> None:
+        start_config_sync(self.ctx, self if notify else None,
+                          on_done=lambda _report: self._defaults_panel.refresh_states())
 
     def _on_link(self, workshop_id: str) -> None:
         numeric_id = workshop_id.replace("workshop-", "")
@@ -1026,11 +1048,13 @@ class ModPage(Page):
             return
         SavePresetDialog(self).exec()
 
-    def _apply_preset_dialog(self) -> None:
-        if self._loading:
-            dialogs.show_info(self.window(), t("mod.preset_apply_btn"), t("mod.loading"))
-            return
-        ApplyPresetDialog(self).exec()
+    def _on_view_changed(self, index: int) -> None:
+        self._view_stack.setCurrentIndex(index)
+        if index == 1:
+            self._defaults_panel.load()
+            self._defaults_panel.refresh_states()
+        elif index == 2:
+            self._presets_panel.refresh()
 
     # ── Workshop 更新 ────────────────────────────────────────────────────
     def _export_mod_list_image(self) -> None:

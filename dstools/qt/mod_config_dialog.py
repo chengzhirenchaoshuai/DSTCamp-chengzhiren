@@ -71,11 +71,13 @@ def _resolve_mod_config(page, workshop_id: str, mod_info) -> bool:
     return changed
 
 
-def open_mod_config(page, workshop_id: str, mod, mod_info, read_only: bool, read_only_reason: str) -> None:
-    """入口：先后台跑耗时解析，再构建真正的对话框。"""
+def open_mod_config(page, workshop_id: str, mod, mod_info, read_only: bool, read_only_reason: str,
+                    *, default_mode: bool = False) -> None:
+    """入口：先后台跑耗时解析，再构建真正的对话框。default_mode 编辑的是默认配置（游戏主菜单"模组"的全局配置）。"""
     needs_resolve = not mod_info.full_sandbox_tried or not mod_info.chs_translation_tried
     if not needs_resolve:
-        ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason).show()
+        ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason,
+                        default_mode=default_mode).show()
         return
 
     # 加载期间只显示忙碌光标，不弹提示小窗（会在选项多的 Mod 上闪一下）
@@ -88,24 +90,28 @@ def open_mod_config(page, workshop_id: str, mod, mod_info, read_only: bool, read
         finish()
         if changed:
             page._render_list()
-        ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason).show()
+        ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason,
+                        default_mode=default_mode).show()
 
     def error(_exc: Exception) -> None:
         finish()
-        ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason).show()
+        ModConfigDialog(page, workshop_id, mod, mod_info, read_only, read_only_reason,
+                        default_mode=default_mode).show()
 
     run_async(lambda: _resolve_mod_config(page, workshop_id, mod_info), done, error)
 
 
 class ModConfigDialog(QDialog):
     def __init__(self, page, workshop_id: str, mod, mod_info, read_only: bool = False,
-                 read_only_reason: str = "client_only"):
+                 read_only_reason: str = "client_only", *, default_mode: bool = False):
         super().__init__(page.window())
         self.page = page
         self.workshop_id = workshop_id
         self.mod = mod
         self.mod_info = mod_info
         self.read_only = read_only
+        # 默认配置模式：跟游戏主菜单"模组"一致，显示 client=true 的客户端选项，应用后只写默认配置
+        self.default_mode = default_mode
         self.vars: dict[str, QComboBox] = {}
         # 按下拉框项的顺序记录 data（与 combo 的 item 索引一一对应），不再
         # 用显示文本当字典键——见 _render_choice_row() 的说明。
@@ -127,8 +133,8 @@ class ModConfigDialog(QDialog):
         if read_only:
             banner_key = "mod.read_only_local" if read_only_reason == "client_only" else "mod.read_only_local_save"
             root.addWidget(self._banner(t(banner_key), "#607d8b"))
-        elif mod_info.client_only:
-            root.addWidget(self._banner(t("mod.client_only_sync_banner"), "#607d8b"))
+        elif default_mode:
+            root.addWidget(self._banner(t("mod.default_config_banner"), "#607d8b"))
         if mod_info.unsupported_schema:
             root.addWidget(self._banner(t("mod.unsupported_schema"), theme.hex("ERROR")))
         elif remaining_dynamic:
@@ -160,7 +166,8 @@ class ModConfigDialog(QDialog):
         root.addWidget(area, 1)
 
         real_options = 0
-        for opt in visible_config_options(mod_info.config_options):
+        shown = mod_info.config_options if default_mode else visible_config_options(mod_info.config_options)
+        for opt in shown:
             if opt.is_header:
                 label_text = opt.label.strip()
                 # 分组标题放进一个容器，搜索时整体隐藏/显示——标题、分隔线、
@@ -210,7 +217,7 @@ class ModConfigDialog(QDialog):
             reset_btn = dialogs.style_button(QPushButton(t("mod.reset")), "secondary")
             reset_btn.clicked.connect(self._reset)
             btn_row.addWidget(reset_btn)
-            if recall_for(workshop_id, mod_info):
+            if not default_mode and recall_for(workshop_id, mod_info):
                 import_btn = dialogs.style_button(QPushButton(t("mod.import_memory_btn")), "secondary")
                 import_btn.clicked.connect(self._import_memory)
                 btn_row.addWidget(import_btn)
@@ -582,15 +589,14 @@ class ModConfigDialog(QDialog):
 
     def _apply(self) -> None:
         self.mod.configuration_options.update(self._collect_values())
-        if self.mod_info.client_only:
-            # 纯客户端 Mod 不进存档，只记入配置记忆并推送到游戏客户端
-            self.page._remember_config(self.workshop_id, self.mod.configuration_options)
+        if self.default_mode:
+            # 默认配置不进存档，只保存到 DSTCamp 并与游戏全局配置同步
+            self.page._save_default_config(self.workshop_id, self.mod.configuration_options)
             self.close()
             return
         # 立刻写进当前世界的 modoverrides.lua（跟游戏内配置界面一致）；"应用到所有
-        # 世界"还没做，标脏让 保存/应用 按钮保持可点。
+        # 世界"还没做，标脏让 保存/应用 按钮保持可点。存档配置不影响默认配置（与游戏一致）。
         self.page._mark_dirty()
         self.page._save_mods(silent=True)
-        self.page._remember_config(self.workshop_id, self.mod.configuration_options)
         self.page._render_list()
         self.close()

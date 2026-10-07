@@ -1,9 +1,7 @@
-"""Mod 配置集相关弹窗：保存、套用、套用报告。"""
+"""Mod 配置集相关弹窗：保存、套用报告，以及应用到当前存档的流程（列表在 Mod 页"配置集"子页签）。"""
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
+    QCheckBox, QHBoxLayout, QLabel, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from dstools.features.mod import presets
@@ -149,73 +147,20 @@ class ApplyReportDialog(dialogs.Dialog):
         self.accept()
 
 
-class ApplyPresetDialog(dialogs.Dialog):
-    """"应用配置集"——选一个已保存的配置集，先弹预览报告，确认了才真正写盘。"""
-
-    def __init__(self, page):
-        super().__init__(page.window(), t("preset.apply_dialog_title"), 460)
-        self.page = page
-        self._presets = presets.list_presets()
-        self.body.addWidget(self.text_label(t("preset.apply_pick_hint")))
-        self._list = QListWidget()
-        self._list.setMinimumHeight(220)
-        self.body.addWidget(self._list, 1)
-        self._refill()
-        # 底部按钮行："删除"在左、"应用"在右；不放"取消"，关闭窗口即可取消。
-        row = QHBoxLayout()
-        delete_btn = dialogs.style_button(QPushButton(t("preset.delete_btn")), "danger")
-        delete_btn.clicked.connect(self._delete)
-        apply_btn = QPushButton(t("preset.apply_btn"))
-        apply_btn.clicked.connect(self.accept_if_valid)
-        apply_btn.setDefault(True)
-        row.addWidget(delete_btn)
-        row.addStretch()
-        row.addWidget(apply_btn)
-        self.body.addSpacing(8)
-        self.body.addLayout(row)
-
-    def _refill(self) -> None:
-        self._list.clear()
-        if not self._presets:
-            item = QListWidgetItem(t("preset.apply_none"))
-            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
-            self._list.addItem(item)
-            return
-        for preset in self._presets:
-            self._list.addItem(f"{preset.name}  ({len(preset.mods)})")
-
-    def _selected_preset(self):
-        row = self._list.currentRow()
-        if row < 0 or row >= len(self._presets):
-            return None
-        return self._presets[row]
-
-    def _delete(self) -> None:
-        preset = self._selected_preset()
-        if preset is None:
-            return
-        if not dialogs.ask_yes_no(self, t("preset.delete_btn"), t("preset.delete_confirm", name=preset.name), danger=True):
-            return
-        presets.delete_preset(preset.name)
-        self._presets = presets.list_presets()
-        self._refill()
-
-    def accept_if_valid(self) -> None:
-        preset = self._selected_preset()
-        if preset is None:
-            return
-        cluster = self.page.get_cluster()
-        if cluster is None:
-            dialogs.show_warning(self, t("preset.apply_dialog_title"), t("local.select_cluster_first"))
-            return
-        plan = presets.plan_apply_preset(preset, self.page._mod_infos)
-        report = ApplyReportDialog(self, plan)
-        if not report.exec():
-            return
-        count = presets.apply_preset(cluster, plan, clear_first=report.clear_first)
-        # 配置集直接写盘（不经过"保存修改"按钮）；世界设置页"来自 Mod"的显示依据
-        # 的是这份磁盘内容，必须通知它下次打开时重新读取。
-        self.page.ctx.cluster_config_saved.emit(cluster)
-        dialogs.show_info(self, t("preset.apply_dialog_title"), t("preset.applied_done", count=count))
-        self.page._refresh_mods(full=False)
-        self.accept()
+def apply_preset_to_current_save(page, preset: "presets.ModPreset") -> bool:
+    """把配置集应用到 Mod 页当前选中的存档：先弹预览报告，确认了才写盘。返回是否已写入。"""
+    cluster = page.get_cluster()
+    if cluster is None:
+        dialogs.show_warning(page.window(), t("preset.apply_dialog_title"), t("local.select_cluster_first"))
+        return False
+    plan = presets.plan_apply_preset(preset, page._mod_infos)
+    report = ApplyReportDialog(page.window(), plan)
+    if not report.exec():
+        return False
+    count = presets.apply_preset(cluster, plan, clear_first=report.clear_first)
+    # 配置集直接写盘（不经过"保存修改"按钮）；世界设置页"来自 Mod"的显示依据
+    # 的是这份磁盘内容，必须通知它下次打开时重新读取。
+    page.ctx.cluster_config_saved.emit(cluster)
+    dialogs.show_info(page.window(), t("preset.apply_dialog_title"), t("preset.applied_done", count=count))
+    page._refresh_mods(full=False)
+    return True

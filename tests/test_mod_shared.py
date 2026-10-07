@@ -638,7 +638,8 @@ def test_shardindex_save_replaces_only_enabled_mods():
 
 
 def test_mod_config_memory_two_way_sync():
-    """配置记忆与游戏 mod_config_data 三方比较：单边变化同步到另一边，游戏运行时只拉不推，双边变化取较新一方。"""
+    """默认配置与游戏全局配置（普通 Mod 为 _CLIENT 文件）三方比较：单边变化同步到另一边，
+    游戏运行时只拉不推，双边变化取较新一方；存档中转用的无后缀文件不参与。"""
     import os
 
     from dstools.features.mod import config_memory as cm
@@ -647,11 +648,13 @@ def test_mod_config_memory_two_way_sync():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         user, mem, bak = root / "123", root / "memory.json", root / "bak"
-        game_file = g.mod_config_dir(user) / g.file_name("workshop-9", False)
+        game_file = g.mod_config_dir(user) / g.file_name("workshop-9", True)
         g.write_values(game_file, {"a": 1, "flag": True})
+        g.write_values(g.mod_config_dir(user) / g.file_name("workshop-9", False), {"a": 99})
+        g.write_values(g.mod_config_dir(user) / g.file_name("workshop-8", False), {"a": 99})
 
         def sync(can_write=True):
-            return cm.sync_with_game(user, "123", can_write=can_write, memory_path=mem, backup_dir=bak)
+            return cm.sync_with_game(user, "123", set(), can_write=can_write, memory_path=mem, backup_dir=bak)
 
         assert sync().pulled == [game_file.name]
         assert cm.recall("workshop-9", path=mem) == {"a": 1, "flag": True}
