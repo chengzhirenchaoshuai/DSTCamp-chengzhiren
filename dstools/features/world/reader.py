@@ -51,6 +51,11 @@ class LeveldataLoadResult:
     error: Exception | None = None
 
 
+def _display_value(value) -> str:
+    """界面统一按字符串处理取值；布尔/数字（如 has_ocean=true）保存时据此判断是否被改过。"""
+    return value if isinstance(value, str) else str(value)
+
+
 def load_leveldata(path: Path) -> LeveldataLoadResult:
     """读取一个 leveldataoverride.lua，并区分缺失与格式错误。"""
     if not path.exists():
@@ -73,8 +78,7 @@ def load_leveldata(path: Path) -> LeveldataLoadResult:
     overrides_raw = raw.get("overrides", {})
     if isinstance(overrides_raw, dict):
         for key, value in overrides_raw.items():
-            value_str = str(value) if not isinstance(value, str) else value
-            preset.overrides.append(WorldOverride(key=key, value=value_str))
+            preset.overrides.append(WorldOverride(key=key, value=_display_value(value)))
     return LeveldataLoadResult(LeveldataStatus.OK, preset=preset)
 
 
@@ -116,8 +120,13 @@ def save_leveldata(preset: WorldPreset, path: Path) -> None:
     elif not isinstance(raw["overrides"], dict):
         raise ValueError("leveldataoverride.lua 的 overrides 必须是 Lua table")
 
+    overrides = raw["overrides"]
     for ov in preset.overrides:
-        raw["overrides"][ov.key] = ov.value
+        original = overrides.get(ov.key)
+        # 未改动的非字符串原值原样写回，否则 true/1.5 会被写成 "True"/"1.5"，Mod 的 == true 判断随之失效
+        if not isinstance(original, str) and original is not None and _display_value(original) == ov.value:
+            continue
+        overrides[ov.key] = ov.value
 
     text = serialize_lua_table(raw)
     _write_text_atomically(path, text)

@@ -1054,7 +1054,8 @@ def test_world_reader_and_view_model():
         path.write_text(
             'return { id = "ENDLESS", name = "Endless", desc = "keep me", '
             'location = "forest", custom = { enabled = true }, '
-            'overrides = { day = "default", autumn = "longseason" } }',
+            'overrides = { day = "default", autumn = "longseason", '
+            'has_ocean = true, world_size_multi = 1.5 } }',
             encoding="utf-8",
         )
         result = load_leveldata(path)
@@ -1069,6 +1070,9 @@ def test_world_reader_and_view_model():
         assert {item.key: item.value for item in reloaded.preset.overrides}[
             "day"
         ] == "onlyday"
+        # 未改动的布尔/数字必须保持原类型，不能被写成字符串
+        assert reloaded.preset.raw["overrides"]["has_ocean"] is True
+        assert reloaded.preset.raw["overrides"]["world_size_multi"] == 1.5
         assert not list(root.glob("*.tmp")), "原子写入完成后不应遗留临时文件"
 
         assert load_leveldata(root / "missing.lua").status == LeveldataStatus.MISSING
