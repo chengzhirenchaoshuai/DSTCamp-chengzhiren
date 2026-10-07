@@ -132,6 +132,9 @@ def test_location_profiles() -> None:
     assert three.effective_mod_ids == frozenset({THREE_WORLDS_MOD_ID}) and not three.warnings
     assert location_requirements_met(PORKLAND_LOCATION, {THREE_WORLDS_MOD_ID})
     assert location_requirements_met(VOLCANO_LOCATION, {THREE_WORLDS_MOD_ID})
+    # 与原 Mod（海难会连带补核心）同时启用时给出警告，创建校验据此拦下
+    clash = resolve_world_location_profile({THREE_WORLDS_MOD_ID, IA_SHIPWRECKED_MOD_ID})
+    assert clash.warnings and "岛屿冒险 - 核心" in clash.warnings[0]
 
 
 def test_setting_location_isolation() -> None:

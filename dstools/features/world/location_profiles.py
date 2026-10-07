@@ -24,6 +24,13 @@ THREE_WORLDS_MOD_ID = "3811652910"
 BUNDLED_MOD_CAPABILITIES = {
     THREE_WORLDS_MOD_ID: frozenset({IA_CORE_MOD_ID, IA_SHIPWRECKED_MOD_ID, PORKLAND_MOD_ID}),
 }
+# 三合一整合版说明要求不能同时启用的原 Mod（ID 见包内 CREDITS.md），会重复加载同一份内容
+THREE_WORLDS_CONFLICT_MODS = {
+    IA_CORE_MOD_ID: "岛屿冒险 - 核心",
+    IA_SHIPWRECKED_MOD_ID: "岛屿冒险 - 海难",
+    PORKLAND_MOD_ID: "云霄国度",
+    "3330056551": "云霄国度补丁",
+}
 ALL_MOD_LOCATIONS = (
     FOREST_LOCATION, CAVE_LOCATION, SHIPWRECKED_LOCATION, VOLCANO_LOCATION, PORKLAND_LOCATION,
 )
@@ -243,6 +250,11 @@ def resolve_world_location_profile(enabled_mod_ids) -> WorldLocationProfile:
     if THREE_WORLDS_MOD_ID in effective:
         # 整合版自带两套扩展的兼容层，面向专服五分片（Master 森林 + 海难/猪镇/洞穴/火山）；
         # 不走建房界面的选世界逻辑，两个固定槽位都放开全部世界，默认仍是森林+洞穴
+        conflicts = [name for mod_id, name in THREE_WORLDS_CONFLICT_MODS.items() if mod_id in effective]
+        if conflicts:
+            warnings.append(
+                "三合一整合版已包含这些内容，不能同时启用：" + "、".join(conflicts) + "，请先关闭它们。"
+            )
         return WorldLocationProfile(
             selected,
             effective,
@@ -250,6 +262,7 @@ def resolve_world_location_profile(enabled_mod_ids) -> WorldLocationProfile:
             ALL_MOD_LOCATIONS,
             FOREST_LOCATION,
             CAVE_LOCATION,
+            tuple(warnings),
         )
 
     if PORKLAND_MOD_ID in effective and IA_CORE_MOD_ID in effective:
