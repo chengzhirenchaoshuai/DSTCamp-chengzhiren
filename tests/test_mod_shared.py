@@ -637,5 +637,40 @@ def test_shardindex_save_replaces_only_enabled_mods():
     assert not back["workshop-1"].enabled and back["workshop-2"].configuration_options == {"n": 3}
 
 
+def test_mod_config_memory_two_way_sync():
+    """配置记忆与游戏 mod_config_data 三方比较：单边变化同步到另一边，游戏运行时只拉不推，双边变化取较新一方。"""
+    import os
+
+    from dstools.features.mod import config_memory as cm
+    from dstools.features.mod import game_mod_config as g
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        user, mem, bak = root / "123", root / "memory.json", root / "bak"
+        game_file = g.mod_config_dir(user) / g.file_name("workshop-9", False)
+        g.write_values(game_file, {"a": 1, "flag": True})
+
+        def sync(can_write=True):
+            return cm.sync_with_game(user, "123", can_write=can_write, memory_path=mem, backup_dir=bak)
+
+        assert sync().pulled == [game_file.name]
+        assert cm.recall("workshop-9", path=mem) == {"a": 1, "flag": True}
+
+        cm.remember("workshop-9", {"a": 2}, path=mem)  # DSTCamp 改了
+        assert sync(can_write=False).pending == [game_file.name]
+        assert g.read_values(game_file)["a"] == 1
+        assert sync().pushed == [game_file.name] and g.read_values(game_file)["a"] == 2
+        assert (bak / game_file.name).exists()
+
+        g.write_values(game_file, {"flag": False})  # 游戏改了
+        assert sync().pulled and cm.recall("workshop-9", path=mem)["flag"] is False
+
+        cm.remember("workshop-9", {"a": 3}, now=1.0, path=mem)  # 双边都改：游戏文件更新，游戏胜出
+        g.write_values(game_file, {"a": 4})
+        os.utime(game_file, (100.0, 100.0))
+        report = sync()
+        assert report.conflicts == [(game_file.name, "game")] and cm.recall("workshop-9", path=mem)["a"] == 4
+
+
 if __name__ == "__main__":
     run(globals())

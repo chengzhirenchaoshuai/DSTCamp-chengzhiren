@@ -9,7 +9,8 @@
                     mod_full_resolve、mod_versions、mod_chs_translation、mod_icons/<平台>、legacy_v1_read、
                     world_mod_icons、character_icons、connection_log、lobby_accel_mihomo、runtime/{ktools,ktech_jobs}
     data/           需要保留的用户数据：background、player_registry、port_backups、auto_restart、updates、
-                    runtime_tools（长驻工具的解压副本）、frpc_config / frp_selfhost_config / lolia_frpc_config
+                    runtime_tools（长驻工具的解压副本）、frpc_config / frp_selfhost_config / lolia_frpc_config、
+                    mod_config_memory（Mod 配置记忆 memory.json 与覆盖前的游戏配置备份 game_backup/）
     security/       凭据与主机信任：frp_selfhost（SSH 密钥/known_hosts）、lobby_accel_wireguard、
                     lobby_accel_mihomo、lolia（OAuth 令牌）
 """
