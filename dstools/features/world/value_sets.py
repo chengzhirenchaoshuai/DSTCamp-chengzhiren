@@ -267,3 +267,27 @@ def get_value_set(
     # 其余原版资源密度类统一用完整的 worldgen 频率表兜底，避免新 key（如 angrybees）丢失
     # uncommon/mostly/insane 档
     return WORLDGEN_FREQUENCY_SET
+
+
+def _parse_number(text: str) -> int | float | None:
+    try:
+        number = float(text)
+    except (TypeError, ValueError):
+        return None
+    return int(number) if number.is_integer() else number
+
+
+def is_mod_readonly(key: str, mod_settings: dict | None) -> bool:
+    """Mod 登记了该条但没有取值列表（values=None）：只展示，不能循环到通用档位。"""
+    info = mod_settings.get(key) if mod_settings else None
+    return info is not None and info.values is None
+
+
+def typed_override_value(value: str, values: list[str]):
+    """写入 leveldataoverride 前还原 Lua 类型：取值表全是数字时（如热带冒险 world_size_multi 的
+    0.5~2）写成数字，Mod 才能按数值使用；原版取值表没有这种情况，其余一律保持字符串。"""
+    if values and all(_parse_number(item) is not None for item in values):
+        number = _parse_number(value)
+        if number is not None:
+            return number
+    return value

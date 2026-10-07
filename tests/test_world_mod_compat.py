@@ -46,7 +46,9 @@ from dstools.features.world.location_profiles import (  # noqa: E402
     resolve_world_location_profile,
 )
 from dstools.features.world.mod_settings import get_mod_categories, get_mod_world_settings  # noqa: E402
-from dstools.features.world.value_sets import get_value_set  # noqa: E402
+from dstools.features.world.value_sets import (  # noqa: E402
+    get_value_set, is_mod_readonly, typed_override_value,
+)
 from dstools.features.world.reader import WorldOverride, WorldPreset  # noqa: E402
 from dstools.features.world.view_model import build_world_view_model  # noqa: E402
 from dstools.features.mod.parser import parse_modinfo  # noqa: E402
@@ -183,6 +185,11 @@ def test_setting_location_isolation() -> None:
     assert [key for key, _ in get_mod_categories(tropical)] == [
         "mod_group_ta_worldgen", "mod_group_ta_climate",
     ]
+    # 创建向导可编辑世界生成：数字取值写回 Lua 数字，没登记取值的 Mod 生成项保持只读
+    multi = get_value_set("world_size_multi", tropical, location=FOREST_LOCATION, is_rule=False)
+    assert typed_override_value("2", multi) == 2 and typed_override_value("never", ["never", "5"]) == "never"
+    island = get_mod_world_settings({IA_SHIPWRECKED_MOD_ID}, SHIPWRECKED_LOCATION, True)
+    assert is_mod_readonly("volcano", island) and not is_mod_readonly("world_size", island)
 
     # 三合一整合版与三个独立版同时启用时看到的条目一致
     standalone = {IA_CORE_MOD_ID, IA_SHIPWRECKED_MOD_ID, PORKLAND_MOD_ID}

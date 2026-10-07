@@ -41,7 +41,7 @@ from dstools.features.world.mod_settings import (
     filter_mod_world_settings, get_mod_categories, get_mod_world_settings,
 )
 from dstools.features.world.reader import WorldOverride, WorldPreset
-from dstools.features.world.value_sets import get_value_set
+from dstools.features.world.value_sets import get_value_set, typed_override_value
 from dstools.features.world.view_model import build_world_view_model
 from dstools.i18n import t
 from dstools.models import Cluster, ModEntry, Platform, SaveSource, Shard
@@ -473,8 +473,11 @@ class CreationWizardDialog(QDialog):
         layout.addWidget(self._world_sub_tabs)
         self._world_stack = QStackedWidget()
         self._rules_panel = WorldPanel(editable=True, is_rule=True)
-        self._gen_panel = WorldPanel(editable=False, is_rule=False)
+        # 新建世界尚未生成，世界生成项与世界设置一样可改（已有存档的世界设置页才只读）
+        self._gen_panel = WorldPanel(editable=True, is_rule=False)
         self._rules_panel.value_clicked.connect(self._on_value_clicked)
+        self._gen_panel.value_clicked.connect(
+            lambda key, delta: self._on_value_clicked(key, delta, is_rule=False))
         self._world_stack.addWidget(self._rules_panel)
         self._world_stack.addWidget(self._gen_panel)
         layout.addWidget(self._world_stack, 1)
@@ -711,7 +714,8 @@ class CreationWizardDialog(QDialog):
             return
         preset = WorldPreset(preset_id=plan.preset_id, name=plan.name, description=plan.description,
                              location=plan.location,
-                             overrides=[WorldOverride(key, value) for key, value in plan.overrides.items()])
+                             overrides=[WorldOverride(key, value if isinstance(value, str) else str(value))
+                                        for key, value in plan.overrides.items()])
         is_master = self._shard_combo.currentText() == MASTER_SHARD
         self._active_mod_settings = filter_mod_world_settings(self._mod_settings, preset.location, is_master)
         mod_categories = get_mod_categories(self._active_mod_settings)
@@ -725,21 +729,25 @@ class CreationWizardDialog(QDialog):
             self._gen_panel.set_data(view.generation_categories, view.generation_by_category, preset.location,
                                      self._active_mod_settings, self._mod_world_icons)
 
-    def _on_value_clicked(self, key: str, delta: int) -> None:
+    def _on_value_clicked(self, key: str, delta: int, is_rule: bool = True) -> None:
         plan = self._active_preset()
         if not plan:
             return
         self._dirty = True
-        values = get_value_set(key, self._active_mod_settings, location=plan.location, is_rule=True)
-        current = plan.overrides.get(key, "default")
+        values = get_value_set(key, self._active_mod_settings, location=plan.location, is_rule=is_rule)
+        # 模板里没有的 Mod 项从其登记的初始值起步（不一定有 "default" 档）；模板值可能是数字/布尔
+        mod_info = self._active_mod_settings.get(key)
+        raw = plan.overrides.get(key, mod_info.initial_value if mod_info else "default")
+        current = raw if isinstance(raw, str) else str(raw)
         idx = values.index(current) if current in values else 0
-        plan.overrides[key] = values[max(0, min(len(values) - 1, idx + delta))]
-        self._rules_panel.set_flash((key, delta))
+        plan.overrides[key] = typed_override_value(values[max(0, min(len(values) - 1, idx + delta))], values)
+        (self._rules_panel if is_rule else self._gen_panel).set_flash((key, delta))
         self._flash_timer.start()
         self._render_world()
 
     def _clear_flash(self) -> None:
         self._rules_panel.set_flash(None)
+        self._gen_panel.set_flash(None)
 
     # ── Mod 子页签 ──────────────────────────────────────────────────────
     def _build_mod_tab(self) -> None:

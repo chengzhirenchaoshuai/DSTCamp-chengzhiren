@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QAbstractScrollArea
 from dstools.features.world.categories import CATEGORY_COLORS
 from dstools.features.world.icons import get_icon_path
 from dstools.features.world.value_labels import get_value_label
-from dstools.features.world.value_sets import get_value_set
+from dstools.features.world.value_sets import get_value_set, is_mod_readonly
 from dstools.qt.imaging import pil_to_pixmap
 from dstools.qt.theme import theme
 from dstools.shared.resource_paths import bundled_resource_dir
@@ -203,6 +203,10 @@ class WorldPanel(QAbstractScrollArea):
                 self._arrow_cache[cache_key] = scaled
         return self._arrow_cache[cache_key]
 
+    def _row_editable(self, key: str) -> bool:
+        # 面板可编辑时，Mod 登记了但没给取值列表的条目仍只展示，不画箭头也不响应点击
+        return self._editable and not is_mod_readonly(key, self._mod_settings)
+
     def _value_set(self, key: str) -> list[str]:
         if key not in self._value_sets:
             self._value_sets[key] = get_value_set(
@@ -304,7 +308,7 @@ class WorldPanel(QAbstractScrollArea):
         painter.setPen(value_color(value))
         self._draw_centered(painter, wrap_text(get_value_label(override.key, value, self._mod_settings), value_fm, value_text_w),
                             geo["val_x"], icon_cy, value_fm, m.s)
-        if self._editable:
+        if self._row_editable(override.key):
             values = self._value_set(override.key)
             try:
                 idx = values.index(value)
@@ -359,6 +363,8 @@ class WorldPanel(QAbstractScrollArea):
                 if not (geo["top"] <= y <= geo["top"] + m.icon):
                     continue
                 override = items[idx]
+                if not self._row_editable(override.key):
+                    continue
                 values = self._value_set(override.key)
                 try:
                     vi = values.index(override.value)
