@@ -18,6 +18,15 @@ CHERRY_FOREST_MOD_ID = "1289779251"
 PORKLAND_MOD_ID = "3322803908"
 IA_CORE_MOD_ID = "3435352667"
 IA_SHIPWRECKED_MOD_ID = "1467214795"
+# 三合一整合版：一个 Mod 内含岛屿冒险核心/海难与云霄国度，只能专服多分片使用（建房界面勾选即报错）
+THREE_WORLDS_MOD_ID = "3811652910"
+# 整合 Mod -> 它在世界类型上等同于哪些独立版（只用于能力判断，不写进 modoverrides）
+BUNDLED_MOD_CAPABILITIES = {
+    THREE_WORLDS_MOD_ID: frozenset({IA_CORE_MOD_ID, IA_SHIPWRECKED_MOD_ID, PORKLAND_MOD_ID}),
+}
+ALL_MOD_LOCATIONS = (
+    FOREST_LOCATION, CAVE_LOCATION, SHIPWRECKED_LOCATION, VOLCANO_LOCATION, PORKLAND_LOCATION,
+)
 
 MASTER_SHARD = "Master"
 CAVES_SHARD = "Caves"
@@ -196,6 +205,14 @@ def find_mod_key(mod_ids, mod_id: str) -> str | None:
     )
 
 
+def location_capability_ids(mod_ids) -> frozenset[str]:
+    """展开整合 Mod 后的能力集合，只用于判断世界类型可用性。"""
+    normalized = set(normalize_mod_ids(mod_ids))
+    for mod_id in tuple(normalized):
+        normalized |= BUNDLED_MOD_CAPABILITIES.get(mod_id, frozenset())
+    return frozenset(normalized)
+
+
 def with_required_dependencies(mod_ids) -> frozenset[str]:
     """返回加入已验证硬依赖后的 Mod 集合，不修改调用方容器。"""
     normalized = set(normalize_mod_ids(mod_ids))
@@ -211,6 +228,18 @@ def resolve_world_location_profile(enabled_mod_ids) -> WorldLocationProfile:
     selected = normalize_mod_ids(enabled_mod_ids)
     effective = with_required_dependencies(selected)
     warnings: list[str] = []
+
+    if THREE_WORLDS_MOD_ID in effective:
+        # 整合版自带两套扩展的兼容层，面向专服五分片（Master 森林 + 海难/猪镇/洞穴/火山）；
+        # 不走建房界面的选世界逻辑，两个固定槽位都放开全部世界，默认仍是森林+洞穴
+        return WorldLocationProfile(
+            selected,
+            effective,
+            ALL_MOD_LOCATIONS,
+            ALL_MOD_LOCATIONS,
+            FOREST_LOCATION,
+            CAVE_LOCATION,
+        )
 
     if PORKLAND_MOD_ID in effective and IA_CORE_MOD_ID in effective:
         warnings.append(
@@ -275,4 +304,4 @@ def get_location_definition(location: str) -> WorldLocationDefinition:
 
 def location_requirements_met(location: str, enabled_mod_ids) -> bool:
     definition = get_location_definition(location)
-    return definition.required_mod_ids.issubset(normalize_mod_ids(enabled_mod_ids))
+    return definition.required_mod_ids.issubset(location_capability_ids(enabled_mod_ids))

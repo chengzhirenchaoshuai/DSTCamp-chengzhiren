@@ -37,8 +37,10 @@ from dstools.features.world.location_profiles import (  # noqa: E402
     PORKLAND_LOCATION,
     PORKLAND_MOD_ID,
     SHIPWRECKED_LOCATION,
+    THREE_WORLDS_MOD_ID,
     VOLCANO_LOCATION,
     get_location_definition,
+    location_requirements_met,
     get_verified_creation_level_data,
     resolve_world_location_profile,
 )
@@ -119,6 +121,16 @@ def test_location_profiles() -> None:
     assert islands.effective_mod_ids == frozenset(
         {IA_CORE_MOD_ID, IA_SHIPWRECKED_MOD_ID}
     )
+
+    # 三合一整合版：五种世界都可用，但不补独立版依赖，也不触发猪镇+岛屿冒险警告
+    three = resolve_world_location_profile({THREE_WORLDS_MOD_ID})
+    assert set(three.master_locations) == {
+        FOREST_LOCATION, CAVE_LOCATION, SHIPWRECKED_LOCATION, VOLCANO_LOCATION, PORKLAND_LOCATION,
+    }
+    assert (three.default_master, three.default_caves) == (FOREST_LOCATION, CAVE_LOCATION)
+    assert three.effective_mod_ids == frozenset({THREE_WORLDS_MOD_ID}) and not three.warnings
+    assert location_requirements_met(PORKLAND_LOCATION, {THREE_WORLDS_MOD_ID})
+    assert location_requirements_met(VOLCANO_LOCATION, {THREE_WORLDS_MOD_ID})
 
 
 def test_setting_location_isolation() -> None:
