@@ -18,18 +18,18 @@
   <a href="#-features">Features</a> ·
   <a href="#-storage-layout">Storage</a> ·
   <a href="#-development">Development</a> ·
-  <a href="#161-changes">Changelog</a> ·
+  <a href="#162-changes">Changelog</a> ·
   <a href="README.md">中文</a>
 </p>
 
 ---
 
-## ✨ 1.6.1 highlights
+## ✨ 1.6.2 highlights
 
-- 🧱 **Multi-column Mod list**: the Mod page and the create-save wizard can show 1, 2, or 3 columns, so more Mods fit on screen.
-- 🔁 **Upgrade without quitting first**: just open the new version — the old one, and any dedicated servers it runs, are shut down safely.
-- 🚀 **No background throttling**: dedicated servers keep full speed while DSTCamp is in the background instead of being throttled by Windows.
-- 📡 **Direct-connect codes retry automatically**: failed lookups retry with a countdown and refresh once the world is ready.
+- 🧩 **Global Mod defaults**: synced both ways with the global Mod configuration in the game's main menu, and applied automatically when a save enables a Mod.
+- 🏝️ **Three-in-one mod support**: Shipwrecked, Volcano, and Porkland worlds are recognized, the five-shard layout is one click away, and conflicting Mods are caught early.
+- 💾 **Editable Mods for local saves**: edit a Steam local save's Mods while the game is closed, in the same place the game reads them.
+- ⚡ **Idle token right after a crash**: if the original token is still waiting for Klei to release it, an idle pool token is used and the server goes back online right away.
 
 ## 🧭 Features
 
@@ -105,9 +105,33 @@ python scripts/build_exe.py         # stage allowlisted resources in build/, wri
 
 `tests/_harness.py` runs every `test_*` function in definition order, so new tests need no registration. Real Windows GUI, Steam, frpc, and game behavior still require manual validation before release.
 
-## 1.6.1 changes
+## 1.6.2 changes
 
 ### ✨ New features
+
+- **Global Mod defaults**: the Mod page's former "View Local Mods" button is now "Global Default Configs". Its window matches the global Mod configuration in the game's main menu and syncs with it both ways (when both sides changed, the newer one wins and the overwritten game file is backed up first; while the game is running, writes wait until it closes; sync can be turned off in the Settings menu). In the window you can search, filter by configured/unconfigured, edit (including client-only options), restore a Mod's defaults, sync now, and see a result summary and sync log. Mods newly enabled in a save without a configuration get the defaults automatically, and a save's Mod configuration dialog can "Use default config" manually; changing a save's configuration does not change the defaults.
+- **"Client Mods" filter on the Mod page**: placed after "Custom", and "All" now lists client mods too; filter buttons are sized to their text.
+- **Editable Mods for Steam local saves**: reads and writes Master/save/shardindex, which the game actually uses, and also writes each shard's modoverrides.lua on save; saving is refused while the game client is running, with a prompt to exit the game first (WeGame local saves stay read-only).
+- **Three-in-one mod support**: its world settings are supported; world creation recognizes the Shipwrecked, Volcano, and Porkland worlds it provides; the create-save wizard can apply the five-shard layout in one click (fixed shard IDs, no volcano island in Shipwrecked); enabling it together with the original Island Adventures or Above the Clouds Mods shows a warning and blocks creation.
+- **Tropical Adventures | Ship of Theseus world settings**: supports Mod-defined groups, per-item icons, and value labels.
+- **Editable world generation options in the create-save wizard**: numeric values are written as Lua numbers; Mod options registered without a value list stay read-only.
+- **Use an idle token right after a crash**: when auto-restarting after a crash, if the original token is still waiting for Klei to release it and the pool has an idle token, that token is used and the server goes online right away; the replaced token becomes available again once its wait expires. "Wait before switching" now defaults to 0 minutes (0–110 allowed; raise it or turn off "Use an idle token after a crash" to save tokens). When starting manually with an unreleased original token and an idle token available, the default button is now "Use Another Token".
+- **Auto-restart only restarts the crashed world**: when the overworld crashes, the caves keep running — the game pauses them and reconnects automatically, then syncs once the overworld is back, so the save stays consistent; if the caves crash while the overworld is also down, the overworld is started with them.
+- **Release notes in the update prompt**: when a new version is found, the update dialog shows its release notes, styled to match the theme and font size setting; the dialog is wider accordingly.
+
+### 🐞 Fixes
+
+- Saving world settings wrote booleans and numbers as strings (e.g. true became "True"), breaking Mods' option checks.
+- When several Mods registered the same world setting, the one shown was not the one the game actually uses (the game keeps the first registered, by load order).
+- New Porkland worlds lacked a complete level definition, so world generation failed and the server could not start.
+- With only the overworld running, crash auto-restart also started the caves that had not been running.
+
+<details>
+<summary><strong>Earlier versions (1.3.5 ~ 1.6.1)</strong></summary>
+
+### 1.6.1
+
+#### ✨ New features
 
 - **Multi-column Mod list**: the Mod lists on the Mod page and in the create-save wizard switch between 1, 2, and 3 columns (one shared, remembered setting); multi-column view is compact, with the switch and Configure button on the right of each cell.
 - **New version replaces the old one**: opening a new version while an old one is still running closes the old one and starts the new one; if the old version is running dedicated servers, it asks first, then saves and stops them before exiting, leaving no server processes behind.
@@ -116,12 +140,9 @@ python scripts/build_exe.py         # stage allowlisted resources in build/, wri
 - **More reliable direct-connect codes**: when the public or tunnel code fails or times out, it retries after 5/15/30/60 s with a countdown, and once retries run out you can click the row to retry; codes refresh when the master world becomes ready; Lolia and self-hosted mappings read local settings directly instead of being slowed by the Sakura API, and Sakura API errors show "Failed to fetch" instead of "Not mapped".
 - The "Game client" server program option is renamed "Bundled Server".
 
-### 🐞 Fixes
+#### 🐞 Fixes
 
 - After closing to the tray, launching the app again made the window appear only on the taskbar; it could not be restored, clicked, or closed.
-
-<details>
-<summary><strong>Earlier versions (1.3.5 ~ 1.6.0)</strong></summary>
 
 ### 1.6.0
 
