@@ -41,6 +41,9 @@ GROUP_TO_CATEGORY_GEN = {
     "monsters": "hostile_spawners",   # 敌对生物以及刷新点
 }
 
+# Mod 用 AddCustomizeGroup 自建的组名 -> 分类标题（取自该组的 text）。组名在游戏里全局唯一。
+MOD_CUSTOM_GROUP_NAMES: dict[str, dict] = {}
+
 
 @dataclass
 class ModWorldSetting:
@@ -62,15 +65,24 @@ class ModWorldSetting:
     locations: frozenset[str] | None = None
     # 对应官方 ``master_controlled``，只在 Master 分片显示和编辑。
     master_controlled: bool = False
-    # AddCustomizeItem 的 group；None 表示按 Mod 名单独分类（见 get_mod_categories）
+    # AddCustomizeItem 的 group；None 表示按 Mod 名单独分类，Mod 用 AddCustomizeGroup 自建的组
+    # 登记在 MOD_CUSTOM_GROUP_NAMES（见 get_mod_categories）
     group: str | None = None
     # AddCustomizeItem 的 order（分类内排序键）；None 按显示名排序。
     # 用 float：樱花林等用 3.06 这类小数插在整数之间
     order: float | None = None
+    # 本条图集 (xml, tex)，相对 Mod 根目录；None 时用 MOD_ICON_ATLAS 中该 Mod 的统一图集
+    icon_atlas: tuple[str, str] | None = None
+    # 图标取自本体图集时，借用 icons/world 下该原版 key 的图标
+    vanilla_icon_key: str | None = None
+    # 取值 -> {"zh", "en"}，Mod desc 文案与全局取值文案不同时按条覆盖
+    value_labels: dict[str, dict] | None = None
 
     @property
     def category(self) -> str:
         if self.group is not None:
+            if self.group in MOD_CUSTOM_GROUP_NAMES:
+                return f"mod_group_{self.group}"
             mapping = GROUP_TO_CATEGORY if self.is_rule else GROUP_TO_CATEGORY_GEN
             return mapping.get(self.group, f"mod_{self.mod_id}")
         return f"mod_{self.mod_id}"
@@ -883,6 +895,112 @@ BENEATH_WORLD_BELOW_DSTU_SETTINGS: dict[str, ModWorldSetting] = {
 }
 
 
+# workshop-2986194136 == 热带冒险|忒修斯之船（Tropical Adventures），26.09.19
+# 来源（content/322330/2986194136/）：
+#   - modworldgenmain 导入 main/ta_customize.lua：AddCustomizeGroup 自建 ta_worldgen（世界生成）与
+#     ta_climate（世界设置）两组，条目来自 scripts/datadefs/customization.lua；
+#   - 取值/文案：各条 options（desc），中英文为源码 en_zh() 的两个参数，原样保留（含原文拼写）；
+#   - 存档缺 key 时 ta_config.lua 依次取 overrides → 同名 Mod 配置 → default，modinfo 没有这些同名
+#     配置项，故 initial_value 即源码 default；
+#   - 图标：sw_atlas/ham_atlas 是本 Mod 的 images/hud 图集，dst_atlas/dstset_atlas 是本体图集。
+_TA_ID = "2986194136"
+_TA_SW_ATLAS = ("images/hud/customization_shipwrecked.xml", "images/hud/customization_shipwrecked.tex")
+_TA_HAM_ATLAS = ("images/hud/customization_porkland.xml", "images/hud/customization_porkland.tex")
+_TA_FOREST = frozenset({FOREST_LOCATION})
+_TA_CAVE = frozenset({CAVE_LOCATION})
+_TA_BOTH = frozenset({FOREST_LOCATION, CAVE_LOCATION})
+# options_enable / options_enable2
+_TA_ENABLE_LABELS = {
+    "enabled": {"zh": "开启", "en": "Enabled"},
+    "disabled": {"zh": "关闭", "en": "Disabled"},
+}
+
+MOD_CUSTOM_GROUP_NAMES.update({
+    "ta_worldgen": {"zh": "热带冒险 | 忒修斯之船", "en": "Tropical Adventures | Ship of Theseus"},
+    "ta_climate": {"zh": "热带冒险气候", "en": "Tropical Adventures climates"},
+})
+
+
+def _ta(key, is_rule, zh, en, values, default, order, locations, *,
+        atlas=_TA_SW_ATLAS, element=None, vanilla_icon=None, labels=None) -> ModWorldSetting:
+    return ModWorldSetting(
+        key=key, is_rule=is_rule, name={"zh": zh, "en": en}, values=values, mod_id=_TA_ID,
+        icon_element=element, initial_value=default, locations=locations,
+        group="ta_climate" if is_rule else "ta_worldgen", order=order,
+        icon_atlas=None if vanilla_icon else atlas, vanilla_icon_key=vanilla_icon,
+        value_labels=labels or _TA_ENABLE_LABELS,
+    )
+
+
+_TA_ENABLE = ["enabled", "disabled"]
+_TA_DISABLED_ONLY = ["disabled"]
+
+TROPICAL_ADVENTURES_SETTINGS: dict[str, ModWorldSetting] = {s.key: s for s in (
+    # ── 世界生成（ta_worldgen，只读）──
+    _ta("rog", False, "巨人国", "Region of Gaints", ["default", "fixed", "disabled"], "fixed", 1,
+        _TA_FOREST, vanilla_icon="deerclops", labels={
+            "default": {"zh": "默认", "en": "Default"},
+            "fixed": {"zh": "固定的随机地形", "en": "Fxied Random Tasks"},
+            "disabled": {"zh": "关闭(不推荐)", "en": "Disabled(Not Recommended)"},
+        }),
+    _ta("shipwrecked", False, "海难", "Shipwrecked", _TA_ENABLE, "enabled", 2, _TA_FOREST,
+        element="birds.tex"),
+    _ta("hamlet", False, "哈姆雷特", "Hamlet", _TA_ENABLE, "enabled", 3, _TA_FOREST,
+        atlas=_TA_HAM_ATLAS, element="pig_houses.tex"),
+    _ta("ocean_content", False, "联机海洋内容", "DST Ocean Contents", _TA_ENABLE, "enabled", 4,
+        _TA_FOREST, element="blank_world.tex"),
+    _ta("cave_content", False, "联机洞穴内容", "Together Caves", ["default", "part"], "default", 5,
+        _TA_CAVE, element="blank_world.tex", labels={
+            "default": {"zh": "默认", "en": "Default"},
+            "part": {"zh": "没有楼梯", "en": "No ladder"},
+        }),
+    _ta("ruins", False, "猪人遗迹", "Pig Ruins", _TA_ENABLE, "enabled", 5.5, _TA_CAVE,
+        element="blank_world.tex"),
+    _ta("multiplayerportal", False, "绚丽之门位置", "Florid Postern location",
+        ["rog", "shipwrecked", "hamlet"], "hamlet", 6, _TA_FOREST, vanilla_icon="spawnmode", labels={
+            "rog": {"zh": "默认", "en": "Default"},
+            "shipwrecked": {"zh": "海难区域", "en": "Shipwrecked region"},
+            "hamlet": {"zh": "哈姆雷特区域", "en": "Hamlet region"},
+        }),
+    # data 是 Lua 数字，存档读入后按 str() 显示（1 → "1"、1.5 → "1.5"）
+    _ta("world_size_multi", False, "世界面积乘数", "World area multi",
+        ["0.5", "0.75", "1", "1.25", "1.5", "2"], "1.5", 8, _TA_BOTH,
+        vanilla_icon="world_size", labels={
+            "0.5": {"zh": "极小 , 0.5×", "en": "Tiny, 0.5×"},
+            "0.75": {"zh": "更小, 0.75×", "en": "Smaller, 0.75×"},
+            "1": {"zh": "默认, 1×", "en": "Default, 1×"},
+            "1.25": {"zh": "更大, 1.25×", "en": "Larger, 1.25×"},
+            "1.5": {"zh": "巨大, 1.5×", "en": "Huger, 1.5×"},
+            "2": {"zh": "超巨大, 2×", "en": "xHuger, 2×"},
+        }),
+    _ta("coastline", False, "海岸线", "Coastline", _TA_ENABLE, "enabled", 9, _TA_FOREST,
+        element="blank_world.tex", labels={
+            "enabled": {"zh": "更平滑的海岸线", "en": "Smoother"},
+            "disabled": {"zh": "默认", "en": "Default"},
+        }),
+
+    # ── 世界设置（ta_climate，可编辑）──
+    _ta("wind", True, "海风", "Wind", _TA_ENABLE, "enabled", 11, _TA_FOREST, element="blank_world.tex"),
+    _ta("hail", True, "冰雹", "Hail", _TA_ENABLE, "enabled", 12, _TA_FOREST, element="blank_world.tex"),
+    _ta("waves", True, "海浪", "Waves", _TA_ENABLE, "enabled", 13, _TA_FOREST, element="waves.tex"),
+    # flood/volcano 只有"关闭"一档（options_enable2），源码即如此
+    _ta("flood", True, "洪水", "Flood", _TA_DISABLED_ONLY, "disabled", 14, _TA_FOREST,
+        element="floods.tex"),
+    _ta("volcano", True, "火山喷发", "Volcano Eruption", _TA_DISABLED_ONLY, "disabled", 15,
+        _TA_FOREST, element="volcano.tex"),
+    _ta("sealnado", True, "豹卷风", "sealnado", _TA_ENABLE, "enabled", 16, _TA_FOREST,
+        element="twister.tex"),
+    _ta("fog", True, "雾", "Fog", _TA_ENABLE, "enabled", 17, _TA_FOREST,
+        atlas=_TA_HAM_ATLAS, element="fog.tex"),
+    _ta("hayfever", True, "花粉过敏", "Hayfever", _TA_ENABLE, "disabled", 18, _TA_FOREST,
+        atlas=_TA_HAM_ATLAS, element="hayfever.tex"),
+    _ta("aporkalypse", True, "毁灭季", "Aporkalypse", _TA_ENABLE, "enabled", 19, _TA_BOTH,
+        atlas=_TA_HAM_ATLAS, element="aporkalypse.tex"),
+    _ta("roc", True, "大鹏", "ROC", _TA_ENABLE, "enabled", 20, _TA_FOREST,
+        atlas=_TA_HAM_ATLAS, element="roc.tex"),
+)}
+
+
 # workshop id（不带 "workshop-" 前缀）-> 该 mod 贡献的世界设置登记表。
 MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
     _CHERRY_FOREST_ID: CHERRY_FOREST_SETTINGS,
@@ -890,6 +1008,7 @@ MOD_WORLD_SETTINGS: dict[str, dict[str, ModWorldSetting]] = {
     _IA_SHIPWRECKED_ID: IA_SHIPWRECKED_SETTINGS,
     _PORKLAND_ID: PORKLAND_SETTINGS,
     _BWB_ID: BENEATH_WORLD_BELOW_SETTINGS,
+    _TA_ID: TROPICAL_ADVENTURES_SETTINGS,
 }
 
 # workshop id -> modinfo.lua 的 priority（未写按 0），本体 mods.lua 按它降序加载 Mod，
@@ -900,6 +1019,7 @@ MOD_LOAD_PRIORITY: dict[str, float] = {
     _IA_SHIPWRECKED_ID: 4,
     _PORKLAND_ID: -1,
     _BWB_ID: -9999999,
+    _TA_ID: -100,
 }
 
 # 深埋之下在前端修改了原版 OPTIONS：隐藏"大蠕虫"，把"石虾""洞穴蠕虫袭击"排到新增项之前。
@@ -921,6 +1041,7 @@ MOD_DISPLAY_NAMES: dict[str, dict] = {
     _IA_SHIPWRECKED_ID: {"zh": "岛屿冒险 - 海难", "en": "Island Adventures - Shipwrecked"},
     _PORKLAND_ID: {"zh": "云霄国度", "en": "Above the Clouds"},
     _BWB_ID: {"zh": "深埋之下", "en": "Beneath the World Below"},
+    _TA_ID: {"zh": "热带冒险 | 忒修斯之船", "en": "Tropical Adventures | Ship of Theseus"},
     "3401927745": {"zh": "山河表里", "en": "Montfluv"},
 }
 
@@ -932,6 +1053,7 @@ MOD_ICON_ATLAS: dict[str, tuple[str, str]] = {
     _IA_SHIPWRECKED_ID: ("images/hud/customization_shipwrecked.xml", "images/hud/customization_shipwrecked.tex"),
     _PORKLAND_ID: ("images/hud/customization_porkland.xml", "images/hud/customization_porkland.tex"),
     _BWB_ID: ("images/worldsettings_customization_bwb.xml", "images/worldsettings_customization_bwb.tex"),
+    _TA_ID: _TA_SW_ATLAS,
 }
 
 
@@ -995,15 +1117,18 @@ def filter_mod_world_settings(
 
 
 def get_mod_categories(mod_settings: dict) -> list[tuple[str, dict]]:
-    """为未登记 group 的 Mod 各生成一条 (分类 key, 显示名)，按首次出现顺序去重。"""
+    """为 Mod 自建组和未登记 group 的 Mod 各生成一条 (分类 key, 显示名)，按首次出现顺序去重。"""
     cats: list[tuple[str, dict]] = []
     seen: set[str] = set()
     for info in mod_settings.values():
-        if info.group is not None:
+        if info.group in MOD_CUSTOM_GROUP_NAMES:
+            name = MOD_CUSTOM_GROUP_NAMES[info.group]
+        elif info.group is None:
+            name = MOD_DISPLAY_NAMES.get(info.mod_id, {"zh": info.mod_id, "en": info.mod_id})
+        else:
             continue
-        if info.mod_id in seen:
+        if info.category in seen:
             continue
-        seen.add(info.mod_id)
-        name = MOD_DISPLAY_NAMES.get(info.mod_id, {"zh": info.mod_id, "en": info.mod_id})
+        seen.add(info.category)
         cats.append((info.category, name))
     return cats

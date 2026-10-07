@@ -42,7 +42,7 @@ from dstools.features.world.location_profiles import (  # noqa: E402
     get_verified_creation_level_data,
     resolve_world_location_profile,
 )
-from dstools.features.world.mod_settings import get_mod_world_settings  # noqa: E402
+from dstools.features.world.mod_settings import get_mod_categories, get_mod_world_settings  # noqa: E402
 from dstools.features.world.value_sets import get_value_set  # noqa: E402
 from dstools.features.world.reader import WorldOverride, WorldPreset  # noqa: E402
 from dstools.features.world.view_model import build_world_view_model  # noqa: E402
@@ -161,6 +161,12 @@ def test_setting_location_isolation() -> None:
     both = {IA_CORE_MOD_ID, PORKLAND_MOD_ID}
     assert get_mod_world_settings(both, PORKLAND_LOCATION, True)["poison"].mod_id == IA_CORE_MOD_ID
     assert "poison" not in get_mod_world_settings(both, PORKLAND_LOCATION, False)
+
+    # 热带冒险用 AddCustomizeGroup 自建的两组必须各自成为分类，否则整组不显示
+    tropical = get_mod_world_settings({"2986194136"}, FOREST_LOCATION, True)
+    assert [key for key, _ in get_mod_categories(tropical)] == [
+        "mod_group_ta_worldgen", "mod_group_ta_climate",
+    ]
 
     bwb_forest = get_mod_world_settings({"3360553731"}, FOREST_LOCATION, True)
     bwb_cave = get_mod_world_settings({"3360553731"}, CAVE_LOCATION, True)

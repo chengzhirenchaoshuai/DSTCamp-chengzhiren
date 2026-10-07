@@ -177,8 +177,14 @@ def _localized_value(names: dict) -> str:
     return names.get(get_lang()) or names.get("zh") or ""
 
 
-def get_value_label(key: str, raw_value: str) -> str:
+def get_value_label(key: str, raw_value: str, mod_settings: dict | None = None) -> str:
     """按当前界面语言取一个原始设置值的显示文案，支持按 key 单独覆盖。"""
+    # Mod 登记了本条 desc 文案的优先（同名取值在不同 Mod 里含义不同）
+    mod_info = mod_settings.get(key) if mod_settings else None
+    if mod_info is not None and mod_info.value_labels:
+        names = mod_info.value_labels.get(raw_value)
+        if names is not None:
+            return _localized_value(names)
     # 先查有没有针对这个 key 的专属覆盖
     if key in _PER_KEY_LABELS:
         override = _PER_KEY_LABELS[key].get(raw_value)

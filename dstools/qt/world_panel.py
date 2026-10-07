@@ -302,7 +302,7 @@ class WorldPanel(QAbstractScrollArea):
         value = override.value
         painter.setFont(value_font)
         painter.setPen(value_color(value))
-        self._draw_centered(painter, wrap_text(get_value_label(override.key, value), value_fm, value_text_w),
+        self._draw_centered(painter, wrap_text(get_value_label(override.key, value, self._mod_settings), value_fm, value_text_w),
                             geo["val_x"], icon_cy, value_fm, m.s)
         if self._editable:
             values = self._value_set(override.key)

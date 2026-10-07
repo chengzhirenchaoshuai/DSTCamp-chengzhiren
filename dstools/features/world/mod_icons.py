@@ -54,15 +54,24 @@ def resolve_mod_setting_icons(mod_settings: dict, platform, wegame_client_mods_d
     失败的条目跳过（调用方显示占位）。同一 Mod 的目录只查找一次。
     """
     from dstools.features.mod.parser import find_mod_folder
+    from dstools.features.world.icons import get_icon_path
     from dstools.features.world.mod_settings import MOD_ICON_ATLAS
 
     images: dict[str, Image.Image] = {}
     mod_folder_cache: dict[str, Path | None] = {}
 
     for key, info in mod_settings.items():
+        if info.vanilla_icon_key:
+            vanilla_path = get_icon_path(info.vanilla_icon_key)
+            if vanilla_path:
+                try:
+                    images[key] = Image.open(vanilla_path).convert("RGBA")
+                except OSError:
+                    pass
+            continue
         if not info.icon_element:
             continue
-        atlas_info = MOD_ICON_ATLAS.get(info.mod_id)
+        atlas_info = info.icon_atlas or MOD_ICON_ATLAS.get(info.mod_id)
         if not atlas_info:
             continue
         if info.mod_id not in mod_folder_cache:
