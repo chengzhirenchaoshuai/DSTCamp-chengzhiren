@@ -5,7 +5,7 @@
 ``desc`` 为准，不抄 ``tuning_vars``。未登记 key 原样保留在 Lua 中，不在界面伪造。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from dstools.features.world.location_profiles import (
     CAVE_LOCATION,
@@ -1055,6 +1055,28 @@ MOD_ICON_ATLAS: dict[str, tuple[str, str]] = {
     _BWB_ID: ("images/worldsettings_customization_bwb.xml", "images/worldsettings_customization_bwb.tex"),
     _TA_ID: _TA_SW_ATLAS,
 }
+
+
+# workshop-3811652910 == 三合一测试mod（岛屿冒险核心/海难 + 云霄国度 + 补丁 + 兼容层整合版），
+# 0.1.4-public-test.22。integrated_loader.lua 按 core→sw→pl→patch→compat 在各自子环境执行原 Mod
+# 入口；注册世界设置的 modservercreationmain.lua / modcustomizeitems.lua 及三张图集 XML 与本机
+# 独立版 3435352667 1.0.77 / 1467214795 1.0.62 / 3322803908 1.0.50 逐字节相同，patch/compat 不注册
+# 新条目，故直接复用三张登记表。图集被 shared_assets.lua 映射到 Mod 根目录的同名路径。
+# 同名 poison 按 core 先注册生效（AddCustomizeItem 遇已注册 name 直接 return）。
+_THREE_WORLDS_ID = "3811652910"
+THREE_WORLDS_SETTINGS: dict[str, ModWorldSetting] = {}
+for _source_id, _source in (
+    (_IA_CORE_ID, IA_CORE_SETTINGS),
+    (_IA_SHIPWRECKED_ID, IA_SHIPWRECKED_SETTINGS),
+    (_PORKLAND_ID, PORKLAND_SETTINGS),
+):
+    for _key, _info in _source.items():
+        THREE_WORLDS_SETTINGS.setdefault(_key, replace(
+            _info, mod_id=_THREE_WORLDS_ID,
+            icon_atlas=_info.icon_atlas or MOD_ICON_ATLAS[_source_id],
+        ))
+MOD_WORLD_SETTINGS[_THREE_WORLDS_ID] = THREE_WORLDS_SETTINGS
+MOD_LOAD_PRIORITY[_THREE_WORLDS_ID] = 5
 
 
 def get_mod_world_settings(

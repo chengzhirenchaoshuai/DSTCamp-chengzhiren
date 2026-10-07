@@ -168,6 +168,12 @@ def test_setting_location_isolation() -> None:
         "mod_group_ta_worldgen", "mod_group_ta_climate",
     ]
 
+    # 三合一整合版与三个独立版同时启用时看到的条目一致
+    standalone = {IA_CORE_MOD_ID, IA_SHIPWRECKED_MOD_ID, PORKLAND_MOD_ID}
+    for location, is_master in ((SHIPWRECKED_LOCATION, True), (PORKLAND_LOCATION, False)):
+        assert get_mod_world_settings({"3811652910"}, location, is_master).keys() == (
+            get_mod_world_settings(standalone, location, is_master).keys())
+
     bwb_forest = get_mod_world_settings({"3360553731"}, FOREST_LOCATION, True)
     bwb_cave = get_mod_world_settings({"3360553731"}, CAVE_LOCATION, True)
     bwb_secondary = get_mod_world_settings({"3360553731"}, CAVE_LOCATION, False)
