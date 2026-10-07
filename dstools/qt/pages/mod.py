@@ -1,7 +1,8 @@
 """Mod 管理页。
 
 列表使用 qt/mod_panel.py 的自绘面板；配置编辑、配置集、推荐订阅、Workshop 更新拆在同目录独立模块。
-本地存档或未选存档时整页只读：本地存档的 Mod 启用状态由客户端加密的 modindex 决定，改 modoverrides.lua 不保证生效。
+本地存档（Steam）的 Mod 状态以 Master/save/shardindex 为准，游戏关闭时可编辑，保存时同步写各世界 modoverrides.lua；
+WeGame 本地存档与未选存档时整页只读。
 """
 
 import os
@@ -33,10 +34,11 @@ from dstools.features.mod.parser import (
     resolve_wegame_client_mods_dir,
 )
 from dstools.features.mod.sandbox_apply import apply_full_sandbox_result
+from dstools.features.mod.shardindex import ShardIndexError, load_shardindex_mods, save_shardindex_mods, shardindex_path
 from dstools.features.mod.sync import apply_mod_sync, detach_mod_sync_junction, get_enabled_mod_ids, plan_mod_sync
 from dstools.features.world.location_profiles import IA_CORE_MOD_ID, IA_SHIPWRECKED_MOD_ID, find_mod_key
 from dstools.i18n import t
-from dstools.models import ModEntry, Platform, SaveSource
+from dstools.models import ModEntry, ModOverrides, Platform, SaveSource
 from dstools.qt import dialogs
 from dstools.qt.mod_config_dialog import open_mod_config
 from dstools.qt.mod_panel import ModListPanel
@@ -233,6 +235,17 @@ class ModPage(Page):
     def get_cluster(self):
         return self.ctx.selected_cluster()
 
+    @staticmethod
+    def _local_shardindex(cluster) -> Path | None:
+        """可编辑的本地存档返回其 Master shardindex；只支持 Steam（WeGame 客户端进程名未核实，无法确认游戏已关闭）。"""
+        if not cluster or cluster.source != SaveSource.LOCAL or cluster.platform != Platform.STEAM:
+            return None
+        path = shardindex_path(cluster.path)
+        return path if path.is_file() else None
+
+    def _editable(self, cluster) -> bool:
+        return bool(cluster and (cluster.source == SaveSource.SERVER or self._local_shardindex(cluster)))
+
     def on_cluster_changed(self, cluster) -> None:
         c = cluster if cluster is not None else self.get_cluster()
         is_server = bool(c and c.source == SaveSource.SERVER)
@@ -240,15 +253,17 @@ class ModPage(Page):
         self._update_hint_label.setVisible(False)
         self._refresh_workshop_update_button_state()
         self.refresh_sync_button_state()
-        save_state = is_server and self._dirty
+        save_state = self._editable(c) and self._dirty
         self._save_btn.setEnabled(save_state)
-        self._apply_current_btn.setEnabled(save_state)
+        self._apply_current_btn.setEnabled(save_state and is_server)
         preset_state = is_server
         self._preset_save_btn.setEnabled(preset_state)
         self._preset_apply_btn.setEnabled(preset_state)
         self._export_image_btn.setEnabled(preset_state)
         if is_server:
             self._local_banner.set_text("")
+        elif self._local_shardindex(c):
+            self._local_banner.set_text(t("mod.local_shardindex_banner"))
         else:
             self._local_banner.set_text(t("mod.no_save_banner") if c is None else t("mod.local_view_only_banner"))
         self._wegame_banner.set_text(t("mod.wegame_root_needed_banner") if self._wegame_root_missing(c) else "")
@@ -526,7 +541,8 @@ class ModPage(Page):
             return
         self._refresh_gen += 1
         gen = self._refresh_gen
-        if not shard or not shard.mod_overrides_path:
+        local_index = self._local_shardindex(c)
+        if not shard or not (shard.mod_overrides_path or local_index):
             self._mod_data.clear()
             self._mod_infos.clear()
             self._icon_imgs.clear()
@@ -563,7 +579,7 @@ class ModPage(Page):
         def work():
             return self._load_mods_worker(
                 overrides_path, full, platform, wegame_client_mods_dir, steam_runtime_mods_dir,
-                luajit_bin64_dir, full_resolved_cache)
+                luajit_bin64_dir, full_resolved_cache, local_index)
 
         def done(result) -> None:
             self._apply_loaded_mods(gen, result)
@@ -578,13 +594,16 @@ class ModPage(Page):
         run_async(work, done, error)
 
     def _load_mods_worker(self, overrides_path, full, platform, wegame_client_mods_dir,
-                          steam_runtime_mods_dir, luajit_bin64_dir, full_resolved_cache):
-        """跑在线程池里——不能碰任何 Qt 对象。"""
+                          steam_runtime_mods_dir, luajit_bin64_dir, full_resolved_cache, local_index=None):
+        """跑在线程池里——不能碰任何 Qt 对象。本地存档以 Master/save/shardindex 为准（游戏开服时据此重写 modoverrides.lua）。"""
         mod_data, mod_infos, mod_paths, icon_imgs = {}, {}, {}, {}
         icon_targets = []
         version_targets = []
         luajit_active = False
-        overrides = load_mod_overrides(overrides_path)
+        if local_index is not None:
+            overrides = ModOverrides(path=local_index, mods=load_shardindex_mods(local_index))
+        else:
+            overrides = load_mod_overrides(overrides_path)
         overrides_dirty = False
         if luajit_bin64_dir is not None:
             luajit_active = (luajit_injector.detect_state(luajit_bin64_dir) is luajit_injector.InjectorState.ACTIVE
@@ -771,9 +790,7 @@ class ModPage(Page):
             return
         self._list_panel.set_center_message("")
         rows = self._build_rows()
-        c = self.get_cluster()
-        is_server = bool(c and c.source == SaveSource.SERVER)
-        self._list_panel.set_rows(rows, self._icon_imgs, interactive=is_server)
+        self._list_panel.set_rows(rows, self._icon_imgs, interactive=self._editable(self.get_cluster()))
 
     def _update_enabled_count(self, count: int | None = None) -> None:
         if count is None:
@@ -782,8 +799,9 @@ class ModPage(Page):
 
     def _mark_dirty(self) -> None:
         self._dirty = True
+        c = self.get_cluster()
         self._save_btn.setEnabled(True)
-        self._apply_current_btn.setEnabled(True)
+        self._apply_current_btn.setEnabled(bool(c and c.source == SaveSource.SERVER))
 
     def get_pending_enabled_mod_ids(self, cluster):
         if not self._dirty or self._loading or cluster is None:
@@ -797,8 +815,7 @@ class ModPage(Page):
 
     # ── 行为回调 ────────────────────────────────────────────────────────
     def _on_toggle(self, workshop_id: str) -> None:
-        c = self.get_cluster()
-        if not c or c.source != SaveSource.SERVER:
+        if not self._editable(self.get_cluster()):
             return
         if self._luajit_mod_locked and workshop_id == luajit_injector.WORKSHOP_MOD_KEY:
             return
@@ -840,9 +857,7 @@ class ModPage(Page):
             return
         if not mod_info.config_options and not mod_info.unsupported_schema:
             return
-        c = self.get_cluster()
-        is_server = bool(c and c.source == SaveSource.SERVER)
-        read_only = mod_info.client_only or not is_server
+        read_only = mod_info.client_only or not self._editable(self.get_cluster())
         reason = "client_only" if mod_info.client_only else "local_save"
         open_mod_config(self, workshop_id, mod, mod_info, read_only, reason)
 
@@ -904,8 +919,39 @@ class ModPage(Page):
                         config = {opt.name: opt.default for opt in info.config_options if not opt.is_header}
                 overrides.mods[wid] = ModEntry(workshop_id=wid, enabled=mod.enabled, configuration_options=config)
 
+    def _save_local_mods(self, cluster, index_path: Path, silent: bool) -> None:
+        """本地存档：写 Master shardindex（游戏前端以它为准），再把同一份写进各世界 modoverrides.lua。
+        游戏运行时内存里缓存着 shardindex，退出会写回覆盖，所以必须先关游戏；静默保存也要提示，否则改动悄悄丢失。"""
+        from dstools.features.mod.legacy_v1 import is_dst_client_running
+
+        if is_dst_client_running():
+            dialogs.show_warning(self.window(), t("mod.save_btn"), t("mod.local_save_game_running"))
+            return
+        try:
+            overrides = ModOverrides(path=index_path, mods=load_shardindex_mods(index_path))
+            self._write_mod_states(overrides)
+            save_shardindex_mods(index_path, overrides.mods)
+        except (OSError, ShardIndexError) as exc:
+            dialogs.show_error(self.window(), t("mod.save_btn"), str(exc))
+            return
+        for sh in cluster.shards:
+            dst = ModOverrides(path=sh.mod_overrides_path or sh.path / "modoverrides.lua")
+            sync_mods(overrides, dst)
+            save_mod_overrides(dst)
+        self.ctx.cluster_config_saved.emit(cluster)
+        if not silent:
+            enabled_count = sum(1 for m in overrides.mods.values() if m.enabled)
+            dialogs.show_info(self.window(), t("dlg.save_ok"), t("mod.local_saved", count=enabled_count))
+            self._dirty = False
+            self._save_btn.setEnabled(False)
+            self._refresh_mods()
+
     def _save_mods(self, silent: bool = False) -> None:
         c = self.get_cluster()
+        index_path = self._local_shardindex(c)
+        if index_path is not None:
+            self._save_local_mods(c, index_path, silent)
+            return
         shard = next((s for s in c.shards if s.name == self._current_shard_name), None) if c else None
         if not c or not shard or not shard.mod_overrides_path or c.source != SaveSource.SERVER:
             if not silent:

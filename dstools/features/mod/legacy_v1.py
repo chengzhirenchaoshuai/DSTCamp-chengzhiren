@@ -499,6 +499,11 @@ def running_dst_processes() -> tuple[str, ...]:
     return tuple(found)
 
 
+def is_dst_client_running() -> bool:
+    """游戏客户端（不含专服）是否在运行。"""
+    return any(name in _CLIENT_PROCESS_NAMES for name in running_dst_processes())
+
+
 def _safe_extract(package: zipfile.ZipFile, stage: Path) -> None:
     for entry in package.infolist():
         normalized = entry.filename.replace("\\", "/")

@@ -614,5 +614,28 @@ def test_shadowed_v1_copy_is_detected_only_when_v2_exists():
     assert [(m.workshop_id, m.name) for m in found] == [("111", "New")]
 
 
+def test_shardindex_save_replaces_only_enabled_mods():
+    """本地存档 shardindex 写回只替换 enabled_mods，字符串里的括号和其它字段原样保留。"""
+    from dstools.features.mod.shardindex import load_shardindex_mods, save_shardindex_mods
+    from dstools.models import ModEntry
+
+    rest = ('  server={ name="a}{b", description=[[x}]] },\n'
+            '  enabled_mods={ ["workshop-1"]={ enabled=true, configuration_options={ k="}" } } },\n'
+            '  session_id="S", version=5\n}')
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "shardindex"
+        path.write_bytes(b"KLEI     1 return {\n" + rest.encode())
+        mods = load_shardindex_mods(path)
+        assert mods["workshop-1"].configuration_options == {"k": "}"}
+        mods["workshop-1"].enabled = False
+        mods["workshop-2"] = ModEntry("workshop-2", True, {"n": 3})
+        save_shardindex_mods(path, mods)
+        text = path.read_text(encoding="utf-8")
+        back = load_shardindex_mods(path)
+    assert text.startswith('KLEI     1 return {\n  server={ name="a}{b", description=[[x}]] },\n  enabled_mods=')
+    assert text.endswith(',\n  session_id="S", version=5\n}')
+    assert not back["workshop-1"].enabled and back["workshop-2"].configuration_options == {"n": 3}
+
+
 if __name__ == "__main__":
     run(globals())
