@@ -155,6 +155,8 @@ class _ModRow(Card):
         edit_btn.setFont(theme.font("FONT_SIZE_SM"))
         edit_btn.clicked.connect(lambda: dialog.page._open_default_config(key, info))
         box.addWidget(edit_btn)
+        # 状态标签与"编辑"按钮等高
+        self.chip.setFixedHeight(edit_btn.sizeHint().height())
         reset_btn = dialogs.style_button(QPushButton(t("mod.default_config_reset")), "secondary")
         reset_btn.setFont(theme.font("FONT_SIZE_SM"))
         reset_btn.clicked.connect(lambda: dialog.reset(key))
@@ -165,7 +167,9 @@ class _ModRow(Card):
         key, color_key = _STATES[state]
         color = theme.hex(color_key)
         self.chip.setText(t(key))
-        self.chip.setStyleSheet(f"color: {color}; border: 1px solid {color}; border-radius: 9px; padding: 2px 10px;")
+        radius = self.chip.height() // 2
+        self.chip.setStyleSheet(f"color: {color}; border: 1px solid {color}; border-radius: {radius}px; "
+                                "padding: 0 10px;")
 
     def set_icon(self, pixmap: QPixmap | None) -> None:
         if pixmap is None or pixmap.isNull():
