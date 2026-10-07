@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import html
+import re
 import sys
 import webbrowser
 
@@ -25,12 +27,68 @@ def can_install_automatically(release: UpdateRelease) -> bool:
     return bool(release.can_auto_update and getattr(sys, "frozen", False))
 
 
+def _inline_html(text: str) -> str:
+    """转义后处理行内的 **粗体**、`代码` 与 [文字](链接)。"""
+    text = html.escape(text, quote=False)
+    text = re.sub(r"\*\*(.+?)\*\*",
+                  lambda m: f'<b style="color:{theme.hex("HEADING")}">{m.group(1)}</b>', text)
+    text = re.sub(r"`([^`]+)`",
+                  lambda m: f'<span style="background-color:{theme.hex("CARD_BG_ALT")};'
+                            f' color:{theme.hex("ACCENT")}">&nbsp;{m.group(1)}&nbsp;</span>', text)
+    return re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)",
+                  lambda m: f'<a href="{m.group(2)}" style="color:{theme.hex("ACCENT")}">{m.group(1)}</a>',
+                  text)
+
+
+def release_notes_html(markdown: str) -> str:
+    """把 Release 说明（只用到标题、列表、段落与行内格式）转成按主题配色的 HTML。
+
+    不用 QTextDocument.setMarkdown：它的标题字号固定偏大且没有颜色，与界面字号体系不一致。
+    """
+    def pt(size_key: str) -> str:
+        # 跟随"字体大小"设置缩放后的实际字号
+        return f"{theme.font(size_key).pointSizeF():g}pt"
+
+    text_color = theme.hex("TEXT")
+    parts: list[str] = []
+    in_list = False
+    for raw in markdown.split("\n"):
+        line = raw.strip()
+        bullet = re.match(r"[-*]\s+(.*)", line)
+        if in_list and not bullet:
+            parts.append("</ul>")
+            in_list = False
+        if not line:
+            continue
+        if line.startswith("## "):
+            top = 14 if parts else 0  # 首个标题不留上边距
+            parts.append(
+                f'<p style="margin-top:{top}px; margin-bottom:6px; font-size:{pt("FONT_SIZE_LG")};'
+                f' font-weight:bold; color:{theme.hex("ACCENT")}">{_inline_html(line[3:])}</p>')
+        elif line.startswith("### "):
+            parts.append(
+                f'<p style="margin-top:10px; margin-bottom:4px; font-size:{pt("FONT_SIZE_MD")};'
+                f' font-weight:bold; color:{theme.hex("HEADING")}">'
+                f'<span style="color:{theme.hex("PRIMARY_DARK")}">▍</span>{_inline_html(line[4:])}</p>')
+        elif bullet:
+            if not in_list:
+                parts.append('<ul style="margin-top:0px; margin-bottom:4px; -qt-list-indent:1">')
+                in_list = True
+            parts.append(f'<li style="margin-bottom:5px">{_inline_html(bullet.group(1))}</li>')
+        else:
+            parts.append(f'<p style="margin-bottom:6px">{_inline_html(line)}</p>')
+    if in_list:
+        parts.append("</ul>")
+    return (f'<div style="color:{text_color}; font-size:{pt("FONT_SIZE_BASE")};'
+            f' line-height:140%">{"".join(parts)}</div>')
+
+
 class UpdatePromptDialog(dialogs.Dialog):
     """发现新版本：立即更新 / 打开下载页 / 取消，外加"不再提醒"开关
     （跟"关于"里的"提醒更新"是同一个设置）。"""
 
     def __init__(self, parent, release: UpdateRelease):
-        super().__init__(parent, t("update.title"), "md" if release.notes else "sm")
+        super().__init__(parent, t("update.title"), "lg" if release.notes else "sm")
         self.action = "cancel"
         key = "update.prompt" if release.can_auto_update else "update.manual_only"
         self.body.addWidget(self.text_label(t(key, version=release.version)))
@@ -38,9 +96,10 @@ class UpdatePromptDialog(dialogs.Dialog):
             self.body.addWidget(self.heading_label(t("update.notes_heading")))
             notes = QTextBrowser()
             notes.setOpenExternalLinks(True)
-            notes.setFont(theme.font("FONT_SIZE_SM"))
-            notes.setMarkdown(release.notes)
-            notes.setMinimumHeight(260)
+            notes.setFont(theme.font("FONT_SIZE_BASE"))
+            notes.document().setDocumentMargin(10)
+            notes.setHtml(release_notes_html(release.notes))
+            notes.setMinimumHeight(340)
             self.body.addWidget(notes, 1)
 
         remind_row = QHBoxLayout()
