@@ -9,10 +9,11 @@
 import re
 import time
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QEvent, QRect, Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QToolTip, QVBoxLayout,
+    QWidget,
 )
 
 from dstools.features.mod.config_memory import load_memory
@@ -87,18 +88,31 @@ def _convert_icons(targets: list) -> dict:
 
 
 class _ElidedLabel(QLabel):
-    """单行文字放不下时显示省略号、悬停看全文；不让长 Mod 名把整行撑出窗口。"""
+    """单行文字放不下时显示省略号、悬停看全文；不让长 Mod 名把整行撑出窗口。
+    标签会被拉伸占满剩余宽度，所以悬停提示只在鼠标落在实际文字上时显示，不用 setToolTip。"""
 
     def __init__(self, text: str):
         super().__init__()
         self._full = text
-        self.setToolTip(text)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.setMinimumWidth(40)
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self.setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, self.width()))
+
+    def event(self, event) -> bool:
+        if event.type() == QEvent.Type.ToolTip:
+            text_rect = QRect(self.contentsRect().left(), 0, self.fontMetrics().horizontalAdvance(self.text()),
+                              self.height())
+            if text_rect.contains(event.pos()):
+                # 传入文字矩形：提示弹出后鼠标移出文字（到后面空白处）即自动收起
+                QToolTip.showText(event.globalPos(), self._full, self, text_rect)
+            else:
+                QToolTip.hideText()
+                event.ignore()
+            return True
+        return super().event(event)
 
 
 class _ModRow(Card):
