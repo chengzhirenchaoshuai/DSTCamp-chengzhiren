@@ -9,7 +9,7 @@
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from dstools.features.mod.config_memory import load_memory
@@ -24,7 +24,7 @@ from dstools.qt.widgets import Card, PillTabBar
 from dstools.shared.resource_paths import bundled_resource_dir
 
 _FILTER_DEBOUNCE_MS = 150
-_ICON_SIZE = 44
+_ICON_SIZE = 56
 _DEFAULT_ICON_PATH = bundled_resource_dir() / "icons" / "ui" / "mod_icon_default.png"
 # 状态 -> (文案键, 颜色键)
 _STATES = {
@@ -80,6 +80,21 @@ def _convert_icons(targets: list) -> dict:
     return icons
 
 
+class _ElidedLabel(QLabel):
+    """单行文字放不下时显示省略号、悬停看全文；不让长 Mod 名把整行撑出窗口。"""
+
+    def __init__(self, text: str):
+        super().__init__()
+        self._full = text
+        self.setToolTip(text)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.setMinimumWidth(40)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.setText(self.fontMetrics().elidedText(self._full, Qt.TextElideMode.ElideRight, self.width()))
+
+
 class _ModRow(Card):
     """一行：图标 | 名称 + ID/作者/版本 | 状态标签 | 编辑、恢复默认值。"""
 
@@ -89,7 +104,7 @@ class _ModRow(Card):
         self.search_text = f"{name} {key}".casefold()
         self.state = "none"
         box = QHBoxLayout(self)
-        box.setContentsMargins(10, 8, 12, 8)
+        box.setContentsMargins(10, 6, 12, 6)
         box.setSpacing(12)
         self.icon = QLabel()
         self.icon.setFixedSize(_ICON_SIZE, _ICON_SIZE)
@@ -97,7 +112,7 @@ class _ModRow(Card):
 
         text = QVBoxLayout()
         text.setSpacing(2)
-        title = QLabel(name)
+        title = _ElidedLabel(name)
         title.setFont(theme.font("FONT_SIZE_MD", bold=True))
         text.addWidget(title)
         meta_parts = [key.removeprefix("workshop-")]
@@ -105,7 +120,7 @@ class _ModRow(Card):
             meta_parts.append(info.author)
         if info.version:
             meta_parts.append(f"v{info.version}")
-        meta = QLabel(" · ".join(meta_parts))
+        meta = _ElidedLabel(" · ".join(meta_parts))
         meta.setFont(theme.font("FONT_SIZE_XS"))
         meta.setProperty("muted", True)
         text.addWidget(meta)
@@ -145,7 +160,7 @@ class GlobalDefaultsDialog(dialogs.Dialog):
     def __init__(self, page):
         super().__init__(page.window(), t("mod.global_defaults_title"), "lg")
         self.setModal(False)
-        dialogs.fit_to_screen(self, 860, 720)
+        dialogs.fit_to_screen(self, 980, 780)
         self.page = page
         self._infos: dict = {}
         self._rows: dict[str, _ModRow] = {}
@@ -191,6 +206,7 @@ class GlobalDefaultsDialog(dialogs.Dialog):
         area.setObjectName("globalDefaultsArea")
         area.setWidgetResizable(True)
         area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.viewport().setAutoFillBackground(False)
         body = QWidget()
         body.setObjectName("globalDefaultsBody")
