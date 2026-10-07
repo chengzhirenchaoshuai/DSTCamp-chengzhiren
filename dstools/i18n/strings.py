@@ -842,6 +842,14 @@ STRINGS = {
         "world.creation_add_world_prompt": "选择要添加的世界模板。已启用 Mod 提供的世界也会显示在这里。",
         "world.creation_surface_world": "地上（森林）",
         "world.creation_remove_world_confirm": "确定删除世界“{name}”吗？其尚未写入存档的设置会一并移除。",
+        "world.creation_three_worlds_layout": "套用三世界五分片",
+        "world.creation_three_worlds_confirm": (
+            "按三合一整合版的专服要求设置五个世界：\n"
+            "Master 森林、Shipwrecked 海难（编号 2）、Porkland 猪镇（编号 3）、"
+            "Caves 洞穴（编号 4）、Volcano 火山（编号 5）。\n\n"
+            "现有的额外世界会被移除，各从世界的端口和分片编号会重置；海难不生成火山岛（由火山世界代替）。\n\n"
+            "若要开启该 Mod 配置里的“世界分组暂停”，还需在 cluster.ini 中关闭 pause_when_empty。"
+        ),
         "world.creation_no_master_title": "没有主世界",
         "world.creation_no_master_prompt": "当前剩下的世界里没有主世界，存档必须有且只有一个主世界才能启动。\n请选择一个世界设为主世界（只修改该世界的配置，不改文件夹名）：",
         "world.creation_rules_tab": "世界规则",
@@ -2067,6 +2075,14 @@ STRINGS = {
         "world.creation_add_world_prompt": "Choose a world template. Worlds supplied by enabled mods also appear here.",
         "world.creation_surface_world": "Surface (Forest)",
         "world.creation_remove_world_confirm": 'Remove the world "{name}"? Its unsaved settings will also be removed.',
+        "world.creation_three_worlds_layout": "Apply Three-World 5-Shard Layout",
+        "world.creation_three_worlds_confirm": (
+            "Set up the five worlds required by the three-in-one mod for dedicated servers:\n"
+            "Master Forest, Shipwrecked (ID 2), Porkland (ID 3), Caves (ID 4), Volcano (ID 5).\n\n"
+            "Existing extra worlds will be removed, and ports and shard IDs of secondary worlds will be reset; "
+            "Shipwrecked will not generate a volcano island (the Volcano world replaces it).\n\n"
+            "To enable the mod's group pause option, also turn off pause_when_empty in cluster.ini."
+        ),
         "world.creation_no_master_title": "No Master World",
         "world.creation_no_master_prompt": "None of the remaining worlds is the master world, and a save needs exactly one to start.\nPick a world to make the master (only its config changes; the folder name stays the same):",
         "world.creation_rules_tab": "World Rules",

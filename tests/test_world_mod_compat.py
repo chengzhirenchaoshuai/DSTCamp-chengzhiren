@@ -25,6 +25,7 @@ from dstools.features.world.creation import (  # noqa: E402
 from dstools.features.world.defaults import (  # noqa: E402
     default_plan_for_location,
     default_plans_from_cluster,
+    three_worlds_layout,
 )
 from dstools.features.world.location_profiles import (  # noqa: E402
     CAVE_LOCATION,
@@ -734,6 +735,25 @@ def test_multi_shard_mod_templates_require_enabled_mods() -> None:
         output = create_world(valid, Path(directory))
         assert parse_lua_file(output / "Shipwrecked" / "leveldataoverride.lua")["location"] == SHIPWRECKED_LOCATION
         assert parse_lua_file(output / "Volcano" / "leveldataoverride.lua")["location"] == VOLCANO_LOCATION
+
+        # 三合一整合版五分片：编号固定，海难不生成火山岛，modoverrides 不混入独立版
+        layout = {name: (plan, config) for name, plan, config in three_worlds_layout()}
+        three = WorldCreationPlan(
+            "three_worlds", layout["Master"][0], layout["Caves"][0],
+            mod_ids=frozenset({THREE_WORLDS_MOD_ID}),
+            shard_configs={name: config for name, (_plan, config) in layout.items()},
+            extra_shards={name: plan for name, (plan, _config) in layout.items()
+                          if name not in (MASTER_SHARD, CAVES_SHARD)},
+        )
+        output = create_world(three, Path(directory))
+        ids = {name: load_shard_config(output / name).shard.get("id")
+               for name in ("Shipwrecked", "Porkland", "Caves", "Volcano")}
+        assert ids == {"Shipwrecked": 2, "Porkland": 3, "Caves": 4, "Volcano": 5}
+        shipwrecked = parse_lua_file(output / "Shipwrecked" / "leveldataoverride.lua")
+        assert shipwrecked["overrides"]["volcanoisland"] == "none"
+        assert parse_lua_file(output / "Porkland" / "modoverrides.lua") == {
+            f"workshop-{THREE_WORLDS_MOD_ID}": {"enabled": True},
+        }
 
 
 if __name__ == "__main__":

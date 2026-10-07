@@ -34,7 +34,7 @@ from dstools.features.mod.parser import (
 from dstools.features.save_browser.cluster_copy import suggest_new_cluster_name
 from dstools.features.world import creation, defaults
 from dstools.features.world.location_profiles import (
-    CAVES_SHARD, IA_CORE_MOD_ID, IA_SHIPWRECKED_MOD_ID, MASTER_SHARD, find_mod_key,
+    CAVES_SHARD, IA_CORE_MOD_ID, IA_SHIPWRECKED_MOD_ID, MASTER_SHARD, THREE_WORLDS_MOD_ID, find_mod_key,
     get_location_definition, resolve_world_location_profile,
 )
 from dstools.features.world.mod_settings import (
@@ -116,18 +116,22 @@ class DraftServerPanel(ServerConfigPage):
                 editor.widget.setText(name)
                 return
 
-    def add_shard(self, shard_name: str) -> None:
+    def add_shard(self, shard_name: str, config=None) -> None:
+        """新增分片；给出 ``config`` 时按它写 server.ini，已存在的分片也会被覆盖（固定分片编号的布局用）。"""
         cluster = self.ctx.selected_cluster()
-        if any(s.name == shard_name for s in cluster.shards):
+        existing = any(s.name == shard_name for s in cluster.shards)
+        if existing and config is None:
             return
         # load() 会按草稿文件重建表单，先把未落盘的表单值写进草稿，否则会被冲掉
         self.read_creation_settings()
         from dstools.shared.ini_parser import write_server_ini
         path = cluster.path / shard_name
-        path.mkdir()
-        shard_index = len(cluster.shards)
-        write_server_ini(creation.default_shard_config(False, shard_name, shard_index), path / "server.ini")
-        cluster.shards.append(Shard(name=shard_name, path=path))
+        if config is None:
+            config = creation.default_shard_config(False, shard_name, len(cluster.shards))
+        if not existing:
+            path.mkdir()
+            cluster.shards.append(Shard(name=shard_name, path=path))
+        write_server_ini(config, path / "server.ini")
         self.load()
         self._shard_combo.setCurrentText(shard_name)
         self._on_shard_picked(0)
@@ -443,6 +447,10 @@ class CreationWizardDialog(QDialog):
         add_btn = QPushButton(t("world.creation_add_world"))
         add_btn.clicked.connect(self._add_world)
         toolbar.addWidget(add_btn)
+        self._three_worlds_btn = QPushButton(t("world.creation_three_worlds_layout"))
+        self._three_worlds_btn.clicked.connect(self._apply_three_worlds_layout)
+        self._three_worlds_btn.setVisible(False)
+        toolbar.addWidget(self._three_worlds_btn)
         self._remove_world_btn = QPushButton(t("world.creation_remove_world"))
         self._remove_world_btn.clicked.connect(self._remove_world)
         toolbar.addWidget(self._remove_world_btn)
@@ -596,6 +604,14 @@ class CreationWizardDialog(QDialog):
                                   t("world.creation_remove_world_confirm", name=shard_name), danger=True):
             return
         self._dirty = True
+        self._discard_shard(shard_name)
+        self._shard_combo.setCurrentIndex(0)
+        self._update_remove_world_btn()
+        self._refresh_location_combo()
+        self._render_world()
+
+    def _discard_shard(self, shard_name: str) -> None:
+        """移除一个世界的计划、草稿、服务器配置和下拉项（不确认、不刷新界面）。"""
         if shard_name == MASTER_SHARD:
             self._plan_master = None
             self._removed_fixed_shards.add(shard_name)
@@ -612,6 +628,34 @@ class CreationWizardDialog(QDialog):
         index = self._shard_combo.findText(shard_name)
         if index >= 0:
             self._shard_combo.removeItem(index)
+
+    def _apply_three_worlds_layout(self) -> None:
+        """按三合一整合版说明的专服五分片重建世界列表，分片编号固定（世界分组暂停依赖它）。"""
+        if not dialogs.ask_yes_no(self, t("world.creation_three_worlds_layout"),
+                                  t("world.creation_three_worlds_confirm")):
+            return
+        self._dirty = True
+        for shard_name in list(self._extra_plans):
+            self._discard_shard(shard_name)
+        for shard_name, plan, config in defaults.three_worlds_layout():
+            if shard_name in (MASTER_SHARD, CAVES_SHARD):
+                restored = shard_name in self._removed_fixed_shards
+                if restored:
+                    self._removed_fixed_shards.discard(shard_name)
+                    position = 0 if shard_name == MASTER_SHARD else int(self._shard_combo.findText(MASTER_SHARD) >= 0)
+                    self._shard_combo.insertItem(position, shard_name)
+                # 固定槽位沿用现有计划（优先官方模板），只切换世界类型
+                self._switch_shard_location(shard_name, plan.location, render=False)
+                self._user_selected_location_shards.add(shard_name)
+                # 已有的 Master 保留用户填写的 server.ini，只有被删后恢复的才写默认值
+                if shard_name == MASTER_SHARD and not restored:
+                    continue
+            else:
+                self._extra_plans[shard_name] = plan
+                self._location_drafts[(shard_name, plan.location)] = plan
+                self._shard_combo.addItem(shard_name)
+            if self._server_panel is not None:
+                self._server_panel.add_shard(shard_name, config)
         self._shard_combo.setCurrentIndex(0)
         self._update_remove_world_btn()
         self._refresh_location_combo()
@@ -641,6 +685,7 @@ class CreationWizardDialog(QDialog):
             profile = resolve_world_location_profile(self._selected_mod_ids)
             profile_changed = profile.effective_mod_ids != self._world_profile.effective_mod_ids
             self._world_profile = profile
+            self._three_worlds_btn.setVisible(THREE_WORLDS_MOD_ID in profile.effective_mod_ids)
             if apply_profile_defaults and profile_changed:
                 for shard in self._live_fixed_shards():
                     if shard not in self._user_selected_location_shards:

@@ -27,6 +27,17 @@ BUNDLED_MOD_CAPABILITIES = {
 ALL_MOD_LOCATIONS = (
     FOREST_LOCATION, CAVE_LOCATION, SHIPWRECKED_LOCATION, VOLCANO_LOCATION, PORKLAND_LOCATION,
 )
+# 三合一整合版创意工坊说明与 README 要求的专服五分片：(目录名, location, 分片 ID, 额外 overrides)。
+# 分片 ID 固定，"世界分组暂停"按它配对（森林+洞穴、海难+火山、猪镇）；Master 无 ID。
+# 海难的 volcanoisland：IA postinit/map/levels/shipwrecked.lua 判断 ``~= "none"`` 才加火山岛，
+# 缺 key 也会生成，有独立火山分片时必须显式写 "none"。
+THREE_WORLDS_SHARD_LAYOUT = (
+    ("Master", FOREST_LOCATION, None, {}),
+    ("Shipwrecked", SHIPWRECKED_LOCATION, 2, {"volcanoisland": "none"}),
+    ("Porkland", PORKLAND_LOCATION, 3, {}),
+    ("Caves", CAVE_LOCATION, 4, {}),
+    ("Volcano", VOLCANO_LOCATION, 5, {}),
+)
 
 MASTER_SHARD = "Master"
 CAVES_SHARD = "Caves"
