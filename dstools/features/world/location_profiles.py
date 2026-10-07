@@ -118,7 +118,7 @@ LOCATION_DEFINITIONS: dict[str, WorldLocationDefinition] = {
 
 # 取自 Island Adventures 1467214795 源码（sw_locations.lua、levels/shipwrecked.lua、levels/volcano.lua）。
 # 官方创建界面会把 AddLocation 默认值合并进 AddWorldGenLevel 再写 leveldataoverride.lua，不能只写空 overrides
-_ISLAND_CREATION_LEVEL_DATA: dict[str, dict[str, object]] = {
+_MOD_CREATION_LEVEL_DATA: dict[str, dict[str, object]] = {
     SHIPWRECKED_LOCATION: {
         "version": 4,
         "hideminimap": False,
@@ -173,12 +173,54 @@ _ISLAND_CREATION_LEVEL_DATA: dict[str, dict[str, object]] = {
             "ia_drowning": "always",
         },
     },
+    # 取自 Above the Clouds 3322803908 源码（三合一 modules/pl 下同名文件逐字节相同）：
+    # 本体 levels.lua 的 GetDataForLevelID = MergeMapsDeep(locations/porkland.lua 的 AddLocation,
+    # levels/porkland.lua 的 AddLevel)，关卡预设覆盖地点默认值（如 no_joining_islands=false）。
+    # 只写 id 不写 overrides 时游戏不会按预设补全，世界生成报 "Must specify the task set for a level!"（实测）。
+    PORKLAND_LOCATION: {
+        "version": 4,
+        "hideminimap": False,
+        "min_playlist_position": 0,
+        "max_playlist_position": 999,
+        "override_level_string": False,
+        "numrandom_set_pieces": 0,
+        "random_set_pieces": [],
+        "background_node_range": [0, 1],
+        "required_prefabs": ["multiplayer_portal"],
+        "overrides": {
+            "start_location": "PorkLandStart",
+            "task_set": "porkland",
+            "season_start": "default",
+            "world_size": "default",
+            "layout_mode": "RestrictNodesByKey",
+            "wormhole_prefab": "wormhole",
+            "roads": "never",
+            "keep_disconnected_tiles": True,
+            "no_wormholes_to_disconnected_tiles": True,
+            "no_joining_islands": False,
+            "has_ocean": True,
+            "prefabswaps_start": "classic",
+            "spawnmode": "fixed",
+            "specialevent": "none",
+            "grassgekkos": "never",
+            "branching": "least",
+            "frograin": "never",
+            "wildfires": "never",
+            "deerclops": "never",
+            "bearger": "never",
+            "deciduousmonster": "never",
+            "perd": "never",
+            "penguins": "never",
+            "hunt": "never",
+            "pl_clocktype": "plateau",
+        },
+    },
 }
 
 
 def get_verified_creation_level_data(location: str) -> dict[str, object]:
     """返回已从真实 Mod 源码核对过的创建数据副本。"""
-    return copy.deepcopy(_ISLAND_CREATION_LEVEL_DATA.get(location, {}))
+    return copy.deepcopy(_MOD_CREATION_LEVEL_DATA.get(location, {}))
 
 
 @dataclass(frozen=True)

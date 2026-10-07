@@ -683,6 +683,8 @@ def test_porkland_creation() -> None:
             "PORKLAND_DEFAULT",
         )
         assert (caves["location"], caves["id"]) == (CAVE_LOCATION, "DST_CAVE")
+        # leveldataoverride 必须是完整定义，缺 task_set 世界生成直接报错
+        assert master["overrides"]["task_set"] == "porkland"
 
 
 def test_multi_shard_creation() -> None:
