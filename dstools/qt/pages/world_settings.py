@@ -65,8 +65,8 @@ class WorldSettingsPage(Page):
         self._sub_tabs = PillTabBar(["", ""], height=32, pill_height=24, font_size_key="FONT_SIZE_SM")
         self._sub_tabs.current_changed.connect(self._on_sub_tab_changed)
         layout.addWidget(self._sub_tabs)
-        self._rules = WorldPanel(editable=True, is_rule=True)
-        # 世界生成按存档类型在加载后切换可编辑（见 _load_world）
+        # 两个面板都按存档类型在加载后切换可编辑（见 _load_world）：本地存档不显示箭头
+        self._rules = WorldPanel(editable=False, is_rule=True)
         self._generation_panel = WorldPanel(editable=False, is_rule=False)
         self._rules.value_clicked.connect(self._on_value_clicked)
         self._generation_panel.value_clicked.connect(
@@ -111,15 +111,10 @@ class WorldSettingsPage(Page):
         self._rules.refresh_values()
         self._generation_panel.refresh_values()
 
-    def _is_server(self) -> bool:
-        return bool(self._data and self._data.is_server)
-
     def _update_tab_labels(self) -> None:
         data = self._data
-        is_server = self._is_server() if data else self._selected_is_server()
-        # 服务器存档默认可改，不再标注；只有本地存档标"仅查看"
-        tag = "" if is_server else f" {t('world.rules_readonly_tag')}"
-        rules, generation = f"{t('world.rules')}{tag}", f"{t('world.generation')}{tag}"
+        # 不再标注可改/仅查看：本地存档只读由上方横幅说明，面板也不显示箭头
+        rules, generation = t("world.rules"), t("world.generation")
         if data is not None and data.status == page_data.STATUS_OK:
             rules += f" ({sum(len(v) for v in data.rules_by_category.values())})"
             generation += f" ({sum(len(v) for v in data.generation_by_category.values())})"
@@ -183,6 +178,7 @@ class WorldSettingsPage(Page):
             if generation != self._generation:
                 return
             self._data = data
+            self._rules.set_editable(data.is_server)
             self._generation_panel.set_editable(data.is_server)
             if data.status == page_data.STATUS_OK:
                 preset = data.preset

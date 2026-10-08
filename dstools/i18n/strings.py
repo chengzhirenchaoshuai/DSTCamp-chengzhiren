@@ -818,7 +818,6 @@ STRINGS = {
         "selector.running_suffix": "  [运行中]",
         # 世界设置改进
         "world.rules": "世界规则",
-        "world.rules_readonly_tag": "(仅查看)",
         "world.generation": "世界生成",
         "world.save_rules": "保存世界设置",
         "world.no_preset": "未找到世界设置文件",
@@ -2101,7 +2100,6 @@ STRINGS = {
         "selector.running_suffix": "  [Running]",
         # 世界设置改进
         "world.rules": "World Rules",
-        "world.rules_readonly_tag": "(View Only)",
         "world.generation": "World Generation",
         "world.save_rules": "Save World Settings",
         "world.no_preset": "No world settings file found",
