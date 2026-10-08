@@ -125,6 +125,14 @@ class WorldPanel(QAbstractScrollArea):
     def clear(self) -> None:
         self.set_data([], {}, "forest", {}, {})
 
+    def set_editable(self, editable: bool) -> None:
+        """切换是否显示箭头并响应点击（如世界生成只在服务器存档上可改）；行内几何随之变化，需重排。"""
+        if editable == self._editable:
+            return
+        self._editable = editable
+        self._layout_width = -1
+        self.viewport().update()
+
     def set_flash(self, flash) -> None:
         self._flash = flash
         self.viewport().update()

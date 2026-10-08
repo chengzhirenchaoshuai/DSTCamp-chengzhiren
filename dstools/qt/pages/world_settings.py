@@ -1,5 +1,5 @@
-"""世界设置页：编辑 leveldataoverride.lua。服务器存档的世界规则可改值保存，本地存档与世界生成只读；后台加载，
-面板见 qt/world_panel.py。
+"""世界设置页：编辑 leveldataoverride.lua。服务器存档的世界规则与世界生成都可改值保存，本地存档只读；
+世界生成只在生成新世界时生效（已生成的世界需重置），后台加载，面板见 qt/world_panel.py。
 """
 
 from PySide6.QtCore import Qt, QTimer
@@ -27,6 +27,7 @@ class WorldSettingsPage(Page):
         self._shard = ""
         self._data: page_data.WorldPageData | None = None
         self._dirty = False
+        self._generation_changed = False  # 本次未保存的修改是否包含世界生成项（保存后提示重置）
         self._flash_timer = QTimer(self, singleShot=True, interval=FLASH_MS)
         self._flash_timer.timeout.connect(self._clear_flash)
 
@@ -62,11 +63,14 @@ class WorldSettingsPage(Page):
         layout.addWidget(self._desc)
 
         self._sub_tabs = PillTabBar(["", ""], height=32, pill_height=24, font_size_key="FONT_SIZE_SM")
-        self._sub_tabs.current_changed.connect(lambda index: self._stack.setCurrentIndex(index))
+        self._sub_tabs.current_changed.connect(self._on_sub_tab_changed)
         layout.addWidget(self._sub_tabs)
         self._rules = WorldPanel(editable=True, is_rule=True)
+        # 世界生成按存档类型在加载后切换可编辑（见 _load_world）
         self._generation_panel = WorldPanel(editable=False, is_rule=False)
         self._rules.value_clicked.connect(self._on_value_clicked)
+        self._generation_panel.value_clicked.connect(
+            lambda key, delta: self._on_value_clicked(key, delta, is_rule=False))
         self._stack = QStackedWidget()
         self._stack.addWidget(self._rules)
         self._stack.addWidget(self._generation_panel)
@@ -114,7 +118,7 @@ class WorldSettingsPage(Page):
         data = self._data
         is_server = self._is_server() if data else self._selected_is_server()
         tag = t("world.rules_editable_tag") if is_server else t("world.rules_readonly_tag")
-        rules, generation = f"{t('world.rules')} {tag}", t("world.generation")
+        rules, generation = f"{t('world.rules')} {tag}", f"{t('world.generation')} {tag}"
         if data is not None and data.status == page_data.STATUS_OK:
             rules += f" ({sum(len(v) for v in data.rules_by_category.values())})"
             generation += f" ({sum(len(v) for v in data.generation_by_category.values())})"
@@ -131,8 +135,14 @@ class WorldSettingsPage(Page):
             self._banner.set_text(t("world.no_save_banner"))
         elif not self._selected_is_server():
             self._banner.set_text(t("world.local_view_only_banner"))  # 本地存档只读查看，不保证编辑生效
+        elif self._stack.currentIndex() == 1:
+            self._banner.set_text(t("world.generation_reset_banner"))
         else:
             self._banner.set_text("")
+
+    def _on_sub_tab_changed(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
+        self._update_banner()
 
     # ── 加载 ────────────────────────────────────────────────────────────
     def on_cluster_changed(self, cluster) -> None:
@@ -172,6 +182,7 @@ class WorldSettingsPage(Page):
             if generation != self._generation:
                 return
             self._data = data
+            self._generation_panel.set_editable(data.is_server)
             if data.status == page_data.STATUS_OK:
                 preset = data.preset
                 self._show_info(f"{preset.name} ({preset.preset_id})   {data.location_label}",
@@ -202,20 +213,25 @@ class WorldSettingsPage(Page):
     # ── 编辑 ────────────────────────────────────────────────────────────
     def _set_dirty(self, dirty: bool) -> None:
         self._dirty = dirty
+        if not dirty:
+            self._generation_changed = False
         self._save_button.setEnabled(dirty)
 
-    def _on_value_clicked(self, key: str, delta: int) -> None:
+    def _on_value_clicked(self, key: str, delta: int, is_rule: bool = True) -> None:
         data = self._data
         # 只读兜底：本地存档的面板不注册点击，正常点不到这里，这里再挡一道防止别的路径漏调
         if data is None or not data.is_server or data.preset is None:
             return
-        page_data.step_rule_value(data, key, delta)
+        page_data.step_rule_value(data, key, delta, is_rule=is_rule)
         self._set_dirty(True)
-        self._rules.set_flash((key, delta))
+        if not is_rule:
+            self._generation_changed = True
+        (self._rules if is_rule else self._generation_panel).set_flash((key, delta))
         self._flash_timer.start()
 
     def _clear_flash(self) -> None:
         self._rules.set_flash(None)
+        self._generation_panel.set_flash(None)
 
     def _on_save(self) -> None:
         data = self._data
@@ -228,9 +244,11 @@ class WorldSettingsPage(Page):
         if not dialogs.ask_yes_no(self.window(), title, t("dlg.confirm_save_msg", name=data.shard_name)):
             return
         try:
-            save_leveldata(data.preset, data.path)
+            save_leveldata(data.preset, data.path, page_data.lua_value_types(data))
         except (OSError, ValueError) as exc:
             dialogs.show_error(self.window(), title, str(exc))
             return
+        need_reset = self._generation_changed and page_data.generation_requires_reset(data)
         self._set_dirty(False)
-        dialogs.show_info(self.window(), t("dlg.save_ok"), t("world.saved"))
+        dialogs.show_info(self.window(), t("dlg.save_ok"),
+                          t("world.saved_need_reset") if need_reset else t("world.saved"))

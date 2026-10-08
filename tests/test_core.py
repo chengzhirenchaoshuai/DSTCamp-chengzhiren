@@ -1073,6 +1073,11 @@ def test_world_reader_and_view_model():
         # 未改动的布尔/数字必须保持原类型，不能被写成字符串
         assert reloaded.preset.raw["overrides"]["has_ocean"] is True
         assert reloaded.preset.raw["overrides"]["world_size_multi"] == 1.5
+        # 改过的值按 Mod 登记的全数字取值表写回 Lua 数字（世界设置页保存世界生成项时传入）
+        changed = next(item for item in reloaded.preset.overrides if item.key == "world_size_multi")
+        changed.value = "2"
+        save_leveldata(reloaded.preset, path, {"world_size_multi": ["1.5", "2"]})
+        assert load_leveldata(path).preset.raw["overrides"]["world_size_multi"] == 2
         assert not list(root.glob("*.tmp")), "原子写入完成后不应遗留临时文件"
 
         assert load_leveldata(root / "missing.lua").status == LeveldataStatus.MISSING

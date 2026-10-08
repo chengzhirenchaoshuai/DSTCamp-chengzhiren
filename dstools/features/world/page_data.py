@@ -92,13 +92,13 @@ def load_world_page(
     )
 
 
-def step_rule_value(data: WorldPageData, key: str, delta: int) -> None:
-    """把规则取值前/后移一格（两端钳制不绕回，与游戏一致）。
+def step_rule_value(data: WorldPageData, key: str, delta: int, is_rule: bool = True) -> None:
+    """把设置取值前/后移一格（两端钳制不绕回，与游戏一致）；``is_rule=False`` 为世界生成项。
 
     存档已有该 key 直接改；没有（刚启用的 Mod、游戏未写过的设置）则从其初始值起移动，转为会被保存的 WorldOverride。
     """
     preset = data.preset
-    values = get_value_set(key, data.mod_settings, location=data.location, is_rule=True)
+    values = get_value_set(key, data.mod_settings, location=data.location, is_rule=is_rule)
     override = next((o for o in preset.overrides if o.key == key), None)
     if override is not None:
         try:
@@ -123,3 +123,14 @@ def step_rule_value(data: WorldPageData, key: str, delta: int) -> None:
                 if row.key == key:
                     items[i] = override
                     break
+
+
+def generation_requires_reset(data: WorldPageData) -> bool:
+    """世界是否已生成过：已生成的地图不会因世界生成设置改变，需要重置世界（c_regenerateworld 会重读
+    leveldataoverride.lua 后重新生成）。以分片目录下是否已有 save/session 判断。"""
+    return data.path is not None and (data.path.parent / "save" / "session").is_dir()
+
+
+def lua_value_types(data: WorldPageData) -> dict[str, list[str]]:
+    """保存时用于还原 Lua 数字类型的取值表（只有 Mod 登记的全数字取值会被转成数字）。"""
+    return {key: info.values for key, info in data.mod_settings.items() if info.values}

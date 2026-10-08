@@ -820,10 +820,21 @@ STRINGS = {
         "world.rules": "世界规则",
         "world.rules_editable_tag": "(可修改)",
         "world.rules_readonly_tag": "(仅查看)",
-        "world.generation": "世界生成 (仅查看)",
-        "world.save_rules": "保存世界规则",
+        "world.generation": "世界生成",
+        "world.save_rules": "保存世界设置",
         "world.no_preset": "未找到世界设置文件",
-        "world.saved": "世界规则已保存",
+        "world.saved": "世界设置已保存",
+        "world.generation_reset_banner": (
+            "世界生成设置只在生成新世界时生效。修改保存后，需要在「本地服务器」页的主世界控制台点击"
+            "「重置世界」才会按新设置重新生成，重置会清空当前地图、建筑和物品。"
+        ),
+        "world.saved_need_reset": (
+            "世界设置已保存。\n\n"
+            "本次修改了世界生成设置，但这个世界已经生成过，地图不会自动改变。需要在「本地服务器」页的"
+            "主世界控制台点击「重置世界」，游戏才会按新设置重新生成；重置会清空当前地图、建筑和物品，"
+            "多层世界会一起重新生成，请先备份存档。\n\n"
+            "不想丢掉当前世界就不必重置，世界规则部分的修改在下次启动时照常生效。"
+        ),
         "world.local_view_only_banner": "⚠ 当前选中的是本地存档，世界设置仅支持查看，不支持修改。",
         "world.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再查看世界设置。",
         # 创建服务器存档向导
@@ -2093,10 +2104,24 @@ STRINGS = {
         "world.rules": "World Rules",
         "world.rules_editable_tag": "(Editable)",
         "world.rules_readonly_tag": "(View Only)",
-        "world.generation": "World Generation (View Only)",
-        "world.save_rules": "Save World Rules",
+        "world.generation": "World Generation",
+        "world.save_rules": "Save World Settings",
         "world.no_preset": "No world settings file found",
-        "world.saved": "World rules saved",
+        "world.saved": "World settings saved",
+        "world.generation_reset_banner": (
+            "World generation settings only apply when a new world is generated. After saving, click "
+            "\"Reset World\" in the Master console on the Local Server page to regenerate with the new "
+            "settings -- this wipes the current map, buildings and items."
+        ),
+        "world.saved_need_reset": (
+            "World settings saved.\n\n"
+            "You changed world generation settings, but this world has already been generated, so the map "
+            "won't change by itself. Click \"Reset World\" in the Master console on the Local Server page to "
+            "regenerate with the new settings. Resetting wipes the current map, buildings and items and "
+            "regenerates every shard, so back up the save first.\n\n"
+            "If you want to keep the current world, don't reset -- your world rule changes still apply on the "
+            "next start."
+        ),
         "world.local_view_only_banner": "⚠ The selected save is a local one -- World Settings is view-only here, editing isn't supported.",
         "world.no_save_banner": "No saves were detected. Create or import a save before viewing world settings.",
         # 创建服务器存档向导
