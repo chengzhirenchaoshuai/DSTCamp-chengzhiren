@@ -117,8 +117,9 @@ class WorldSettingsPage(Page):
     def _update_tab_labels(self) -> None:
         data = self._data
         is_server = self._is_server() if data else self._selected_is_server()
-        tag = t("world.rules_editable_tag") if is_server else t("world.rules_readonly_tag")
-        rules, generation = f"{t('world.rules')} {tag}", f"{t('world.generation')} {tag}"
+        # 服务器存档默认可改，不再标注；只有本地存档标"仅查看"
+        tag = "" if is_server else f" {t('world.rules_readonly_tag')}"
+        rules, generation = f"{t('world.rules')}{tag}", f"{t('world.generation')}{tag}"
         if data is not None and data.status == page_data.STATUS_OK:
             rules += f" ({sum(len(v) for v in data.rules_by_category.values())})"
             generation += f" ({sum(len(v) for v in data.generation_by_category.values())})"
