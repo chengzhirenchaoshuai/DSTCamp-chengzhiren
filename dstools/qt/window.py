@@ -402,39 +402,36 @@ class _SteamDot(QWidget):
         painter.end()
 
 
-_TAG_GAP = 4  # 展开列表里绿点与"当前登录"注释之间的距离
+_TIP_PAD = 5  # 展开列表绿点左右各扩出的悬停感应宽度（绿点只有约 6px，难以悬停）
 
 
-def _tag_font():
-    return theme.font("FONT_SIZE_XS")
-
-
-def _tag_width() -> int:
-    """绿点后面"当前登录"注释（含与绿点的间距）的宽度。"""
-    from PySide6.QtGui import QFontMetrics
-
-    return _TAG_GAP + QFontMetrics(_tag_font()).horizontalAdvance(t("selector.account_current_tag"))
-
-
-class _SteamTag(QWidget):
-    """展开列表里盖在 Steam 当前登录那一行上的"绿点 + 当前登录"注释；高度与行相同，绿点与文字垂直居中。"""
+class _SteamTipDot(QWidget):
+    """展开列表里 Steam 当前登录那一行的绿点：悬停显示"当前登录"提示。
+    感应区比绿点大（左右各扩 _TIP_PAD、与行同高）；鼠标点击/移动事件忽略，交给下面的列表行处理。"""
 
     def __init__(self, parent):
         super().__init__(parent)
-        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setToolTip(t("selector.account_current_tag"))
         self.hide()
         self.diameter = 6
         self.dot_top = 0
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
-        _paint_steam_dot(painter, 0, self.dot_top + self.diameter / 2, self.diameter)
-        painter.setFont(_tag_font())
-        painter.setPen(theme.color("TEXT_MUTED"))
-        painter.drawText(QRect(self.diameter + _TAG_GAP, 0, self.width(), self.height()),
-                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                         t("selector.account_current_tag"))
+        _paint_steam_dot(painter, _TIP_PAD, self.dot_top + self.diameter / 2, self.diameter)
         painter.end()
+
+    def mousePressEvent(self, event) -> None:
+        event.ignore()
+
+    def mouseReleaseEvent(self, event) -> None:
+        event.ignore()
+
+    def mouseMoveEvent(self, event) -> None:
+        event.ignore()
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        event.ignore()
 
 
 class _AccountCombo(QComboBox):
@@ -443,21 +440,14 @@ class _AccountCombo(QComboBox):
     def __init__(self):
         super().__init__()
         self._dot = _SteamDot(self)
-        self._popup_dot = _SteamTag(self.view().viewport())
+        self._popup_dot = _SteamTipDot(self.view().viewport())
         self._closed_text_end: dict[tuple, int | None] = {}
         self._measuring = False  # render() 会触发尺寸事件，防止 refresh_dot 重入
         self.currentIndexChanged.connect(self.refresh_dot)
         theme.changed.connect(self._dot.update)  # 绿点颜色跟随主题
 
     def _dot_space(self) -> int:
-        """比最长账号名多出的宽度：选择框里的绿点，以及展开列表里当前登录那一项的"绿点 + 当前登录"。"""
-        metrics = self.fontMetrics()
-        dot = _DOT_GAP + round(_dot_diameter(metrics)) + 2
-        widths = [metrics.horizontalAdvance(self.itemText(i)) for i in range(self.count())]
-        if not widths:
-            return dot
-        tagged = [w + dot + _tag_width() for i, w in enumerate(widths) if self.itemData(i, _STEAM_ACTIVE_ROLE)]
-        return max(dot, max(tagged, default=0) - max(widths))
+        return _DOT_GAP + round(_dot_diameter(self.fontMetrics())) + 2
 
     def sizeHint(self) -> QSize:
         size = super().sizeHint()
@@ -527,10 +517,10 @@ class _AccountCombo(QComboBox):
             return
         metrics = view.fontMetrics()
         diameter = math.ceil(_dot_diameter(metrics))
-        left = rect.left() + round(end / ratio) + _DOT_GAP
+        left = rect.left() + round(end / ratio) + _DOT_GAP - _TIP_PAD
         self._popup_dot.diameter = diameter
         self._popup_dot.dot_top = _dot_top(rect.center().y(), diameter, metrics) - rect.top()
-        self._popup_dot.setGeometry(left, rect.top(), max(0, rect.right() + 1 - left), rect.height())
+        self._popup_dot.setGeometry(left, rect.top(), diameter + 2 * _TIP_PAD, rect.height())
         self._popup_dot.show()
         self._popup_dot.raise_()
 
