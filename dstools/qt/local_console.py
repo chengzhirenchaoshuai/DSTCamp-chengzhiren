@@ -70,10 +70,10 @@ class _DiagnosticDetailDialog(QDialog):
         self.activateWindow()
 
 
-# 世界页签外边距（逻辑像素），与 theme.py 中 QTabBar::tab 的 margin 一致：
-# 上、右各留一圈给压在页签右上角的关闭角标。
+# 世界页签外边距（逻辑像素），与 theme.py 中 #consoleTabs QTabBar::tab 的 margin 一致：
+# 上方留给压在页签右上角的关闭角标；右边距即相邻页签的间隔。
 TAB_MARGIN_TOP = 6
-TAB_MARGIN_RIGHT = 8
+TAB_MARGIN_RIGHT = 2
 
 
 class TabCloseButton(QAbstractButton):
@@ -133,10 +133,11 @@ class _ConsoleTabBar(QTabBar):
             if not isinstance(button, TabCloseButton):
                 continue
             alive.add(button)
-            # tabRect 含 QSS 外边距，扣掉后才是胶囊本体；角标中心压在胶囊右上角往里 3px 处。
+            # tabRect 含 QSS 外边距，扣掉后才是页签本体；角标压在页签右上角，右缘越过页签 5px，
+            # 中心在上边往下 2px 处（再往上会超出页签条顶部被裁掉）。
             pill = self.tabRect(index).adjusted(0, TAB_MARGIN_TOP, -TAB_MARGIN_RIGHT, 0)
             half = button.width() / 2
-            button.move(round(pill.right() + 1 - 3 - half), round(pill.top() + 3 - half))
+            button.move(round(pill.right() + 1 + 5 - button.width()), round(pill.top() + 2 - half))
             button.raise_()
             button.show()
         # 页签被移除/清空后，tabData 里不再引用的角标一并释放。
@@ -144,6 +145,11 @@ class _ConsoleTabBar(QTabBar):
             if button not in alive:
                 button.hide()
                 button.deleteLater()
+
+    def sizeHint(self) -> QSize:
+        # 角标越过最后一个页签右缘 3px，页签条加宽一点免得被裁掉
+        hint = super().sizeHint()
+        return QSize(hint.width() + 4, hint.height())
 
     def tabLayoutChange(self) -> None:
         super().tabLayoutChange()
@@ -167,7 +173,10 @@ class ConsoleTabWidget(QTabWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("consoleTabs")  # theme.py 据此让页签贴住日志框
         self.setTabBar(_ConsoleTabBar())
+        # 页签不拉伸，页签条多出的宽度留给最后一个角标（须在 setTabBar 之后设，否则被重置）
+        self.tabBar().setExpanding(False)
         self.setIconSize(QSize(self._DOT + 2, self._DOT + 2 + self._DOT_DROP))
         self._dot_icons: dict[tuple[str, float], QIcon] = {}
 

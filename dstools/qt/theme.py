@@ -611,13 +611,18 @@ class Theme(QObject):
                 border-radius: 10px; top: 6px; }}
             QTabWidget::tab-bar {{ left: 4px; }}
             QTabWidget > QWidget, QTabWidget QStackedWidget > QWidget {{ background: transparent; }}
-            /* 页签做成与 PillTabBar 一致的胶囊：选中主题色底白字，未选中浅色底。上、右外边距给压在
-               页签右上角的关闭角标留位，数值与 local_console.TAB_MARGIN_TOP/RIGHT 一致；
-               与下方面板的间距由 pane 的 top 让出。 */
+            /* 页签做成与 PillTabBar 一致的胶囊：选中主题色底白字，未选中浅色底；
+               与下方面板的间距由 pane 的 top 让出。世界控制台页签另见下方 #consoleTabs。 */
             QTabBar::tab {{ background: {c['PRIMARY_LIGHT']}; color: {c['TEXT_MUTED']}; border: none;
                 padding: 4px 18px; margin: 6px 8px 0 0; min-width: 48px; border-radius: 10px; }}
             QTabBar::tab:selected {{ background: {c['PRIMARY']}; color: #FFFFFF; font-weight: {fw_bold}; }}
             QTabBar::tab:hover:!selected {{ background: {_rgba(c['PRIMARY'], 90)}; color: {c['TEXT']}; }}
+            /* 世界控制台页签贴住下方日志框：面板不再下让，页签条右移避开面板圆角；页签上方小圆角、
+               下方直角，间隔收窄，margin 与 local_console.TAB_MARGIN_TOP/RIGHT 一致。 */
+            QTabWidget#consoleTabs::pane {{ top: -1px; }}
+            QTabWidget#consoleTabs::tab-bar {{ left: 12px; }}
+            QTabWidget#consoleTabs QTabBar::tab {{ margin: 6px 2px 0 0; border-radius: 0;
+                border-top-left-radius: 4px; border-top-right-radius: 4px; }}
             QDialog {{ background: {c['BG_SOFT']}; }}
             QListWidget, QPlainTextEdit, QTextEdit {{ background: rgba(255,255,255,200); color: {c['TEXT']};
                 border: 1px solid {c['CARD_BORDER']}; border-radius: 8px; padding: 4px; }}
