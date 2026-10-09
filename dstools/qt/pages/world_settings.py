@@ -1,6 +1,7 @@
 """世界设置页：世界规则与世界生成都可改值保存。服务器存档写 leveldataoverride.lua；本地存档写游戏真正
-读取的各分片 save/shardindex 并同步 leveldataoverride.lua，须在游戏关闭时保存。世界生成只在生成新世界时
-生效（已生成的世界需重置），后台加载，面板见 qt/world_panel.py。
+读取的各分片 save/shardindex 并同步 leveldataoverride.lua。游戏只在启动时读取并缓存各存档 shardindex，
+存档运行时开服进程还会覆盖它：存档可能在运行时拦下，游戏开着时保存前提醒需重启游戏。世界生成只在生成
+新世界时生效（已生成的世界需重置），后台加载，面板见 qt/world_panel.py。
 """
 
 from PySide6.QtCore import Qt, QTimer
@@ -9,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from dstools.features.world import page_data
+from dstools.features.local_service.dedicated_server import detect_external_shard_processes
 from dstools.features.mod.legacy_v1 import is_dst_client_running
 from dstools.features.mod.shardindex import ShardIndexError
 from dstools.i18n import t
@@ -247,11 +249,39 @@ class WorldSettingsPage(Page):
         if data.preset is None or data.path is None:
             dialogs.show_info(self.window(), title, t("world.no_preset"))
             return
-        # 游戏把 shardindex 缓存在内存里、退出时写回，开着游戏改本地存档会被覆盖
-        if not data.is_server and is_dst_client_running():
-            dialogs.show_warning(self.window(), title, t("world.local_save_game_running"))
+        if data.is_server:
+            self._confirm_and_save(data, t("dlg.confirm_save_msg", name=data.shard_name))
             return
-        if not dialogs.ask_yes_no(self.window(), title, t("dlg.confirm_save_msg", name=data.shard_name)):
+        # 本地存档：游戏只在启动时读各存档 shardindex 并一直缓存，存档运行时开服进程自动存档还会覆盖它。
+        # 进程/端口检测要跑 tasklist、netstat，放后台
+        cluster = self.ctx.selected_cluster()
+        self._save_button.setEnabled(False)
+
+        def check() -> str:
+            if not is_dst_client_running():
+                return "closed"
+            shards = detect_external_shard_processes(cluster) if cluster is not None else {}
+            return "running" if any(info["running"] for info in shards.values()) else "open"
+
+        def done(state: str) -> None:
+            self._save_button.setEnabled(self._dirty)
+            if data is not self._data:
+                return
+            if state == "running":
+                dialogs.show_warning(self.window(), title, t("world.local_save_running"))
+                return
+            key = "world.local_save_game_open_confirm" if state == "open" else "dlg.confirm_save_msg"
+            self._confirm_and_save(data, t(key, name=data.shard_name))
+
+        def failed(exc: Exception) -> None:
+            self._save_button.setEnabled(self._dirty)
+            dialogs.show_error(self.window(), title, str(exc))
+
+        run_async(check, done, failed)
+
+    def _confirm_and_save(self, data: page_data.WorldPageData, confirm_text: str) -> None:
+        title = t("world.save_rules")
+        if not dialogs.ask_yes_no(self.window(), title, confirm_text):
             return
         try:
             page_data.save_world_page(data)
