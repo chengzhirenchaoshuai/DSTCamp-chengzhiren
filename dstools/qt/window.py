@@ -5,15 +5,18 @@
 """
 
 import ctypes
+import math
 import os
 from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import (
+    QAction, QActionGroup, QGuiApplication, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap,
+)
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
-    QProgressBar, QSizePolicy, QStyle, QStyledItemDelegate, QStyleOptionComboBox, QStyleOptionViewItem,
+    QAbstractItemDelegate, QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
+    QProgressBar, QSizePolicy, QStyle, QStyleOptionComboBox, QStyleOptionViewItem,
     QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
 )
 
@@ -354,7 +357,7 @@ def _dot_diameter(metrics) -> float:
 
 
 def _paint_steam_dot(painter: QPainter, x: float, center_y: float, diameter: float) -> None:
-    """在文字后面画 Steam 当前登录的小绿点。"""
+    """画 Steam 当前登录的小绿点（x 为绿点左边缘）。"""
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
@@ -363,35 +366,87 @@ def _paint_steam_dot(painter: QPainter, x: float, center_y: float, diameter: flo
     painter.restore()
 
 
-class _AccountItemDelegate(QStyledItemDelegate):
-    """账号下拉列表项：Steam 当前登录的账号在文字后面画小绿点。"""
+def _color_distance(a, b) -> int:
+    return abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue()) + abs(a.alpha() - b.alpha())
+
+
+class _AccountItemDelegate(QAbstractItemDelegate):
+    """包住下拉框原有的菜单样式代理（外观与其他下拉框一致），只在 Steam 当前登录的账号文字后面补画小绿点。
+
+    原代理画文字的位置由样式决定，无法直接取得：把该项（去掉选中/悬停状态）画到透明图上，
+    取最右侧与行底色不同的像素作为文字结尾，按文字、宽度和字体缓存。"""
+
+    def __init__(self, inner: QAbstractItemDelegate, parent):
+        super().__init__(parent)
+        self._inner = inner
+        self._text_end: dict[tuple, int] = {}
 
     def paint(self, painter, option, index) -> None:
-        super().paint(painter, option, index)
+        self._inner.paint(painter, option, index)
         if not index.data(_STEAM_ACTIVE_ROLE):
             return
-        opt = QStyleOptionViewItem(option)
-        self.initStyleOption(opt, index)
-        style = opt.widget.style() if opt.widget is not None else QApplication.style()
-        text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, opt.widget)
-        metrics = opt.fontMetrics
-        x = text_rect.left() + metrics.horizontalAdvance(opt.text) + _DOT_GAP
-        _paint_steam_dot(painter, x, text_rect.center().y() + 0.5, _dot_diameter(metrics))
+        end = self._measure_text_end(option, index)
+        if end is not None:
+            _paint_steam_dot(painter, option.rect.left() + end + _DOT_GAP, option.rect.center().y() + 0.5,
+                             _dot_diameter(option.fontMetrics))
+
+    def _measure_text_end(self, option, index) -> int | None:
+        key = (index.data(), option.rect.width(), option.rect.height(), option.font.key())
+        if key not in self._text_end:
+            opt = QStyleOptionViewItem(option)
+            opt.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver
+                           | QStyle.StateFlag.State_HasFocus)
+            opt.rect = QRect(0, 0, option.rect.width(), option.rect.height())
+            image = QImage(opt.rect.size(), QImage.Format.Format_ARGB32_Premultiplied)
+            image.fill(Qt.GlobalColor.transparent)
+            painter = QPainter(image)
+            self._inner.paint(painter, opt, index)
+            painter.end()
+            # 菜单样式会给整行铺底色：以最右一列为底色，最右侧与底色明显不同的列即文字结尾
+            width, height = image.width(), image.height()
+            background = [image.pixelColor(width - 1, y) for y in range(height)]
+            end = None
+            for x in range(width - 2, -1, -1):
+                if any(_color_distance(image.pixelColor(x, y), background[y]) > 60 for y in range(height)):
+                    end = x + 1
+                    break
+            self._text_end[key] = end
+        return self._text_end[key]
 
     def sizeHint(self, option, index) -> QSize:
-        size = super().sizeHint(option, index)
-        return QSize(size.width() + _DOT_GAP + round(_dot_diameter(option.fontMetrics)), size.height())
+        size = self._inner.sizeHint(option, index)
+        return QSize(size.width() + _DOT_GAP + round(_dot_diameter(option.fontMetrics)) + 2, size.height())
+
+    def editorEvent(self, event, model, option, index) -> bool:
+        return self._inner.editorEvent(event, model, option, index)
+
+
+class _SteamDot(QWidget):
+    """盖在下拉框上的小绿点：单独绘制，不与下拉框自身（及全局绘制补丁）的画笔冲突。"""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+
+    def paintEvent(self, _event) -> None:
+        painter = QPainter(self)
+        _paint_steam_dot(painter, 0, self.height() / 2, self.width())
+        painter.end()
 
 
 class _AccountCombo(QComboBox):
-    """游戏账号下拉：收起时也在当前文字后面画 Steam 当前登录的小绿点，宽度留出绿点的位置。"""
+    """游戏账号下拉：选择框和展开列表里，Steam 当前登录的账号都在文字后面显示小绿点。"""
 
     def __init__(self):
         super().__init__()
-        self.setItemDelegate(_AccountItemDelegate(self))
+        self.setItemDelegate(_AccountItemDelegate(self.itemDelegate(), self))
+        self._dot = _SteamDot(self)
+        self.currentIndexChanged.connect(self.refresh_dot)
+        theme.changed.connect(self._dot.update)  # 绿点颜色跟随主题
 
     def _dot_space(self) -> int:
-        return _DOT_GAP + round(_dot_diameter(self.fontMetrics()))
+        return _DOT_GAP + round(_dot_diameter(self.fontMetrics())) + 2
 
     def sizeHint(self) -> QSize:
         size = super().sizeHint()
@@ -401,22 +456,34 @@ class _AccountCombo(QComboBox):
         size = super().minimumSizeHint()
         return QSize(size.width() + self._dot_space(), size.height())
 
-    def paintEvent(self, event) -> None:
-        super().paintEvent(event)
+    def refresh_dot(self) -> None:
         index = self.currentIndex()
         if index < 0 or not self.itemData(index, _STEAM_ACTIVE_ROLE):
+            self._dot.hide()
             return
         opt = QStyleOptionComboBox()
         self.initStyleOption(opt)
         edit = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, opt,
                                            QStyle.SubControl.SC_ComboBoxEditField, self)
         metrics = self.fontMetrics()
-        diameter = _dot_diameter(metrics)
+        diameter = math.ceil(_dot_diameter(metrics))
         x = edit.left() + metrics.horizontalAdvance(self.currentText()) + _DOT_GAP
-        if x + diameter <= edit.right():
-            painter = QPainter(self)
-            _paint_steam_dot(painter, x, edit.center().y() + 0.5, diameter)
-            painter.end()
+        self._dot.setGeometry(x, edit.center().y() - diameter // 2, diameter, diameter)
+        self._dot.show()
+        self._dot.raise_()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self.refresh_dot()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self.refresh_dot()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self.refresh_dot()
 
 
 class ClusterBar(QWidget):
@@ -469,7 +536,6 @@ class ClusterBar(QWidget):
         self._cluster.activated.connect(self._on_cluster)
         ctx.env_changed.connect(self.reload)
         ctx.platform_changed.connect(self.reload)
-        theme.changed.connect(self._account.update)  # 绿点颜色跟随主题
         self.setFixedHeight(56)
         self.retranslate()
         self.reload()
@@ -501,6 +567,7 @@ class ClusterBar(QWidget):
                 self._account.setItemData(self._account.count() - 1, account.steam_active, _STEAM_ACTIVE_ROLE)
                 if current is not None and account.id == current.id:
                     self._account.setCurrentIndex(self._account.count() - 1)
+            self._account.refresh_dot()
             self._account_label.setVisible(len(accounts) > 1)
             self._account.setVisible(len(accounts) > 1)
             self._cluster.clear()
