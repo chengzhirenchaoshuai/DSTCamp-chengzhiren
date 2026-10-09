@@ -356,6 +356,11 @@ def _dot_diameter(metrics) -> float:
     return max(4.0, metrics.height() * 0.3)
 
 
+def _dot_top(center_y: int, diameter: int, metrics) -> int:
+    """绿点上边缘：按行的几何中心放会显得偏上（中文字形视觉重心偏下），向下挪约字高的 8%。"""
+    return center_y - diameter // 2 + max(1, round(metrics.height() * 0.08))
+
+
 def _paint_steam_dot(painter: QPainter, x: float, center_y: float, diameter: float) -> None:
     """画 Steam 当前登录的小绿点（x 为绿点左边缘）。"""
     painter.save()
@@ -440,7 +445,7 @@ class _AccountCombo(QComboBox):
         metrics = self.fontMetrics()
         diameter = math.ceil(_dot_diameter(metrics))
         x = edit.left() + metrics.horizontalAdvance(self.currentText()) + _DOT_GAP
-        self._dot.setGeometry(x, edit.center().y() - diameter // 2, diameter, diameter)
+        self._dot.setGeometry(x, _dot_top(edit.center().y(), diameter, metrics), diameter, diameter)
         self._dot.show()
         self._dot.raise_()
 
@@ -470,7 +475,8 @@ class _AccountCombo(QComboBox):
             self._popup_dot.hide()
             return
         diameter = math.ceil(_dot_diameter(opt.fontMetrics))
-        self._popup_dot.setGeometry(rect.left() + end + _DOT_GAP, rect.center().y() - diameter // 2,
+        self._popup_dot.setGeometry(rect.left() + end + _DOT_GAP,
+                                    _dot_top(rect.center().y(), diameter, opt.fontMetrics),
                                     diameter, diameter)
         self._popup_dot.show()
         self._popup_dot.raise_()
