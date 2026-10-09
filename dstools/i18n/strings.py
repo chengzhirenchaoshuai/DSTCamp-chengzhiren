@@ -870,9 +870,9 @@ STRINGS = {
         ),
         "world.local_save_game_open_confirm": (
             "检测到饥荒游戏客户端正在运行。\n\n"
-            "游戏只在回到开始页面（显示“登录游戏 / 离线游戏”的页面）时重新读取存档设置。现在保存后，"
+            "游戏只在回到开始页面（显示“登陆中...”的页面）时重新读取存档设置。现在保存后，"
             "请先在游戏主菜单「模组」里点「应用」（或重启游戏）让游戏回到开始页面，再开启这个存档，修改才会"
-            "生效；否则开启时会用旧设置覆盖你的修改。\n\n"
+            "生效。\n\n"
             "确定保存“{name}”的世界设置吗？"
         ),
         "world.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再查看世界设置。",
@@ -2202,10 +2202,9 @@ STRINGS = {
         ),
         "world.local_save_game_open_confirm": (
             "The Don't Starve Together client is running.\n\n"
-            "The game only re-reads save settings when it returns to its start screen (the one showing "
-            "\"Log In / Play Offline\"). After saving now, click \"Apply\" in the main menu's \"Mods\" (or "
-            "restart the game) to send it back to the start screen, then start this save for the changes to "
-            "apply; otherwise starting it overwrites your changes with the old settings.\n\n"
+            "The game only re-reads save settings when it returns to its start screen (the \"Logging in...\" "
+            "screen). After saving now, click \"Apply\" in the main menu's \"Mods\" (or restart the game) to "
+            "send it back to the start screen, then start this save for the changes to apply.\n\n"
             "Save the world settings of \"{name}\"?"
         ),
         "world.no_save_banner": "No saves were detected. Create or import a save before viewing world settings.",
