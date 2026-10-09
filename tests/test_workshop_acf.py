@@ -67,6 +67,7 @@ def test_workshop_acf_cleanup() -> None:
 
         acf = read_workshop_acf(acf_path)
         assert acf.items["222"].subscribed and not acf.items["111"].subscribed
+        assert acf.items["222"].subscribed_by == "9"
         assert find_orphan_records(acf, content) == ["111"]
         assert find_orphan_records(acf, content, exclude_ids={"111"}) == []
 

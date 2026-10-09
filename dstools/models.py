@@ -176,6 +176,7 @@ class DSTEnvironment:
     client_config: Path | None = None
     accounts: list[Account] = field(default_factory=list)
     steam_active_account: str = ""            # Steam 客户端当前登录的账号 ID，Steam 未运行时为空
+    steam_names: dict[str, str] = field(default_factory=dict)  # 本机登录过的 Steam 账号 ID -> 昵称
 
     def accounts_for(self, platform: Platform) -> list[Account]:
         return [a for a in self.accounts if a.platform == platform]

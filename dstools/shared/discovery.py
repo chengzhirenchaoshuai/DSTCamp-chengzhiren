@@ -177,6 +177,7 @@ def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> 
     if platform == Platform.STEAM:
         env.user_id = current
         env.steam_active_account = active
+        env.steam_names = names
         client_ini = root / current / "client.ini" if current else None
         if client_ini is not None and client_ini.exists():
             env.client_config = client_ini

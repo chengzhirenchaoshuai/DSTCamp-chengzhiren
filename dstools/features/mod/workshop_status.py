@@ -71,6 +71,7 @@ class WorkshopModEvidence:
     v1_shadow_version: LocalModVersion | None = None
     # Steam 清单里有 subscribedby：本机某个 Steam 账号订阅着它（不一定是当前登录账号）
     acf_subscribed: bool = False
+    acf_subscriber: str = ""  # 清单记录的订阅者 Steam AccountID
 
 
 @dataclass(frozen=True)
@@ -480,7 +481,7 @@ def inspect_workshop_items(
     workshop_content_paths: dict[int, Path] | None = None,
     legacy_runtime_residual_paths: dict[int, tuple[Path, ...]] | None = None,
     running_dst_processes: tuple[str, ...] = (),
-    acf_subscribed_ids: set[int] | frozenset[int] = frozenset(),
+    acf_subscribers: dict[int, str] | None = None,
 ) -> dict[int, WorkshopModStatus]:
     """读取一批真实状态并评估；源端详情失败不会抹掉本地物理证据。"""
     ids = list(dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0))
@@ -608,7 +609,8 @@ def inspect_workshop_items(
             running_dst_processes=running_dst_processes,
             v1_shadow_path=shadow_path,
             v1_shadow_version=shadow_version,
-            acf_subscribed=workshop_id in acf_subscribed_ids,
+            acf_subscribed=workshop_id in (acf_subscribers or {}),
+            acf_subscriber=(acf_subscribers or {}).get(workshop_id, ""),
         )
         statuses[workshop_id] = evaluate_workshop_status(evidence)
     return statuses

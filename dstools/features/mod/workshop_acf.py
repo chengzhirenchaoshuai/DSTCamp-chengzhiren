@@ -49,6 +49,7 @@ class AcfWorkshopItem:
     workshop_id: str
     size: int
     subscribed: bool
+    subscribed_by: str = ""  # subscribedby 的值：订阅者的 Steam AccountID
 
 
 @dataclass(frozen=True)
@@ -144,23 +145,29 @@ def read_workshop_acf(path: Path) -> WorkshopAcf:
         if not size_text.isdigit():
             raise WorkshopAcfError(f"条目 {wid} 的大小无效")
         detail = details.get(wid)
-        subscribed = detail is not None and any(c.key == "subscribedby" for c in detail.children)
-        items[wid] = AcfWorkshopItem(wid, int(size_text), subscribed)
+        subscriber = next((c for c in detail.children if c.key == "subscribedby"), None) if detail else None
+        items[wid] = AcfWorkshopItem(wid, int(size_text), subscriber is not None,
+                                     (subscriber.value or "") if subscriber is not None else "")
     return WorkshopAcf(path, raw, items)
 
 
-def read_acf_subscribed_ids(content_root: Path | None) -> set[int]:
-    """清单中带 ``subscribedby`` 的 Workshop ID，即本机某个 Steam 账号仍订阅着它；读不到返回空集。
+def read_acf_subscribers(content_root: Path | None) -> dict[int, str]:
+    """清单中带 ``subscribedby`` 的 Workshop ID 及订阅者 AccountID，即本机某个 Steam 账号仍订阅着它；读不到返回空。
 
     内容目录和清单是本机全部 Steam 账号共用的，而 Steam API 只回答当前登录账号是否订阅，
     这是判断"其他账号订阅"的唯一本地证据。"""
     if content_root is None:
-        return set()
+        return {}
     try:
         acf = read_workshop_acf(workshop_acf_path(content_root))
     except (OSError, WorkshopAcfError):
-        return set()
-    return {int(wid) for wid, item in acf.items.items() if item.subscribed and wid.isdigit()}
+        return {}
+    return {int(wid): item.subscribed_by for wid, item in acf.items.items() if item.subscribed and wid.isdigit()}
+
+
+def read_acf_subscribed_ids(content_root: Path | None) -> set[int]:
+    """清单中仍有账号订阅的 Workshop ID。"""
+    return set(read_acf_subscribers(content_root))
 
 
 def _line_span(text: str, node: _Node) -> tuple[int, int]:

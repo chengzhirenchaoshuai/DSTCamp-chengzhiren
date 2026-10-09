@@ -266,7 +266,7 @@ class WorkshopUpdateDialog(QDialog):
             from dstools.features.mod.parser import (
                 find_workshop_content_dirs, find_workshop_dir, find_workshop_residual_dirs,
             )
-            from dstools.features.mod.workshop_acf import read_acf_subscribed_ids
+            from dstools.features.mod.workshop_acf import read_acf_subscribers
             from dstools.features.mod.workshop_status import inspect_workshop_items
             discovered_paths = {
                 int(str(wid).removeprefix("workshop-")): path
@@ -278,7 +278,7 @@ class WorkshopUpdateDialog(QDialog):
                 residual_paths=find_workshop_residual_dirs(), workshop_content_paths=find_workshop_content_dirs(),
                 legacy_runtime_residual_paths=find_legacy_runtime_residual_dirs(),
                 running_dst_processes=running_dst_processes(),
-                acf_subscribed_ids=read_acf_subscribed_ids(find_workshop_dir()))
+                acf_subscribers=read_acf_subscribers(find_workshop_dir()))
 
         def done(states) -> None:
             self._loading = False
@@ -412,7 +412,7 @@ class WorkshopUpdateDialog(QDialog):
         layout.addLayout(text_col, 1)
 
         status = self._states.get(wid)
-        latest_text = t(self._latest_key(status)) if status else t("mod.update_latest_checking")
+        latest_text = self._latest_text(status) if status else t("mod.update_latest_checking")
         latest_label = QLabel(latest_text)
         latest_label.setWordWrap(True)
         latest_label.setFixedWidth(150)
@@ -458,6 +458,21 @@ class WorkshopUpdateDialog(QDialog):
         tag.setStyleSheet(f"QLabel#modFormatTag {{ background: {background.name()}; color: {color.name()}; "
                           "border-radius: 4px; padding: 0px 5px; }")
         return tag
+
+    def _subscriber_text(self, account_id: str) -> str:
+        """订阅者显示为"昵称 (ID)"，没有昵称时只显示 ID。"""
+        name = self.page.ctx.env.steam_names.get(account_id, "")
+        return f"{name} ({account_id})" if name else account_id
+
+    def _latest_text(self, status) -> str:
+        """其他账号订阅的 Mod 按存档栏选中的账号区分：选中账号自己订阅的显示"本账号订阅"，其余显示订阅者。"""
+        subscriber = status.evidence.acf_subscriber if status.evidence is not None else ""
+        if status.state == WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT and subscriber:
+            selected = self.page.ctx.env.current_account(Platform.STEAM)
+            if selected is not None and selected.id == subscriber:
+                return t("mod.update_latest_own_account")
+            return t("mod.update_latest_other_account_named", name=self._subscriber_text(subscriber))
+        return t(self._latest_key(status))
 
     @staticmethod
     def _latest_key(status) -> str:
@@ -658,7 +673,7 @@ class WorkshopUpdateDialog(QDialog):
             from dstools.features.mod.parser import (
                 find_workshop_content_dirs, find_workshop_dir, find_workshop_residual_dirs,
             )
-            from dstools.features.mod.workshop_acf import read_acf_subscribed_ids
+            from dstools.features.mod.workshop_acf import read_acf_subscribers
             from dstools.features.mod.workshop_status import inspect_workshop_items
             cleaned: list[str] = []
             errors: dict[str, Exception] = {}
@@ -671,7 +686,7 @@ class WorkshopUpdateDialog(QDialog):
                     workshop_content_paths=find_workshop_content_dirs(),
                     legacy_runtime_residual_paths=find_legacy_runtime_residual_dirs(),
                     running_dst_processes=processes,
-                    acf_subscribed_ids=read_acf_subscribed_ids(find_workshop_dir()))
+                    acf_subscribers=read_acf_subscribers(find_workshop_dir()))
             except (OSError, ValueError, KeyError) as exc:
                 fresh_states = {}
                 errors.update({wid: exc for wid in ids})
@@ -742,8 +757,10 @@ class WorkshopUpdateDialog(QDialog):
             dialogs.show_warning(self, t("mod.update_title"), t("mod.update_cannot_cleanup"))
             return
         path = status.evidence.workshop_content_path
+        owner = (self._subscriber_text(status.evidence.acf_subscriber) if status.evidence.acf_subscriber
+                 else t("mod.update_latest_other_account"))
         if not dialogs.ask_yes_no(self, t("mod.update_force_cleanup_title"),
-                                  t("mod.update_force_cleanup_confirm", path=str(path)),
+                                  t("mod.update_force_cleanup_confirm", owner=owner, path=str(path)),
                                   min_width=560, danger=True):
             return
         self._cleanup_running.add(wid)
