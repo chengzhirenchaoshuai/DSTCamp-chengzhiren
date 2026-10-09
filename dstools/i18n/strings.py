@@ -849,8 +849,8 @@ STRINGS = {
             "不想丢掉当前世界就不必重置，世界规则部分的修改在下次启动时照常生效。"
         ),
         "world.local_edit_banner": (
-            "当前是本地存档：游戏只在启动时读取存档设置，若保存时游戏开着，请重启游戏（或进一局再退回大厅）"
-            "后再开启这个存档，否则会用旧设置覆盖你的修改。"
+            "当前是本地存档：游戏只在回到开始页面时重新读取存档设置。若保存时游戏开着，请先让游戏回到开始页面"
+            "（在游戏主菜单「模组」里点「应用」，或重启游戏）再开启这个存档，否则会用旧设置覆盖你的修改。"
         ),
         "world.generation_reset_banner_local": (
             "世界生成设置只在生成新世界时生效。本地存档修改保存后，需要在游戏里开启这个存档并重新生成世界"
@@ -870,8 +870,9 @@ STRINGS = {
         ),
         "world.local_save_game_open_confirm": (
             "检测到饥荒游戏客户端正在运行。\n\n"
-            "游戏只在启动时读取存档设置，现在保存后，需要重启游戏（或进一局再退回大厅）再开启这个存档，"
-            "修改才会生效；否则开启时会用旧设置覆盖你的修改。\n\n"
+            "游戏只在回到开始页面（显示“登录游戏 / 离线游戏”的页面）时重新读取存档设置。现在保存后，"
+            "请先在游戏主菜单「模组」里点「应用」（或重启游戏）让游戏回到开始页面，再开启这个存档，修改才会"
+            "生效；否则开启时会用旧设置覆盖你的修改。\n\n"
             "确定保存“{name}”的世界设置吗？"
         ),
         "world.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再查看世界设置。",
@@ -2174,9 +2175,10 @@ STRINGS = {
             "next start."
         ),
         "world.local_edit_banner": (
-            "This is a local save: the game only reads save settings when it starts. If the game is open when "
-            "you save, restart it (or enter a game and return to the lobby) before starting this save, "
-            "otherwise the old settings overwrite your changes."
+            "This is a local save: the game only re-reads save settings when it returns to its start screen. "
+            "If the game is open when you save, send it back to the start screen first (click \"Apply\" in "
+            "the main menu's \"Mods\", or restart the game) before starting this save, otherwise the old "
+            "settings overwrite your changes."
         ),
         "world.generation_reset_banner_local": (
             "World generation settings only apply when a new world is generated. After saving a local save, "
@@ -2200,9 +2202,10 @@ STRINGS = {
         ),
         "world.local_save_game_open_confirm": (
             "The Don't Starve Together client is running.\n\n"
-            "The game only reads save settings when it starts. After saving now, restart the game (or enter a "
-            "game and return to the lobby) before starting this save for the changes to apply; otherwise "
-            "starting it overwrites your changes with the old settings.\n\n"
+            "The game only re-reads save settings when it returns to its start screen (the one showing "
+            "\"Log In / Play Offline\"). After saving now, click \"Apply\" in the main menu's \"Mods\" (or "
+            "restart the game) to send it back to the start screen, then start this save for the changes to "
+            "apply; otherwise starting it overwrites your changes with the old settings.\n\n"
             "Save the world settings of \"{name}\"?"
         ),
         "world.no_save_banner": "No saves were detected. Create or import a save before viewing world settings.",
