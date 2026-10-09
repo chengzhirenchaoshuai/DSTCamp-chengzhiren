@@ -49,9 +49,16 @@ def _is_shard_dir(path: Path) -> bool:
     return path.is_dir() and (path / "server.ini").exists()
 
 
-def _is_user_dir(path: Path) -> bool:
-    """判断是不是 Steam/Rail 的用户 ID 目录（纯数字命名）。"""
-    return path.is_dir() and path.name.isdigit()
+# 游戏启动后才会在账号目录里写的文件；DSTCamp 自己只写 client_save/mod_config_data，不能当证据
+_ACCOUNT_MARKERS = ("client.ini", "client_save/cached_userid", "client_save/boot_modindex")
+
+
+def _is_user_dir(path: Path, known_ids=()) -> bool:
+    """判断是不是 Steam/Rail 的账号目录：纯数字命名，且有游戏写入的痕迹或是本机 Steam 登录过的账号。
+    纯数字的 Mod 文件夹（有 modinfo.lua）等误放进来的目录不算。"""
+    if not (path.is_dir() and path.name.isdigit()) or (path / "modinfo.lua").exists():
+        return False
+    return path.name in known_ids or any((path / marker).exists() for marker in _ACCOUNT_MARKERS)
 
 
 def find_klei_root() -> Path | None:
@@ -64,11 +71,11 @@ def find_wegame_klei_root() -> Path | None:
     return _find_klei_root_impl(_WEGAME_KLEI_FOLDER)
 
 
-def list_user_dirs(klei_root: Path) -> list[Path]:
-    """列出 Klei 根目录下全部账号目录（同一台电脑登录过多个账号时会有多个）。"""
+def list_user_dirs(klei_root: Path, known_ids=()) -> list[Path]:
+    """列出 Klei 根目录下全部账号目录（同一台电脑登录过多个账号时会有多个）；known_ids 为本机 Steam 登录过的账号。"""
     if not klei_root.exists():
         return []
-    return sorted((entry for entry in klei_root.iterdir() if _is_user_dir(entry)), key=lambda p: p.name)
+    return sorted((entry for entry in klei_root.iterdir() if _is_user_dir(entry, known_ids)), key=lambda p: p.name)
 
 
 def _last_played(user_dir: Path) -> float:
@@ -151,8 +158,6 @@ def discover_environment(klei_root: Path | None = None,
 
 def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> None:
     """扫描一个平台的 Klei 根目录，把发现的 Cluster 追加进 env.clusters。"""
-    user_dirs = list_user_dirs(root)
-    ids = [d.name for d in user_dirs]
     if platform == Platform.STEAM:
         login_users = read_steam_login_users()
         names = {u.account_id: u.persona_name for u in login_users}
@@ -161,6 +166,8 @@ def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> 
         active = read_active_steam_account()
     else:
         names, recent, active = {}, [], ""
+    user_dirs = list_user_dirs(root, known_ids=names)
+    ids = [d.name for d in user_dirs]
     # 只有一个账号时不必读修改时间
     played = {d.name: _last_played(d) for d in user_dirs} if len(user_dirs) > 1 else None
     # Steam 当前登录的账号即使还没在本机运行过饥荒（没有账号目录）也列出来，工具跟随它

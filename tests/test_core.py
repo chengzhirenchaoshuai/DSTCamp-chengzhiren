@@ -220,6 +220,11 @@ def test_discovery():
         incomplete = root / "Incomplete"
         incomplete.mkdir()
         (incomplete / "cluster.ini").write_text("[NETWORK]\n", encoding="utf-8")
+        (root / "123456" / "client.ini").write_text("[GRAPHICS]\n", encoding="utf-8")
+        # 纯数字的 Mod 文件夹误放在根目录（里面还有 DSTCamp 曾误写的 mod_config_data），不是账号
+        fake = root / "378160973"
+        (fake / "client_save" / "mod_config_data").mkdir(parents=True)
+        (fake / "modinfo.lua").write_text("name = 'x'\n", encoding="utf-8")
 
         # 不读本机注册表和 Steam 登录记录（Steam 当前登录的账号会被加入账号列表）
         import dstools.shared.discovery as discovery
@@ -230,6 +235,7 @@ def test_discovery():
         finally:
             discovery.read_active_steam_account, discovery.read_steam_login_users = saved
         assert env.user_id == "123456"
+        assert [account.id for account in env.accounts] == ["123456"]
         assert len(env.clusters) == 2
         assert {cluster.source for cluster in env.clusters} == {
             SaveSource.SERVER,
