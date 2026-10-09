@@ -221,7 +221,14 @@ def test_discovery():
         incomplete.mkdir()
         (incomplete / "cluster.ini").write_text("[NETWORK]\n", encoding="utf-8")
 
-        env = discover_environment(root, root.parent / "missing-wegame")
+        # 不读本机注册表和 Steam 登录记录（Steam 当前登录的账号会被加入账号列表）
+        import dstools.shared.discovery as discovery
+        saved = discovery.read_active_steam_account, discovery.read_steam_login_users
+        discovery.read_active_steam_account, discovery.read_steam_login_users = (lambda: ""), (lambda: [])
+        try:
+            env = discover_environment(root, root.parent / "missing-wegame")
+        finally:
+            discovery.read_active_steam_account, discovery.read_steam_login_users = saved
         assert env.user_id == "123456"
         assert len(env.clusters) == 2
         assert {cluster.source for cluster in env.clusters} == {
@@ -236,10 +243,13 @@ def test_discovery():
 
 
 def test_pick_current_account():
-    """多账号时按 手动选择 > Steam 当前登录 > 最近登录 > 最近游玩 > 第一个 选当前账号，且只认存在的目录。"""
+    """多账号时按 手动选择 > Steam 当前登录 > 最近登录 > 最近游玩 > 第一个 选当前账号，且只认给定的账号。"""
     ids = ["111", "222", "333"]
     assert pick_current_account([]) == ""
-    assert pick_current_account(ids, selected="333", active="222") == "333"
+    assert pick_current_account(ids, selected="333", selected_active="222", active="222") == "333"
+    assert pick_current_account(ids, selected="333") == "333"  # Steam 未运行时手动选择仍有效
+    # Steam 换了账号：手动选择失效，跟随 Steam
+    assert pick_current_account(ids, selected="333", selected_active="111", active="222") == "222"
     assert pick_current_account(ids, selected="999", active="222", recent=["111"]) == "222"
     assert pick_current_account(ids, active="999", recent=["888", "111"]) == "111"
     assert pick_current_account(ids, last_played={"111": 5.0, "333": 9.0}) == "333"

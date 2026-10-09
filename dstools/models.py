@@ -159,6 +159,8 @@ class Account:
     platform: Platform
     path: Path
     name: str = ""                            # Steam 昵称（loginusers.vdf），读不到为空
+    steam_active: bool = False                # 是 Steam 客户端当前登录的账号
+    has_game_dir: bool = True                 # 本机已有饥荒账号目录（没运行过饥荒的 Steam 账号没有）
 
 
 @dataclass
@@ -174,6 +176,7 @@ class DSTEnvironment:
     clusters: list[Cluster] = field(default_factory=list)
     client_config: Path | None = None
     accounts: list[Account] = field(default_factory=list)
+    steam_active_account: str = ""            # Steam 客户端当前登录的账号 ID，Steam 未运行时为空
 
     def accounts_for(self, platform: Platform) -> list[Account]:
         return [a for a in self.accounts if a.platform == platform]

@@ -86,12 +86,16 @@ def _last_played(user_dir: Path) -> float:
     return max(times, default=0.0)
 
 
-def pick_current_account(account_ids: list[str], *, selected: str = "", active: str = "",
-                         recent: list[str] = (), last_played: dict[str, float] | None = None) -> str:
+def pick_current_account(account_ids: list[str], *, selected: str = "", selected_active: str = "",
+                         active: str = "", recent: list[str] = (),
+                         last_played: dict[str, float] | None = None) -> str:
     """按优先级选当前账号：用户手动选择 > Steam 当前登录 > Steam 最近登录顺序 > 最近游玩 > 第一个。
-    每一级都只认本机确实存在目录的账号；没有账号返回空串。"""
+    手动选择只在 Steam 仍登录着选择时的账号（或 Steam 未运行）时有效，Steam 换了账号就跟随 Steam。
+    每一级都只认 account_ids 中的账号；没有账号返回空串。"""
     if not account_ids:
         return ""
+    if active and selected_active != active:
+        selected = ""
     for candidate in (selected, active, *recent):
         if candidate and candidate in account_ids:
             return candidate
@@ -159,13 +163,20 @@ def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> 
         names, recent, active = {}, [], ""
     # 只有一个账号时不必读修改时间
     played = {d.name: _last_played(d) for d in user_dirs} if len(user_dirs) > 1 else None
-    current = pick_current_account(ids, selected=get_selected_account(platform.value), active=active,
+    # Steam 当前登录的账号即使还没在本机运行过饥荒（没有账号目录）也列出来，工具跟随它
+    if active and active not in ids:
+        ids.append(active)
+    selected, selected_active = get_selected_account(platform.value)
+    current = pick_current_account(ids, selected=selected, selected_active=selected_active, active=active,
                                    recent=recent, last_played=played)
-    for user_dir in user_dirs:
-        env.accounts.append(Account(user_dir.name, platform, user_dir, names.get(user_dir.name, "")))
+    for account_id in ids:
+        path = root / account_id
+        env.accounts.append(Account(account_id, platform, path, names.get(account_id, ""),
+                                    steam_active=account_id == active, has_game_dir=path.is_dir()))
 
     if platform == Platform.STEAM:
         env.user_id = current
+        env.steam_active_account = active
         client_ini = root / current / "client.ini" if current else None
         if client_ini is not None and client_ini.exists():
             env.client_config = client_ini

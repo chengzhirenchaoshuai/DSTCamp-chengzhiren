@@ -257,18 +257,24 @@ def set_last_cluster_path(path: str) -> None:
     save_settings(data)
 
 
-def get_selected_account(platform: str) -> str:
-    """返回用户手动选择的游戏账号 ID（按平台 steam/wegame 分开记录），没选过返回空串。"""
+def get_selected_account(platform: str) -> tuple[str, str]:
+    """返回用户手动选择的游戏账号 ID（按平台 steam/wegame 分开记录）及选择时 Steam 登录的账号 ID；
+    没选过返回空串。旧版本只存了账号 ID，选择时的 Steam 账号视为未知。"""
     accounts = load_settings().get(_KEY_SELECTED_ACCOUNTS)
     value = accounts.get(platform) if isinstance(accounts, dict) else None
-    return value if isinstance(value, str) else ""
+    if isinstance(value, str):
+        return value, ""
+    if isinstance(value, dict):
+        account, active = value.get("id"), value.get("steam_active")
+        return (account if isinstance(account, str) else "", active if isinstance(active, str) else "")
+    return "", ""
 
 
-def set_selected_account(platform: str, account_id: str) -> None:
+def set_selected_account(platform: str, account_id: str, steam_active: str = "") -> None:
     data = load_settings()
     accounts = data.get(_KEY_SELECTED_ACCOUNTS)
     accounts = dict(accounts) if isinstance(accounts, dict) else {}
-    accounts[platform] = account_id
+    accounts[platform] = {"id": account_id, "steam_active": steam_active}
     data[_KEY_SELECTED_ACCOUNTS] = accounts
     save_settings(data)
 

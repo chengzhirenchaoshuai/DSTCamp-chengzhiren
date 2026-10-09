@@ -83,16 +83,23 @@ class AppContext(QObject):
         return self.env.current_account(self._platform)
 
     def select_account(self, account_id: str) -> None:
-        """切换当前平台的游戏账号：记住手动选择并重新扫描（本地存档、Mod 配置同步都跟随当前账号）。"""
+        """切换当前平台的游戏账号：记住手动选择并重新扫描（本地存档、Mod 配置同步都跟随当前账号）。
+        同时记下此刻 Steam 登录的账号，Steam 换账号后这个手动选择失效、改为跟随 Steam。"""
         current = self.current_account()
         if current is not None and current.id == account_id:
             return
-        set_selected_account(self._platform.value, account_id)
+        steam_active = self.env.steam_active_account if self._platform == Platform.STEAM else ""
+        set_selected_account(self._platform.value, account_id, steam_active)
         self.refresh_env()
 
     @staticmethod
     def account_text(account: Account) -> str:
-        return f"{account.name} ({account.id})" if account.name else account.id
+        text = f"{account.name} ({account.id})" if account.name else account.id
+        if account.steam_active:
+            text += t("selector.account_steam_active")
+        if not account.has_game_dir:
+            text += t("selector.account_no_game_dir")
+        return text
 
     def selected_cluster(self) -> Cluster | None:
         return self._selected
