@@ -16,7 +16,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
-    QProgressBar, QSizePolicy, QStyle, QStyleOptionComboBox, QStyleOptionViewItem,
+    QProgressBar, QSizePolicy, QStyle, QStyleOptionComboBox,
     QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
 )
 
@@ -375,25 +375,11 @@ def _color_distance(a, b) -> int:
     return abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue()) + abs(a.alpha() - b.alpha())
 
 
-def _measure_text_end(delegate, option, index) -> int | None:
-    """列表项文字结尾相对行左边的位置：文字位置由样式决定、无法直接取得，把该项（去掉选中/悬停状态）
-    用原代理画到透明图上，取最右侧与行底色（最右一列）明显不同的列。"""
-    opt = QStyleOptionViewItem(option)
-    opt.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver
-                   | QStyle.StateFlag.State_HasFocus)
-    opt.rect = QRect(0, 0, option.rect.width(), option.rect.height())
-    image = QImage(opt.rect.size(), QImage.Format.Format_ARGB32_Premultiplied)
-    image.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(image)
-    delegate.paint(painter, opt, index)
-    painter.end()
-    return _content_right_edge(image, image.rect())
-
-
-def _content_right_edge(image: QImage, area: QRect) -> int | None:
-    """area 内最右侧与底色（area 最右一列）明显不同的列的右边界（相对 area 左边）；没有内容返回 None。"""
+def _content_right_edge(image: QImage, area: QRect, edge: int = 0) -> int | None:
+    """area 内最右侧与底色明显不同的列的右边界（相对 area 左边）；没有内容返回 None。
+    底色取距右边缘 edge 像素的那一列，跳过边框、焦点框之类的竖线。"""
     top, bottom = max(area.top(), 0), min(area.bottom(), image.height() - 1)
-    right = min(area.right(), image.width() - 1)
+    right = min(area.right(), image.width() - 1) - edge
     background = [image.pixelColor(right, y) for y in range(top, bottom + 1)]
     for x in range(right - 1, area.left() - 1, -1):
         if any(_color_distance(image.pixelColor(x, y), background[y - top]) > 60 for y in range(top, bottom + 1)):
@@ -423,7 +409,6 @@ class _AccountCombo(QComboBox):
         super().__init__()
         self._dot = _SteamDot(self)
         self._popup_dot = _SteamDot(self.view().viewport())
-        self._text_end: dict[tuple, int | None] = {}
         self._closed_text_end: dict[tuple, int | None] = {}
         self._measuring = False  # render() 会触发尺寸事件，防止 refresh_dot 重入
         self.currentIndexChanged.connect(self.refresh_dot)
@@ -482,29 +467,26 @@ class _AccountCombo(QComboBox):
         self._place_popup_dot()
 
     def _place_popup_dot(self) -> None:
-        """展开列表里的绿点：放在 Steam 当前登录那一行的文字后面。"""
+        """展开列表里的绿点：放在 Steam 当前登录那一行的文字后面。
+        文字位置由列表样式决定，截取这一行真实画出来的像素实测文字结尾（合成参数离屏绘制会和实际字体、边距对不上）。"""
         view = self.view()
+        self._popup_dot.hide()
         row = next((i for i in range(self.count()) if self.itemData(i, _STEAM_ACTIVE_ROLE)), -1)
         rect = view.visualRect(self.model().index(row, 0)) if row >= 0 else QRect()
+        # 只截可见部分：行矩形可能比被收窄的弹出列表宽，超出部分会被误判成文字结尾
+        rect = rect.intersected(view.viewport().rect())
         if rect.isEmpty():
-            self._popup_dot.hide()
             return
-        index = self.model().index(row, 0)
-        opt = QStyleOptionViewItem()
-        opt.initFrom(view)
-        opt.font = view.font()
-        opt.fontMetrics = view.fontMetrics()
-        opt.rect = rect
-        key = (self.itemText(row), rect.width(), rect.height(), opt.font.key(), theme.font_style)
-        if key not in self._text_end:
-            self._text_end[key] = _measure_text_end(view.itemDelegate(), opt, index)
-        end = self._text_end[key]
+        image = view.viewport().grab(rect).toImage()
+        ratio = image.devicePixelRatio() or 1.0
+        # 行最右侧可能有 1px 边线（实测离屏为灰色竖线），底色参照往里留几像素
+        end = _content_right_edge(image, image.rect(), edge=math.ceil(4 * ratio))
         if end is None:
-            self._popup_dot.hide()
             return
-        diameter = math.ceil(_dot_diameter(opt.fontMetrics))
-        self._popup_dot.setGeometry(rect.left() + end + _DOT_GAP,
-                                    _dot_top(rect.center().y(), diameter, opt.fontMetrics),
+        metrics = view.fontMetrics()
+        diameter = math.ceil(_dot_diameter(metrics))
+        self._popup_dot.setGeometry(rect.left() + round(end / ratio) + _DOT_GAP,
+                                    _dot_top(rect.center().y(), diameter, metrics),
                                     diameter, diameter)
         self._popup_dot.show()
         self._popup_dot.raise_()
