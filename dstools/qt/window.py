@@ -15,7 +15,7 @@ from PySide6.QtGui import (
     QAction, QActionGroup, QGuiApplication, QIcon, QImage, QKeySequence, QPainter, QPen, QPixmap,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemDelegate, QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
+    QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
     QProgressBar, QSizePolicy, QStyle, QStyleOptionComboBox, QStyleOptionViewItem,
     QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
 )
@@ -370,59 +370,29 @@ def _color_distance(a, b) -> int:
     return abs(a.red() - b.red()) + abs(a.green() - b.green()) + abs(a.blue() - b.blue()) + abs(a.alpha() - b.alpha())
 
 
-class _AccountItemDelegate(QAbstractItemDelegate):
-    """包住下拉框原有的菜单样式代理（外观与其他下拉框一致），只在 Steam 当前登录的账号文字后面补画小绿点。
-
-    原代理画文字的位置由样式决定，无法直接取得：把该项（去掉选中/悬停状态）画到透明图上，
-    取最右侧与行底色不同的像素作为文字结尾，按文字、宽度和字体缓存。"""
-
-    def __init__(self, inner: QAbstractItemDelegate, parent):
-        super().__init__(parent)
-        self._inner = inner
-        self._text_end: dict[tuple, int] = {}
-
-    def paint(self, painter, option, index) -> None:
-        self._inner.paint(painter, option, index)
-        if not index.data(_STEAM_ACTIVE_ROLE):
-            return
-        end = self._measure_text_end(option, index)
-        if end is not None:
-            _paint_steam_dot(painter, option.rect.left() + end + _DOT_GAP, option.rect.center().y() + 0.5,
-                             _dot_diameter(option.fontMetrics))
-
-    def _measure_text_end(self, option, index) -> int | None:
-        key = (index.data(), option.rect.width(), option.rect.height(), option.font.key())
-        if key not in self._text_end:
-            opt = QStyleOptionViewItem(option)
-            opt.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver
-                           | QStyle.StateFlag.State_HasFocus)
-            opt.rect = QRect(0, 0, option.rect.width(), option.rect.height())
-            image = QImage(opt.rect.size(), QImage.Format.Format_ARGB32_Premultiplied)
-            image.fill(Qt.GlobalColor.transparent)
-            painter = QPainter(image)
-            self._inner.paint(painter, opt, index)
-            painter.end()
-            # 菜单样式会给整行铺底色：以最右一列为底色，最右侧与底色明显不同的列即文字结尾
-            width, height = image.width(), image.height()
-            background = [image.pixelColor(width - 1, y) for y in range(height)]
-            end = None
-            for x in range(width - 2, -1, -1):
-                if any(_color_distance(image.pixelColor(x, y), background[y]) > 60 for y in range(height)):
-                    end = x + 1
-                    break
-            self._text_end[key] = end
-        return self._text_end[key]
-
-    def sizeHint(self, option, index) -> QSize:
-        size = self._inner.sizeHint(option, index)
-        return QSize(size.width() + _DOT_GAP + round(_dot_diameter(option.fontMetrics)) + 2, size.height())
-
-    def editorEvent(self, event, model, option, index) -> bool:
-        return self._inner.editorEvent(event, model, option, index)
+def _measure_text_end(delegate, option, index) -> int | None:
+    """列表项文字结尾相对行左边的位置：文字位置由样式决定、无法直接取得，把该项（去掉选中/悬停状态）
+    用原代理画到透明图上，取最右侧与行底色（最右一列）明显不同的列。"""
+    opt = QStyleOptionViewItem(option)
+    opt.state &= ~(QStyle.StateFlag.State_Selected | QStyle.StateFlag.State_MouseOver
+                   | QStyle.StateFlag.State_HasFocus)
+    opt.rect = QRect(0, 0, option.rect.width(), option.rect.height())
+    image = QImage(opt.rect.size(), QImage.Format.Format_ARGB32_Premultiplied)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    delegate.paint(painter, opt, index)
+    painter.end()
+    width, height = image.width(), image.height()
+    background = [image.pixelColor(width - 1, y) for y in range(height)]
+    for x in range(width - 2, -1, -1):
+        if any(_color_distance(image.pixelColor(x, y), background[y]) > 60 for y in range(height)):
+            return x + 1
+    return None
 
 
 class _SteamDot(QWidget):
-    """盖在下拉框上的小绿点：单独绘制，不与下拉框自身（及全局绘制补丁）的画笔冲突。"""
+    """盖在下拉框/弹出列表上的小绿点：单独绘制，不改下拉框的列表代理（换代理会让弹出列表外观与其他下拉框不同），
+    也不与下拉框自身（及全局绘制补丁）的画笔冲突。"""
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -440,8 +410,9 @@ class _AccountCombo(QComboBox):
 
     def __init__(self):
         super().__init__()
-        self.setItemDelegate(_AccountItemDelegate(self.itemDelegate(), self))
         self._dot = _SteamDot(self)
+        self._popup_dot = _SteamDot(self.view().viewport())
+        self._text_end: dict[tuple, int | None] = {}
         self.currentIndexChanged.connect(self.refresh_dot)
         theme.changed.connect(self._dot.update)  # 绿点颜色跟随主题
 
@@ -457,6 +428,7 @@ class _AccountCombo(QComboBox):
         return QSize(size.width() + self._dot_space(), size.height())
 
     def refresh_dot(self) -> None:
+        """选择框里的绿点：当前项是 Steam 当前登录的账号时，放在文字后面。"""
         index = self.currentIndex()
         if index < 0 or not self.itemData(index, _STEAM_ACTIVE_ROLE):
             self._dot.hide()
@@ -471,6 +443,37 @@ class _AccountCombo(QComboBox):
         self._dot.setGeometry(x, edit.center().y() - diameter // 2, diameter, diameter)
         self._dot.show()
         self._dot.raise_()
+
+    def showPopup(self) -> None:
+        super().showPopup()
+        self._place_popup_dot()
+
+    def _place_popup_dot(self) -> None:
+        """展开列表里的绿点：放在 Steam 当前登录那一行的文字后面。"""
+        view = self.view()
+        row = next((i for i in range(self.count()) if self.itemData(i, _STEAM_ACTIVE_ROLE)), -1)
+        rect = view.visualRect(self.model().index(row, 0)) if row >= 0 else QRect()
+        if rect.isEmpty():
+            self._popup_dot.hide()
+            return
+        index = self.model().index(row, 0)
+        opt = QStyleOptionViewItem()
+        opt.initFrom(view)
+        opt.font = view.font()
+        opt.fontMetrics = view.fontMetrics()
+        opt.rect = rect
+        key = (self.itemText(row), rect.width(), rect.height(), opt.font.key(), theme.font_style)
+        if key not in self._text_end:
+            self._text_end[key] = _measure_text_end(view.itemDelegate(), opt, index)
+        end = self._text_end[key]
+        if end is None:
+            self._popup_dot.hide()
+            return
+        diameter = math.ceil(_dot_diameter(opt.fontMetrics))
+        self._popup_dot.setGeometry(rect.left() + end + _DOT_GAP, rect.center().y() - diameter // 2,
+                                    diameter, diameter)
+        self._popup_dot.show()
+        self._popup_dot.raise_()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
