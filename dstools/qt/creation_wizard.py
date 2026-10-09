@@ -268,7 +268,9 @@ class CreationWizardDialog(QDialog):
         # 标题（含任务栏显示）只写"创建服务器存档"，不带 DSTCamp 前缀。
         self.setWindowTitle(t("save.create_server_save"))
         # 默认房间名与游戏一致："{Steam 昵称}的世界"（NEWGAME_FMT），读不到昵称时跟随存档名称
-        persona = read_steam_persona_name()
+        # 本机有多个 Steam 账号时用存档栏选中账号的昵称，读不到再取最近登录账号的
+        account = ctx.env.current_account(Platform.STEAM)
+        persona = (account.name if account else "") or read_steam_persona_name()
         self._default_room_name = t("world.creation_default_room_name", name=persona) if persona else ""
         dialogs.fit_to_screen(self, 1400, 860)
         # 无边框 + 自绘标题栏（Windows 10 原生标题栏改不了颜色）；保留 MinMax 提示以便从任务栏还原

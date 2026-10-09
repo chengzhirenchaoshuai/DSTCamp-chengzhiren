@@ -7,10 +7,10 @@ from PySide6.QtCore import QObject, Signal
 from dstools.features.local_service.dedicated_server import ServerManager, ServerStatus
 from dstools.features.mod.catalog import ModCatalogStore
 from dstools.i18n import t
-from dstools.models import Cluster, Platform, SaveSource
+from dstools.models import Account, Cluster, Platform, SaveSource
 from dstools.shared.app_settings import (
     get_last_cluster_path, get_last_platform, get_lobby_accel_enabled,
-    set_last_cluster_path, set_last_platform,
+    set_last_cluster_path, set_last_platform, set_selected_account,
 )
 from dstools.shared.discovery import discover_environment
 
@@ -69,7 +69,30 @@ class AppContext(QObject):
 
     # ── 存档 ────────────────────────────────────────────────────────────
     def clusters(self) -> list[Cluster]:
-        return [c for c in self.env.clusters if c.platform == self._platform]
+        """当前平台的服务器存档 + 当前账号的本地存档（其他账号的本地存档切换账号后才显示）。"""
+        current = self.current_account()
+        current_id = current.id if current else ""
+        return [c for c in self.env.clusters if c.platform == self._platform
+                and (c.source != SaveSource.LOCAL or c.account_id == current_id)]
+
+    # ── 游戏账号 ────────────────────────────────────────────────────────
+    def accounts(self) -> list[Account]:
+        return self.env.accounts_for(self._platform)
+
+    def current_account(self) -> Account | None:
+        return self.env.current_account(self._platform)
+
+    def select_account(self, account_id: str) -> None:
+        """切换当前平台的游戏账号：记住手动选择并重新扫描（本地存档、Mod 配置同步都跟随当前账号）。"""
+        current = self.current_account()
+        if current is not None and current.id == account_id:
+            return
+        set_selected_account(self._platform.value, account_id)
+        self.refresh_env()
+
+    @staticmethod
+    def account_text(account: Account) -> str:
+        return f"{account.name} ({account.id})" if account.name else account.id
 
     def selected_cluster(self) -> Cluster | None:
         return self._selected
@@ -119,10 +142,9 @@ class AppContext(QObject):
 
     def status_text(self) -> str:
         """状态栏文字：跟随平台筛选，WeGame 与 Steam 各用各的根目录/用户 ID。"""
-        if self._platform == Platform.WEGAME:
-            klei_root, user_id = self.env.wegame_klei_root, self.env.wegame_user_id
-        else:
-            klei_root, user_id = self.env.klei_root, self.env.user_id
+        klei_root = self.env.klei_root_for(self._platform)
+        account = self.current_account()
+        user_id = self.account_text(account) if account else ""
         clusters = self.clusters()
         servers = sum(1 for c in clusters if c.source == SaveSource.SERVER)
         local = sum(1 for c in clusters if c.source == SaveSource.LOCAL)

@@ -815,6 +815,7 @@ STRINGS = {
         "copy.done": "复制完成。",
         # 更新过的标签
         "selector.archive": "存档:",
+        "selector.account": "账号:",
         "selector.save_type": "存档类型:",
         "selector.running_suffix": "  [运行中]",
         # 世界设置改进
@@ -2098,6 +2099,7 @@ STRINGS = {
         "copy.done": "Copy complete.",
         # 更新过的标签
         "selector.archive": "Archive:",
+        "selector.account": "Account:",
         "selector.save_type": "Save Type:",
         "selector.running_suffix": "  [Running]",
         # 世界设置改进

@@ -344,7 +344,7 @@ class _RefreshingCombo(QComboBox):
 
 
 class ClusterBar(QWidget):
-    """顶部统一存档选择栏：存档类型（Steam/WeGame）+ 存档下拉 + 刷新。全部页签共用。"""
+    """顶部统一存档选择栏：存档类型（Steam/WeGame）+ 游戏账号（本机有多个时）+ 存档下拉 + 刷新。全部页签共用。"""
 
     def __init__(self, ctx: AppContext, window: "MainWindow"):
         super().__init__()
@@ -354,9 +354,13 @@ class ClusterBar(QWidget):
         # 右边距与各页面内容区对齐（外壳另有 2px 边框），"刷新"与页面级按钮右对齐
         row.setContentsMargins(24, 4, 8, 4)
         row.setSpacing(10)
-        self._platform_label, self._archive_label = QLabel(), QLabel()
-        for label in (self._platform_label, self._archive_label):
+        self._platform_label, self._account_label, self._archive_label = QLabel(), QLabel(), QLabel()
+        for label in (self._platform_label, self._account_label, self._archive_label):
             label.setProperty("heading", True)
+        # 同一平台登录过多个游戏账号时才显示；本地存档和 Mod 配置同步都跟随这里选中的账号
+        self._account = QComboBox()
+        self._account.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._account.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._platform = QComboBox()
         self._platform.addItems(["Steam", "WeGame"])
         # 宽度至少 110 并随字号自适应（写死在大字号下放不下 "WeGame" 和箭头），Fixed 不随窗口拉伸
@@ -376,6 +380,8 @@ class ClusterBar(QWidget):
         row.addWidget(self._platform_label)
         row.addWidget(self._platform)
         row.addSpacing(8)
+        row.addWidget(self._account_label)
+        row.addWidget(self._account)
         row.addWidget(self._archive_label)
         row.addWidget(self._cluster)
         row.addWidget(self._open_location)
@@ -383,6 +389,7 @@ class ClusterBar(QWidget):
         row.addWidget(self._create_save)
         row.addWidget(self._refresh)
         self._platform.activated.connect(self._on_platform)
+        self._account.activated.connect(self._on_account)
         self._cluster.activated.connect(self._on_cluster)
         ctx.env_changed.connect(self.reload)
         ctx.platform_changed.connect(self.reload)
@@ -392,6 +399,7 @@ class ClusterBar(QWidget):
 
     def retranslate(self) -> None:
         self._platform_label.setText(t("selector.save_type"))
+        self._account_label.setText(t("selector.account"))
         self._archive_label.setText(t("selector.archive"))
         self._open_location.setText(t("env.open_location"))
         self._create_save.setText(t("save.create_server_save"))
@@ -408,6 +416,15 @@ class ClusterBar(QWidget):
         self._populating = True
         try:
             self._platform.setCurrentText("WeGame" if self._ctx.platform == Platform.WEGAME else "Steam")
+            accounts = self._ctx.accounts()
+            current = self._ctx.current_account()
+            self._account.clear()
+            for account in accounts:
+                self._account.addItem(self._ctx.account_text(account), account.id)
+                if current is not None and account.id == current.id:
+                    self._account.setCurrentIndex(self._account.count() - 1)
+            self._account_label.setVisible(len(accounts) > 1)
+            self._account.setVisible(len(accounts) > 1)
             self._cluster.clear()
             selected = self._ctx.selected_cluster()
             for cluster in self._ctx.clusters():
@@ -419,6 +436,10 @@ class ClusterBar(QWidget):
 
     def _on_platform(self, _index: int) -> None:
         self._ctx.set_platform(Platform.WEGAME if self._platform.currentText() == "WeGame" else Platform.STEAM)
+
+    def _on_account(self, index: int) -> None:
+        if not self._populating and index >= 0:
+            self._ctx.select_account(self._account.itemData(index))
 
     def _on_cluster(self, index: int) -> None:
         if not self._populating and index >= 0:
