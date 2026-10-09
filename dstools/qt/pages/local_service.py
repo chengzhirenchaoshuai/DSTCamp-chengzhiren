@@ -20,8 +20,8 @@ from pathlib import Path
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QFontMetrics, QGuiApplication
 from PySide6.QtWidgets import (
-    QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSizePolicy, QSplitter,
-    QTextEdit, QVBoxLayout, QWidget,
+    QButtonGroup, QComboBox, QFileDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QRadioButton, QSizePolicy, QSplitter, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dstools.features.cluster_config.config_manager import (
@@ -267,6 +267,121 @@ class _RollbackDialog(dialogs.Dialog):
                                t("local.rollback_sent", n=n, shards=target.name))
         else:
             dialogs.show_warning(self.page.window(), t("local.rollback_title"), t("local.rollback_none_running"))
+
+
+class _ModeTableCell(QFrame):
+    """"切换程序"表格的单元格：只画右/下边框（外框由表格画），点击时回调选中整行。"""
+
+    def __init__(self, right: bool, bottom: bool, on_click=None):
+        super().__init__()
+        self.setObjectName("modeTableCell")
+        self._edges = (int(right), int(bottom))
+        self._on_click = on_click
+        if on_click:
+            self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.row = QHBoxLayout(self)
+        self.row.setContentsMargins(8, 7, 8, 7)
+        self.row.setSpacing(4)
+
+    def set_background(self, color: str) -> None:
+        right, bottom = self._edges
+        self.setStyleSheet(f"QFrame#modeTableCell {{ border-style: solid; border-color: {theme.hex('CARD_BORDER')}; "
+                           f"border-width: 0 {right}px {bottom}px 0; background: {color}; }}")
+
+    def mousePressEvent(self, event) -> None:
+        if self._on_click:
+            self._on_click()
+        super().mousePressEvent(event)
+
+
+class _RuntimeModeDialog(dialogs.Dialog):
+    """"切换程序"窗口：当前程序 / 三种模式单选 / 安装状态，点"保存"才生效。"""
+
+    _MODES = ((RuntimeMode.AUTO, "local.runtime_mode_desc_auto"),
+              (RuntimeMode.CLIENT, "local.runtime_mode_desc_client"),
+              (RuntimeMode.DEDICATED, "local.runtime_mode_desc_dedicated"))
+
+    def __init__(self, parent, current: RuntimeMode, current_text: str, names: dict, installed: dict):
+        super().__init__(parent, t("local.runtime_mode_title"), "lg", confirm_text=t("local.runtime_mode_save_btn"))
+        self.result_mode = current
+        esc = html.escape
+        accent, heading = theme.hex("ACCENT"), theme.hex("HEADING")
+        current_label = QLabel(f'{esc(t("local.runtime_mode_current_label"))}'
+                               f'<span style="color:{accent}; font-weight:bold;">{esc(current_text)}</span>')
+        current_label.setFont(theme.font("FONT_SIZE_BASE"))
+        self.body.addWidget(current_label)
+
+        # 表格：表头浅底，单元格带边框；选中行浅色底、模式名强调色，整行可点
+        table = QFrame()
+        table.setObjectName("modeTable")
+        table.setStyleSheet(f"QFrame#modeTable {{ border: 1px solid {theme.hex('CARD_BORDER')}; }}")
+        grid = QGridLayout(table)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(0)
+        grid.setColumnStretch(1, 1)
+        for col, key in enumerate(("local.runtime_mode_col_mode", "local.runtime_mode_col_desc")):
+            header = _ModeTableCell(right=col == 0, bottom=True)
+            header.set_background(theme.hex("CARD_BG_ALT"))
+            label = QLabel(t(key))
+            label.setFont(theme.font("FONT_SIZE_BASE", bold=True))
+            label.setStyleSheet(f"color: {heading};")
+            header.row.addWidget(label)
+            grid.addWidget(header, 0, col)
+
+        group = QButtonGroup(self)
+        self._rows: dict[RuntimeMode, tuple[QRadioButton, list[_ModeTableCell]]] = {}
+        for index, (mode, desc_key) in enumerate(self._MODES, start=1):
+            last = index == len(self._MODES)
+            radio = QRadioButton(names[mode])
+            radio.setFont(theme.font("FONT_SIZE_BASE", bold=True))
+            group.addButton(radio)
+            name_cell = _ModeTableCell(right=True, bottom=not last, on_click=radio.click)
+            name_cell.row.addWidget(radio)
+            if mode is current:
+                tag = QLabel(t("local.runtime_mode_current_tag"))
+                tag.setFont(theme.font("FONT_SIZE_BASE"))
+                tag.setStyleSheet(f"color: {theme.hex('TEXT_MUTED')};")
+                name_cell.row.addWidget(tag)
+            name_cell.row.addStretch()
+            desc_cell = _ModeTableCell(right=False, bottom=not last, on_click=radio.click)
+            desc = QLabel(t(desc_key))
+            desc.setWordWrap(True)
+            desc.setFont(theme.font("FONT_SIZE_BASE"))
+            desc_cell.row.addWidget(desc, 1)
+            grid.addWidget(name_cell, index, 0)
+            grid.addWidget(desc_cell, index, 1)
+            self._rows[mode] = (radio, [name_cell, desc_cell])
+            radio.toggled.connect(self._restyle_rows)
+            radio.setChecked(mode is current)
+        self._restyle_rows()
+        self.body.addSpacing(4)
+        self.body.addWidget(table)
+        self.body.addWidget(self.text_label(t("local.runtime_mode_note"), muted=True))
+
+        status_rows = []
+        for kind in RuntimeKind:
+            ok = installed[kind]
+            color = theme.hex("SUCCESS" if ok else "ERROR")
+            state = t("local.runtime_installed") if ok else t("local.runtime_not_installed")
+            status_rows.append(f'<tr><td nowrap style="padding:3px 16px 3px 0;">{esc(t(_RUNTIME_KIND_KEYS[kind]))}</td>'
+                               f'<td style="padding:3px 0; color:{color}; font-weight:bold;">● {esc(state)}</td></tr>')
+        status_label = QLabel(f'<div style="color:{heading}; font-weight:bold;">{esc(t("local.runtime_install_status"))}</div>'
+                              f'<table cellspacing="0" cellpadding="0" style="margin-top:4px;">{"".join(status_rows)}</table>')
+        status_label.setFont(theme.font("FONT_SIZE_BASE"))
+        self.body.addSpacing(4)
+        self.body.addWidget(status_label)
+        self.add_buttons()
+
+    def _restyle_rows(self) -> None:
+        for radio, cells in self._rows.values():
+            checked = radio.isChecked()
+            for cell in cells:
+                cell.set_background(theme.hex("PRIMARY_LIGHT") if checked else "transparent")
+            radio.setStyleSheet(f"color: {theme.hex('ACCENT' if checked else 'HEADING')};")
+
+    def accept_if_valid(self) -> None:
+        self.result_mode = next(mode for mode, (radio, _cells) in self._rows.items() if radio.isChecked())
+        self.accept()
 
 
 class _ConnectRow(QWidget):
@@ -743,52 +858,14 @@ class LocalServicePage(Page):
         names = {RuntimeMode.AUTO: t("local.runtime_mode_auto"),
                  RuntimeMode.CLIENT: t("local.runtime_mode_client"),
                  RuntimeMode.DEDICATED: t("local.runtime_mode_dedicated")}
-        text = self._runtime_mode_dialog_html(current, names, installed)
-        choices = [(t("dlg.cancel_btn"), "cancel")] + [(names[mode], mode.value) for mode in RuntimeMode]
-        choice = dialogs.ask_choice(self.window(), t("local.runtime_mode_title"), text, choices,
-                                    default=current.value, min_width=760, rich=True)
-        if not choice or choice == "cancel" or choice == current.value:
+        current_text = self._runtime_mode_text(self._runtime_resolution) if self._runtime_resolution else names[current]
+        dialog = _RuntimeModeDialog(self.window(), current, current_text, names, installed)
+        if not dialog.exec() or dialog.result_mode is current:
             return
-        set_runtime_mode(RuntimeMode(choice))
+        set_runtime_mode(dialog.result_mode)
         self._on_runtime_changed()
         if self._runtime is None:
             _show_not_found_warning(self.window(), self._wanted_runtime_kind())
-
-    def _runtime_mode_dialog_html(self, current, names, installed) -> str:
-        """三段：当前模式（强调色）/ 三种模式表格（表头浅底、单元格边框、当前行高亮）/ 安装状态两列对齐（彩色圆点）。"""
-        esc = html.escape
-        accent, muted, heading = theme.hex("ACCENT"), theme.hex("TEXT_MUTED"), theme.hex("HEADING")
-        current_text = self._runtime_mode_text(self._runtime_resolution) if self._runtime_resolution else names[current]
-        parts = [f'<div>{esc(t("local.runtime_mode_current_label"))}'
-                 f'<span style="color:{accent}; font-weight:bold;">{esc(current_text)}</span></div>']
-        border, header_bg, current_bg = theme.hex("CARD_BORDER"), theme.hex("CARD_BG_ALT"), theme.hex("PRIMARY_LIGHT")
-        rows = [f'<tr bgcolor="{header_bg}">'
-                f'<td nowrap style="font-weight:bold; color:{heading};">{esc(t("local.runtime_mode_col_mode"))}</td>'
-                f'<td style="font-weight:bold; color:{heading};">{esc(t("local.runtime_mode_col_desc"))}</td></tr>']
-        for mode, desc_key in ((RuntimeMode.AUTO, "local.runtime_mode_desc_auto"),
-                               (RuntimeMode.CLIENT, "local.runtime_mode_desc_client"),
-                               (RuntimeMode.DEDICATED, "local.runtime_mode_desc_dedicated")):
-            is_current = mode is current
-            row_bg = f' bgcolor="{current_bg}"' if is_current else ""
-            name_color = accent if is_current else heading
-            tag = (f' <span style="color:{muted}; font-weight:normal;">{esc(t("local.runtime_mode_current_tag"))}</span>'
-                   if is_current else "")
-            rows.append(f'<tr{row_bg}><td nowrap style="font-weight:bold; color:{name_color};">{esc(names[mode])}{tag}</td>'
-                        f'<td>{esc(t(desc_key))}</td></tr>')
-        parts.append(f'<table width="100%" border="1" cellspacing="0" cellpadding="7" style="margin-top:10px; '
-                     f'border-collapse:collapse; border-style:solid; border-color:{border};">{"".join(rows)}</table>')
-        parts.append(f'<div style="margin-top:8px; color:{muted};">{esc(t("local.runtime_mode_note"))}</div>')
-        status_rows = []
-        for kind in RuntimeKind:
-            ok = installed[kind]
-            color = theme.hex("SUCCESS" if ok else "ERROR")
-            state = t("local.runtime_installed") if ok else t("local.runtime_not_installed")
-            status_rows.append(f'<tr><td nowrap style="padding:3px 16px 3px 0;">{esc(t(_RUNTIME_KIND_KEYS[kind]))}</td>'
-                               f'<td style="padding:3px 0; color:{color}; font-weight:bold;">● {esc(state)}</td></tr>')
-        parts.append(f'<div style="margin-top:14px; color:{heading}; font-weight:bold;">'
-                     f'{esc(t("local.runtime_install_status"))}</div>')
-        parts.append(f'<table cellspacing="0" cellpadding="0" style="margin-top:4px;">{"".join(status_rows)}</table>')
-        return "".join(parts)
 
     def _change_install_dir(self) -> None:
         if self._runtime_switch_blocked():
