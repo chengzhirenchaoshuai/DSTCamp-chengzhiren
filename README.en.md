@@ -18,18 +18,17 @@
   <a href="#-features">Features</a> ·
   <a href="#-storage-layout">Storage</a> ·
   <a href="#-development">Development</a> ·
-  <a href="#162-changes">Changelog</a> ·
+  <a href="#163-changes">Changelog</a> ·
   <a href="README.md">中文</a>
 </p>
 
 ---
 
-## ✨ 1.6.2 highlights
+## ✨ 1.6.3 highlights
 
-- 🧩 **Global Mod defaults**: synced both ways with the global Mod configuration in the game's main menu, and applied automatically when a save enables a Mod.
-- 🏝️ **Three-in-one mod support**: Shipwrecked, Volcano, and Porkland worlds are recognized, the five-shard layout is one click away, and conflicting Mods are caught early.
-- 💾 **Editable Mods for local saves**: edit a Steam local save's Mods while the game is closed, in the same place the game reads them.
-- ⚡ **Idle token right after a crash**: if the original token is still waiting for Klei to release it, an idle pool token is used and the server goes back online right away.
+- 👥 **Multiple accounts**: all game accounts on this PC are detected, following the account logged in to Steam by default, and you can switch in the save bar.
+- 🧹 **Mods subscribed by other accounts**: the subscriber is shown, they can be force-cleaned, and they are no longer deleted as leftovers.
+- 💾 **Editable local saves**: change world settings and Mods, and save even while the game is open.
 
 ## 🧭 Features
 
@@ -105,9 +104,27 @@ python scripts/build_exe.py         # stage allowlisted resources in build/, wri
 
 `tests/_harness.py` runs every `test_*` function in definition order, so new tests need no registration. Real Windows GUI, Steam, frpc, and game behavior still require manual validation before release.
 
-## 1.6.2 changes
+## 1.6.3 changes
 
 ### ✨ New features
+
+- **Multiple accounts**: all game accounts on this PC are detected and their local saves scanned; the account logged in to Steam is used by default (marked with a green dot in the dropdown). You can switch accounts in the save bar, and local saves, the status bar, the create-save wizard's nickname, and Mod default config sync all follow the current account.
+- **Mods subscribed by other accounts**: the subscriber is shown and they can be force-cleaned (Steam is closed and restarted automatically; batch supported); the update window gains an account filter.
+- **Editable local saves**: world settings and Mods can be changed and saved even while the game is open; saving is blocked if the save may be running, otherwise you are reminded to return to the game's "Logging in..." screen before entering the save.
+- **Editable world generation settings for server saves**: after saving, you are reminded that the world must be reset for them to apply.
+- **Full LuaJIT patch uninstall**: removes the copy and leftovers and disables the companion Mod; also works when the patch is already turned off.
+- **UI tweaks**: the "Switch Program" window is now a single-select table that applies on Save; world console tabs sit flush on the log box, with the close badge in the top-right corner.
+
+### 🐞 Fixes
+
+- Mods subscribed by other Steam accounts were deleted as leftovers and then downloaded again by Steam.
+
+<details>
+<summary><strong>Earlier versions (1.3.5 ~ 1.6.2)</strong></summary>
+
+### 1.6.2
+
+#### ✨ New features
 
 - **Global Mod defaults**: the Mod page's former "View Local Mods" button is now "Global Default Configs". Its window matches the global Mod configuration in the game's main menu and syncs with it both ways (when both sides changed, the newer one wins and the overwritten game file is backed up first; while the game is running, writes wait until it closes; sync can be turned off in the Settings menu). In the window you can search, filter by configured/unconfigured, edit (including client-only options), restore a Mod's defaults, sync now, and see a result summary and sync log. Mods newly enabled in a save without a configuration get the defaults automatically, and a save's Mod configuration dialog can "Use default config" manually; changing a save's configuration does not change the defaults.
 - **"Client Mods" filter on the Mod page**: placed after "Custom", and "All" now lists client mods too; filter buttons are sized to their text.
@@ -119,15 +136,12 @@ python scripts/build_exe.py         # stage allowlisted resources in build/, wri
 - **Auto-restart only restarts the crashed world**: when the overworld crashes, the caves keep running — the game pauses them and reconnects automatically, then syncs once the overworld is back, so the save stays consistent; if the caves crash while the overworld is also down, the overworld is started with them.
 - **Release notes in the update prompt**: when a new version is found, the update dialog shows its release notes, styled to match the theme and font size setting; the dialog is wider accordingly.
 
-### 🐞 Fixes
+#### 🐞 Fixes
 
 - Saving world settings wrote booleans and numbers as strings (e.g. true became "True"), breaking Mods' option checks.
 - When several Mods registered the same world setting, the one shown was not the one the game actually uses (the game keeps the first registered, by load order).
 - New Porkland worlds lacked a complete level definition, so world generation failed and the server could not start.
 - With only the overworld running, crash auto-restart also started the caves that had not been running.
-
-<details>
-<summary><strong>Earlier versions (1.3.5 ~ 1.6.1)</strong></summary>
 
 ### 1.6.1
 
