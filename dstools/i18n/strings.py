@@ -938,8 +938,23 @@ STRINGS = {
         "mod.dynamic_banner": "⚠ 有 {count} 项设置由模组内部逻辑动态生成，已尝试自动解析但未成功，无法在此编辑，请在游戏内修改。",
         "mod.read_only_local": "该模组为本地模组（client_only），不需要在存档中配置，此处仅供查看，不可编辑。",
         "mod.read_only_local_save": "当前选中的是本地存档：游戏以存档 Master/save/shardindex 中记录的 Mod 为准，开服时会据此重写 modoverrides.lua。此存档暂不支持在这里编辑，仅供查看，如需修改请在游戏内的 Mods 菜单操作。",
-        "mod.local_shardindex_banner": "当前选中的是本地存档：Mod 状态读取自存档的 shardindex（游戏以它为准），保存时会同时写入各世界的 modoverrides.lua。修改前请先完全退出游戏，否则游戏退出时会覆盖这里的改动。",
-        "mod.local_save_game_running": "检测到饥荒游戏客户端正在运行。游戏会在退出时覆盖存档的 Mod 设置，请先完全退出游戏再保存。",
+        "mod.local_shardindex_banner": (
+            "当前选中的是本地存档：Mod 状态读取自存档的 shardindex（游戏以它为准），保存时会同时写入各世界的 "
+            "modoverrides.lua。游戏只在回到开始页面时重新读取存档设置，若保存时游戏开着，请先在游戏主菜单"
+            "「模组」里点「应用」（或重启游戏）再开启这个存档。"
+        ),
+        "mod.local_save_running": (
+            "这个存档的世界可能正在运行（检测到游戏客户端开着，且有开服进程占用了该存档配置的端口）。"
+            "运行中的世界会在自动存档时覆盖存档设置，请先在游戏里退出这个存档（回到大厅）再保存。"
+        ),
+        "mod.local_save_game_open_confirm": (
+            "检测到饥荒游戏客户端正在运行。\n\n"
+            "游戏只在回到开始页面（显示“登陆中...”的页面）时重新读取存档设置。现在保存后，"
+            "请先在游戏主菜单「模组」里点「应用」（或重启游戏）让游戏回到开始页面，再开启这个存档，修改才会"
+            "生效。\n\n"
+            "确定保存 Mod 设置吗？"
+        ),
+        "mod.local_saved_game_open_toast": "已保存。游戏开着，请先在游戏主菜单「模组」里点「应用」再开启这个存档",
         "mod.local_saved": "已保存 {count} 个已启用 Mod 到本地存档（shardindex 与各世界 modoverrides.lua）",
         "mod.config_sync_toast": "Mod 配置已与游戏同步：{detail}",
         "mod.config_sync_pulled": "从游戏取回 {count} 个",
@@ -2270,8 +2285,25 @@ STRINGS = {
         "mod.dynamic_banner": "⚠ {count} setting(s) are computed by the mod's own logic; automatic resolution was attempted but didn't succeed, so they can't be edited here -- please change them in-game.",
         "mod.read_only_local": "This is a local (client_only) mod -- it doesn't need a save-file entry to work. Shown here for reference only, not editable.",
         "mod.read_only_local_save": "The selected save is a local one: the game uses the mods recorded in the save's Master/save/shardindex and rewrites modoverrides.lua from it when the world starts. Editing this save here isn't supported yet -- shown for reference only. To change it, use the in-game Mods menu.",
-        "mod.local_shardindex_banner": "The selected save is a local one: mod states are read from the save's shardindex (which the game treats as authoritative), and saving also writes each shard's modoverrides.lua. Fully exit the game before editing, otherwise the game will overwrite your changes when it exits.",
-        "mod.local_save_game_running": "The Don't Starve Together client is running. The game overwrites the save's mod settings when it exits, so fully exit the game before saving.",
+        "mod.local_shardindex_banner": (
+            "The selected save is a local one: mod states are read from the save's shardindex (which the game "
+            "treats as authoritative), and saving also writes each shard's modoverrides.lua. The game only "
+            "re-reads save settings when it returns to its start screen, so if the game is open when you save, "
+            "click \"Apply\" in the main menu's \"Mods\" (or restart the game) before starting this save."
+        ),
+        "mod.local_save_running": (
+            "This save's world may be running (the game client is open and a server process is using the port "
+            "this save is configured with). A running world overwrites the save settings when it autosaves, so "
+            "leave this save in the game (back to the lobby) before saving."
+        ),
+        "mod.local_save_game_open_confirm": (
+            "The Don't Starve Together client is running.\n\n"
+            "The game only re-reads save settings when it returns to its start screen (the \"Logging in...\" "
+            "screen). After saving now, click \"Apply\" in the main menu's \"Mods\" (or restart the game) to "
+            "send it back to the start screen, then start this save for the changes to apply.\n\n"
+            "Save the mod settings?"
+        ),
+        "mod.local_saved_game_open_toast": "Saved. The game is open -- click \"Apply\" in the main menu's \"Mods\" before starting this save",
         "mod.local_saved": "Saved {count} enabled mod(s) to the local save (shardindex and each shard's modoverrides.lua)",
         "mod.config_sync_toast": "Mod configs synced with the game: {detail}",
         "mod.config_sync_pulled": "{count} pulled from the game",

@@ -4,7 +4,10 @@
 生成各世界的 modoverrides.lua，所以只改 modoverrides.lua 会被覆盖；enabled_mods 与 modoverrides.lua 格式相同
 （见游戏脚本 ModIndex:ApplyEnabledOverrides 的注释）。只有 Master 的 shardindex 生效（GetEnabledServerMods）。
 
-游戏运行时把 shardindex 缓存在内存里，退出前会写回，所以只能在游戏关闭时修改。
+游戏前端首次访问某存档时读入整个 shardindex（世界设置与 Mod 同在一个对象里）并一直缓存，只有回到
+"登陆中..."开始页面（重启游戏、主菜单模组页点应用、退出别人的服务器）才重读；开存档时会用缓存写回。
+所以游戏开着时可以改，但要先让游戏回到开始页面再开这个存档；存档运行时开服进程自动存档会覆盖，不能改
+（2026-10-09 用户实测）。见 local_save_play_state()。
 """
 
 import base64
@@ -29,6 +32,25 @@ class ShardIndexError(Exception):
 
 def shardindex_path(cluster_path: Path) -> Path:
     return Path(cluster_path) / "Master" / "save" / "shardindex"
+
+
+LOCAL_SAVE_CLOSED = "closed"    # 游戏客户端没开，直接改
+LOCAL_SAVE_OPEN = "open"        # 游戏开着但存档没运行：可改，需提醒回开始页面后再开存档
+LOCAL_SAVE_RUNNING = "running"  # 存档可能正在运行：开服进程会覆盖，不能改
+
+
+def local_save_play_state(cluster) -> str:
+    """判断能否改本地存档的 shardindex（会跑 tasklist/netstat，须在后台线程调用）。
+
+    本地存档只能由游戏客户端拉起，所以客户端开着且有开服进程占用该存档配置的端口时视为运行中；
+    同端口的其他专服会被误判为运行中，提示文案按"可能"措辞。"""
+    from dstools.features.local_service.dedicated_server import detect_external_shard_processes
+    from dstools.features.mod.legacy_v1 import is_dst_client_running
+
+    if not is_dst_client_running():
+        return LOCAL_SAVE_CLOSED
+    shards = detect_external_shard_processes(cluster) if cluster is not None else {}
+    return LOCAL_SAVE_RUNNING if any(info["running"] for info in shards.values()) else LOCAL_SAVE_OPEN
 
 
 def decode_persistent_bytes(raw: bytes) -> tuple[str, bool]:

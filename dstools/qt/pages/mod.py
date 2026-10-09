@@ -977,20 +977,44 @@ class ModPage(Page):
                 overrides.mods[wid] = ModEntry(workshop_id=wid, enabled=mod.enabled, configuration_options=config)
 
     def _save_local_mods(self, cluster, index_path: Path, silent: bool) -> None:
-        """本地存档：写 Master shardindex（游戏前端以它为准），再把同一份写进各世界 modoverrides.lua。
-        游戏运行时内存里缓存着 shardindex，退出会写回覆盖，所以必须先关游戏；静默保存也要提示，否则改动悄悄丢失。"""
-        from dstools.features.mod.legacy_v1 import is_dst_client_running
+        """本地存档：游戏前端缓存 shardindex，回到"登陆中..."页面才重读，存档运行时开服进程还会覆盖。
+        后台检测后：运行中拦下；游戏开着时手动保存先确认、静默保存（配置弹窗应用）存后轻提示；没开直接存。"""
+        from dstools.features.mod.shardindex import (
+            LOCAL_SAVE_OPEN, LOCAL_SAVE_RUNNING, local_save_play_state,
+        )
 
-        if is_dst_client_running():
-            dialogs.show_warning(self.window(), t("mod.save_btn"), t("mod.local_save_game_running"))
-            return
+        self._save_btn.setEnabled(False)
+
+        def done(state: str) -> None:
+            self._save_btn.setEnabled(self._dirty)
+            current = self.get_cluster()
+            # 检测期间存档列表可能刷新成新对象，按路径判断是否还是同一个存档
+            if current is None or str(current.path) != str(cluster.path):
+                return
+            if state == LOCAL_SAVE_RUNNING:
+                dialogs.show_warning(self.window(), t("mod.save_btn"), t("mod.local_save_running"))
+                return
+            if state == LOCAL_SAVE_OPEN and not silent and not dialogs.ask_yes_no(
+                    self.window(), t("mod.save_btn"), t("mod.local_save_game_open_confirm")):
+                return
+            if self._write_local_mods(cluster, index_path, silent) and state == LOCAL_SAVE_OPEN and silent:
+                dialogs.show_toast(self.window(), t("mod.local_saved_game_open_toast"), ms=4000)
+
+        def failed(exc: Exception) -> None:
+            self._save_btn.setEnabled(self._dirty)
+            dialogs.show_error(self.window(), t("mod.save_btn"), str(exc))
+
+        run_async(lambda: local_save_play_state(cluster), done, failed)
+
+    def _write_local_mods(self, cluster, index_path: Path, silent: bool) -> bool:
+        """写 Master shardindex（游戏前端以它为准），再把同一份写进各世界 modoverrides.lua；返回是否成功。"""
         try:
             overrides = ModOverrides(path=index_path, mods=load_shardindex_mods(index_path))
             self._write_mod_states(overrides)
             save_shardindex_mods(index_path, overrides.mods)
         except (OSError, ShardIndexError) as exc:
             dialogs.show_error(self.window(), t("mod.save_btn"), str(exc))
-            return
+            return False
         for sh in cluster.shards:
             dst = ModOverrides(path=sh.mod_overrides_path or sh.path / "modoverrides.lua")
             sync_mods(overrides, dst)
@@ -1002,6 +1026,7 @@ class ModPage(Page):
             self._dirty = False
             self._save_btn.setEnabled(False)
             self._refresh_mods()
+        return True
 
     def _save_mods(self, silent: bool = False) -> None:
         c = self.get_cluster()

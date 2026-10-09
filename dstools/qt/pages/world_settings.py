@@ -10,9 +10,9 @@ from PySide6.QtWidgets import (
 )
 
 from dstools.features.world import page_data
-from dstools.features.local_service.dedicated_server import detect_external_shard_processes
-from dstools.features.mod.legacy_v1 import is_dst_client_running
-from dstools.features.mod.shardindex import ShardIndexError
+from dstools.features.mod.shardindex import (
+    LOCAL_SAVE_OPEN, LOCAL_SAVE_RUNNING, ShardIndexError, local_save_play_state,
+)
 from dstools.i18n import t
 from dstools.qt import dialogs
 from dstools.qt.pages.base import Page
@@ -257,27 +257,21 @@ class WorldSettingsPage(Page):
         cluster = self.ctx.selected_cluster()
         self._save_button.setEnabled(False)
 
-        def check() -> str:
-            if not is_dst_client_running():
-                return "closed"
-            shards = detect_external_shard_processes(cluster) if cluster is not None else {}
-            return "running" if any(info["running"] for info in shards.values()) else "open"
-
         def done(state: str) -> None:
             self._save_button.setEnabled(self._dirty)
             if data is not self._data:
                 return
-            if state == "running":
+            if state == LOCAL_SAVE_RUNNING:
                 dialogs.show_warning(self.window(), title, t("world.local_save_running"))
                 return
-            key = "world.local_save_game_open_confirm" if state == "open" else "dlg.confirm_save_msg"
+            key = "world.local_save_game_open_confirm" if state == LOCAL_SAVE_OPEN else "dlg.confirm_save_msg"
             self._confirm_and_save(data, t(key, name=data.shard_name))
 
         def failed(exc: Exception) -> None:
             self._save_button.setEnabled(self._dirty)
             dialogs.show_error(self.window(), title, str(exc))
 
-        run_async(check, done, failed)
+        run_async(lambda: local_save_play_state(cluster), done, failed)
 
     def _confirm_and_save(self, data: page_data.WorldPageData, confirm_text: str) -> None:
         title = t("world.save_rules")
