@@ -94,12 +94,7 @@ class AppContext(QObject):
 
     @staticmethod
     def account_text(account: Account) -> str:
-        text = f"{account.name} ({account.id})" if account.name else account.id
-        if account.steam_active:
-            text += t("selector.account_steam_active")
-        if not account.has_game_dir:
-            text += t("selector.account_no_game_dir")
-        return text
+        return f"{account.name} ({account.id})" if account.name else account.id
 
     def selected_cluster(self) -> Cluster | None:
         return self._selected

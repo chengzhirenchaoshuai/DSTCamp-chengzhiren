@@ -172,7 +172,7 @@ def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> 
     for account_id in ids:
         path = root / account_id
         env.accounts.append(Account(account_id, platform, path, names.get(account_id, ""),
-                                    steam_active=account_id == active, has_game_dir=path.is_dir()))
+                                    steam_active=account_id == active))
 
     if platform == Platform.STEAM:
         env.user_id = current

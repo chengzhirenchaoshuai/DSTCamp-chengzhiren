@@ -822,8 +822,6 @@ STRINGS = {
         # 更新过的标签
         "selector.archive": "存档:",
         "selector.account": "账号:",
-        "selector.account_steam_active": " · Steam 当前登录",
-        "selector.account_no_game_dir": " · 尚未在本机运行过饥荒",
         "selector.save_type": "存档类型:",
         "selector.running_suffix": "  [运行中]",
         # 世界设置改进
@@ -2114,8 +2112,6 @@ STRINGS = {
         # 更新过的标签
         "selector.archive": "Archive:",
         "selector.account": "Account:",
-        "selector.account_steam_active": " · Signed in to Steam",
-        "selector.account_no_game_dir": " · DST not run on this PC yet",
         "selector.save_type": "Save Type:",
         "selector.running_suffix": "  [Running]",
         # 世界设置改进

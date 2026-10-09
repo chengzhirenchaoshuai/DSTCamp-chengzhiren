@@ -393,6 +393,7 @@ class ClusterBar(QWidget):
         self._cluster.activated.connect(self._on_cluster)
         ctx.env_changed.connect(self.reload)
         ctx.platform_changed.connect(self.reload)
+        theme.changed.connect(self.reload)  # 绿点颜色跟随主题
         self.setFixedHeight(56)
         self.retranslate()
         self.reload()
@@ -419,8 +420,11 @@ class ClusterBar(QWidget):
             accounts = self._ctx.accounts()
             current = self._ctx.current_account()
             self._account.clear()
+            dot = self._steam_active_icon()
             for account in accounts:
-                self._account.addItem(self._ctx.account_text(account), account.id)
+                # Steam 当前登录的账号前面画一个小绿点
+                self._account.addItem(dot if account.steam_active else QIcon(),
+                                      self._ctx.account_text(account), account.id)
                 if current is not None and account.id == current.id:
                     self._account.setCurrentIndex(self._account.count() - 1)
             self._account_label.setVisible(len(accounts) > 1)
@@ -436,6 +440,22 @@ class ClusterBar(QWidget):
 
     def _on_platform(self, _index: int) -> None:
         self._ctx.set_platform(Platform.WEGAME if self._platform.currentText() == "WeGame" else Platform.STEAM)
+
+    def _steam_active_icon(self) -> QIcon:
+        """下拉项图标大小的透明图，中间一个小绿点；按屏幕缩放比画到物理像素。"""
+        size = self._account.iconSize()
+        ratio = self.devicePixelRatioF()
+        pixmap = QPixmap(round(size.width() * ratio), round(size.height() * ratio))
+        pixmap.setDevicePixelRatio(ratio)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(theme.color("SUCCESS"))
+        diameter = min(size.width(), size.height()) * 0.5
+        painter.drawEllipse(QPointF(size.width() / 2, size.height() / 2), diameter / 2, diameter / 2)
+        painter.end()
+        return QIcon(pixmap)
 
     def _on_account(self, index: int) -> None:
         if not self._populating and index >= 0:

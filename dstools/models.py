@@ -160,7 +160,6 @@ class Account:
     path: Path
     name: str = ""                            # Steam 昵称（loginusers.vdf），读不到为空
     steam_active: bool = False                # 是 Steam 客户端当前登录的账号
-    has_game_dir: bool = True                 # 本机已有饥荒账号目录（没运行过饥荒的 Steam 账号没有）
 
 
 @dataclass
