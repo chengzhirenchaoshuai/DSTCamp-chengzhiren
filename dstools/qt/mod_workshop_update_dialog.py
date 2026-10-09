@@ -239,21 +239,23 @@ class WorkshopUpdateDialog(QDialog):
         status = self._states.get(wid)
         return self._can_select(wid) or (status is not None and self._can_force_cleanup(status))
 
-    def _owner(self, wid: str) -> str:
-        """Mod 的订阅账号：当前 Steam 账号订阅的算 Steam 当前登录账号，否则取 Steam 清单记录的订阅者；都没有为空。"""
+    def _owners(self, wid: str) -> set[str]:
+        """Mod 的订阅账号（可能多个）：Steam 清单记录的订阅者，当前 Steam 账号订阅的再加上 Steam 当前登录账号。"""
         status = self._states.get(wid)
         evidence = status.evidence if status is not None else None
         if evidence is None:
-            return ""
-        if evidence.steam_state is not None and evidence.steam_state.subscribed:
-            return self.page.ctx.env.steam_active_account
-        return evidence.acf_subscriber
+            return set()
+        owners = set(evidence.acf_subscribers)
+        active = self.page.ctx.env.steam_active_account
+        if active and evidence.steam_state is not None and evidence.steam_state.subscribed:
+            owners.add(active)
+        return owners
 
     def _refresh_account_filter(self) -> None:
         """按当前状态重建账号筛选项，保持原来选中的账号；Steam 当前登录账号排在最前。"""
         selected = self._account_filter.currentData()
         active = self.page.ctx.env.steam_active_account
-        owners = {self._owner(wid) for wid in self._ids} - {""}
+        owners = set().union(*(self._owners(wid) for wid in self._ids))
         if active:
             owners.add(active)
         ordered = sorted(owners, key=lambda account: (account != active, account))
@@ -273,7 +275,7 @@ class WorkshopUpdateDialog(QDialog):
         account = self._account_filter.currentData()
         result = []
         for wid in self._ids:
-            if account and self._owner(wid) != account:
+            if account and account not in self._owners(wid):
                 continue
             if mode == 1 and not (wid in self._states and self._states[wid].needs_action):
                 continue
@@ -424,6 +426,8 @@ class WorkshopUpdateDialog(QDialog):
         can_select = self._can_check(wid)
         checkbox = QCheckBox()
         checkbox.setEnabled(can_select)
+        if not can_select:
+            checkbox.setToolTip(self._force_block_reason(self._states.get(wid)))
         checkbox.setChecked(wid in self._selected)
         checkbox.toggled.connect(lambda checked, w=wid: self._on_check(w, checked))
         layout.addWidget(checkbox)
@@ -513,14 +517,17 @@ class WorkshopUpdateDialog(QDialog):
         name = self.page.ctx.env.steam_names.get(account_id, "")
         return f"{name} ({account_id})" if name else account_id
 
+    def _subscribers_text(self, subscribers) -> str:
+        return "、".join(self._subscriber_text(account) for account in subscribers)
+
     def _latest_text(self, status) -> str:
-        """其他账号订阅的 Mod 按存档栏选中的账号区分：选中账号自己订阅的显示"本账号订阅"，其余显示订阅者。"""
-        subscriber = status.evidence.acf_subscriber if status.evidence is not None else ""
-        if status.state == WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT and subscriber:
+        """其他账号订阅的 Mod 按存档栏选中的账号区分：订阅者含选中账号时显示"本账号订阅"，否则列出订阅者。"""
+        subscribers = status.evidence.acf_subscribers if status.evidence is not None else ()
+        if status.state == WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT and subscribers:
             selected = self.page.ctx.env.current_account(Platform.STEAM)
-            if selected is not None and selected.id == subscriber:
+            if selected is not None and selected.id in subscribers:
                 return t("mod.update_latest_own_account")
-            return t("mod.update_latest_other_account_named", name=self._subscriber_text(subscriber))
+            return t("mod.update_latest_other_account_named", name=self._subscribers_text(subscribers))
         return t(self._latest_key(status))
 
     @staticmethod
@@ -548,11 +555,34 @@ class WorkshopUpdateDialog(QDialog):
 
     @staticmethod
     def _can_force_cleanup(status) -> bool:
-        """本机其他账号订阅、当前存档没有引用、内容目录还在的 Mod 才允许强制清理。"""
+        """本机其他账号订阅、当前存档没有引用、内容目录还在的 Mod 才允许强制清理。
+        游戏是否运行不在这里判断（运行中也能勾选），点击清理时再拦截。"""
         evidence = status.evidence
         return bool(status.state == WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT and evidence is not None
-                    and not evidence.configured and evidence.workshop_content_path is not None
-                    and not evidence.running_dst_processes)
+                    and not evidence.configured and evidence.workshop_content_path is not None)
+
+    @staticmethod
+    def _force_block_reason(status) -> str:
+        """其他账号订阅的 Mod 不能勾选的原因，用作勾选框提示。"""
+        evidence = status.evidence if status is not None else None
+        if status is None or status.state != WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT or evidence is None:
+            return ""
+        if evidence.configured:
+            return t("mod.update_force_blocked_referenced")
+        if evidence.workshop_content_path is None:
+            return t("mod.update_cannot_cleanup")
+        return ""
+
+    def _confirm_game_closed(self) -> bool:
+        """游戏或专服运行中不能关闭 Steam 清理：提示后返回 False。"""
+        from dstools.features.mod.legacy_v1 import running_dst_processes
+
+        processes = running_dst_processes()
+        if processes:
+            dialogs.show_warning(self, t("mod.update_force_cleanup_title"),
+                                 t("mod.update_force_cleanup_game_running", processes="、".join(processes)))
+            return False
+        return True
 
     def _on_check(self, wid: str, checked: bool) -> None:
         if checked:
@@ -688,9 +718,9 @@ class WorkshopUpdateDialog(QDialog):
             return
         force_ids = self._selected_force_ids()
         if force_ids:
-            owners = sorted({self._states[wid].evidence.acf_subscriber for wid in force_ids} - {""})
-            owner_text = "、".join(self._subscriber_text(o) for o in owners) or t("mod.update_latest_other_account")
-            if dialogs.ask_yes_no(self, t("mod.update_force_cleanup_title"),
+            owners = sorted(set().union(*(self._states[wid].evidence.acf_subscribers for wid in force_ids)))
+            owner_text = self._subscribers_text(owners) or t("mod.update_latest_other_account")
+            if self._confirm_game_closed() and dialogs.ask_yes_no(self, t("mod.update_force_cleanup_title"),
                                   t("mod.update_force_cleanup_bulk_confirm", count=len(force_ids), owners=owner_text),
                                   min_width=560, danger=True):
                 self._start_force_cleanup(force_ids)
@@ -816,8 +846,9 @@ class WorkshopUpdateDialog(QDialog):
             dialogs.show_warning(self, t("mod.update_title"), t("mod.update_cannot_cleanup"))
             return
         path = status.evidence.workshop_content_path
-        owner = (self._subscriber_text(status.evidence.acf_subscriber) if status.evidence.acf_subscriber
-                 else t("mod.update_latest_other_account"))
+        owner = self._subscribers_text(status.evidence.acf_subscribers) or t("mod.update_latest_other_account")
+        if not self._confirm_game_closed():
+            return
         if not dialogs.ask_yes_no(self, t("mod.update_force_cleanup_title"),
                                   t("mod.update_force_cleanup_confirm", owner=owner, path=str(path)),
                                   min_width=560, danger=True):

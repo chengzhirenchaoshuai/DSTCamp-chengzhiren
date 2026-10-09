@@ -49,7 +49,7 @@ class AcfWorkshopItem:
     workshop_id: str
     size: int
     subscribed: bool
-    subscribed_by: str = ""  # subscribedby 的值：订阅者的 Steam AccountID
+    subscribed_by: str = ""  # subscribedby 的值：订阅者的 Steam AccountID，多个账号订阅时以逗号分隔
 
 
 @dataclass(frozen=True)

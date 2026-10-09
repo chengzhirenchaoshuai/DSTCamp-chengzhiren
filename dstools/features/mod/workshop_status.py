@@ -71,7 +71,11 @@ class WorkshopModEvidence:
     v1_shadow_version: LocalModVersion | None = None
     # Steam 清单里有 subscribedby：本机某个 Steam 账号订阅着它（不一定是当前登录账号）
     acf_subscribed: bool = False
-    acf_subscriber: str = ""  # 清单记录的订阅者 Steam AccountID
+    acf_subscriber: str = ""  # 清单记录的订阅者 Steam AccountID，多个账号订阅时以逗号分隔
+
+    @property
+    def acf_subscribers(self) -> tuple[str, ...]:
+        return tuple(part.strip() for part in self.acf_subscriber.split(",") if part.strip())
 
 
 @dataclass(frozen=True)
