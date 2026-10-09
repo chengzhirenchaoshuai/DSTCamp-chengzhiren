@@ -10,7 +10,7 @@ import time
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextEdit,
+    QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QTextEdit,
     QVBoxLayout, QWidget,
 )
 
@@ -159,6 +159,12 @@ class WorkshopUpdateDialog(QDialog):
             uniform_width=True)  # "全部"两个字太窄，跟"待更新"等统一宽度
         self._status_filter.current_changed.connect(lambda _i: self._render_rows())
         toolbar.addWidget(self._status_filter)
+        # 按订阅账号筛选：Steam 当前登录账号的订阅，或 Steam 清单记录的其他账号的订阅
+        self._account_filter = QComboBox()
+        self._account_filter.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._account_filter.activated.connect(lambda _i: self._render_rows())
+        toolbar.addWidget(self._account_filter)
+        self._refresh_account_filter()
         self._refresh_btn = QPushButton(t("mod.update_refresh_states"))
         self._refresh_btn.clicked.connect(lambda: self._reload(force=True))
         toolbar.addWidget(self._refresh_btn)
@@ -228,14 +234,47 @@ class WorkshopUpdateDialog(QDialog):
         status = self._states.get(wid)
         return bool(status is not None and status.can_update)
 
+    def _can_check(self, wid: str) -> bool:
+        """能勾选：可以更新的，或其他账号订阅、可以强制清理的（勾选后由"一键清理残留"批量清理）。"""
+        status = self._states.get(wid)
+        return self._can_select(wid) or (status is not None and self._can_force_cleanup(status))
+
+    def _owner(self, wid: str) -> str:
+        """Mod 的订阅账号：当前 Steam 账号订阅的算 Steam 当前登录账号，否则取 Steam 清单记录的订阅者；都没有为空。"""
+        status = self._states.get(wid)
+        evidence = status.evidence if status is not None else None
+        if evidence is None:
+            return ""
+        if evidence.steam_state is not None and evidence.steam_state.subscribed:
+            return self.page.ctx.env.steam_active_account
+        return evidence.acf_subscriber
+
+    def _refresh_account_filter(self) -> None:
+        """按当前状态重建账号筛选项，保持原来选中的账号；Steam 当前登录账号排在最前。"""
+        selected = self._account_filter.currentData()
+        active = self.page.ctx.env.steam_active_account
+        owners = {self._owner(wid) for wid in self._ids} - {""}
+        if active:
+            owners.add(active)
+        ordered = sorted(owners, key=lambda account: (account != active, account))
+        self._account_filter.clear()
+        self._account_filter.addItem(t("mod.update_account_filter_all"), "")
+        for account in ordered:
+            self._account_filter.addItem(self._subscriber_text(account), account)
+        index = self._account_filter.findData(selected) if selected else 0
+        self._account_filter.setCurrentIndex(max(index, 0))
+
     def _pending_count(self) -> int:
         return sum(1 for wid in self._ids if wid in self._states and self._states[wid].needs_action)
 
     def _filtered_ids(self) -> list[str]:
         needle = self._search.text().strip().casefold()
         mode = self._status_filter.current_index()
+        account = self._account_filter.currentData()
         result = []
         for wid in self._ids:
+            if account and self._owner(wid) != account:
+                continue
             if mode == 1 and not (wid in self._states and self._states[wid].needs_action):
                 continue
             if mode == 2 and wid not in self._current_ids:
@@ -287,6 +326,7 @@ class WorkshopUpdateDialog(QDialog):
             self.page._workshop_status_cache = dict(states)
             self.page._workshop_status_checked_at = time.monotonic()
             self.page._update_workshop_update_hint()
+            self._refresh_account_filter()
             self._render_rows()
 
         def error(exc: Exception) -> None:
@@ -320,7 +360,7 @@ class WorkshopUpdateDialog(QDialog):
         return header
 
     def _on_select_all_clicked(self, checked: bool) -> None:
-        selectable = [wid for wid in self._filtered_ids() if self._can_select(wid)]
+        selectable = [wid for wid in self._filtered_ids() if self._can_check(wid)]
         if checked:
             self._selected.update(selectable)
         else:
@@ -347,7 +387,7 @@ class WorkshopUpdateDialog(QDialog):
         ])
         visible_ids = self._filtered_ids()
         self._count_label.setText(t("mod.update_selected_count", selected=len(self._selected), total=len(self._ids)))
-        selectable = [wid for wid in visible_ids if self._can_select(wid)]
+        selectable = [wid for wid in visible_ids if self._can_check(wid)]
         self._select_all_box.setEnabled(bool(selectable))
         self._select_all_box.setChecked(bool(selectable) and all(wid in self._selected for wid in selectable))
         if not visible_ids:
@@ -361,9 +401,18 @@ class WorkshopUpdateDialog(QDialog):
         self._rows_layout.addStretch()
         actionable = [wid for wid in self._ids if self._can_select(wid)]
         self._update_all_btn.setEnabled(bool(actionable) and not self._loading)
+        self._update_cleanup_all_btn()
+
+    def _selected_force_ids(self) -> list[str]:
+        """勾选中可以强制清理的其他账号 Mod。"""
+        return [wid for wid in self._ids if wid in self._selected
+                and (status := self._states.get(wid)) is not None and self._can_force_cleanup(status)]
+
+    def _update_cleanup_all_btn(self) -> None:
         has_residual = any(status.can_cleanup_residual and status.state != WorkshopModState.UNSUBSCRIBED_REFERENCED
                            for status in self._states.values())
-        self._cleanup_all_btn.setEnabled(has_residual and not self._cleanup_running)
+        self._cleanup_all_btn.setEnabled((has_residual or bool(self._selected_force_ids()))
+                                         and not self._cleanup_running)
 
     def _make_row(self, wid: str, index: int) -> QWidget:
         # 交替行色与主 Mod 列表一致（CARD_BG/CARD_BG_ALT），每行一个 Card 带描边形成独立卡片。
@@ -372,7 +421,7 @@ class WorkshopUpdateDialog(QDialog):
         row.setFixedHeight(_ROW_H)
         layout = QHBoxLayout(row)
         layout.setContentsMargins(12, 4, 12, 4)
-        can_select = self._can_select(wid)
+        can_select = self._can_check(wid)
         checkbox = QCheckBox()
         checkbox.setEnabled(can_select)
         checkbox.setChecked(wid in self._selected)
@@ -511,6 +560,7 @@ class WorkshopUpdateDialog(QDialog):
         else:
             self._selected.discard(wid)
         self._count_label.setText(t("mod.update_selected_count", selected=len(self._selected), total=len(self._ids)))
+        self._update_cleanup_all_btn()
 
     # ── 更新执行 ────────────────────────────────────────────────────────
     def _confirm_and_update(self, ids: list[str]) -> None:
@@ -635,6 +685,15 @@ class WorkshopUpdateDialog(QDialog):
 
     def _cleanup_all_residuals(self) -> None:
         if self._cleanup_running:
+            return
+        force_ids = self._selected_force_ids()
+        if force_ids:
+            owners = sorted({self._states[wid].evidence.acf_subscriber for wid in force_ids} - {""})
+            owner_text = "、".join(self._subscriber_text(o) for o in owners) or t("mod.update_latest_other_account")
+            if dialogs.ask_yes_no(self, t("mod.update_force_cleanup_title"),
+                                  t("mod.update_force_cleanup_bulk_confirm", count=len(force_ids), owners=owner_text),
+                                  min_width=560, danger=True):
+                self._start_force_cleanup(force_ids)
             return
         candidates = [wid for wid, status in self._states.items()
                      if status.can_cleanup_residual and status.state != WorkshopModState.UNSUBSCRIBED_REFERENCED
@@ -763,7 +822,12 @@ class WorkshopUpdateDialog(QDialog):
                                   t("mod.update_force_cleanup_confirm", owner=owner, path=str(path)),
                                   min_width=560, danger=True):
             return
-        self._cleanup_running.add(wid)
+        self._start_force_cleanup([wid])
+
+    def _start_force_cleanup(self, ids: list[str]) -> None:
+        """后台强制清理一批其他账号订阅的 Mod：整批只关闭/重启一次 Steam。"""
+        content_root = self._states[ids[0]].evidence.workshop_content_path.parent
+        self._cleanup_running.update(ids)
         self._show_state_notice(t("mod.update_force_cleanup_running"))
         self._render_rows()
 
@@ -774,21 +838,25 @@ class WorkshopUpdateDialog(QDialog):
             from dstools.features.mod.legacy_v1 import running_dst_processes
             from dstools.features.mod.workshop_cleanup import force_remove_other_account_items
             return force_remove_other_account_items(
-                path.parent, [wid], is_steam_running=is_steam_running, shutdown_steam=shutdown_steam,
+                content_root, ids, is_steam_running=is_steam_running, shutdown_steam=shutdown_steam,
                 launch_steam=launch_steam, running_dst_processes=running_dst_processes)
 
         def finish() -> None:
-            self._cleanup_running.discard(wid)
+            self._cleanup_running.difference_update(ids)
             self._show_state_notice("")
 
         def done(result) -> None:
             finish()
             self._apply_cleaned_items(list(result.removed))
+            self._refresh_account_filter()
             self._render_rows()
             if result.errors:
                 details = "\n".join(f"{item}: {reason}" for item, reason in result.errors.items())
                 dialogs.show_error(self, t("mod.update_force_cleanup_title"),
                                    t("mod.update_force_cleanup_failed", details=details))
+            elif len(result.removed) > 1:
+                dialogs.show_toast(self, t("mod.update_force_cleanup_bulk_done_toast", count=len(result.removed)),
+                                   ms=2400)
             elif result.removed:
                 dialogs.show_toast(self, t("mod.update_force_cleanup_done_toast"), ms=2400)
 

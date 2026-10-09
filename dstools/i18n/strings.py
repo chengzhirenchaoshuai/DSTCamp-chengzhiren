@@ -258,6 +258,9 @@ STRINGS = {
         "mod.update_cannot_cleanup": "Steam 仍在管理此目录，或目录已不符合安全清理条件。",
         "mod.update_cleanup_residual_done_toast": "残留 Mod 已删除",
         "mod.update_force_cleanup_btn": "强制清理",
+        "mod.update_account_filter_all": "全部账号",
+        "mod.update_force_cleanup_bulk_confirm": "将强制清理勾选的 {count} 个其他账号订阅的 Mod（订阅者：{owners}）。\n\n将先关闭 Steam，删除这些 Mod 的文件并清除 Steam 下载记录，完成后重新启动 Steam。\n\n订阅仍在这些账号上：它们下次在这台电脑登录 Steam 时，Steam 会重新下载。\n\n确定继续吗？",
+        "mod.update_force_cleanup_bulk_done_toast": "已清理 {count} 个 Mod，Steam 下载记录已清除",
         "mod.update_force_cleanup_title": "强制清理其他账号订阅的 Mod",
         "mod.update_force_cleanup_confirm": "此 Mod 由 {owner} 订阅，Steam 当前登录的账号没有订阅。\n\n将先关闭 Steam，删除下面的文件并清除 Steam 下载记录，完成后重新启动 Steam：\n{path}\n\n订阅仍在该账号上：该账号下次在这台电脑登录 Steam 时，Steam 会重新下载此 Mod。\n\n确定继续吗？",
         "mod.update_force_cleanup_running": "正在关闭 Steam 并清理……",
@@ -843,7 +846,23 @@ STRINGS = {
             "多层世界会一起重新生成，请先备份存档。\n\n"
             "不想丢掉当前世界就不必重置，世界规则部分的修改在下次启动时照常生效。"
         ),
-        "world.local_view_only_banner": "⚠ 当前选中的是本地存档，世界设置仅支持查看，不支持修改。",
+        "world.local_edit_banner": "当前是本地存档：保存前请完全退出游戏，游戏运行时会在退出时覆盖存档里的世界设置。",
+        "world.generation_reset_banner_local": (
+            "世界生成设置只在生成新世界时生效。本地存档修改保存后，需要在游戏里开启这个存档并重新生成世界"
+            "（如控制台执行 c_regenerateworld()）才会按新设置生成，重新生成会清空当前地图、建筑和物品。"
+            "保存前请完全退出游戏。"
+        ),
+        "world.saved_need_reset_local": (
+            "世界设置已保存。\n\n"
+            "本次修改了世界生成设置，但这个世界已经生成过，地图不会自动改变。需要在游戏里开启这个存档并"
+            "重新生成世界（如控制台执行 c_regenerateworld()），游戏才会按新设置生成；重新生成会清空当前地图、"
+            "建筑和物品，多层世界会一起重新生成，请先备份存档。\n\n"
+            "不想丢掉当前世界就不必重新生成，世界规则部分的修改在下次开启存档时照常生效。"
+        ),
+        "world.local_index_unreadable": "⚠ 无法读取本地存档的世界设置（{detail}），暂时只能查看。",
+        "world.local_save_game_running": (
+            "检测到饥荒游戏客户端正在运行。游戏会在退出时覆盖存档的世界设置，请先完全退出游戏再保存。"
+        ),
         "world.no_save_banner": "未检测到任何存档，请先创建或导入一个存档后再查看世界设置。",
         # 创建服务器存档向导
         "world.creation_name_label": "存档名称",
@@ -1551,6 +1570,9 @@ STRINGS = {
         "mod.update_cannot_cleanup": "Steam still manages this directory, or it no longer meets the safe cleanup conditions.",
         "mod.update_cleanup_residual_done_toast": "Residual Mod deleted",
         "mod.update_force_cleanup_btn": "Force Clean",
+        "mod.update_account_filter_all": "All accounts",
+        "mod.update_force_cleanup_bulk_confirm": "Force clean the {count} selected Mods subscribed by other accounts (subscribers: {owners}).\n\nDSTCamp will close Steam, delete these Mods' files, clear the Steam download records, then restart Steam.\n\nThe subscriptions stay on those accounts: the next time they sign in to Steam on this computer, Steam will download them again.\n\nContinue?",
+        "mod.update_force_cleanup_bulk_done_toast": "Cleaned up {count} Mods and cleared the Steam download records",
         "mod.update_force_cleanup_title": "Force Clean a Mod Subscribed by Another Account",
         "mod.update_force_cleanup_confirm": "This Mod is subscribed by {owner}; the Steam account currently signed in is not subscribed.\n\nDSTCamp will close Steam, delete the files below, clear the Steam download record, then restart Steam:\n{path}\n\nThe subscription stays on that account: the next time that account signs in to Steam on this computer, Steam will download this Mod again.\n\nContinue?",
         "mod.update_force_cleanup_running": "Closing Steam and cleaning up...",
@@ -2138,7 +2160,30 @@ STRINGS = {
             "If you want to keep the current world, don't reset -- your world rule changes still apply on the "
             "next start."
         ),
-        "world.local_view_only_banner": "⚠ The selected save is a local one -- World Settings is view-only here, editing isn't supported.",
+        "world.local_edit_banner": (
+            "This is a local save: fully exit the game before saving -- a running game overwrites the save's "
+            "world settings when it exits."
+        ),
+        "world.generation_reset_banner_local": (
+            "World generation settings only apply when a new world is generated. After saving a local save, "
+            "start it in the game and regenerate the world (e.g. run c_regenerateworld() in the console) to "
+            "use the new settings -- this wipes the current map, buildings and items. Fully exit the game "
+            "before saving."
+        ),
+        "world.saved_need_reset_local": (
+            "World settings saved.\n\n"
+            "You changed world generation settings, but this world has already been generated, so the map "
+            "won't change by itself. Start this save in the game and regenerate the world (e.g. run "
+            "c_regenerateworld() in the console) to use the new settings. Regenerating wipes the current map, "
+            "buildings and items and regenerates every shard, so back up the save first.\n\n"
+            "If you want to keep the current world, don't regenerate -- your world rule changes still apply "
+            "the next time you start the save."
+        ),
+        "world.local_index_unreadable": "⚠ Couldn't read the local save's world settings ({detail}), so it's view-only for now.",
+        "world.local_save_game_running": (
+            "The Don't Starve Together client is running. The game overwrites the save's world settings when "
+            "it exits, so fully exit the game before saving."
+        ),
         "world.no_save_banner": "No saves were detected. Create or import a save before viewing world settings.",
         # 创建服务器存档向导
         "world.creation_name_label": "Save Name",
