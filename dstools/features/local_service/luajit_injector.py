@@ -12,6 +12,7 @@
 
 import hashlib
 import json
+import os
 import shutil
 import tempfile
 from dataclasses import dataclass, field
@@ -482,6 +483,94 @@ def apply_uninstall(bin64_dir: Path, on_log=None) -> bool:
     set_luajit_enabled(False)
     log(t("local.luajit_log_uninstalled"))
     return True
+
+
+def _remove_tree(path: Path) -> None:
+    """删除目录；联接只删联接本身，不进入目标（符号链接 rmtree 会直接报错，同样不进入）。"""
+    if os.path.isjunction(path):
+        os.rmdir(path)
+    else:
+        shutil.rmtree(path)
+
+
+def _leftover_dirs(install_dir: Path) -> list[Path]:
+    """本工具生成的副本与中断遗留的临时目录。只认带 version.json 标记的 luajit，不碰别人放的同名文件夹。"""
+    luajit_dir = get_luajit_dir(install_dir)
+    dirs = [luajit_dir] if (luajit_dir / _MARKER_FILE).is_file() else []
+    dirs += sorted(install_dir.glob(f".{LUAJIT_DIR_NAME}.tmp-*"))
+    dirs += sorted(install_dir.glob(f".{LUAJIT_DIR_NAME}.backup-*"))
+    return dirs
+
+
+def has_leftovers(bin64_dir: Path) -> bool:
+    """未生效时是否还有可彻底卸载的残留（副本、临时目录或路径标记），决定卸载按钮是否可点。"""
+    install_dir = bin64_dir.parent
+    return bool(_leftover_dirs(install_dir)) or (install_dir / _INJECTOR_PATH_MARKER).is_file()
+
+
+def apply_full_uninstall(bin64_dir: Path, mod_overrides_paths: list[Path], on_log=None) -> InstallResult:
+    """彻底卸载：删除本工具生成的全部 LuaJIT 文件，并在给定分片中停用配套 Mod。
+
+    - 独立专服：关闭开关，删除带 version.json 标记的 luajit 副本、中断遗留的
+      .luajit.tmp-*/.luajit.backup-* 临时目录和路径标记；
+    - 游戏专服：删除游戏 bin64 的注入壳和路径标记（客户端一并卸载），并清理旧副本。
+    真实 bin64、创意工坊订阅和作者旧版手动复制的文件都不碰。某项失败时继续处理其余项并汇总报错。"""
+    def log(line: str) -> None:
+        if on_log:
+            on_log(line)
+
+    result = InstallResult()
+
+    def fail(exc: OSError) -> None:
+        result.errors.append(t("local.luajit_error_uninstall_failed", detail=f"{type(exc).__name__}: {exc}"))
+        log(result.errors[-1])
+
+    install_dir = bin64_dir.parent
+    if uses_game_bin64(install_dir):
+        for name in (TRIGGER_FILE, "winmm.dll"):
+            target = bin64_dir / name
+            try:
+                if target.is_file():
+                    target.unlink()
+                    log(t("local.luajit_log_removed", path=str(target)))
+            except OSError as exc:
+                fail(exc)
+    elif get_luajit_enabled():
+        set_luajit_enabled(False)
+        log(t("local.luajit_log_switch_off"))
+
+    for path in _leftover_dirs(install_dir):
+        try:
+            _remove_tree(path)
+            log(t("local.luajit_log_removed", path=str(path)))
+        except OSError as exc:
+            fail(exc)
+
+    marker_path = install_dir / _INJECTOR_PATH_MARKER
+    try:
+        if marker_path.is_file():
+            marker_path.unlink()
+            log(t("local.luajit_log_removed", path=str(marker_path)))
+    except OSError as exc:
+        fail(exc)
+
+    n_shards = 0
+    for mo_path in mod_overrides_paths:
+        try:
+            overrides = load_mod_overrides(mo_path)
+            entry = overrides.mods.get(WORKSHOP_MOD_KEY)
+            if entry is not None and entry.enabled:
+                entry.enabled = False
+                save_mod_overrides(overrides)
+                n_shards += 1
+        except OSError as exc:
+            fail(exc)
+    if n_shards:
+        log(t("local.luajit_log_mod_disabled", n=n_shards))
+
+    result.ok = not result.errors
+    log(t("local.luajit_log_full_uninstalled") if result.ok else t("local.luajit_log_full_uninstall_partial"))
+    return result
 
 
 def resolve_launch_bin64_dir(install_dir: Path) -> Path | None:

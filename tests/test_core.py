@@ -2273,6 +2273,52 @@ def test_luajit_game_bin64_install():
             assert detect_state(bin64) is InjectorState.NOT_INSTALLED
 
 
+def test_luajit_full_uninstall():
+    """独立专服彻底卸载：删除副本、中断遗留的临时目录和路径标记并停用配套 Mod；
+    不带 version.json 的同名文件夹和真实 bin64 不碰。"""
+    import dstools.features.local_service.luajit_injector as lj
+    from dstools.features.mod.manager import ModOverrides, enable_mod, load_mod_overrides, save_mod_overrides
+
+    with _isolated_settings_dir(), tempfile.TemporaryDirectory() as tmp:
+        install_dir = _make_fake_install_dir(Path(tmp), build_id="100")
+        bin64 = install_dir / "bin64"
+        bin64.mkdir()
+        (bin64 / "dontstarve_dedicated_server_nullrenderer_x64.exe").write_bytes(b"server")
+        luajit_dir = get_luajit_dir(install_dir)
+        luajit_dir.mkdir()
+        (luajit_dir / "Winmm.dll").write_bytes(b"x")
+        write_marker(luajit_dir, LuajitMarker(DST_version="100", luajit_version="1"))
+        (install_dir / ".luajit.tmp-abc").mkdir()
+        (install_dir / ".luajit.backup-def" / "sub").mkdir(parents=True)
+        injector = Path(tmp) / "Injector.dll"
+        injector.write_bytes(b"x")
+        write_injector_path_marker(install_dir, injector)
+        set_luajit_enabled(True)
+        mo_path = Path(tmp) / "Master" / "modoverrides.lua"
+        overrides = ModOverrides(path=mo_path)
+        enable_mod(overrides, lj.WORKSHOP_MOD_KEY)
+        enable_mod(overrides, "workshop-1")
+        save_mod_overrides(overrides)
+        assert detect_state(bin64) is InjectorState.ACTIVE
+
+        result = lj.apply_full_uninstall(bin64, [mo_path])
+        assert result.ok, result.errors
+        assert get_luajit_enabled() is False
+        assert not luajit_dir.exists()
+        assert not list(install_dir.glob(".luajit.*")), "中断遗留的临时目录应被清理"
+        assert not (install_dir / "data" / "unsafedata" / "ds_luajit_injector.path").exists()
+        mods = load_mod_overrides(mo_path).mods
+        assert mods[lj.WORKSHOP_MOD_KEY].enabled is False and mods["workshop-1"].enabled is True
+        assert (bin64 / "dontstarve_dedicated_server_nullrenderer_x64.exe").is_file()
+        assert not lj.has_leftovers(bin64)
+
+        luajit_dir.mkdir()
+        (luajit_dir / "user_file.txt").write_text("x", encoding="utf-8")
+        assert not lj.has_leftovers(bin64), "没有 version.json 的同名文件夹不算本工具的残留"
+        assert lj.apply_full_uninstall(bin64, []).ok
+        assert (luajit_dir / "user_file.txt").is_file()
+
+
 def test_luajit_injector():
     """luajit_injector 的离线逻辑：版本读取、副本状态检测、启动目录解析、标记往返、重建判断、订阅检测、
     安装计划与卸载幂等（真实注入效果属人工验证项）。"""

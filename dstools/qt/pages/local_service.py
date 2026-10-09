@@ -981,13 +981,16 @@ class LocalServicePage(Page):
             self._luajit_install_btn.setText(t("local.luajit_reinstall_btn"))
             self._set_luajit_btns("", "")
         elif state is luajit_injector.InjectorState.DISABLED_LEFTOVER:
+            # 已关闭但副本还在：卸载按钮用于彻底删除残留
             self._luajit_status_label.setText(t("local.luajit_state_leftover"))
             self._luajit_install_btn.setText(t("local.luajit_reinstall_btn"))
-            self._set_luajit_btns("", t("local.luajit_uninstall_leftover_hint"))
+            self._set_luajit_btns("", "")
         else:
             self._luajit_status_label.setText(t("local.luajit_state_not_installed"))
             self._luajit_install_btn.setText(t("local.luajit_install_btn"))
-            self._set_luajit_btns("", t("local.luajit_uninstall_not_installed_hint"))
+            # 未生效但仍有中断遗留的临时目录或路径标记时，也允许彻底卸载
+            leftover = luajit_injector.has_leftovers(bin64_dir)
+            self._set_luajit_btns("", "" if leftover else t("local.luajit_uninstall_not_installed_hint"))
 
     def _on_luajit_install_clicked(self) -> None:
         bin64_dir = self._luajit_bin64_dir
@@ -1054,14 +1057,55 @@ class LocalServicePage(Page):
         if shared and luajit_injector.game_trigger_in_use(bin64_dir):
             dialogs.show_warning(self.window(), t("local.luajit_confirm_uninstall_title"), t("local.luajit_blocked_game_running"))
             return
-        # 游戏专服与客户端共用游戏 bin64 的 Winmm.dll：卸载会连客户端的 LuaJIT 一起卸载，必须讲清楚。
-        message = t("local.luajit_confirm_uninstall_msg_shared" if shared else "local.luajit_confirm_uninstall_msg")
-        if not dialogs.ask_yes_no(self.window(), t("local.luajit_confirm_uninstall_title"), message):
+        title = t("local.luajit_confirm_uninstall_title")
+        active = luajit_injector.detect_state(bin64_dir) is luajit_injector.InjectorState.ACTIVE
+        if shared and active:
+            # 游戏专服与客户端共用游戏 bin64 的 Winmm.dll：卸载会连客户端的 LuaJIT 一起卸载，必须讲清楚。
+            if not dialogs.ask_yes_no(self.window(), title, t("local.luajit_confirm_uninstall_msg_shared")):
+                return
+        elif active:
+            choice = dialogs.ask_choice(
+                self.window(), title, t("local.luajit_uninstall_choice_msg"),
+                [(t("local.luajit_disable_only_btn"), "disable"),
+                 (t("local.luajit_full_uninstall_btn"), "full"),
+                 (t("dlg.cancel_btn"), "cancel")],
+                default="disable", min_width=560, danger_values=("full",))
+            if choice == "disable":
+                lines: list[str] = []
+                luajit_injector.apply_uninstall(bin64_dir, on_log=lines.append)
+                dialogs.show_info(self.window(), title, "\n".join(lines))
+                self._update_luajit_row(self.get_cluster())
+                return
+            if choice != "full":
+                return
+        elif not dialogs.ask_yes_no(self.window(), title, t("local.luajit_uninstall_leftover_msg")):
             return
-        lines: list[str] = []
-        luajit_injector.apply_uninstall(bin64_dir, on_log=lines.append)
-        dialogs.show_info(self.window(), t("local.luajit_confirm_uninstall_title"), "\n".join(lines))
-        self._update_luajit_row(self.get_cluster())
+        self._run_luajit_full_uninstall(bin64_dir)
+
+    def _run_luajit_full_uninstall(self, bin64_dir: Path) -> None:
+        """彻底卸载可能要删除整份 bin64 副本，放后台执行并显示日志。"""
+        cluster = self.get_cluster()
+        mod_overrides_paths = [s.mod_overrides_path for s in cluster.shards if s.mod_overrides_path] if cluster else []
+        self._luajit_busy = True
+        self._update_luajit_row(cluster)
+        log_dialog = dialogs.LogDialog(self.window(), t("local.luajit_confirm_uninstall_title"))
+        log_dialog.show()
+
+        def work(emit):
+            return luajit_injector.apply_full_uninstall(bin64_dir, mod_overrides_paths, on_log=emit)
+
+        def done(result) -> None:
+            self._luajit_busy = False
+            log_dialog.finish()
+            if not result.ok:
+                dialogs.show_error(self.window(), t("local.luajit_confirm_uninstall_title"), "\n".join(result.errors))
+            self._update_luajit_row(self.get_cluster())
+
+        def error(exc: Exception) -> None:
+            done(luajit_injector.InstallResult(ok=False, errors=[
+                t("local.luajit_error_uninstall_failed", detail=f"{type(exc).__name__}: {exc}")]))
+
+        run_async_with_log(work, log_dialog.append, done, error)
 
     # ── WeGame 检测 ─────────────────────────────────────────────────────
     def _on_wegame_detect(self) -> None:
