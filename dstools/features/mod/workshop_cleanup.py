@@ -203,3 +203,72 @@ def _same_location(left: Path, right: Path) -> bool:
         return os.path.normcase(str(left.resolve(strict=False))) == os.path.normcase(
             str(right.resolve(strict=False))
         )
+
+
+@dataclass(frozen=True)
+class OtherAccountCleanupResult:
+    removed: tuple[str, ...]
+    errors: dict[str, str]
+    steam_restarted: bool
+
+
+def force_remove_other_account_items(
+    content_root: Path,
+    workshop_ids,
+    *,
+    is_steam_running,
+    shutdown_steam,
+    launch_steam,
+    running_dst_processes,
+) -> OtherAccountCleanupResult:
+    """强制清理本机其他 Steam 账号订阅的 Mod：退出 Steam，删除 322330 内容目录并清除清单记录，再按原状态重启 Steam。
+
+    调用方必须已确认当前登录账号未订阅这些 Mod。订阅仍在对方账号上，对方下次在本机登录 Steam 时会重新下载。
+    清单必须在 Steam 退出后改写，否则 Steam 退出时会用内存状态覆盖。"""
+    from dstools.features.mod.workshop_acf import (
+        WorkshopAcfError, prune_workshop_acf, read_workshop_acf, workshop_acf_path,
+    )
+
+    if running_dst_processes():
+        raise ValueError("游戏或专用服务器正在运行，请退出后再清理")
+    root = Path(content_root)
+    acf_path = workshop_acf_path(root)
+    if not acf_path.is_file():
+        raise ValueError(f"找不到 Steam 清单：{acf_path}")
+    was_running = bool(is_steam_running())
+    if was_running:
+        shutdown_steam()
+    removed: list[str] = []
+    errors: dict[str, str] = {}
+    try:
+        if is_steam_running():
+            raise ValueError("Steam 未能退出，已停止清理")
+        acf = read_workshop_acf(acf_path)
+        for wid in dict.fromkeys(str(int(w)) for w in workshop_ids):
+            item = acf.items.get(wid)
+            # 只处理退出 Steam 后仍是"有人订阅"的记录；不再订阅的交给普通残留清理
+            if not is_workshop_content_id(wid) or item is None or not item.subscribed:
+                errors[wid] = "Steam 清单中已没有其他账号的订阅记录"
+                continue
+            candidate = root / wid
+            try:
+                if candidate.is_symlink() or (hasattr(os.path, "isjunction") and os.path.isjunction(candidate)):
+                    raise ValueError("拒绝处理链接或目录联接")
+                if candidate.exists():
+                    if not candidate.is_dir():
+                        raise ValueError("内容路径不是目录")
+                    shutil.rmtree(candidate)
+                removed.append(wid)
+            except (OSError, ValueError) as exc:
+                errors[wid] = str(exc)
+        if removed:
+            try:
+                prune_workshop_acf(acf, removed, allow_subscribed=True)
+            except (OSError, WorkshopAcfError) as exc:
+                # 文件已删但记录还在：Steam 会重新下载，如实报告
+                errors.update({wid: f"文件已删除，但清除 Steam 记录失败：{exc}" for wid in removed})
+                removed = []
+    finally:
+        if was_running:
+            launch_steam()
+    return OtherAccountCleanupResult(tuple(removed), errors, was_running)

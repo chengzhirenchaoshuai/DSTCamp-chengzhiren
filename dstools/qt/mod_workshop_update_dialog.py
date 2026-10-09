@@ -478,7 +478,17 @@ class WorkshopUpdateDialog(QDialog):
             return t("mod.update_remove_reference_btn"), self._remove_reference, False
         if status.can_cleanup_residual:
             return t("mod.update_cleanup_residual_btn"), self._cleanup_residual, wid in self._cleanup_running
+        if self._can_force_cleanup(status):
+            return t("mod.update_force_cleanup_btn"), self._force_cleanup_other, wid in self._cleanup_running
         return None
+
+    @staticmethod
+    def _can_force_cleanup(status) -> bool:
+        """本机其他账号订阅、当前存档没有引用、内容目录还在的 Mod 才允许强制清理。"""
+        evidence = status.evidence
+        return bool(status.state == WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT and evidence is not None
+                    and not evidence.configured and evidence.workshop_content_path is not None
+                    and not evidence.running_dst_processes)
 
     def _on_check(self, wid: str, checked: bool) -> None:
         if checked:
@@ -720,6 +730,55 @@ class WorkshopUpdateDialog(QDialog):
             self._show_state_notice("")
             self._render_rows()
             dialogs.show_error(self, t("mod.update_cleanup_residual_title"), str(exc))
+
+        run_async(work, done, error)
+
+    def _force_cleanup_other(self, wid: str) -> None:
+        """强制清理其他账号订阅的 Mod：关闭 Steam、删文件、清除下载记录后重启 Steam。"""
+        if self._cleanup_running:
+            return
+        status = self._states.get(wid)
+        if status is None or not self._can_force_cleanup(status):
+            dialogs.show_warning(self, t("mod.update_title"), t("mod.update_cannot_cleanup"))
+            return
+        path = status.evidence.workshop_content_path
+        if not dialogs.ask_yes_no(self, t("mod.update_force_cleanup_title"),
+                                  t("mod.update_force_cleanup_confirm", path=str(path)),
+                                  min_width=560, danger=True):
+            return
+        self._cleanup_running.add(wid)
+        self._show_state_notice(t("mod.update_force_cleanup_running"))
+        self._render_rows()
+
+        def work():
+            from dstools.features.local_service.steam_client_updater import (
+                is_steam_running, launch_steam, shutdown_steam,
+            )
+            from dstools.features.mod.legacy_v1 import running_dst_processes
+            from dstools.features.mod.workshop_cleanup import force_remove_other_account_items
+            return force_remove_other_account_items(
+                path.parent, [wid], is_steam_running=is_steam_running, shutdown_steam=shutdown_steam,
+                launch_steam=launch_steam, running_dst_processes=running_dst_processes)
+
+        def finish() -> None:
+            self._cleanup_running.discard(wid)
+            self._show_state_notice("")
+
+        def done(result) -> None:
+            finish()
+            self._apply_cleaned_items(list(result.removed))
+            self._render_rows()
+            if result.errors:
+                details = "\n".join(f"{item}: {reason}" for item, reason in result.errors.items())
+                dialogs.show_error(self, t("mod.update_force_cleanup_title"),
+                                   t("mod.update_force_cleanup_failed", details=details))
+            elif result.removed:
+                dialogs.show_toast(self, t("mod.update_force_cleanup_done_toast"), ms=2400)
+
+        def error(exc: Exception) -> None:
+            finish()
+            self._render_rows()
+            dialogs.show_error(self, t("mod.update_force_cleanup_title"), str(exc))
 
         run_async(work, done, error)
 

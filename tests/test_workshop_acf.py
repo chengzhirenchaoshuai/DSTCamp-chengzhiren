@@ -113,5 +113,37 @@ def test_workshop_acf_cleanup() -> None:
         assert "bad" not in calls
 
 
+def test_force_remove_other_account_items() -> None:
+    """强制清理其他账号订阅的 Mod：退出 Steam 后删目录并清除带 subscribedby 的记录，未订阅的不在此处理。"""
+    from dstools.features.mod.workshop_cleanup import force_remove_other_account_items
+
+    with tempfile.TemporaryDirectory() as tmp:
+        content = Path(tmp) / "steamapps" / "workshop" / "content" / "322330"
+        (content / "222").mkdir(parents=True)
+        (content / "222" / "modinfo.lua").write_text("name = 'x'", encoding="utf-8")
+        (content / "333").mkdir()
+        acf_path = workshop_acf_path(content)
+        acf_path.write_bytes(SAMPLE.encode("utf-8"))
+        calls = []
+        state = {"running": True}
+
+        def shutdown():
+            calls.append("shutdown")
+            state["running"] = False
+
+        result = force_remove_other_account_items(
+            content, ["222", "333"],
+            is_steam_running=lambda: state["running"],
+            shutdown_steam=shutdown,
+            launch_steam=lambda: calls.append("launch"),
+            running_dst_processes=lambda: (),
+        )
+        assert result.removed == ("222",) and set(result.errors) == {"333"}
+        assert calls == ["shutdown", "launch"]
+        assert not (content / "222").exists() and (content / "333").is_dir()
+        text = acf_path.read_text(encoding="utf-8")
+        assert '"222"' not in text and '"SizeOnDisk"\t\t"400"' in text
+
+
 if __name__ == "__main__":
     run(globals())

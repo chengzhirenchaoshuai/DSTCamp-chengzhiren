@@ -176,8 +176,9 @@ def _line_span(text: str, node: _Node) -> tuple[int, int]:
     return line_start, min(end + 1, len(text))
 
 
-def build_pruned_text(text: str, workshop_ids) -> str:
-    """生成删除指定未订阅条目后的清单文本；任何一项不满足条件都整体拒绝。"""
+def build_pruned_text(text: str, workshop_ids, *, allow_subscribed: bool = False) -> str:
+    """生成删除指定未订阅条目后的清单文本；任何一项不满足条件都整体拒绝。
+    allow_subscribed=True 只用于强制清理本机其他账号订阅的 Mod（调用方已确认当前账号未订阅）。"""
     root = _parse(text)
     installed, details = _sections(root)
     size_node = root.child("SizeOnDisk", obj=False)
@@ -190,7 +191,8 @@ def build_pruned_text(text: str, workshop_ids) -> str:
         if node is None:
             continue
         detail = details.get(wid)
-        if detail is not None and any(c.key == "subscribedby" for c in detail.children):
+        if (not allow_subscribed and detail is not None
+                and any(c.key == "subscribedby" for c in detail.children)):
             raise WorkshopAcfError(f"Steam 仍标记已订阅，拒绝清除：{wid}")
         removed_size += int(node.child("size", obj=False).value or "0")
         start, end = _line_span(text, node)
@@ -209,14 +211,14 @@ def build_pruned_text(text: str, workshop_ids) -> str:
     return result
 
 
-def prune_workshop_acf(acf: WorkshopAcf, workshop_ids) -> bool:
+def prune_workshop_acf(acf: WorkshopAcf, workshop_ids, *, allow_subscribed: bool = False) -> bool:
     """从清单删除指定未订阅条目，返回是否改写（Steam 必须已退出，否则退出时会用内存状态覆盖）。"""
     path = Path(acf.path)
     current = path.read_bytes()
     if current != acf.raw:
         raise WorkshopAcfError("清单在检查期间发生变化，已停止写入")
     text = _decode(current)
-    updated = build_pruned_text(text, workshop_ids)
+    updated = build_pruned_text(text, workshop_ids, allow_subscribed=allow_subscribed)
     if updated == text:
         return False
     temporary = path.with_name(f"{path.name}.tmp.{os.getpid()}")
