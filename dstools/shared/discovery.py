@@ -4,12 +4,15 @@ from pathlib import Path
 
 from dstools.features.local_service.dedicated_server import get_documents_dir
 from dstools.models import (
+    Account,
     Cluster,
     DSTEnvironment,
     Platform,
     SaveSource,
     Shard,
 )
+from dstools.shared.app_settings import get_selected_account
+from dstools.shared.steam_discovery import read_active_steam_account, read_steam_login_users
 
 # Klei 根目录名：Steam 版 DoNotStarveTogether，WeGame 版 DoNotStarveTogetherRail，两棵独立目录树可并存
 _STEAM_KLEI_FOLDER = "DoNotStarveTogether"
@@ -61,14 +64,41 @@ def find_wegame_klei_root() -> Path | None:
     return _find_klei_root_impl(_WEGAME_KLEI_FOLDER)
 
 
-def find_user_dir(klei_root: Path) -> Path | None:
-    """在 Klei 根目录下找 Steam 用户目录。"""
+def list_user_dirs(klei_root: Path) -> list[Path]:
+    """列出 Klei 根目录下全部账号目录（同一台电脑登录过多个账号时会有多个）。"""
     if not klei_root.exists():
-        return None
-    for entry in klei_root.iterdir():
-        if _is_user_dir(entry):
-            return entry
-    return None
+        return []
+    return sorted((entry for entry in klei_root.iterdir() if _is_user_dir(entry)), key=lambda p: p.name)
+
+
+def _last_played(user_dir: Path) -> float:
+    """账号最近一次被游戏使用的时间：client_save 下各文件/目录的最新修改时间。"""
+    try:
+        entries = list((user_dir / "client_save").iterdir())
+    except OSError:
+        return 0.0
+    times = []
+    for entry in entries:
+        try:
+            times.append(entry.stat().st_mtime)
+        except OSError:
+            continue
+    return max(times, default=0.0)
+
+
+def pick_current_account(account_ids: list[str], *, selected: str = "", active: str = "",
+                         recent: list[str] = (), last_played: dict[str, float] | None = None) -> str:
+    """按优先级选当前账号：用户手动选择 > Steam 当前登录 > Steam 最近登录顺序 > 最近游玩 > 第一个。
+    每一级都只认本机确实存在目录的账号；没有账号返回空串。"""
+    if not account_ids:
+        return ""
+    for candidate in (selected, active, *recent):
+        if candidate and candidate in account_ids:
+            return candidate
+    played = last_played or {}
+    if any(played.get(a, 0) > 0 for a in account_ids):
+        return max(account_ids, key=lambda a: played.get(a, 0))
+    return account_ids[0]
 
 
 def list_clusters(klei_root: Path) -> list[Path]:
@@ -117,26 +147,42 @@ def discover_environment(klei_root: Path | None = None,
 
 def _scan_platform_root(env: DSTEnvironment, root: Path, platform: Platform) -> None:
     """扫描一个平台的 Klei 根目录，把发现的 Cluster 追加进 env.clusters。"""
-    user_dir = find_user_dir(root)
-    if user_dir:
-        if platform == Platform.STEAM:
-            env.user_id = user_dir.name
-            client_ini = user_dir / "client.ini"
-            if client_ini.exists():
-                env.client_config = client_ini
-        else:
-            # WeGame 版用户 ID 单独存一份（状态栏按存档类型切换显示）
-            env.wegame_user_id = user_dir.name
+    user_dirs = list_user_dirs(root)
+    ids = [d.name for d in user_dirs]
+    if platform == Platform.STEAM:
+        login_users = read_steam_login_users()
+        names = {u.account_id: u.persona_name for u in login_users}
+        # 登录记录按 MostRecent、登录时间倒序，作为没有当前登录账号时的依据
+        recent = [u.account_id for u in sorted(login_users, key=lambda u: (u.most_recent, u.timestamp), reverse=True)]
+        active = read_active_steam_account()
+    else:
+        names, recent, active = {}, [], ""
+    # 只有一个账号时不必读修改时间
+    played = {d.name: _last_played(d) for d in user_dirs} if len(user_dirs) > 1 else None
+    current = pick_current_account(ids, selected=get_selected_account(platform.value), active=active,
+                                   recent=recent, last_played=played)
+    for user_dir in user_dirs:
+        env.accounts.append(Account(user_dir.name, platform, user_dir, names.get(user_dir.name, "")))
+
+    if platform == Platform.STEAM:
+        env.user_id = current
+        client_ini = root / current / "client.ini" if current else None
+        if client_ini is not None and client_ini.exists():
+            env.client_config = client_ini
+    else:
+        # WeGame 版用户 ID 单独存一份（状态栏按存档类型切换显示）
+        env.wegame_user_id = current
 
     # 根目录下的 cluster → SERVER
     for cluster_path in list_clusters(root):
         cluster = _build_cluster(cluster_path, SaveSource.SERVER, platform)
         env.clusters.append(cluster)
 
-    # 用户目录下的存档 → LOCAL。不与 SERVER 按名字去重：两棵目录树中的同名存档是不同的存档
-    if user_dir:
+    # 各账号目录下的存档 → LOCAL，当前账号排在前面。不与 SERVER 按名字去重：两棵目录树中的同名存档是不同的存档
+    for user_dir in sorted(user_dirs, key=lambda d: d.name != current):
         for cluster_path in list_clusters(user_dir):
             cluster = _build_cluster(cluster_path, SaveSource.LOCAL, platform)
+            cluster.account_id = user_dir.name
             env.clusters.append(cluster)
 
 

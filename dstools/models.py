@@ -148,12 +148,24 @@ class Cluster:
     adminlist_path: Path | None = None        # adminlist.txt
     token_path: Path | None = None            # cluster_token.txt
     blocklist_path: Path | None = None        # blocklist.txt (黑名单)
+    account_id: str = ""                      # 本地存档所属的游戏账号 ID（服务器存档为空）
+
+
+@dataclass
+class Account:
+    """Klei 根目录下的一个游戏账号目录（目录名为 Steam AccountID / WeGame 用户 ID）。"""
+
+    id: str
+    platform: Platform
+    path: Path
+    name: str = ""                            # Steam 昵称（loginusers.vdf），读不到为空
 
 
 @dataclass
 class DSTEnvironment:
     """DST 环境信息：klei_root 固定是 Steam 版根目录，WeGame 版另记在 wegame_klei_root，
-    两边的存档一起放在 clusters 中按 platform 区分。"""
+    两边的存档一起放在 clusters 中按 platform 区分。
+    同一平台可能有多个游戏账号（accounts），user_id/wegame_user_id 是各平台的当前账号。"""
 
     klei_root: Path | None = None
     wegame_klei_root: Path | None = None
@@ -161,6 +173,14 @@ class DSTEnvironment:
     wegame_user_id: str = ""
     clusters: list[Cluster] = field(default_factory=list)
     client_config: Path | None = None
+    accounts: list[Account] = field(default_factory=list)
+
+    def accounts_for(self, platform: Platform) -> list[Account]:
+        return [a for a in self.accounts if a.platform == platform]
+
+    def current_account(self, platform: Platform) -> Account | None:
+        current = self.wegame_user_id if platform == Platform.WEGAME else self.user_id
+        return next((a for a in self.accounts_for(platform) if a.id == current), None)
 
     def klei_root_for(self, platform: Platform) -> Path | None:
         """按平台取根目录；在根目录下新建/复制存档时必须用它，不能直接用 klei_root。"""

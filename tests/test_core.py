@@ -33,7 +33,7 @@ from dstools.features.mod.manager import (
     list_mods,
     sync_mods,
 )
-from dstools.shared.discovery import discover_environment
+from dstools.shared.discovery import discover_environment, pick_current_account
 from dstools.features.save_browser.reader import (
     list_save_sessions,
     get_save_summary,
@@ -233,6 +233,17 @@ def test_discovery():
             [shard.name for shard in cluster.shards] == ["Master"]
             for cluster in env.clusters
         )
+
+
+def test_pick_current_account():
+    """多账号时按 手动选择 > Steam 当前登录 > 最近登录 > 最近游玩 > 第一个 选当前账号，且只认存在的目录。"""
+    ids = ["111", "222", "333"]
+    assert pick_current_account([]) == ""
+    assert pick_current_account(ids, selected="333", active="222") == "333"
+    assert pick_current_account(ids, selected="999", active="222", recent=["111"]) == "222"
+    assert pick_current_account(ids, active="999", recent=["888", "111"]) == "111"
+    assert pick_current_account(ids, last_played={"111": 5.0, "333": 9.0}) == "333"
+    assert pick_current_account(ids) == "111"
 
 
 def test_save_reader():

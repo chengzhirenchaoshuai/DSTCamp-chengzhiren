@@ -6,6 +6,7 @@
 
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 IS_WINDOWS = sys.platform == "win32"
@@ -82,33 +83,64 @@ def find_steam_root() -> Path | None:
     return libs[0] if libs else None
 
 
+# SteamID64 减去它得到 32 位 AccountID，也就是 Klei/DoNotStarveTogether 下账号目录的名字
+_STEAM_ID64_BASE = 76561197960265728
+
+
+@dataclass(frozen=True)
+class SteamLoginUser:
+    """loginusers.vdf 中的一个账号。"""
+
+    account_id: str
+    persona_name: str
+    most_recent: bool
+    timestamp: int
+
+
+def read_steam_login_users() -> list[SteamLoginUser]:
+    """读取本机登录过的 Steam 账号（loginusers.vdf），读不到返回空列表。MostRecent 键名大小写因版本而异。"""
+    for root in (find_steam_root_from_registry(), find_steam_root()):
+        if root is None:
+            continue
+        try:
+            text = (root / "config" / "loginusers.vdf").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        users = []
+        for match in re.finditer(r'"(\d+)"\s*\{([^{}]*)\}', text):
+            steam_id = int(match.group(1))
+            if steam_id <= _STEAM_ID64_BASE:
+                continue
+            fields = {key.lower(): value for key, value in re.findall(r'"(\w+)"\s+"([^"]*)"', match.group(2))}
+            timestamp = fields.get("timestamp", "")
+            users.append(SteamLoginUser(str(steam_id - _STEAM_ID64_BASE), fields.get("personaname", "").strip(),
+                                        fields.get("mostrecent") == "1",
+                                        int(timestamp) if timestamp.isdigit() else 0))
+        if users:
+            return users
+    return []
+
+
+def read_active_steam_account() -> str:
+    """Steam 客户端当前登录账号的 AccountID（注册表 ActiveProcess/ActiveUser）；Steam 未运行或未登录时为空串。"""
+    if not IS_WINDOWS:
+        return ""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam\ActiveProcess") as key:
+            value, _ = winreg.QueryValueEx(key, "ActiveUser")
+    except OSError:
+        return ""
+    return str(value) if isinstance(value, int) and value > 0 else ""
+
+
 def read_steam_persona_name() -> str | None:
     """读取最近登录的 Steam 昵称（loginusers.vdf 的 PersonaName），读不到返回 None。
 
-    优先 MostRecent=1（键名大小写因版本而异），没有该字段时取 Timestamp 最大的账号。"""
-    roots = [find_steam_root_from_registry(), find_steam_root()]
-    for root in roots:
-        if root is None:
-            continue
-        vdf_path = root / "config" / "loginusers.vdf"
-        try:
-            text = vdf_path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        best: tuple[int, int, str] | None = None
-        for match in re.finditer(r'"\d+"\s*\{([^{}]*)\}', text):
-            fields = {key.lower(): value for key, value in re.findall(r'"(\w+)"\s+"([^"]*)"', match.group(1))}
-            name = fields.get("personaname", "").strip()
-            if not name:
-                continue
-            most_recent = 1 if fields.get("mostrecent") == "1" else 0
-            timestamp = int(fields["timestamp"]) if fields.get("timestamp", "").isdigit() else 0
-            candidate = (most_recent, timestamp, name)
-            if best is None or candidate[:2] > best[:2]:
-                best = candidate
-        if best is not None:
-            return best[2]
-    return None
+    优先 MostRecent=1，没有该字段时取 Timestamp 最大的账号。"""
+    named = [u for u in read_steam_login_users() if u.persona_name]
+    if not named:
+        return None
+    return max(named, key=lambda u: (u.most_recent, u.timestamp)).persona_name
 
 
 def read_game_version_file(install_dir: Path) -> str | None:

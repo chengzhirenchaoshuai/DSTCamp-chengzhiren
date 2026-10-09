@@ -42,6 +42,7 @@ _KEY_LAST_PLATFORM = "last_platform"
 _KEY_NAT_SUB_TAB = "nat_sub_tab"
 _DEFAULT_NAT_SUB_TAB = "sakura"
 _KEY_LAST_CLUSTER_PATH = "last_cluster_path"
+_KEY_SELECTED_ACCOUNTS = "selected_accounts"
 _KEY_SELFHOST_FRP_SERVER = "selfhost_frp_server"
 _KEY_SELFHOST_FRP_MAPPINGS = "selfhost_frp_mappings"
 _KEY_SELFHOST_SSH_CONNECTION = "selfhost_ssh_connection"
@@ -253,6 +254,22 @@ def get_last_cluster_path() -> str | None:
 def set_last_cluster_path(path: str) -> None:
     data = load_settings()
     data[_KEY_LAST_CLUSTER_PATH] = path
+    save_settings(data)
+
+
+def get_selected_account(platform: str) -> str:
+    """返回用户手动选择的游戏账号 ID（按平台 steam/wegame 分开记录），没选过返回空串。"""
+    accounts = load_settings().get(_KEY_SELECTED_ACCOUNTS)
+    value = accounts.get(platform) if isinstance(accounts, dict) else None
+    return value if isinstance(value, str) else ""
+
+
+def set_selected_account(platform: str, account_id: str) -> None:
+    data = load_settings()
+    accounts = data.get(_KEY_SELECTED_ACCOUNTS)
+    accounts = dict(accounts) if isinstance(accounts, dict) else {}
+    accounts[platform] = account_id
+    data[_KEY_SELECTED_ACCOUNTS] = accounts
     save_settings(data)
 
 
