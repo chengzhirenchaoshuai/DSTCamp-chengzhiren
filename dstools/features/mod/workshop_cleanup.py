@@ -8,7 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dstools.features.mod.parser import find_workshop_dir, is_workshop_content_id
+from dstools.features.mod.workshop_acf import read_acf_subscribed_ids
 from dstools.features.mod.workshop_api import WorkshopItemState
+
+# Steam API 只回答当前登录账号是否订阅；清单里仍有 subscribedby 时删掉会被 Steam 重新下载
+_OTHER_ACCOUNT_ERROR = "本机其他 Steam 账号仍订阅此 Mod，删除后会被 Steam 重新下载"
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,8 @@ def delete_workshop_residual(
         or steam_state.download_pending
     ):
         raise ValueError("Steam 仍在订阅或下载此 Mod")
+    if int(text_id) in read_acf_subscribed_ids(root):
+        raise ValueError(_OTHER_ACCOUNT_ERROR)
     running = (
         context.running_processes
         if context is not None
@@ -174,6 +180,9 @@ def delete_legacy_runtime_residual(
         or steam_state.download_pending
     ):
         raise ValueError("Steam 仍在订阅、安装或下载此 Mod")
+    workshop_root = context.workshop_root if context is not None else find_workshop_dir()
+    if int(text_id) in read_acf_subscribed_ids(workshop_root):
+        raise ValueError(_OTHER_ACCOUNT_ERROR)
     running = (
         context.running_processes
         if context is not None

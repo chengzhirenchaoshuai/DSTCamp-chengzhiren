@@ -1649,6 +1649,22 @@ def test_workshop_status_evidence_priority():
         assert unavailable_status.state == WorkshopModState.SOURCE_UNAVAILABLE
         assert "EResult=15" in unavailable_status.reasons[0]
 
+        # 当前 Steam 账号未订阅、但清单显示本机其他账号订阅：不是残留，不能清理（删了会被重新下载）
+        other_account = WorkshopModEvidence(
+            workshop_id=4,
+            steam_state=WorkshopItemState(0),
+            discovered_path=installed,
+            source_version=version,
+            workshop_content_path=installed,
+            acf_subscribed=True,
+        )
+        other_status = evaluate_workshop_status(other_account)
+        assert other_status.state == WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT
+        assert not other_status.can_cleanup_residual
+        assert evaluate_workshop_status(
+            WorkshopModEvidence(**{**other_account.__dict__, "acf_subscribed": False})
+        ).can_cleanup_residual
+
 
 def test_workshop_snapshot_uses_one_steam_session():
     """组合刷新必须只初始化一次 SteamAPI，标题失败不能丢本地证据。"""

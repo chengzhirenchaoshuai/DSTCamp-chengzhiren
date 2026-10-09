@@ -35,6 +35,8 @@ class WorkshopModState(str, Enum):
     LEGACY_RUNTIME_RESIDUAL = "legacy_runtime_residual"
     UNSUBSCRIBED_PENDING_CLEANUP = "unsubscribed_pending_cleanup"
     UNSUBSCRIBED_REFERENCED = "unsubscribed_referenced"
+    # 当前登录的 Steam 账号未订阅，但本机其他账号订阅着（ACF 有 subscribedby）；删掉文件会被 Steam 重新下载
+    SUBSCRIBED_BY_OTHER_ACCOUNT = "subscribed_by_other_account"
     UPDATE_AVAILABLE = "update_available"
     # V2 Mod 在专服 mods/workshop-<id> 还有一份旧副本，专服会优先加载旧副本
     SHADOWED_BY_V1 = "shadowed_by_v1"
@@ -67,6 +69,8 @@ class WorkshopModEvidence:
     # 专服 mods/workshop-<id> 里挡住 V2 的旧副本（见 v1_shadow.py）及其版本
     v1_shadow_path: Path | None = None
     v1_shadow_version: LocalModVersion | None = None
+    # Steam 清单里有 subscribedby：本机某个 Steam 账号订阅着它（不一定是当前登录账号）
+    acf_subscribed: bool = False
 
 
 @dataclass(frozen=True)
@@ -129,6 +133,7 @@ class WorkshopModStatus:
                 or bool(evidence.legacy_runtime_residual_paths)
             )
             and not evidence.running_dst_processes
+            and not evidence.acf_subscribed
             and not (
                 steam.subscribed
                 or steam.downloading
@@ -201,6 +206,19 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
         from dstools.features.mod.workshop_api import workshop_source_error
 
         source_error = workshop_source_error(evidence.source_details)
+    if (
+        steam is not None
+        and not steam.subscribed
+        and evidence.acf_subscribed
+        and (content_path is not None or runtime_residual_paths)
+    ):
+        # 内容目录是本机所有 Steam 账号共用的，当前账号未订阅不代表是残留
+        return result(
+            WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT,
+            "当前登录的 Steam 账号未订阅，但本机其他 Steam 账号订阅了此 Mod",
+            "文件仍由 Steam 管理，删除后会被重新下载",
+            source_error,
+        )
     if steam is not None and not steam.subscribed and content_path is not None:
         if evidence.running_dst_processes:
             return result(
@@ -462,6 +480,7 @@ def inspect_workshop_items(
     workshop_content_paths: dict[int, Path] | None = None,
     legacy_runtime_residual_paths: dict[int, tuple[Path, ...]] | None = None,
     running_dst_processes: tuple[str, ...] = (),
+    acf_subscribed_ids: set[int] | frozenset[int] = frozenset(),
 ) -> dict[int, WorkshopModStatus]:
     """读取一批真实状态并评估；源端详情失败不会抹掉本地物理证据。"""
     ids = list(dict.fromkeys(int(item) for item in workshop_ids if int(item) > 0))
@@ -589,6 +608,7 @@ def inspect_workshop_items(
             running_dst_processes=running_dst_processes,
             v1_shadow_path=shadow_path,
             v1_shadow_version=shadow_version,
+            acf_subscribed=workshop_id in acf_subscribed_ids,
         )
         statuses[workshop_id] = evaluate_workshop_status(evidence)
     return statuses

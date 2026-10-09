@@ -132,6 +132,7 @@ def referenced_missing_status_text(status) -> str:
 
     labels = {
         WorkshopModState.UNSUBSCRIBED_REFERENCED: "mod.update_latest_unsubscribed_referenced",
+        WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT: "mod.update_latest_other_account",
         WorkshopModState.MISSING: "mod.update_latest_missing",
         WorkshopModState.NOT_INSTALLED: "mod.update_latest_not_installed",
         WorkshopModState.SOURCE_UNAVAILABLE: "mod.update_latest_source_unavailable",

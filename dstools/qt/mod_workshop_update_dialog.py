@@ -39,6 +39,7 @@ _LATEST_LABELS = {
     WorkshopModState.INTEGRITY_UNCONFIRMED: "mod.update_latest_integrity_unconfirmed",
     WorkshopModState.UNSUBSCRIBED_REFERENCED: "mod.update_latest_unsubscribed_referenced",
     WorkshopModState.RESIDUAL_FILES: "mod.update_latest_residual_files",
+    WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT: "mod.update_latest_other_account",
     WorkshopModState.LEGACY_PACKAGE_READY: "mod.update_latest_legacy_package_ready",
     WorkshopModState.LEGACY_RUNTIME_RESIDUAL: "mod.update_latest_legacy_runtime_residual",
     WorkshopModState.LOCAL_FILES: "mod.update_latest_local_files",
@@ -262,7 +263,10 @@ class WorkshopUpdateDialog(QDialog):
             from dstools.features.mod.legacy_v1 import (
                 find_legacy_runtime_residual_dirs, is_legacy_read_cache_path, running_dst_processes,
             )
-            from dstools.features.mod.parser import find_workshop_content_dirs, find_workshop_residual_dirs
+            from dstools.features.mod.parser import (
+                find_workshop_content_dirs, find_workshop_dir, find_workshop_residual_dirs,
+            )
+            from dstools.features.mod.workshop_acf import read_acf_subscribed_ids
             from dstools.features.mod.workshop_status import inspect_workshop_items
             discovered_paths = {
                 int(str(wid).removeprefix("workshop-")): path
@@ -273,7 +277,8 @@ class WorkshopUpdateDialog(QDialog):
                 query_source=True, include_subscribed=True,
                 residual_paths=find_workshop_residual_dirs(), workshop_content_paths=find_workshop_content_dirs(),
                 legacy_runtime_residual_paths=find_legacy_runtime_residual_dirs(),
-                running_dst_processes=running_dst_processes())
+                running_dst_processes=running_dst_processes(),
+                acf_subscribed_ids=read_acf_subscribed_ids(find_workshop_dir()))
 
         def done(states) -> None:
             self._loading = False
@@ -640,7 +645,10 @@ class WorkshopUpdateDialog(QDialog):
             from dstools.features.mod.legacy_v1 import (
                 find_legacy_runtime_residual_dirs, running_dst_processes,
             )
-            from dstools.features.mod.parser import find_workshop_content_dirs, find_workshop_residual_dirs
+            from dstools.features.mod.parser import (
+                find_workshop_content_dirs, find_workshop_dir, find_workshop_residual_dirs,
+            )
+            from dstools.features.mod.workshop_acf import read_acf_subscribed_ids
             from dstools.features.mod.workshop_status import inspect_workshop_items
             cleaned: list[str] = []
             errors: dict[str, Exception] = {}
@@ -652,7 +660,8 @@ class WorkshopUpdateDialog(QDialog):
                     numeric_ids, query_source=False, residual_paths=find_workshop_residual_dirs(),
                     workshop_content_paths=find_workshop_content_dirs(),
                     legacy_runtime_residual_paths=find_legacy_runtime_residual_dirs(),
-                    running_dst_processes=processes)
+                    running_dst_processes=processes,
+                    acf_subscribed_ids=read_acf_subscribed_ids(find_workshop_dir()))
             except (OSError, ValueError, KeyError) as exc:
                 fresh_states = {}
                 errors.update({wid: exc for wid in ids})

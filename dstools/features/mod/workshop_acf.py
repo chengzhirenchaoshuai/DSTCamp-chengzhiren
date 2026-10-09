@@ -149,6 +149,20 @@ def read_workshop_acf(path: Path) -> WorkshopAcf:
     return WorkshopAcf(path, raw, items)
 
 
+def read_acf_subscribed_ids(content_root: Path | None) -> set[int]:
+    """清单中带 ``subscribedby`` 的 Workshop ID，即本机某个 Steam 账号仍订阅着它；读不到返回空集。
+
+    内容目录和清单是本机全部 Steam 账号共用的，而 Steam API 只回答当前登录账号是否订阅，
+    这是判断"其他账号订阅"的唯一本地证据。"""
+    if content_root is None:
+        return set()
+    try:
+        acf = read_workshop_acf(workshop_acf_path(content_root))
+    except (OSError, WorkshopAcfError):
+        return set()
+    return {int(wid) for wid, item in acf.items.items() if item.subscribed and wid.isdigit()}
+
+
 def _line_span(text: str, node: _Node) -> tuple[int, int]:
     """返回条目所在的完整行区间；条目必须独占这些行。"""
     line_start = text.rfind("\n", 0, node.start) + 1
