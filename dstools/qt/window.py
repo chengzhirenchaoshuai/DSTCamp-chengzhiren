@@ -9,11 +9,12 @@ import os
 from ctypes import wintypes
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QPointF, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QHBoxLayout, QLabel, QMenu, QPushButton, QStackedWidget,
-    QProgressBar, QSizePolicy, QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
+    QProgressBar, QSizePolicy, QStyle, QStyledItemDelegate, QStyleOptionComboBox, QStyleOptionViewItem,
+    QSystemTrayIcon, QToolTip, QVBoxLayout, QWidget, QWidgetAction,
 )
 
 from dstools import __version__
@@ -343,6 +344,81 @@ class _RefreshingCombo(QComboBox):
         super().showPopup()
 
 
+# 账号下拉项上标记"Steam 当前登录"的数据角色
+_STEAM_ACTIVE_ROLE = Qt.ItemDataRole.UserRole + 1
+_DOT_GAP = 6
+
+
+def _dot_diameter(metrics) -> float:
+    return max(4.0, metrics.height() * 0.3)
+
+
+def _paint_steam_dot(painter: QPainter, x: float, center_y: float, diameter: float) -> None:
+    """在文字后面画 Steam 当前登录的小绿点。"""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(theme.color("SUCCESS"))
+    painter.drawEllipse(QPointF(x + diameter / 2, center_y), diameter / 2, diameter / 2)
+    painter.restore()
+
+
+class _AccountItemDelegate(QStyledItemDelegate):
+    """账号下拉列表项：Steam 当前登录的账号在文字后面画小绿点。"""
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+        if not index.data(_STEAM_ACTIVE_ROLE):
+            return
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        text_rect = style.subElementRect(QStyle.SubElement.SE_ItemViewItemText, opt, opt.widget)
+        metrics = opt.fontMetrics
+        x = text_rect.left() + metrics.horizontalAdvance(opt.text) + _DOT_GAP
+        _paint_steam_dot(painter, x, text_rect.center().y() + 0.5, _dot_diameter(metrics))
+
+    def sizeHint(self, option, index) -> QSize:
+        size = super().sizeHint(option, index)
+        return QSize(size.width() + _DOT_GAP + round(_dot_diameter(option.fontMetrics)), size.height())
+
+
+class _AccountCombo(QComboBox):
+    """游戏账号下拉：收起时也在当前文字后面画 Steam 当前登录的小绿点，宽度留出绿点的位置。"""
+
+    def __init__(self):
+        super().__init__()
+        self.setItemDelegate(_AccountItemDelegate(self))
+
+    def _dot_space(self) -> int:
+        return _DOT_GAP + round(_dot_diameter(self.fontMetrics()))
+
+    def sizeHint(self) -> QSize:
+        size = super().sizeHint()
+        return QSize(size.width() + self._dot_space(), size.height())
+
+    def minimumSizeHint(self) -> QSize:
+        size = super().minimumSizeHint()
+        return QSize(size.width() + self._dot_space(), size.height())
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        index = self.currentIndex()
+        if index < 0 or not self.itemData(index, _STEAM_ACTIVE_ROLE):
+            return
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        edit = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, opt,
+                                           QStyle.SubControl.SC_ComboBoxEditField, self)
+        metrics = self.fontMetrics()
+        diameter = _dot_diameter(metrics)
+        x = edit.left() + metrics.horizontalAdvance(self.currentText()) + _DOT_GAP
+        if x + diameter <= edit.right():
+            painter = QPainter(self)
+            _paint_steam_dot(painter, x, edit.center().y() + 0.5, diameter)
+            painter.end()
+
+
 class ClusterBar(QWidget):
     """顶部统一存档选择栏：存档类型（Steam/WeGame）+ 游戏账号（本机有多个时）+ 存档下拉 + 刷新。全部页签共用。"""
 
@@ -358,7 +434,7 @@ class ClusterBar(QWidget):
         for label in (self._platform_label, self._account_label, self._archive_label):
             label.setProperty("heading", True)
         # 同一平台登录过多个游戏账号时才显示；本地存档和 Mod 配置同步都跟随这里选中的账号
-        self._account = QComboBox()
+        self._account = _AccountCombo()
         self._account.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self._account.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._platform = QComboBox()
@@ -393,7 +469,7 @@ class ClusterBar(QWidget):
         self._cluster.activated.connect(self._on_cluster)
         ctx.env_changed.connect(self.reload)
         ctx.platform_changed.connect(self.reload)
-        theme.changed.connect(self.reload)  # 绿点颜色跟随主题
+        theme.changed.connect(self._account.update)  # 绿点颜色跟随主题
         self.setFixedHeight(56)
         self.retranslate()
         self.reload()
@@ -420,11 +496,9 @@ class ClusterBar(QWidget):
             accounts = self._ctx.accounts()
             current = self._ctx.current_account()
             self._account.clear()
-            dot = self._steam_active_icon()
             for account in accounts:
-                # Steam 当前登录的账号前面画一个小绿点
-                self._account.addItem(dot if account.steam_active else QIcon(),
-                                      self._ctx.account_text(account), account.id)
+                self._account.addItem(self._ctx.account_text(account), account.id)
+                self._account.setItemData(self._account.count() - 1, account.steam_active, _STEAM_ACTIVE_ROLE)
                 if current is not None and account.id == current.id:
                     self._account.setCurrentIndex(self._account.count() - 1)
             self._account_label.setVisible(len(accounts) > 1)
@@ -440,22 +514,6 @@ class ClusterBar(QWidget):
 
     def _on_platform(self, _index: int) -> None:
         self._ctx.set_platform(Platform.WEGAME if self._platform.currentText() == "WeGame" else Platform.STEAM)
-
-    def _steam_active_icon(self) -> QIcon:
-        """下拉项图标大小的透明图，中间一个小绿点；按屏幕缩放比画到物理像素。"""
-        size = self._account.iconSize()
-        ratio = self.devicePixelRatioF()
-        pixmap = QPixmap(round(size.width() * ratio), round(size.height() * ratio))
-        pixmap.setDevicePixelRatio(ratio)
-        pixmap.fill(Qt.GlobalColor.transparent)
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(theme.color("SUCCESS"))
-        diameter = min(size.width(), size.height()) * 0.5
-        painter.drawEllipse(QPointF(size.width() / 2, size.height() / 2), diameter / 2, diameter / 2)
-        painter.end()
-        return QIcon(pixmap)
 
     def _on_account(self, index: int) -> None:
         if not self._populating and index >= 0:
