@@ -107,7 +107,6 @@ def save_leveldata(preset: WorldPreset, path: Path, value_sets: dict[str, list[s
     """把 overrides 写回 leveldataoverride.lua，其他字段保持不变。
 
     ``value_sets`` 为 key -> 取值表，取值表全是数字的 key（如热带冒险 world_size_multi）按 Lua 数字写入。"""
-    from dstools.features.world.value_sets import typed_override_value
     from dstools.shared.lua_parser import parse_lua_file
     from dstools.shared.lua_parser import serialize_lua_table
 
@@ -123,13 +122,21 @@ def save_leveldata(preset: WorldPreset, path: Path, value_sets: dict[str, list[s
     elif not isinstance(raw["overrides"], dict):
         raise ValueError("leveldataoverride.lua 的 overrides 必须是 Lua table")
 
-    overrides = raw["overrides"]
-    for ov in preset.overrides:
-        original = overrides.get(ov.key)
+    raw["overrides"] = merge_overrides(raw["overrides"], preset.overrides, value_sets)
+    text = serialize_lua_table(raw)
+    _write_text_atomically(path, text)
+
+
+def merge_overrides(existing: dict, overrides: list[WorldOverride],
+                    value_sets: dict[str, list[str]] | None = None) -> dict:
+    """把界面上的取值合并进已有 overrides 表并返回新表（leveldataoverride 与本地存档 shardindex 共用）。"""
+    from dstools.features.world.value_sets import typed_override_value
+
+    merged = dict(existing)
+    for ov in overrides:
+        original = merged.get(ov.key)
         # 未改动的非字符串原值原样写回，否则 true/1.5 会被写成 "True"/"1.5"，Mod 的 == true 判断随之失效
         if not isinstance(original, str) and original is not None and _display_value(original) == ov.value:
             continue
-        overrides[ov.key] = typed_override_value(ov.value, (value_sets or {}).get(ov.key, []))
-
-    text = serialize_lua_table(raw)
-    _write_text_atomically(path, text)
+        merged[ov.key] = typed_override_value(ov.value, (value_sets or {}).get(ov.key, []))
+    return merged

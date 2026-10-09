@@ -1,5 +1,6 @@
-"""世界设置页：编辑 leveldataoverride.lua。服务器存档的世界规则与世界生成都可改值保存，本地存档只读；
-世界生成只在生成新世界时生效（已生成的世界需重置），后台加载，面板见 qt/world_panel.py。
+"""世界设置页：世界规则与世界生成都可改值保存。服务器存档写 leveldataoverride.lua；本地存档写游戏真正
+读取的各分片 save/shardindex 并同步 leveldataoverride.lua，须在游戏关闭时保存。世界生成只在生成新世界时
+生效（已生成的世界需重置），后台加载，面板见 qt/world_panel.py。
 """
 
 from PySide6.QtCore import Qt, QTimer
@@ -8,7 +9,8 @@ from PySide6.QtWidgets import (
 )
 
 from dstools.features.world import page_data
-from dstools.features.world.reader import save_leveldata
+from dstools.features.mod.legacy_v1 import is_dst_client_running
+from dstools.features.mod.shardindex import ShardIndexError
 from dstools.i18n import t
 from dstools.qt import dialogs
 from dstools.qt.pages.base import Page
@@ -130,7 +132,13 @@ class WorldSettingsPage(Page):
         if cluster is None:
             self._banner.set_text(t("world.no_save_banner"))
         elif not self._selected_is_server():
-            self._banner.set_text(t("world.local_view_only_banner"))  # 本地存档只读查看，不保证编辑生效
+            data = self._data
+            if data is not None and data.local_index_error:
+                self._banner.set_text(t("world.local_index_unreadable", detail=data.local_index_error))
+            elif self._stack.currentIndex() == 1:
+                self._banner.set_text(t("world.generation_reset_banner_local"))
+            else:
+                self._banner.set_text(t("world.local_edit_banner"))
         elif self._stack.currentIndex() == 1:
             self._banner.set_text(t("world.generation_reset_banner"))
         else:
@@ -178,8 +186,9 @@ class WorldSettingsPage(Page):
             if generation != self._generation:
                 return
             self._data = data
-            self._rules.set_editable(data.is_server)
-            self._generation_panel.set_editable(data.is_server)
+            # 本地存档也可改（写游戏真正读取的 shardindex），读不了 shardindex 时只读
+            self._rules.set_editable(data.can_save)
+            self._generation_panel.set_editable(data.can_save)
             if data.status == page_data.STATUS_OK:
                 preset = data.preset
                 self._show_info(f"{preset.name} ({preset.preset_id})   {data.location_label}",
@@ -216,8 +225,8 @@ class WorldSettingsPage(Page):
 
     def _on_value_clicked(self, key: str, delta: int, is_rule: bool = True) -> None:
         data = self._data
-        # 只读兜底：本地存档的面板不注册点击，正常点不到这里，这里再挡一道防止别的路径漏调
-        if data is None or not data.is_server or data.preset is None:
+        # 只读兜底：不可保存时面板不显示箭头，正常点不到这里，这里再挡一道防止别的路径漏调
+        if data is None or not data.can_save:
             return
         page_data.step_rule_value(data, key, delta, is_rule=is_rule)
         self._set_dirty(True)
@@ -232,20 +241,27 @@ class WorldSettingsPage(Page):
 
     def _on_save(self) -> None:
         data = self._data
-        if data is None or not data.is_server:
+        if data is None or not data.can_save:
             return
         title = t("world.save_rules")
         if data.preset is None or data.path is None:
             dialogs.show_info(self.window(), title, t("world.no_preset"))
             return
+        # 游戏把 shardindex 缓存在内存里、退出时写回，开着游戏改本地存档会被覆盖
+        if not data.is_server and is_dst_client_running():
+            dialogs.show_warning(self.window(), title, t("world.local_save_game_running"))
+            return
         if not dialogs.ask_yes_no(self.window(), title, t("dlg.confirm_save_msg", name=data.shard_name)):
             return
         try:
-            save_leveldata(data.preset, data.path, page_data.lua_value_types(data))
-        except (OSError, ValueError) as exc:
+            page_data.save_world_page(data)
+        except (OSError, ValueError, ShardIndexError) as exc:
             dialogs.show_error(self.window(), title, str(exc))
             return
         need_reset = self._generation_changed and page_data.generation_requires_reset(data)
         self._set_dirty(False)
-        dialogs.show_info(self.window(), t("dlg.save_ok"),
-                          t("world.saved_need_reset") if need_reset else t("world.saved"))
+        if not need_reset:
+            message = t("world.saved")
+        else:
+            message = t("world.saved_need_reset" if data.is_server else "world.saved_need_reset_local")
+        dialogs.show_info(self.window(), t("dlg.save_ok"), message)

@@ -11,8 +11,10 @@ from dstools.features.world.mod_icons import resolve_mod_setting_icons
 from dstools.features.world.mod_settings import (
     filter_mod_world_settings, get_mod_categories, get_mod_world_settings,
 )
+from dstools.features.mod.shardindex import ShardIndexError
+from dstools.features.world.local_options import load_local_overrides, save_local_overrides
 from dstools.features.world.reader import (
-    LeveldataStatus, WorldOverride, WorldPreset, load_leveldata,
+    LeveldataStatus, WorldOverride, WorldPreset, load_leveldata, merge_overrides, save_leveldata,
 )
 from dstools.features.world.value_sets import get_value_set
 from dstools.features.world.view_model import build_world_view_model
@@ -41,6 +43,12 @@ class WorldPageData:
     rule_categories: list = field(default_factory=list)
     generation_by_category: dict = field(default_factory=dict)
     generation_categories: list = field(default_factory=list)
+    # 本地存档的真实配置在分片 save/shardindex；读不了时退回 leveldataoverride 显示，并记下原因禁止保存
+    local_index_error: str = ""
+
+    @property
+    def can_save(self) -> bool:
+        return self.preset is not None and (self.is_server or not self.local_index_error)
 
 
 def load_world_page(
@@ -65,6 +73,17 @@ def load_world_page(
         )
 
     preset = load_result.preset
+    local_index_error = ""
+    if not is_server:
+        # 游戏选存档时读的是 shardindex 的 world.options，开服时再据此重写 leveldataoverride.lua
+        try:
+            local = load_local_overrides(shard.path)
+            preset.overrides = [
+                WorldOverride(key=key, value=value if isinstance(value, str) else str(value))
+                for key, value in local.items()
+            ]
+        except (OSError, ShardIndexError) as exc:
+            local_index_error = str(exc)
     location = preset.location or "forest"
     # 已启用 mod 里登记过的条目贡献了哪些"世界设置"/"世界生成"——按整个存档算（get_enabled_mod_ids
     # 本来就是并集所有世界的 modoverrides.lua），不分具体哪个世界。
@@ -89,6 +108,7 @@ def load_world_page(
         rules_by_category=view_model.rules_by_category, rule_categories=view_model.rule_categories,
         generation_by_category=view_model.generation_by_category,
         generation_categories=view_model.generation_categories,
+        local_index_error=local_index_error,
     )
 
 
@@ -134,3 +154,16 @@ def generation_requires_reset(data: WorldPageData) -> bool:
 def lua_value_types(data: WorldPageData) -> dict[str, list[str]]:
     """保存时用于还原 Lua 数字类型的取值表（只有 Mod 登记的全数字取值会被转成数字）。"""
     return {key: info.values for key, info in data.mod_settings.items() if info.values}
+
+
+def save_world_page(data: WorldPageData) -> None:
+    """保存当前取值。服务器存档写 leveldataoverride.lua；本地存档先写游戏真正读取的各分片
+    save/shardindex，再同步写 leveldataoverride.lua 保持一致。本地存档须在游戏关闭时调用。"""
+    if not data.can_save or data.path is None:
+        raise ValueError(data.local_index_error or "当前世界无法保存")
+    value_sets = lua_value_types(data)
+    if not data.is_server:
+        shard_dir = data.path.parent
+        merged = merge_overrides(load_local_overrides(shard_dir), data.preset.overrides, value_sets)
+        save_local_overrides(shard_dir, merged)
+    save_leveldata(data.preset, data.path, value_sets)

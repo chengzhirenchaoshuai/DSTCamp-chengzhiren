@@ -1099,6 +1099,30 @@ def test_world_reader_and_view_model():
         changed.value = "2"
         save_leveldata(reloaded.preset, path, {"world_size_multi": ["1.5", "2"]})
         assert load_leveldata(path).preset.raw["overrides"]["world_size_multi"] == 2
+
+        # 本地存档：游戏读分片 save/shardindex 的 world.options.overrides，只替换这一段，其余原样保留
+        from dstools.features.mod.shardindex import ShardIndexError
+        from dstools.features.world.local_options import load_local_overrides, save_local_overrides
+        shard_dir = root / "Master"
+        (shard_dir / "save").mkdir(parents=True)
+        index_file = shard_dir / "save" / "shardindex"
+        index_file.write_bytes(
+            b'KLEI     1 return {enabled_mods={["workshop-1"]={enabled=true}}, '
+            b'world={options={id="SURVIVAL_TOGETHER", overrides={autumn="default", has_ocean=true}}}}'
+        )
+        local = load_local_overrides(shard_dir)
+        local["autumn"] = "longseason"
+        save_local_overrides(shard_dir, local)
+        saved = index_file.read_bytes()
+        assert saved.startswith(b"KLEI     1 ") and b'enabled_mods={["workshop-1"]={enabled=true}}' in saved
+        assert load_local_overrides(shard_dir) == {"autumn": "longseason", "has_ocean": True}
+        index_file.write_bytes(b"KLEI     1D" + saved[11:])
+        try:
+            save_local_overrides(shard_dir, local)
+        except ShardIndexError:
+            pass
+        else:
+            raise AssertionError("压缩格式的 shardindex 不能写回")
         assert not list(root.glob("*.tmp")), "原子写入完成后不应遗留临时文件"
 
         assert load_leveldata(root / "missing.lua").status == LeveldataStatus.MISSING
