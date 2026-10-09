@@ -387,11 +387,17 @@ def _measure_text_end(delegate, option, index) -> int | None:
     painter = QPainter(image)
     delegate.paint(painter, opt, index)
     painter.end()
-    width, height = image.width(), image.height()
-    background = [image.pixelColor(width - 1, y) for y in range(height)]
-    for x in range(width - 2, -1, -1):
-        if any(_color_distance(image.pixelColor(x, y), background[y]) > 60 for y in range(height)):
-            return x + 1
+    return _content_right_edge(image, image.rect())
+
+
+def _content_right_edge(image: QImage, area: QRect) -> int | None:
+    """area 内最右侧与底色（area 最右一列）明显不同的列的右边界（相对 area 左边）；没有内容返回 None。"""
+    top, bottom = max(area.top(), 0), min(area.bottom(), image.height() - 1)
+    right = min(area.right(), image.width() - 1)
+    background = [image.pixelColor(right, y) for y in range(top, bottom + 1)]
+    for x in range(right - 1, area.left() - 1, -1):
+        if any(_color_distance(image.pixelColor(x, y), background[y - top]) > 60 for y in range(top, bottom + 1)):
+            return x + 1 - area.left()
     return None
 
 
@@ -418,6 +424,8 @@ class _AccountCombo(QComboBox):
         self._dot = _SteamDot(self)
         self._popup_dot = _SteamDot(self.view().viewport())
         self._text_end: dict[tuple, int | None] = {}
+        self._closed_text_end: dict[tuple, int | None] = {}
+        self._measuring = False  # render() 会触发尺寸事件，防止 refresh_dot 重入
         self.currentIndexChanged.connect(self.refresh_dot)
         theme.changed.connect(self._dot.update)  # 绿点颜色跟随主题
 
@@ -434,6 +442,8 @@ class _AccountCombo(QComboBox):
 
     def refresh_dot(self) -> None:
         """选择框里的绿点：当前项是 Steam 当前登录的账号时，放在文字后面。"""
+        if self._measuring:
+            return
         index = self.currentIndex()
         if index < 0 or not self.itemData(index, _STEAM_ACTIVE_ROLE):
             self._dot.hide()
@@ -444,8 +454,24 @@ class _AccountCombo(QComboBox):
                                            QStyle.SubControl.SC_ComboBoxEditField, self)
         metrics = self.fontMetrics()
         diameter = math.ceil(_dot_diameter(metrics))
-        x = edit.left() + metrics.horizontalAdvance(self.currentText()) + _DOT_GAP
-        self._dot.setGeometry(x, _dot_top(edit.center().y(), diameter, metrics), diameter, diameter)
+        # 文字实际起点受样式内边距和字体补丁影响，按字宽推算会偏左：把选择框画出来实测文字结尾
+        key = (self.currentText(), self.size().width(), self.size().height(), self.font().key(), theme.font_style)
+        if key not in self._closed_text_end:
+            self._dot.hide()
+            image = QImage(self.size(), QImage.Format.Format_ARGB32_Premultiplied)
+            image.fill(Qt.GlobalColor.transparent)
+            self._measuring = True
+            try:
+                self.render(image)
+            finally:
+                self._measuring = False
+            end = _content_right_edge(image, edit)
+            self._closed_text_end[key] = edit.left() + end if end is not None else None
+        text_end = self._closed_text_end[key]
+        if text_end is None:
+            text_end = edit.left() + metrics.horizontalAdvance(self.currentText())
+        self._dot.setGeometry(text_end + _DOT_GAP, _dot_top(edit.center().y(), diameter, metrics),
+                              diameter, diameter)
         self._dot.show()
         self._dot.raise_()
 
@@ -488,6 +514,8 @@ class _AccountCombo(QComboBox):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self.refresh_dot()
+        # 首次显示时样式表字体可能尚未生效，事件循环回来后再按最终字体定位一次
+        QTimer.singleShot(0, self.refresh_dot)
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
@@ -521,7 +549,10 @@ class ClusterBar(QWidget):
         self._platform.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._cluster = _RefreshingCombo()
         self._cluster.about_to_open.connect(self.reload)
-        self._cluster.setFixedWidth(360)  # 固定宽度，不随窗口拉伸变化
+        # 按最长的存档名自适应宽度；Fixed 策略不随窗口拉伸
+        self._cluster.setMinimumWidth(200)
+        self._cluster.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self._cluster.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         # "创建服务器存档"作用于整个存档集合，放在全局存档选择器右侧；"打开位置"在其左侧，打开当前存档文件夹
         self._open_location = QPushButton()
         self._open_location.clicked.connect(self._on_open_location)
