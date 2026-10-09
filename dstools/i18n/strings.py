@@ -829,6 +829,7 @@ STRINGS = {
         # 更新过的标签
         "selector.archive": "存档:",
         "selector.account": "账号:",
+        "selector.account_current_tag": "当前登录",
         "selector.save_type": "存档类型:",
         "selector.running_suffix": "  [运行中]",
         # 世界设置改进
@@ -2176,6 +2177,7 @@ STRINGS = {
         # 更新过的标签
         "selector.archive": "Archive:",
         "selector.account": "Account:",
+        "selector.account_current_tag": "Signed in",
         "selector.save_type": "Save Type:",
         "selector.running_suffix": "  [Running]",
         # 世界设置改进
