@@ -1,7 +1,8 @@
 """Mod 默认配置与游戏全局配置（主菜单"模组"）的同步入口。
 
 启动、打开 Mod 页、保存默认配置后触发，在后台执行；同一时间只跑一个，运行中再次触发则结束后补跑一次。
-只用 Steam 账号目录（WeGame 客户端进程名未核实，无法确认游戏已关闭）。不弹模态框，结果写 sync.log 并轻提示。
+只用 Steam 账号目录（WeGame 客户端进程名未核实，无法确认游戏已关闭），本机有多个账号时跟随存档栏选中的账号。
+不弹模态框，结果写 sync.log 并轻提示。
 """
 
 from pathlib import Path
@@ -13,7 +14,7 @@ from dstools.qt import dialogs
 from dstools.qt.threads import run_async
 from dstools.shared import app_settings
 
-_state = {"running": False, "rerun": False, "parent": None, "callbacks": []}
+_state = {"running": False, "rerun": False, "parent": None, "callbacks": [], "account": ""}
 # 最近一次同步得到的各 Mod 状态（mod_key -> synced/pending/error），供默认配置列表显示
 last_states: dict[str, str] = {}
 
@@ -59,6 +60,10 @@ def start_sync(ctx, parent=None, on_done=None) -> bool:
         _state["parent"] = parent if parent is not None else _state["parent"]
         return True
     user_dir, account = game_account(ctx)
+    if account != _state["account"]:
+        # 换了账号：上一个账号的同步状态不再适用，等本轮结果
+        last_states.clear()
+        _state["account"] = account
     _state["running"] = True
     # 本轮只回调开始前登记的；运行中新登记的留给补跑那一轮（它们要看到补跑后的状态）
     run_callbacks, _state["callbacks"] = _state["callbacks"], []
@@ -89,6 +94,13 @@ def start_sync(ctx, parent=None, on_done=None) -> bool:
 
     run_async(work, finish, fail)
     return True
+
+
+def sync_if_account_changed(ctx) -> None:
+    """环境重新扫描后，当前账号与上次同步的不同（切换了账号）才补同步；账号没变不重复同步。"""
+    account = game_account(ctx)
+    if account is not None and _state["account"] and account[1] != _state["account"]:
+        start_sync(ctx)
 
 
 def last_error() -> str:

@@ -181,7 +181,8 @@ def sync_with_game(user_dir: Path, account: str, client_only_keys: set[str], *, 
     未安装（无法判断）的 Mod 只认 _CLIENT 文件。can_write=False（游戏运行中）时只拉取，需要推送的记为 pending。"""
     report = SyncReport()
     config_dir = game_mod_config.mod_config_dir(user_dir)
-    backup_dir = backup_dir or _backup_dir()
+    # 按账号分目录：多个账号的同名配置文件备份不能互相覆盖
+    backup_dir = backup_dir or _backup_dir() / account
     with _lock:
         data = load_memory(memory_path)
         files = game_mod_config.list_config_files(config_dir)
