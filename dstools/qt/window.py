@@ -456,7 +456,9 @@ class _AccountCombo(QComboBox):
         diameter = math.ceil(_dot_diameter(metrics))
         # 文字实际起点受样式内边距和字体补丁影响，按字宽推算会偏左：把选择框画出来实测文字结尾
         key = (self.currentText(), self.size().width(), self.size().height(), self.font().key(), theme.font_style)
-        if key not in self._closed_text_end:
+        # 只在下拉框和主窗口都已显示后实测：构造期间 render() 会连带触发主窗口的尺寸事件（此时主窗口尚未构造完）。
+        # 未显示时先按字宽推算，showEvent 安排的延迟回调会再实测一次
+        if key not in self._closed_text_end and self.isVisible() and self.window().isVisible():
             self._dot.hide()
             image = QImage(self.size(), QImage.Format.Format_ARGB32_Premultiplied)
             image.fill(Qt.GlobalColor.transparent)
@@ -467,7 +469,7 @@ class _AccountCombo(QComboBox):
                 self._measuring = False
             end = _content_right_edge(image, edit)
             self._closed_text_end[key] = edit.left() + end if end is not None else None
-        text_end = self._closed_text_end[key]
+        text_end = self._closed_text_end.get(key)
         if text_end is None:
             text_end = edit.left() + metrics.horizontalAdvance(self.currentText())
         self._dot.setGeometry(text_end + _DOT_GAP, _dot_top(edit.center().y(), diameter, metrics),
