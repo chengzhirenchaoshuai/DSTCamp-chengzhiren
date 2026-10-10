@@ -1058,7 +1058,9 @@ class SteamWorkshopSession:
                 result.details["legacy_path_recovered_from_source"] = True
         if result.state.legacy_item and install_info is not None:
             # 目录里混入其他文件时游戏不会解压 V1 包，先清掉，只留 Steam 记录的压缩包
-            from dstools.features.mod.legacy_v1 import remove_legacy_package_extras
+            from dstools.features.mod.legacy_v1 import (
+                record_legacy_extras_removed, remove_legacy_package_extras,
+            )
 
             try:
                 removed = remove_legacy_package_extras(install_info.path)
@@ -1067,6 +1069,7 @@ class SteamWorkshopSession:
                 return result
             if removed:
                 result.details["legacy_extras_removed"] = [str(path) for path in removed]
+                record_legacy_extras_removed(workshop_id, removed, "更新")
         # 文件被手动删除后 Installed 位和安装信息可能仍是旧值，物理目录、modinfo 与
         # Manifest 都通过才跳过 DownloadItem，否则按修复处理
         if (

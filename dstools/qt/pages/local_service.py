@@ -1644,6 +1644,8 @@ class LocalServicePage(Page):
         if not self._resolve_v1_shadows(enabled_ids, mods_root):
             return False
         prepared = prepare_enabled_legacy_mods(enabled_ids, mods_root)
+        if prepared.extras_removed:
+            dialogs.show_toast(self.window(), t("local.v1_extras_cleaned", count=len(prepared.extras_removed)), ms=3000)
         if prepared.completed:
             return True
         dialogs.show_error(self.window(), t("local.install_title"), t("local.legacy_prepare_failed", detail="\n".join(prepared.errors)))

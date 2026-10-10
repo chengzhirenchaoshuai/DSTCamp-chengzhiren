@@ -627,6 +627,10 @@ class WorkshopUpdateDialog(QDialog):
 
         def on_line(current, total, result) -> None:
             name = self._name_for(str(result.workshop_id))
+            extras = result.details.get("legacy_extras_removed") or ()
+            if extras:
+                progress.append(t("mod.update_log_item_extras_removed", current=current, total=total,
+                                  name=name, count=len(extras)))
             if result.completed and result.up_to_date:
                 progress.append(t("mod.update_log_item_current", current=current, total=total, name=name))
             elif result.completed:

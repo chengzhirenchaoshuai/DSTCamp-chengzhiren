@@ -125,6 +125,10 @@ def create_log_bundle(cluster_path: Path, shard_names=None, output_dir: Path | N
         files.extend(_files_for_shard(cluster_path / str(shard_name), str(shard_name)))
     if not files:
         raise FileNotFoundError("当前存档没有可收集的服务器日志")
+    # V1 Mod 目录多余文件的清理记录，用来追查这些文件从哪来
+    from dstools.features.mod.legacy_v1 import legacy_extras_log_path
+
+    _add_file(files, legacy_extras_log_path(), "DSTCamp/v1_extras.log")
 
     output_dir = Path(output_dir) if output_dir else default_log_output_dir()
     output_dir.mkdir(parents=True, exist_ok=True)

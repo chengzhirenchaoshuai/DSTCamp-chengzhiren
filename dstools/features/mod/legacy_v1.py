@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import json
 import os
@@ -16,7 +17,7 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
-from dstools.shared.resource_paths import cache_dir
+from dstools.shared.resource_paths import cache_dir, data_dir
 
 
 _MAX_ENTRY_COUNT = 50_000
@@ -65,6 +66,7 @@ class LegacyPreparationResult:
     deployed: list[Path] = field(default_factory=list)
     already_current: list[Path] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    extras_removed: list[int] = field(default_factory=list)  # 删掉了多余文件的项目
 
     @property
     def completed(self) -> bool:
@@ -336,6 +338,34 @@ def remove_legacy_package_extras(archive_path: Path) -> tuple[Path, ...]:
     return tuple(removed)
 
 
+_EXTRAS_LOG_MAX_BYTES = 256 * 1024
+
+
+def legacy_extras_log_path() -> Path:
+    """V1 目录多余文件的清理记录，日志包会一并收录。"""
+    return data_dir("mod_repair") / "v1_extras.log"
+
+
+def record_legacy_extras_removed(workshop_id: int, removed, source: str) -> None:
+    """追加一行清理记录（时间、项目、来源、删掉的条目），用于追查多余文件从哪来；写失败不影响修复。"""
+    if not removed:
+        return
+    names = "、".join(path.name for path in removed)
+    stamp = _dt.datetime.now().isoformat(sep=" ", timespec="seconds")
+    line = f"{stamp}  workshop-{int(workshop_id)}  {source}  {names}\n"
+    path = legacy_extras_log_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.is_file() and path.stat().st_size > _EXTRAS_LOG_MAX_BYTES:
+            # 超过上限只保留后半部分，避免无限增长
+            kept = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+            path.write_text("".join(kept[len(kept) // 2:]), encoding="utf-8")
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(line)
+    except OSError:
+        pass
+
+
 def materialize_legacy_package_for_read(
     workshop_id: int, archive_path: Path
 ) -> Path:
@@ -516,10 +546,13 @@ def prepare_enabled_legacy_mods(
             continue
         result.checked.append(workshop_id)
         try:
-            remove_legacy_package_extras(archive)
+            removed = remove_legacy_package_extras(archive)
         except OSError as exc:
             result.errors.append(f"workshop-{workshop_id} 目录里的多余文件无法删除：{exc}")
             continue
+        if removed:
+            result.extras_removed.append(workshop_id)
+            record_legacy_extras_removed(workshop_id, removed, "开服前")
         target = root / f"workshop-{workshop_id}"
         if legacy_runtime_matches_package(archive, target):
             result.already_current.append(target)

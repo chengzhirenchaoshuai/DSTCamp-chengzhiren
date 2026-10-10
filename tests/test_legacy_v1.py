@@ -392,11 +392,15 @@ def test_legacy_dir_with_extra_files() -> None:
             f'"123" {{ "size" "{v1_archive.stat().st_size}" }} "789" {{ "size" "{v2_size}" }} '
             '} "WorkshopItemDetails" { } }', encoding="utf-8")
 
-        with patch.object(mod_parser, "find_workshop_dir", return_value=content):
+        with patch.object(mod_parser, "find_workshop_dir", return_value=content), patch.object(
+                legacy_v1, "data_dir", side_effect=lambda name: Path(temp) / "data" / name):
             assert legacy_v1.find_legacy_packages() == {123: v1_archive}
             assert legacy_v1.find_legacy_package_ids() == {123}
             prepared = prepare_enabled_legacy_mods(["123", "789"], Path(temp) / "mods")
+            record = legacy_v1.legacy_extras_log_path().read_text(encoding="utf-8")
         assert prepared.completed and prepared.checked == [123], prepared.errors
+        assert prepared.extras_removed == [123]
+        assert "workshop-123  开服前  modinfo.lua" in record
         assert [path.name for path in polluted.iterdir()] == ["456_legacy.bin"]
         assert (Path(temp) / "mods" / "workshop-123" / "modmain.lua").is_file()
         assert stray.is_file() and not (Path(temp) / "mods" / "workshop-789").exists()
