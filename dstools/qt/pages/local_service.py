@@ -1559,6 +1559,13 @@ class LocalServicePage(Page):
                 return candidate
         return None
 
+    def _export_running_mods(self, proc, cluster) -> None:
+        """控制台"Mod 全部加载成功"横幅点击：导出该世界实际加载的 Mod 列表图片。"""
+        from dstools.qt.mod_export_dialog import export_running_mods_image
+        network = cluster.config.network if cluster.config else {}
+        label = str(network.get("cluster_name") or cluster.name)
+        export_running_mods_image(self.window(), proc, sorted(proc.visible_mod_ids), label)
+
     def _runtime_mods_root(self) -> Path | None:
         """开服程序实际读取的 mods 目录：独立专服或游戏客户端安装目录下的 mods。"""
         # 只用页面已探测到的结果：预检不应触发设置迁移等写操作。
@@ -1791,7 +1798,8 @@ class LocalServicePage(Page):
         else:
             pane = ConsolePane(proc, on_close=lambda: self._close_console_pane(key, cluster, shard),
                                 on_rollback=lambda: self._open_rollback_dialog(), on_failure=self._on_server_failure,
-                                on_registered=self._on_server_registered)
+                                on_registered=self._on_server_registered,
+                                on_export_mods=lambda p, c=cluster: self._export_running_mods(p, c))
             self._console_panes[key] = pane
             if str(cluster.path) == (str(self.get_cluster().path) if self.get_cluster() else None):
                 self._add_console_tab(pane, shard.name)

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import re
 from typing import Iterable
 
+from dstools.i18n import t
+
 
 _WORKSHOP_RE = re.compile(r"workshop-\d+", re.IGNORECASE)
 _TOKEN_CONFLICT_MARKER = "e_rowid_exist"
@@ -63,6 +65,11 @@ def analyze_mod_loading(
         failed_mods=tuple(sorted(missing, key=str.lower)),
         visible_mod_count=visible_mod_count,
     )
+
+
+def _tips(category: str) -> tuple[str, ...]:
+    """每类诊断固定两条建议，文案按 diag.<类别>.tip1/tip2 存放在 i18n 中。"""
+    return (t(f"diag.{category}.tip1"), t(f"diag.{category}.tip2"))
 
 
 def _evidence(lines: list[str], patterns: tuple[str, ...], limit: int = 3) -> tuple[str, ...]:
@@ -133,12 +140,11 @@ def _lua_report(
     lines: list[str],
     related_mods: tuple[str, ...],
 ) -> DiagnosticReport:
-    phase = "运行中" if world_ready else "启动阶段"
+    phase = t("diag.phase_running" if world_ready else "diag.phase_startup")
     return DiagnosticReport(
-        "mod_conflict", "疑似 Mod 冲突",
-        f"{shard_name} 在{phase}检测到 Lua 运行时错误，可能由 Mod Bug 或兼容性冲突导致。",
-        ("优先禁用日志中列出的疑似 Mod，并重新启动服务器。",
-         "如果禁用后恢复，再逐个启用最近更新或新增的 Mod。"),
+        "mod_conflict", t("diag.mod_conflict.title"),
+        t("diag.mod_conflict.summary", shard=shard_name, phase=phase),
+        _tips("mod_conflict"),
         _lua_evidence(lines), related_mods,
     )
 
@@ -152,6 +158,7 @@ def diagnose_server_failure(
     enabled_mods: Iterable[str] = (),
     loaded_mods: Iterable[str] = (),
     intentional_stop: bool = False,
+    ignore_token_conflict: bool = False,
 ) -> DiagnosticReport | None:
     """根据一次世界启动或运行日志生成保守诊断，``None`` 表示无需提醒（正常停止不生成）。
 
@@ -164,14 +171,14 @@ def diagnose_server_failure(
     lower = "\n".join(lines).lower()
     related_mods = _mods(lines, enabled_mods, loaded_mods)
 
-    if _TOKEN_CONFLICT_MARKER in lower and (
+    # 已报过令牌冲突、之后进程又退出时由调用方传 ignore_token_conflict，按退出原因重新归类
+    if not ignore_token_conflict and _TOKEN_CONFLICT_MARKER in lower and (
         "master server broadcast error" in lower or "http_500" in lower
     ):
         return DiagnosticReport(
-            "token_conflict", "令牌注册冲突",
-            f"{shard_name} 无法向 Klei 注册房间；这会导致该世界持续重试，地上与洞穴也可能无法完成建联。",
-            ("如果房间刚刚崩溃或被强制结束，无需停服：服务器会自动重试，Klei 释放旧注册后自动上线（通常需要半小时左右）。",
-             "如果同一新令牌正被其他存档或其他机器使用，请停止对方，或停服后从全局令牌池换用可用令牌。"),
+            "token_conflict", t("diag.token_conflict.title"),
+            t("diag.token_conflict.summary", shard=shard_name),
+            _tips("token_conflict"),
             _evidence(lines, ("e_rowid_exist", "master server broadcast error")),
             (),
         )
@@ -188,8 +195,7 @@ def diagnose_server_failure(
         "找不到指定模块", "找不到 vcruntime", "找不到 vcomp",
     )):
         return DiagnosticReport(
-            "runtime", "运行库缺失", "服务器启动时找不到 Visual C++ 运行库。",
-            ("确认专服位数与运行库位数匹配。", "LuaJIT 模式请安装 VC++ 2023 x64；Mod 图标问题请安装 VC++ 2013 x86。"),
+            "runtime", t("diag.runtime.title"), t("diag.runtime.summary"), _tips("runtime"),
             _evidence(lines, ("dll", "找不到指定模块", "cannot find")), related_mods,
         )
 
@@ -198,8 +204,7 @@ def diagnose_server_failure(
         "port_already_in_use", "端口已被占用", "only one usage",
     )):
         return DiagnosticReport(
-            "port", "端口占用", "服务器需要使用的网络端口已被其他进程占用。",
-            ("检查服务器配置中的端口。", "关闭占用该端口的程序，或为当前存档分配新的端口。"),
+            "port", t("diag.port.title"), t("diag.port.summary"), _tips("port"),
             _evidence(lines, ("address already", "bind", "端口")), related_mods,
         )
 
@@ -209,15 +214,14 @@ def diagnose_server_failure(
         "check for write access: false", "check for read access: false",
     )):
         return DiagnosticReport(
-            "permission", "文件访问失败", "服务器没有权限读取或写入所需文件。",
-            ("确认当前用户对专服安装目录和存档目录有读写权限。", "检查杀毒软件是否拦截了专服或 LuaJIT 副本。"),
+            "permission", t("diag.permission.title"), t("diag.permission.summary"), _tips("permission"),
             _evidence(lines, ("access is denied", "permission", "拒绝访问")), related_mods,
         )
 
     if "must specify the task set for a level" in lower or "error loading worldgen_main.lua" in lower:
         return DiagnosticReport(
-            "world_generation", "世界生成配置错误", f"{shard_name} 在世界生成阶段缺少有效的世界预设或任务集。",
-            ("检查当前世界类型与世界生成预设是否匹配。", "如果刚卸载或更新了世界配置 Mod，请重新扫描 Mod 并重新保存世界设置。"),
+            "world_generation", t("diag.world_generation.title"),
+            t("diag.world_generation.summary", shard=shard_name), _tips("world_generation"),
             _evidence(lines, ("task set", "worldgen_main.lua")), related_mods,
         )
 
@@ -226,9 +230,8 @@ def diagnose_server_failure(
 
     # 世界已就绪过说明是运行中退出（崩溃、被强制结束等），不能再叫"启动失败"
     return DiagnosticReport(
-        "unknown", "服务器异常退出" if world_ready else "服务器启动失败",
-        "服务器进程异常退出，但暂时无法从日志确定单一原因。",
-        ("先查看控制台末尾日志。", "检查令牌、端口、存档权限和最近更新的 Mod。"),
+        "unknown", t("diag.unknown.title_crashed" if world_ready else "diag.unknown.title_startup"),
+        t("diag.unknown.summary"), _tips("unknown"),
         tuple(line.strip() for line in lines[-3:] if line.strip()), related_mods,
     )
 

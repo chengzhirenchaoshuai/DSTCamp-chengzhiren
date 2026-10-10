@@ -32,40 +32,55 @@ def max_rollback_days(cluster) -> int:
     return max(1, snapshots - 1)
 
 
-def mod_display_names(proc, mod_ids: tuple[str, ...]) -> tuple[str, ...]:
-    """把诊断中的 Mod ID 尽力解析成"ID（名称）"，失败时保留 ID。"""
+def _process_mod_roots(proc) -> list[Path]:
+    """专服进程查找 Mod 的目录顺序：专服 UGC 目录、客户端 Workshop 目录、开服程序 mods 目录、游戏 mods 目录。"""
     roots: list[Path] = []
     if getattr(proc, "ugc_directory", None):
         roots.append(Path(proc.ugc_directory) / "content" / "322330")
     workshop = find_workshop_dir()
     if workshop:
         roots.append(workshop)
+    if getattr(proc, "install_dir", None):
+        roots.append(Path(proc.install_dir) / "mods")
     game_mods = find_game_mods_dir()
     if game_mods:
         roots.append(game_mods)
+    return roots
 
-    result = []
+
+def find_process_mod_folders(proc, mod_ids) -> dict[str, Path]:
+    """按专服进程的查找顺序定位各 Mod 的本地目录（含 modinfo.lua），找不到的不出现在结果里。"""
+    roots = _process_mod_roots(proc)
+    result: dict[str, Path] = {}
     for mod_id in mod_ids:
-        name = ""
         folder_names = [mod_id]
         if mod_id.lower().startswith("workshop-"):
             folder_names.append(mod_id[9:])
-        for root in roots:
-            for folder_name in folder_names:
-                folder = root / folder_name
-                if not (folder / "modinfo.lua").is_file():
-                    continue
-                try:
-                    info = parse_modinfo(folder)
-                    name = (info.name or "").strip() if info else ""
-                except (OSError, ValueError, TypeError):
-                    name = ""
-                if name:
-                    break
-            if name:
-                break
-        result.append(f"{mod_id}（{name}）" if name else mod_id)
-    return tuple(result)
+        folder = next((root / name for root in roots for name in folder_names
+                       if (root / name / "modinfo.lua").is_file()), None)
+        if folder is not None:
+            result[mod_id] = folder
+    return result
+
+
+def mod_names(folders: dict[str, Path]) -> dict[str, str]:
+    """读取各 Mod 目录 modinfo.lua 里的名称，读不到的不出现在结果里。"""
+    names: dict[str, str] = {}
+    for mod_id, folder in folders.items():
+        try:
+            info = parse_modinfo(folder)
+        except (OSError, ValueError, TypeError):
+            continue
+        name = (info.name or "").strip() if info else ""
+        if name:
+            names[mod_id] = name
+    return names
+
+
+def mod_display_names(proc, mod_ids: tuple[str, ...]) -> tuple[str, ...]:
+    """把诊断中的 Mod ID 尽力解析成"ID（名称）"，失败时保留 ID。"""
+    names = mod_names(find_process_mod_folders(proc, mod_ids))
+    return tuple(f"{mod_id}（{names[mod_id]}）" if mod_id in names else mod_id for mod_id in mod_ids)
 
 
 __all__ = [
@@ -74,5 +89,7 @@ __all__ = [
     "ordered_shards",
     "max_rollback_days",
     "mod_display_names",
+    "find_process_mod_folders",
+    "mod_names",
     "find_shared_ugc_directory",
 ]

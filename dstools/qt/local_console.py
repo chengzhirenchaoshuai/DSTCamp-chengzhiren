@@ -1,5 +1,6 @@
 """运行中世界的控制台标签：只读日志、命令输入、快捷指令、搜索栏、崩溃诊断与 Mod 加载提示条（由本地服务器页定时器驱动 pump()）。"""
 
+import os
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, QSize, Qt, QTimer, Signal
@@ -7,8 +8,8 @@ from PySide6.QtGui import (
     QColor, QGuiApplication, QIcon, QKeySequence, QPainter, QPen, QPixmap, QShortcut, QTextCursor,
 )
 from PySide6.QtWidgets import (
-    QAbstractButton, QComboBox, QDialog, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QTabBar,
-    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QAbstractButton, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton,
+    QScrollArea, QTabBar, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from dstools.features.local_service.dedicated_server import ServerStatus, advance_world_ready_marker
@@ -16,7 +17,10 @@ from dstools.features.local_service.server_diagnostics import (
     analyze_mod_loading, contains_runtime_lua_error, contains_server_registration_success,
     contains_startup_failure, contains_token_conflict, diagnose_server_failure,
 )
-from dstools.features.local_service.shard_helpers import STATUS_TEXT_KEYS, mod_display_names
+from dstools.features.local_service.shard_helpers import (
+    STATUS_TEXT_KEYS, find_process_mod_folders, mod_display_names, mod_names,
+)
+from dstools.features.mod.locations import resolve_mod_open_location
 from dstools.i18n import t
 from dstools.qt import dialogs
 from dstools.qt.theme import theme
@@ -68,6 +72,66 @@ class _DiagnosticDetailDialog(QDialog):
         self.show()
         self.raise_()
         self.activateWindow()
+
+
+class _FailedModsDialog(dialogs.Dialog):
+    """加载失败的 Mod 列表：每行显示名称、ID 与本地目录，可直接打开所在位置。"""
+
+    def __init__(self, parent, shard_name: str, mod_ids: tuple[str, ...], folders: dict, names: dict):
+        super().__init__(parent, t("local.mods_failed_dialog_title", shard=shard_name), width="md")
+        hint = QLabel(t("local.mods_failed_dialog_hint"))
+        hint.setWordWrap(True)
+        hint.setProperty("muted", True)
+        self.body.addWidget(hint)
+
+        rows = QWidget()
+        rows_layout = QVBoxLayout(rows)
+        rows_layout.setContentsMargins(0, 0, 0, 0)
+        rows_layout.setSpacing(10)
+        for mod_id in mod_ids:
+            folder = folders.get(mod_id)
+            row = QHBoxLayout()
+            text = QVBoxLayout()
+            text.setSpacing(2)
+            title = QLabel(names.get(mod_id) or mod_id)
+            title.setFont(theme.font("FONT_SIZE_MD", bold=True))
+            title.setWordWrap(True)
+            detail = QLabel(f"{mod_id} · {folder}" if folder is not None else
+                            t("local.mods_failed_not_found", id=mod_id))
+            detail.setFont(theme.font("FONT_SIZE_SM"))
+            detail.setProperty("muted", True)
+            detail.setWordWrap(True)
+            detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            text.addWidget(title)
+            text.addWidget(detail)
+            row.addLayout(text, 1)
+            open_btn = dialogs.style_button(QPushButton(t("env.open_location")), "secondary")
+            open_btn.setEnabled(folder is not None)
+            open_btn.clicked.connect(lambda _checked=False, m=mod_id, f=folder: self._open(m, f))
+            row.addWidget(open_btn, 0, Qt.AlignmentFlag.AlignTop)
+            rows_layout.addLayout(row)
+        rows_layout.addStretch()
+        area = QScrollArea()
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setWidgetResizable(True)
+        area.setWidget(rows)
+        self.body.addWidget(area, 1)
+
+        close = QPushButton(t("dlg.close_btn"))
+        close.clicked.connect(self.accept)
+        self.add_footer(right=[close])
+        dialogs.fit_to_screen(self, dialogs.DIALOG_WIDTHS["md"], 160 + 64 * min(len(mod_ids), 8))
+
+    def _open(self, mod_id: str, folder) -> None:
+        path = resolve_mod_open_location(mod_id, folder)
+        if path is None:
+            dialogs.show_warning(self, t("env.open_location"), t("mod.open_location_missing"))
+            return
+        try:
+            os.startfile(str(path))
+        except OSError as exc:
+            dialogs.show_error(self, t("env.open_location"), str(exc))
 
 
 # 世界页签外边距（逻辑像素），与 theme.py 中 #consoleTabs QTabBar::tab 的 margin 一致：
@@ -225,8 +289,13 @@ class ConsolePane(QWidget):
     # 世界运行状态变化时发出（只在变化时发，定时 pump 不会重复触发），供页签状态圆点刷新。
     status_changed = Signal(object)
 
-    def __init__(self, proc, on_close, on_rollback, on_failure=None, on_registered=None, parent=None):
+    def __init__(self, proc, on_close, on_rollback, on_failure=None, on_registered=None, on_export_mods=None,
+                 parent=None):
         super().__init__(parent)
+        self._on_export_mods = on_export_mods
+        # Mod 横幅点击时的去向：全部成功→导出图片；有失败→失败列表
+        self._mod_failed_ids: tuple[str, ...] = ()
+        self._diagnostic_category = ""
         self._last_status = None
         self.proc = proc
         self._on_close = on_close
@@ -252,7 +321,8 @@ class ConsolePane(QWidget):
         outer.setContentsMargins(4, 4, 4, 4)
         outer.setSpacing(4)
 
-        self._mod_status_label = self._banner_label()
+        self._mod_status_label = self._banner_label(clickable=True)
+        self._mod_status_label.mousePressEvent = self._on_mod_status_clicked
         self._diagnostic_label = self._banner_label(clickable=True)
         self._diagnostic_label.mousePressEvent = self._show_diagnostic_detail
         outer.addWidget(self._mod_status_label)
@@ -543,6 +613,35 @@ class ConsolePane(QWidget):
             self._detail_dialog = _DiagnosticDetailDialog(self.window())
         self._detail_dialog.show_detail(self._diagnostic_detail_title, self._diagnostic_detail)
 
+    def _show_report(self, report) -> None:
+        """把诊断结果写到横幅和详情，并自动弹出一次详情窗。"""
+        self._diagnostic_category = report.category
+        self._diagnostic_label.setText(t("local.console_diag_banner", title=report.title))
+        self._diagnostic_label.setStyleSheet(
+            f"background: {theme.hex('BANNER_BG')}; color: {theme.hex('BANNER_TEXT')};")
+        self._diagnostic_label.setVisible(True)
+        detail = report.summary + "\n\n" + t("local.console_diag_tips") + "\n" + "\n".join(
+            f"{index}. {suggestion}" for index, suggestion in enumerate(report.suggestions, 1))
+        if report.related_mods:
+            related = mod_display_names(self.proc, report.related_mods)
+            detail += "\n\n" + t("local.console_diag_related_mods") + "\n" + "\n".join(related[:8])
+            if len(related) > 8:
+                detail += "\n" + t("local.console_diag_more_mods", count=len(related) - 8)
+        if report.evidence:
+            detail += "\n\n" + t("local.console_diag_evidence") + "\n" + "\n".join(report.evidence)
+        self._diagnostic_detail_title = report.title
+        self._diagnostic_detail = detail
+        QTimer.singleShot(0, self._show_diagnostic_detail)
+
+    def _on_mod_status_clicked(self, _event=None) -> None:
+        """Mod 横幅点击：有失败时列出失败的 Mod，全部成功时导出已加载 Mod 的图片。"""
+        if self._mod_failed_ids:
+            ids = self._mod_failed_ids
+            folders = find_process_mod_folders(self.proc, ids)
+            _FailedModsDialog(self.window(), self.proc.shard_name, ids, folders, mod_names(folders)).exec()
+        elif self._on_export_mods is not None:
+            self._on_export_mods(self.proc)
+
     def _diagnostic_log_lines(self) -> tuple[str, ...]:
         """合并管道日志和 server_log.txt，覆盖专服 stdout 缓冲导致的漏行。"""
         lines = list(self.proc.recent_log_lines)
@@ -564,6 +663,8 @@ class ConsolePane(QWidget):
         self._close_search()
         self.text.clear()
         self._mod_status_label.setVisible(False)
+        self._mod_failed_ids = ()
+        self._diagnostic_category = ""
         self._mod_check_reported = False
         self._mod_check_real_start_seen = False
         self._mod_check_ready_seen = False
@@ -605,33 +706,22 @@ class ConsolePane(QWidget):
             self.proc.status = ServerStatus.CRASHED
             status = ServerStatus.CRASHED
             crashed_now = True
-        if (crashed_now or startup_failed_now or token_conflict_now or runtime_lua_error_now) \
-                and not self._diagnostic_reported:
+        first_report = (crashed_now or startup_failed_now or token_conflict_now or runtime_lua_error_now) \
+            and not self._diagnostic_reported
+        # 令牌冲突不会让进程退出，之后真崩溃时横幅要改成崩溃原因；失败回调（令牌等待、自动重启）仍只触发一次
+        crash_after_conflict = crashed_now and self._diagnostic_category == "token_conflict"
+        if first_report or crash_after_conflict:
             self._diagnostic_reported = True
             report = diagnose_server_failure(
-                shard_name=getattr(self.proc, "shard_name", "当前世界"),
+                shard_name=getattr(self.proc, "shard_name", t("local.console_current_world")),
                 exit_code=exit_code, world_ready=self.proc.world_ready,
                 log_lines=self._diagnostic_log_lines(),
-                enabled_mods=self.proc.mods_enabled, loaded_mods=self.proc.mods_loaded)
+                enabled_mods=self.proc.mods_enabled, loaded_mods=self.proc.mods_loaded,
+                ignore_token_conflict=crash_after_conflict)
             if report is not None:
-                if self._on_failure is not None:
+                if first_report and self._on_failure is not None:
                     self._on_failure(self.proc, report)
-                self._diagnostic_label.setText(f"⚠ {report.title} · 点击查看详细诊断")
-                self._diagnostic_label.setStyleSheet(
-                    f"background: {theme.hex('BANNER_BG')}; color: {theme.hex('BANNER_TEXT')};")
-                self._diagnostic_label.setVisible(True)
-                detail = report.summary + "\n\n建议：\n" + "\n".join(
-                    f"{index}. {suggestion}" for index, suggestion in enumerate(report.suggestions, 1))
-                if report.related_mods:
-                    related = mod_display_names(self.proc, report.related_mods)
-                    detail += "\n\n疑似相关 Mod：\n" + "\n".join(related[:8])
-                    if len(related) > 8:
-                        detail += f"\n……另有 {len(related) - 8} 个 Mod 未展开。"
-                if report.evidence:
-                    detail += "\n\n日志证据：\n" + "\n".join(report.evidence)
-                self._diagnostic_detail_title = report.title
-                self._diagnostic_detail = detail
-                QTimer.singleShot(0, self._show_diagnostic_detail)
+                self._show_report(report)
         registration_succeeded_now = (
             getattr(self.proc, "is_master", True) and not self._registration_reported
             and not token_conflict_now and contains_server_registration_success(lines))
@@ -672,9 +762,14 @@ class ConsolePane(QWidget):
                 enabled_mods=self.proc.mods_enabled, loaded_mods=self.proc.mods_loaded,
                 failed_mods=getattr(self.proc, "mods_failed", ()), visible_mod_count=self.proc.visible_mod_count)
             if mod_status.failed_mods:
+                self._mod_failed_ids = mod_status.failed_mods
+                # 横幅只列前 3 个名称（读不到名称时用 ID），完整列表点击后查看
+                names = mod_names(find_process_mod_folders(self.proc, mod_status.failed_mods[:3]))
+                shown = ", ".join(names.get(mod_id, mod_id) for mod_id in mod_status.failed_mods[:3])
+                if len(mod_status.failed_mods) > 3:
+                    shown += " …"
                 self._mod_status_label.setText(t(
-                    "local.mods_check_failed", failed_count=len(mod_status.failed_mods),
-                    ids=", ".join(mod_status.failed_mods)))
+                    "local.mods_check_failed", failed_count=len(mod_status.failed_mods), ids=shown))
                 self._mod_status_label.setStyleSheet(
                     f"background: {theme.hex('BANNER_BG')}; color: {theme.hex('BANNER_TEXT')};")
                 self._mod_status_label.setVisible(True)

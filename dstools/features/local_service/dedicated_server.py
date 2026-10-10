@@ -301,9 +301,13 @@ class ServerProcess:
         self.missing_mods: list[str] | None = None
 
     @property
+    def visible_mod_ids(self) -> set[str]:
+        """玩家可见的已启用 Mod，不包含工具内部配套组件。"""
+        return self.mods_enabled - _INTERNAL_MOD_KEYS
+
+    @property
     def visible_mod_count(self) -> int:
-        """玩家可见的已启用 Mod 数量，不包含工具内部配套组件。"""
-        return len(self.mods_enabled - _INTERNAL_MOD_KEYS)
+        return len(self.visible_mod_ids)
 
     def start(self) -> None:
         # 完全不存在的 Mod 服务器可能连 enabling 行都不打印，所以启动前先读配置里的启用集合

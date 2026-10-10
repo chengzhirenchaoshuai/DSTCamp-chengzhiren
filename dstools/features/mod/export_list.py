@@ -33,3 +33,60 @@ def build_export_entries(mod_data: dict, mod_infos: dict) -> list[ExportModEntry
             id_text=numeric if numeric.isascii() and numeric.isdecimal() else "",
         ))
     return entries
+
+
+def collect_export_data(mod_ids, folders: dict, platform) -> tuple[list[ExportModEntry], dict]:
+    """按 Mod 目录直接解析导出条目和图标（供运行中的专服使用，不依赖 Mod 页已加载的数据）。
+
+    会转换图标、跑沙箱补版本号，耗时，只能放后台线程。排除 client_only，按名称排序。
+    """
+    import functools
+    from concurrent.futures import ThreadPoolExecutor
+
+    from dstools.features.mod.icons import get_mod_icon_path, load_mod_icon_image
+    from dstools.features.mod.list_model import mod_name_cmp
+    from dstools.features.mod.local_version import resolve_local_mod_version
+    from dstools.features.mod.parser import parse_modinfo
+
+    def one(mod_id):
+        folder = folders.get(mod_id)
+        info = icon = None
+        if folder is not None:
+            try:
+                info = parse_modinfo(folder)
+            except (OSError, ValueError, TypeError):
+                info = None
+        if info is not None:
+            try:
+                resolved = resolve_local_mod_version(str(mod_id), folder, str(info.workshop_id))
+                if resolved.name_status == "confirmed":
+                    info.name = resolved.name
+                if resolved.icon_status == "confirmed":
+                    info.icon = resolved.icon
+                if resolved.icon_atlas_status == "confirmed":
+                    info.icon_atlas = resolved.icon_atlas
+                info.version = resolved.version
+                info.version_status = resolved.status
+            except Exception:
+                pass
+            try:
+                path = get_mod_icon_path(info, folder, platform)
+                icon = load_mod_icon_image(path) if path is not None else None
+            except Exception:
+                icon = None
+        return mod_id, info, icon
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(one, mod_ids))
+    infos = {mod_id: info for mod_id, info, _icon in results}
+    icons = {mod_id: icon for mod_id, _info, icon in results if icon is not None}
+    enabled = {mod_id: _Enabled() for mod_id in infos}
+    entries = build_export_entries(enabled, infos)
+    entries.sort(key=functools.cmp_to_key(lambda a, b: mod_name_cmp(a.name, b.name)))
+    return entries, icons
+
+
+class _Enabled:
+    """build_export_entries 只读 enabled 与 name 两个属性，这里给运行中已加载的 Mod 用。"""
+    enabled = True
+    name = ""

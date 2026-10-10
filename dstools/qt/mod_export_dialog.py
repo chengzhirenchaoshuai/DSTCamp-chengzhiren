@@ -315,3 +315,39 @@ class ModListImageDialog(dialogs.Dialog):
 def default_file_name(cluster_label: str) -> str:
     safe = "".join("_" if ch in '\\/:*?"<>|' else ch for ch in cluster_label).strip() or "mods"
     return f"{safe}_mods_{time.strftime('%Y%m%d_%H%M')}.png"
+
+
+def export_running_mods_image(parent, proc, mod_ids, cluster_label: str) -> None:
+    """控制台"Mod 全部加载成功"横幅的点击入口：按专服实际加载的 Mod 生成图片并预览。
+
+    解析与图标转换放后台，完成前给出提示，避免重复点击时连开多份。"""
+    from dstools.features.local_service.shard_helpers import find_process_mod_folders
+    from dstools.features.mod.export_list import collect_export_data
+    from dstools.models import Platform
+    from dstools.qt.threads import run_async
+
+    if getattr(parent, "_mod_export_running", False):
+        return
+    parent._mod_export_running = True
+    dialogs.show_toast(parent, t("local.mods_export_preparing"))
+    ids = tuple(mod_ids)
+
+    def work():
+        return collect_export_data(ids, find_process_mod_folders(proc, ids), Platform.STEAM)
+
+    def done(result) -> None:
+        parent._mod_export_running = False
+        entries, icons = result
+        if not entries:
+            dialogs.show_info(parent, t("mod.export_preview_title"), t("mod.export_empty"))
+            return
+        subtitle = t("mod.export_subtitle", cluster=cluster_label, shard=proc.shard_name,
+                     count=len(entries), time=time.strftime("%Y-%m-%d %H:%M"))
+        image = render_mod_list_image(entries, icons, t("mod.export_title"), subtitle)
+        ModListImageDialog(parent, image, default_file_name(cluster_label)).exec()
+
+    def error(exc: Exception) -> None:
+        parent._mod_export_running = False
+        dialogs.show_error(parent, t("mod.export_preview_title"), str(exc))
+
+    run_async(work, done, error)
