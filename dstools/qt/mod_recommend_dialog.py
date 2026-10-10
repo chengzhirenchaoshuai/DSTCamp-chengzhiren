@@ -12,10 +12,11 @@ from dstools.qt.theme import theme
 from dstools.qt.widgets import Card
 from dstools.shared.resource_paths import bundled_resource_dir
 
+# （工坊 ID, Mod 名称, 简介文案 key）
 RECOMMENDED_MODS = [
-    ("3444078585", "DontStarveLuaJit2", "LuaJIT 性能补丁，大幅降低卡顿"),
-    ("2941527805", "Chinese++ Pro", "汉化其它模组的名称与配置项，Mod 列表和设置直接显示中文"),
-    ("2998347052", "Say about your ping(Server)", "显示 Ping、网络与服务器性能及丢包率，并支持聊天播报"),
+    ("3444078585", "DontStarveLuaJit2", "mod.recommend_desc_luajit"),
+    ("2941527805", "Chinese++ Pro", "mod.recommend_desc_chinese_pp"),
+    ("2998347052", "Say about your ping(Server)", "mod.recommend_desc_ping"),
 ]
 
 _ICON = 56  # 图标边长（逻辑像素）
@@ -34,8 +35,8 @@ class RecommendModsDialog(dialogs.Dialog):
         inner_layout.setContentsMargins(0, 0, 0, 0)
         inner_layout.setSpacing(10)
         icon_dir = bundled_resource_dir() / "icons" / "recommended"
-        for wid, name, desc in RECOMMENDED_MODS:
-            inner_layout.addWidget(self._mod_card(wid, name, desc, icon_dir / f"{wid}.png"))
+        for wid, name, desc_key in RECOMMENDED_MODS:
+            inner_layout.addWidget(self._mod_card(wid, name, t(desc_key), icon_dir / f"{wid}.png"))
         inner_layout.addStretch()
 
         area = QScrollArea()

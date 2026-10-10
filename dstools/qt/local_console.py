@@ -85,7 +85,7 @@ class _FailedModsDialog(dialogs.Dialog):
     _ICON = 44  # 图标边长（逻辑像素）
 
     def __init__(self, parent, shard_name: str, mod_ids: tuple[str, ...], folders: dict):
-        super().__init__(parent, t("local.mods_failed_dialog_title", shard=shard_name), width="md")
+        super().__init__(parent, t("local.mods_failed_dialog_title", shard=shard_name), width="lg")
         hint = QLabel(t("local.mods_failed_dialog_hint", count=len(mod_ids)))
         hint.setWordWrap(True)
         hint.setProperty("muted", True)
@@ -114,7 +114,7 @@ class _FailedModsDialog(dialogs.Dialog):
         close = QPushButton(t("dlg.close_btn"))
         close.clicked.connect(self.accept)
         self.add_footer(right=[close])
-        dialogs.fit_to_screen(self, dialogs.DIALOG_WIDTHS["md"], 170 + 78 * min(len(mod_ids), 6))
+        dialogs.fit_to_screen(self, dialogs.DIALOG_WIDTHS["lg"], 170 + 78 * min(len(mod_ids), 6))
 
     def _mod_card(self, mod_id: str, folder) -> QWidget:
         info = None

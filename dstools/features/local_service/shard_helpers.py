@@ -5,6 +5,7 @@ from pathlib import Path
 from dstools.features.cluster_config.config_manager import load_cluster_config
 from dstools.features.mod.parser import find_game_mods_dir, find_shared_ugc_directory, find_workshop_dir, parse_modinfo
 from dstools.features.local_service.dedicated_server import ServerStatus
+from dstools.i18n import t
 
 RUNNING_LIKE = (ServerStatus.STARTING, ServerStatus.RUNNING, ServerStatus.STOPPING)
 
@@ -80,7 +81,8 @@ def mod_names(folders: dict[str, Path]) -> dict[str, str]:
 def mod_display_names(proc, mod_ids: tuple[str, ...]) -> tuple[str, ...]:
     """把诊断中的 Mod ID 尽力解析成"ID（名称）"，失败时保留 ID。"""
     names = mod_names(find_process_mod_folders(proc, mod_ids))
-    return tuple(f"{mod_id}（{names[mod_id]}）" if mod_id in names else mod_id for mod_id in mod_ids)
+    return tuple(t("local.mod_id_with_name", id=mod_id, name=names[mod_id]) if mod_id in names else mod_id
+                 for mod_id in mod_ids)
 
 
 __all__ = [
