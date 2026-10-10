@@ -18,17 +18,16 @@
   <a href="#-features">Features</a> ·
   <a href="#-storage-layout">Storage</a> ·
   <a href="#-development">Development</a> ·
-  <a href="#163-changes">Changelog</a> ·
+  <a href="#164-changes">Changelog</a> ·
   <a href="README.md">中文</a>
 </p>
 
 ---
 
-## ✨ 1.6.3 highlights
+## ✨ 1.6.4 highlights
 
-- 👥 **Multiple accounts**: all game accounts on this PC are detected, following the account logged in to Steam by default, and you can switch in the save bar.
-- 🧹 **Mods subscribed by other accounts**: the subscriber is shown, they can be force-cleaned, and they are no longer deleted as leftovers.
-- 💾 **Editable local saves**: change world settings and Mods, and save even while the game is open.
+- 🔧 **Automatic V1 Mod folder repair**: V1 Mods that fail to load because of extra files in their folder are cleaned up before the server starts, no manual steps needed.
+- 🖥️ **More useful console banners**: failed Mods are named and open a failure list, and when everything loads you can export an image of the Mod list.
 
 ## 🧭 Features
 
@@ -104,9 +103,28 @@ python scripts/build_exe.py         # stage allowlisted resources in build/, wri
 
 `tests/_harness.py` runs every `test_*` function in definition order, so new tests need no registration. Real Windows GUI, Steam, frpc, and game behavior still require manual validation before release.
 
-## 1.6.3 changes
+## 1.6.4 changes
 
 ### ✨ New features
+
+- **Automatic V1 Mod folder repair**: when a V1 folder contains extra files, they are cleaned up before the server starts, with a notice and a log entry; the Workshop update dialog gains a "V1 folder has extra files" status.
+- **Console banner improvements**: the Mod load failure banner shows Mod names and opens a failure list with icons, where each Mod's folder can be opened; when all Mods load, clicking the banner exports an image of the Mods the server actually loaded; crash and startup diagnostics support the English UI.
+- **Recommended Mods dialog uses icon cards**: icons are sharp at any display scaling, and descriptions support English.
+- **Leaner Mod update log**: each Mod shows a single "start checking" line with its name instead of repeating with download progress.
+
+### 🐞 Fixes
+
+- V1 Mod folders with extra files failed to load or were skipped during deployment, and Mods re-uploaded as V2 with an old package left inside were treated as V1 (V1/V2 is now determined by the install size in Steam's manifest); temporary files were left in the Workshop folder when a V1 download failed.
+- When a world that had reported a token conflict later exited, the banner did not show the actual exit reason.
+- Clicking "Set Global Tokens" while creating a save did nothing and raised an error.
+- Shift+Enter in log search still jumped to the next match.
+
+<details>
+<summary><strong>Earlier versions (1.3.5 ~ 1.6.3)</strong></summary>
+
+### 1.6.3
+
+#### ✨ New features
 
 - **Multiple accounts**: all game accounts on this PC are detected and their local saves scanned; the account logged in to Steam is used by default (marked with a green dot in the dropdown). You can switch accounts in the save bar, and local saves, the status bar, the create-save wizard's nickname, and Mod default config sync all follow the current account.
 - **Mods subscribed by other accounts**: the subscriber is shown and they can be force-cleaned (Steam is closed and restarted automatically; batch supported); the update window gains an account filter.
@@ -115,12 +133,9 @@ python scripts/build_exe.py         # stage allowlisted resources in build/, wri
 - **Full LuaJIT patch uninstall**: removes the copy and leftovers and disables the companion Mod; also works when the patch is already turned off.
 - **UI tweaks**: the "Switch Program" window is now a single-select table that applies on Save; world console tabs sit flush on the log box, with the close badge in the top-right corner.
 
-### 🐞 Fixes
+#### 🐞 Fixes
 
 - Mods subscribed by other Steam accounts were deleted as leftovers and then downloaded again by Steam.
-
-<details>
-<summary><strong>Earlier versions (1.3.5 ~ 1.6.2)</strong></summary>
 
 ### 1.6.2
 
