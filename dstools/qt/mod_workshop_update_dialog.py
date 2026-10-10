@@ -41,6 +41,7 @@ _LATEST_LABELS = {
     WorkshopModState.RESIDUAL_FILES: "mod.update_latest_residual_files",
     WorkshopModState.SUBSCRIBED_BY_OTHER_ACCOUNT: "mod.update_latest_other_account",
     WorkshopModState.LEGACY_PACKAGE_READY: "mod.update_latest_legacy_package_ready",
+    WorkshopModState.LEGACY_DIR_POLLUTED: "mod.update_latest_legacy_dir_polluted",
     WorkshopModState.LEGACY_RUNTIME_RESIDUAL: "mod.update_latest_legacy_runtime_residual",
     WorkshopModState.LOCAL_FILES: "mod.update_latest_local_files",
     WorkshopModState.NOT_INSTALLED: "mod.update_latest_not_installed",
@@ -287,7 +288,7 @@ class WorkshopUpdateDialog(QDialog):
             result.append(wid)
         priority = {WorkshopModState.DOWNLOADING: 0, WorkshopModState.DOWNLOAD_PENDING: 0,
                    WorkshopModState.UPDATE_AVAILABLE: 1, WorkshopModState.SUSPECTED_OUTDATED: 1,
-                   WorkshopModState.SHADOWED_BY_V1: 1,
+                   WorkshopModState.SHADOWED_BY_V1: 1, WorkshopModState.LEGACY_DIR_POLLUTED: 1,
                    WorkshopModState.MISSING: 2}
         return sorted(result, key=lambda wid: (
             priority.get(self._states[wid].state, 5) if wid in self._states else 5, self._name_for(wid).casefold()))

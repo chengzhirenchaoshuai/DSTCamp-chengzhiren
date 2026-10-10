@@ -32,6 +32,8 @@ class WorkshopModState(str, Enum):
     NOT_INSTALLED = "not_installed"
     RESIDUAL_FILES = "residual_files"
     LEGACY_PACKAGE_READY = "legacy_package_ready"
+    # V1 项目目录里除压缩包外还有别的文件，游戏不会解压它，Mod 加载失败
+    LEGACY_DIR_POLLUTED = "legacy_dir_polluted"
     LEGACY_RUNTIME_RESIDUAL = "legacy_runtime_residual"
     UNSUBSCRIBED_PENDING_CLEANUP = "unsubscribed_pending_cleanup"
     UNSUBSCRIBED_REFERENCED = "unsubscribed_referenced"
@@ -61,6 +63,7 @@ class WorkshopModEvidence:
     legacy_package_valid: bool | None = None
     legacy_package_error: str = ""
     legacy_package_version: LocalModVersion | None = None
+    legacy_dir_extras: tuple[Path, ...] = ()
     configured: bool = False
     residual_path: Path | None = None
     workshop_content_path: Path | None = None
@@ -96,6 +99,7 @@ class WorkshopModStatus:
             WorkshopModState.UPDATE_AVAILABLE,
             WorkshopModState.SUSPECTED_OUTDATED,
             WorkshopModState.SHADOWED_BY_V1,
+            WorkshopModState.LEGACY_DIR_POLLUTED,
         }
 
     @property
@@ -112,6 +116,8 @@ class WorkshopModStatus:
                 WorkshopModState.SUSPECTED_OUTDATED,
                 # 新订阅的 V1 可能只有有效 Legacy 包尚未展开，仍显示"更新"，由更新流程决定下载或直接部署
                 WorkshopModState.LEGACY_PACKAGE_READY,
+                # 更新时先删掉目录里压缩包以外的文件，再按需重下并部署
+                WorkshopModState.LEGACY_DIR_POLLUTED,
             }
         )
 
@@ -289,6 +295,12 @@ def evaluate_workshop_status(evidence: WorkshopModEvidence) -> WorkshopModStatus
         legacy_path = install_path or source_path
         if legacy_path is None or not legacy_path.is_file():
             return result(WorkshopModState.MISSING, "Steam 记录的旧式 Mod 文件不存在")
+        if evidence.legacy_dir_extras:
+            return result(
+                WorkshopModState.LEGACY_DIR_POLLUTED,
+                "旧式 Mod 目录里除下载包外还有其他文件，游戏不会解压，Mod 无法加载",
+                "多余条目：" + "、".join(path.name for path in evidence.legacy_dir_extras[:5]),
+            )
         if evidence.legacy_package_valid is False:
             return result(
                 WorkshopModState.MISSING,
@@ -528,6 +540,7 @@ def inspect_workshop_items(
         )
         legacy_validation = None
         legacy_package_version = None
+        legacy_dir_extras: tuple[Path, ...] = ()
         state = states.get(workshop_id)
         if (
             state is not None
@@ -536,10 +549,12 @@ def inspect_workshop_items(
             and install.path.is_file()
         ):
             from dstools.features.mod.legacy_v1 import (
+                legacy_package_extras,
                 resolve_legacy_package_version,
                 validate_legacy_package,
             )
 
+            legacy_dir_extras = legacy_package_extras(install.path)
             legacy_validation = validate_legacy_package(install.path)
             if legacy_validation.valid:
                 legacy_package_version = resolve_legacy_package_version(
@@ -604,6 +619,7 @@ def inspect_workshop_items(
                 legacy_validation.error if legacy_validation is not None else ""
             ),
             legacy_package_version=legacy_package_version,
+            legacy_dir_extras=legacy_dir_extras,
             configured=workshop_id in configured,
             residual_path=residual_paths.get(workshop_id),
             workshop_content_path=workshop_content_paths.get(workshop_id),

@@ -275,6 +275,42 @@ def find_legacy_package_ids() -> set[int]:
     return result
 
 
+def _is_workshop_item_dir(path: Path) -> bool:
+    from dstools.features.mod.parser import is_workshop_content_id
+
+    return is_workshop_content_id(path.name) and path.parent.name == "322330"
+
+
+def legacy_package_extras(archive_path: Path) -> tuple[Path, ...]:
+    """V1 项目目录里除 Steam 记录的 ``*_legacy.bin`` 以外的条目。
+
+    坑（用户真机）：V1 项目目录里只要混入其他文件（如手动解压出的内容），游戏就不再把包解压到
+    ``mods/workshop-<id>``，原地解压的文件也不会被当成 V2 加载，Mod 直接加载失败。
+    """
+    archive = Path(archive_path)
+    item_dir = archive.parent
+    if not archive.name.endswith("_legacy.bin") or not _is_workshop_item_dir(item_dir):
+        return ()
+    try:
+        return tuple(sorted(path for path in item_dir.iterdir() if path.name != archive.name))
+    except OSError:
+        return ()
+
+
+def remove_legacy_package_extras(archive_path: Path) -> tuple[Path, ...]:
+    """删除 V1 项目目录里压缩包以外的全部条目，返回删除的路径；失败抛 OSError。"""
+    removed = []
+    for path in legacy_package_extras(archive_path):
+        if os.path.isjunction(path):
+            os.rmdir(path)
+        elif path.is_symlink() or not path.is_dir():
+            path.unlink(missing_ok=True)
+        else:
+            shutil.rmtree(path)
+        removed.append(path)
+    return tuple(removed)
+
+
 def materialize_legacy_package_for_read(
     workshop_id: int, archive_path: Path
 ) -> Path:

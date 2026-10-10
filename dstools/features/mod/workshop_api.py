@@ -1056,6 +1056,17 @@ class SteamWorkshopSession:
                     max(0, int(source_details.time_updated)),
                 )
                 result.details["legacy_path_recovered_from_source"] = True
+        if result.state.legacy_item and install_info is not None:
+            # 目录里混入其他文件时游戏不会解压 V1 包，先清掉，只留 Steam 记录的压缩包
+            from dstools.features.mod.legacy_v1 import remove_legacy_package_extras
+
+            try:
+                removed = remove_legacy_package_extras(install_info.path)
+            except OSError as exc:
+                result.error = f"无法清理旧式 Mod 目录里的多余文件：{exc}"
+                return result
+            if removed:
+                result.details["legacy_extras_removed"] = [str(path) for path in removed]
         # 文件被手动删除后 Installed 位和安装信息可能仍是旧值，物理目录、modinfo 与
         # Manifest 都通过才跳过 DownloadItem，否则按修复处理
         if (
@@ -1558,54 +1569,58 @@ class SteamWorkshopSession:
         run_callbacks = self.dll.SteamAPI_RunCallbacks
         run_callbacks.restype = None
         io_failed = ctypes.c_bool()
-        deadline = time.monotonic() + max(0.0, timeout)
-        while time.monotonic() < deadline:
-            run_callbacks()
-            try:
-                current_size = target.stat().st_size
-            except OSError:
-                current_size = 0
-            result.downloaded_bytes = current_size
-            result.total_bytes = expected_size or None
-            if on_progress:
-                on_progress(result.downloaded_bytes, result.total_bytes)
-            if self.dll.SteamAPI_ISteamUtils_IsAPICallCompleted(
-                self.utils, api_call, ctypes.byref(io_failed)
-            ):
-                if io_failed.value:
-                    result.error = "Legacy Workshop 下载发生 Steam IO 错误"
-                    return result
-                from dstools.features.mod.legacy_v1 import validate_legacy_package
-
-                validation = validate_legacy_package(target)
-                if validation.valid and (
-                    not expected_size or current_size == expected_size
-                ):
-                    try:
-                        os.replace(target, final_target)
-                    except OSError as exc:
-                        result.error = f"无法替换 Legacy Mod 下载包：{exc}"
-                        return result
-                    return SteamWorkshopSession._finish_legacy_install(
-                        result,
-                        final_target,
-                        expected_version=str(
-                            result.details.get("expected_version") or ""
-                        ),
-                        force=True,
-                    )
-                if validation.valid:
-                    result.error = f"Legacy Workshop 文件大小不完整：{current_size}/{expected_size} 字节"
-                else:
-                    result.error = f"Legacy Workshop 文件验收失败：{validation.error}"
-                return result
-            time.sleep(max(0.02, poll_interval))
         try:
-            target.unlink(missing_ok=True)
-        except OSError:
-            pass
-        result.error = "等待 Legacy Workshop 下载完成超时；请检查 Steam 登录状态和网络"
-        return result
+            deadline = time.monotonic() + max(0.0, timeout)
+            while time.monotonic() < deadline:
+                run_callbacks()
+                try:
+                    current_size = target.stat().st_size
+                except OSError:
+                    current_size = 0
+                result.downloaded_bytes = current_size
+                result.total_bytes = expected_size or None
+                if on_progress:
+                    on_progress(result.downloaded_bytes, result.total_bytes)
+                if self.dll.SteamAPI_ISteamUtils_IsAPICallCompleted(
+                    self.utils, api_call, ctypes.byref(io_failed)
+                ):
+                    if io_failed.value:
+                        result.error = "Legacy Workshop 下载发生 Steam IO 错误"
+                        return result
+                    from dstools.features.mod.legacy_v1 import validate_legacy_package
+
+                    validation = validate_legacy_package(target)
+                    if validation.valid and (
+                        not expected_size or current_size == expected_size
+                    ):
+                        try:
+                            os.replace(target, final_target)
+                        except OSError as exc:
+                            result.error = f"无法替换 Legacy Mod 下载包：{exc}"
+                            return result
+                        return SteamWorkshopSession._finish_legacy_install(
+                            result,
+                            final_target,
+                            expected_version=str(
+                                result.details.get("expected_version") or ""
+                            ),
+                            force=True,
+                        )
+                    if validation.valid:
+                        result.error = f"Legacy Workshop 文件大小不完整：{current_size}/{expected_size} 字节"
+                    else:
+                        result.error = f"Legacy Workshop 文件验收失败：{validation.error}"
+                    return result
+                time.sleep(max(0.02, poll_interval))
+            result.error = "等待 Legacy Workshop 下载完成超时；请检查 Steam 登录状态和网络"
+            return result
+        finally:
+            # 失败时临时文件留在 V1 目录里会让游戏不再解压；成功时它已被改名，这里只清失败残留
+            if target != final_target:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def item_install_info(self, workshop_id: int) -> Path | None:
         details = self.item_install_details(workshop_id)
@@ -1762,6 +1777,9 @@ def _update_workshop_items_in_process(
                     result = WorkshopDownloadResult(workshop_id,
                         error=f"{type(exc).__name__}: {exc}",
                     )
+                if result.completed and result.details.get("legacy_extras_removed"):
+                    # 清理了多余文件就算一次修复，不能报"已是最新"
+                    result.up_to_date = False
                 batch.results.append(result)
                 if on_item_complete:
                     on_item_complete(index, total, result)

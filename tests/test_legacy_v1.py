@@ -341,5 +341,37 @@ def test_legacy_package_validation_and_deploy() -> None:
                 raise AssertionError("仍受 Steam 管理的 V1 目录不能清理")
 
 
+def test_legacy_dir_with_extra_files() -> None:
+    """V1 目录混入解压文件时游戏不再解压：要识别出来，更新时只留下压缩包。"""
+    from dstools.features.mod.legacy_v1 import legacy_package_extras, remove_legacy_package_extras
+    from dstools.features.mod.workshop_api import WorkshopInstallInfo
+    from dstools.features.mod.workshop_status import (
+        WorkshopModEvidence, WorkshopModState, evaluate_workshop_status,
+    )
+
+    with tempfile.TemporaryDirectory(prefix="dstcamp_v1_extra_") as temp:
+        item = Path(temp) / "322330" / "123"
+        item.mkdir(parents=True)
+        archive = item / "456_legacy.bin"
+        _write_package(archive)
+        (item / "modinfo.lua").write_text('name = "extracted"', encoding="utf-8")
+        (item / "scripts").mkdir()
+        (item / "scripts" / "a.lua").write_text("", encoding="utf-8")
+
+        extras = legacy_package_extras(archive)
+        assert {path.name for path in extras} == {"modinfo.lua", "scripts"}
+        status = evaluate_workshop_status(WorkshopModEvidence(
+            123, steam_state=WorkshopItemState(7),
+            install_info=WorkshopInstallInfo(archive, archive.stat().st_size, 1),
+            legacy_package_valid=True, legacy_dir_extras=extras))
+        assert status.state == WorkshopModState.LEGACY_DIR_POLLUTED
+        assert status.needs_action and status.can_update
+
+        remove_legacy_package_extras(archive)
+        assert [path.name for path in item.iterdir()] == ["456_legacy.bin"]
+        # 不在 322330/<id> 下的文件一律不碰
+        assert legacy_package_extras(Path(temp) / "x_legacy.bin") == ()
+
+
 if __name__ == "__main__":
     run(globals())
