@@ -621,8 +621,9 @@ class WorkshopUpdateDialog(QDialog):
         progress.show()
         progress.append(t("mod.update_log_start", count=len(ids)))
 
-        def on_progress(current, total) -> None:
-            progress.append(t("mod.update_log_item_start", current=current, total=total, name=""))
+        def on_item_start(current, total, workshop_id) -> None:
+            progress.append(t("mod.update_log_item_start", current=current, total=total,
+                              name=self._name_for(str(workshop_id))))
 
         def on_line(current, total, result) -> None:
             name = self._name_for(str(result.workshop_id))
@@ -644,7 +645,7 @@ class WorkshopUpdateDialog(QDialog):
 
         self.page._update_workshop_mods(ids, expected_versions=expected_versions,
                                         force_redownload_ids=force_redownload_ids,
-                                        on_progress=on_progress, on_line=on_line, on_finish=on_finish)
+                                        on_item_start=on_item_start, on_line=on_line, on_finish=on_finish)
 
     # ── 移除失效引用 ─────────────────────────────────────────────────────
     def _remove_reference(self, wid: str) -> None:

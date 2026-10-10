@@ -1239,7 +1239,7 @@ class ModPage(Page):
         WorkshopUpdateDialog(self).exec()
 
     def _update_workshop_mods(self, ids: list[int], expected_versions=None, force_redownload_ids=None,
-                              on_progress=None, on_line=None, on_finish=None) -> None:
+                              on_item_start=None, on_line=None, on_finish=None) -> None:
         """后台调用 SteamUGC 更新，供 Workshop 更新弹窗复用（弹窗负责进度展示）。
 
         ``on_finish`` 默认是本页的 _finish_workshop_update，更新弹窗可传入自己的包装版本。"""
@@ -1255,7 +1255,9 @@ class ModPage(Page):
             try:
                 batch = update_workshop_items(
                     ids, expected_versions=expected_versions or {}, force_redownload_ids=force_redownload_ids or set(),
-                    on_progress=lambda cur, total, *_a: on_progress and post_to_ui(lambda _b: on_progress(cur, total)),
+                    # 接每个 Mod 开始时的事件；下载进度回调每 0.2 秒一次，接它会刷出大量重复行
+                    on_item_start=lambda cur, total, wid: on_item_start and post_to_ui(
+                        lambda _b: on_item_start(cur, total, wid)),
                     on_item_complete=lambda cur, total, result: on_line and post_to_ui(
                         lambda _b: on_line(cur, total, result)),
                     cancel_event=cancel_event)
