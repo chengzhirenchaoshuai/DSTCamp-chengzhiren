@@ -329,7 +329,6 @@ def export_running_mods_image(parent, proc, mod_ids, cluster_label: str) -> None
     if getattr(parent, "_mod_export_running", False):
         return
     parent._mod_export_running = True
-    dialogs.show_toast(parent, t("local.mods_export_preparing"))
     ids = tuple(mod_ids)
 
     def work():
