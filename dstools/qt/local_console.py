@@ -20,9 +20,14 @@ from dstools.features.local_service.server_diagnostics import (
 from dstools.features.local_service.shard_helpers import (
     STATUS_TEXT_KEYS, find_process_mod_folders, mod_display_names, mod_names,
 )
+from dstools.features.mod.icons import get_cached_mod_icon_path
 from dstools.features.mod.locations import resolve_mod_open_location
+from dstools.features.mod.parser import parse_modinfo
 from dstools.i18n import t
+from dstools.models import Platform
 from dstools.qt import dialogs
+from dstools.qt.mod_panel import _DEFAULT_ICON_PATH
+from dstools.qt.widgets import Card
 from dstools.qt.theme import theme
 from dstools.shared.clipboard import copy_file_to_clipboard
 
@@ -75,53 +80,102 @@ class _DiagnosticDetailDialog(QDialog):
 
 
 class _FailedModsDialog(dialogs.Dialog):
-    """加载失败的 Mod 列表：每行显示名称、ID 与本地目录，可直接打开所在位置。"""
+    """加载失败的 Mod 列表：每个 Mod 一张圆角卡片，显示图标、名称、ID 与本地目录，可直接打开所在位置。"""
 
-    def __init__(self, parent, shard_name: str, mod_ids: tuple[str, ...], folders: dict, names: dict):
+    _ICON = 44  # 图标边长（逻辑像素）
+
+    def __init__(self, parent, shard_name: str, mod_ids: tuple[str, ...], folders: dict):
         super().__init__(parent, t("local.mods_failed_dialog_title", shard=shard_name), width="md")
-        hint = QLabel(t("local.mods_failed_dialog_hint"))
+        hint = QLabel(t("local.mods_failed_dialog_hint", count=len(mod_ids)))
         hint.setWordWrap(True)
         hint.setProperty("muted", True)
         self.body.addWidget(hint)
 
         rows = QWidget()
+        rows.setObjectName("failedModsInner")
+        rows.setAutoFillBackground(False)
         rows_layout = QVBoxLayout(rows)
         rows_layout.setContentsMargins(0, 0, 0, 0)
-        rows_layout.setSpacing(10)
+        rows_layout.setSpacing(8)
         for mod_id in mod_ids:
-            folder = folders.get(mod_id)
-            row = QHBoxLayout()
-            text = QVBoxLayout()
-            text.setSpacing(2)
-            title = QLabel(names.get(mod_id) or mod_id)
-            title.setFont(theme.font("FONT_SIZE_MD", bold=True))
-            title.setWordWrap(True)
-            detail = QLabel(f"{mod_id} · {folder}" if folder is not None else
-                            t("local.mods_failed_not_found", id=mod_id))
-            detail.setFont(theme.font("FONT_SIZE_SM"))
-            detail.setProperty("muted", True)
-            detail.setWordWrap(True)
-            detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            text.addWidget(title)
-            text.addWidget(detail)
-            row.addLayout(text, 1)
-            open_btn = dialogs.style_button(QPushButton(t("env.open_location")), "secondary")
-            open_btn.setEnabled(folder is not None)
-            open_btn.clicked.connect(lambda _checked=False, m=mod_id, f=folder: self._open(m, f))
-            row.addWidget(open_btn, 0, Qt.AlignmentFlag.AlignTop)
-            rows_layout.addLayout(row)
+            rows_layout.addWidget(self._mod_card(mod_id, folders.get(mod_id)))
         rows_layout.addStretch()
         area = QScrollArea()
+        area.setObjectName("failedModsArea")
         area.setFrameShape(QFrame.Shape.NoFrame)
         area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setWidgetResizable(True)
+        # 视口和内层都不自绘底色，否则会盖出一块灰色底
+        area.viewport().setAutoFillBackground(False)
+        area.setStyleSheet("#failedModsArea, #failedModsInner { background: transparent; border: none; }")
         area.setWidget(rows)
         self.body.addWidget(area, 1)
 
         close = QPushButton(t("dlg.close_btn"))
         close.clicked.connect(self.accept)
         self.add_footer(right=[close])
-        dialogs.fit_to_screen(self, dialogs.DIALOG_WIDTHS["md"], 160 + 64 * min(len(mod_ids), 8))
+        dialogs.fit_to_screen(self, dialogs.DIALOG_WIDTHS["md"], 170 + 78 * min(len(mod_ids), 6))
+
+    def _mod_card(self, mod_id: str, folder) -> QWidget:
+        info = None
+        if folder is not None:
+            try:
+                info = parse_modinfo(folder)
+            except (OSError, ValueError, TypeError):
+                info = None
+        card = Card(radius=12, alpha=170)
+        row = QHBoxLayout(card)
+        row.setContentsMargins(12, 10, 12, 10)
+        row.setSpacing(12)
+
+        icon = QLabel()
+        icon.setFixedSize(self._ICON, self._ICON)
+        pixmap = self._icon_pixmap(info, folder)
+        if pixmap is not None:
+            icon.setPixmap(pixmap)
+        row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
+
+        text = QVBoxLayout()
+        text.setSpacing(3)
+        title = QLabel((info.name or "").strip() if info and info.name else mod_id)
+        title.setFont(theme.font("FONT_SIZE_MD", bold=True))
+        title.setWordWrap(True)
+        text.addWidget(title)
+        detail = QLabel(f"{mod_id}  ·  {folder}" if folder is not None else t("local.mods_failed_not_found", id=mod_id))
+        detail.setFont(theme.font("FONT_SIZE_XS"))
+        detail.setWordWrap(True)
+        detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        if folder is None:
+            detail.setStyleSheet(f"color: {theme.hex('ERROR')};")
+        else:
+            detail.setProperty("muted", True)
+        text.addWidget(detail)
+        row.addLayout(text, 1)
+
+        open_btn = dialogs.style_button(QPushButton(t("env.open_location")), "secondary")
+        open_btn.setEnabled(folder is not None)
+        open_btn.clicked.connect(lambda _checked=False, m=mod_id, f=folder: self._open(m, f))
+        row.addWidget(open_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        return card
+
+    def _icon_pixmap(self, info, folder) -> QPixmap | None:
+        """优先用已转换好的图标缓存（不在界面线程里跑 ktech 转换），没有时用默认图标。"""
+        path = None
+        if info is not None and folder is not None:
+            try:
+                path = get_cached_mod_icon_path(info, folder, Platform.STEAM)
+            except OSError:
+                path = None
+        source = QPixmap(str(path if path is not None else _DEFAULT_ICON_PATH))
+        if source.isNull():
+            return None
+        # 按屏幕缩放比缩到物理像素再设 devicePixelRatio，避免被二次放大发虚
+        dpr = self.devicePixelRatioF()
+        side = round(self._ICON * dpr)
+        pixmap = source.scaled(side, side, Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
+        pixmap.setDevicePixelRatio(dpr)
+        return pixmap
 
     def _open(self, mod_id: str, folder) -> None:
         path = resolve_mod_open_location(mod_id, folder)
@@ -361,7 +415,10 @@ class ConsolePane(QWidget):
         search_row.addWidget(down_btn)
         search_row.addWidget(close_btn)
         # 搜索栏常驻显示，提供可见入口（也可 Ctrl+F）
-        self._search_line.installEventFilter(self)  # Shift+Enter 跳到上一个
+        # Shift+Enter 跳到上一个。可编辑 QComboBox 的焦点实际在下拉框本身，按键由它直接转给
+        # 内部输入框，不经过输入框上的过滤器，所以下拉框也要装（只装输入框时 Shift+Enter 仍是下一个）
+        self._search_edit.installEventFilter(self)
+        self._search_line.installEventFilter(self)
         outer.addWidget(self._search_bar)
 
         self.text = QPlainTextEdit()
@@ -526,7 +583,7 @@ class ConsolePane(QWidget):
 
     # ── 命令输入 ────────────────────────────────────────────────────────
     def eventFilter(self, watched, event):
-        if (watched is self._search_line and event.type() == QEvent.Type.KeyPress
+        if (watched in (self._search_edit, self._search_line) and event.type() == QEvent.Type.KeyPress
                 and event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter)
                 and event.modifiers() & Qt.KeyboardModifier.ShiftModifier):
             self._search_step(-1)
@@ -638,7 +695,7 @@ class ConsolePane(QWidget):
         if self._mod_failed_ids:
             ids = self._mod_failed_ids
             folders = find_process_mod_folders(self.proc, ids)
-            _FailedModsDialog(self.window(), self.proc.shard_name, ids, folders, mod_names(folders)).exec()
+            _FailedModsDialog(self.window(), self.proc.shard_name, ids, folders).exec()
         elif self._on_export_mods is not None:
             self._on_export_mods(self.proc)
 
