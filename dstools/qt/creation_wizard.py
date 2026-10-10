@@ -81,11 +81,13 @@ class _DraftContext:
     """ServerConfigPage 需要的最小 ctx 接口。草稿存档从不运行、从不被内网穿透映射；
     跨存档端口冲突检查仍读取真实环境（避免新建存档和已有存档撞端口），因此持有真实 env。"""
 
-    def __init__(self, real_env, draft_cluster: Cluster):
-        self.env = real_env
+    def __init__(self, real_ctx, draft_cluster: Cluster):
+        self.env = real_ctx.env
         self._draft_cluster = draft_cluster
         self.mapping_owner = lambda cluster, shard: None
         self.cluster_config_saved = _NullSignal()
+        # 全局令牌池弹窗要标出其他存档正在用的令牌；真实 ctx 的 token_uses 由本地服务器页后装上，调用时再取
+        self.token_uses = lambda: real_ctx.token_uses()
 
     def selected_cluster(self):
         return self._draft_cluster
@@ -421,7 +423,7 @@ class CreationWizardDialog(QDialog):
                    Shard(name=CAVES_SHARD, path=draft_root / "Caves")],
             adminlist_path=draft_root / "adminlist.txt", blocklist_path=draft_root / "blocklist.txt",
             token_path=draft_root / "cluster_token.txt")
-        draft_ctx = _DraftContext(self.ctx.env, draft_cluster)
+        draft_ctx = _DraftContext(self.ctx, draft_cluster)
         self._server_panel = DraftServerPanel(draft_ctx, self._default_room_name or cluster_name)
         self._server_baseline = self._server_panel.read_creation_settings()
         layout = QVBoxLayout(self._server_page)
