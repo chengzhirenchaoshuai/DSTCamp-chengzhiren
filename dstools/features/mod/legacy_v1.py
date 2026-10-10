@@ -220,13 +220,36 @@ def discover_legacy_runtime_roots() -> list[Path]:
     return roots
 
 
+def _is_v2_with_stray_package(archive: Path, installed_sizes: dict[int, int]) -> bool:
+    """压缩包是否只是 V2 内容里夹带的旧文件（有的作者改成 V2 上传时把旧 *_legacy.bin 一起传了）。
+
+    V1 项目 Steam 只安装这一个包，清单里的安装大小正好等于包的大小；V2 的安装大小是整个目录，
+    不会相等。不能看目录里有没有 modinfo.lua：V1 目录被混入解压文件时也有。清单没有记录时才退回看它。
+    """
+    item_dir = archive.parent
+    size = installed_sizes.get(int(item_dir.name))
+    if size is not None:
+        try:
+            return size != archive.stat().st_size
+        except OSError:
+            return False
+    return (item_dir / "modinfo.lua").is_file()
+
+
+def _installed_sizes(root: Path) -> dict[int, int]:
+    from dstools.features.mod.workshop_acf import read_acf_installed_sizes
+
+    return read_acf_installed_sizes(root)
+
+
 def find_legacy_packages() -> dict[int, Path]:
-    """扫描 Steam 共享缓存中的 V1 包，每个项目只取最新的有效文件。"""
+    """扫描 Steam 共享缓存中的 V1 包，每个项目只取最新的有效文件；V2 夹带的旧包不算。"""
     from dstools.features.mod.parser import find_workshop_dir, is_workshop_content_id
 
     root = find_workshop_dir()
     if root is None or not root.is_dir():
         return {}
+    installed_sizes = _installed_sizes(root)
     packages: dict[int, Path] = {}
     for item_dir in root.iterdir():
         if not item_dir.is_dir() or not is_workshop_content_id(item_dir.name):
@@ -247,18 +270,19 @@ def find_legacy_packages() -> dict[int, Path]:
         valid = next(
             (path for path in candidates if validate_legacy_package(path).valid), None
         )
-        if valid is not None:
+        if valid is not None and not _is_v2_with_stray_package(valid, installed_sizes):
             packages[int(item_dir.name)] = valid
     return packages
 
 
 def find_legacy_package_ids() -> set[int]:
-    """返回存在任意 ``*_legacy.bin`` 的项目，不要求包已经通过校验。"""
+    """返回存在任意 ``*_legacy.bin`` 的项目，不要求包已经通过校验；V2 夹带的旧包不算。"""
     from dstools.features.mod.parser import find_workshop_dir, is_workshop_content_id
 
     root = find_workshop_dir()
     if root is None or not root.is_dir():
         return set()
+    installed_sizes = _installed_sizes(root)
     result: set[int] = set()
     try:
         item_dirs = list(root.iterdir())
@@ -268,7 +292,8 @@ def find_legacy_package_ids() -> set[int]:
         if not item_dir.is_dir() or not is_workshop_content_id(item_dir.name):
             continue
         try:
-            if any(path.is_file() for path in item_dir.glob("*_legacy.bin")):
+            if any(path.is_file() and not _is_v2_with_stray_package(path, installed_sizes)
+                   for path in item_dir.glob("*_legacy.bin")):
                 result.add(int(item_dir.name))
         except OSError:
             continue
@@ -474,13 +499,11 @@ def prepare_enabled_legacy_mods(
 
     真机确认：独立专服只有在 dedicated_server_mods_setup.lua 写了 ServerModSetup(id) 时才会下载并
     解压 V1，只靠 modoverrides.lua 会静默跳过，所以由 DSTCamp 自行部署。
-    Workshop 目录已有 V2 内容的项目一律跳过：解压到专服 mods 会优先于 V2 加载，用旧版挡住新版（见 v1_shadow.py）。
+    V2 项目不会出现在 find_legacy_packages 里（含夹带旧包的），不会被解压去挡住 V2（见 v1_shadow.py）。
+    V1 目录混入的其他文件会先删掉，否则游戏客户端不再解压它。
     """
-    from dstools.features.mod.parser import find_workshop_dir
-
     result = LegacyPreparationResult()
     packages = find_legacy_packages()
-    workshop_root = find_workshop_dir()
     root = Path(server_mods_root)
     normalized_ids = []
     for value in workshop_ids:
@@ -491,9 +514,12 @@ def prepare_enabled_legacy_mods(
         archive = packages.get(workshop_id)
         if archive is None:
             continue
-        if workshop_root is not None and (workshop_root / str(workshop_id) / "modinfo.lua").is_file():
-            continue  # 已经是 V2，不能再解压 V1 包去覆盖它
         result.checked.append(workshop_id)
+        try:
+            remove_legacy_package_extras(archive)
+        except OSError as exc:
+            result.errors.append(f"workshop-{workshop_id} 目录里的多余文件无法删除：{exc}")
+            continue
         target = root / f"workshop-{workshop_id}"
         if legacy_runtime_matches_package(archive, target):
             result.already_current.append(target)

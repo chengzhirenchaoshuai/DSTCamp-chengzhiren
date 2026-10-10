@@ -372,6 +372,35 @@ def test_legacy_dir_with_extra_files() -> None:
         # 不在 322330/<id> 下的文件一律不碰
         assert legacy_package_extras(Path(temp) / "x_legacy.bin") == ()
 
+    # 按清单安装大小区分：V1 目录混入解压文件仍是 V1（开服前清掉多余文件再部署），
+    # V2 内容夹带的旧压缩包不算 V1 包（不部署、不清理）
+    with tempfile.TemporaryDirectory(prefix="dstcamp_v1_acf_") as temp:
+        content = Path(temp) / "workshop" / "content" / "322330"
+        polluted = content / "123"
+        polluted.mkdir(parents=True)
+        v1_archive = polluted / "456_legacy.bin"
+        _write_package(v1_archive)
+        (polluted / "modinfo.lua").write_text('name = "extracted"', encoding="utf-8")
+        v2 = content / "789"
+        v2.mkdir()
+        stray = v2 / "999_legacy.bin"
+        _write_package(stray)
+        (v2 / "modinfo.lua").write_text('name = "v2"', encoding="utf-8")
+        v2_size = sum(path.stat().st_size for path in v2.iterdir())
+        (content.parent.parent / "appworkshop_322330.acf").write_text(
+            '"AppWorkshop" { "appid" "322330" "WorkshopItemsInstalled" { '
+            f'"123" {{ "size" "{v1_archive.stat().st_size}" }} "789" {{ "size" "{v2_size}" }} '
+            '} "WorkshopItemDetails" { } }', encoding="utf-8")
+
+        with patch.object(mod_parser, "find_workshop_dir", return_value=content):
+            assert legacy_v1.find_legacy_packages() == {123: v1_archive}
+            assert legacy_v1.find_legacy_package_ids() == {123}
+            prepared = prepare_enabled_legacy_mods(["123", "789"], Path(temp) / "mods")
+        assert prepared.completed and prepared.checked == [123], prepared.errors
+        assert [path.name for path in polluted.iterdir()] == ["456_legacy.bin"]
+        assert (Path(temp) / "mods" / "workshop-123" / "modmain.lua").is_file()
+        assert stray.is_file() and not (Path(temp) / "mods" / "workshop-789").exists()
+
 
 if __name__ == "__main__":
     run(globals())

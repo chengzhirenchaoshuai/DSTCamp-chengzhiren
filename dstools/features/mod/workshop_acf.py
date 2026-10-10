@@ -165,6 +165,17 @@ def read_acf_subscribers(content_root: Path | None) -> dict[int, str]:
     return {int(wid): item.subscribed_by for wid, item in acf.items.items() if item.subscribed and wid.isdigit()}
 
 
+def read_acf_installed_sizes(content_root: Path | None) -> dict[int, int]:
+    """清单里 Steam 实际安装的大小（字节）；读不到返回空。"""
+    if content_root is None:
+        return {}
+    try:
+        acf = read_workshop_acf(workshop_acf_path(content_root))
+    except (OSError, WorkshopAcfError):
+        return {}
+    return {int(wid): item.size for wid, item in acf.items.items() if wid.isdigit()}
+
+
 def read_acf_subscribed_ids(content_root: Path | None) -> set[int]:
     """清单中仍有账号订阅的 Workshop ID。"""
     return set(read_acf_subscribers(content_root))
